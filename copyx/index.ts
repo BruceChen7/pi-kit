@@ -105,7 +105,11 @@ function getAssistantMessages(
     type: "assistant" | "custom";
     entry: AssistantMessageEntry | CustomMessageEntry;
   }> = [];
-  for (let i = entries.length - 1; i >= 0 && allMessages.length < maxMessages; i--) {
+  for (
+    let i = entries.length - 1;
+    i >= 0 && allMessages.length < maxMessages;
+    i--
+  ) {
     const entry = entries[i];
     if (isAssistantMessage(entry)) {
       allMessages.push({ type: "assistant", entry });

@@ -7,3 +7,4 @@ dist/
 build/
 .pi-memory/
 package-lock.json
+.pi/

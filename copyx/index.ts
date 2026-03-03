@@ -37,6 +37,14 @@ interface AssistantMessageEntry {
   };
 }
 
+interface CustomMessageEntry {
+  type: "custom_message";
+  customType: string;
+  content: string;
+  display?: boolean;
+  details?: unknown;
+}
+
 function isAssistantMessage(entry: unknown): entry is AssistantMessageEntry {
   return (
     typeof entry === "object" &&
@@ -46,11 +54,44 @@ function isAssistantMessage(entry: unknown): entry is AssistantMessageEntry {
   );
 }
 
+function isCustomMessage(entry: unknown): entry is CustomMessageEntry {
+  return (
+    typeof entry === "object" &&
+    entry !== null &&
+    (entry as CustomMessageEntry).type === "custom_message" &&
+    typeof (entry as CustomMessageEntry).content === "string" &&
+    (entry as CustomMessageEntry).display === true
+  );
+}
+
 function extractTextContent(entry: AssistantMessageEntry): string {
-  return entry.message.content
-    .filter((c) => c.type === "text")
-    .map((c) => (c as { type: "text"; text: string }).text)
-    .join("\n\n");
+  const parts: string[] = [];
+
+  for (const c of entry.message.content) {
+    if (c.type === "text") {
+      const text = (c as { type: "text"; text: string }).text;
+      // Skip empty or whitespace-only text
+      if (text && text.trim()) {
+        parts.push(text.trim());
+      }
+    } else if (c.type === "toolCall") {
+      const toolCall = c as {
+        type: "toolCall";
+        id: string;
+        name: string;
+        arguments: string;
+      };
+      try {
+        const args = JSON.parse(toolCall.arguments);
+        parts.push(`[tool] ${toolCall.name}(${JSON.stringify(args)})`);
+      } catch {
+        parts.push(`[tool] ${toolCall.name}`);
+      }
+    }
+    // Skip thinking and other content types (images, etc.)
+  }
+
+  return parts.join("\n\n");
 }
 
 function getAssistantMessages(
@@ -59,33 +100,37 @@ function getAssistantMessages(
 ): MessageItem[] {
   const entries = ctx.sessionManager.getEntries();
 
-  // Collect all assistant messages in reverse order (newest first)
-  const assistantMessages: AssistantMessageEntry[] = [];
-  for (
-    let i = entries.length - 1;
-    i >= 0 && assistantMessages.length < maxMessages;
-    i--
-  ) {
+  // Collect all assistant and custom messages in reverse order (newest first)
+  const allMessages: Array<{
+    type: "assistant" | "custom";
+    entry: AssistantMessageEntry | CustomMessageEntry;
+  }> = [];
+  for (let i = entries.length - 1; i >= 0 && allMessages.length < maxMessages; i--) {
     const entry = entries[i];
     if (isAssistantMessage(entry)) {
-      assistantMessages.push(entry);
+      allMessages.push({ type: "assistant", entry });
+    } else if (isCustomMessage(entry)) {
+      allMessages.push({ type: "custom", entry });
     }
   }
 
-  // assistantMessages is already newest first due to reverse traversal.
-  const totalAssistantCount = entries.filter((e) =>
-    isAssistantMessage(e),
+  // Count total for index calculation
+  const totalCount = entries.filter(
+    (e) => isAssistantMessage(e) || isCustomMessage(e),
   ).length;
-  const reversedWithIndex = assistantMessages.map((msg, idx) => {
-    return {
-      msg,
-      index: totalAssistantCount - idx,
-      turnsAgo: idx,
-    };
-  });
 
-  return reversedWithIndex.map(({ msg, index, turnsAgo }) => {
-    const fullText = extractTextContent(msg);
+  return allMessages.map((item, idx) => {
+    const index = totalCount - idx;
+    const turnsAgo = idx;
+
+    let fullText: string;
+    if (item.type === "assistant") {
+      fullText = extractTextContent(item.entry as AssistantMessageEntry);
+    } else {
+      // Custom message - use content directly
+      fullText = (item.entry as CustomMessageEntry).content;
+    }
+
     return {
       index,
       preview: truncatePreview(fullText),

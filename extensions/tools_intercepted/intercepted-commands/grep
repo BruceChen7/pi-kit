@@ -10,6 +10,8 @@ echo "  rg -g '*.ext' PATTERN   # Search in specific file types" >&2
 echo "  rg -A 5 PATTERN         # Show 5 lines after match" >&2
 echo "  rg -B 5 PATTERN         # Show 5 lines before match" >&2
 echo "" >&2
-echo "  Install: uv tool install rg" >&2
+echo "  Install: brew install ripgrep     # macOS" >&2
+echo "           apt install ripgrep       # Ubuntu/Debian" >&2
+echo "           pacman -S ripgrep         # Arch Linux" >&2
 echo "" >&2
 exit 1

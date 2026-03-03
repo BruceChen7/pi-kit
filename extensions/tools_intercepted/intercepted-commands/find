@@ -8,6 +8,8 @@ echo "  fd -e ext PATTERN       # Find files with extension" >&2
 echo "  fd -t d PATTERN         # Find directories" >&2
 echo "  fd -t f PATTERN         # Find files" >&2
 echo "" >&2
-echo "  Install: uv tool install fd" >&2
+echo "  Install: brew install fd          # macOS" >&2
+echo "           apt install fd            # Ubuntu/Debian" >&2
+echo "           pacman -S fd              # Arch Linux" >&2
 echo "" >&2
 exit 1

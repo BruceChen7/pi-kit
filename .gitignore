@@ -1,0 +1,7 @@
+node_modules/
+.pilot/
+PLAN.md
+*.log
+.DS_Store
+dist/
+build/

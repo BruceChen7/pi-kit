@@ -1,0 +1,32 @@
+{
+  "name": "pi-kit",
+  "version": "0.1.0",
+  "description": "A collection of Pi Agent extensions and utilities",
+  "keywords": [
+    "pi-package"
+  ],
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./copyx"
+    ]
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*": "biome format --write"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.4",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.3.1",
+    "typescript": "^5.9.3"
+  }
+}

@@ -31,29 +31,29 @@ import { loadSnippets } from "./storage.js";
 import { showSnippetSelector, insertSnippetText } from "./selector.js";
 
 export default function promptSnippetsExtension(pi: ExtensionAPI) {
-	// Register /snippet command
-	registerSnippetCommand(pi);
+  // Register /snippet command
+  registerSnippetCommand(pi);
 
-	// Register Ctrl+J shortcut for snippet insertion
-	pi.registerShortcut(Key.ctrl("j"), {
-		description: "Insert prompt snippet",
-		handler: async (ctx) => {
-			const snippets = getCurrentSnippets(ctx);
-			const result = await showSnippetSelector(snippets, ctx);
+  // Register Ctrl+J shortcut for snippet insertion
+  pi.registerShortcut(Key.ctrl("j"), {
+    description: "Insert prompt snippet",
+    handler: async (ctx) => {
+      const snippets = getCurrentSnippets(ctx);
+      const result = await showSnippetSelector(snippets, ctx);
 
-			if (result) {
-				insertSnippetText(result.text, ctx);
-				ctx.ui.notify(`Inserted "${result.name}"`, "info");
-			}
-		},
-	});
+      if (result) {
+        insertSnippetText(result.text, ctx);
+        ctx.ui.notify(`Inserted "${result.name}"`, "info");
+      }
+    },
+  });
 
-	// Notify on load
-	pi.on("session_start", async (_event, ctx) => {
-		const snippets = loadSnippets(ctx.cwd);
-		const count = Object.keys(snippets).length;
-		if (count > 0) {
-			ctx.ui.notify(`Prompt snippets loaded: ${count} snippets`, "info");
-		}
-	});
+  // Notify on load
+  pi.on("session_start", async (_event, ctx) => {
+    const snippets = loadSnippets(ctx.cwd);
+    const count = Object.keys(snippets).length;
+    if (count > 0) {
+      ctx.ui.notify(`Prompt snippets loaded: ${count} snippets`, "info");
+    }
+  });
 }

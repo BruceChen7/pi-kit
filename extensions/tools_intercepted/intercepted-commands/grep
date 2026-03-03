@@ -1,0 +1,15 @@
+#!/bin/bash
+# Intercept grep to suggest rg (ripgrep, faster alternative)
+
+echo "Error: 'grep' is disabled. Use 'rg' (ripgrep) instead (faster, modern alternative):" >&2
+echo "" >&2
+echo "  rg PATTERN              # Search for pattern in files" >&2
+echo "  rg -l PATTERN           # List files containing pattern" >&2
+echo "  rg -i PATTERN           # Case-insensitive search" >&2
+echo "  rg -g '*.ext' PATTERN   # Search in specific file types" >&2
+echo "  rg -A 5 PATTERN         # Show 5 lines after match" >&2
+echo "  rg -B 5 PATTERN         # Show 5 lines before match" >&2
+echo "" >&2
+echo "  Install: uv tool install rg" >&2
+echo "" >&2
+exit 1

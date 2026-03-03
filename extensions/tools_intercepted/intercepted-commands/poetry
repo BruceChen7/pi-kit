@@ -1,0 +1,9 @@
+#!/bin/bash
+echo "Error: poetry is disabled. Use uv instead:" >&2
+echo "" >&2
+echo "  uv init                  # Initialize new project" >&2
+echo "  uv add PACKAGE           # Add dependency" >&2
+echo "  uv sync                  # Sync dependencies" >&2
+echo "  uv run python script.py  # Run script with dependencies" >&2
+echo "" >&2
+exit 1

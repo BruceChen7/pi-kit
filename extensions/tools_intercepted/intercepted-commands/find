@@ -1,0 +1,13 @@
+#!/bin/bash
+# Intercept find to suggest fd (faster alternative from rust)
+
+echo "Error: 'find' is disabled. Use 'fd' instead (faster, modern alternative):" >&2
+echo "" >&2
+echo "  fd PATTERN              # Find files matching pattern" >&2
+echo "  fd -e ext PATTERN       # Find files with extension" >&2
+echo "  fd -t d PATTERN         # Find directories" >&2
+echo "  fd -t f PATTERN         # Find files" >&2
+echo "" >&2
+echo "  Install: uv tool install fd" >&2
+echo "" >&2
+exit 1

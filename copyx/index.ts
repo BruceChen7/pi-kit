@@ -24,11 +24,7 @@ import {
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui";
 import type { MessageItem } from "./types.js";
-import {
-  DEFAULT_MAX_MESSAGES,
-  PREVIEW_MAX_CHARS,
-  PREVIEW_MAX_LINES,
-} from "./types.js";
+import { DEFAULT_MAX_MESSAGES, truncatePreview } from "./types.js";
 
 interface AssistantMessageEntry {
   type: "message";
@@ -55,19 +51,6 @@ function extractTextContent(entry: AssistantMessageEntry): string {
     .filter((c) => c.type === "text")
     .map((c) => (c as { type: "text"; text: string }).text)
     .join("\n\n");
-}
-
-function truncatePreview(
-  text: string,
-  maxLines = PREVIEW_MAX_LINES,
-  maxChars = PREVIEW_MAX_CHARS,
-): string {
-  const lines = text.split("\n").slice(0, maxLines);
-  let result = lines.join("\n");
-  if (result.length > maxChars) {
-    result = `${result.slice(0, maxChars).trimEnd()}...`;
-  }
-  return result;
 }
 
 function getAssistantMessages(
@@ -115,7 +98,7 @@ function getAssistantMessages(
 function buildOutputText(items: MessageItem[]): string {
   return items
     .map((item) => {
-      return `[${item.index}] Assistant (${item.turnsAgo} turn${item.turnsAgo !== 1 ? "s" : ""} ago)\n${item.fullText}`;
+      return item.fullText;
     })
     .join("\n\n---\n\n");
 }
@@ -131,6 +114,10 @@ class MessageSelectorComponent implements Component {
     private readonly tui: TUI,
     private readonly onDone: (value: MessageItem[] | null) => void,
   ) {}
+
+  invalidate(): void {
+    // No cached state to invalidate
+  }
 
   private getSelectedItems(): MessageItem[] {
     return Array.from(this.selected)
@@ -173,7 +160,7 @@ class MessageSelectorComponent implements Component {
       return;
     }
 
-    if (matchesKey(data, "pageup")) {
+    if (matchesKey(data, "pageUp")) {
       this.selectedIndex = Math.max(
         0,
         this.selectedIndex - this.maxVisibleItems,
@@ -182,7 +169,7 @@ class MessageSelectorComponent implements Component {
       return;
     }
 
-    if (matchesKey(data, "pagedown")) {
+    if (matchesKey(data, "pageDown")) {
       this.selectedIndex = Math.min(
         this.messages.length - 1,
         this.selectedIndex + this.maxVisibleItems,
@@ -300,7 +287,7 @@ export default function (pi: ExtensionAPI) {
         // Only one message, copy directly
         const text = buildOutputText([messages[0]]);
         copyToClipboard(text);
-        ctx.ui.notify("Copied 1 message to clipboard", "success");
+        ctx.ui.notify("Copied 1 message to clipboard", "info");
         return;
       }
 
@@ -321,7 +308,7 @@ export default function (pi: ExtensionAPI) {
         copyToClipboard(text);
         ctx.ui.notify(
           `Copied ${selectedItems.length} message(s) to clipboard`,
-          "success",
+          "info",
         );
         return;
       }

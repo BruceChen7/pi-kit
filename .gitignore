@@ -5,3 +5,5 @@ PLAN.md
 .DS_Store
 dist/
 build/
+.pi-memory/
+package-lock.json

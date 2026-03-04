@@ -10,12 +10,12 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder } from "@mariozechner/pi-coding-agent";
 import {
+  type Component,
   Container,
   Key,
   Markdown,
-  Text,
   matchesKey,
-  type Component,
+  Text,
 } from "@mariozechner/pi-tui";
 
 export default function (pi: ExtensionAPI) {

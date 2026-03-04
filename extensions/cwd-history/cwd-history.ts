@@ -1,12 +1,12 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 import { CustomEditor } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import path from "node:path";
-import os from "node:os";
-import fs from "node:fs/promises";
 
 /**
  * Extension that seeds the prompt editor history with recent prompts from the
@@ -206,7 +206,7 @@ class HistoryEditor extends CustomEditor {
         );
         lines[lines.length - 1] = searchPrompt + truncated;
       } else {
-        lines[lines.length - 1] = searchPrompt + "(no match)";
+        lines[lines.length - 1] = `${searchPrompt}(no match)`;
       }
 
       // Add status line
@@ -233,7 +233,7 @@ function extractText(content: Array<{ type: string; text?: string }>): string {
   // Filter out skill tag blocks to avoid searching system prompts
   // Format: <skill name="..." location="...">...</skill>
   const skillTagRegex = /<skill\s+[^>]*>[\s\S]*?<\/skill>/gi;
-  let filtered = text.replace(skillTagRegex, "");
+  const filtered = text.replace(skillTagRegex, "");
 
   // Filter out extension-generated prompts (e.g., review guidelines from review.ts)
   // These are system prompts injected by extensions that shouldn't appear in history search

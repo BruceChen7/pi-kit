@@ -71,7 +71,7 @@ function extractTextContent(entry: AssistantMessageEntry): string {
     if (c.type === "text") {
       const text = (c as { type: "text"; text: string }).text;
       // Skip empty or whitespace-only text
-      if (text && text.trim()) {
+      if (text?.trim()) {
         parts.push(text.trim());
       }
     } else if (c.type === "toolCall") {

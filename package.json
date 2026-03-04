@@ -11,7 +11,16 @@
   },
   "pi": {
     "extensions": [
-      "./copyx"
+      "./copyx",
+      "./extensions/answer",
+      "./extensions/cwd-history",
+      "./extensions/notify",
+      "./extensions/pi-review",
+      "./extensions/prompt-snippets",
+      "./extensions/review",
+      "./extensions/safe-delete",
+      "./extensions/system-prompt-view",
+      "./extensions/tools_intercepted"
     ]
   },
   "scripts": {

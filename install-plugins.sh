@@ -4,9 +4,10 @@
 # Usage: ./install-plugins.sh
 #
 # Supported patterns:
-#   extensions/foo.ts          -> creates foo.ts symlink
-#   extensions/bar/index.ts    -> creates bar/ symlink
-#   extensions/baz/baz.ts      -> creates baz.ts symlink
+#   extensions/foo.ts              -> creates foo.ts symlink
+#   extensions/bar/index.ts        -> creates bar/ symlink
+#   extensions/baz/baz.ts          -> creates baz.ts symlink
+#   extensions/qux/extension.ts    -> creates qux.ts symlink
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -100,8 +101,12 @@ for dir in "$EXTENSIONS_DIR"/*/; do
         elif [ -f "$dir${dir_name}.ts" ]; then
             check_and_install "$dir${dir_name}.ts" "${dir_name}.ts"
             mark_installed "${dir_name}.ts"
+        # Priority 3: Check if directory has extension.ts -> create .ts symlink
+        elif [ -f "$dir/extension.ts" ]; then
+            check_and_install "$dir/extension.ts" "${dir_name}.ts"
+            mark_installed "${dir_name}.ts"
         else
-            echo -e "${YELLOW}!${NC} Skipped (no index.ts or ${dir_name}.ts): $dir_name"
+            echo -e "${YELLOW}!${NC} Skipped (no index.ts, ${dir_name}.ts, or extension.ts): $dir_name"
         fi
     fi
 done

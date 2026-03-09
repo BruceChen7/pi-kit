@@ -9,7 +9,6 @@ import {
   SelectList,
   Text,
 } from "@mariozechner/pi-tui";
-import type { Snippets } from "./types.js";
 import { buildManagementItems, showSnippetSelector } from "./selector.js";
 import {
   addSnippet,
@@ -18,6 +17,7 @@ import {
   loadSnippets,
   saveSnippets,
 } from "./storage.js";
+import type { Snippets } from "./types.js";
 
 /** Parse command line arguments for /snippet command */
 function parseSnippetArgs(args: string): {

@@ -11,7 +11,8 @@
   },
   "pi": {
     "extensions": [
-      "./copyx"
+      "./copyx",
+      "./skill-status"
     ]
   },
   "scripts": {

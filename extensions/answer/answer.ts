@@ -11,9 +11,9 @@
  */
 
 import {
+  type Api,
   complete,
   type Model,
-  type Api,
   type UserMessage,
 } from "@mariozechner/pi-ai";
 import type {
@@ -27,8 +27,8 @@ import {
   type EditorTheme,
   Key,
   matchesKey,
-  truncateToWidth,
   type TUI,
+  truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui";

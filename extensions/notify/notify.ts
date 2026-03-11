@@ -8,19 +8,84 @@
  * Not supported: Kitty (uses OSC 99), Terminal.app, Windows Terminal, Alacritty
  */
 
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
 import { createLogger } from "../shared/logger.js";
 
+export interface NotifyConfig {
+  /** Enable/disable the notification extension (default: true) */
+  enabled?: boolean;
+  /** Custom log file path (default: ~/.pi/agent/pi-debug.log) */
+  logFilePath?: string;
+  /** Minimum log level: debug, info, warn, error (default: debug) */
+  logLevel?: "debug" | "info" | "warn" | "error";
+}
+
+export const DEFAULT_CONFIG: NotifyConfig = {
+  enabled: true,
+  logFilePath: path.join(os.homedir(), ".pi", "agent", "pi-debug.log"),
+  logLevel: "debug",
+};
+
+/**
+ * Resolve environment variable - support $VAR or ${VAR} syntax
+ */
+const resolveEnvVar = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  const match = value.match(/^\$\{?(\w+)\}?$/);
+  if (match) {
+    return process.env[match[1]];
+  }
+  return value;
+};
+
+/**
+ * Load config from settings.
+ * Looks for "notify" key in settings.json (project first, then global).
+ */
+async function loadConfig(cwd: string): Promise<NotifyConfig> {
+  const paths: string[] = [
+    path.join(cwd, ".pi", "settings.json"),
+    path.join(os.homedir(), ".pi", "agent", "settings.json"),
+  ];
+
+  for (const settingsPath of paths) {
+    try {
+      const content = await fs.readFile(settingsPath, "utf-8");
+      const settings = JSON.parse(content) as Record<string, unknown>;
+      const notifyConfig = settings?.notify as NotifyConfig | undefined;
+
+      if (notifyConfig) {
+        // Resolve environment variables in logFilePath
+        if (notifyConfig.logFilePath) {
+          notifyConfig.logFilePath = resolveEnvVar(notifyConfig.logFilePath);
+        }
+        return { ...DEFAULT_CONFIG, ...notifyConfig };
+      }
+    } catch {
+      // Continue to next path
+    }
+  }
+
+  return DEFAULT_CONFIG;
+}
+
 /**
  * Send a desktop notification via OSC 777 escape sequence.
  */
-const log = createLogger("notify", {
-  logFilePath: path.join(os.homedir(), ".pi", "agent", "notify-ext.log"),
-  stderr: null,
-});
+let log: ReturnType<typeof createLogger>;
+
+async function initLogger(cwd: string): Promise<void> {
+  const config = await loadConfig(cwd);
+  log = createLogger("notify", {
+    logFilePath: config.logFilePath,
+    stderr: null,
+    minLevel: config.logLevel,
+  });
+}
 
 const wrapForTmuxPassthrough = (payload: string): string => {
   const escaped = payload.split("\x1b").join("\x1b\x1b");
@@ -129,7 +194,9 @@ const formatNotification = (
   return { title: "π", body };
 };
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI) {
+  await initLogger(process.cwd());
+
   log.debug("extension initialized", {
     pid: process.pid,
     term: process.env.TERM,

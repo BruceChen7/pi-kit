@@ -25,7 +25,7 @@ export const DEFAULT_CONFIG: NotifyConfig = {
 /**
  * Send a desktop notification via OSC 777 escape sequence.
  */
-let log: ReturnType<typeof createLogger>;
+let log: ReturnType<typeof createLogger> | null = null;
 
 async function initLogger(cwd: string): Promise<void> {
   const logConfig = await loadLogConfig(cwd);
@@ -48,7 +48,7 @@ const notify = (title: string, body: string): void => {
   const inTmux = Boolean(process.env.TMUX);
   const payload = inTmux ? wrapForTmuxPassthrough(osc777) : osc777;
 
-  log.debug("writing notification payload", {
+  log?.debug("writing notification payload", {
     protocol: "OSC777",
     inTmux,
     titleLength: title.length,
@@ -68,14 +68,15 @@ const notify = (title: string, body: string): void => {
 
 export const getTmuxWindowName = async (): Promise<string | null> => {
   try {
-    const { stdout } = await execFile("tmux", [
-      "display-message",
-      "-p",
-      "#W",
-    ]);
+    const { stdout } = await execFile("tmux", ["display-message", "-p", "#W"]);
     const name = stdout.trim();
-    return name ? name : null;
-  } catch {
+    const windowName = name ? name : null;
+    log?.debug("tmux window name resolved", { windowName });
+    return windowName;
+  } catch (error) {
+    log?.debug("tmux window name lookup failed", {
+      error: String(error),
+    });
     return null;
   }
 };
@@ -172,7 +173,7 @@ const formatNotification = (
 export default async function (pi: ExtensionAPI) {
   await initLogger(process.cwd());
 
-  log.debug("extension initialized", {
+  log?.debug("extension initialized", {
     pid: process.pid,
     term: process.env.TERM,
     termProgram: process.env.TERM_PROGRAM,
@@ -182,7 +183,7 @@ export default async function (pi: ExtensionAPI) {
   pi.on("agent_end", async (event) => {
     const messages = event.messages ?? [];
     const last = messages.at(-1);
-    log.debug("agent_end received", {
+    log?.debug("agent_end received", {
       messageCount: messages.length,
       lastRole: last?.role ?? null,
       lastContentType: Array.isArray(last?.content)
@@ -191,18 +192,21 @@ export default async function (pi: ExtensionAPI) {
     });
 
     const lastText = extractLastAssistantText(messages);
-    log.debug("assistant text extracted", {
+    log?.debug("assistant text extracted", {
       hasText: Boolean(lastText),
       preview: lastText ? lastText.slice(0, 120) : null,
     });
 
     const { title, body } = formatNotification(lastText);
-    log.debug("notification formatted", {
-      title,
+    const inTmux = Boolean(process.env.TMUX);
+    const resolvedTitle = await resolveNotificationTitle(title, inTmux);
+    log?.debug("notification formatted", {
+      title: resolvedTitle,
       bodyPreview: body.slice(0, 120),
       bodyLength: body.length,
+      inTmux,
     });
 
-    notify(title, body);
+    notify(resolvedTitle, body);
   });
 }

@@ -4,6 +4,30 @@ import path from "node:path";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
+export interface LogConfig {
+  logFilePath?: string;
+  logLevel?: LogLevel;
+}
+
+export const DEFAULT_LOG_CONFIG: Required<LogConfig> = {
+  logFilePath: path.join(os.homedir(), ".pi", "agent", "pi-debug.log"),
+  logLevel: "debug",
+};
+
+/**
+ * Resolve environment variable - support $VAR or ${VAR} syntax
+ */
+export const resolveEnvVar = (
+  value: string | undefined,
+): string | undefined => {
+  if (!value) return undefined;
+  const match = value.match(/^\$\{?(\w+)\}?$/);
+  if (match) {
+    return process.env[match[1]];
+  }
+  return value;
+};
+
 type Logger = {
   debug: (message: string, data?: unknown) => void;
   info: (message: string, data?: unknown) => void;
@@ -19,7 +43,7 @@ type CreateLoggerOptions = {
   now?: () => Date;
 };
 
-type LogConfig = {
+type ExtensionsLogConfig = {
   minLevel?: unknown;
   overrides?: Record<string, unknown>;
 };
@@ -61,18 +85,59 @@ const readSettings = (settingsPath: string): unknown => {
   }
 };
 
-const getLogConfig = (settings: unknown): LogConfig => {
+const getLogConfig = (settings: unknown): ExtensionsLogConfig => {
   if (!settings || typeof settings !== "object") {
     return {};
   }
 
   const root = settings as {
     extensions?: {
-      log?: LogConfig;
+      log?: ExtensionsLogConfig;
     };
   };
 
   return root.extensions?.log ?? {};
+};
+
+/**
+ * Load log config from settings.json files.
+ * Looks for "extensions.log" key in settings.json (project first, then global).
+ */
+export const loadLogConfig = async (
+  cwd: string,
+): Promise<Required<LogConfig>> => {
+  const paths: string[] = [
+    path.join(cwd, ".pi", "settings.json"),
+    path.join(os.homedir(), ".pi", "agent", "settings.json"),
+  ];
+
+  for (const settingsPath of paths) {
+    try {
+      const content = await fs.readFile(settingsPath, "utf-8");
+      const settings = JSON.parse(content) as Record<string, unknown>;
+      const logConfig = settings?.extensions?.log as LogConfig | undefined;
+
+      if (logConfig) {
+        // Resolve environment variables in logFilePath
+        if (logConfig.logFilePath) {
+          logConfig.logFilePath =
+            resolveEnvVar(logConfig.logFilePath) ??
+            DEFAULT_LOG_CONFIG.logFilePath;
+        }
+        if (logConfig.logLevel) {
+          return { ...DEFAULT_LOG_CONFIG, ...logConfig };
+        }
+        return {
+          ...DEFAULT_LOG_CONFIG,
+          logLevel: logConfig.logLevel ?? DEFAULT_LOG_CONFIG.logLevel,
+        };
+      }
+    } catch {
+      // Continue to next path
+    }
+  }
+
+  return DEFAULT_LOG_CONFIG;
 };
 
 export const resolveMinLogLevel = (
@@ -116,15 +181,27 @@ const appendToFile = (logFilePath: string, line: string): void => {
 
 export const createLogger = (
   extensionName: string,
-  options: CreateLoggerOptions = {},
+  options: CreateLoggerOptions | LogConfig = {},
 ): Logger => {
   const settingsPath = options.settingsPath ?? DEFAULT_SETTINGS_PATH;
   const settings = readSettings(settingsPath);
-  const minLevel =
-    options.minLevel ?? resolveMinLogLevel(settings, extensionName);
+
+  let minLevel: LogLevel;
+  let logFilePath: string | undefined;
+
+  if ("logLevel" in options || "logFilePath" in options) {
+    // LogConfig style - explicit values
+    minLevel = options.logLevel ?? resolveMinLogLevel(settings, extensionName);
+    logFilePath = options.logFilePath;
+  } else {
+    // CreateLoggerOptions style
+    const opt = options as CreateLoggerOptions;
+    minLevel = opt.minLevel ?? resolveMinLogLevel(settings, extensionName);
+    logFilePath = opt.logFilePath;
+  }
+
   const stderr = options.stderr === undefined ? process.stderr : options.stderr;
   const now = options.now ?? (() => new Date());
-  const logFilePath = options.logFilePath;
 
   const emit = (level: LogLevel, message: string, data?: unknown): void => {
     if (!shouldLog(level, minLevel)) {

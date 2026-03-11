@@ -8,7 +8,7 @@
  * Not supported: Kitty (uses OSC 99), Terminal.app, Windows Terminal, Alacritty
  */
 
-import { execFile } from "node:child_process/promises";
+import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
 import { createLogger, loadLogConfig } from "../shared/logger.js";
@@ -66,9 +66,31 @@ const notify = (title: string, body: string): void => {
   process.stdout.write(payload);
 };
 
+const execFileAsync = (
+  file: string,
+  args: string[],
+): Promise<{ stdout: string; stderr: string }> =>
+  new Promise((resolve, reject) => {
+    execFile(file, args, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve({
+        stdout: stdout.toString(),
+        stderr: stderr.toString(),
+      });
+    });
+  });
+
 export const getTmuxWindowName = async (): Promise<string | null> => {
   try {
-    const { stdout } = await execFile("tmux", ["display-message", "-p", "#W"]);
+    const { stdout } = await execFileAsync("tmux", [
+      "display-message",
+      "-p",
+      "#W",
+    ]);
     const name = stdout.trim();
     const windowName = name ? name : null;
     log?.debug("tmux window name resolved", { windowName });

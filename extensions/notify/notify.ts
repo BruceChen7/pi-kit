@@ -205,12 +205,16 @@ export default async function (pi: ExtensionAPI) {
   pi.on("agent_end", async (event) => {
     const messages = event.messages ?? [];
     const last = messages.at(-1);
+    const lastContentType =
+      last && "content" in last
+        ? Array.isArray(last.content)
+          ? "array"
+          : typeof last.content
+        : null;
     log?.debug("agent_end received", {
       messageCount: messages.length,
       lastRole: last?.role ?? null,
-      lastContentType: Array.isArray(last?.content)
-        ? "array"
-        : typeof last?.content,
+      lastContentType,
     });
 
     const lastText = extractLastAssistantText(messages);

@@ -8,15 +8,48 @@
  * Not supported: Kitty (uses OSC 99), Terminal.app, Windows Terminal, Alacritty
  */
 
+import os from "node:os";
+import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
+import { createLogger } from "../shared/logger.js";
 
 /**
  * Send a desktop notification via OSC 777 escape sequence.
  */
+const log = createLogger("notify", {
+  logFilePath: path.join(os.homedir(), ".pi", "agent", "notify-ext.log"),
+  stderr: null,
+});
+
+const wrapForTmuxPassthrough = (payload: string): string => {
+  const escaped = payload.split("\x1b").join("\x1b\x1b");
+  // tmux DCS passthrough: ESC P tmux; <payload-with-doubled-ESC> ESC \
+  return `\x1bPtmux;${escaped}\x1b\\`;
+};
+
 const notify = (title: string, body: string): void => {
   // OSC 777 format: ESC ] 777 ; notify ; title ; body BEL
-  process.stdout.write(`\x1b]777;notify;${title};${body}\x07`);
+  const osc777 = `\x1b]777;notify;${title};${body}\x07`;
+  const inTmux = Boolean(process.env.TMUX);
+  const payload = inTmux ? wrapForTmuxPassthrough(osc777) : osc777;
+
+  log.debug("writing notification payload", {
+    protocol: "OSC777",
+    inTmux,
+    titleLength: title.length,
+    bodyLength: body.length,
+    payloadPreview: payload
+      .split("\x1b")
+      .join("<ESC>")
+      .split("\x07")
+      .join("<BEL>"),
+    term: process.env.TERM,
+    termProgram: process.env.TERM_PROGRAM,
+    tty: Boolean(process.stdout.isTTY),
+  });
+
+  process.stdout.write(payload);
 };
 
 const isTextPart = (part: unknown): part is { type: "text"; text: string } =>
@@ -97,9 +130,37 @@ const formatNotification = (
 };
 
 export default function (pi: ExtensionAPI) {
+  log.debug("extension initialized", {
+    pid: process.pid,
+    term: process.env.TERM,
+    termProgram: process.env.TERM_PROGRAM,
+    tty: Boolean(process.stdout.isTTY),
+  });
+
   pi.on("agent_end", async (event) => {
-    const lastText = extractLastAssistantText(event.messages ?? []);
+    const messages = event.messages ?? [];
+    const last = messages.at(-1);
+    log.debug("agent_end received", {
+      messageCount: messages.length,
+      lastRole: last?.role ?? null,
+      lastContentType: Array.isArray(last?.content)
+        ? "array"
+        : typeof last?.content,
+    });
+
+    const lastText = extractLastAssistantText(messages);
+    log.debug("assistant text extracted", {
+      hasText: Boolean(lastText),
+      preview: lastText ? lastText.slice(0, 120) : null,
+    });
+
     const { title, body } = formatNotification(lastText);
+    log.debug("notification formatted", {
+      title,
+      bodyPreview: body.slice(0, 120),
+      bodyLength: body.length,
+    });
+
     notify(title, body);
   });
 }

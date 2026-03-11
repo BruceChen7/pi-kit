@@ -70,6 +70,32 @@ check_and_install() {
 echo "Scanning extensions directory..."
 echo ""
 
+# Install shared utilities for symlinked .ts extensions that use relative imports
+# Example: ~/.pi/agent/extensions/notify.ts -> ../shared/logger.js => ~/.pi/agent/shared/logger.js
+SHARED_SOURCE_DIR="$EXTENSIONS_DIR/shared"
+SHARED_TARGET_DIR="$HOME/.pi/agent/shared"
+if [ -d "$SHARED_SOURCE_DIR" ]; then
+    if [ -e "$SHARED_TARGET_DIR" ] || [ -L "$SHARED_TARGET_DIR" ]; then
+        if [ -L "$SHARED_TARGET_DIR" ]; then
+            current_target=$(readlink "$SHARED_TARGET_DIR")
+            if [ "$current_target" != "$SHARED_SOURCE_DIR" ]; then
+                rm -rf "$SHARED_TARGET_DIR"
+                ln -s "$SHARED_SOURCE_DIR" "$SHARED_TARGET_DIR"
+                echo -e "${GREEN}✓${NC} Updated shared symlink: $SHARED_TARGET_DIR -> $SHARED_SOURCE_DIR"
+            fi
+        else
+            echo -e "${YELLOW}!${NC} Shared target exists and is not a symlink: $SHARED_TARGET_DIR"
+            echo -e "${YELLOW}!${NC} Please remove it manually to enable shared utility imports"
+        fi
+    else
+        if ln -s "$SHARED_SOURCE_DIR" "$SHARED_TARGET_DIR"; then
+            echo -e "${GREEN}✓${NC} Installed shared symlink: $SHARED_TARGET_DIR -> $SHARED_SOURCE_DIR"
+        else
+            echo -e "${RED}✗${NC} Failed to install shared symlink: $SHARED_TARGET_DIR"
+        fi
+    fi
+fi
+
 # Track installed items using a temp file
 installed_file=$(mktemp)
 

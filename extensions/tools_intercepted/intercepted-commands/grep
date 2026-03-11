@@ -9,6 +9,10 @@ echo "  rg -i PATTERN           # Case-insensitive search" >&2
 echo "  rg -g '*.ext' PATTERN   # Search in specific file types" >&2
 echo "  rg -A 5 PATTERN         # Show 5 lines after match" >&2
 echo "  rg -B 5 PATTERN         # Show 5 lines before match" >&2
+echo "  rg -u PATTERN         # Include ignored files (.gitignore)" >&2
+echo "  rg -uu PATTERN        # Include ignored + hidden files" >&2
+echo "  rg -uuu PATTERN       # Include ignored + hidden + binary" >&2
+echo "  rg --no-ignore-vcs    # Only ignore .gitignore" >&2
 echo "" >&2
 echo "  Install: brew install ripgrep     # macOS" >&2
 echo "           apt install ripgrep       # Ubuntu/Debian" >&2

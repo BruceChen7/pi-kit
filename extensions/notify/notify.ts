@@ -8,6 +8,7 @@
  * Not supported: Kitty (uses OSC 99), Terminal.app, Windows Terminal, Alacritty
  */
 
+import { execFile } from "node:child_process/promises";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
 import { createLogger, loadLogConfig } from "../shared/logger.js";
@@ -63,6 +64,32 @@ const notify = (title: string, body: string): void => {
   });
 
   process.stdout.write(payload);
+};
+
+export const getTmuxWindowName = async (): Promise<string | null> => {
+  try {
+    const { stdout } = await execFile("tmux", [
+      "display-message",
+      "-p",
+      "#W",
+    ]);
+    const name = stdout.trim();
+    return name ? name : null;
+  } catch {
+    return null;
+  }
+};
+
+export const resolveNotificationTitle = async (
+  baseTitle: string,
+  inTmux: boolean,
+): Promise<string> => {
+  if (!inTmux) {
+    return baseTitle;
+  }
+
+  const windowName = await getTmuxWindowName();
+  return windowName ? `${windowName} - ${baseTitle}` : baseTitle;
 };
 
 const isTextPart = (part: unknown): part is { type: "text"; text: string } =>

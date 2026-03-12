@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import fs, { promises as fsPromises } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -91,17 +91,17 @@ const getLogConfig = (settings: unknown): ExtensionsLogConfig => {
   }
 
   const root = settings as {
-    extensions?: {
+    third_extionis?: {
       log?: ExtensionsLogConfig;
     };
   };
 
-  return root.extensions?.log ?? {};
+  return root.third_extionis?.log ?? {};
 };
 
 /**
  * Load log config from settings.json files.
- * Looks for "extensions.log" key in settings.json (project first, then global).
+ * Looks for "third_extionis.log" key in settings.json (project first, then global).
  */
 export const loadLogConfig = async (
   cwd: string,
@@ -113,9 +113,9 @@ export const loadLogConfig = async (
 
   for (const settingsPath of paths) {
     try {
-      const content = await fs.readFile(settingsPath, "utf-8");
+      const content = await fsPromises.readFile(settingsPath, "utf-8");
       const settings = JSON.parse(content) as Record<string, unknown>;
-      const logConfig = settings?.extensions?.log as LogConfig | undefined;
+      const logConfig = settings?.third_extionis?.log as LogConfig | undefined;
 
       if (logConfig) {
         // Resolve environment variables in logFilePath
@@ -183,7 +183,10 @@ export const createLogger = (
   extensionName: string,
   options: CreateLoggerOptions | LogConfig = {},
 ): Logger => {
-  const settingsPath = options.settingsPath ?? DEFAULT_SETTINGS_PATH;
+  const settingsPath =
+    "settingsPath" in options && options.settingsPath
+      ? options.settingsPath
+      : DEFAULT_SETTINGS_PATH;
   const settings = readSettings(settingsPath);
 
   let minLevel: LogLevel;
@@ -191,8 +194,10 @@ export const createLogger = (
 
   if ("logLevel" in options || "logFilePath" in options) {
     // LogConfig style - explicit values
-    minLevel = options.logLevel ?? resolveMinLogLevel(settings, extensionName);
-    logFilePath = options.logFilePath;
+    const logOptions = options as LogConfig;
+    minLevel =
+      logOptions.logLevel ?? resolveMinLogLevel(settings, extensionName);
+    logFilePath = logOptions.logFilePath;
   } else {
     // CreateLoggerOptions style
     const opt = options as CreateLoggerOptions;
@@ -200,8 +205,14 @@ export const createLogger = (
     logFilePath = opt.logFilePath;
   }
 
-  const stderr = options.stderr === undefined ? process.stderr : options.stderr;
-  const now = options.now ?? (() => new Date());
+  const stderr =
+    "stderr" in options
+      ? options.stderr === undefined
+        ? process.stderr
+        : options.stderr
+      : process.stderr;
+  const now =
+    "now" in options ? (options.now ?? (() => new Date())) : () => new Date();
 
   const emit = (level: LogLevel, message: string, data?: unknown): void => {
     if (!shouldLog(level, minLevel)) {

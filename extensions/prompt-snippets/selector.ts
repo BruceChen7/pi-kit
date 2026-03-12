@@ -2,7 +2,6 @@ import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder } from "@mariozechner/pi-coding-agent";
 import {
   Container,
-  type Key,
   type SelectItem,
   SelectList,
   Text,
@@ -12,11 +11,11 @@ import type { Snippets } from "./types.js";
 /** Truncate text for display in selector */
 function truncateText(text: string, maxLength: number = 60): string {
   if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength - 3) + "...";
+  return `${text.slice(0, maxLength - 3)}...`;
 }
 
 /** Build description text for a snippet */
-function buildSnippetDescription(name: string, text: string): string {
+function buildSnippetDescription(_name: string, text: string): string {
   const truncated = truncateText(text.replace(/\n/g, "\\n"));
   return `"${truncated}"`;
 }

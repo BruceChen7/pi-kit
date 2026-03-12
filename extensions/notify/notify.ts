@@ -11,7 +11,7 @@
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
-import { createLogger, loadLogConfig } from "../shared/logger.js";
+import { createLogger, loadLogConfig } from "../shared/logger.ts";
 
 export interface NotifyConfig {
   /** Enable/disable the notification extension (default: true) */

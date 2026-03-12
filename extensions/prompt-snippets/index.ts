@@ -24,11 +24,11 @@
  * /snippet delete <name> - Delete snippet
  */
 
-import { Key } from "@mariozechner/pi-tui";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { registerSnippetCommand, getCurrentSnippets } from "./commands.js";
+import { Key } from "@mariozechner/pi-tui";
+import { getCurrentSnippets, registerSnippetCommand } from "./commands.js";
+import { insertSnippetText, showSnippetSelector } from "./selector.js";
 import { loadSnippets } from "./storage.js";
-import { showSnippetSelector, insertSnippetText } from "./selector.js";
 
 export default function promptSnippetsExtension(pi: ExtensionAPI) {
   // Register /snippet command

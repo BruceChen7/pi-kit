@@ -26,25 +26,25 @@
  * Note: PR review requires a clean working tree (no uncommitted changes to tracked files).
  */
 
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import type {
   ExtensionAPI,
-  ExtensionContext,
   ExtensionCommandContext,
+  ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
-import { DynamicBorder, BorderedLoader } from "@mariozechner/pi-coding-agent";
+import { BorderedLoader, DynamicBorder } from "@mariozechner/pi-coding-agent";
 import {
   Container,
   type SelectItem,
   SelectList,
   Text,
 } from "@mariozechner/pi-tui";
-import path from "node:path";
-import { promises as fs } from "node:fs";
 
 // State to track fresh session review (where we branched from).
 // Module-level state means only one review can be active at a time.
 // This is intentional - the UI and /end-review command assume a single active review.
-let reviewOriginId: string | undefined = undefined;
+let reviewOriginId: string | undefined;
 let endReviewInProgress = false;
 let reviewLoopFixingEnabled = false;
 let reviewLoopInProgress = false;
@@ -627,7 +627,7 @@ function parsePrReference(ref: string): number | null {
 
   // Try as a number first
   const num = parseInt(trimmed, 10);
-  if (!isNaN(num) && num > 0) {
+  if (!Number.isNaN(num) && num > 0) {
     return num;
   }
 
@@ -806,13 +806,13 @@ function getUserFacingHint(target: ReviewTarget): string {
     }
     case "custom":
       return target.instructions.length > 40
-        ? target.instructions.slice(0, 37) + "..."
+        ? `${target.instructions.slice(0, 37)}...`
         : target.instructions;
 
     case "pullRequest": {
       const shortTitle =
         target.title.length > 30
-          ? target.title.slice(0, 27) + "..."
+          ? `${target.title.slice(0, 27)}...`
           : target.title;
       return `PR #${target.prNumber}: ${shortTitle}`;
     }

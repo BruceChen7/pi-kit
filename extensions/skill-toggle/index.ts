@@ -16,6 +16,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@mariozechner/pi-tui";
+import { createLogger, loadLogConfig } from "../shared/logger.js";
 
 interface Skill {
   name: string;
@@ -71,6 +72,17 @@ const SKILL_DIRS: {
 ];
 
 const paletteTheme = loadTheme();
+
+let log: ReturnType<typeof createLogger> | null = null;
+
+async function initLogger(cwd: string): Promise<void> {
+  const logConfig = await loadLogConfig(cwd);
+  log = createLogger("skill-toggle", {
+    logFilePath: logConfig.logFilePath,
+    minLevel: logConfig.logLevel,
+    stderr: null,
+  });
+}
 
 function fg(code: string, text: string): string {
   if (!code) return text;
@@ -339,7 +351,10 @@ function updateStatus(ctx: ExtensionContext, disabledCount: number): void {
 function filterSystemPrompt(prompt: string, disabled: Set<string>): string {
   if (disabled.size === 0) return prompt;
 
+  log?.info("SKILL_TAG_REGEX", { regex: String(SKILL_TAG_REGEX) });
+
   return prompt.replace(SKILL_TAG_REGEX, (match, name) => {
+    log?.info("skill name resolved", { name });
     if (disabled.has(name)) return "";
     return match;
   });
@@ -544,6 +559,8 @@ class SkillTogglePalette {
 
 export default function skillToggleExtension(pi: ExtensionAPI): void {
   let state: ToggleState = loadToggleState(process.cwd());
+
+  void initLogger(process.cwd());
 
   const refreshState = (ctx: ExtensionContext) => {
     state = loadToggleState(ctx.cwd);

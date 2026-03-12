@@ -11,7 +11,7 @@
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
-import { createLogger, loadLogConfig } from "../shared/logger.ts";
+import { createLogger } from "../shared/logger.ts";
 
 export interface NotifyConfig {
   /** Enable/disable the notification extension (default: true) */
@@ -27,12 +27,9 @@ export const DEFAULT_CONFIG: NotifyConfig = {
  */
 let log: ReturnType<typeof createLogger> | null = null;
 
-async function initLogger(cwd: string): Promise<void> {
-  const logConfig = await loadLogConfig(cwd);
+async function initLogger(_cwd: string): Promise<void> {
   log = createLogger("notify", {
-    logFilePath: logConfig.logFilePath,
     stderr: null,
-    minLevel: logConfig.logLevel,
   });
 }
 

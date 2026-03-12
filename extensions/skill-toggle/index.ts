@@ -16,7 +16,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@mariozechner/pi-tui";
-import { createLogger, loadLogConfig } from "../shared/logger.ts";
+import { createLogger } from "../shared/logger.ts";
 
 interface Skill {
   name: string;
@@ -82,11 +82,8 @@ function normalizeSkillName(name: string): string {
 
 let log: ReturnType<typeof createLogger> | null = null;
 
-async function initLogger(cwd: string): Promise<void> {
-  const logConfig = await loadLogConfig(cwd);
+async function initLogger(_cwd: string): Promise<void> {
   log = createLogger("skill-toggle", {
-    logFilePath: logConfig.logFilePath,
-    minLevel: logConfig.logLevel,
     stderr: null,
   });
 }

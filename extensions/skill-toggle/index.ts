@@ -65,17 +65,9 @@ const SKILL_DIRS: {
   format: "recursive" | "claude";
 }[] = [
   {
-    dir: () => path.join(os.homedir(), ".codex", "skills"),
+    dir: () => path.join(os.homedir(), ".agents", "skills"),
     format: "recursive",
   },
-  { dir: () => path.join(os.homedir(), ".claude", "skills"), format: "claude" },
-  { dir: (cwd) => path.join(cwd, ".claude", "skills"), format: "claude" },
-  {
-    dir: () => path.join(os.homedir(), ".pi", "agent", "skills"),
-    format: "recursive",
-  },
-  { dir: () => path.join(os.homedir(), ".pi", "skills"), format: "recursive" },
-  { dir: (cwd) => path.join(cwd, ".pi", "skills"), format: "recursive" },
 ];
 
 const paletteTheme = loadTheme();

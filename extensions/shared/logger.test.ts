@@ -23,19 +23,30 @@ class CaptureStream extends Writable {
   }
 }
 
-const tempDirs: string[] = [];
+const tempHomes: string[] = [];
+const originalHome = process.env.HOME;
 
-const createTempSettingsFile = (content: string): string => {
+const createTempSettingsHome = (content: string): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-kit-logger-"));
-  tempDirs.push(dir);
+  tempHomes.push(dir);
 
-  const settingsPath = path.join(dir, "settings.json");
+  const settingsPath = path.join(dir, ".pi", "agent", "settings.json");
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
   fs.writeFileSync(settingsPath, content, "utf8");
-  return settingsPath;
+  return dir;
+};
+
+const restoreHome = (): void => {
+  if (originalHome === undefined) {
+    delete process.env.HOME;
+    return;
+  }
+  process.env.HOME = originalHome;
 };
 
 afterEach(() => {
-  for (const dir of tempDirs.splice(0)) {
+  restoreHome();
+  for (const dir of tempHomes.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -68,6 +79,19 @@ describe("resolveMinLogLevel", () => {
     };
     expect(resolveMinLogLevel(invalid, "notify")).toBe("debug");
   });
+
+  it("uses logLevel when minLevel is invalid", () => {
+    const settings = {
+      third_extensions: {
+        log: {
+          minLevel: "trace",
+          logLevel: "warn",
+        },
+      },
+    };
+
+    expect(resolveMinLogLevel(settings, "notify")).toBe("warn");
+  });
 });
 
 describe("shouldLog", () => {
@@ -79,8 +103,8 @@ describe("shouldLog", () => {
 });
 
 describe("createLogger", () => {
-  it("reads settings file once and filters logs by minimum level", () => {
-    const settingsPath = createTempSettingsFile(
+  it("reads global settings and filters logs by minimum level", () => {
+    process.env.HOME = createTempSettingsHome(
       JSON.stringify(
         {
           third_extensions: {
@@ -99,7 +123,7 @@ describe("createLogger", () => {
 
     const stream = new CaptureStream();
     const logger = createLogger("notify", {
-      settingsPath,
+      logFilePath: null,
       stderr: stream,
       now: () => new Date("2026-03-11T06:00:00.000Z"),
     });
@@ -115,11 +139,11 @@ describe("createLogger", () => {
   });
 
   it("uses explicit minLevel option with highest priority", () => {
-    const settingsPath = createTempSettingsFile("{}");
+    process.env.HOME = createTempSettingsHome("{}");
     const stream = new CaptureStream();
 
     const logger = createLogger("notify", {
-      settingsPath,
+      logFilePath: null,
       minLevel: "error" satisfies LogLevel,
       stderr: stream,
       now: () => new Date("2026-03-11T06:00:00.000Z"),
@@ -130,5 +154,48 @@ describe("createLogger", () => {
 
     expect(stream.output).not.toContain("warn-message");
     expect(stream.output).toContain("error-message");
+  });
+
+  it("allows disabling log file via settings", () => {
+    const home = createTempSettingsHome(
+      JSON.stringify(
+        {
+          third_extensions: {
+            log: {
+              logFilePath: null,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    process.env.HOME = home;
+
+    const logger = createLogger("notify", {
+      stderr: null,
+    });
+
+    logger.info("info-message");
+
+    const logPath = path.join(home, ".pi", "agent", "pi-debug.log");
+    expect(fs.existsSync(logPath)).toBe(false);
+  });
+
+  it("handles unserializable data payloads", () => {
+    process.env.HOME = createTempSettingsHome("{}");
+    const stream = new CaptureStream();
+
+    const logger = createLogger("notify", {
+      logFilePath: null,
+      stderr: stream,
+      now: () => new Date("2026-03-11T06:00:00.000Z"),
+    });
+
+    const payload: Record<string, unknown> = {};
+    payload.self = payload;
+
+    expect(() => logger.info("circular", payload)).not.toThrow();
+    expect(stream.output).toContain("circular");
   });
 });

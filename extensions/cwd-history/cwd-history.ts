@@ -20,6 +20,23 @@ interface PromptEntry {
   timestamp: number;
 }
 
+type SessionMessageContent = {
+  type: string;
+  text?: string;
+};
+
+type SessionMessage = {
+  role?: string;
+  content?: SessionMessageContent[];
+  timestamp?: number;
+};
+
+type SessionEntry = {
+  type?: string;
+  message?: SessionMessage;
+  timestamp?: number;
+};
+
 class HistoryEditor extends CustomEditor {
   private lockedBorder = false;
   private _borderColor?: (text: string) => string;
@@ -83,7 +100,7 @@ class HistoryEditor extends CustomEditor {
   }
 
   private handleSearchInput(data: string): void {
-    const tui = (this as { _tui?: any })._tui;
+    const tui = (this as { _tui?: { requestRender?: () => void } })._tui;
 
     // Escape: exit search, restore original text
     if (data === "\x1b") {
@@ -250,7 +267,7 @@ function extractText(content: Array<{ type: string; text?: string }>): string {
   return filtered.trim();
 }
 
-function collectUserPromptsFromEntries(entries: Array<any>): PromptEntry[] {
+function collectUserPromptsFromEntries(entries: SessionEntry[]): PromptEntry[] {
   const prompts: PromptEntry[] = [];
 
   for (const entry of entries) {
@@ -350,9 +367,9 @@ async function loadPromptHistoryForCwd(
     if (!tail) continue;
     const lines = tail.split("\n").filter(Boolean);
     for (const line of lines) {
-      let entry: any;
+      let entry: SessionEntry | undefined;
       try {
-        entry = JSON.parse(line);
+        entry = JSON.parse(line) as SessionEntry;
       } catch {
         continue;
       }

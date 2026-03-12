@@ -14,9 +14,30 @@ import {
   Container,
   Key,
   Markdown,
+  type MarkdownTheme,
   matchesKey,
   Text,
 } from "@mariozechner/pi-tui";
+
+type ThemeLike = {
+  fg?: (name: string, text: string) => string;
+  heading?: (text: string) => string;
+  link?: (text: string) => string;
+  linkUrl?: (text: string) => string;
+  code?: (text: string) => string;
+  codeBlock?: (text: string) => string;
+  codeBlockBorder?: (text: string) => string;
+  quote?: (text: string) => string;
+  quoteBorder?: (text: string) => string;
+  hr?: (text: string) => string;
+  listBullet?: (text: string) => string;
+  bold?: (text: string) => string;
+  italic?: (text: string) => string;
+  strikethrough?: (text: string) => string;
+  underline?: (text: string) => string;
+  highlightCode?: (code: string, lang?: string) => string[];
+  codeBlockIndent?: string;
+};
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("system_prompt_view", {
@@ -55,13 +76,13 @@ export default function (pi: ExtensionAPI) {
 class SystemPromptView implements Component {
   private container: Container;
   private body: Markdown;
-  private markdownTheme: any;
+  private markdownTheme: MarkdownTheme;
   private scrollY = 0;
   private lines: string[];
   private bodyIndex: number;
 
   constructor(
-    private theme: any,
+    private theme: ThemeLike,
     prompt: string,
     private onClose: () => void,
   ) {
@@ -147,7 +168,7 @@ class SystemPromptView implements Component {
     } else if (data.toLowerCase() === "g") {
       this.scrollY = 0;
       this.updateContent();
-    } else if (data.toLowerCase() === "g") {
+    } else if (data === "G") {
       const maxScroll = Math.max(0, this.lines.length - visibleHeight);
       this.scrollY = maxScroll;
       this.updateContent();
@@ -163,7 +184,7 @@ class SystemPromptView implements Component {
   }
 }
 
-function createMarkdownTheme(theme: any): any {
+function createMarkdownTheme(theme: ThemeLike): MarkdownTheme {
   const identity = (text: string) => text;
   const dim = (text: string) =>
     typeof theme?.fg === "function" ? theme.fg("dim", text) : text;

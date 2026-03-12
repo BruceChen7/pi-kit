@@ -464,6 +464,8 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
+    const assistantText = lastAssistantText;
+
     // Select the best model for extraction (prefer Codex mini, then haiku)
     const extractionModel = await selectExtractionModel(
       ctx.model,
@@ -484,7 +486,7 @@ export default function (pi: ExtensionAPI) {
           const apiKey = await ctx.modelRegistry.getApiKey(extractionModel);
           const userMessage: UserMessage = {
             role: "user",
-            content: [{ type: "text", text: lastAssistantText! }],
+            content: [{ type: "text", text: assistantText }],
             timestamp: Date.now(),
           };
 

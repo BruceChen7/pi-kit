@@ -114,7 +114,7 @@ function hasWildcardExplosion({ targetPath }: { targetPath: string }): boolean {
     targetPath === "/*" ||
     targetPath === "~/*" ||
     targetPath === "$HOME/*" ||
-    targetPath === "${HOME}/*" ||
+    targetPath === String.raw`\${HOME}/*` ||
     targetPath === "../*";
 
   // Recursive glob from a shallow path

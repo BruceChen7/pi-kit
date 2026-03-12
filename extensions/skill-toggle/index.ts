@@ -669,12 +669,12 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
   pi.on("before_agent_start", async (event, _ctx) => {
     await loggerReady;
     log?.debug("before_agent_start");
+    log?.debug("disabled skills", { disabled: state.disabledSkills });
     if (state.disabledSkills.size === 0) return {};
+    const prompt = filterSystemPrompt(event.systemPrompt, state.disabledSkills);
+    log?.debug("filtered prompt", { prompt });
     return {
-      systemPrompt: filterSystemPrompt(
-        event.systemPrompt,
-        state.disabledSkills,
-      ),
+      systemPrompt: prompt,
     };
   });
 }

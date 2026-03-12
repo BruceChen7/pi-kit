@@ -91,17 +91,17 @@ const getLogConfig = (settings: unknown): ExtensionsLogConfig => {
   }
 
   const root = settings as {
-    extensions?: {
+    third_extionis?: {
       log?: ExtensionsLogConfig;
     };
   };
 
-  return root.extensions?.log ?? {};
+  return root.third_extionis?.log ?? {};
 };
 
 /**
  * Load log config from settings.json files.
- * Looks for "extensions.log" key in settings.json (project first, then global).
+ * Looks for "third_extionis.log" key in settings.json (project first, then global).
  */
 export const loadLogConfig = async (
   cwd: string,
@@ -115,7 +115,7 @@ export const loadLogConfig = async (
     try {
       const content = await fsPromises.readFile(settingsPath, "utf-8");
       const settings = JSON.parse(content) as Record<string, unknown>;
-      const logConfig = settings?.extensions?.log as LogConfig | undefined;
+      const logConfig = settings?.third_extionis?.log as LogConfig | undefined;
 
       if (logConfig) {
         // Resolve environment variables in logFilePath

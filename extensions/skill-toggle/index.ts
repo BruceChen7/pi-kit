@@ -394,14 +394,18 @@ class SkillTogglePalette {
   private filtered: Skill[];
   private selected = 0;
   private query = "";
+  private boundaryMessage: string | null = null;
+  private boundaryTimeout: ReturnType<typeof setTimeout> | null = null;
   private inactivityTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly INACTIVITY_MS = 60000;
+  private static readonly BOUNDARY_MESSAGE_MS = 2000;
 
   constructor(
     private skills: Skill[],
     private disabled: Set<string>,
     private onToggle: (skill: Skill) => void,
     private onClose: () => void,
+    private onUpdate: () => void,
   ) {
     this.filtered = skills;
     this.resetInactivityTimeout();
@@ -413,6 +417,17 @@ class SkillTogglePalette {
       this.cleanup();
       this.onClose();
     }, SkillTogglePalette.INACTIVITY_MS);
+  }
+
+  private showBoundaryMessage(message: string): void {
+    this.boundaryMessage = message;
+    if (this.boundaryTimeout) clearTimeout(this.boundaryTimeout);
+    this.boundaryTimeout = setTimeout(() => {
+      this.boundaryMessage = null;
+      this.boundaryTimeout = null;
+      this.onUpdate();
+    }, SkillTogglePalette.BOUNDARY_MESSAGE_MS);
+    this.onUpdate();
   }
 
   handleInput(data: string): void {
@@ -434,16 +449,22 @@ class SkillTogglePalette {
 
     if (data === "k") {
       if (this.filtered.length > 0) {
-        this.selected =
-          this.selected === 0 ? this.filtered.length - 1 : this.selected - 1;
+        if (this.selected === 0) {
+          this.showBoundaryMessage("Top");
+        } else {
+          this.selected -= 1;
+        }
       }
       return;
     }
 
     if (data === "j") {
       if (this.filtered.length > 0) {
-        this.selected =
-          this.selected === this.filtered.length - 1 ? 0 : this.selected + 1;
+        if (this.selected === this.filtered.length - 1) {
+          this.showBoundaryMessage("Bottom");
+        } else {
+          this.selected += 1;
+        }
       }
       return;
     }
@@ -478,9 +499,9 @@ class SkillTogglePalette {
     const selectedText = (s: string) => fg(t.selectedText, s);
     const disabled = (s: string) => fg(t.disabled, s);
     const searchIcon = (s: string) => fg(t.searchIcon, s);
-    const placeholder = (s: string) => fg(t.placeholder, s);
     const description = (s: string) => fg(t.description, s);
     const hint = (s: string) => fg(t.hint, s);
+    const keyHint = (s: string) => fg(t.selected, s);
     const bold = (s: string) => `\x1b[1m${s}\x1b[22m`;
     const italic = (s: string) => `\x1b[3m${s}\x1b[23m`;
 
@@ -506,7 +527,7 @@ class SkillTogglePalette {
     const searchIconChar = searchIcon("◎");
     const queryDisplay = this.query
       ? `${this.query}${cursor}`
-      : `${cursor}${placeholder(italic("type to filter..."))}`;
+      : `${cursor}${keyHint(italic("type to filter..."))}`;
     lines.push(row(`${searchIconChar}  ${queryDisplay}`));
 
     lines.push(emptyRow());
@@ -566,8 +587,22 @@ class SkillTogglePalette {
     lines.push(border(`├${"─".repeat(innerW)}┤`));
     lines.push(emptyRow());
 
-    const hints = `${italic("j/k")} navigate  ${italic("enter")} toggle  ${italic("esc")} cancel`;
-    lines.push(row(hint(hints)));
+    const hints = `${keyHint("j/k")} navigate  ${keyHint("enter")} toggle  ${keyHint("esc")} cancel`;
+    const hintText = hint(hints);
+    const boundaryText = this.boundaryMessage
+      ? keyHint(italic(this.boundaryMessage))
+      : "";
+    const contentWidth = Math.max(0, innerW - 1);
+    const padWidth = boundaryText
+      ? Math.max(
+          0,
+          contentWidth - visibleWidth(hintText) - visibleWidth(boundaryText),
+        )
+      : 0;
+    const hintLine = boundaryText
+      ? `${hintText}${" ".repeat(padWidth)}${boundaryText}`
+      : hintText;
+    lines.push(row(hintLine));
 
     lines.push(border(`╰${"─".repeat(innerW)}╯`));
 
@@ -579,6 +614,11 @@ class SkillTogglePalette {
       clearTimeout(this.inactivityTimeout);
       this.inactivityTimeout = null;
     }
+    if (this.boundaryTimeout) {
+      clearTimeout(this.boundaryTimeout);
+      this.boundaryTimeout = null;
+    }
+    this.boundaryMessage = null;
   }
 
   invalidate(): void {}
@@ -632,6 +672,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
               tui.requestRender();
             },
             () => done(),
+            () => tui.requestRender(),
           );
 
           return {

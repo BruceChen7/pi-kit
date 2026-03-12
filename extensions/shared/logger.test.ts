@@ -43,7 +43,7 @@ afterEach(() => {
 describe("resolveMinLogLevel", () => {
   it("prefers extension override over global level", () => {
     const settings = {
-      extensions: {
+      third_extionis: {
         log: {
           minLevel: "error",
           overrides: {
@@ -60,7 +60,7 @@ describe("resolveMinLogLevel", () => {
     expect(resolveMinLogLevel({}, "notify")).toBe("debug");
 
     const invalid = {
-      extensions: {
+      third_extionis: {
         log: {
           minLevel: "trace",
         },
@@ -83,7 +83,7 @@ describe("createLogger", () => {
     const settingsPath = createTempSettingsFile(
       JSON.stringify(
         {
-          extensions: {
+          third_extionis: {
             log: {
               minLevel: "warn",
               overrides: {

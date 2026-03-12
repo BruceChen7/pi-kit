@@ -10,12 +10,12 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder } from "@mariozechner/pi-coding-agent";
 import {
+  type Component,
   Container,
   Key,
   Markdown,
-  Text,
   matchesKey,
-  type Component,
+  Text,
 } from "@mariozechner/pi-tui";
 
 export default function (pi: ExtensionAPI) {
@@ -147,7 +147,7 @@ class SystemPromptView implements Component {
     } else if (data.toLowerCase() === "g") {
       this.scrollY = 0;
       this.updateContent();
-    } else if (data.toLowerCase() === "G") {
+    } else if (data.toLowerCase() === "g") {
       const maxScroll = Math.max(0, this.lines.length - visibleHeight);
       this.scrollY = maxScroll;
       this.updateContent();

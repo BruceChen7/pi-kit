@@ -102,7 +102,7 @@ function isProtectedPath({
     if (resolved === protectedPath) return true;
 
     // Target is a parent of a protected path (deleting it would destroy the protected path)
-    if (protectedPath.startsWith(resolved + "/")) return true;
+    if (protectedPath.startsWith(`${resolved}/`)) return true;
   }
 
   return false;
@@ -273,7 +273,7 @@ function detectRmThreats({
 
   const flags = match[2] || "";
   const isRecursive = /r/.test(flags) || /R/.test(flags);
-  const isForced = /f/.test(flags);
+  const _isForced = /f/.test(flags);
   const argsString = match[3];
   const targets = extractArgs({ argsString });
 

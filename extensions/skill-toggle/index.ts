@@ -16,7 +16,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@mariozechner/pi-tui";
-import { createLogger, loadLogConfig } from "../shared/logger.js";
+import { createLogger, loadLogConfig } from "../shared/logger.ts";
 
 interface Skill {
   name: string;
@@ -59,7 +59,10 @@ const DEFAULT_THEME: PaletteTheme = {
 
 const SETTINGS_FILE_NAME = "settings.json";
 
-const SKILL_TAG_REGEX = /<skill\s+[^>]*name="([^"]+)"[^>]*>[\s\S]*?<\/skill>/gi;
+// Matches <skill>...</skill> blocks with nested <name>...</name>
+// Case-insensitive, tolerant of whitespace/newlines between tags
+const SKILL_TAG_REGEX =
+  /<skill\b[^>]*>[\s]*<name\b[^>]*>([^<]*)<\/name\b[^>]*>[\s\S]*?<\/skill>/gi;
 
 const SKILL_DIRS: {
   dir: (cwd: string) => string;
@@ -73,6 +76,10 @@ const SKILL_DIRS: {
 
 const paletteTheme = loadTheme();
 
+function normalizeSkillName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
 let log: ReturnType<typeof createLogger> | null = null;
 
 async function initLogger(cwd: string): Promise<void> {
@@ -82,6 +89,13 @@ async function initLogger(cwd: string): Promise<void> {
     minLevel: logConfig.logLevel,
     stderr: null,
   });
+}
+
+export function createLoggerReady(
+  cwd: string,
+  init: (cwd: string) => Promise<void> = initLogger,
+): Promise<void> {
+  return init(cwd).catch(() => undefined);
 }
 
 function fg(code: string, text: string): string {
@@ -317,8 +331,10 @@ function loadToggleState(cwd: string): ToggleState {
   const disabledSkills = projectDisabled ?? globalDisabled ?? [];
   const writePath = fs.existsSync(projectPath) ? projectPath : globalPath;
 
+  // Normalize all disabled skill names for consistent matching
+  const normalizedDisabled = disabledSkills.map(normalizeSkillName);
   return {
-    disabledSkills: new Set(disabledSkills),
+    disabledSkills: new Set(normalizedDisabled),
     writePath,
   };
 }
@@ -333,9 +349,20 @@ function saveToggleState(state: ToggleState, settingsPath: string): void {
   fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
-function formatDisabledList(disabled: string[], maxWidth: number): string {
+function formatDisabledList(
+  disabled: string[],
+  skills: Skill[],
+  maxWidth: number,
+): string {
   if (disabled.length === 0) return "Disabled: none";
-  const label = `Disabled (${disabled.length}): ${disabled.join(", ")}`;
+
+  // Map normalized names back to canonical skill names
+  const displayNames = disabled.map((normalized) => {
+    const skill = skills.find((s) => normalizeSkillName(s.name) === normalized);
+    return skill?.name ?? normalized;
+  });
+
+  const label = `Disabled (${displayNames.length}): ${displayNames.join(", ")}`;
   return truncateToWidth(label, maxWidth, "…", true);
 }
 
@@ -354,8 +381,14 @@ function filterSystemPrompt(prompt: string, disabled: Set<string>): string {
   log?.info("SKILL_TAG_REGEX", { regex: String(SKILL_TAG_REGEX) });
 
   return prompt.replace(SKILL_TAG_REGEX, (match, name) => {
-    log?.info("skill name resolved", { name });
-    if (disabled.has(name)) return "";
+    if (!name) {
+      // Fail-soft: keep block if name cannot be extracted
+      log?.debug("skill name extraction failed, keeping block");
+      return match;
+    }
+    const normalizedName = normalizeSkillName(name);
+    log?.info("skill name resolved", { name, normalizedName });
+    if (disabled.has(normalizedName)) return "";
     return match;
   });
 }
@@ -501,7 +534,7 @@ class SkillTogglePalette {
       for (let i = startIndex; i < endIndex; i++) {
         const skill = this.filtered[i];
         const isSelected = i === this.selected;
-        const isDisabled = this.disabled.has(skill.name);
+        const isDisabled = this.disabled.has(normalizeSkillName(skill.name));
 
         const prefix = isSelected ? selected("▸") : border("·");
         const disabledBadge = isDisabled ? ` ${disabled("⨯")}` : "";
@@ -527,6 +560,7 @@ class SkillTogglePalette {
 
     const disabledList = formatDisabledList(
       Array.from(this.disabled).sort(),
+      this.skills,
       innerW - 1,
     );
     lines.push(row(hint(disabledList)));
@@ -560,7 +594,7 @@ class SkillTogglePalette {
 export default function skillToggleExtension(pi: ExtensionAPI): void {
   let state: ToggleState = loadToggleState(process.cwd());
 
-  void initLogger(process.cwd());
+  const loggerReady = createLoggerReady(process.cwd());
 
   const refreshState = (ctx: ExtensionContext) => {
     state = loadToggleState(ctx.cwd);
@@ -590,10 +624,11 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
             skills,
             state.disabledSkills,
             (skill) => {
-              if (state.disabledSkills.has(skill.name)) {
-                state.disabledSkills.delete(skill.name);
+              const normalizedName = normalizeSkillName(skill.name);
+              if (state.disabledSkills.has(normalizedName)) {
+                state.disabledSkills.delete(normalizedName);
               } else {
-                state.disabledSkills.add(skill.name);
+                state.disabledSkills.add(normalizedName);
               }
               saveToggleState(state, writePath);
               updateStatus(ctx, state.disabledSkills.size);
@@ -632,6 +667,8 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", async (event, _ctx) => {
+    await loggerReady;
+    log?.debug("before_agent_start");
     if (state.disabledSkills.size === 0) return {};
     return {
       systemPrompt: filterSystemPrompt(

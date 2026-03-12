@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import fs, { promises as fsPromises } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -113,7 +113,7 @@ export const loadLogConfig = async (
 
   for (const settingsPath of paths) {
     try {
-      const content = await fs.readFile(settingsPath, "utf-8");
+      const content = await fsPromises.readFile(settingsPath, "utf-8");
       const settings = JSON.parse(content) as Record<string, unknown>;
       const logConfig = settings?.extensions?.log as LogConfig | undefined;
 
@@ -183,7 +183,10 @@ export const createLogger = (
   extensionName: string,
   options: CreateLoggerOptions | LogConfig = {},
 ): Logger => {
-  const settingsPath = options.settingsPath ?? DEFAULT_SETTINGS_PATH;
+  const settingsPath =
+    "settingsPath" in options && options.settingsPath
+      ? options.settingsPath
+      : DEFAULT_SETTINGS_PATH;
   const settings = readSettings(settingsPath);
 
   let minLevel: LogLevel;
@@ -191,8 +194,10 @@ export const createLogger = (
 
   if ("logLevel" in options || "logFilePath" in options) {
     // LogConfig style - explicit values
-    minLevel = options.logLevel ?? resolveMinLogLevel(settings, extensionName);
-    logFilePath = options.logFilePath;
+    const logOptions = options as LogConfig;
+    minLevel =
+      logOptions.logLevel ?? resolveMinLogLevel(settings, extensionName);
+    logFilePath = logOptions.logFilePath;
   } else {
     // CreateLoggerOptions style
     const opt = options as CreateLoggerOptions;
@@ -200,8 +205,14 @@ export const createLogger = (
     logFilePath = opt.logFilePath;
   }
 
-  const stderr = options.stderr === undefined ? process.stderr : options.stderr;
-  const now = options.now ?? (() => new Date());
+  const stderr =
+    "stderr" in options
+      ? options.stderr === undefined
+        ? process.stderr
+        : options.stderr
+      : process.stderr;
+  const now =
+    "now" in options ? (options.now ?? (() => new Date())) : () => new Date();
 
   const emit = (level: LogLevel, message: string, data?: unknown): void => {
     if (!shouldLog(level, minLevel)) {

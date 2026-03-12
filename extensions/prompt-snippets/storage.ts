@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Snippets } from "./types.js";
 
 const GLOBAL_CONFIG = join(homedir(), ".pi", "agent", "prompt-snippets.json");

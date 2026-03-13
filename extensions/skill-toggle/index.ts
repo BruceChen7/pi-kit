@@ -426,6 +426,71 @@ function saveToggleState(state: ToggleState): void {
   fs.writeFileSync(state.writePath, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
+function getInstalledSkillNames(skills: Skill[]): Set<string> {
+  return new Set(skills.map((skill) => normalizeSkillName(skill.name)));
+}
+
+function getInstalledDisabled(
+  disabled: Set<string>,
+  skills: Skill[],
+): string[] {
+  if (disabled.size === 0) return [];
+  const installed = getInstalledSkillNames(skills);
+  return Array.from(disabled).filter((name) => installed.has(name));
+}
+
+function pruneDisabledList(
+  value: unknown,
+  installed: Set<string>,
+): { list: string[]; changed: boolean } | null {
+  const items = toSkillList(value);
+  if (items === null) return null;
+  const normalized = items.map(normalizeSkillName);
+  const filtered = normalized.filter((name) => installed.has(name));
+  const changed = filtered.length !== normalized.length;
+  return { list: filtered, changed };
+}
+
+function pruneSettingsFile(filePath: string, installed: Set<string>): void {
+  if (!fs.existsSync(filePath)) return;
+  const settings = loadSettingsFile(filePath);
+  if (!isRecord(settings.skillToggle)) return;
+
+  const skillToggle = settings.skillToggle as SkillToggleSettings;
+  let changed = false;
+
+  const topLevel = pruneDisabledList(skillToggle.disabledSkills, installed);
+  if (topLevel?.changed) {
+    skillToggle.disabledSkills = topLevel.list;
+    changed = true;
+  }
+
+  if (isRecord(skillToggle.byCwd)) {
+    const byCwd = skillToggle.byCwd as Record<string, unknown>;
+    for (const key of Object.keys(byCwd)) {
+      const entryRaw = byCwd[key];
+      if (!isRecord(entryRaw)) continue;
+      const entry = entryRaw as SkillToggleSettingsEntry;
+      const entryPruned = pruneDisabledList(entry.disabledSkills, installed);
+      if (entryPruned?.changed) {
+        entry.disabledSkills = entryPruned.list;
+        changed = true;
+      }
+    }
+  }
+
+  if (!changed) return;
+  settings.skillToggle = skillToggle;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, `${JSON.stringify(settings, null, 2)}\n`);
+}
+
+function pruneSettingsFiles(cwd: string, installed: Set<string>): void {
+  const { projectPath, globalPath } = getSettingsPaths(cwd);
+  pruneSettingsFile(projectPath, installed);
+  pruneSettingsFile(globalPath, installed);
+}
+
 function formatDisabledList(
   disabled: string[],
   skills: Skill[],
@@ -443,13 +508,22 @@ function formatDisabledList(
   return truncateToWidth(label, maxWidth, "…", true);
 }
 
-function updateStatus(ctx: ExtensionContext, disabledCount: number): void {
+function updateStatus(
+  ctx: ExtensionContext,
+  disabled: Set<string>,
+  skills?: Skill[],
+): void {
   if (!ctx.hasUI) return;
-  if (disabledCount === 0) {
+
+  const visibleCount = skills
+    ? getInstalledDisabled(disabled, skills).length
+    : disabled.size;
+
+  if (visibleCount === 0) {
     ctx.ui.setStatus("skill-toggle", undefined);
     return;
   }
-  ctx.ui.setStatus("skill-toggle", `Skill toggle: ${disabledCount} disabled`);
+  ctx.ui.setStatus("skill-toggle", `Skill toggle: ${visibleCount} disabled`);
 }
 
 function filterSystemPrompt(prompt: string, disabled: Set<string>): string {
@@ -657,7 +731,7 @@ class SkillTogglePalette {
     lines.push(emptyRow());
 
     const disabledList = formatDisabledList(
-      Array.from(this.disabled).sort(),
+      getInstalledDisabled(this.disabled, this.skills).sort(),
       this.skills,
       innerW - 1,
     );
@@ -713,9 +787,13 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
 
   const loggerReady = createLoggerReady(process.cwd());
 
-  const refreshState = (ctx: ExtensionContext) => {
+  const refreshState = (ctx: ExtensionContext, skills?: Skill[]) => {
+    if (skills) {
+      const installed = getInstalledSkillNames(skills);
+      pruneSettingsFiles(ctx.cwd, installed);
+    }
     state = loadToggleState(ctx.cwd);
-    updateStatus(ctx, state.disabledSkills.size);
+    updateStatus(ctx, state.disabledSkills, skills);
   };
 
   pi.registerCommand("toggle-skill", {
@@ -726,9 +804,8 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      refreshState(ctx);
-
       const skills = loadSkills(ctx.cwd);
+      refreshState(ctx, skills);
       if (skills.length === 0) {
         ctx.ui.notify("No skills found", "warning");
         return;
@@ -747,7 +824,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
                 state.disabledSkills.add(normalizedName);
               }
               saveToggleState(state);
-              updateStatus(ctx, state.disabledSkills.size);
+              updateStatus(ctx, state.disabledSkills, skills);
               tui.requestRender();
             },
             () => done(),
@@ -776,11 +853,13 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    refreshState(ctx);
+    const skills = loadSkills(ctx.cwd);
+    refreshState(ctx, skills);
   });
 
   pi.on("session_switch", async (_event, ctx) => {
-    refreshState(ctx);
+    const skills = loadSkills(ctx.cwd);
+    refreshState(ctx, skills);
   });
 
   pi.on("before_agent_start", async (event, _ctx) => {

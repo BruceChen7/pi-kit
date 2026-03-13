@@ -12,7 +12,8 @@
   "pi": {
     "extensions": [
       "./copyx",
-      "./extensions/skill-toggle"
+      "./extensions/skill-toggle",
+      "./extensions/env-guard"
     ]
   },
   "scripts": {

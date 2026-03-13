@@ -24,13 +24,20 @@ interface Skill {
   filePath: string;
 }
 
+interface SkillToggleSettingsEntry {
+  disabledSkills?: string[];
+}
+
 interface SkillToggleSettings {
   disabledSkills?: string[];
+  byCwd?: Record<string, SkillToggleSettingsEntry>;
 }
 
 interface ToggleState {
   disabledSkills: Set<string>;
   writePath: string;
+  writeScope: "project" | "global";
+  cwdKey?: string;
 }
 
 interface PaletteTheme {
@@ -78,6 +85,48 @@ const paletteTheme = loadTheme();
 
 function normalizeSkillName(name: string): string {
   return name.trim().toLowerCase();
+}
+
+const HOME_DIR = os.homedir();
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function expandHomeShortcut(value: string): string {
+  if (value === "~") return HOME_DIR;
+  if (value.startsWith("~/") || value.startsWith("~\\")) {
+    return path.join(HOME_DIR, value.slice(2));
+  }
+  return value;
+}
+
+function normalizeCwdKey(value: string): string {
+  return path.resolve(expandHomeShortcut(value));
+}
+
+function toTildePath(value: string): string {
+  const normalized = path.resolve(value);
+  if (normalized === HOME_DIR) return "~";
+  const prefix = `${HOME_DIR}${path.sep}`;
+  if (normalized.startsWith(prefix)) {
+    return `~${normalized.slice(HOME_DIR.length)}`;
+  }
+  return normalized;
+}
+
+function findCwdKey(
+  byCwd: Record<string, unknown> | undefined,
+  cwd: string,
+): string | null {
+  if (!byCwd) return null;
+  const normalizedCwd = normalizeCwdKey(cwd);
+  for (const key of Object.keys(byCwd)) {
+    if (normalizeCwdKey(key) === normalizedCwd) {
+      return key;
+    }
+  }
+  return null;
 }
 
 let log: ReturnType<typeof createLogger> | null = null;
@@ -323,27 +372,58 @@ function loadToggleState(cwd: string): ToggleState {
   const globalToggle = extractSkillToggle(globalSettings);
 
   const projectDisabled = toSkillList(projectToggle?.disabledSkills);
-  const globalDisabled = toSkillList(globalToggle?.disabledSkills);
+
+  const byCwd = isRecord(globalToggle?.byCwd)
+    ? (globalToggle?.byCwd as Record<string, unknown>)
+    : undefined;
+  const matchedKey = findCwdKey(byCwd, cwd);
+  const globalEntryRaw = matchedKey && byCwd ? byCwd[matchedKey] : undefined;
+  const globalEntry = isRecord(globalEntryRaw)
+    ? (globalEntryRaw as SkillToggleSettingsEntry)
+    : null;
+  const globalDisabled = toSkillList(globalEntry?.disabledSkills);
 
   const disabledSkills = projectDisabled ?? globalDisabled ?? [];
-  const writePath = fs.existsSync(projectPath) ? projectPath : globalPath;
+  const writeScope: ToggleState["writeScope"] = fs.existsSync(projectPath)
+    ? "project"
+    : "global";
+  const writePath = writeScope === "project" ? projectPath : globalPath;
+  const cwdKey =
+    writeScope === "global" ? (matchedKey ?? toTildePath(cwd)) : undefined;
 
   // Normalize all disabled skill names for consistent matching
   const normalizedDisabled = disabledSkills.map(normalizeSkillName);
   return {
     disabledSkills: new Set(normalizedDisabled),
     writePath,
+    writeScope,
+    cwdKey,
   };
 }
 
-function saveToggleState(state: ToggleState, settingsPath: string): void {
-  const settings = loadSettingsFile(settingsPath);
-  settings.skillToggle = {
-    disabledSkills: Array.from(state.disabledSkills).sort(),
-  };
+function saveToggleState(state: ToggleState): void {
+  const settings = loadSettingsFile(state.writePath);
+  if (state.writeScope === "global") {
+    const skillToggle = isRecord(settings.skillToggle)
+      ? (settings.skillToggle as SkillToggleSettings)
+      : {};
+    const byCwd = isRecord(skillToggle.byCwd) ? { ...skillToggle.byCwd } : {};
+    const cwdKey = state.cwdKey ?? toTildePath(process.cwd());
+    byCwd[cwdKey] = {
+      disabledSkills: Array.from(state.disabledSkills).sort(),
+    };
+    settings.skillToggle = {
+      ...skillToggle,
+      byCwd,
+    };
+  } else {
+    settings.skillToggle = {
+      disabledSkills: Array.from(state.disabledSkills).sort(),
+    };
+  }
 
-  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+  fs.mkdirSync(path.dirname(state.writePath), { recursive: true });
+  fs.writeFileSync(state.writePath, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
 function formatDisabledList(
@@ -654,7 +734,6 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      const writePath = state.writePath;
       await ctx.ui.custom<void>(
         (tui, _theme, _kb, done) => {
           const palette = new SkillTogglePalette(
@@ -667,7 +746,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
               } else {
                 state.disabledSkills.add(normalizedName);
               }
-              saveToggleState(state, writePath);
+              saveToggleState(state);
               updateStatus(ctx, state.disabledSkills.size);
               tui.requestRender();
             },

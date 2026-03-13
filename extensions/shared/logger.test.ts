@@ -9,6 +9,7 @@ import {
   resolveMinLogLevel,
   shouldLog,
 } from "./logger.js";
+import { clearSettingsCache } from "./settings.js";
 
 class CaptureStream extends Writable {
   public output = "";
@@ -25,6 +26,7 @@ class CaptureStream extends Writable {
 
 const tempHomes: string[] = [];
 const originalHome = process.env.HOME;
+const originalCwd = process.cwd();
 
 const createTempSettingsHome = (content: string): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-kit-logger-"));
@@ -45,7 +47,9 @@ const restoreHome = (): void => {
 };
 
 afterEach(() => {
+  clearSettingsCache();
   restoreHome();
+  process.chdir(originalCwd);
   for (const dir of tempHomes.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -136,6 +140,58 @@ describe("createLogger", () => {
       "[ext:notify][info][2026-03-11T06:00:00.000Z] info-message",
     );
     expect(stream.output).toContain('{"phase":"start"}');
+  });
+
+  it("ignores project settings when reading logger config", () => {
+    const home = createTempSettingsHome(
+      JSON.stringify(
+        {
+          third_extensions: {
+            log: {
+              minLevel: "info",
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    process.env.HOME = home;
+
+    const projectDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-kit-logger-project-"),
+    );
+    tempHomes.push(projectDir);
+    const projectSettingsPath = path.join(projectDir, ".pi", "settings.json");
+    fs.mkdirSync(path.dirname(projectSettingsPath), { recursive: true });
+    fs.writeFileSync(
+      projectSettingsPath,
+      JSON.stringify(
+        {
+          third_extensions: {
+            log: {
+              minLevel: "error",
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    process.chdir(projectDir);
+
+    const stream = new CaptureStream();
+    const logger = createLogger("notify", {
+      logFilePath: null,
+      stderr: stream,
+      now: () => new Date("2026-03-11T06:00:00.000Z"),
+    });
+
+    logger.info("info-message");
+
+    expect(stream.output).toContain("info-message");
   });
 
   it("uses explicit minLevel option with highest priority", () => {

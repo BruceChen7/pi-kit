@@ -1,14 +1,10 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import {
   createBashTool,
   type ExtensionAPI,
   type ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 import { createLogger } from "../shared/logger.ts";
-
-const SETTINGS_FILE_NAME = "settings.json";
+import { loadSettings } from "../shared/settings.ts";
 
 const DEFAULT_ENV: Record<string, string> = {
   GIT_EXTERNAL_DIFF: "",
@@ -36,26 +32,6 @@ let log: ReturnType<typeof createLogger> | null = null;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function getSettingsPaths(cwd: string): {
-  projectPath: string;
-  globalPath: string;
-} {
-  return {
-    projectPath: path.join(cwd, ".pi", SETTINGS_FILE_NAME),
-    globalPath: path.join(os.homedir(), ".pi", "agent", SETTINGS_FILE_NAME),
-  };
-}
-
-function loadSettingsFile(filePath: string): Record<string, unknown> {
-  try {
-    if (!fs.existsSync(filePath)) return {};
-    const content = fs.readFileSync(filePath, "utf-8");
-    return JSON.parse(content) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
 }
 
 function extractEnvOverrides(
@@ -103,7 +79,7 @@ function extractGitDiffFlags(
   return [];
 }
 
-function resolveEnvGuardConfig(
+export function resolveEnvGuardConfig(
   cwd: string,
   options?: { forceReload?: boolean },
 ): EnvGuardConfig {
@@ -111,9 +87,12 @@ function resolveEnvGuardConfig(
     return cachedConfig;
   }
 
-  const { projectPath, globalPath } = getSettingsPaths(cwd);
-  const globalSettings = loadSettingsFile(globalPath);
-  const projectSettings = loadSettingsFile(projectPath);
+  const {
+    projectPath,
+    globalPath,
+    global: globalSettings,
+    project: projectSettings,
+  } = loadSettings(cwd, { forceReload: options?.forceReload });
   const globalOverrides = extractEnvOverrides(globalSettings);
   const projectOverrides = extractEnvOverrides(projectSettings);
 

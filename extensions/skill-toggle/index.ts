@@ -17,6 +17,12 @@ import {
   visibleWidth,
 } from "@mariozechner/pi-tui";
 import { createLogger } from "../shared/logger.ts";
+import {
+  getSettingsPaths,
+  loadSettings,
+  readSettingsFile,
+  writeSettingsFile,
+} from "../shared/settings.ts";
 
 interface Skill {
   name: string;
@@ -63,8 +69,6 @@ const DEFAULT_THEME: PaletteTheme = {
   description: "2",
   hint: "2",
 };
-
-const SETTINGS_FILE_NAME = "settings.json";
 
 // Matches <skill>...</skill> blocks with nested <name>...</name>
 // Case-insensitive, tolerant of whitespace/newlines between tags
@@ -329,26 +333,6 @@ function filterSkills(skills: Skill[], query: string): Skill[] {
   return scored.map((item) => item.skill);
 }
 
-function getSettingsPaths(cwd: string): {
-  projectPath: string;
-  globalPath: string;
-} {
-  return {
-    projectPath: path.join(cwd, ".pi", SETTINGS_FILE_NAME),
-    globalPath: path.join(os.homedir(), ".pi", "agent", SETTINGS_FILE_NAME),
-  };
-}
-
-function loadSettingsFile(filePath: string): Record<string, unknown> {
-  try {
-    if (!fs.existsSync(filePath)) return {};
-    const content = fs.readFileSync(filePath, "utf-8");
-    return JSON.parse(content) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-}
-
 function extractSkillToggle(
   settings: Record<string, unknown>,
 ): SkillToggleSettings | null {
@@ -363,10 +347,13 @@ function toSkillList(value: unknown): string[] | null {
   return items.length ? items : [];
 }
 
-function loadToggleState(cwd: string): ToggleState {
-  const { projectPath, globalPath } = getSettingsPaths(cwd);
-  const projectSettings = loadSettingsFile(projectPath);
-  const globalSettings = loadSettingsFile(globalPath);
+export function loadToggleState(cwd: string): ToggleState {
+  const {
+    projectPath,
+    globalPath,
+    project: projectSettings,
+    global: globalSettings,
+  } = loadSettings(cwd, { forceReload: true });
 
   const projectToggle = extractSkillToggle(projectSettings);
   const globalToggle = extractSkillToggle(globalSettings);
@@ -401,8 +388,8 @@ function loadToggleState(cwd: string): ToggleState {
   };
 }
 
-function saveToggleState(state: ToggleState): void {
-  const settings = loadSettingsFile(state.writePath);
+export function saveToggleState(state: ToggleState): void {
+  const settings = readSettingsFile(state.writePath);
   if (state.writeScope === "global") {
     const skillToggle = isRecord(settings.skillToggle)
       ? (settings.skillToggle as SkillToggleSettings)
@@ -422,8 +409,7 @@ function saveToggleState(state: ToggleState): void {
     };
   }
 
-  fs.mkdirSync(path.dirname(state.writePath), { recursive: true });
-  fs.writeFileSync(state.writePath, `${JSON.stringify(settings, null, 2)}\n`);
+  writeSettingsFile(state.writePath, settings);
 }
 
 function getInstalledSkillNames(skills: Skill[]): Set<string> {
@@ -453,7 +439,7 @@ function pruneDisabledList(
 
 function pruneSettingsFile(filePath: string, installed: Set<string>): void {
   if (!fs.existsSync(filePath)) return;
-  const settings = loadSettingsFile(filePath);
+  const settings = readSettingsFile(filePath);
   if (!isRecord(settings.skillToggle)) return;
 
   const skillToggle = settings.skillToggle as SkillToggleSettings;
@@ -481,8 +467,7 @@ function pruneSettingsFile(filePath: string, installed: Set<string>): void {
 
   if (!changed) return;
   settings.skillToggle = skillToggle;
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(settings, null, 2)}\n`);
+  writeSettingsFile(filePath, settings);
 }
 
 function pruneSettingsFiles(cwd: string, installed: Set<string>): void {

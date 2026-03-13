@@ -1,6 +1,7 @@
-import fs, { promises as fsPromises } from "node:fs";
+import { promises as fsPromises } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { loadGlobalSettings } from "./settings.ts";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -8,9 +9,6 @@ const DEFAULT_LOG_LEVEL: LogLevel = "debug";
 
 const getDefaultLogFilePath = (): string =>
   path.join(os.homedir(), ".pi", "agent", "pi-debug.log");
-
-const getSettingsPath = (): string =>
-  path.join(os.homedir(), ".pi", "agent", "settings.json");
 
 /**
  * Resolve environment variable - support $VAR or ${VAR} syntax
@@ -64,19 +62,6 @@ const parseLogLevel = (value: unknown): LogLevel | null => {
     return value;
   }
   return null;
-};
-
-const readSettings = (): unknown => {
-  const settingsPath = getSettingsPath();
-  try {
-    if (!fs.existsSync(settingsPath)) {
-      return {};
-    }
-    const raw = fs.readFileSync(settingsPath, "utf8");
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return {};
-  }
 };
 
 const getLogConfig = (settings: unknown): ExtensionsLogConfig => {
@@ -176,7 +161,7 @@ export const createLogger = (
   extensionName: string,
   options: CreateLoggerOptions = {},
 ): Logger => {
-  const settings = readSettings();
+  const { global: settings } = loadGlobalSettings();
   const minLevel =
     options.minLevel ?? resolveMinLogLevel(settings, extensionName);
   const logFilePathFromSettings = resolveLogFilePath(settings);

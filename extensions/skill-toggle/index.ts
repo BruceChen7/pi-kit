@@ -529,7 +529,7 @@ function filterSystemPrompt(prompt: string, disabled: Set<string>): string {
   });
 }
 
-class SkillTogglePalette {
+class SkillTogglePicker {
   private filtered: Skill[];
   private selected = 0;
   private query = "";
@@ -555,7 +555,7 @@ class SkillTogglePalette {
     this.inactivityTimeout = setTimeout(() => {
       this.cleanup();
       this.onClose();
-    }, SkillTogglePalette.INACTIVITY_MS);
+    }, SkillTogglePicker.INACTIVITY_MS);
   }
 
   private showBoundaryMessage(message: string): void {
@@ -565,7 +565,7 @@ class SkillTogglePalette {
       this.boundaryMessage = null;
       this.boundaryTimeout = null;
       this.onUpdate();
-    }, SkillTogglePalette.BOUNDARY_MESSAGE_MS);
+    }, SkillTogglePicker.BOUNDARY_MESSAGE_MS);
     this.onUpdate();
   }
 
@@ -650,7 +650,7 @@ class SkillTogglePalette {
       border("│");
     const emptyRow = () => border("│") + " ".repeat(innerW) + border("│");
 
-    const titleText = " Skill Toggle ";
+    const titleText = " Skill Picker ";
     const borderLen = innerW - visibleWidth(titleText);
     const leftBorder = Math.floor(borderLen / 2);
     const rightBorder = borderLen - leftBorder;
@@ -798,7 +798,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
 
       await ctx.ui.custom<void>(
         (tui, _theme, _kb, done) => {
-          const palette = new SkillTogglePalette(
+          const picker = new SkillTogglePicker(
             skills,
             state.disabledSkills,
             (skill) => {
@@ -818,13 +818,13 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
 
           return {
             render(width: number) {
-              return palette.render(width);
+              return picker.render(width);
             },
             invalidate() {
-              palette.invalidate();
+              picker.invalidate();
             },
             handleInput(data: string) {
-              palette.handleInput(data);
+              picker.handleInput(data);
               tui.requestRender();
             },
           };

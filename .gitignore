@@ -10,3 +10,4 @@ package-lock.json
 .pi/
 .worktrees/
 docs/
+.alma-snapshots

@@ -18,11 +18,14 @@
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { createLogger } from "../shared/logger.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const interceptedCommandsPath = join(__dirname, "intercepted-commands");
 
-function applyInterceptedPath(): void {
+let log: ReturnType<typeof createLogger> | null = null;
+
+function applyInterceptedPath(reason: string): void {
   const pathKey =
     Object.keys(process.env).find((key) => key.toLowerCase() === "path") ??
     "PATH";
@@ -30,22 +33,35 @@ function applyInterceptedPath(): void {
   const entries = currentPath.split(delimiter).filter(Boolean);
 
   if (entries.includes(interceptedCommandsPath)) {
+    log?.debug("Intercepted commands path already applied", {
+      reason,
+      pathKey,
+      interceptedCommandsPath,
+    });
     return;
   }
 
   process.env[pathKey] = [interceptedCommandsPath, currentPath]
     .filter(Boolean)
     .join(delimiter);
+
+  log?.info("Prepended intercepted commands path", {
+    reason,
+    pathKey,
+    interceptedCommandsPath,
+  });
 }
 
 export default function (pi: ExtensionAPI) {
-  applyInterceptedPath();
+  log = createLogger("tools-intercepted", { stderr: null });
+
+  applyInterceptedPath("init");
 
   pi.on("session_start", () => {
-    applyInterceptedPath();
+    applyInterceptedPath("session_start");
   });
 
   pi.on("session_switch", () => {
-    applyInterceptedPath();
+    applyInterceptedPath("session_switch");
   });
 }

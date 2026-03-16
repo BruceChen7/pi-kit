@@ -1,0 +1,18 @@
+# Skills Configuration
+# Format: skill-name|git-repo-url|repo-path(optional)
+# - repo-path is relative to the repo root (for monorepos)
+# - Leave repo-path empty for single-skill repos
+#
+# Example:
+#   dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
+#   x-tweet-fetcher|https://github.com/user/x-tweet-fetcher.git|
+
+dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
+jira|https://github.com/softaworks/agent-toolkit|skills/jira
+receiving-code-review|https://github.com/obra/superpowers.git|skills/receiving-code-review
+skill-creator|https://github.com/anthropics/skills.git|skills/skill-creator
+systematic-debugging|https://github.com/obra/superpowers.git|skills/systematic-debugging
+test-driven-development|https://github.com/obra/superpowers.git|skills/test-driven-development
+using-git-worktrees|https://github.com/obra/superpowers.git|skills/using-git-worktrees
+writing-skills|https://github.com/obra/superpowers.git|skills/writing-skills
+x-tweet-fetcher|https://github.com/ythx-101/x-tweet-fetcher.git|

@@ -11,7 +11,7 @@
   },
   "pi": {
     "extensions": [
-      "./copyx",
+      "./extensions/copyx",
       "./extensions/skill-toggle",
       "./extensions/env-guard"
     ]

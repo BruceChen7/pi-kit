@@ -41,6 +41,7 @@ import {
   truncateHead,
   truncateLine,
 } from "@mariozechner/pi-coding-agent";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { globSync } from "glob";
 import { createLogger } from "../shared/logger.ts";
@@ -51,6 +52,8 @@ const interceptedCommandsPath = join(__dirname, "intercepted-commands");
 const DEFAULT_GREP_LIMIT = 100;
 const DEFAULT_FIND_LIMIT = 1000;
 const GREP_MAX_LINE_LENGTH = 500;
+const COMMAND_PREVIEW_LIMIT = 200;
+const SHELL_SAFE_ARG = /^[A-Za-z0-9_./:@%+=,-]+$/;
 
 type RgMatchEvent = {
   type: "match";
@@ -181,6 +184,76 @@ function toPosixPath(value: string): string {
   return value.split(path.sep).join("/");
 }
 
+function quoteShellArg(value: string): string {
+  if (!value) {
+    return "''";
+  }
+  if (SHELL_SAFE_ARG.test(value)) {
+    return value;
+  }
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function formatCommand(command: string, args: string[]): string {
+  return [command, ...args.map(quoteShellArg)].join(" ");
+}
+
+function truncateCommand(
+  value: string,
+  maxLength = COMMAND_PREVIEW_LIMIT,
+): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  if (maxLength <= 3) {
+    return value.slice(0, maxLength);
+  }
+  return `${value.slice(0, maxLength - 3)}...`;
+}
+
+function buildRgArgs(
+  pattern: string,
+  searchPath: string,
+  glob?: string,
+  ignoreCase?: boolean,
+  literal?: boolean,
+): string[] {
+  const args = ["--json", "--line-number", "--color=never", "--hidden"];
+  if (ignoreCase) {
+    args.push("--ignore-case");
+  }
+  if (literal) {
+    args.push("--fixed-strings");
+  }
+  if (glob) {
+    args.push("--glob", glob);
+  }
+  args.push(pattern, searchPath);
+  return args;
+}
+
+function buildFdArgs(
+  pattern: string,
+  searchPath: string,
+  effectiveLimit: number,
+  ignoreFiles: Iterable<string> = [],
+): string[] {
+  const args = [
+    "--glob",
+    "--color=never",
+    "--hidden",
+    "--max-results",
+    String(effectiveLimit),
+  ];
+
+  for (const ignoreFile of ignoreFiles) {
+    args.push("--ignore-file", ignoreFile);
+  }
+
+  args.push(pattern, searchPath);
+  return args;
+}
+
 function commandExists(command: string): boolean {
   try {
     const result = spawnSync(command, ["--version"], { stdio: "pipe" });
@@ -252,6 +325,36 @@ function createRgTool() {
     label: "rg",
     description: `Search file contents with ripgrep. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_GREP_LIMIT} matches or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
     parameters: grepSchema,
+    renderCall(args, theme) {
+      const searchPath = args.path ?? ".";
+      const command = formatCommand(
+        "rg",
+        buildRgArgs(
+          args.pattern,
+          searchPath,
+          args.glob,
+          args.ignoreCase,
+          args.literal,
+        ),
+      );
+      const preview = truncateCommand(command);
+
+      let text = theme.fg("toolTitle", theme.bold("$ "));
+      text += theme.fg("accent", preview);
+
+      const extras: string[] = [];
+      if (typeof args.context === "number" && args.context > 0) {
+        extras.push(`context=${args.context}`);
+      }
+      if (typeof args.limit === "number") {
+        extras.push(`limit=${args.limit}`);
+      }
+      if (extras.length > 0) {
+        text += theme.fg("dim", ` (${extras.join(", ")})`);
+      }
+
+      return new Text(text, 0, 0);
+    },
     async execute(
       _toolCallId: string,
       {
@@ -333,22 +436,13 @@ function createRgTool() {
               return lines;
             };
 
-            const args = [
-              "--json",
-              "--line-number",
-              "--color=never",
-              "--hidden",
-            ];
-            if (ignoreCase) {
-              args.push("--ignore-case");
-            }
-            if (literal) {
-              args.push("--fixed-strings");
-            }
-            if (glob) {
-              args.push("--glob", glob);
-            }
-            args.push(pattern, searchPath);
+            const args = buildRgArgs(
+              pattern,
+              searchPath,
+              glob,
+              ignoreCase,
+              literal,
+            );
 
             if (!commandExists("rg")) {
               settle(() => reject(new Error(RG_INSTALL_HINT)));
@@ -563,6 +657,20 @@ function createFdTool() {
     label: "fd",
     description: `Search for files by glob pattern using fd. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_FIND_LIMIT} results or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first).`,
     parameters: findSchema,
+    renderCall(args, theme) {
+      const searchPath = args.path ?? ".";
+      const effectiveLimit = args.limit ?? DEFAULT_FIND_LIMIT;
+      const command = formatCommand(
+        "fd",
+        buildFdArgs(args.pattern, searchPath, effectiveLimit),
+      );
+      const preview = truncateCommand(command);
+
+      let text = theme.fg("toolTitle", theme.bold("$ "));
+      text += theme.fg("accent", preview);
+
+      return new Text(text, 0, 0);
+    },
     async execute(
       _toolCallId: string,
       {
@@ -589,14 +697,6 @@ function createFdTool() {
             const searchPath = resolveToCwd(searchDir || ".", cwd);
             const effectiveLimit = limit ?? DEFAULT_FIND_LIMIT;
 
-            const args = [
-              "--glob",
-              "--color=never",
-              "--hidden",
-              "--max-results",
-              String(effectiveLimit),
-            ];
-
             const gitignoreFiles = new Set<string>();
             const rootGitignore = join(searchPath, ".gitignore");
             if (existsSync(rootGitignore)) {
@@ -618,11 +718,12 @@ function createFdTool() {
               // Ignore glob errors
             }
 
-            for (const gitignorePath of gitignoreFiles) {
-              args.push("--ignore-file", gitignorePath);
-            }
-
-            args.push(pattern, searchPath);
+            const args = buildFdArgs(
+              pattern,
+              searchPath,
+              effectiveLimit,
+              gitignoreFiles,
+            );
 
             if (!commandExists("fd")) {
               signal?.removeEventListener("abort", onAbort);

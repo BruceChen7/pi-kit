@@ -133,7 +133,7 @@ const runRtkRewrite = async (
       return null;
     }
     const output = result.stdout.trim();
-    log?.debug("rtk rewrite output", { command, output });
+    log?.info("rtk rewrite output", { command, output });
     return output.length > 0 ? output : null;
   } catch (error) {
     log?.warn("rtk rewrite failed", {

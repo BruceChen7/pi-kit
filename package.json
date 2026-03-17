@@ -13,7 +13,8 @@
     "extensions": [
       "./extensions/copyx",
       "./extensions/skill-toggle",
-      "./extensions/env-guard"
+      "./extensions/env-guard",
+      "./extensions/rtk-rewrite"
     ]
   },
   "scripts": {

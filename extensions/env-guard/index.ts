@@ -1,7 +1,6 @@
-import {
-  createBashTool,
-  type ExtensionAPI,
-  type ExtensionContext,
+import type {
+  ExtensionAPI,
+  ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
@@ -124,7 +123,10 @@ export function resolveEnvGuardConfig(
   return cachedConfig;
 }
 
-function rewriteGitDiffCommand(command: string, extraFlags: string[]): string {
+export function rewriteGitDiffCommand(
+  command: string,
+  extraFlags: string[],
+): string {
   if (!GIT_DIFF_COMMAND.test(command)) {
     return command;
   }
@@ -161,23 +163,6 @@ function applyEnvGuard(ctx: ExtensionContext): void {
 
 export default function (pi: ExtensionAPI) {
   log = createLogger("env-guard", { stderr: null });
-
-  const baseBash = createBashTool(process.cwd());
-
-  pi.registerTool({
-    ...baseBash,
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const { gitDiffFlags } = resolveEnvGuardConfig(ctx.cwd);
-      const command = rewriteGitDiffCommand(params.command, gitDiffFlags);
-      const bashTool = createBashTool(ctx.cwd);
-      return bashTool.execute(
-        toolCallId,
-        { ...params, command },
-        signal,
-        onUpdate,
-      );
-    },
-  });
 
   pi.on("session_start", (_event, ctx) => {
     applyEnvGuard(ctx);

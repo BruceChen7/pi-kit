@@ -3,6 +3,7 @@
 # Skills Migration Script
 # Usage:
 #   ./migrate.sh import   - Clone skills and create symlinks in ~/.agents/skills
+#   ./migrate.sh update   - Update GitHub skill repos in ~/.agents/git-skills
 #   ./migrate.sh export   - Scan ~/.agents/skills and update skills/skills.txt
 #
 # Configuration:
@@ -37,10 +38,11 @@ log_error() {
 }
 
 usage() {
-    echo "Usage: $0 {import|export}"
+    echo "Usage: $0 {import|export|update}"
     echo ""
     echo "Commands:"
     echo "  import   Clone skills (GitHub only) and create symlinks in ~/.agents/skills"
+    echo "  update   Update GitHub skill repos in ~/.agents/git-skills"
     echo "  export   Scan ~/.agents/skills for GitHub skills and update skills/skills.txt"
     echo ""
     echo "Configuration:"
@@ -202,6 +204,62 @@ import_skills() {
     log_info "Import completed!"
 }
 
+# Update skills: pull latest changes for cloned repos
+update_skills() {
+    log_info "Updating GitHub skill repos in $GIT_CLONE_BASE_DIR..."
+    ensure_git_clone_dir
+
+    declare -A updated_repos=()
+    local missing=()
+
+    while IFS='|' read -r skill_name repo_url repo_path; do
+        if [ -z "$skill_name" ]; then
+            continue
+        fi
+
+        if [ -z "$repo_url" ]; then
+            log_warn "No git repo specified for: $skill_name"
+            continue
+        fi
+
+        if ! is_github_repo "$repo_url"; then
+            log_warn "Skipping non-GitHub repo: $skill_name"
+            continue
+        fi
+
+        local repo_name
+        repo_name=$(basename "$repo_url" .git)
+
+        if [ -n "${updated_repos[$repo_name]:-}" ]; then
+            continue
+        fi
+        updated_repos[$repo_name]=1
+
+        local clone_base="$GIT_CLONE_BASE_DIR/$repo_name"
+        if [ ! -d "$clone_base/.git" ]; then
+            log_warn "Repo not found in git-skills (run import first): $repo_name"
+            missing+=("$repo_name")
+            continue
+        fi
+
+        if (cd "$clone_base" && git fetch --all -q); then
+            if (cd "$clone_base" && git pull --ff-only -q); then
+                log_info "Updated repo: $repo_name"
+            else
+                log_warn "Failed to pull updates: $repo_name"
+            fi
+        else
+            log_warn "Failed to fetch updates: $repo_name"
+        fi
+    done < <(read_skills)
+
+    if [ "${#missing[@]}" -gt 0 ]; then
+        log_warn "Missing repos (run import first): ${missing[*]}"
+    fi
+
+    log_info "Update completed!"
+}
+
 # Export skills: scan machine directory and update skills.txt
 export_skills() {
     log_info "Exporting skills from $MACHINE_SKILLS_DIR to $SKILLS_FILE..."
@@ -284,6 +342,9 @@ EOF
 case "${1:-}" in
     import)
         import_skills
+        ;;
+    update)
+        update_skills
         ;;
     export)
         export_skills

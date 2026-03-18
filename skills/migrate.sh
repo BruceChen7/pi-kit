@@ -2,9 +2,8 @@
 
 # Skills Migration Script
 # Usage:
-#   ./migrate.sh import   - Clone skills and create symlinks in project
-#   ./migrate.sh export   - Clone skills to ~/.agents/skills/
-#   ./migrate.sh sync     - Sync skills from machine to project (backup)
+#   ./migrate.sh import   - Clone skills and create symlinks in ~/.agents/skills
+#   ./migrate.sh export   - Scan ~/.agents/skills and update skills/skills.txt
 #
 # Configuration:
 #   skills.txt - List of skills with format:
@@ -16,7 +15,6 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_FILE="$SCRIPT_DIR/skills.txt"
-PROJECT_SKILLS_DIR="$SCRIPT_DIR"
 MACHINE_SKILLS_DIR="$HOME/.agents/skills"
 GIT_CLONE_BASE_DIR="$HOME/.agents/git-skills"
 
@@ -39,12 +37,11 @@ log_error() {
 }
 
 usage() {
-    echo "Usage: $0 {import|export|sync}"
+    echo "Usage: $0 {import|export}"
     echo ""
     echo "Commands:"
-    echo "  import   Clone skills (GitHub only) and create symlinks in project directory"
-    echo "  export   Clone skills (GitHub only) to ~/.agents/skills/"
-    echo "  sync     Sync skills from machine directory to project directory"
+    echo "  import   Clone skills (GitHub only) and create symlinks in ~/.agents/skills"
+    echo "  export   Scan ~/.agents/skills for GitHub skills and update skills/skills.txt"
     echo ""
     echo "Configuration:"
     echo "  Edit skills.txt to manage skill list"
@@ -128,27 +125,43 @@ ensure_repo_cloned() {
     echo "$clone_base"
 }
 
-# Import skills: git clone + symlink to project
+resolve_path() {
+    local path="$1"
+    if command -v realpath >/dev/null 2>&1; then
+        realpath "$path"
+    else
+        python3 - "$path" <<'PY'
+import os, sys
+print(os.path.realpath(sys.argv[1]))
+PY
+    fi
+}
+
+relative_path() {
+    python3 - "$1" "$2" <<'PY'
+import os, sys
+print(os.path.relpath(sys.argv[1], sys.argv[2]))
+PY
+}
+
+# Import skills: git clone + symlink to machine directory
 import_skills() {
-    log_info "Importing skills to project directory..."
+    log_info "Importing skills to $MACHINE_SKILLS_DIR..."
     ensure_git_clone_dir
+    mkdir -p "$MACHINE_SKILLS_DIR"
+
+    local skipped=()
 
     while IFS='|' read -r skill_name repo_url repo_path; do
         if [ -z "$skill_name" ]; then
             continue
         fi
 
-        skill_symlink_path="$PROJECT_SKILLS_DIR/$skill_name"
+        skill_symlink_path="$MACHINE_SKILLS_DIR/$skill_name"
 
-        # Check if symlink already exists
-        if [ -L "$skill_symlink_path" ]; then
-            log_warn "Symlink already exists: $skill_name"
-            continue
-        fi
-
-        # Check if directory already exists (non-symlink)
-        if [ -d "$skill_symlink_path" ]; then
-            log_warn "Directory already exists (not symlink): $skill_name"
+        if [ -e "$skill_symlink_path" ] || [ -L "$skill_symlink_path" ]; then
+            log_warn "Skipping existing skill: $skill_name"
+            skipped+=("$skill_name")
             continue
         fi
 
@@ -182,84 +195,89 @@ import_skills() {
         fi
     done < <(read_skills)
 
+    if [ "${#skipped[@]}" -gt 0 ]; then
+        log_warn "Skipped existing skills: ${skipped[*]}"
+    fi
+
     log_info "Import completed!"
 }
 
-# Export skills: git clone to machine directory
+# Export skills: scan machine directory and update skills.txt
 export_skills() {
-    log_info "Exporting skills to $MACHINE_SKILLS_DIR..."
+    log_info "Exporting skills from $MACHINE_SKILLS_DIR to $SKILLS_FILE..."
 
-    # Create machine skills directory if not exists
-    mkdir -p "$MACHINE_SKILLS_DIR"
+    if [ ! -d "$MACHINE_SKILLS_DIR" ]; then
+        log_error "Machine skills directory not found: $MACHINE_SKILLS_DIR"
+        exit 1
+    fi
 
-    while IFS='|' read -r skill_name repo_url repo_path; do
-        if [ -z "$skill_name" ]; then
+    local entries=()
+
+    while IFS= read -r -d '' entry; do
+        local skill_name
+        local target_path
+        local repo_root
+        local repo_url
+        local repo_path
+
+        skill_name=$(basename "$entry")
+
+        if [ "$skill_name" = "skills.txt" ] || [ "$skill_name" = "migrate.sh" ]; then
             continue
         fi
 
-        machine_skill_path="$MACHINE_SKILLS_DIR/$skill_name"
-
-        if [ -n "$repo_url" ]; then
-            if ! is_github_repo "$repo_url"; then
-                log_warn "Skipping non-GitHub repo: $skill_name"
-                continue
-            fi
-
-            repo_path=$(sanitize_repo_path "$repo_path")
-            clone_base=$(ensure_repo_cloned "$repo_url" "$repo_path") || {
-                log_error "Failed to clone: $skill_name"
-                continue
-            }
-
-            if [ -n "$repo_path" ]; then
-                source_path="$clone_base/$repo_path"
-            else
-                source_path="$clone_base"
-            fi
-
-            if [ ! -d "$source_path" ]; then
-                log_error "Skill path not found: $source_path"
-                continue
-            fi
-
-            rm -rf "$machine_skill_path"
-            cp -r "$source_path" "$machine_skill_path"
-            rm -rf "$machine_skill_path/.git" 2>/dev/null || true
-
-            log_info "Exported skill: $skill_name"
+        if [ -L "$entry" ]; then
+            target_path=$(resolve_path "$entry")
         else
-            log_warn "No git repo specified for: $skill_name"
+            target_path="$entry"
         fi
-    done < <(read_skills)
 
-    log_info "Export completed!"
-}
-
-# Sync skills from machine to project (backup)
-sync_skills() {
-    log_info "Syncing skills from machine to project directory..."
-
-    while IFS='|' read -r skill_name repo_url repo_path; do
-        if [ -z "$skill_name" ]; then
+        if [ ! -d "$target_path" ]; then
+            log_warn "Skipping non-directory skill: $skill_name"
             continue
         fi
 
-        machine_skill_path="$MACHINE_SKILLS_DIR/$skill_name"
-        project_skill_path="$PROJECT_SKILLS_DIR/$skill_name"
+        repo_root=$(git -C "$target_path" rev-parse --show-toplevel 2>/dev/null) || {
+            log_warn "Skipping non-git skill: $skill_name"
+            continue
+        }
 
-        if [ ! -d "$machine_skill_path" ]; then
-            log_warn "Skill not found in machine directory: $skill_name"
+        repo_url=$(git -C "$repo_root" remote get-url origin 2>/dev/null) || {
+            log_warn "Skipping git repo without origin: $skill_name"
+            continue
+        }
+
+        if ! is_github_repo "$repo_url"; then
+            log_warn "Skipping non-GitHub repo: $skill_name"
             continue
         fi
 
-        # Remove existing symlink/directory and copy fresh
-        rm -rf "$project_skill_path"
-        cp -r "$machine_skill_path" "$project_skill_path"
+        repo_path=""
+        if [ "$(resolve_path "$repo_root")" != "$(resolve_path "$target_path")" ]; then
+            repo_path=$(relative_path "$target_path" "$repo_root")
+            repo_path=$(sanitize_repo_path "$repo_path")
+        fi
 
-        log_info "Synced skill: $skill_name"
-    done < <(read_skills)
+        entries+=("$skill_name|$repo_url|$repo_path")
+    done < <(find "$MACHINE_SKILLS_DIR" -mindepth 1 -maxdepth 1 -print0)
 
-    log_info "Sync completed!"
+    {
+        cat <<'EOF'
+# Skills Configuration
+# Format: skill-name|git-repo-url|repo-path(optional)
+# - repo-path is relative to the repo root (for monorepos)
+# - Leave repo-path empty for single-skill repos
+#
+# Example:
+#   dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
+#   x-tweet-fetcher|https://github.com/user/x-tweet-fetcher.git|
+EOF
+        for entry in "${entries[@]}"; do
+            echo "$entry"
+        done
+    } > "$SKILLS_FILE"
+
+    log_info "Export completed! Wrote ${#entries[@]} skills."
 }
 
 # Main
@@ -269,9 +287,6 @@ case "${1:-}" in
         ;;
     export)
         export_skills
-        ;;
-    sync)
-        sync_skills
         ;;
     *)
         usage

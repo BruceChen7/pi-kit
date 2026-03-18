@@ -6,13 +6,14 @@
 # Example:
 #   dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
 #   x-tweet-fetcher|https://github.com/user/x-tweet-fetcher.git|
-
+using-git-worktrees|https://github.com/obra/superpowers.git|skills/using-git-worktrees
+test-driven-development|https://github.com/obra/superpowers.git|skills/test-driven-development
+systematic-debugging|https://github.com/obra/superpowers.git|skills/systematic-debugging
 dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
+visualise|https://github.com/bentossell/visualise.git|
+skill-creator|https://github.com/anthropics/skills.git|skills/skill-creator
 jira|https://github.com/softaworks/agent-toolkit|skills/jira
 receiving-code-review|https://github.com/obra/superpowers.git|skills/receiving-code-review
-skill-creator|https://github.com/anthropics/skills.git|skills/skill-creator
-systematic-debugging|https://github.com/obra/superpowers.git|skills/systematic-debugging
-test-driven-development|https://github.com/obra/superpowers.git|skills/test-driven-development
-using-git-worktrees|https://github.com/obra/superpowers.git|skills/using-git-worktrees
 writing-skills|https://github.com/obra/superpowers.git|skills/writing-skills
 x-tweet-fetcher|https://github.com/ythx-101/x-tweet-fetcher.git|
+code-simplifier|https://github.com/HazAT/pi-config|skills/code-simplifier

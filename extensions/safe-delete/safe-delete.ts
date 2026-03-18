@@ -25,6 +25,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
+import { createLogger } from "../shared/logger.ts";
 
 // --- Configuration ---
 
@@ -56,6 +57,8 @@ const PROTECTED_PATHS: string[] = [
   path.join(os.homedir(), ".local"),
   path.join(os.homedir(), ".gnupg"),
 ];
+
+let log: ReturnType<typeof createLogger> | null = null;
 
 // --- Types ---
 
@@ -280,6 +283,10 @@ function detectRmThreats({
   for (const target of targets) {
     // Wildcard explosion check
     if (hasWildcardExplosion({ targetPath: target })) {
+      log?.warn("rm wildcard deletion detected", {
+        targetPath: target,
+        command,
+      });
       threats.push({
         description: `Wildcard deletion: rm ${flags}${target}`,
         severity: "critical",
@@ -292,6 +299,11 @@ function detectRmThreats({
 
     // Protected path check
     if (isProtectedPath({ targetPath: target, cwd })) {
+      log?.warn("rm protected path detected", {
+        targetPath: target,
+        resolved,
+        command,
+      });
       threats.push({
         description: `Deletion targets protected path: ${resolved}`,
         severity: "critical",
@@ -304,6 +316,11 @@ function detectRmThreats({
     if (isRecursive) {
       const size = getPathSize({ targetPath: resolved });
       if (size >= SIZE_THRESHOLD) {
+        log?.info("rm large recursive deletion detected", {
+          resolved,
+          size,
+          command,
+        });
         threats.push({
           description: `Large recursive deletion: ${resolved} (${formatBytes({ bytes: size })})`,
           severity: "high",
@@ -337,6 +354,11 @@ function detectFindDeleteThreats({
   const resolved = resolvePath({ targetPath: searchRoot, cwd });
 
   if (isProtectedPath({ targetPath: searchRoot, cwd })) {
+    log?.warn("find -delete protected path detected", {
+      searchRoot,
+      resolved,
+      command,
+    });
     threats.push({
       description: `find -delete rooted at protected path: ${resolved}`,
       severity: "critical",
@@ -345,6 +367,11 @@ function detectFindDeleteThreats({
   } else {
     const size = getPathSize({ targetPath: resolved });
     if (size >= SIZE_THRESHOLD) {
+      log?.info("find -delete large directory detected", {
+        resolved,
+        size,
+        command,
+      });
       threats.push({
         description: `find -delete in large directory: ${resolved} (${formatBytes({ bytes: size })})`,
         severity: "high",
@@ -379,10 +406,17 @@ function detectChmodChownThreats({
 
   for (const target of paths) {
     if (isProtectedPath({ targetPath: target, cwd })) {
+      const resolved = resolvePath({ targetPath: target, cwd });
+      log?.warn("recursive chmod/chown protected path detected", {
+        operation: match[1],
+        targetPath: target,
+        resolved,
+        command,
+      });
       threats.push({
-        description: `Recursive ${match[1]} on protected path: ${resolvePath({ targetPath: target, cwd })}`,
+        description: `Recursive ${match[1]} on protected path: ${resolved}`,
         severity: "critical",
-        paths: [resolvePath({ targetPath: target, cwd })],
+        paths: [resolved],
       });
     }
   }
@@ -403,6 +437,10 @@ function detectGitCleanThreats({ command }: { command: string }): Threat[] {
   const isIgnored = /x/.test(flags) || /X/.test(flags);
 
   if (isForced && (isDirectories || isIgnored)) {
+    log?.info("git clean aggressive detected", {
+      flags: flags.trim(),
+      command,
+    });
     threats.push({
       description: `Aggressive git clean (${flags.trim()}) -- will permanently delete untracked${isIgnored ? " and gitignored" : ""} files${isDirectories ? " and directories" : ""}`,
       severity: "high",
@@ -422,6 +460,7 @@ function detectPipedDeletionThreats({
 
   // xargs rm, xargs del, etc.
   if (/\|\s*xargs\s+(?:.*\s)?rm\b/.test(command)) {
+    log?.info("piped deletion via xargs rm detected", { command });
     threats.push({
       description: "Piped deletion via xargs rm -- uncontrolled scope",
       severity: "high",
@@ -448,6 +487,11 @@ function detectTruncationThreats({
     const target = truncateRedirect[1];
     const resolved = resolvePath({ targetPath: target, cwd });
     if (isProtectedPath({ targetPath: target, cwd })) {
+      log?.warn("truncation of protected file detected", {
+        targetPath: target,
+        resolved,
+        command,
+      });
       threats.push({
         description: `Truncation of protected file: ${resolved}`,
         severity: "critical",
@@ -463,6 +507,11 @@ function detectTruncationThreats({
     const resolved = resolvePath({ targetPath: target, cwd });
     const size = getPathSize({ targetPath: resolved });
     if (size >= SIZE_THRESHOLD) {
+      log?.info("truncating large file detected", {
+        resolved,
+        size,
+        command,
+      });
       threats.push({
         description: `Truncating large file: ${resolved} (${formatBytes({ bytes: size })})`,
         severity: "high",
@@ -479,6 +528,7 @@ function detectDeviceThreats({ command }: { command: string }): Threat[] {
 
   // dd writing to a device
   if (/\bdd\b/.test(command) && /\bof=\/dev\//.test(command)) {
+    log?.warn("dd writing to device detected", { command });
     threats.push({
       description: "dd writing directly to a device",
       severity: "critical",
@@ -488,6 +538,7 @@ function detectDeviceThreats({ command }: { command: string }): Threat[] {
 
   // mkfs / format
   if (/\b(mkfs|newfs|format)\b/.test(command)) {
+    log?.warn("filesystem format command detected", { command });
     threats.push({
       description: "Filesystem format command detected",
       severity: "critical",
@@ -497,6 +548,7 @@ function detectDeviceThreats({ command }: { command: string }): Threat[] {
 
   // mv to /dev/null
   if (/\bmv\b/.test(command) && /\/dev\/null/.test(command)) {
+    log?.warn("mv to /dev/null detected", { command });
     threats.push({
       description: "mv to /dev/null -- data will be destroyed",
       severity: "high",
@@ -517,6 +569,8 @@ function analyzeCommand({
   cwd: string;
 }): Threat[] {
   const allThreats: Threat[] = [];
+
+  log?.debug("analyzing command", { command, cwd });
 
   // Pipe-aware detectors must run on the full command before splitting,
   // since splitCommands breaks on | and the pipe context is lost.
@@ -550,6 +604,11 @@ function analyzeCommand({
       allThreats.push(...threats);
     }
   }
+
+  log?.debug("analysis complete", {
+    command,
+    threatCount: allThreats.length,
+  });
 
   return allThreats;
 }
@@ -586,6 +645,9 @@ function formatThreats({ threats }: { threats: Threat[] }): string {
 // --- Extension ---
 
 export default function (pi: ExtensionAPI) {
+  log = createLogger("safe-delete", { stderr: null });
+  log?.debug("extension initialized", { pid: process.pid });
+
   pi.on("tool_call", async (event, ctx) => {
     if (!isToolCallEventType("bash", event)) return;
     if (!ctx.hasUI) return;
@@ -598,19 +660,37 @@ export default function (pi: ExtensionAPI) {
     if (threats.length === 0) return;
 
     const hasCritical = threats.some((t) => t.severity === "critical");
+    log?.info("destructive command detected", {
+      command: event.input.command,
+      threatCount: threats.length,
+      hasCritical,
+    });
     const title = hasCritical
       ? "CRITICAL: Destructive command detected"
       : "Destructive command detected";
 
     const body = `${formatThreats({ threats })}\n\nCommand:\n  ${event.input.command}\n\nAllow this command to run?`;
 
+    log?.info("prompting for destructive command confirmation", {
+      command: event.input.command,
+      threatCount: threats.length,
+    });
     const isConfirmed = await ctx.ui.confirm(title, body);
 
     if (!isConfirmed) {
+      log?.warn("destructive command blocked", {
+        command: event.input.command,
+        threatCount: threats.length,
+      });
       return {
         block: true,
         reason: `User blocked destructive command.\n${formatThreats({ threats })}`,
       };
     }
+
+    log?.info("destructive command allowed", {
+      command: event.input.command,
+      threatCount: threats.length,
+    });
   });
 }

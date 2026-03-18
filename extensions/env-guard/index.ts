@@ -2,6 +2,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
+import { registerBashHook } from "../shared/bash-hook.ts";
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
 
@@ -14,6 +15,7 @@ const DEFAULT_ENV: Record<string, string> = {
 };
 
 const GIT_DIFF_COMMAND = /^\s*git\s+diff(\s|$)/;
+const GIT_DIFF_HOOK_ID = "git-diff";
 
 type EnvGuardSettings = {
   env?: Record<string, unknown>;
@@ -149,6 +151,17 @@ export function rewriteGitDiffCommand(
   return rewritten;
 }
 
+function registerGitDiffHook(): void {
+  registerBashHook({
+    id: GIT_DIFF_HOOK_ID,
+    hook: async ({ command, cwd }) => {
+      const { gitDiffFlags } = resolveEnvGuardConfig(cwd);
+      const rewritten = rewriteGitDiffCommand(command, gitDiffFlags);
+      return rewritten !== command ? { command: rewritten } : undefined;
+    },
+  });
+}
+
 function applyEnvGuard(ctx: ExtensionContext): void {
   const { envMap, gitDiffFlags } = resolveEnvGuardConfig(ctx.cwd, {
     forceReload: true,
@@ -163,6 +176,7 @@ function applyEnvGuard(ctx: ExtensionContext): void {
 
 export default function (pi: ExtensionAPI) {
   log = createLogger("env-guard", { stderr: null });
+  registerGitDiffHook();
 
   pi.on("session_start", (_event, ctx) => {
     applyEnvGuard(ctx);

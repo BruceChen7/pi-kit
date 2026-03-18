@@ -36,8 +36,47 @@ type HookOrderResult = {
   order: string[];
 };
 
-const hooks: BashHookEntry[] = [];
-let hookIndex = 0;
+type BashHookState = {
+  hooks: BashHookEntry[];
+  hookIndex: number;
+  lastRun: BashHookRun | null;
+};
+
+type BashHookRun = {
+  command: string;
+  resolved: string;
+  applied: string[];
+  source: BashHookSource;
+  cwd: string;
+  timestamp: number;
+};
+
+const GLOBAL_HOOK_STATE_KEY = "__pi_bash_hook_state__";
+
+const ensureHookState = (): BashHookState => {
+  const container = globalThis as Record<string, unknown>;
+  const existing = container[GLOBAL_HOOK_STATE_KEY];
+
+  if (existing && typeof existing === "object") {
+    const state = existing as BashHookState;
+    if (Array.isArray(state.hooks) && typeof state.hookIndex === "number") {
+      return state;
+    }
+  }
+
+  const state: BashHookState = { hooks: [], hookIndex: 0, lastRun: null };
+  container[GLOBAL_HOOK_STATE_KEY] = state;
+  return state;
+};
+
+const hookState = ensureHookState();
+const hooks = hookState.hooks;
+
+const nextHookIndex = (): number => {
+  const index = hookState.hookIndex;
+  hookState.hookIndex += 1;
+  return index;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -121,12 +160,12 @@ export const registerBashHook = ({ id, hook }: RegisteredBashHook): void => {
     return;
   }
 
-  hooks.push({ id, hook, index: hookIndex++ });
+  hooks.push({ id, hook, index: nextHookIndex() });
 };
 
 export const clearBashHooks = (): void => {
   hooks.length = 0;
-  hookIndex = 0;
+  hookState.hookIndex = 0;
 };
 
 export const runBashHooks = async (
@@ -147,6 +186,15 @@ export const runBashHooks = async (
       applied.push(entry.id);
     }
   }
+
+  hookState.lastRun = {
+    command: input.command,
+    resolved: command,
+    applied: [...applied],
+    source: input.source,
+    cwd: input.cwd,
+    timestamp: Date.now(),
+  };
 
   return { command, applied };
 };
@@ -191,5 +239,16 @@ export const createBashHookOperations = (ctx: ExtensionContext) => {
       });
       return local.exec(resolved.command, cwd, options);
     },
+  };
+};
+
+export const getBashHookStatus = (cwd: string) => {
+  const orderSetting = resolveHookOrder(cwd);
+  const orderedHooks = resolveOrderedHooks(cwd);
+  return {
+    orderSetting,
+    registered: hooks.map((entry) => entry.id),
+    ordered: orderedHooks.map((entry) => entry.id),
+    lastRun: hookState.lastRun,
   };
 };

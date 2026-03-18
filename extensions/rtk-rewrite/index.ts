@@ -3,11 +3,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
-import { createBashTool, getShellConfig } from "@mariozechner/pi-coding-agent";
-import {
-  resolveEnvGuardConfig,
-  rewriteGitDiffCommand,
-} from "../env-guard/index.ts";
+import { registerBashHook } from "../shared/bash-hook.ts";
 import { createLogger } from "../shared/logger.ts";
 import { loadGlobalSettings, updateSettings } from "../shared/settings.ts";
 
@@ -28,6 +24,8 @@ const DEFAULT_CONFIG: RtkRewriteConfig = {
   notify: true,
   exclude: [],
 };
+
+const RTK_HOOK_ID = "rtk";
 
 let cachedConfig: RtkRewriteConfig = DEFAULT_CONFIG;
 let configLoaded = false;
@@ -145,13 +143,12 @@ const runRtkRewrite = async (
   }
 };
 
-const resolveRewrite = async (
+const resolveRtkRewrite = async (
   command: string,
   ctx: ExtensionContext,
   source: "tool" | "user_bash",
-): Promise<{ command: string; rtkRewritten: boolean }> => {
+): Promise<string | null> => {
   const config = getConfig();
-  const { gitDiffFlags } = resolveEnvGuardConfig(ctx.cwd);
   log?.debug("rtk rewrite requested", {
     source,
     command,
@@ -167,7 +164,7 @@ const resolveRewrite = async (
         ctx.ui.notify(`RTK rewrite: ${command} → ${rewritten}`, "info");
       }
 
-      return { command: rewritten, rtkRewritten: true };
+      return rewritten;
     }
 
     if (!rewritten) {
@@ -175,7 +172,11 @@ const resolveRewrite = async (
     } else if (rewritten === command) {
       log?.debug("rtk rewrite no-op", { source, command });
     }
-  } else if (!config.enabled) {
+
+    return null;
+  }
+
+  if (!config.enabled) {
     log?.debug("rtk rewrite skipped (disabled)", { source, command });
   } else {
     log?.debug("rtk rewrite skipped (excluded)", {
@@ -185,16 +186,7 @@ const resolveRewrite = async (
     });
   }
 
-  const fallback = rewriteGitDiffCommand(command, gitDiffFlags);
-  if (fallback !== command) {
-    log?.debug("git diff rewrite applied", {
-      source,
-      command,
-      rewritten: fallback,
-    });
-  }
-
-  return { command: fallback, rtkRewritten: false };
+  return null;
 };
 
 const formatStatus = (config: RtkRewriteConfig): string => {
@@ -271,54 +263,12 @@ export default function (pi: ExtensionAPI) {
   log = createLogger("rtk-rewrite", { stderr: null });
   execCommand = pi.exec;
 
-  pi.registerTool({
-    ...createBashTool(process.cwd()),
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const { command } = params;
-      const resolved = await resolveRewrite(command, ctx, "tool");
-      const bashTool = createBashTool(ctx.cwd);
-      return bashTool.execute(
-        toolCallId,
-        { ...params, command: resolved.command },
-        signal,
-        onUpdate,
-      );
+  registerBashHook({
+    id: RTK_HOOK_ID,
+    hook: async ({ command, ctx, source }) => {
+      const rewritten = await resolveRtkRewrite(command, ctx, source);
+      return rewritten ? { command: rewritten } : undefined;
     },
-  });
-
-  pi.on("user_bash", async (event, ctx) => {
-    const resolved = await resolveRewrite(event.command, ctx, "user_bash");
-    if (resolved.command === event.command) {
-      return;
-    }
-
-    try {
-      if (!execCommand) {
-        return;
-      }
-      const { shell, args } = getShellConfig();
-      const result = await execCommand(shell, [...args, resolved.command], {
-        cwd: event.cwd,
-      });
-      const output = `${result.stdout}${result.stderr}`.trimEnd();
-      return {
-        result: {
-          output: output.length > 0 ? output : "(no output)",
-          exitCode: result.code,
-          cancelled: false,
-          truncated: false,
-        },
-      };
-    } catch (error) {
-      return {
-        result: {
-          output: `rtk rewrite execution failed: ${String(error)}`,
-          exitCode: 1,
-          cancelled: false,
-          truncated: false,
-        },
-      };
-    }
   });
 
   pi.registerCommand("rtk-rewrite-enable", {

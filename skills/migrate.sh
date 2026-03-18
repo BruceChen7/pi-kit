@@ -79,6 +79,19 @@ sanitize_repo_path() {
     echo "$path"
 }
 
+# Bash 3.2 compatibility: associative arrays are not supported.
+array_contains() {
+    local needle="$1"
+    shift
+    local item
+    for item in "$@"; do
+        if [ "$item" = "$needle" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Only handle GitHub repos for import/export
 is_github_repo() {
     local repo_url="$1"
@@ -209,7 +222,7 @@ update_skills() {
     log_info "Updating GitHub skill repos in $GIT_CLONE_BASE_DIR..."
     ensure_git_clone_dir
 
-    declare -A updated_repos=()
+    local updated_repos=()
     local missing=()
 
     while IFS='|' read -r skill_name repo_url repo_path; do
@@ -230,10 +243,10 @@ update_skills() {
         local repo_name
         repo_name=$(basename "$repo_url" .git)
 
-        if [ -n "${updated_repos[$repo_name]:-}" ]; then
+        if array_contains "$repo_name" "${updated_repos[@]}"; then
             continue
         fi
-        updated_repos[$repo_name]=1
+        updated_repos+=("$repo_name")
 
         local clone_base="$GIT_CLONE_BASE_DIR/$repo_name"
         if [ ! -d "$clone_base/.git" ]; then

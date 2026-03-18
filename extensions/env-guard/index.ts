@@ -154,10 +154,16 @@ export function rewriteGitDiffCommand(
 function registerGitDiffHook(): void {
   registerBashHook({
     id: GIT_DIFF_HOOK_ID,
-    hook: async ({ command, cwd }) => {
+    hook: async ({ command, cwd, ctx }) => {
       const { gitDiffFlags } = resolveEnvGuardConfig(cwd);
       const rewritten = rewriteGitDiffCommand(command, gitDiffFlags);
-      return rewritten !== command ? { command: rewritten } : undefined;
+      if (rewritten !== command) {
+        if (ctx.hasUI) {
+          ctx.ui.notify(`Git diff rewrite: ${command} → ${rewritten}`, "info");
+        }
+        return { command: rewritten };
+      }
+      return undefined;
     },
   });
 }

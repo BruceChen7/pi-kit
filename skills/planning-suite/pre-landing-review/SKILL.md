@@ -1,5 +1,5 @@
 ---
-name: review
+name: pre-landing-review
 description: |
   Pre-landing PR review. Analyzes the diff against the base branch for SQL safety, LLM trust
   boundary violations, conditional side effects, enum completeness, and other structural risks.

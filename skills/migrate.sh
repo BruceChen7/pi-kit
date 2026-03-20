@@ -2,13 +2,14 @@
 
 # Skills Migration Script
 # Usage:
-#   ./migrate.sh import   - Clone skills and create symlinks in ~/.agents/skills
+#   ./migrate.sh import   - Install GitHub + local repo skills into ~/.agents/skills
 #   ./migrate.sh update   - Update GitHub skill repos in ~/.agents/git-skills
 #   ./migrate.sh export   - Scan ~/.agents/skills and update skills/skills.txt
 #
 # Configuration:
 #   skills.txt - List of skills with format:
 #     skill-name|git-repo-url|repo-path(optional)
+#     skill-name|local|repo-path
 #   - repo-path is relative to the repo root (for monorepos)
 #   - Leave repo-path empty for single-skill repos
 
@@ -41,13 +42,15 @@ usage() {
     echo "Usage: $0 {import|export|update}"
     echo ""
     echo "Commands:"
-    echo "  import   Clone skills (GitHub only) and create symlinks in ~/.agents/skills"
+    echo "  import   Install GitHub + local repo skills into ~/.agents/skills"
     echo "  update   Update GitHub skill repos in ~/.agents/git-skills"
-    echo "  export   Scan ~/.agents/skills for GitHub skills and update skills/skills.txt"
+    echo "  export   Scan ~/.agents/skills and update skills/skills.txt"
     echo ""
     echo "Configuration:"
     echo "  Edit skills.txt to manage skill list"
-    echo "  Format: skill-name|git-repo-url|repo-path(optional)"
+    echo "  Format:"
+    echo "    skill-name|git-repo-url|repo-path(optional)"
+    echo "    skill-name|local|repo-path"
     exit 1
 }
 
@@ -159,6 +162,51 @@ print(os.path.relpath(sys.argv[1], sys.argv[2]))
 PY
 }
 
+extract_skill_name() {
+    local skill_dir="$1"
+    local skill_file="$skill_dir/SKILL.md"
+
+    if [ ! -f "$skill_file" ]; then
+        return 1
+    fi
+
+    local name
+    name=$(awk '
+        BEGIN { in_frontmatter = 0 }
+        /^---[[:space:]]*$/ {
+            if (in_frontmatter == 0) { in_frontmatter = 1; next }
+            else { exit }
+        }
+        in_frontmatter == 1 && $0 ~ /^[[:space:]]*name:[[:space:]]*/ {
+            sub(/^[[:space:]]*name:[[:space:]]*/, "", $0)
+            sub(/[[:space:]]*$/, "", $0)
+            print $0
+            exit
+        }
+    ' "$skill_file" | tr -d '\r')
+
+    if [ -n "$name" ]; then
+        echo "$name"
+        return 0
+    fi
+
+    return 1
+}
+
+is_path_within_root() {
+    local path="$1"
+    local root="$2"
+
+    case "$path" in
+        "$root"|"$root"/*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 # Import skills: git clone + symlink to machine directory
 import_skills() {
     log_info "Importing skills to $MACHINE_SKILLS_DIR..."
@@ -166,9 +214,47 @@ import_skills() {
     mkdir -p "$MACHINE_SKILLS_DIR"
 
     local skipped=()
+    local local_repo_root
+    local_repo_root=$(resolve_path "$SCRIPT_DIR/..")
 
     while IFS='|' read -r skill_name repo_url repo_path; do
         if [ -z "$skill_name" ]; then
+            continue
+        fi
+
+        repo_path=$(sanitize_repo_path "$repo_path")
+
+        if [ "$repo_url" = "local" ] || { [ -z "$repo_url" ] && [ -n "$repo_path" ]; }; then
+            if [ -z "$repo_path" ]; then
+                log_warn "Skipping local skill with empty path: $skill_name"
+                continue
+            fi
+
+            local local_skill_dir="$local_repo_root/$repo_path"
+            if [ ! -d "$local_skill_dir" ]; then
+                log_error "Local skill path not found: $local_skill_dir"
+                continue
+            fi
+
+            local resolved_name
+            if ! resolved_name=$(extract_skill_name "$local_skill_dir"); then
+                resolved_name=$(basename "$local_skill_dir")
+                log_warn "Missing SKILL.md name for local skill: $local_skill_dir (using $resolved_name)"
+            fi
+
+            if [ "$skill_name" != "$resolved_name" ]; then
+                log_warn "Local skill name mismatch ($skill_name vs $resolved_name), using $resolved_name"
+            fi
+
+            local skill_symlink_path="$MACHINE_SKILLS_DIR/$resolved_name"
+            if [ -e "$skill_symlink_path" ] || [ -L "$skill_symlink_path" ]; then
+                log_warn "Skipping existing skill: $resolved_name"
+                skipped+=("$resolved_name")
+                continue
+            fi
+
+            ln -s "$local_skill_dir" "$skill_symlink_path"
+            log_info "Created symlink: $resolved_name -> $local_skill_dir"
             continue
         fi
 
@@ -186,7 +272,6 @@ import_skills() {
                 continue
             fi
 
-            repo_path=$(sanitize_repo_path "$repo_path")
             clone_base=$(ensure_repo_cloned "$repo_url" "$repo_path") || {
                 log_error "Failed to clone: $skill_name"
                 continue
@@ -227,6 +312,10 @@ update_skills() {
 
     while IFS='|' read -r skill_name repo_url repo_path; do
         if [ -z "$skill_name" ]; then
+            continue
+        fi
+
+        if [ "$repo_url" = "local" ] || { [ -z "$repo_url" ] && [ -n "$repo_path" ]; }; then
             continue
         fi
 
@@ -283,13 +372,16 @@ export_skills() {
     fi
 
     local entries=()
+    local local_repo_root
+    local_repo_root=$(resolve_path "$SCRIPT_DIR/..")
 
     while IFS= read -r -d '' entry; do
         local skill_name
         local target_path
-        local repo_root
+        local git_repo_root
         local repo_url
         local repo_path
+        local resolved_target
 
         skill_name=$(basename "$entry")
 
@@ -308,12 +400,27 @@ export_skills() {
             continue
         fi
 
-        repo_root=$(git -C "$target_path" rev-parse --show-toplevel 2>/dev/null) || {
+        resolved_target=$(resolve_path "$target_path")
+
+        if is_path_within_root "$resolved_target" "$local_repo_root"; then
+            local local_name
+            if ! local_name=$(extract_skill_name "$resolved_target"); then
+                local_name=$(basename "$resolved_target")
+                log_warn "Missing SKILL.md name for local skill: $resolved_target (using $local_name)"
+            fi
+
+            repo_path=$(relative_path "$resolved_target" "$local_repo_root")
+            repo_path=$(sanitize_repo_path "$repo_path")
+            entries+=("$local_name|local|$repo_path")
+            continue
+        fi
+
+        git_repo_root=$(git -C "$resolved_target" rev-parse --show-toplevel 2>/dev/null) || {
             log_warn "Skipping non-git skill: $skill_name"
             continue
         }
 
-        repo_url=$(git -C "$repo_root" remote get-url origin 2>/dev/null) || {
+        repo_url=$(git -C "$git_repo_root" remote get-url origin 2>/dev/null) || {
             log_warn "Skipping git repo without origin: $skill_name"
             continue
         }
@@ -324,8 +431,8 @@ export_skills() {
         fi
 
         repo_path=""
-        if [ "$(resolve_path "$repo_root")" != "$(resolve_path "$target_path")" ]; then
-            repo_path=$(relative_path "$target_path" "$repo_root")
+        if [ "$(resolve_path "$git_repo_root")" != "$resolved_target" ]; then
+            repo_path=$(relative_path "$resolved_target" "$git_repo_root")
             repo_path=$(sanitize_repo_path "$repo_path")
         fi
 
@@ -336,11 +443,13 @@ export_skills() {
         cat <<'EOF'
 # Skills Configuration
 # Format: skill-name|git-repo-url|repo-path(optional)
-# - repo-path is relative to the repo root (for monorepos)
-# - Leave repo-path empty for single-skill repos
+#   - repo-path is relative to the repo root (for monorepos)
+#   - Leave repo-path empty for single-skill repos
+#   - Local skills use: skill-name|local|repo-path (repo-path relative to this repo root)
 #
 # Example:
 #   dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
+#   pre-landing-review|local|skills/planning-suite/pre-landing-review
 #   x-tweet-fetcher|https://github.com/user/x-tweet-fetcher.git|
 EOF
         for entry in "${entries[@]}"; do

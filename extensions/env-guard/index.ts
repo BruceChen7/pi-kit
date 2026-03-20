@@ -51,8 +51,40 @@ function extractEnvOverrides(
   return overrides;
 }
 
+const NO_EXT_DIFF_FLAG = "--no-ext-diff";
+const END_OF_OPTIONS = /(^|\s)--(\s|$)/;
+const SPECIAL_REGEX_CHARS = /[.*+?^${}()|[\]\\]/g;
+
 function normalizeFlagList(flags: string[]): string[] {
   return flags.map((flag) => flag.trim()).filter(Boolean);
+}
+
+function uniqueFlags(flags: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const flag of flags) {
+    if (seen.has(flag)) continue;
+    seen.add(flag);
+    result.push(flag);
+  }
+  return result;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(SPECIAL_REGEX_CHARS, "\\$&");
+}
+
+function sliceBeforeOptionsEnd(value: string): string {
+  const match = value.match(END_OF_OPTIONS);
+  if (!match || match.index === undefined) {
+    return value;
+  }
+  return value.slice(0, match.index).trimEnd();
+}
+
+function hasFlagToken(value: string, flag: string): boolean {
+  const pattern = new RegExp(`(^|\\s)${escapeRegExp(flag)}(\\s|$)`);
+  return pattern.test(value);
 }
 
 function extractGitDiffFlags(
@@ -136,11 +168,21 @@ export function rewriteGitDiffCommand(
   const trimmed = command.trimStart();
   const leadingWhitespace = command.slice(0, command.length - trimmed.length);
   const rest = trimmed.replace(GIT_DIFF_COMMAND, "").trimStart();
-  const normalizedFlags = normalizeFlagList(extraFlags);
-  const extra =
-    normalizedFlags.length > 0 ? ` ${normalizedFlags.join(" ")}` : "";
+  const flagRegion = sliceBeforeOptionsEnd(rest);
+  const normalizedFlags = uniqueFlags(normalizeFlagList(extraFlags));
+  const commandHasNoExtDiff = hasFlagToken(flagRegion, NO_EXT_DIFF_FLAG);
+  const extraHasNoExtDiff = normalizedFlags.includes(NO_EXT_DIFF_FLAG);
+  const extraFlagsFiltered = commandHasNoExtDiff
+    ? normalizedFlags.filter((flag) => flag !== NO_EXT_DIFF_FLAG)
+    : normalizedFlags;
+  const needsNoExtDiff = !commandHasNoExtDiff && !extraHasNoExtDiff;
+  const diffFlags = [
+    ...(needsNoExtDiff ? [NO_EXT_DIFF_FLAG] : []),
+    ...extraFlagsFiltered,
+  ];
+  const extra = diffFlags.length > 0 ? ` ${diffFlags.join(" ")}` : "";
   const suffix = rest ? ` ${rest}` : "";
-  const rewritten = `${leadingWhitespace}git --no-pager diff --no-ext-diff${extra}${suffix}`;
+  const rewritten = `${leadingWhitespace}git --no-pager diff${extra}${suffix}`;
 
   log?.debug("Rewrote git diff command", {
     command,

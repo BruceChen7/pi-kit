@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { clearSettingsCache, getSettingsPaths } from "../shared/settings.js";
-import { resolveEnvGuardConfig } from "./index.js";
+import { resolveEnvGuardConfig, rewriteGitDiffCommand } from "./index.js";
 
 const tempDirs: string[] = [];
 const originalHome = process.env.HOME;
@@ -118,5 +118,22 @@ describe("resolveEnvGuardConfig", () => {
 
     const config = resolveEnvGuardConfig(cwd, { forceReload: true });
     expect(config.gitDiffFlags).toEqual(["--stat", "--compact-summary"]);
+  });
+});
+
+describe("rewriteGitDiffCommand", () => {
+  it("avoids duplicating --no-ext-diff when already present", () => {
+    const result = rewriteGitDiffCommand("git diff --no-ext-diff --stat", []);
+    expect(result).toBe("git --no-pager diff --no-ext-diff --stat");
+  });
+
+  it("avoids duplicating --no-ext-diff when extra flags include it", () => {
+    const result = rewriteGitDiffCommand("git diff --stat", [
+      "--no-ext-diff",
+      "--color=never",
+    ]);
+    expect(result).toBe(
+      "git --no-pager diff --no-ext-diff --color=never --stat",
+    );
   });
 });

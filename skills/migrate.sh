@@ -104,11 +104,11 @@ is_github_repo() {
 # Resolve default branch
 checkout_default_branch() {
     if git rev-parse --verify main >/dev/null 2>&1; then
-        git checkout main 2>/dev/null || true
+        git checkout main >/dev/null 2>&1 || true
     elif git rev-parse --verify master >/dev/null 2>&1; then
-        git checkout master 2>/dev/null || true
+        git checkout master >/dev/null 2>&1 || true
     else
-        git checkout $(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@') 2>/dev/null || true
+        git checkout $(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@') >/dev/null 2>&1 || true
     fi
 }
 
@@ -122,22 +122,27 @@ ensure_repo_cloned() {
     local clone_base="$GIT_CLONE_BASE_DIR/$repo_name"
 
     if [ -d "$clone_base/.git" ]; then
-        log_info "Updating repo: $repo_name"
-        (cd "$clone_base" && git fetch --all -q) || log_warn "Failed to fetch updates: $repo_name"
+        log_info "Updating repo: $repo_name" >&2
+        (cd "$clone_base" && git fetch --all -q >/dev/null 2>&1) || log_warn "Failed to fetch updates: $repo_name" >&2
     else
         if [ -n "$repo_path" ]; then
-            log_info "Cloning repo (sparse checkout): $repo_name"
-            git clone --no-checkout "$repo_url" "$clone_base" 2>/dev/null || return 1
+            log_info "Cloning repo (sparse checkout): $repo_name" >&2
+            git clone --no-checkout "$repo_url" "$clone_base" >/dev/null 2>&1 || return 1
         else
-            log_info "Cloning repo: $repo_name"
-            git clone "$repo_url" "$clone_base" 2>/dev/null || return 1
+            log_info "Cloning repo: $repo_name" >&2
+            git clone "$repo_url" "$clone_base" >/dev/null 2>&1 || return 1
         fi
     fi
 
     if [ -n "$repo_path" ]; then
-        (cd "$clone_base" && git sparse-checkout init --cone 2>/dev/null || true)
-        (cd "$clone_base" && git sparse-checkout set "$repo_path" 2>/dev/null || true)
+        (cd "$clone_base" && git sparse-checkout init --cone >/dev/null 2>&1 || true)
+        (cd "$clone_base" && git sparse-checkout set "$repo_path" >/dev/null 2>&1 || true)
         (cd "$clone_base" && checkout_default_branch)
+    else
+        if [ "$(cd "$clone_base" && git config --bool core.sparseCheckout 2>/dev/null)" = "true" ]; then
+            (cd "$clone_base" && git sparse-checkout disable >/dev/null 2>&1 || true)
+            (cd "$clone_base" && checkout_default_branch)
+        fi
     fi
 
     echo "$clone_base"

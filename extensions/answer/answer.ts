@@ -32,6 +32,7 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui";
+import { createLogger } from "../shared/logger.ts";
 
 // Structured output format for question extraction
 interface ExtractedQuestion {
@@ -78,6 +79,16 @@ Example output:
 const CODEX_MODEL_ID = "gpt-5.1-codex-mini";
 const HAIKU_MODEL_ID = "claude-haiku-4-5";
 
+let log: ReturnType<typeof createLogger> | null = null;
+
+const previewText = (value: string, max = 200): string => {
+  const trimmed = value.trim();
+  if (trimmed.length <= max) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, max)}…`;
+};
+
 /**
  * Prefer Codex mini for extraction when available, otherwise fallback to haiku or the current model.
  */
@@ -91,21 +102,45 @@ async function selectExtractionModel(
   const codexModel = modelRegistry.find("openai-codex", CODEX_MODEL_ID);
   if (codexModel) {
     const apiKey = await modelRegistry.getApiKey(codexModel);
+    log?.debug("codex model check", {
+      modelId: codexModel.id,
+      hasApiKey: Boolean(apiKey),
+    });
     if (apiKey) {
+      log?.info("using codex model for extraction", {
+        modelId: codexModel.id,
+      });
       return codexModel;
     }
+  } else {
+    log?.debug("codex model not found", {
+      modelId: CODEX_MODEL_ID,
+    });
   }
 
   const haikuModel = modelRegistry.find("anthropic", HAIKU_MODEL_ID);
   if (!haikuModel) {
+    log?.info("haiku model not found, using current model", {
+      modelId: currentModel.id,
+    });
     return currentModel;
   }
 
   const apiKey = await modelRegistry.getApiKey(haikuModel);
+  log?.debug("haiku model check", {
+    modelId: haikuModel.id,
+    hasApiKey: Boolean(apiKey),
+  });
   if (!apiKey) {
+    log?.info("haiku model missing api key, using current model", {
+      modelId: currentModel.id,
+    });
     return currentModel;
   }
 
+  log?.info("using haiku model for extraction", {
+    modelId: haikuModel.id,
+  });
   return haikuModel;
 }
 
@@ -419,13 +454,23 @@ class QnAComponent implements Component {
 }
 
 export default function (pi: ExtensionAPI) {
+  log = createLogger("answer", { stderr: null });
+  log?.debug("extension initialized", { pid: process.pid });
+
   const answerHandler = async (ctx: ExtensionContext) => {
+    log?.info("answer command invoked", {
+      hasUI: ctx.hasUI,
+      modelId: ctx.model?.id,
+    });
+
     if (!ctx.hasUI) {
+      log?.warn("answer requires interactive mode");
       ctx.ui.notify("answer requires interactive mode", "error");
       return;
     }
 
     if (!ctx.model) {
+      log?.warn("answer requires a selected model");
       ctx.ui.notify("No model selected", "error");
       return;
     }
@@ -434,12 +479,19 @@ export default function (pi: ExtensionAPI) {
     const branch = ctx.sessionManager.getBranch();
     let lastAssistantText: string | undefined;
 
+    log?.debug("searching last assistant message", {
+      branchLength: branch.length,
+    });
+
     for (let i = branch.length - 1; i >= 0; i--) {
       const entry = branch[i];
       if (entry.type === "message") {
         const msg = entry.message;
         if ("role" in msg && msg.role === "assistant") {
           if (msg.stopReason !== "stop") {
+            log?.warn("last assistant message incomplete", {
+              stopReason: msg.stopReason,
+            });
             ctx.ui.notify(
               `Last assistant message incomplete (${msg.stopReason})`,
               "error",
@@ -453,6 +505,10 @@ export default function (pi: ExtensionAPI) {
             .map((c) => c.text);
           if (textParts.length > 0) {
             lastAssistantText = textParts.join("\n");
+            log?.debug("last assistant message found", {
+              textLength: lastAssistantText.length,
+              preview: previewText(lastAssistantText),
+            });
             break;
           }
         }
@@ -460,6 +516,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     if (!lastAssistantText) {
+      log?.warn("no assistant messages found");
       ctx.ui.notify("No assistant messages found", "error");
       return;
     }
@@ -472,6 +529,10 @@ export default function (pi: ExtensionAPI) {
       ctx.modelRegistry,
     );
 
+    log?.info("selected extraction model", {
+      modelId: extractionModel.id,
+    });
+
     // Run extraction with loader UI
     const extractionResult = await ctx.ui.custom<ExtractionResult | null>(
       (tui, theme, _kb, done) => {
@@ -480,10 +541,27 @@ export default function (pi: ExtensionAPI) {
           theme,
           `Extracting questions using ${extractionModel.id}...`,
         );
-        loader.onAbort = () => done(null);
+        loader.onAbort = () => {
+          log?.info("extraction aborted by user");
+          done(null);
+        };
 
         const doExtract = async () => {
           const apiKey = await ctx.modelRegistry.getApiKey(extractionModel);
+          const reasoningEffort =
+            extractionModel.reasoning &&
+            (extractionModel.api === "openai-responses" ||
+              extractionModel.api === "openai-codex-responses")
+              ? "low"
+              : undefined;
+          log?.debug("starting question extraction", {
+            modelId: extractionModel.id,
+            api: extractionModel.api,
+            provider: extractionModel.provider,
+            hasApiKey: Boolean(apiKey),
+            assistantTextLength: assistantText.length,
+            reasoningEffort,
+          });
           const userMessage: UserMessage = {
             role: "user",
             content: [{ type: "text", text: assistantText }],
@@ -493,11 +571,28 @@ export default function (pi: ExtensionAPI) {
           const response = await complete(
             extractionModel,
             { systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
-            { apiKey, signal: loader.signal },
+            { apiKey, signal: loader.signal, reasoningEffort },
           );
 
+          log?.debug("extraction response received", {
+            stopReason: response.stopReason,
+            contentParts: response.content.length,
+          });
+
           if (response.stopReason === "aborted") {
+            log?.info("extraction aborted by model", {
+              errorMessage: response.errorMessage,
+            });
             return null;
+          }
+
+          if (response.stopReason === "error") {
+            log?.error("extraction response error", {
+              errorMessage: response.errorMessage,
+              api: response.api,
+              provider: response.provider,
+              model: response.model,
+            });
           }
 
           const responseText = response.content
@@ -507,28 +602,55 @@ export default function (pi: ExtensionAPI) {
             .map((c) => c.text)
             .join("\n");
 
-          return parseExtractionResult(responseText);
+          log?.debug("extraction response text ready", {
+            textLength: responseText.length,
+            preview: previewText(responseText),
+          });
+
+          const parsed = parseExtractionResult(responseText);
+          if (!parsed) {
+            log?.warn("failed to parse extraction result", {
+              responsePreview: previewText(responseText),
+            });
+            return null;
+          }
+
+          log?.info("extraction parsed", {
+            questionCount: parsed.questions.length,
+          });
+
+          return parsed;
         };
 
         doExtract()
           .then(done)
-          .catch(() => done(null));
+          .catch((error) => {
+            log?.error("extraction failed", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+            done(null);
+          });
 
         return loader;
       },
     );
 
     if (extractionResult === null) {
+      log?.info("extraction cancelled or failed");
       ctx.ui.notify("Cancelled", "info");
       return;
     }
 
     if (extractionResult.questions.length === 0) {
+      log?.info("no questions extracted");
       ctx.ui.notify("No questions found in the last message", "info");
       return;
     }
 
     // Show the Q&A component
+    log?.debug("launching QnA UI", {
+      questionCount: extractionResult.questions.length,
+    });
     const answersResult = await ctx.ui.custom<string | null>(
       (tui, _theme, _kb, done) => {
         return new QnAComponent(extractionResult.questions, tui, done);
@@ -536,11 +658,16 @@ export default function (pi: ExtensionAPI) {
     );
 
     if (answersResult === null) {
+      log?.info("answer UI cancelled");
       ctx.ui.notify("Cancelled", "info");
       return;
     }
 
     // Send the answers directly as a message and trigger a turn
+    log?.info("answers sent", {
+      questionCount: extractionResult.questions.length,
+      answerLength: answersResult.length,
+    });
     pi.sendMessage(
       {
         customType: "answers",

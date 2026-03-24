@@ -26,9 +26,8 @@ To disable Plannotator Auto explicitly:
 
 ## Behavior
 
-- On session start/switch, calls `/plannotator-set-file <planFile>` to sync Plannotator.
-- After the agent `write`/`edit` tool updates the plan file, and Plannotator is idle,
-  it triggers `/plannotator` automatically.
+- When the agent `write`/`edit` tool updates the configured plan file, and Plannotator is idle,
+  it sends `/plannotator-set-file <planFile>` and triggers `/plannotator` automatically.
 
 ## Logging
 

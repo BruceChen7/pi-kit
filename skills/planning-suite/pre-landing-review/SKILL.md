@@ -4,7 +4,7 @@ description: |
   Pre-landing PR review. Analyzes the diff against the base branch for SQL safety, LLM trust
   boundary violations, conditional side effects, enum completeness, and other structural risks.
   Use when asked to review a PR, check a diff, or before merging changes.
-compatibility: Requires git and GitHub CLI (gh) when available.
+compatibility: Requires git.
 ---
 
 # Pre-Landing Review (pi-native)
@@ -18,9 +18,18 @@ You are reviewing code changes, not shipping them. Apply fixes when safe, and as
 - Do not commit, push, or open a PR.
 
 ## Step 0: Detect base branch
-1. If a PR exists: `gh pr view --json baseRefName -q .baseRefName`
-2. Else: `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`
-3. Fallback: `main`
+```bash
+BASE=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+if [ -z "$BASE" ]; then
+  if git show-ref --verify --quiet refs/remotes/origin/main; then
+    BASE=main
+  elif git show-ref --verify --quiet refs/remotes/origin/master; then
+    BASE=master
+  else
+    BASE=main
+  fi
+fi
+```
 
 Print the detected base branch and use it in all subsequent commands.
 
@@ -31,7 +40,7 @@ Print the detected base branch and use it in all subsequent commands.
 
 ## Step 1.5: Scope drift detection
 1. Read `TODOS.md` if present.
-2. Read PR description (`gh pr view --json body --jq .body 2>/dev/null || true`) and commit messages (`git log origin/<base>..HEAD --oneline`).
+2. Read PR description if the user provides it (paste or file), and commit messages (`git log origin/<base>..HEAD --oneline`).
 3. Compare stated intent vs files changed (`git diff --no-ext-diff origin/<base> --stat`).
 4. Output:
 ```

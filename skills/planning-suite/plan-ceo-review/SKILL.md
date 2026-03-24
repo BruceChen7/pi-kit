@@ -5,7 +5,7 @@ description: |
   to expand, hold, or reduce scope. Produces a rigorous review across architecture, risk,
   tests, and UX. Use when a user asks to “think bigger,” “review the strategy,” or wants
   a high-rigor plan review before implementation.
-compatibility: Requires git. Uses GitHub CLI (gh) if available for base-branch detection.
+compatibility: Requires git.
 ---
 
 # Plan CEO Review (pi-native)
@@ -33,9 +33,16 @@ Recommendation: ... (optional)
    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
    SLUG=$(basename "$REPO_ROOT")
    BRANCH=$(git branch --show-current 2>/dev/null || echo "no-branch")
-   BASE=$(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || true)
-   [ -z "$BASE" ] && BASE=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)
-   BASE=${BASE:-main}
+   BASE=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+   if [ -z "$BASE" ]; then
+     if git show-ref --verify --quiet refs/remotes/origin/main; then
+       BASE=main
+     elif git show-ref --verify --quiet refs/remotes/origin/master; then
+       BASE=master
+     else
+       BASE=main
+     fi
+   fi
    PLANS_DIR="$REPO_ROOT/.pi/plans/$SLUG/ceo-review"
    mkdir -p "$PLANS_DIR"
    ```

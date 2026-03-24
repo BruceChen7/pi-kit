@@ -47,8 +47,7 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
 };
 
 let log: ReturnType<typeof createLogger> | null = null;
-let resolvedPlanPath: string | null = null;
-let planFileSetting: string | null = null;
+const toolArgsByCallId = new Map<string, unknown>();
 
 const loadConfig = (options?: {
   forceReload?: boolean;
@@ -101,26 +100,18 @@ const sendCommand = (
 const resolvePlanPath = (cwd: string, planFile: string): string =>
   path.resolve(cwd, planFile);
 
-const syncPlanFile = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
+const getPlanFileConfig = (
+  ctx: ExtensionContext,
+): { planFile: string; resolvedPlanPath: string } | null => {
   const config = loadConfig({ forceReload: true });
   if (!config.planFile) {
-    planFileSetting = null;
-    resolvedPlanPath = null;
-    log?.info("plannotator-auto disabled: no planFile configured", {
-      cwd: ctx.cwd,
-    });
-    return;
+    return null;
   }
 
-  planFileSetting = config.planFile;
-  resolvedPlanPath = resolvePlanPath(ctx.cwd, config.planFile);
-  log?.info("plannotator-auto syncing plan file", {
-    cwd: ctx.cwd,
+  return {
     planFile: config.planFile,
-    resolvedPlanPath,
-  });
-
-  sendCommand(pi, ctx, "plannotator-set-file", config.planFile);
+    resolvedPlanPath: resolvePlanPath(ctx.cwd, config.planFile),
+  };
 };
 
 const getPlannotatorState = (
@@ -157,7 +148,8 @@ const handlePlanFileWrite = (
   toolName: string,
   args: unknown,
 ): void => {
-  if (!planFileSetting || !resolvedPlanPath) {
+  const planConfig = getPlanFileConfig(ctx);
+  if (!planConfig) {
     return;
   }
 
@@ -167,7 +159,7 @@ const handlePlanFileWrite = (
   }
 
   const targetPath = path.resolve(ctx.cwd, toolPath);
-  if (targetPath !== resolvedPlanPath) {
+  if (targetPath !== planConfig.resolvedPlanPath) {
     return;
   }
 
@@ -175,31 +167,30 @@ const handlePlanFileWrite = (
     log?.debug("plannotator-auto skipped trigger (not idle)", {
       phase: getPlannotatorState(ctx)?.phase ?? "unknown",
       toolName,
-      planFile: planFileSetting,
-      resolvedPlanPath,
+      planFile: planConfig.planFile,
+      resolvedPlanPath: planConfig.resolvedPlanPath,
     });
     return;
   }
 
   log?.info("plannotator-auto triggering /plannotator", {
     toolName,
-    planFile: planFileSetting,
-    resolvedPlanPath,
+    planFile: planConfig.planFile,
+    resolvedPlanPath: planConfig.resolvedPlanPath,
   });
+  sendCommand(pi, ctx, "plannotator-set-file", planConfig.planFile);
   sendCommand(pi, ctx, "plannotator");
 };
 
 export default function plannotatorAuto(pi: ExtensionAPI) {
   log = createLogger("plannotator-auto", { stderr: null });
 
-  pi.on("session_start", (_event, ctx) => {
-    log?.debug("plannotator-auto session_start", { cwd: ctx.cwd });
-    syncPlanFile(pi, ctx);
-  });
+  pi.on("tool_execution_start", (event) => {
+    if (event.toolName !== "write" && event.toolName !== "edit") {
+      return;
+    }
 
-  pi.on("session_switch", (_event, ctx) => {
-    log?.debug("plannotator-auto session_switch", { cwd: ctx.cwd });
-    syncPlanFile(pi, ctx);
+    toolArgsByCallId.set(event.toolCallId, event.args);
   });
 
   pi.on("tool_execution_end", (event, ctx) => {
@@ -207,10 +198,12 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       return;
     }
 
-    handlePlanFileWrite(pi, ctx, event.toolName, event.args);
-  });
+    const args = toolArgsByCallId.get(event.toolCallId);
+    toolArgsByCallId.delete(event.toolCallId);
+    if (!args) {
+      return;
+    }
 
-  pi.on("session_shutdown", () => {
-    log?.debug("plannotator-auto session_shutdown");
+    handlePlanFileWrite(pi, ctx, event.toolName, args);
   });
 }

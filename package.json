@@ -15,7 +15,8 @@
       "./extensions/skill-toggle",
       "./extensions/bash-hook",
       "./extensions/env-guard",
-      "./extensions/rtk-rewrite"
+      "./extensions/rtk-rewrite",
+      "./extensions/plannotator-auto"
     ]
   },
   "scripts": {

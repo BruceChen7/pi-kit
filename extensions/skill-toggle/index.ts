@@ -260,7 +260,46 @@ function loadSkillFromFile(
   }
 }
 
-function parseFrontmatter(
+function isBlockScalar(value: string): boolean {
+  return value.startsWith("|") || value.startsWith(">");
+}
+
+function readBlockScalar(
+  lines: string[],
+  startIndex: number,
+): { value: string; nextIndex: number } {
+  let indent: number | null = null;
+  const blockLines: string[] = [];
+  let index = startIndex;
+
+  for (; index < lines.length; index++) {
+    const line = lines[index];
+    if (!line.trim()) {
+      blockLines.push("");
+      continue;
+    }
+
+    const match = /^(\s+)(.*)$/.exec(line);
+    if (!match) break;
+
+    const currentIndent = match[1].length;
+    if (indent === null) {
+      indent = currentIndent;
+    }
+
+    if (currentIndent < indent) break;
+
+    blockLines.push(line.slice(indent));
+  }
+
+  return { value: blockLines.join("\n"), nextIndex: index };
+}
+
+function normalizeDescription(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+export function parseFrontmatter(
   content: string,
   fallbackName: string,
 ): { name: string; description: string } {
@@ -274,21 +313,37 @@ function parseFrontmatter(
   }
 
   const frontmatter = content.slice(4, endIndex);
+  const lines = frontmatter.split("\n");
   let name = fallbackName;
   let description = "";
 
-  for (const line of frontmatter.split("\n")) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+
     const colonIndex = line.indexOf(":");
     if (colonIndex === -1) continue;
 
     const key = line.slice(0, colonIndex).trim();
     const value = line.slice(colonIndex + 1).trim();
 
-    if (key === "name") name = value;
-    if (key === "description") description = value;
+    if (key === "name" && value) {
+      name = value;
+      continue;
+    }
+
+    if (key === "description") {
+      if (isBlockScalar(value)) {
+        const { value: blockValue, nextIndex } = readBlockScalar(lines, i + 1);
+        description = blockValue;
+        i = nextIndex - 1;
+      } else {
+        description = value;
+      }
+    }
   }
 
-  return { name, description };
+  return { name, description: normalizeDescription(description) };
 }
 
 function fuzzyScore(query: string, text: string): number {

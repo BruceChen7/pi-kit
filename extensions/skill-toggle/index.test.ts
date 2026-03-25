@@ -185,3 +185,38 @@ describe("settings integration", () => {
     expect(entry.disabledSkills).toEqual(["beta", "gamma"]);
   });
 });
+
+describe("parseFrontmatter", () => {
+  it("parses multi-line description blocks", async () => {
+    createTempHome();
+    const skillToggle = await importSkillToggle();
+    const parseFrontmatter = (
+      skillToggle as {
+        parseFrontmatter?: (
+          content: string,
+          fallbackName: string,
+        ) => { name: string; description: string };
+      }
+    ).parseFrontmatter;
+
+    expect(parseFrontmatter).toBeDefined();
+
+    const content = [
+      "---",
+      "name: office-hours",
+      "description: |",
+      "  Founder-style office hours to clarify the problem, users, and wedge before any code is written.",
+      "  Runs in Startup or Builder mode.",
+      "---",
+      "",
+    ].join("\n");
+
+    const result = parseFrontmatter?.(content, "fallback");
+
+    expect(result).toEqual({
+      name: "office-hours",
+      description:
+        "Founder-style office hours to clarify the problem, users, and wedge before any code is written. Runs in Startup or Builder mode.",
+    });
+  });
+});

@@ -232,6 +232,13 @@ function buildRgArgs(
   return args;
 }
 
+const RG_REGEX_PARSE_ERROR =
+  /regex parse error|unclosed (?:group|character class|bracket)/i;
+
+function isRegexParseError(message: string): boolean {
+  return RG_REGEX_PARSE_ERROR.test(message);
+}
+
 function buildFdArgs(
   pattern: string,
   searchPath: string,
@@ -392,7 +399,14 @@ function createRgTool() {
           }
         };
 
-        (async () => {
+        let literalFallbackUsed = false;
+
+        const runSearch = (useLiteral: boolean) => {
+          if (signal?.aborted) {
+            settle(() => reject(new Error("Operation aborted")));
+            return;
+          }
+
           try {
             const cwd = ctx?.cwd ?? process.cwd();
             const searchPath = resolveToCwd(searchDir || ".", cwd);
@@ -441,7 +455,7 @@ function createRgTool() {
               searchPath,
               glob,
               ignoreCase,
-              literal,
+              useLiteral,
             );
 
             if (!commandExists("rg")) {
@@ -579,15 +593,25 @@ function createRgTool() {
 
               if (!killedDueToLimit && code !== 0 && code !== 1) {
                 const errorMsg = stderr.trim() || `rg exited with code ${code}`;
+                if (!useLiteral && isRegexParseError(errorMsg)) {
+                  literalFallbackUsed = true;
+                  runSearch(true);
+                  return;
+                }
                 settle(() => reject(new Error(errorMsg)));
                 return;
               }
 
               if (matchCount === 0) {
+                const message = literalFallbackUsed
+                  ? "No matches found (retried with literal search after regex parse error)"
+                  : "No matches found";
                 settle(() =>
                   resolve({
-                    content: [{ type: "text", text: "No matches found" }],
-                    details: undefined,
+                    content: [{ type: "text", text: message }],
+                    details: literalFallbackUsed
+                      ? { literalFallback: true }
+                      : undefined,
                   }),
                 );
                 return;
@@ -610,6 +634,13 @@ function createRgTool() {
 
               const details: Record<string, unknown> = {};
               const notices: string[] = [];
+
+              if (literalFallbackUsed) {
+                notices.push(
+                  "Regex parse error detected. Retried with literal search. Set literal=true to skip regex parsing",
+                );
+                details.literalFallback = true;
+              }
 
               if (matchLimitReached) {
                 notices.push(
@@ -645,7 +676,9 @@ function createRgTool() {
           } catch (err) {
             settle(() => reject(err));
           }
-        })();
+        };
+
+        runSearch(literal ?? false);
       });
     },
   };

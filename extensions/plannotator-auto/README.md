@@ -26,8 +26,13 @@ To disable Plannotator Auto explicitly:
 
 ## Behavior
 
-- When the agent `write`/`edit` tool updates the configured plan file, and Plannotator is idle,
-  it sends `/plannotator-set-file <planFile>` and triggers `/plannotator` automatically.
+- When the agent `write`/`edit` tool updates the configured plan file, and Plannotator is idle, it queues:
+  - `/plannotator-set-file <planFile>`
+  - `/plannotator`
+  - `/plannotator-annotate`
+- Auto-trigger waits until the agent is idle and the prompt editor is empty (to avoid interrupting streaming or overwriting input). It retries briefly if busy.
+- In interactive TUI mode it submits commands by simulating Enter; in non-interactive modes it notifies you to run the commands manually.
+- If the editor has pending input, auto-trigger is skipped and a notification is shown.
 
 ## Logging
 

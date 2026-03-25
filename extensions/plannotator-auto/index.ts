@@ -49,6 +49,16 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
 let log: ReturnType<typeof createLogger> | null = null;
 const toolArgsByCallId = new Map<string, unknown>();
 
+type PendingTrigger = {
+  commands: string[];
+  planFile: string;
+  createdAt: number;
+};
+
+// Defer auto-triggering until the agent is idle to avoid interrupting streaming.
+let pendingTrigger: PendingTrigger | null = null;
+let pendingRetry: ReturnType<typeof setTimeout> | null = null;
+
 const loadConfig = (options?: {
   forceReload?: boolean;
 }): PlannotatorAutoConfig => {
@@ -71,30 +81,154 @@ const resolveCommandName = (
   return command?.name ?? null;
 };
 
-const sendCommand = (
+const buildCommandText = (
   pi: ExtensionAPI,
-  ctx: ExtensionContext,
   baseName: string,
   args?: string,
-): void => {
+): string | null => {
   const commandName = resolveCommandName(pi, baseName);
   if (!commandName) {
     log?.warn("plannotator-auto command missing", { baseName });
+    return null;
+  }
+
+  return args ? `/${commandName} ${args}` : `/${commandName}`;
+};
+
+// Best-effort hack: simulate pressing Enter in the TUI by emitting stdin data.
+// Works only in interactive mode; noop in RPC/print modes.
+const emitEnterKey = (): boolean => {
+  if (typeof process?.stdin?.emit !== "function") {
+    return false;
+  }
+
+  try {
+    process.stdin.emit("data", Buffer.from("\r"));
+    return true;
+  } catch (error) {
+    log?.warn("plannotator-auto failed to emit enter", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+};
+
+const scheduleTriggerRetry = (
+  ctx: ExtensionContext,
+  reason: string,
+  delay = 120,
+): void => {
+  if (pendingRetry) {
     return;
   }
 
-  const commandText = args ? `/${commandName} ${args}` : `/${commandName}`;
-  const deliverAs = ctx.isIdle() ? undefined : "steer";
-  if (deliverAs) {
-    pi.sendUserMessage(commandText, { deliverAs });
-  } else {
-    pi.sendUserMessage(commandText);
+  pendingRetry = setTimeout(() => {
+    pendingRetry = null;
+    tryTriggerPlanMode(ctx, reason);
+  }, delay);
+};
+
+const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
+  if (!pendingTrigger) {
+    return;
   }
 
-  log?.debug("plannotator-auto sent command", {
+  if (!ctx.hasUI) {
+    log?.warn("plannotator-auto auto-trigger skipped (no UI)", {
+      reason,
+      planFile: pendingTrigger.planFile,
+    });
+    pendingTrigger = null;
+    return;
+  }
+
+  // Only submit when the agent is idle and the editor is empty to avoid
+  // overwriting user input or interrupting streaming output.
+  if (!ctx.isIdle()) {
+    log?.debug("plannotator-auto deferring trigger (agent busy)", {
+      reason,
+      planFile: pendingTrigger.planFile,
+    });
+    scheduleTriggerRetry(ctx, "busy");
+    return;
+  }
+
+  const editorText = ctx.ui.getEditorText?.() ?? "";
+  if (editorText.trim().length > 0) {
+    ctx.ui.notify(
+      "Plannotator auto-trigger skipped: editor has pending input. Run /plannotator (and /plannotator-annotate) manually when ready.",
+      "info",
+    );
+    log?.info("plannotator-auto skipped trigger (editor not empty)", {
+      reason,
+      planFile: pendingTrigger.planFile,
+    });
+    pendingTrigger = null;
+    return;
+  }
+
+  const [commandText] = pendingTrigger.commands;
+  if (!commandText) {
+    pendingTrigger = null;
+    return;
+  }
+
+  ctx.ui.setEditorText(commandText);
+  if (!emitEnterKey()) {
+    ctx.ui.notify(
+      "Unable to auto-run plannotator commands. Please run /plannotator and /plannotator-annotate manually.",
+      "info",
+    );
+    log?.warn("plannotator-auto auto-trigger failed (stdin unavailable)", {
+      reason,
+      planFile: pendingTrigger.planFile,
+    });
+    pendingTrigger = null;
+    return;
+  }
+
+  pendingTrigger.commands.shift();
+  log?.info("plannotator-auto submitted command via stdin", {
+    reason,
+    planFile: pendingTrigger.planFile,
     commandText,
-    idle: ctx.isIdle(),
   });
+
+  if (pendingTrigger.commands.length === 0) {
+    pendingTrigger = null;
+    return;
+  }
+
+  scheduleTriggerRetry(ctx, "next-command");
+};
+
+// Queue auto-trigger; the actual submission happens when it is safe.
+const queuePlanTrigger = (
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  planFile: string,
+): void => {
+  const commands = [
+    buildCommandText(pi, "plannotator-set-file", planFile),
+    buildCommandText(pi, "plannotator", planFile),
+    buildCommandText(pi, "plannotator-annotate", planFile),
+  ].filter((value): value is string => Boolean(value));
+
+  if (commands.length === 0) {
+    return;
+  }
+
+  pendingTrigger = {
+    commands,
+    planFile,
+    createdAt: Date.now(),
+  };
+
+  log?.debug("plannotator-auto queued trigger", {
+    planFile,
+    commands,
+  });
+  tryTriggerPlanMode(ctx, "queue");
 };
 
 const resolvePlanPath = (cwd: string, planFile: string): string =>
@@ -173,13 +307,12 @@ const handlePlanFileWrite = (
     return;
   }
 
-  log?.info("plannotator-auto triggering /plannotator", {
+  log?.info("plannotator-auto queueing /plannotator trigger", {
     toolName,
     planFile: planConfig.planFile,
     resolvedPlanPath: planConfig.resolvedPlanPath,
   });
-  sendCommand(pi, ctx, "plannotator-set-file", planConfig.planFile);
-  sendCommand(pi, ctx, "plannotator");
+  queuePlanTrigger(pi, ctx, planConfig.planFile);
 };
 
 export default function plannotatorAuto(pi: ExtensionAPI) {
@@ -205,5 +338,9 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     }
 
     handlePlanFileWrite(pi, ctx, event.toolName, args);
+  });
+
+  pi.on("agent_end", (_event, ctx) => {
+    tryTriggerPlanMode(ctx, "agent_end");
   });
 }

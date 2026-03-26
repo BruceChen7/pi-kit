@@ -1,28 +1,48 @@
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
+import {
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
+  isBashToolResult,
 } from "@mariozechner/pi-coding-agent";
-import { registerBashHook } from "../shared/bash-hook.ts";
+import { getBashHookStatus, registerBashHook } from "../shared/bash-hook.ts";
 import { createLogger } from "../shared/logger.ts";
 import { loadGlobalSettings, updateSettings } from "../shared/settings.ts";
+import {
+  createBuildOutputFilter,
+  createTestOutputFilter,
+  DEFAULT_BUILD_COMMANDS,
+  DEFAULT_TEST_COMMANDS,
+  mergeCommandLists,
+} from "./output-filter.ts";
 
 type RtkRewriteConfig = {
   enabled: boolean;
   notify: boolean;
   exclude: string[];
+  buildOutputFiltering: boolean;
+  testOutputAggregation: boolean;
+  buildCommands: string[];
+  testCommands: string[];
 };
 
 type RtkRewriteSettings = {
   enabled?: unknown;
   notify?: unknown;
   exclude?: unknown;
+  buildOutputFiltering?: unknown;
+  testOutputAggregation?: unknown;
+  buildCommands?: unknown;
+  testCommands?: unknown;
 };
 
 const DEFAULT_CONFIG: RtkRewriteConfig = {
   enabled: true,
   notify: true,
   exclude: [],
+  buildOutputFiltering: true,
+  testOutputAggregation: true,
+  buildCommands: [],
+  testCommands: [],
 };
 
 const RTK_HOOK_ID = "rtk";
@@ -36,6 +56,13 @@ const normalizeEntry = (value: string): string => value.trim().toLowerCase();
 
 const uniqueList = (items: string[]): string[] => Array.from(new Set(items));
 
+const normalizeEntries = (value: unknown): string[] => {
+  const raw = Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+  return uniqueList(raw.map(normalizeEntry).filter((item) => item.length > 0));
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -45,17 +72,26 @@ const sanitizeConfig = (value: unknown): RtkRewriteConfig => {
     typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_CONFIG.enabled;
   const notify =
     typeof raw.notify === "boolean" ? raw.notify : DEFAULT_CONFIG.notify;
-  const excludeRaw = Array.isArray(raw.exclude)
-    ? raw.exclude.filter((item): item is string => typeof item === "string")
-    : [];
-  const exclude = uniqueList(
-    excludeRaw.map(normalizeEntry).filter((item) => item.length > 0),
-  );
+  const buildOutputFiltering =
+    typeof raw.buildOutputFiltering === "boolean"
+      ? raw.buildOutputFiltering
+      : DEFAULT_CONFIG.buildOutputFiltering;
+  const testOutputAggregation =
+    typeof raw.testOutputAggregation === "boolean"
+      ? raw.testOutputAggregation
+      : DEFAULT_CONFIG.testOutputAggregation;
+  const exclude = normalizeEntries(raw.exclude);
+  const buildCommands = normalizeEntries(raw.buildCommands);
+  const testCommands = normalizeEntries(raw.testCommands);
 
   return {
     enabled,
     notify,
     exclude,
+    buildOutputFiltering,
+    testOutputAggregation,
+    buildCommands,
+    testCommands,
   };
 };
 
@@ -87,6 +123,10 @@ const updateConfig = (
         enabled: next.enabled,
         notify: next.notify,
         exclude: [...next.exclude],
+        buildOutputFiltering: next.buildOutputFiltering,
+        testOutputAggregation: next.testOutputAggregation,
+        buildCommands: [...next.buildCommands],
+        testCommands: [...next.testCommands],
       },
     };
   });
@@ -106,6 +146,12 @@ const shouldExclude = (command: string, exclude: string[]): boolean => {
     if (normalized.startsWith(`${entry}\t`)) return true;
   }
   return false;
+};
+
+const formatExtras = (entries: string[]): string => {
+  if (entries.length === 0) return "none";
+  if (entries.length <= 3) return entries.join(", ");
+  return `${entries.slice(0, 3).join(", ")} +${entries.length - 3}`;
 };
 
 const runRtkRewrite = async (
@@ -189,11 +235,61 @@ const resolveRtkRewrite = async (
   return null;
 };
 
+const resolveOriginalCommand = (
+  command: string,
+  ctx: ExtensionContext,
+): string => {
+  const status = getBashHookStatus(ctx.cwd);
+  if (status.lastRun && status.lastRun.resolved === command) {
+    return status.lastRun.command;
+  }
+  return command;
+};
+
+const resolveFilteredOutput = (
+  output: string,
+  command: string,
+  config: RtkRewriteConfig,
+): string | null => {
+  const buildCommands = mergeCommandLists(
+    DEFAULT_BUILD_COMMANDS,
+    config.buildCommands,
+  );
+  const testCommands = mergeCommandLists(
+    DEFAULT_TEST_COMMANDS,
+    config.testCommands,
+  );
+  const filters = [
+    createBuildOutputFilter({
+      enabled: config.buildOutputFiltering,
+      commands: buildCommands,
+    }),
+    createTestOutputFilter({
+      enabled: config.testOutputAggregation,
+      commands: testCommands,
+    }),
+  ];
+
+  for (const filter of filters) {
+    if (!filter.enabled) continue;
+    if (!filter.matches(command)) continue;
+    const next = filter.apply(output, command);
+    if (next && next !== output) {
+      return next;
+    }
+    return null;
+  }
+
+  return null;
+};
+
 const formatStatus = (config: RtkRewriteConfig): string => {
   const status = config.enabled ? "enabled" : "disabled";
   const notify = config.notify ? "on" : "off";
   const exclude = config.exclude.length ? config.exclude.join(", ") : "none";
-  return `RTK rewrite ${status} | notify ${notify} | exclude: ${exclude}`;
+  const buildFilter = `${config.buildOutputFiltering ? "on" : "off"} (extra: ${formatExtras(config.buildCommands)})`;
+  const testFilter = `${config.testOutputAggregation ? "on" : "off"} (extra: ${formatExtras(config.testCommands)})`;
+  return `RTK rewrite ${status} | notify ${notify} | exclude: ${exclude} | build filter ${buildFilter} | test filter ${testFilter}`;
 };
 
 const notifyStatus = (
@@ -269,6 +365,37 @@ export default function (pi: ExtensionAPI) {
       const rewritten = await resolveRtkRewrite(command, ctx, source);
       return rewritten ? { command: rewritten } : undefined;
     },
+  });
+
+  pi.on("tool_result", (event, ctx) => {
+    if (!isBashToolResult(event)) return;
+
+    const config = getConfig();
+    if (!config.enabled) return;
+    if (!config.buildOutputFiltering && !config.testOutputAggregation) return;
+
+    const command = (event.input as { command?: string }).command;
+    if (!command) return;
+
+    const originalCommand = resolveOriginalCommand(command, ctx);
+    if (shouldExclude(originalCommand, config.exclude)) return;
+
+    const content = event.content;
+    const textItem = content?.find((item) => item.type === "text");
+    if (!textItem || !("text" in textItem)) return;
+
+    const filtered = resolveFilteredOutput(
+      textItem.text,
+      originalCommand,
+      config,
+    );
+    if (!filtered) return;
+
+    return {
+      content: content.map((item) =>
+        item.type === "text" ? { ...item, text: filtered } : item,
+      ),
+    };
   });
 
   pi.registerCommand("rtk-rewrite-enable", {

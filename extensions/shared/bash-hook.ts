@@ -1,6 +1,11 @@
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type {
+  AgentToolUpdateCallback,
+  BashToolDetails,
+  BashToolInput,
+  ExtensionContext,
+} from "@mariozechner/pi-coding-agent";
 import {
-  createBashTool,
+  createBashToolDefinition,
   createLocalBashOperations,
 } from "@mariozechner/pi-coding-agent";
 import { loadSettings } from "./settings.ts";
@@ -200,23 +205,32 @@ export const runBashHooks = async (
 };
 
 export const createBashHookTool = (cwd: string) => {
-  const baseTool = createBashTool(cwd);
+  const baseTool = createBashToolDefinition(cwd);
 
   return {
     ...baseTool,
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
+    async execute(
+      toolCallId: string,
+      params: BashToolInput,
+      signal: AbortSignal | undefined,
+      onUpdate:
+        | AgentToolUpdateCallback<BashToolDetails | undefined>
+        | undefined,
+      ctx: ExtensionContext,
+    ) {
       const resolved = await runBashHooks({
         command: params.command,
         ctx,
         cwd: ctx.cwd,
         source: "tool",
       });
-      const bashTool = createBashTool(ctx.cwd);
+      const bashTool = createBashToolDefinition(ctx.cwd);
       return bashTool.execute(
         toolCallId,
         { ...params, command: resolved.command },
         signal,
         onUpdate,
+        ctx,
       );
     },
   };

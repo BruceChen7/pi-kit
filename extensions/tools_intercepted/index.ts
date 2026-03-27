@@ -32,8 +32,10 @@ import path, {
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import type {
+  AgentToolResult,
   ExtensionAPI,
   ExtensionContext,
+  Theme,
 } from "@mariozechner/pi-coding-agent";
 import {
   DEFAULT_MAX_BYTES,
@@ -42,7 +44,7 @@ import {
   truncateLine,
 } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
+import { type Static, Type } from "@sinclair/typebox";
 import { globSync } from "glob";
 import { createLogger } from "../shared/logger.ts";
 
@@ -332,7 +334,7 @@ function createRgTool() {
     label: "rg",
     description: `Search file contents with ripgrep. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_GREP_LIMIT} matches or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
     parameters: grepSchema,
-    renderCall(args, theme) {
+    renderCall(args: Static<typeof grepSchema>, theme: Theme) {
       const searchPath = args.path ?? ".";
       const command = formatCommand(
         "rg",
@@ -385,301 +387,311 @@ function createRgTool() {
       _onUpdate?: unknown,
       ctx?: ExtensionContext,
     ) {
-      return new Promise((resolve, reject) => {
-        if (signal?.aborted) {
-          reject(new Error("Operation aborted"));
-          return;
-        }
-
-        let settled = false;
-        const settle = (fn: () => void) => {
-          if (!settled) {
-            settled = true;
-            fn();
-          }
-        };
-
-        let literalFallbackUsed = false;
-
-        const runSearch = (useLiteral: boolean) => {
+      return new Promise<AgentToolResult<Record<string, unknown> | undefined>>(
+        (resolve, reject) => {
           if (signal?.aborted) {
-            settle(() => reject(new Error("Operation aborted")));
+            reject(new Error("Operation aborted"));
             return;
           }
 
-          try {
-            const cwd = ctx?.cwd ?? process.cwd();
-            const searchPath = resolveToCwd(searchDir || ".", cwd);
-            let isDirectory: boolean;
+          let settled = false;
+          const settle = (fn: () => void) => {
+            if (!settled) {
+              settled = true;
+              fn();
+            }
+          };
+
+          let literalFallbackUsed = false;
+
+          const runSearch = (useLiteral: boolean) => {
+            if (signal?.aborted) {
+              settle(() => reject(new Error("Operation aborted")));
+              return;
+            }
 
             try {
-              isDirectory = statSync(searchPath).isDirectory();
-            } catch {
-              settle(() => reject(new Error(`Path not found: ${searchPath}`)));
-              return;
-            }
+              const cwd = ctx?.cwd ?? process.cwd();
+              const searchPath = resolveToCwd(searchDir || ".", cwd);
+              let isDirectory: boolean;
 
-            const contextValue = context && context > 0 ? context : 0;
-            const effectiveLimit = Math.max(1, limit ?? DEFAULT_GREP_LIMIT);
-
-            const formatPath = (filePath: string) => {
-              if (isDirectory) {
-                const relativePath = relative(searchPath, filePath);
-                if (relativePath && !relativePath.startsWith("..")) {
-                  return relativePath.replace(/\\/g, "/");
-                }
-              }
-              return basename(filePath);
-            };
-
-            const fileCache = new Map<string, string[]>();
-            const getFileLines = async (filePath: string) => {
-              let lines = fileCache.get(filePath);
-              if (!lines) {
-                try {
-                  const content = await readFile(filePath, "utf-8");
-                  lines = content
-                    .replace(/\r\n/g, "\n")
-                    .replace(/\r/g, "\n")
-                    .split("\n");
-                } catch {
-                  lines = [];
-                }
-                fileCache.set(filePath, lines);
-              }
-              return lines;
-            };
-
-            const args = buildRgArgs(
-              pattern,
-              searchPath,
-              glob,
-              ignoreCase,
-              useLiteral,
-            );
-
-            if (!commandExists("rg")) {
-              settle(() => reject(new Error(RG_INSTALL_HINT)));
-              return;
-            }
-
-            const child = spawn("rg", args, {
-              stdio: ["ignore", "pipe", "pipe"],
-            });
-            const rl = createInterface({ input: child.stdout });
-
-            let stderr = "";
-            let matchCount = 0;
-            let matchLimitReached = false;
-            let linesTruncated = false;
-            let aborted = false;
-            let killedDueToLimit = false;
-            const matches: Array<{ filePath: string; lineNumber: number }> = [];
-
-            const cleanup = () => {
-              rl.close();
-              signal?.removeEventListener("abort", onAbort);
-            };
-
-            const stopChild = (dueToLimit = false) => {
-              if (!child.killed) {
-                killedDueToLimit = dueToLimit;
-                child.kill();
-              }
-            };
-
-            const onAbort = () => {
-              aborted = true;
-              stopChild();
-            };
-
-            signal?.addEventListener("abort", onAbort, { once: true });
-
-            child.stderr?.on("data", (chunk) => {
-              stderr += chunk.toString();
-            });
-
-            const formatBlock = async (
-              filePath: string,
-              lineNumber: number,
-            ) => {
-              const relativePath = formatPath(filePath);
-              const lines = await getFileLines(filePath);
-              if (!lines.length) {
-                return [`${relativePath}:${lineNumber}: (unable to read file)`];
-              }
-
-              const block: string[] = [];
-              const start =
-                contextValue > 0
-                  ? Math.max(1, lineNumber - contextValue)
-                  : lineNumber;
-              const end =
-                contextValue > 0
-                  ? Math.min(lines.length, lineNumber + contextValue)
-                  : lineNumber;
-
-              for (let current = start; current <= end; current++) {
-                const lineText = lines[current - 1] ?? "";
-                const sanitized = lineText.replace(/\r/g, "");
-                const isMatchLine = current === lineNumber;
-                const { text: truncatedText, wasTruncated } =
-                  truncateLine(sanitized);
-
-                if (wasTruncated) {
-                  linesTruncated = true;
-                }
-
-                if (isMatchLine) {
-                  block.push(`${relativePath}:${current}: ${truncatedText}`);
-                } else {
-                  block.push(`${relativePath}-${current}- ${truncatedText}`);
-                }
-              }
-
-              return block;
-            };
-
-            rl.on("line", (line) => {
-              if (!line.trim() || matchCount >= effectiveLimit) {
-                return;
-              }
-
-              let event: unknown;
               try {
-                event = JSON.parse(line);
+                isDirectory = statSync(searchPath).isDirectory();
               } catch {
+                settle(() =>
+                  reject(new Error(`Path not found: ${searchPath}`)),
+                );
                 return;
               }
 
-              if (!isRgMatchEvent(event)) {
-                return;
-              }
+              const contextValue = context && context > 0 ? context : 0;
+              const effectiveLimit = Math.max(1, limit ?? DEFAULT_GREP_LIMIT);
 
-              matchCount++;
-              const filePath = event.data.path?.text;
-              const lineNumber = event.data.line_number;
-              if (
-                typeof filePath === "string" &&
-                typeof lineNumber === "number"
-              ) {
-                matches.push({ filePath, lineNumber });
-              }
-              if (matchCount >= effectiveLimit) {
-                matchLimitReached = true;
-                stopChild(true);
-              }
-            });
+              const formatPath = (filePath: string) => {
+                if (isDirectory) {
+                  const relativePath = relative(searchPath, filePath);
+                  if (relativePath && !relativePath.startsWith("..")) {
+                    return relativePath.replace(/\\/g, "/");
+                  }
+                }
+                return basename(filePath);
+              };
 
-            child.on("error", (error) => {
-              cleanup();
-              const err = error as NodeJS.ErrnoException;
-              if (err.code === "ENOENT") {
+              const fileCache = new Map<string, string[]>();
+              const getFileLines = async (filePath: string) => {
+                let lines = fileCache.get(filePath);
+                if (!lines) {
+                  try {
+                    const content = await readFile(filePath, "utf-8");
+                    lines = content
+                      .replace(/\r\n/g, "\n")
+                      .replace(/\r/g, "\n")
+                      .split("\n");
+                  } catch {
+                    lines = [];
+                  }
+                  fileCache.set(filePath, lines);
+                }
+                return lines;
+              };
+
+              const args = buildRgArgs(
+                pattern,
+                searchPath,
+                glob,
+                ignoreCase,
+                useLiteral,
+              );
+
+              if (!commandExists("rg")) {
                 settle(() => reject(new Error(RG_INSTALL_HINT)));
                 return;
               }
-              settle(() =>
-                reject(new Error(`Failed to run rg: ${error.message}`)),
-              );
-            });
 
-            child.on("close", async (code) => {
-              cleanup();
+              const child = spawn("rg", args, {
+                stdio: ["ignore", "pipe", "pipe"],
+              });
+              const rl = createInterface({ input: child.stdout });
 
-              if (aborted) {
-                settle(() => reject(new Error("Operation aborted")));
-                return;
-              }
+              let stderr = "";
+              let matchCount = 0;
+              let matchLimitReached = false;
+              let linesTruncated = false;
+              let aborted = false;
+              let killedDueToLimit = false;
+              const matches: Array<{ filePath: string; lineNumber: number }> =
+                [];
 
-              if (!killedDueToLimit && code !== 0 && code !== 1) {
-                const errorMsg = stderr.trim() || `rg exited with code ${code}`;
-                if (!useLiteral && isRegexParseError(errorMsg)) {
-                  literalFallbackUsed = true;
-                  runSearch(true);
+              const cleanup = () => {
+                rl.close();
+                signal?.removeEventListener("abort", onAbort);
+              };
+
+              const stopChild = (dueToLimit = false) => {
+                if (!child.killed) {
+                  killedDueToLimit = dueToLimit;
+                  child.kill();
+                }
+              };
+
+              const onAbort = () => {
+                aborted = true;
+                stopChild();
+              };
+
+              signal?.addEventListener("abort", onAbort, { once: true });
+
+              child.stderr?.on("data", (chunk) => {
+                stderr += chunk.toString();
+              });
+
+              const formatBlock = async (
+                filePath: string,
+                lineNumber: number,
+              ) => {
+                const relativePath = formatPath(filePath);
+                const lines = await getFileLines(filePath);
+                if (!lines.length) {
+                  return [
+                    `${relativePath}:${lineNumber}: (unable to read file)`,
+                  ];
+                }
+
+                const block: string[] = [];
+                const start =
+                  contextValue > 0
+                    ? Math.max(1, lineNumber - contextValue)
+                    : lineNumber;
+                const end =
+                  contextValue > 0
+                    ? Math.min(lines.length, lineNumber + contextValue)
+                    : lineNumber;
+
+                for (let current = start; current <= end; current++) {
+                  const lineText = lines[current - 1] ?? "";
+                  const sanitized = lineText.replace(/\r/g, "");
+                  const isMatchLine = current === lineNumber;
+                  const { text: truncatedText, wasTruncated } =
+                    truncateLine(sanitized);
+
+                  if (wasTruncated) {
+                    linesTruncated = true;
+                  }
+
+                  if (isMatchLine) {
+                    block.push(`${relativePath}:${current}: ${truncatedText}`);
+                  } else {
+                    block.push(`${relativePath}-${current}- ${truncatedText}`);
+                  }
+                }
+
+                return block;
+              };
+
+              rl.on("line", (line) => {
+                if (!line.trim() || matchCount >= effectiveLimit) {
                   return;
                 }
-                settle(() => reject(new Error(errorMsg)));
-                return;
-              }
 
-              if (matchCount === 0) {
-                const message = literalFallbackUsed
-                  ? "No matches found (retried with literal search after regex parse error)"
-                  : "No matches found";
+                let event: unknown;
+                try {
+                  event = JSON.parse(line);
+                } catch {
+                  return;
+                }
+
+                if (!isRgMatchEvent(event)) {
+                  return;
+                }
+
+                matchCount++;
+                const filePath = event.data.path?.text;
+                const lineNumber = event.data.line_number;
+                if (
+                  typeof filePath === "string" &&
+                  typeof lineNumber === "number"
+                ) {
+                  matches.push({ filePath, lineNumber });
+                }
+                if (matchCount >= effectiveLimit) {
+                  matchLimitReached = true;
+                  stopChild(true);
+                }
+              });
+
+              child.on("error", (error) => {
+                cleanup();
+                const err = error as NodeJS.ErrnoException;
+                if (err.code === "ENOENT") {
+                  settle(() => reject(new Error(RG_INSTALL_HINT)));
+                  return;
+                }
+                settle(() =>
+                  reject(new Error(`Failed to run rg: ${error.message}`)),
+                );
+              });
+
+              child.on("close", async (code) => {
+                cleanup();
+
+                if (aborted) {
+                  settle(() => reject(new Error("Operation aborted")));
+                  return;
+                }
+
+                if (!killedDueToLimit && code !== 0 && code !== 1) {
+                  const errorMsg =
+                    stderr.trim() || `rg exited with code ${code}`;
+                  if (!useLiteral && isRegexParseError(errorMsg)) {
+                    literalFallbackUsed = true;
+                    runSearch(true);
+                    return;
+                  }
+                  settle(() => reject(new Error(errorMsg)));
+                  return;
+                }
+
+                if (matchCount === 0) {
+                  const message = literalFallbackUsed
+                    ? "No matches found (retried with literal search after regex parse error)"
+                    : "No matches found";
+                  settle(() =>
+                    resolve({
+                      content: [{ type: "text", text: message }],
+                      details: literalFallbackUsed
+                        ? { literalFallback: true }
+                        : undefined,
+                    }),
+                  );
+                  return;
+                }
+
+                const outputLines: string[] = [];
+                for (const match of matches) {
+                  const block = await formatBlock(
+                    match.filePath,
+                    match.lineNumber,
+                  );
+                  outputLines.push(...block);
+                }
+
+                const rawOutput = outputLines.join("\n");
+                const truncation = truncateHead(rawOutput, {
+                  maxLines: Number.MAX_SAFE_INTEGER,
+                });
+                let output = truncation.content;
+
+                const details: Record<string, unknown> = {};
+                const notices: string[] = [];
+
+                if (literalFallbackUsed) {
+                  notices.push(
+                    "Regex parse error detected. Retried with literal search. Set literal=true to skip regex parsing",
+                  );
+                  details.literalFallback = true;
+                }
+
+                if (matchLimitReached) {
+                  notices.push(
+                    `${effectiveLimit} matches limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
+                  );
+                  details.matchLimitReached = effectiveLimit;
+                }
+
+                if (truncation.truncated) {
+                  notices.push(
+                    `${formatSize(DEFAULT_MAX_BYTES)} limit reached`,
+                  );
+                  details.truncation = truncation;
+                }
+
+                if (linesTruncated) {
+                  notices.push(
+                    `Some lines truncated to ${GREP_MAX_LINE_LENGTH} chars. Use read tool to see full lines`,
+                  );
+                  details.linesTruncated = true;
+                }
+
+                if (notices.length > 0) {
+                  output += `\n\n[${notices.join(". ")}]`;
+                }
+
                 settle(() =>
                   resolve({
-                    content: [{ type: "text", text: message }],
-                    details: literalFallbackUsed
-                      ? { literalFallback: true }
-                      : undefined,
+                    content: [{ type: "text", text: output }],
+                    details:
+                      Object.keys(details).length > 0 ? details : undefined,
                   }),
                 );
-                return;
-              }
-
-              const outputLines: string[] = [];
-              for (const match of matches) {
-                const block = await formatBlock(
-                  match.filePath,
-                  match.lineNumber,
-                );
-                outputLines.push(...block);
-              }
-
-              const rawOutput = outputLines.join("\n");
-              const truncation = truncateHead(rawOutput, {
-                maxLines: Number.MAX_SAFE_INTEGER,
               });
-              let output = truncation.content;
+            } catch (err) {
+              settle(() => reject(err));
+            }
+          };
 
-              const details: Record<string, unknown> = {};
-              const notices: string[] = [];
-
-              if (literalFallbackUsed) {
-                notices.push(
-                  "Regex parse error detected. Retried with literal search. Set literal=true to skip regex parsing",
-                );
-                details.literalFallback = true;
-              }
-
-              if (matchLimitReached) {
-                notices.push(
-                  `${effectiveLimit} matches limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
-                );
-                details.matchLimitReached = effectiveLimit;
-              }
-
-              if (truncation.truncated) {
-                notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
-                details.truncation = truncation;
-              }
-
-              if (linesTruncated) {
-                notices.push(
-                  `Some lines truncated to ${GREP_MAX_LINE_LENGTH} chars. Use read tool to see full lines`,
-                );
-                details.linesTruncated = true;
-              }
-
-              if (notices.length > 0) {
-                output += `\n\n[${notices.join(". ")}]`;
-              }
-
-              settle(() =>
-                resolve({
-                  content: [{ type: "text", text: output }],
-                  details:
-                    Object.keys(details).length > 0 ? details : undefined,
-                }),
-              );
-            });
-          } catch (err) {
-            settle(() => reject(err));
-          }
-        };
-
-        runSearch(literal ?? false);
-      });
+          runSearch(literal ?? false);
+        },
+      );
     },
   };
 }
@@ -690,7 +702,7 @@ function createFdTool() {
     label: "fd",
     description: `Search for files by glob pattern using fd. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_FIND_LIMIT} results or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first).`,
     parameters: findSchema,
-    renderCall(args, theme) {
+    renderCall(args: Static<typeof findSchema>, theme: Theme) {
       const searchPath = args.path ?? ".";
       const effectiveLimit = args.limit ?? DEFAULT_FIND_LIMIT;
       const command = formatCommand(
@@ -715,151 +727,154 @@ function createFdTool() {
       _onUpdate?: unknown,
       ctx?: ExtensionContext,
     ) {
-      return new Promise((resolve, reject) => {
-        if (signal?.aborted) {
-          reject(new Error("Operation aborted"));
-          return;
-        }
+      return new Promise<AgentToolResult<Record<string, unknown> | undefined>>(
+        (resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new Error("Operation aborted"));
+            return;
+          }
 
-        const onAbort = () => reject(new Error("Operation aborted"));
-        signal?.addEventListener("abort", onAbort, { once: true });
+          const onAbort = () => reject(new Error("Operation aborted"));
+          signal?.addEventListener("abort", onAbort, { once: true });
 
-        (async () => {
-          try {
-            const cwd = ctx?.cwd ?? process.cwd();
-            const searchPath = resolveToCwd(searchDir || ".", cwd);
-            const effectiveLimit = limit ?? DEFAULT_FIND_LIMIT;
-
-            const gitignoreFiles = new Set<string>();
-            const rootGitignore = join(searchPath, ".gitignore");
-            if (existsSync(rootGitignore)) {
-              gitignoreFiles.add(rootGitignore);
-            }
-
+          (async () => {
             try {
-              const nestedGitignores = globSync("**/.gitignore", {
-                cwd: searchPath,
-                dot: true,
-                absolute: true,
-                ignore: ["**/node_modules/**", "**/.git/**"],
-              });
+              const cwd = ctx?.cwd ?? process.cwd();
+              const searchPath = resolveToCwd(searchDir || ".", cwd);
+              const effectiveLimit = limit ?? DEFAULT_FIND_LIMIT;
 
-              for (const file of nestedGitignores) {
-                gitignoreFiles.add(file);
+              const gitignoreFiles = new Set<string>();
+              const rootGitignore = join(searchPath, ".gitignore");
+              if (existsSync(rootGitignore)) {
+                gitignoreFiles.add(rootGitignore);
               }
-            } catch {
-              // Ignore glob errors
-            }
 
-            const args = buildFdArgs(
-              pattern,
-              searchPath,
-              effectiveLimit,
-              gitignoreFiles,
-            );
+              try {
+                const nestedGitignores = globSync("**/.gitignore", {
+                  cwd: searchPath,
+                  dot: true,
+                  absolute: true,
+                  ignore: ["**/node_modules/**", "**/.git/**"],
+                });
 
-            if (!commandExists("fd")) {
-              signal?.removeEventListener("abort", onAbort);
-              reject(new Error(FD_INSTALL_HINT));
-              return;
-            }
+                for (const file of nestedGitignores) {
+                  gitignoreFiles.add(file);
+                }
+              } catch {
+                // Ignore glob errors
+              }
 
-            const result = spawnSync("fd", args, {
-              encoding: "utf-8",
-              maxBuffer: 10 * 1024 * 1024,
-            });
+              const args = buildFdArgs(
+                pattern,
+                searchPath,
+                effectiveLimit,
+                gitignoreFiles,
+              );
 
-            signal?.removeEventListener("abort", onAbort);
-
-            if (result.error) {
-              const err = result.error as NodeJS.ErrnoException;
-              if (err.code === "ENOENT") {
+              if (!commandExists("fd")) {
+                signal?.removeEventListener("abort", onAbort);
                 reject(new Error(FD_INSTALL_HINT));
                 return;
               }
-              reject(new Error(`Failed to run fd: ${result.error.message}`));
-              return;
-            }
 
-            const output = result.stdout?.trim() || "";
-            if (result.status !== 0) {
-              const errorMsg =
-                result.stderr?.trim() || `fd exited with code ${result.status}`;
-              if (!output) {
-                reject(new Error(errorMsg));
+              const result = spawnSync("fd", args, {
+                encoding: "utf-8",
+                maxBuffer: 10 * 1024 * 1024,
+              });
+
+              signal?.removeEventListener("abort", onAbort);
+
+              if (result.error) {
+                const err = result.error as NodeJS.ErrnoException;
+                if (err.code === "ENOENT") {
+                  reject(new Error(FD_INSTALL_HINT));
+                  return;
+                }
+                reject(new Error(`Failed to run fd: ${result.error.message}`));
                 return;
               }
-            }
 
-            if (!output) {
-              resolve({
-                content: [
-                  { type: "text", text: "No files found matching pattern" },
-                ],
-                details: undefined,
+              const output = result.stdout?.trim() || "";
+              if (result.status !== 0) {
+                const errorMsg =
+                  result.stderr?.trim() ||
+                  `fd exited with code ${result.status}`;
+                if (!output) {
+                  reject(new Error(errorMsg));
+                  return;
+                }
+              }
+
+              if (!output) {
+                resolve({
+                  content: [
+                    { type: "text", text: "No files found matching pattern" },
+                  ],
+                  details: undefined,
+                });
+                return;
+              }
+
+              const lines = output.split("\n");
+              const relativized: string[] = [];
+
+              for (const rawLine of lines) {
+                const line = rawLine.replace(/\r$/, "").trim();
+                if (!line) continue;
+                const hadTrailingSlash =
+                  line.endsWith("/") || line.endsWith("\\");
+
+                let relativePath = line;
+                if (line.startsWith(searchPath)) {
+                  relativePath = line.slice(searchPath.length + 1);
+                } else {
+                  relativePath = path.relative(searchPath, line);
+                }
+
+                if (hadTrailingSlash && !relativePath.endsWith("/")) {
+                  relativePath += "/";
+                }
+
+                relativized.push(toPosixPath(relativePath));
+              }
+
+              const resultLimitReached = relativized.length >= effectiveLimit;
+              const rawOutput = relativized.join("\n");
+              const truncation = truncateHead(rawOutput, {
+                maxLines: Number.MAX_SAFE_INTEGER,
               });
-              return;
-            }
+              let resultOutput = truncation.content;
 
-            const lines = output.split("\n");
-            const relativized: string[] = [];
+              const details: Record<string, unknown> = {};
+              const notices: string[] = [];
 
-            for (const rawLine of lines) {
-              const line = rawLine.replace(/\r$/, "").trim();
-              if (!line) continue;
-              const hadTrailingSlash =
-                line.endsWith("/") || line.endsWith("\\");
-
-              let relativePath = line;
-              if (line.startsWith(searchPath)) {
-                relativePath = line.slice(searchPath.length + 1);
-              } else {
-                relativePath = path.relative(searchPath, line);
+              if (resultLimitReached) {
+                notices.push(
+                  `${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
+                );
+                details.resultLimitReached = effectiveLimit;
               }
 
-              if (hadTrailingSlash && !relativePath.endsWith("/")) {
-                relativePath += "/";
+              if (truncation.truncated) {
+                notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+                details.truncation = truncation;
               }
 
-              relativized.push(toPosixPath(relativePath));
+              if (notices.length > 0) {
+                resultOutput += `\n\n[${notices.join(". ")}]`;
+              }
+
+              resolve({
+                content: [{ type: "text", text: resultOutput }],
+                details: Object.keys(details).length > 0 ? details : undefined,
+              });
+            } catch (err) {
+              signal?.removeEventListener("abort", onAbort);
+              reject(err);
             }
-
-            const resultLimitReached = relativized.length >= effectiveLimit;
-            const rawOutput = relativized.join("\n");
-            const truncation = truncateHead(rawOutput, {
-              maxLines: Number.MAX_SAFE_INTEGER,
-            });
-            let resultOutput = truncation.content;
-
-            const details: Record<string, unknown> = {};
-            const notices: string[] = [];
-
-            if (resultLimitReached) {
-              notices.push(
-                `${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
-              );
-              details.resultLimitReached = effectiveLimit;
-            }
-
-            if (truncation.truncated) {
-              notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
-              details.truncation = truncation;
-            }
-
-            if (notices.length > 0) {
-              resultOutput += `\n\n[${notices.join(". ")}]`;
-            }
-
-            resolve({
-              content: [{ type: "text", text: resultOutput }],
-              details: Object.keys(details).length > 0 ? details : undefined,
-            });
-          } catch (err) {
-            signal?.removeEventListener("abort", onAbort);
-            reject(err);
-          }
-        })();
-      });
+          })();
+        },
+      );
     },
   };
 }

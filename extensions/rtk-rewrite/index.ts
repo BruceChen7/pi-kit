@@ -436,16 +436,16 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("rtk-rewrite-status", {
     description: "Show RTK auto-rewrite status",
     handler: async (_args, ctx) => {
-      const config = loadConfig({ forceReload: true });
+      const config = loadConfig();
       notifyStatus(ctx, config);
     },
   });
 
   pi.on("session_start", () => {
-    loadConfig({ forceReload: true });
+    loadConfig();
   });
 
   pi.on("session_switch", () => {
-    loadConfig({ forceReload: true });
+    loadConfig();
   });
 }

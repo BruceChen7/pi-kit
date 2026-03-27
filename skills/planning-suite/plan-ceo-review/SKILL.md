@@ -51,7 +51,7 @@ Recommendation: ... (optional)
    - `git diff --no-ext-diff origin/$BASE --stat` (if origin exists)
    - `git stash list`
    - `rg -n "TODO|FIXME|HACK|XXX" -g "!**/node_modules/**" -g "!**/.git/**" . | head -30`
-3. Read `CLAUDE.md`, `TODOS.md`, and any architecture docs if present.
+3. Read `AGENTS.md`, `TODOS.md`, and any architecture docs if present.
 4. If an office-hours doc exists, read the latest:
    - `$REPO_ROOT/.pi/plans/$SLUG/office-hours/*.md`
 5. Ask the user to provide the plan (paste it or point to a file). Read the plan file if given.

@@ -8,11 +8,11 @@
 
 ## Task Management
 
-1. **Plan First**: Write plan to `.pi/PLAN.md` with checkable items
+1. **Plan First**: Write plan to `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` with checkable items (kebab-case slug)
 2. **Verify Plan**: Check in before starting implementation
 3. **Track Progress**: Mark items complete as you go
 4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `.pi/PLAN.md`
+5. **Document Results**: Add review section to the plan file you created
 6. **Capture Lessons**: Update `.pi/lessons.md` after corrections
 
 ## Core Principles

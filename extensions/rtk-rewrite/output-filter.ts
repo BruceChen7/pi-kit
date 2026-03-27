@@ -48,38 +48,52 @@ export const DEFAULT_TEST_COMMANDS = [
 ];
 
 const SKIP_PATTERNS = [
-  /^\s*Compiling\s+/,
-  /^\s*Checking\s+/,
-  /^\s*Downloading\s+/,
-  /^\s*Downloaded\s+/,
-  /^\s*Fetching\s+/,
-  /^\s*Fetched\s+/,
-  /^\s*Updating\s+/,
-  /^\s*Updated\s+/,
-  /^\s*Building\s+/,
-  /^\s*Generated\s+/,
-  /^\s*Creating\s+/,
-  /^\s*Running\s+/,
+  /^\s*Compiling\s+/, // Cargo/Rust "Compiling ..."
+  /^\s*Checking\s+/, // Cargo/Rust "Checking ..."
+  /^\s*Downloading\s+/, // Downloader progress lines
+  /^\s*Downloaded\s+/, // Downloader completion lines
+  /^\s*Fetching\s+/, // Fetch progress lines
+  /^\s*Fetched\s+/, // Fetch completion lines
+  /^\s*Updating\s+/, // Package update progress
+  /^\s*Updated\s+/, // Package update completion
+  /^\s*Building\s+/, // Generic build progress
+  /^\s*Generated\s+/, // Generation progress
+  /^\s*Creating\s+/, // Creation progress
+  /^\s*Running\s+/, // Running steps
 ];
 
-const ERROR_START_PATTERNS = [/^error\[/, /^error:/, /^\[ERROR\]/, /^FAIL/];
+const ERROR_START_PATTERNS = [
+  /^error\[/, // Rust-style "error[E...]"
+  /^error:/, // Generic lowercase error prefix
+  /^\[ERROR\]/, // Bracketed uppercase error prefix
+  /^FAIL/, // Test failure prefix
+];
 
-const WARNING_PATTERNS = [/^warning:/, /^\[WARNING\]/, /^warn:/];
+const WARNING_PATTERNS = [
+  /^warning:/, // Generic warning prefix
+  /^\[WARNING\]/, // Bracketed warning prefix
+  /^warn:/, // Short warning prefix
+];
 
 const TEST_RESULT_PATTERNS = [
-  /test result:\s*(\w+)\.\s*(\d+)\s*passed;\s*(\d+)\s*failed;/,
-  /(\d+)\s*passed(?:,\s*(\d+)\s*failed)?(?:,\s*(\d+)\s*skipped)?/i,
-  /(\d+)\s*pass(?:,\s*(\d+)\s*fail)?(?:,\s*(\d+)\s*skip)?/i,
-  /tests?:\s*(\d+)\s*passed(?:,\s*(\d+)\s*failed)?(?:,\s*(\d+)\s*skipped)?/i,
+  /test result:\s*(\w+)\.\s*(\d+)\s*passed;\s*(\d+)\s*failed;/, // Cargo test summary
+  /(\d+)\s*passed(?:,\s*(\d+)\s*failed)?(?:,\s*(\d+)\s*skipped)?/i, // "2 passed, 1 failed"
+  /(\d+)\s*pass(?:,\s*(\d+)\s*fail)?(?:,\s*(\d+)\s*skip)?/i, // "2 pass, 1 fail"
+  /tests?:\s*(\d+)\s*passed(?:,\s*(\d+)\s*failed)?(?:,\s*(\d+)\s*skipped)?/i, // "tests: 2 passed"
 ];
 
 const FAILURE_START_PATTERNS = [
-  /^FAIL\s+/,
-  /^FAILED\s+/,
-  /^\s*●\s+/,
-  /^\s*✕\s+/,
-  /test\s+\w+\s+\.\.\.\s*FAILED/,
-  /thread\s+'\w+'\s+panicked/,
+  /^FAIL\s+/, // Jest/Vitest FAIL lines
+  /^FAILED\s+/, // Uppercase FAILED prefix
+  /^\s*●\s+/, // Jest failure bullet
+  /^\s*✕\s+/, // Failure marker
+  /test\s+\w+\s+\.\.\.\s*FAILED/, // Rust-style "test foo ... FAILED"
+  /thread\s+'\w+'\s+panicked/, // Rust panic header
+];
+
+const LOCATION_LINE_PATTERNS = [
+  /\bFile\s+"[^"]+",\s+line\s+\d+/, // Python traceback "File ..., line N"
+  /(?:^|[\s(])[^\s()]+?\.[a-zA-Z0-9]+:\d+(?::\d+)?/, // file.ext:line(:col)
 ];
 
 const normalizeCommandList = (commands: string[]): string[] => {
@@ -110,6 +124,17 @@ const isWarning = (line: string): boolean =>
 
 const isFailureStart = (line: string): boolean =>
   FAILURE_START_PATTERNS.some((pattern) => pattern.test(line));
+
+const isLocationLine = (line: string): boolean =>
+  LOCATION_LINE_PATTERNS.some((pattern) => pattern.test(line));
+
+const formatFailureLine = (line: string, maxLength: number): string => {
+  const trimmed = line.trimEnd();
+  if (isLocationLine(trimmed) || trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, maxLength)}...`;
+};
 
 export function isBuildCommand(
   command: string | undefined | null,
@@ -344,18 +369,33 @@ export function aggregateTestOutput(
     for (const failure of summary.failures.slice(0, 5)) {
       const failureLines = failure.split("\n");
       const firstLine = failureLines[0];
-      result.push(
-        `   • ${firstLine.slice(0, 70)}${firstLine.length > 70 ? "..." : ""}`,
-      );
-      for (const line of failureLines.slice(1, 4)) {
+      const includedIndexes = new Set<number>([0]);
+
+      result.push(`   • ${formatFailureLine(firstLine, 70)}`);
+
+      for (let index = 1; index < failureLines.length && index < 4; index++) {
+        const line = failureLines[index];
         if (line.trim()) {
-          result.push(
-            `     ${line.slice(0, 65)}${line.length > 65 ? "..." : ""}`,
-          );
+          result.push(`     ${formatFailureLine(line, 65)}`);
+          includedIndexes.add(index);
         }
       }
-      if (failureLines.length > 4) {
-        result.push(`     ... (${failureLines.length - 4} more lines)`);
+
+      const locationIndexes = failureLines
+        .map((line, index) => (isLocationLine(line) ? index : -1))
+        .filter((index) => index >= 0 && !includedIndexes.has(index));
+
+      for (const index of locationIndexes.slice(0, 2)) {
+        const line = failureLines[index];
+        if (line.trim()) {
+          result.push(`     ${formatFailureLine(line, 120)}`);
+          includedIndexes.add(index);
+        }
+      }
+
+      const hiddenCount = failureLines.length - includedIndexes.size;
+      if (hiddenCount > 0) {
+        result.push(`     ... (${hiddenCount} more lines)`);
       }
     }
     if (summary.failures.length > 5) {

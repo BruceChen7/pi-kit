@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import type {
   ExtensionAPI,
@@ -7,7 +8,7 @@ import { createLogger } from "../shared/logger.ts";
 import { loadGlobalSettings } from "../shared/settings.ts";
 
 type PlannotatorAutoConfig = {
-  planFile: string | null;
+  planFile?: string | null;
 };
 
 type PlannotatorAutoSettings = {
@@ -19,18 +20,23 @@ type PlannotatorState = {
   planFilePath?: string;
 };
 
-const DEFAULT_PLAN_FILE = ".pi/PLAN.md";
+type PlanFileMode = "file" | "directory";
 
-const DEFAULT_CONFIG: PlannotatorAutoConfig = {
-  planFile: DEFAULT_PLAN_FILE,
+type PlanFileConfig = {
+  planFile: string;
+  resolvedPlanPath: string;
+  mode: PlanFileMode;
 };
+
+const DEFAULT_PLAN_SUBDIR = "plan";
+const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
   if (!isRecord(value)) {
-    return DEFAULT_CONFIG;
+    return {};
   }
 
   const raw = value as PlannotatorAutoSettings;
@@ -39,11 +45,11 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
   }
 
   if (typeof raw.planFile !== "string") {
-    return DEFAULT_CONFIG;
+    return {};
   }
 
   const trimmed = raw.planFile.trim();
-  return trimmed.length > 0 ? { planFile: trimmed } : DEFAULT_CONFIG;
+  return trimmed.length > 0 ? { planFile: trimmed } : {};
 };
 
 let log: ReturnType<typeof createLogger> | null = null;
@@ -66,6 +72,55 @@ const loadConfig = (options?: {
   const config = sanitizeConfig(global.plannotatorAuto);
   log?.debug("plannotator-auto config loaded", { planFile: config.planFile });
   return config;
+};
+
+const getDefaultPlanDir = (cwd: string): string => {
+  const repoSlug = path.basename(cwd);
+  return path.join(".pi", "plans", repoSlug, DEFAULT_PLAN_SUBDIR);
+};
+
+const statPath = (value: string): fs.Stats | null => {
+  try {
+    return fs.statSync(value);
+  } catch {
+    return null;
+  }
+};
+
+const detectPlanMode = (
+  planFile: string,
+  resolvedPlanPath: string,
+): PlanFileMode => {
+  const stats = statPath(resolvedPlanPath);
+  if (stats?.isDirectory()) {
+    return "directory";
+  }
+  if (stats?.isFile()) {
+    return "file";
+  }
+  return path.extname(planFile).toLowerCase() === ".md" ? "file" : "directory";
+};
+
+const resolveCommandPlanPath = (
+  ctx: ExtensionContext,
+  targetPath: string,
+): string => {
+  const relative = path.relative(ctx.cwd, targetPath);
+  if (
+    relative.length > 0 &&
+    !relative.startsWith("..") &&
+    !path.isAbsolute(relative)
+  ) {
+    return relative;
+  }
+  return targetPath;
+};
+
+const isPlanFileMatch = (planDir: string, targetPath: string): boolean => {
+  if (path.dirname(targetPath) !== planDir) {
+    return false;
+  }
+  return PLAN_FILE_PATTERN.test(path.basename(targetPath));
 };
 
 const resolveCommandName = (
@@ -234,17 +289,26 @@ const queuePlanTrigger = (
 const resolvePlanPath = (cwd: string, planFile: string): string =>
   path.resolve(cwd, planFile);
 
-const getPlanFileConfig = (
-  ctx: ExtensionContext,
-): { planFile: string; resolvedPlanPath: string } | null => {
+const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
   const config = loadConfig();
-  if (!config.planFile) {
+  if (config.planFile === null) {
     return null;
   }
 
+  const planFile = config.planFile ?? getDefaultPlanDir(ctx.cwd);
+  const resolvedPlanPath = resolvePlanPath(ctx.cwd, planFile);
+  const mode = detectPlanMode(planFile, resolvedPlanPath);
+
+  log?.debug("plannotator-auto resolved plan path", {
+    planFile,
+    resolvedPlanPath,
+    mode,
+  });
+
   return {
-    planFile: config.planFile,
-    resolvedPlanPath: resolvePlanPath(ctx.cwd, config.planFile),
+    planFile,
+    resolvedPlanPath,
+    mode,
   };
 };
 
@@ -276,6 +340,24 @@ const resolveToolPath = (args: unknown): string | null => {
   return typeof value === "string" ? value : null;
 };
 
+const resolvePlanFileForCommand = (
+  ctx: ExtensionContext,
+  planConfig: PlanFileConfig,
+  targetPath: string,
+): string | null => {
+  if (planConfig.mode === "file") {
+    return targetPath === planConfig.resolvedPlanPath
+      ? planConfig.planFile
+      : null;
+  }
+
+  if (!isPlanFileMatch(planConfig.resolvedPlanPath, targetPath)) {
+    return null;
+  }
+
+  return resolveCommandPlanPath(ctx, targetPath);
+};
+
 const handlePlanFileWrite = (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -293,7 +375,12 @@ const handlePlanFileWrite = (
   }
 
   const targetPath = path.resolve(ctx.cwd, toolPath);
-  if (targetPath !== planConfig.resolvedPlanPath) {
+  const planFileForCommand = resolvePlanFileForCommand(
+    ctx,
+    planConfig,
+    targetPath,
+  );
+  if (!planFileForCommand) {
     return;
   }
 
@@ -301,7 +388,8 @@ const handlePlanFileWrite = (
     log?.debug("plannotator-auto skipped trigger (not idle)", {
       phase: getPlannotatorState(ctx)?.phase ?? "unknown",
       toolName,
-      planFile: planConfig.planFile,
+      planFile: planFileForCommand,
+      planMode: planConfig.mode,
       resolvedPlanPath: planConfig.resolvedPlanPath,
     });
     return;
@@ -309,10 +397,11 @@ const handlePlanFileWrite = (
 
   log?.info("plannotator-auto queueing /plannotator trigger", {
     toolName,
-    planFile: planConfig.planFile,
+    planFile: planFileForCommand,
+    planMode: planConfig.mode,
     resolvedPlanPath: planConfig.resolvedPlanPath,
   });
-  queuePlanTrigger(pi, ctx, planConfig.planFile);
+  queuePlanTrigger(pi, ctx, planFileForCommand);
 };
 
 export default function plannotatorAuto(pi: ExtensionAPI) {

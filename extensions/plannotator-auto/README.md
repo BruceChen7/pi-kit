@@ -4,12 +4,24 @@ Auto-configures the Plannotator plan file and enters plan mode after plan update
 
 ## Configuration
 
-By default, Plannotator Auto uses `.pi/PLAN.md` in the project root. You can override the plan file path (relative to the project root) in `~/.pi/agent/settings.json`:
+By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` (repo slug = basename of the repo) and expects plan files named `YYYY-MM-DD-<slug>.md`. You can override the plan path (relative to the project root) in `~/.pi/agent/settings.json`.
+
+Directory example:
 
 ```json
 {
   "plannotatorAuto": {
-    "planFile": "docs/PLAN.md"
+    "planFile": ".pi/plans/my-repo/plan"
+  }
+}
+```
+
+Single-file example:
+
+```json
+{
+  "plannotatorAuto": {
+    "planFile": ".pi/PLAN.md"
   }
 }
 ```
@@ -26,7 +38,7 @@ To disable Plannotator Auto explicitly:
 
 ## Behavior
 
-- When the agent `write`/`edit` tool updates the configured plan file, and Plannotator is idle, it queues:
+- When the agent `write`/`edit` tool updates the configured plan file (file mode) **or** writes a `YYYY-MM-DD-*.md` file inside the configured plan directory (directory mode), and Plannotator is idle, it queues:
   - `/plannotator-set-file <planFile>`
   - `/plannotator`
   - `/plannotator-annotate`

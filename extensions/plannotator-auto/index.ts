@@ -237,7 +237,7 @@ const resolvePlanPath = (cwd: string, planFile: string): string =>
 const getPlanFileConfig = (
   ctx: ExtensionContext,
 ): { planFile: string; resolvedPlanPath: string } | null => {
-  const config = loadConfig({ forceReload: true });
+  const config = loadConfig();
   if (!config.planFile) {
     return null;
   }

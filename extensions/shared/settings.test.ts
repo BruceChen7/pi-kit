@@ -4,7 +4,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   clearSettingsCache,
+  getGlobalSettingsPath,
   getSettingsPaths,
+  loadGlobalSettings,
   loadSettings,
   writeSettingsFile,
 } from "./settings.js";
@@ -147,5 +149,33 @@ describe("loadSettings", () => {
     const afterProject = loadSettings(cwd);
     expect(afterProject.project).toEqual({ local: false });
     expect(afterProject.merged).toEqual({ level: "warn", local: false });
+  });
+});
+
+describe("loadGlobalSettings", () => {
+  it("caches global settings and refreshes with forceReload", () => {
+    createTempHome();
+    const globalPath = getGlobalSettingsPath();
+
+    fs.mkdirSync(path.dirname(globalPath), { recursive: true });
+    fs.writeFileSync(
+      globalPath,
+      JSON.stringify({ value: 1 }, null, 2),
+      "utf-8",
+    );
+
+    const first = loadGlobalSettings();
+    fs.writeFileSync(
+      globalPath,
+      JSON.stringify({ value: 2 }, null, 2),
+      "utf-8",
+    );
+
+    const cached = loadGlobalSettings();
+    expect(cached.global).toEqual({ value: 1 });
+
+    const refreshed = loadGlobalSettings({ forceReload: true });
+    expect(refreshed.global).toEqual({ value: 2 });
+    expect(first.global).toEqual({ value: 1 });
   });
 });

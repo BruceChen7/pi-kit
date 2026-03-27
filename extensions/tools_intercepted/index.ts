@@ -221,6 +221,7 @@ function buildRgArgs(
   literal?: boolean,
 ): string[] {
   const args = ["--json", "--line-number", "--color=never", "--hidden"];
+  args.push("--glob", "!**/.git/**");
   if (ignoreCase) {
     args.push("--ignore-case");
   }
@@ -332,7 +333,7 @@ function createRgTool() {
   return {
     name: "rg",
     label: "rg",
-    description: `Search file contents with ripgrep. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_GREP_LIMIT} matches or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
+    description: `Search file contents with ripgrep. Returns matching lines with file paths and line numbers. Respects .gitignore and skips .git directories. Output is truncated to ${DEFAULT_GREP_LIMIT} matches or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
     parameters: grepSchema,
     renderCall(args: Static<typeof grepSchema>, theme: Theme) {
       const searchPath = args.path ?? ".";

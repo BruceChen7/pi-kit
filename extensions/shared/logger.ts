@@ -45,6 +45,37 @@ type ExtensionsLogConfig = {
   overrides?: Record<string, unknown>;
 };
 
+type LogSink = {
+  write: (line: string) => void;
+};
+
+type LogSinkOptions = {
+  logFilePath: string | null;
+  stderr: NodeJS.WritableStream | null;
+};
+
+const sinkCache = new Map<string, LogSink>();
+let streamIds = new WeakMap<NodeJS.WritableStream, number>();
+let nextStreamId = 0;
+
+const getStreamId = (stream: NodeJS.WritableStream): number => {
+  const cached = streamIds.get(stream);
+  if (cached !== undefined) {
+    return cached;
+  }
+  nextStreamId += 1;
+  streamIds.set(stream, nextStreamId);
+  return nextStreamId;
+};
+
+const getStreamKey = (stream: NodeJS.WritableStream | null): string =>
+  stream ? `stream:${getStreamId(stream)}` : "stream:none";
+
+const getLogSinkKey = (
+  logFilePath: string | null,
+  stderr: NodeJS.WritableStream | null,
+): string => `${logFilePath ?? "none"}|${getStreamKey(stderr)}`;
+
 const LEVEL_PRIORITY: Record<LogLevel, number> = {
   debug: 10,
   info: 20,
@@ -157,6 +188,48 @@ const appendToFile = async (
   }
 };
 
+const createLogSink = ({ logFilePath, stderr }: LogSinkOptions): LogSink => {
+  let fileQueue = Promise.resolve();
+
+  const enqueueFileWrite = (line: string): void => {
+    if (!logFilePath) {
+      return;
+    }
+    fileQueue = fileQueue.then(() => appendToFile(logFilePath, line));
+  };
+
+  return {
+    write: (line) => {
+      if (stderr) {
+        stderr.write(line);
+      }
+      if (logFilePath) {
+        enqueueFileWrite(line);
+      }
+    },
+  };
+};
+
+const getLogSink = (
+  logFilePath: string | null,
+  stderr: NodeJS.WritableStream | null,
+): LogSink => {
+  const key = getLogSinkKey(logFilePath, stderr);
+  const cached = sinkCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const sink = createLogSink({ logFilePath, stderr });
+  sinkCache.set(key, sink);
+  return sink;
+};
+
+export const clearLoggerCache = (): void => {
+  sinkCache.clear();
+  streamIds = new WeakMap<NodeJS.WritableStream, number>();
+  nextStreamId = 0;
+};
+
 export const createLogger = (
   extensionName: string,
   options: CreateLoggerOptions = {},
@@ -172,6 +245,7 @@ export const createLogger = (
 
   const stderr = options.stderr === undefined ? process.stderr : options.stderr;
   const now = options.now ?? (() => new Date());
+  const sink = getLogSink(logFilePath, stderr);
 
   const emit = (level: LogLevel, message: string, data?: unknown): void => {
     if (!shouldLog(level, minLevel)) {
@@ -180,12 +254,7 @@ export const createLogger = (
 
     const line = formatLine(extensionName, level, message, data, now);
 
-    if (stderr) {
-      stderr.write(line);
-    }
-    if (logFilePath) {
-      void appendToFile(logFilePath, line);
-    }
+    sink.write(line);
   };
 
   return {

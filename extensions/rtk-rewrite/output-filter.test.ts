@@ -81,6 +81,22 @@ describe("aggregateTestOutput", () => {
     expect(result).toContain("FAIL beta");
   });
 
+  it("preserves file/line info in failure summary", () => {
+    const output = [
+      "running 1 test",
+      "FAIL src/math.test.ts",
+      "  ● adds",
+      "    AssertionError: expected 1",
+      "    extra context line",
+      "    at Object.<anonymous> (src/math.test.ts:12:5)",
+      "",
+      "1 failed",
+    ].join("\n");
+
+    const result = aggregateTestOutput(output, "npm test");
+    expect(result).toContain("src/math.test.ts:12:5");
+  });
+
   it("returns null when command is not a test", () => {
     const result = aggregateTestOutput("output", "echo hello");
     expect(result).toBeNull();

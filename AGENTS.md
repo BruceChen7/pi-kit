@@ -5,6 +5,24 @@
 * If something goes sideways, STOP and re-plan immediately - don't keep pushing
 * Use plan mode for verification steps, not just building. Write detailed specs upfront to reduce ambiguity
 
+### Skill Integration (Plan Mode + Skills)
+* Plan mode is still required for non-trivial tasks even when executing a multi-step skill.
+* Keep plans lightweight: reference the skill as a single checklist item instead of duplicating sub-steps.
+* Skill ordering takes precedence. If a plan conflicts with a skill’s required sequence, update the plan to match the skill; if unclear, stop and re-plan/ask.
+* Verification should map to the skill’s outcomes (not its internal steps).
+
+**Lightweight plan template (skill-driven task):**
+```markdown
+## Steps
+- [ ] Prepare change set (files + context)
+- [ ] Execute skill: branch-commit-push (git workflow)
+
+## Verification
+- `git status` clean
+- Branch exists and is pushed to origin
+```
+
+**Example:** Use `branch-commit-push` whenever committing/pushing; keep the plan step at the outcome level and rely on the skill for the step-by-step prompts (new branch, stage, commit, push).
 
 ## Task Management
 

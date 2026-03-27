@@ -6,8 +6,8 @@
     "pi-package"
   ],
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.62.0",
-    "@mariozechner/pi-tui": "^0.62.0"
+    "@mariozechner/pi-coding-agent": "^0.63.1",
+    "@mariozechner/pi-tui": "^0.63.1"
   },
   "pi": {
     "extensions": [
@@ -23,6 +23,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
+    "update": "npm update",
     "test": "vitest run",
     "test:watch": "vitest",
     "prepare": "husky"

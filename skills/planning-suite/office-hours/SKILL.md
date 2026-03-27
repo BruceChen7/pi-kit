@@ -39,7 +39,7 @@ Wait for the user’s response before continuing.
    PLANS_DIR="$REPO_ROOT/.pi/plans/$SLUG/office-hours"
    mkdir -p "$PLANS_DIR"
    ```
-2. Read `CLAUDE.md` and `TODOS.md` if they exist.
+2. Read `AGENTS.md` and `TODOS.md` if they exist.
 3. Run:
    - `git log --oneline -30`
    - `git status -sb`

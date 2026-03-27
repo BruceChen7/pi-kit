@@ -22,7 +22,26 @@ export type LoadSettingsOptions = {
 const SETTINGS_FILE_NAME = "settings.json";
 
 const settingsCache = new Map<string, SettingsBundle>();
-let globalCache: { globalPath: string; global: SettingsRecord } | null = null;
+
+type GlobalSettingsCache = { globalPath: string; global: SettingsRecord };
+
+type GlobalSettingsCacheStore = {
+  value: GlobalSettingsCache | null;
+};
+
+const GLOBAL_SETTINGS_CACHE_KEY = Symbol.for("pi-kit.settings.globalCache");
+
+const getGlobalCacheStore = (): GlobalSettingsCacheStore => {
+  const store = (globalThis as Record<symbol, unknown>)[
+    GLOBAL_SETTINGS_CACHE_KEY
+  ];
+  if (store && typeof store === "object" && "value" in store) {
+    return store as GlobalSettingsCacheStore;
+  }
+  const next: GlobalSettingsCacheStore = { value: null };
+  (globalThis as Record<symbol, unknown>)[GLOBAL_SETTINGS_CACHE_KEY] = next;
+  return next;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -57,14 +76,15 @@ export const readSettingsFile = (filePath: string): SettingsRecord => {
 export const loadGlobalSettings = (
   options: LoadSettingsOptions = {},
 ): { globalPath: string; global: SettingsRecord } => {
-  if (!options.forceReload && globalCache) {
-    return globalCache;
+  const cacheStore = getGlobalCacheStore();
+  if (!options.forceReload && cacheStore.value) {
+    return cacheStore.value;
   }
 
   const globalPath = getGlobalSettingsPath();
   const global = readSettingsFile(globalPath);
   const next = { globalPath, global };
-  globalCache = next;
+  cacheStore.value = next;
   return next;
 };
 
@@ -104,7 +124,11 @@ const updateCachesAfterWrite = (
   const globalPath = normalizePath(getGlobalSettingsPath());
 
   if (normalized === globalPath) {
-    globalCache = { globalPath: getGlobalSettingsPath(), global: settings };
+    const cacheStore = getGlobalCacheStore();
+    cacheStore.value = {
+      globalPath: getGlobalSettingsPath(),
+      global: settings,
+    };
     for (const [cwd, cached] of settingsCache) {
       settingsCache.set(cwd, {
         ...cached,
@@ -151,5 +175,6 @@ export const updateSettings = (
 
 export const clearSettingsCache = (): void => {
   settingsCache.clear();
-  globalCache = null;
+  const cacheStore = getGlobalCacheStore();
+  cacheStore.value = null;
 };

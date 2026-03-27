@@ -4,6 +4,7 @@ import path from "node:path";
 import { Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  clearLoggerCache,
   createLogger,
   type LogLevel,
   resolveMinLogLevel,
@@ -48,6 +49,7 @@ const restoreHome = (): void => {
 
 afterEach(() => {
   clearSettingsCache();
+  clearLoggerCache();
   restoreHome();
   process.chdir(originalCwd);
   for (const dir of tempHomes.splice(0)) {

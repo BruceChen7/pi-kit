@@ -16,6 +16,7 @@ visualise|https://github.com/bentossell/visualise.git|
 skill-creator|https://github.com/anthropics/skills.git|skills/skill-creator
 jira|https://github.com/softaworks/agent-toolkit|skills/jira
 plan-ceo-review|local|skills/planning-suite/plan-ceo-review
+plan-eng-review|local|skills/planning-suite/plan-eng-review
 office-hours|local|skills/planning-suite/office-hours
 receiving-code-review|https://github.com/obra/superpowers.git|skills/receiving-code-review
 writing-skills|https://github.com/obra/superpowers.git|skills/writing-skills

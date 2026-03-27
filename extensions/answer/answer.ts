@@ -92,21 +92,28 @@ const previewText = (value: string, max = 200): string => {
 /**
  * Prefer Codex mini for extraction when available, otherwise fallback to haiku or the current model.
  */
-async function selectExtractionModel(
+export async function selectExtractionModel(
   currentModel: Model<Api>,
   modelRegistry: {
     find: (provider: string, modelId: string) => Model<Api> | undefined;
-    getApiKey: (model: Model<Api>) => Promise<string | undefined>;
+    getApiKeyAndHeaders: (
+      model: Model<Api>,
+    ) => Promise<
+      | { ok: true; apiKey?: string; headers?: Record<string, string> }
+      | { ok: false; error: string }
+    >;
   },
 ): Promise<Model<Api>> {
   const codexModel = modelRegistry.find("openai-codex", CODEX_MODEL_ID);
   if (codexModel) {
-    const apiKey = await modelRegistry.getApiKey(codexModel);
+    const auth = await modelRegistry.getApiKeyAndHeaders(codexModel);
+    const hasAuth = auth.ok && Boolean(auth.apiKey || auth.headers);
     log?.debug("codex model check", {
       modelId: codexModel.id,
-      hasApiKey: Boolean(apiKey),
+      hasAuth,
+      authError: auth.ok ? undefined : auth.error,
     });
-    if (apiKey) {
+    if (hasAuth) {
       log?.info("using codex model for extraction", {
         modelId: codexModel.id,
       });
@@ -126,13 +133,15 @@ async function selectExtractionModel(
     return currentModel;
   }
 
-  const apiKey = await modelRegistry.getApiKey(haikuModel);
+  const auth = await modelRegistry.getApiKeyAndHeaders(haikuModel);
+  const hasAuth = auth.ok && Boolean(auth.apiKey || auth.headers);
   log?.debug("haiku model check", {
     modelId: haikuModel.id,
-    hasApiKey: Boolean(apiKey),
+    hasAuth,
+    authError: auth.ok ? undefined : auth.error,
   });
-  if (!apiKey) {
-    log?.info("haiku model missing api key, using current model", {
+  if (!hasAuth) {
+    log?.info("haiku model missing auth, using current model", {
       modelId: currentModel.id,
     });
     return currentModel;
@@ -547,7 +556,13 @@ export default function (pi: ExtensionAPI) {
         };
 
         const doExtract = async () => {
-          const apiKey = await ctx.modelRegistry.getApiKey(extractionModel);
+          const auth =
+            await ctx.modelRegistry.getApiKeyAndHeaders(extractionModel);
+          if (!auth.ok) {
+            throw new Error(auth.error);
+          }
+          const apiKey = auth.apiKey;
+          const headers = auth.headers;
           const reasoningEffort =
             extractionModel.reasoning &&
             (extractionModel.api === "openai-responses" ||
@@ -558,7 +573,7 @@ export default function (pi: ExtensionAPI) {
             modelId: extractionModel.id,
             api: extractionModel.api,
             provider: extractionModel.provider,
-            hasApiKey: Boolean(apiKey),
+            hasAuth: Boolean(apiKey || headers),
             assistantTextLength: assistantText.length,
             reasoningEffort,
           });
@@ -571,7 +586,7 @@ export default function (pi: ExtensionAPI) {
           const response = await complete(
             extractionModel,
             { systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
-            { apiKey, signal: loader.signal, reasoningEffort },
+            { apiKey, headers, signal: loader.signal, reasoningEffort },
           );
 
           log?.debug("extraction response received", {

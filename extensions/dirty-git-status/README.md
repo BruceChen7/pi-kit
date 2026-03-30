@@ -25,6 +25,15 @@ Checks git status when Pi starts a session and prompts for commit if there are u
 Default commit message:
 - `chore: auto-commit workspace changes`
 
+## AI-generated Default Commit Message (Optional)
+You can optionally generate the *default* commit message using the currently selected model.
+
+- When enabled, the extension will:
+  - run `git add -A`
+  - inspect staged changes (`--name-only` + `--stat`, and optionally `--cached` patch)
+  - ask the model for a single-line Conventional Commit message
+- If AI generation fails or times out, it falls back to `defaultCommitMessage`.
+
 ## Configuration
 Set in global `~/.pi/agent/settings.json` or project `<repo>/.pi/settings.json`:
 
@@ -36,7 +45,13 @@ Set in global `~/.pi/agent/settings.json` or project `<repo>/.pi/settings.json`:
     "timeoutMs": 2000,
     "promptFrequency": "once_per_dirty_session",
     "commitMessageMode": "auto_with_override",
-    "defaultCommitMessage": "chore: auto-commit workspace changes"
+    "defaultCommitMessage": "chore: auto-commit workspace changes",
+
+    "aiDefaultCommitMessage": false,
+    "aiDefaultCommitMessageIncludeDiff": false,
+    "aiDefaultCommitMessageTimeoutMs": 8000,
+    "aiDefaultCommitMessageMaxDiffChars": 8000,
+    "aiDefaultCommitMessageLanguage": "en"
   }
 }
 ```

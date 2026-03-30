@@ -186,6 +186,165 @@ describe("settings integration", () => {
   });
 });
 
+describe("skill override sync", () => {
+  it("writes project overrides and preserves user entries", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const { projectPath } = getSettingsPaths(cwd);
+    const skillPath = path.join(cwd, ".pi", "skills", "alpha", "SKILL.md");
+    const overridePath = `-${path.join(cwd, ".pi", "skills", "alpha")}`;
+
+    fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+    fs.writeFileSync(
+      projectPath,
+      JSON.stringify(
+        {
+          skillToggle: {
+            disabledSkills: ["Alpha"],
+          },
+          skills: ["custom"],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const { loadToggleState, syncSkillOverrides } = await importSkillToggle();
+    const state = loadToggleState(cwd);
+
+    syncSkillOverrides(
+      state,
+      [
+        {
+          name: "Alpha",
+          description: "Alpha skill",
+          filePath: skillPath,
+          scope: "project",
+        },
+      ],
+      cwd,
+    );
+
+    const saved = readSettingsFile(projectPath);
+    expect(saved.skills).toEqual(["custom", overridePath]);
+    expect(
+      (saved.skillToggle as { managedOverrides?: string[] }).managedOverrides,
+    ).toEqual([overridePath]);
+  });
+
+  it("removes global overrides when re-enabled", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const { globalPath, projectPath } = getSettingsPaths(cwd);
+    const skillPath = path.join(
+      os.homedir(),
+      ".agents",
+      "skills",
+      "alpha",
+      "SKILL.md",
+    );
+
+    fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+    fs.writeFileSync(
+      projectPath,
+      JSON.stringify(
+        {
+          skillToggle: {
+            disabledSkills: ["Alpha"],
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const { loadToggleState, saveToggleState, syncSkillOverrides } =
+      await importSkillToggle();
+    const state = loadToggleState(cwd);
+
+    syncSkillOverrides(
+      state,
+      [
+        {
+          name: "Alpha",
+          description: "Alpha skill",
+          filePath: skillPath,
+          scope: "user",
+        },
+      ],
+      cwd,
+    );
+
+    state.disabledSkills.clear();
+    saveToggleState(state);
+    syncSkillOverrides(
+      state,
+      [
+        {
+          name: "Alpha",
+          description: "Alpha skill",
+          filePath: skillPath,
+          scope: "user",
+        },
+      ],
+      cwd,
+    );
+
+    const saved = readSettingsFile(globalPath);
+    const byCwd = (saved.skillToggle as { byCwd: Record<string, unknown> })
+      .byCwd;
+    const entry = byCwd[cwd] as { managedOverrides?: string[] };
+    expect(saved.skills).toBeUndefined();
+    expect(entry.managedOverrides).toBeUndefined();
+  });
+
+  it("prunes stale managed overrides", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const { globalPath } = getSettingsPaths(cwd);
+
+    fs.mkdirSync(path.dirname(globalPath), { recursive: true });
+    fs.writeFileSync(
+      globalPath,
+      JSON.stringify(
+        {
+          skillToggle: {
+            byCwd: {
+              [cwd]: {
+                disabledSkills: [],
+                managedOverrides: [
+                  `-${path.join(os.homedir(), ".agents", "skills", "ghost")}`,
+                ],
+              },
+            },
+          },
+          skills: [
+            "custom",
+            `-${path.join(os.homedir(), ".agents", "skills", "ghost")}`,
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const { loadToggleState, syncSkillOverrides } = await importSkillToggle();
+    const state = loadToggleState(cwd);
+
+    syncSkillOverrides(state, [], cwd);
+
+    const saved = readSettingsFile(globalPath);
+    const byCwd = (saved.skillToggle as { byCwd: Record<string, unknown> })
+      .byCwd;
+    const entry = byCwd[cwd] as { managedOverrides?: string[] };
+    expect(saved.skills).toEqual(["custom"]);
+    expect(entry.managedOverrides).toBeUndefined();
+  });
+});
+
 describe("parseFrontmatter", () => {
   it("parses multi-line description blocks", async () => {
     createTempHome();

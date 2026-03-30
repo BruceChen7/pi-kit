@@ -13,6 +13,11 @@ type DirtyGitStatusSettings = {
   promptFrequency?: unknown;
   commitMessageMode?: unknown;
   defaultCommitMessage?: unknown;
+  aiDefaultCommitMessage?: unknown;
+  aiDefaultCommitMessageIncludeDiff?: unknown;
+  aiDefaultCommitMessageTimeoutMs?: unknown;
+  aiDefaultCommitMessageMaxDiffChars?: unknown;
+  aiDefaultCommitMessageLanguage?: unknown;
 };
 
 type PromptFrequency = "once_per_dirty_session";
@@ -25,6 +30,11 @@ type DirtyGitStatusConfig = {
   promptFrequency: PromptFrequency;
   commitMessageMode: CommitMessageMode;
   defaultCommitMessage: string;
+  aiDefaultCommitMessage: boolean;
+  aiDefaultCommitMessageIncludeDiff: boolean;
+  aiDefaultCommitMessageTimeoutMs: number;
+  aiDefaultCommitMessageMaxDiffChars: number;
+  aiDefaultCommitMessageLanguage: string;
 };
 
 type RepoState = {
@@ -56,11 +66,15 @@ type CommitPipelineInput = {
   runGit: (args: string[]) => StatusOutput | Promise<StatusOutput>;
   hasUI: boolean;
   confirmCommit: () => Promise<boolean>;
-  askCommitMessage: () => Promise<string | null>;
+  askCommitMessage: (defaultMessage: string) => Promise<string | null>;
   notify: (message: string, level: NotifyLevel) => void;
   mode: CommitMessageMode;
   defaultMessage: string;
   requireConfirm: boolean;
+  getDefaultMessage?: (input: {
+    stagedFiles: string[];
+    defaultMessage: string;
+  }) => Promise<string | null>;
 };
 
 type CommitPipelineResult = {
@@ -90,6 +104,11 @@ const DEFAULT_CONFIG: DirtyGitStatusConfig = {
   promptFrequency: "once_per_dirty_session",
   commitMessageMode: "auto_with_override",
   defaultCommitMessage: "chore: auto-commit workspace changes",
+  aiDefaultCommitMessage: false,
+  aiDefaultCommitMessageIncludeDiff: false,
+  aiDefaultCommitMessageTimeoutMs: 8000,
+  aiDefaultCommitMessageMaxDiffChars: 8000,
+  aiDefaultCommitMessageLanguage: "en",
 };
 
 const LOG_NAME = "dirty-git-status";
@@ -127,6 +146,9 @@ const normalizeString = (value: unknown, fallback: string): string =>
     ? value.trim()
     : fallback;
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
 const getSettingsConfig = (cwd: string): DirtyGitStatusConfig => {
   const { merged } = loadSettings(cwd);
   const settings = (merged.dirtyGitStatus ?? {}) as DirtyGitStatusSettings;
@@ -148,6 +170,26 @@ const getSettingsConfig = (cwd: string): DirtyGitStatusConfig => {
     defaultCommitMessage: normalizeString(
       settings.defaultCommitMessage,
       DEFAULT_CONFIG.defaultCommitMessage,
+    ),
+    aiDefaultCommitMessage: normalizeBoolean(
+      settings.aiDefaultCommitMessage,
+      DEFAULT_CONFIG.aiDefaultCommitMessage,
+    ),
+    aiDefaultCommitMessageIncludeDiff: normalizeBoolean(
+      settings.aiDefaultCommitMessageIncludeDiff,
+      DEFAULT_CONFIG.aiDefaultCommitMessageIncludeDiff,
+    ),
+    aiDefaultCommitMessageTimeoutMs: normalizeNumber(
+      settings.aiDefaultCommitMessageTimeoutMs,
+      DEFAULT_CONFIG.aiDefaultCommitMessageTimeoutMs,
+    ),
+    aiDefaultCommitMessageMaxDiffChars: normalizeNumber(
+      settings.aiDefaultCommitMessageMaxDiffChars,
+      DEFAULT_CONFIG.aiDefaultCommitMessageMaxDiffChars,
+    ),
+    aiDefaultCommitMessageLanguage: normalizeString(
+      settings.aiDefaultCommitMessageLanguage,
+      DEFAULT_CONFIG.aiDefaultCommitMessageLanguage,
     ),
   };
 };
@@ -196,6 +238,12 @@ const normalizeMessage = (value: string | null): string | null => {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
 };
+
+const toLines = (value: string): string[] =>
+  value
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0);
 
 const containsNothingToCommit = (output: string): boolean =>
   output.toLowerCase().includes("nothing to commit");
@@ -346,18 +394,36 @@ export const runCommitPipeline = async (
     };
   }
 
+  const stagedFiles = toLines(stagedResult.stdout);
+
+  let effectiveDefaultMessage = input.defaultMessage;
+  if (input.getDefaultMessage) {
+    try {
+      const generated = await input.getDefaultMessage({
+        stagedFiles,
+        defaultMessage: input.defaultMessage,
+      });
+      const normalized = normalizeMessage(generated);
+      if (normalized) {
+        effectiveDefaultMessage = normalized;
+      }
+    } catch {
+      // fallback silently to configured default message
+    }
+  }
+
   let userInput: string | null = null;
   if (
     input.hasUI &&
     (input.mode === "auto_with_override" || input.mode === "ask")
   ) {
-    userInput = await input.askCommitMessage();
+    userInput = await input.askCommitMessage(effectiveDefaultMessage);
   }
 
   const selected = selectCommitMessage({
     mode: input.mode,
     hasUI: input.hasUI,
-    defaultMessage: input.defaultMessage,
+    defaultMessage: effectiveDefaultMessage,
     userInput,
   });
 
@@ -395,6 +461,167 @@ export const runCommitPipeline = async (
     reason: "commit_failed",
     message: null,
   };
+};
+
+const AI_COMMIT_SYSTEM_PROMPT = `You are an expert software engineer writing git commit messages.
+
+Generate a single-line commit message describing the staged changes.
+
+Rules:
+- Output ONLY the commit message line, no quotes, no markdown, no extra commentary.
+- Use Conventional Commits format: <type>(optional-scope): <description>
+- Keep it concise (ideally <= 72 chars), imperative mood.
+- If uncertain, prefer "chore:".
+- Use the requested language when provided.`;
+
+const stripCodeFences = (text: string): string => {
+  const match = text.match(/```(?:\w+)?\s*([\s\S]*?)```/);
+  return match ? (match[1] ?? "").trim() : text;
+};
+
+const parseAiCommitMessage = (raw: string): string | null => {
+  const cleaned = stripCodeFences(raw).trim();
+  const firstLine = cleaned.split(/\r?\n/).find((l) => l.trim().length > 0);
+  if (!firstLine) return null;
+
+  let msg = firstLine.trim();
+  msg = msg
+    .replace(/^["'`]+/, "")
+    .replace(/["'`]+$/, "")
+    .trim();
+  if (msg.length === 0) return null;
+  if (msg.length > 120) msg = `${msg.slice(0, 120).trimEnd()}…`;
+  return msg;
+};
+
+const buildAiCommitUserPrompt = (input: {
+  stagedFiles: string[];
+  diffStat: string;
+  diffPatch?: string;
+  language: string;
+}): string => {
+  const files =
+    input.stagedFiles.length > 0
+      ? input.stagedFiles.map((f) => `- ${f}`).join("\n")
+      : "(unknown)";
+
+  const parts: string[] = [];
+  parts.push(`Language: ${input.language}`);
+  parts.push("");
+  parts.push("Staged files:");
+  parts.push(files);
+  parts.push("");
+  parts.push("Diff stat:");
+  parts.push(input.diffStat.trim() || "(empty)");
+  if (input.diffPatch && input.diffPatch.trim().length > 0) {
+    parts.push("");
+    parts.push("Diff (patch):");
+    parts.push(input.diffPatch);
+  }
+  return parts.join("\n");
+};
+
+const generateAiDefaultCommitMessage = async (input: {
+  ctx: ExtensionContext;
+  stagedFiles: string[];
+  language: string;
+  timeoutMs: number;
+  diffStat: string;
+  diffPatch?: string;
+}): Promise<string | null> => {
+  const model = input.ctx.model;
+  if (!model) return null;
+
+  let mod: unknown;
+  try {
+    mod = await import("@mariozechner/pi-ai");
+  } catch {
+    return null;
+  }
+
+  if (!isRecord(mod) || typeof mod.complete !== "function") {
+    return null;
+  }
+
+  const complete = mod.complete as (
+    model: unknown,
+    request: {
+      systemPrompt: string;
+      messages: Array<{
+        role: "user";
+        content: Array<{ type: "text"; text: string }>;
+        timestamp: number;
+      }>;
+    },
+    options: {
+      apiKey?: string;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+      reasoningEffort?: "low" | "medium" | "high";
+    },
+  ) => Promise<unknown>;
+
+  const auth = await input.ctx.modelRegistry.getApiKeyAndHeaders(model);
+  if (!auth.ok) return null;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), input.timeoutMs);
+  try {
+    const prompt = buildAiCommitUserPrompt({
+      stagedFiles: input.stagedFiles,
+      diffStat: input.diffStat,
+      diffPatch: input.diffPatch,
+      language: input.language,
+    });
+
+    const response = await complete(
+      model,
+      {
+        systemPrompt: AI_COMMIT_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: prompt }],
+            timestamp: Date.now(),
+          },
+        ],
+      },
+      {
+        apiKey: auth.apiKey,
+        headers: auth.headers,
+        signal: controller.signal,
+        reasoningEffort:
+          typeof model === "object" &&
+          model &&
+          "reasoning" in model &&
+          (model as Record<string, unknown>).reasoning
+            ? "low"
+            : undefined,
+      },
+    );
+
+    if (!isRecord(response)) return null;
+    const content = response.content;
+    if (!Array.isArray(content)) return null;
+    const text = content
+      .filter(
+        (c): c is { type: "text"; text: string } =>
+          Boolean(c) &&
+          typeof c === "object" &&
+          "type" in c &&
+          (c as { type?: unknown }).type === "text" &&
+          "text" in c &&
+          typeof (c as { text?: unknown }).text === "string",
+      )
+      .map((c) => c.text)
+      .join("\n");
+
+    return parseAiCommitMessage(text);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 const checkRepoDirty = (
@@ -444,17 +671,52 @@ const runManualCommit = async (
         `Dirty repo ${repoName}: ${formatSummary(dirty.summary)}. Commit now?`,
       );
     },
-    askCommitMessage: async () => {
+    askCommitMessage: async (defaultMessage) => {
       if (!ctx.hasUI) return null;
-      return ctx.ui.input(
-        "Commit message (empty = default)",
-        config.defaultCommitMessage,
-      );
+      return ctx.ui.input("Commit message (empty = default)", defaultMessage);
     },
     notify: (message, level) => ctx.ui.notify(message, level),
     mode: config.commitMessageMode,
     defaultMessage: config.defaultCommitMessage,
     requireConfirm: ctx.hasUI,
+    getDefaultMessage: config.aiDefaultCommitMessage
+      ? async ({ stagedFiles, defaultMessage }) => {
+          if (!ctx.model) return null;
+
+          const diffStatResult = runGit(
+            repoRoot,
+            ["diff", "--cached", "--stat", "--no-color"],
+            config.timeoutMs,
+          );
+          const diffStat =
+            diffStatResult.exitCode === 0 ? diffStatResult.stdout : "";
+
+          let diffPatch: string | undefined;
+          if (config.aiDefaultCommitMessageIncludeDiff) {
+            const patchResult = runGit(
+              repoRoot,
+              ["diff", "--cached", "--no-color"],
+              config.timeoutMs,
+            );
+            if (patchResult.exitCode === 0) {
+              diffPatch = patchResult.stdout.slice(
+                0,
+                Math.max(0, config.aiDefaultCommitMessageMaxDiffChars),
+              );
+            }
+          }
+
+          const generated = await generateAiDefaultCommitMessage({
+            ctx,
+            stagedFiles,
+            language: config.aiDefaultCommitMessageLanguage,
+            timeoutMs: config.aiDefaultCommitMessageTimeoutMs,
+            diffStat,
+            diffPatch,
+          });
+          return generated ?? defaultMessage;
+        }
+      : undefined,
   });
 };
 
@@ -514,15 +776,50 @@ const handleSessionCheck = async (
         "Repository has uncommitted changes",
         `Dirty repo ${repoName}: ${formatSummary(dirty.summary)}. Commit now?`,
       ),
-    askCommitMessage: async () =>
-      ctx.ui.input(
-        "Commit message (empty = default)",
-        config.defaultCommitMessage,
-      ),
+    askCommitMessage: async (defaultMessage) =>
+      ctx.ui.input("Commit message (empty = default)", defaultMessage),
     notify: (message, level) => ctx.ui.notify(message, level),
     mode: config.commitMessageMode,
     defaultMessage: config.defaultCommitMessage,
     requireConfirm: true,
+    getDefaultMessage: config.aiDefaultCommitMessage
+      ? async ({ stagedFiles, defaultMessage }) => {
+          if (!ctx.model) return null;
+
+          const diffStatResult = runGit(
+            repoRoot,
+            ["diff", "--cached", "--stat", "--no-color"],
+            config.timeoutMs,
+          );
+          const diffStat =
+            diffStatResult.exitCode === 0 ? diffStatResult.stdout : "";
+
+          let diffPatch: string | undefined;
+          if (config.aiDefaultCommitMessageIncludeDiff) {
+            const patchResult = runGit(
+              repoRoot,
+              ["diff", "--cached", "--no-color"],
+              config.timeoutMs,
+            );
+            if (patchResult.exitCode === 0) {
+              diffPatch = patchResult.stdout.slice(
+                0,
+                Math.max(0, config.aiDefaultCommitMessageMaxDiffChars),
+              );
+            }
+          }
+
+          const generated = await generateAiDefaultCommitMessage({
+            ctx,
+            stagedFiles,
+            language: config.aiDefaultCommitMessageLanguage,
+            timeoutMs: config.aiDefaultCommitMessageTimeoutMs,
+            diffStat,
+            diffPatch,
+          });
+          return generated ?? defaultMessage;
+        }
+      : undefined,
   });
 };
 

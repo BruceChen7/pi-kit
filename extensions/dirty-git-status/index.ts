@@ -66,11 +66,18 @@ type CommitPipelineInput = {
   runGit: (args: string[]) => StatusOutput | Promise<StatusOutput>;
   hasUI: boolean;
   confirmCommit: () => Promise<boolean>;
-  askCommitMessage: (defaultMessage: string) => Promise<string | null>;
+  askCommitMessage: (
+    defaultMessage: string,
+  ) => Promise<string | null | undefined>;
   notify: (message: string, level: NotifyLevel) => void;
   mode: CommitMessageMode;
   defaultMessage: string;
   requireConfirm: boolean;
+  logContext?: {
+    trigger?: "session_start" | "session_switch" | "manual";
+    repoRoot?: string;
+    repoName?: string;
+  };
   getDefaultMessage?: (input: {
     stagedFiles: string[];
     defaultMessage: string;
@@ -95,6 +102,20 @@ export type DirtySummary = {
   unstaged: number;
   untracked: number;
   dirty: boolean;
+};
+
+type LogLevel = "info" | "warn" | "error";
+
+type LogContext = {
+  event: string;
+  trigger?: "session_start" | "session_switch" | "manual";
+  repoRoot?: string;
+  repoName?: string;
+  summary?: DirtySummary;
+  stage?: string;
+  result?: string;
+  reason?: string;
+  details?: Record<string, unknown>;
 };
 
 const DEFAULT_CONFIG: DirtyGitStatusConfig = {
@@ -152,7 +173,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const getSettingsConfig = (cwd: string): DirtyGitStatusConfig => {
   const { merged } = loadSettings(cwd);
   const settings = (merged.dirtyGitStatus ?? {}) as DirtyGitStatusSettings;
-  return {
+  const config = {
     enabled: normalizeBoolean(settings.enabled, DEFAULT_CONFIG.enabled),
     checkOnSessionStart: normalizeBoolean(
       settings.checkOnSessionStart,
@@ -192,6 +213,27 @@ const getSettingsConfig = (cwd: string): DirtyGitStatusConfig => {
       DEFAULT_CONFIG.aiDefaultCommitMessageLanguage,
     ),
   };
+
+  logInfo({
+    event: "dirty git status config loaded",
+    details: {
+      cwd,
+      enabled: config.enabled,
+      checkOnSessionStart: config.checkOnSessionStart,
+      timeoutMs: config.timeoutMs,
+      promptFrequency: config.promptFrequency,
+      commitMessageMode: config.commitMessageMode,
+      aiDefaultCommitMessage: config.aiDefaultCommitMessage,
+      aiDefaultCommitMessageIncludeDiff:
+        config.aiDefaultCommitMessageIncludeDiff,
+      aiDefaultCommitMessageTimeoutMs: config.aiDefaultCommitMessageTimeoutMs,
+      aiDefaultCommitMessageMaxDiffChars:
+        config.aiDefaultCommitMessageMaxDiffChars,
+      aiDefaultCommitMessageLanguage: config.aiDefaultCommitMessageLanguage,
+    },
+  });
+
+  return config;
 };
 
 const getSessionKey = (ctx: ExtensionContext): string =>
@@ -233,7 +275,7 @@ const getRepoRoot = (cwd: string, timeoutMs: number): string | null => {
 const repoNameFromRoot = (repoRoot: string): string =>
   repoRoot.split("/").pop() ?? repoRoot;
 
-const normalizeMessage = (value: string | null): string | null => {
+const normalizeMessage = (value: string | null | undefined): string | null => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
@@ -250,6 +292,43 @@ const containsNothingToCommit = (output: string): boolean =>
 
 const formatSummary = (summary: DirtySummary): string =>
   `staged ${summary.staged}, unstaged ${summary.unstaged}, untracked ${summary.untracked}`;
+
+const MAX_LOG_TEXT = 200;
+
+const summarizeText = (value: string, max = MAX_LOG_TEXT): string | null => {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, max).trimEnd()}…`;
+};
+
+const buildGitDetails = (result: StatusOutput): Record<string, unknown> => {
+  const stdout = summarizeText(result.stdout);
+  const stderr = summarizeText(result.stderr);
+  const details: Record<string, unknown> = { exitCode: result.exitCode };
+  if (stdout) details.stdout = stdout;
+  if (stderr) details.stderr = stderr;
+  return details;
+};
+
+const logEvent = (level: LogLevel, context: LogContext): void => {
+  if (!log) return;
+  const { event, details, ...rest } = context;
+  const payload = details ? { ...rest, details } : rest;
+  if (level === "info") {
+    log.info(event, payload);
+  } else if (level === "warn") {
+    log.warn(event, payload);
+  } else {
+    log.error(event, payload);
+  }
+};
+
+const logInfo = (context: LogContext): void => logEvent("info", context);
+
+const logWarn = (context: LogContext): void => logEvent("warn", context);
+
+const logError = (context: LogContext): void => logEvent("error", context);
 
 export const computeDirtySummary = (porcelain: string): DirtySummary => {
   const lines = porcelain
@@ -300,7 +379,7 @@ export const selectCommitMessage = (input: {
   mode: CommitMessageMode;
   hasUI: boolean;
   defaultMessage: string;
-  userInput: string | null;
+  userInput: string | null | undefined;
 }): CommitMessageSelection => {
   if (input.mode === "auto") {
     return {
@@ -353,8 +432,18 @@ export const selectCommitMessage = (input: {
 export const runCommitPipeline = async (
   input: CommitPipelineInput,
 ): Promise<CommitPipelineResult> => {
+  const baseContext = input.logContext ?? {};
+
+  logInfo({ event: "commit pipeline start", stage: "start", ...baseContext });
+
   if (input.requireConfirm) {
     const confirmed = await input.confirmCommit();
+    logInfo({
+      event: "commit confirmation",
+      stage: "confirm",
+      result: confirmed ? "confirmed" : "cancelled",
+      ...baseContext,
+    });
     if (!confirmed) {
       input.notify("Commit cancelled", "info");
       return { committed: false, reason: "cancelled", message: null };
@@ -365,9 +454,23 @@ export const runCommitPipeline = async (
   if (addResult.exitCode !== 0) {
     const error =
       addResult.stderr.trim() || addResult.stdout.trim() || "git add -A failed";
+    logError({
+      event: "git add failed",
+      stage: "add",
+      result: "failed",
+      details: buildGitDetails(addResult),
+      ...baseContext,
+    });
     input.notify(error, "error");
     return { committed: false, reason: "add_failed", message: null };
   }
+  logInfo({
+    event: "git add completed",
+    stage: "add",
+    result: "ok",
+    details: { exitCode: addResult.exitCode },
+    ...baseContext,
+  });
 
   const stagedResult = await Promise.resolve(
     input.runGit(["diff", "--cached", "--name-only"]),
@@ -377,6 +480,13 @@ export const runCommitPipeline = async (
       stagedResult.stderr.trim() ||
       stagedResult.stdout.trim() ||
       "Failed to inspect staged files";
+    logError({
+      event: "staged files check failed",
+      stage: "staged_check",
+      result: "failed",
+      details: buildGitDetails(stagedResult),
+      ...baseContext,
+    });
     input.notify(error, "error");
     return {
       committed: false,
@@ -386,6 +496,13 @@ export const runCommitPipeline = async (
   }
 
   if (stagedResult.stdout.trim().length === 0) {
+    logInfo({
+      event: "no staged changes",
+      stage: "staged_check",
+      result: "empty",
+      details: { exitCode: stagedResult.exitCode },
+      ...baseContext,
+    });
     input.notify("No staged changes to commit", "info");
     return {
       committed: false,
@@ -395,8 +512,16 @@ export const runCommitPipeline = async (
   }
 
   const stagedFiles = toLines(stagedResult.stdout);
+  logInfo({
+    event: "staged files detected",
+    stage: "staged_check",
+    result: "ok",
+    details: { count: stagedFiles.length },
+    ...baseContext,
+  });
 
   let effectiveDefaultMessage = input.defaultMessage;
+  let defaultMessageSource = "configured";
   if (input.getDefaultMessage) {
     try {
       const generated = await input.getDefaultMessage({
@@ -406,13 +531,28 @@ export const runCommitPipeline = async (
       const normalized = normalizeMessage(generated);
       if (normalized) {
         effectiveDefaultMessage = normalized;
+        defaultMessageSource = "generated";
       }
-    } catch {
-      // fallback silently to configured default message
+    } catch (error) {
+      logWarn({
+        event: "default commit message generation failed",
+        stage: "default_message",
+        result: "failed",
+        details: { error: summarizeText(String(error)) },
+        ...baseContext,
+      });
     }
   }
 
-  let userInput: string | null = null;
+  logInfo({
+    event: "default commit message resolved",
+    stage: "default_message",
+    result: defaultMessageSource,
+    details: { message: summarizeText(effectiveDefaultMessage, 120) },
+    ...baseContext,
+  });
+
+  let userInput: string | null | undefined = null;
   if (
     input.hasUI &&
     (input.mode === "auto_with_override" || input.mode === "ask")
@@ -420,11 +560,29 @@ export const runCommitPipeline = async (
     userInput = await input.askCommitMessage(effectiveDefaultMessage);
   }
 
+  logInfo({
+    event: "commit message input collected",
+    stage: "message_input",
+    result: normalizeMessage(userInput) ? "provided" : "empty",
+    ...baseContext,
+  });
+
   const selected = selectCommitMessage({
     mode: input.mode,
     hasUI: input.hasUI,
     defaultMessage: effectiveDefaultMessage,
     userInput,
+  });
+
+  logInfo({
+    event: "commit message selected",
+    stage: "message_select",
+    result: selected.cancelled ? "cancelled" : "ok",
+    details: {
+      usedDefault: selected.usedDefault,
+      message: summarizeText(selected.message ?? "", 120),
+    },
+    ...baseContext,
   });
 
   if (selected.cancelled || !selected.message) {
@@ -437,6 +595,13 @@ export const runCommitPipeline = async (
   );
 
   if (commitResult.exitCode === 0) {
+    logInfo({
+      event: "git commit succeeded",
+      stage: "commit",
+      result: "ok",
+      details: { message: summarizeText(selected.message, 120) },
+      ...baseContext,
+    });
     input.notify(`Committed: ${selected.message}`, "success");
     return {
       committed: true,
@@ -447,6 +612,13 @@ export const runCommitPipeline = async (
 
   const rawError = commitResult.stderr.trim() || commitResult.stdout.trim();
   if (containsNothingToCommit(rawError)) {
+    logInfo({
+      event: "git commit skipped",
+      stage: "commit",
+      result: "nothing_to_commit",
+      details: buildGitDetails(commitResult),
+      ...baseContext,
+    });
     input.notify("Nothing to commit", "info");
     return {
       committed: false,
@@ -455,6 +627,13 @@ export const runCommitPipeline = async (
     };
   }
 
+  logError({
+    event: "git commit failed",
+    stage: "commit",
+    result: "failed",
+    details: buildGitDetails(commitResult),
+    ...baseContext,
+  });
   input.notify(rawError || "git commit failed", "error");
   return {
     committed: false,
@@ -642,26 +821,64 @@ const runManualCommit = async (
   ctx: ExtensionContext,
   config: DirtyGitStatusConfig,
 ): Promise<void> => {
+  const trigger = "manual" as const;
+  logInfo({
+    event: "manual commit requested",
+    trigger,
+    details: { cwd: ctx.cwd },
+  });
+
   const repoRoot = getRepoRoot(ctx.cwd, config.timeoutMs);
   if (!repoRoot) {
+    logInfo({
+      event: "repo root not found",
+      trigger,
+      result: "missing",
+      details: { cwd: ctx.cwd },
+    });
     ctx.ui.notify("Not a git repository", "info");
     return;
   }
 
+  const repoName = repoNameFromRoot(repoRoot);
+  logInfo({ event: "repo root resolved", trigger, repoRoot, repoName });
+
   const dirty = checkRepoDirty(repoRoot, config.timeoutMs);
   if (!dirty) {
+    logWarn({
+      event: "git status check failed",
+      trigger,
+      repoRoot,
+      repoName,
+    });
     ctx.ui.notify("Failed to check git status", "warning");
     return;
   }
 
+  logInfo({
+    event: "git status checked",
+    trigger,
+    repoRoot,
+    repoName,
+    stage: "dirty_check",
+    summary: dirty.summary,
+  });
+
   if (!dirty.summary.dirty) {
+    logInfo({
+      event: "repository clean",
+      trigger,
+      repoRoot,
+      repoName,
+      summary: dirty.summary,
+    });
     ctx.ui.notify("Repository is clean", "info");
     return;
   }
 
-  const repoName = repoNameFromRoot(repoRoot);
+  const baseContext = { trigger, repoRoot, repoName };
 
-  await runCommitPipeline({
+  const pipelineResult = await runCommitPipeline({
     runGit: (args) => runGit(repoRoot, args, config.timeoutMs),
     hasUI: ctx.hasUI,
     confirmCommit: async () => {
@@ -679,6 +896,7 @@ const runManualCommit = async (
     mode: config.commitMessageMode,
     defaultMessage: config.defaultCommitMessage,
     requireConfirm: ctx.hasUI,
+    logContext: baseContext,
     getDefaultMessage: config.aiDefaultCommitMessage
       ? async ({ stagedFiles, defaultMessage }) => {
           if (!ctx.model) return null;
@@ -718,28 +936,76 @@ const runManualCommit = async (
         }
       : undefined,
   });
+
+  logInfo({
+    event: "manual commit pipeline finished",
+    trigger,
+    repoRoot,
+    repoName,
+    result: pipelineResult.committed ? "committed" : "skipped",
+    reason: pipelineResult.reason,
+    details: { message: summarizeText(pipelineResult.message ?? "", 120) },
+  });
 };
 
 const handleSessionCheck = async (
   ctx: ExtensionContext,
   trigger: "session_start" | "session_switch",
 ): Promise<void> => {
+  logInfo({
+    event: "session check start",
+    trigger,
+    details: { cwd: ctx.cwd },
+  });
+
   const config = getSettingsConfig(ctx.cwd);
   if (!config.enabled || !config.checkOnSessionStart) {
+    logInfo({
+      event: "session check skipped",
+      trigger,
+      result: "disabled",
+      details: {
+        enabled: config.enabled,
+        checkOnSessionStart: config.checkOnSessionStart,
+      },
+    });
     return;
   }
 
   const repoRoot = getRepoRoot(ctx.cwd, config.timeoutMs);
   if (!repoRoot) {
+    logInfo({
+      event: "repo root not found",
+      trigger,
+      result: "missing",
+      details: { cwd: ctx.cwd },
+    });
     return;
   }
+
+  const repoName = repoNameFromRoot(repoRoot);
+  logInfo({ event: "repo root resolved", trigger, repoRoot, repoName });
 
   const dirty = checkRepoDirty(repoRoot, config.timeoutMs);
   if (!dirty) {
     ctx.ui.notify("Failed to check git status", "warning");
-    log?.warn("git status check failed", { trigger, repoRoot });
+    logWarn({
+      event: "git status check failed",
+      trigger,
+      repoRoot,
+      repoName,
+    });
     return;
   }
+
+  logInfo({
+    event: "git status checked",
+    trigger,
+    repoRoot,
+    repoName,
+    stage: "dirty_check",
+    summary: dirty.summary,
+  });
 
   const sessionState = getSessionState(ctx);
   const repoState = sessionState.get(repoRoot) ?? { prompted: false };
@@ -747,28 +1013,61 @@ const handleSessionCheck = async (
     sessionState.set(repoRoot, repoState);
   }
 
+  const alreadyPrompted = repoState.prompted;
   const decision = shouldPromptForDirtyRepo({
     porcelain: dirty.porcelain,
-    alreadyPrompted: repoState.prompted,
+    alreadyPrompted,
   });
   repoState.prompted = decision.nextPrompted;
 
-  if (!decision.shouldPrompt) {
-    return;
-  }
+  const decisionReason = dirty.summary.dirty
+    ? alreadyPrompted
+      ? "already_prompted"
+      : "dirty"
+    : "clean";
 
-  if (!ctx.hasUI) {
-    log?.info("dirty repo detected but no UI available", {
+  logInfo({
+    event: "prompt decision evaluated",
+    trigger,
+    repoRoot,
+    repoName,
+    stage: "prompt_decision",
+    summary: dirty.summary,
+    details: {
+      alreadyPrompted,
+      shouldPrompt: decision.shouldPrompt,
+      nextPrompted: decision.nextPrompted,
+      reason: decisionReason,
+    },
+  });
+
+  if (!decision.shouldPrompt) {
+    logInfo({
+      event: "prompt skipped",
       trigger,
       repoRoot,
-      summary: dirty.summary,
+      repoName,
+      result: "skip",
+      reason: decisionReason,
     });
     return;
   }
 
-  const repoName = repoNameFromRoot(repoRoot);
+  if (!ctx.hasUI) {
+    logInfo({
+      event: "prompt skipped (no UI)",
+      trigger,
+      repoRoot,
+      repoName,
+      summary: dirty.summary,
+      result: "no_ui",
+    });
+    return;
+  }
 
-  await runCommitPipeline({
+  const baseContext = { trigger, repoRoot, repoName };
+
+  const pipelineResult = await runCommitPipeline({
     runGit: (args) => runGit(repoRoot, args, config.timeoutMs),
     hasUI: ctx.hasUI,
     confirmCommit: async () =>
@@ -782,6 +1081,7 @@ const handleSessionCheck = async (
     mode: config.commitMessageMode,
     defaultMessage: config.defaultCommitMessage,
     requireConfirm: true,
+    logContext: baseContext,
     getDefaultMessage: config.aiDefaultCommitMessage
       ? async ({ stagedFiles, defaultMessage }) => {
           if (!ctx.model) return null;
@@ -820,6 +1120,16 @@ const handleSessionCheck = async (
           return generated ?? defaultMessage;
         }
       : undefined,
+  });
+
+  logInfo({
+    event: "session commit pipeline finished",
+    trigger,
+    repoRoot,
+    repoName,
+    result: pipelineResult.committed ? "committed" : "skipped",
+    reason: pipelineResult.reason,
+    details: { message: summarizeText(pipelineResult.message ?? "", 120) },
   });
 };
 

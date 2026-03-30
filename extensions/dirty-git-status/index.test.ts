@@ -214,6 +214,40 @@ describe("runCommitPipeline", () => {
     });
   });
 
+  it("cancels when ask mode receives undefined input", async () => {
+    const commands: string[] = [];
+    const runGit = vi.fn((args: string[]) => {
+      commands.push(args.join(" "));
+      if (args[0] === "add") return ok();
+      if (args[0] === "diff") return ok("file.ts\n");
+      return fail("unexpected");
+    });
+
+    const notify = vi.fn();
+
+    const result = await runCommitPipeline({
+      runGit,
+      hasUI: true,
+      confirmCommit: vi.fn(async () => true),
+      askCommitMessage: vi.fn(async () => undefined),
+      notify,
+      mode: "ask",
+      defaultMessage: DEFAULT_COMMIT_MESSAGE,
+      requireConfirm: false,
+    });
+
+    expect(result).toEqual({
+      committed: false,
+      reason: "cancelled",
+      message: null,
+    });
+    expect(commands).toEqual(["add -A", "diff --cached --name-only"]);
+    expect(notify).toHaveBeenCalledWith(
+      "Commit cancelled (message required)",
+      "info",
+    );
+  });
+
   it("classifies nothing to commit failures", async () => {
     const runGit = vi.fn((args: string[]) => {
       if (args[0] === "add") return ok();

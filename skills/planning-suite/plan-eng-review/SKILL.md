@@ -35,7 +35,7 @@ Recommendation: ... (optional)
    PLANS_DIR="$REPO_ROOT/.pi/plans/$SLUG/plan-eng-review"
    mkdir -p "$PLANS_DIR"
    ```
-2. Read `CLAUDE.md` and `TODOS.md` if they exist.
+2. Read `AGENTS.md` and `TODOS.md` if they exist.
 3. Find the latest office-hours design doc (if any):
    ```bash
    ls -t "$REPO_ROOT/.pi/plans/$SLUG/office-hours"/*.md 2>/dev/null | head -1

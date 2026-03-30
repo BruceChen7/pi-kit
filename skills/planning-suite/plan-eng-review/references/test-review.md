@@ -3,7 +3,7 @@
 Goal: 100% coverage of new code paths and user-visible flows.
 
 ## Test framework detection
-1. Read `CLAUDE.md` for a testing section.
+1. Read `AGENTS.md` for a testing section.
 2. If absent, auto-detect:
    ```bash
    ls jest.config.* vitest.config.* playwright.config.* cypress.config.* .rspec pytest.ini phpunit.xml 2>/dev/null

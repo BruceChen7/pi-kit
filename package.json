@@ -16,7 +16,8 @@
       "./extensions/bash-hook",
       "./extensions/env-guard",
       "./extensions/rtk-rewrite",
-      "./extensions/plannotator-auto"
+      "./extensions/plannotator-auto",
+      "./extensions/dirty-git-status"
     ]
   },
   "scripts": {

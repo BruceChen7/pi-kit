@@ -1,11 +1,16 @@
 ## Workflow Orchestration
 
 ### Plan Mode Default
-* Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
+* Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions), unless it qualifies for the "Skill-only exception" below.
 * If something goes sideways, STOP and re-plan immediately - don't keep pushing
 * Use plan mode for verification steps, not just building. Write detailed specs upfront to reduce ambiguity
 
 ### Skill Integration (Plan Mode + Skills)
+
+### Skill-only exception (no plan required)
+* If the user request is **only** to run a skill as a **pure workflow** (no code changes, no file edits, no architectural decisions), skip plan mode and do not create a `.pi/plans/...` plan file.
+* The moment the task includes edits/implementation (even if guided by a skill), fall back to plan mode.
+
 * Plan mode is still required for non-trivial tasks even when executing a multi-step skill.
 * Keep plans lightweight: reference the skill as a single checklist item instead of duplicating sub-steps.
 * Skill ordering takes precedence. If a plan conflicts with a skill’s required sequence, update the plan to match the skill; if unclear, stop and re-plan/ask.
@@ -26,7 +31,7 @@
 
 ## Task Management
 
-1. **Plan First**: Write plan to `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` with checkable items (kebab-case slug)
+1. **Plan First**: Write plan to `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` with checkable items (kebab-case slug). (Exception: the "Skill-only exception" above.)
 2. **Verify Plan**: Check in before starting implementation
 3. **Track Progress**: Mark items complete as you go
 4. **Explain Changes**: High-level summary at each step

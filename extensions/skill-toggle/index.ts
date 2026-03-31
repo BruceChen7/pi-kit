@@ -45,8 +45,8 @@ interface SkillToggleSettings {
 interface ToggleState {
   disabledSkills: Set<string>;
   writePath: string;
-  writeScope: "project" | "global";
-  cwdKey?: string;
+  writeScope: "global";
+  cwdKey: string;
 }
 
 interface PaletteTheme {
@@ -480,19 +480,14 @@ function getManagedOverrides(
   skillToggle: SkillToggleSettings,
   state: ToggleState,
 ): string[] {
-  if (state.writeScope === "global") {
-    const byCwd = isRecord(skillToggle.byCwd)
-      ? (skillToggle.byCwd as Record<string, unknown>)
-      : undefined;
-    const cwdKey = state.cwdKey ?? toTildePath(process.cwd());
-    const entryRaw = byCwd ? byCwd[cwdKey] : undefined;
-    if (isRecord(entryRaw)) {
-      return toSkillList(entryRaw.managedOverrides) ?? [];
-    }
-    return [];
+  const byCwd = isRecord(skillToggle.byCwd)
+    ? (skillToggle.byCwd as Record<string, unknown>)
+    : undefined;
+  const entryRaw = byCwd ? byCwd[state.cwdKey] : undefined;
+  if (isRecord(entryRaw)) {
+    return toSkillList(entryRaw.managedOverrides) ?? [];
   }
-
-  return toSkillList(skillToggle.managedOverrides) ?? [];
+  return [];
 }
 
 function getManagedOverrideMap(overrides: string[]): Map<string, string> {
@@ -517,45 +512,27 @@ function getGlobalCwdKey(cwd: string): string {
   return matchedKey ?? toTildePath(cwd);
 }
 
-function getManagedOverrideEntriesForPath(
-  filePath: string,
-  scope: "project" | "user",
-  cwdKey?: string,
-): Skill[] {
-  const settings = readSettingsFile(filePath);
+function getManagedOverrideEntries(cwd: string): Skill[] {
+  const { globalPath } = getSettingsPaths(cwd);
+  const cwdKey = getGlobalCwdKey(cwd);
+  const settings = readSettingsFile(globalPath);
   const skillToggle = isRecord(settings.skillToggle)
     ? (settings.skillToggle as SkillToggleSettings)
     : {};
-  const overrides =
-    scope === "user"
-      ? getManagedOverrides(skillToggle, {
-          disabledSkills: new Set(),
-          writePath: filePath,
-          writeScope: "global",
-          cwdKey,
-        })
-      : getManagedOverrides(skillToggle, {
-          disabledSkills: new Set(),
-          writePath: filePath,
-          writeScope: "project",
-        });
+  const overrides = getManagedOverrides(skillToggle, {
+    disabledSkills: new Set(),
+    writePath: globalPath,
+    writeScope: "global",
+    cwdKey,
+  });
   const entries: Skill[] = [];
   for (const override of overrides) {
     const basePath = override.startsWith("-") ? override.slice(1) : override;
     const name = normalizeSkillName(path.basename(basePath));
     if (!name) continue;
-    entries.push({ name, description: "", filePath: basePath, scope });
+    entries.push({ name, description: "", filePath: basePath, scope: "user" });
   }
   return entries;
-}
-
-function getManagedOverrideEntries(cwd: string): Skill[] {
-  const { projectPath, globalPath } = getSettingsPaths(cwd);
-  const cwdKey = getGlobalCwdKey(cwd);
-  return [
-    ...getManagedOverrideEntriesForPath(projectPath, "project"),
-    ...getManagedOverrideEntriesForPath(globalPath, "user", cwdKey),
-  ];
 }
 
 function updateManagedOverrides(
@@ -563,45 +540,26 @@ function updateManagedOverrides(
   state: ToggleState,
   overrides: string[],
 ): SkillToggleSettings {
-  if (state.writeScope === "global") {
-    const byCwd = isRecord(skillToggle.byCwd) ? { ...skillToggle.byCwd } : {};
-    const cwdKey = state.cwdKey ?? toTildePath(process.cwd());
-    const entryRaw = isRecord(byCwd[cwdKey])
-      ? (byCwd[cwdKey] as SkillToggleSettingsEntry)
-      : {};
-    const nextEntry: SkillToggleSettingsEntry = {
-      ...entryRaw,
-      managedOverrides: overrides.length > 0 ? overrides : undefined,
-    };
-    if (!nextEntry.managedOverrides) {
-      delete nextEntry.managedOverrides;
-    }
-    byCwd[cwdKey] = nextEntry;
-    return { ...skillToggle, byCwd };
-  }
-
-  const next: SkillToggleSettings = {
-    ...skillToggle,
+  const byCwd = isRecord(skillToggle.byCwd) ? { ...skillToggle.byCwd } : {};
+  const entryRaw = isRecord(byCwd[state.cwdKey])
+    ? (byCwd[state.cwdKey] as SkillToggleSettingsEntry)
+    : {};
+  const nextEntry: SkillToggleSettingsEntry = {
+    ...entryRaw,
     managedOverrides: overrides.length > 0 ? overrides : undefined,
   };
-  if (!next.managedOverrides) {
-    delete next.managedOverrides;
+  if (!nextEntry.managedOverrides) {
+    delete nextEntry.managedOverrides;
   }
-  return next;
+  byCwd[state.cwdKey] = nextEntry;
+  return { ...skillToggle, byCwd };
 }
 
 export function loadToggleState(cwd: string): ToggleState {
-  const {
-    projectPath,
-    globalPath,
-    project: projectSettings,
-    global: globalSettings,
-  } = loadSettings(cwd, { forceReload: true });
-
-  const projectToggle = extractSkillToggle(projectSettings);
+  const { globalPath, global: globalSettings } = loadSettings(cwd, {
+    forceReload: true,
+  });
   const globalToggle = extractSkillToggle(globalSettings);
-
-  const projectDisabled = toSkillList(projectToggle?.disabledSkills);
 
   const byCwd = isRecord(globalToggle?.byCwd)
     ? (globalToggle?.byCwd as Record<string, unknown>)
@@ -613,52 +571,36 @@ export function loadToggleState(cwd: string): ToggleState {
     : null;
   const globalDisabled = toSkillList(globalEntry?.disabledSkills);
 
-  const disabledSkills = projectDisabled ?? globalDisabled ?? [];
-  const writeScope: ToggleState["writeScope"] = fs.existsSync(projectPath)
-    ? "project"
-    : "global";
-  const writePath = writeScope === "project" ? projectPath : globalPath;
-  const cwdKey =
-    writeScope === "global" ? (matchedKey ?? toTildePath(cwd)) : undefined;
+  const disabledSkills = globalDisabled ?? [];
+  const cwdKey = matchedKey ?? toTildePath(cwd);
 
   // Normalize all disabled skill names for consistent matching
   const normalizedDisabled = disabledSkills.map(normalizeSkillName);
   return {
     disabledSkills: new Set(normalizedDisabled),
-    writePath,
-    writeScope,
+    writePath: globalPath,
+    writeScope: "global",
     cwdKey,
   };
 }
 
 export function saveToggleState(state: ToggleState): void {
   const settings = readSettingsFile(state.writePath);
-  if (state.writeScope === "global") {
-    const skillToggle = isRecord(settings.skillToggle)
-      ? (settings.skillToggle as SkillToggleSettings)
-      : {};
-    const byCwd = isRecord(skillToggle.byCwd) ? { ...skillToggle.byCwd } : {};
-    const cwdKey = state.cwdKey ?? toTildePath(process.cwd());
-    const entryRaw = isRecord(byCwd[cwdKey])
-      ? (byCwd[cwdKey] as SkillToggleSettingsEntry)
-      : {};
-    byCwd[cwdKey] = {
-      ...entryRaw,
-      disabledSkills: Array.from(state.disabledSkills).sort(),
-    };
-    settings.skillToggle = {
-      ...skillToggle,
-      byCwd,
-    };
-  } else {
-    const skillToggle = isRecord(settings.skillToggle)
-      ? (settings.skillToggle as SkillToggleSettings)
-      : {};
-    settings.skillToggle = {
-      ...skillToggle,
-      disabledSkills: Array.from(state.disabledSkills).sort(),
-    };
-  }
+  const skillToggle = isRecord(settings.skillToggle)
+    ? (settings.skillToggle as SkillToggleSettings)
+    : {};
+  const byCwd = isRecord(skillToggle.byCwd) ? { ...skillToggle.byCwd } : {};
+  const entryRaw = isRecord(byCwd[state.cwdKey])
+    ? (byCwd[state.cwdKey] as SkillToggleSettingsEntry)
+    : {};
+  byCwd[state.cwdKey] = {
+    ...entryRaw,
+    disabledSkills: Array.from(state.disabledSkills).sort(),
+  };
+  settings.skillToggle = {
+    ...skillToggle,
+    byCwd,
+  };
 
   writeSettingsFile(state.writePath, settings);
 }
@@ -718,25 +660,14 @@ export function syncSkillOverrides(
   skills: Skill[],
   cwd: string,
 ): void {
-  const { projectPath, globalPath } = getSettingsPaths(cwd);
+  const { globalPath } = getSettingsPaths(cwd);
   const globalState: ToggleState = {
     disabledSkills: state.disabledSkills,
     writePath: globalPath,
     writeScope: "global",
     cwdKey: getGlobalCwdKey(cwd),
   };
-
-  if (state.writeScope === "project") {
-    const projectSkills = skills.filter((skill) => skill.scope === "project");
-    const userSkills = skills.filter((skill) => skill.scope !== "project");
-    syncSkillOverridesForState(
-      { ...state, writePath: projectPath, writeScope: "project" },
-      projectSkills,
-    );
-    syncSkillOverridesForState(globalState, userSkills);
-  } else {
-    syncSkillOverridesForState(globalState, skills);
-  }
+  syncSkillOverridesForState(globalState, skills);
 }
 
 function getInstalledSkillNames(skills: Skill[]): Set<string> {
@@ -799,8 +730,7 @@ function pruneSettingsFile(filePath: string, installed: Set<string>): void {
 
 function pruneSettingsFiles(cwd: string, skills: Skill[]): void {
   const installed = getInstalledSkillNames(skills);
-  const { projectPath, globalPath } = getSettingsPaths(cwd);
-  pruneSettingsFile(projectPath, installed);
+  const { globalPath } = getSettingsPaths(cwd);
   pruneSettingsFile(globalPath, installed);
 }
 

@@ -43,7 +43,7 @@ type RepoState = {
 
 type SessionState = Map<string, RepoState>;
 
-type NotifyLevel = "success" | "info" | "warning" | "error";
+type NotifyLevel = "info" | "warning" | "error";
 
 export type StatusOutput = {
   exitCode: number;
@@ -138,6 +138,10 @@ const MANUAL_COMMAND = "commit-now";
 export const DEFAULT_COMMIT_MESSAGE = DEFAULT_CONFIG.defaultCommitMessage;
 
 const stateBySession = new Map<string, SessionState>();
+const pendingSessionChecks = new Map<
+  string,
+  "session_start" | "session_switch"
+>();
 
 let log: ReturnType<typeof createLogger> | null = null;
 
@@ -248,6 +252,61 @@ const getSessionState = (ctx: ExtensionContext): SessionState => {
   return next;
 };
 
+const queueSessionCheck = (
+  ctx: ExtensionContext,
+  trigger: "session_start" | "session_switch",
+): void => {
+  const sessionKey = getSessionKey(ctx);
+  const previousTrigger = pendingSessionChecks.get(sessionKey) ?? null;
+  pendingSessionChecks.set(sessionKey, trigger);
+  logInfo({
+    event: "session check queued",
+    trigger,
+    stage: "queue",
+    result: previousTrigger ? "replaced" : "queued",
+    details: {
+      sessionKey,
+      previousTrigger,
+    },
+  });
+};
+
+const consumeQueuedSessionCheck = (
+  ctx: ExtensionContext,
+): "session_start" | "session_switch" | null => {
+  const key = getSessionKey(ctx);
+  const queued = pendingSessionChecks.get(key);
+  if (queued) {
+    pendingSessionChecks.delete(key);
+    logInfo({
+      event: "session check dequeued",
+      trigger: queued,
+      stage: "queue",
+      result: "consumed",
+      details: {
+        sessionKey: key,
+      },
+    });
+    return queued;
+  }
+
+  const fallback = Array.from(pendingSessionChecks.entries()).at(-1);
+  if (!fallback) return null;
+  const [fallbackSessionKey, fallbackTrigger] = fallback;
+  pendingSessionChecks.delete(fallbackSessionKey);
+  logWarn({
+    event: "session check dequeued",
+    trigger: fallbackTrigger,
+    stage: "queue",
+    result: "consumed_fallback",
+    details: {
+      sessionKey: key,
+      fallbackSessionKey,
+    },
+  });
+  return fallbackTrigger;
+};
+
 const runGit = (
   cwd: string,
   args: string[],
@@ -294,6 +353,7 @@ const formatSummary = (summary: DirtySummary): string =>
   `staged ${summary.staged}, unstaged ${summary.unstaged}, untracked ${summary.untracked}`;
 
 const MAX_LOG_TEXT = 200;
+const UI_INTERACTION_TIMEOUT_MS = 60_000;
 
 const summarizeText = (value: string, max = MAX_LOG_TEXT): string | null => {
   const trimmed = value.trim();
@@ -301,6 +361,27 @@ const summarizeText = (value: string, max = MAX_LOG_TEXT): string | null => {
   if (trimmed.length <= max) return trimmed;
   return `${trimmed.slice(0, max).trimEnd()}…`;
 };
+
+const withTimeout = <T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
 
 const buildGitDetails = (result: StatusOutput): Record<string, unknown> => {
   const stdout = summarizeText(result.stdout);
@@ -437,7 +518,32 @@ export const runCommitPipeline = async (
   logInfo({ event: "commit pipeline start", stage: "start", ...baseContext });
 
   if (input.requireConfirm) {
-    const confirmed = await input.confirmCommit();
+    logInfo({
+      event: "commit confirmation requested",
+      stage: "confirm",
+      result: "requested",
+      ...baseContext,
+    });
+
+    let confirmed: boolean;
+    try {
+      confirmed = await withTimeout(
+        Promise.resolve(input.confirmCommit()),
+        UI_INTERACTION_TIMEOUT_MS,
+        "commit confirmation",
+      );
+    } catch (error) {
+      logWarn({
+        event: "commit confirmation failed",
+        stage: "confirm",
+        result: "failed",
+        details: { error: summarizeText(String(error)) },
+        ...baseContext,
+      });
+      input.notify("Failed to open commit confirmation prompt", "warning");
+      return { committed: false, reason: "cancelled", message: null };
+    }
+
     logInfo({
       event: "commit confirmation",
       stage: "confirm",
@@ -557,7 +663,22 @@ export const runCommitPipeline = async (
     input.hasUI &&
     (input.mode === "auto_with_override" || input.mode === "ask")
   ) {
-    userInput = await input.askCommitMessage(effectiveDefaultMessage);
+    try {
+      userInput = await withTimeout(
+        Promise.resolve(input.askCommitMessage(effectiveDefaultMessage)),
+        UI_INTERACTION_TIMEOUT_MS,
+        "commit message input",
+      );
+    } catch (error) {
+      logWarn({
+        event: "commit message input failed",
+        stage: "message_input",
+        result: "failed",
+        details: { error: summarizeText(String(error)) },
+        ...baseContext,
+      });
+      userInput = null;
+    }
   }
 
   logInfo({
@@ -602,7 +723,7 @@ export const runCommitPipeline = async (
       details: { message: summarizeText(selected.message, 120) },
       ...baseContext,
     });
-    input.notify(`Committed: ${selected.message}`, "success");
+    input.notify(`Committed: ${selected.message}`, "info");
     return {
       committed: true,
       reason: "committed",
@@ -1018,7 +1139,6 @@ const handleSessionCheck = async (
     porcelain: dirty.porcelain,
     alreadyPrompted,
   });
-  repoState.prompted = decision.nextPrompted;
 
   const decisionReason = dirty.summary.dirty
     ? alreadyPrompted
@@ -1042,6 +1162,7 @@ const handleSessionCheck = async (
   });
 
   if (!decision.shouldPrompt) {
+    repoState.prompted = decision.nextPrompted;
     logInfo({
       event: "prompt skipped",
       trigger,
@@ -1054,6 +1175,7 @@ const handleSessionCheck = async (
   }
 
   if (!ctx.hasUI) {
+    repoState.prompted = false;
     logInfo({
       event: "prompt skipped (no UI)",
       trigger,
@@ -1067,60 +1189,77 @@ const handleSessionCheck = async (
 
   const baseContext = { trigger, repoRoot, repoName };
 
-  const pipelineResult = await runCommitPipeline({
-    runGit: (args) => runGit(repoRoot, args, config.timeoutMs),
-    hasUI: ctx.hasUI,
-    confirmCommit: async () =>
-      ctx.ui.confirm(
-        "Repository has uncommitted changes",
-        `Dirty repo ${repoName}: ${formatSummary(dirty.summary)}. Commit now?`,
-      ),
-    askCommitMessage: async (defaultMessage) =>
-      ctx.ui.input("Commit message (empty = default)", defaultMessage),
-    notify: (message, level) => ctx.ui.notify(message, level),
-    mode: config.commitMessageMode,
-    defaultMessage: config.defaultCommitMessage,
-    requireConfirm: true,
-    logContext: baseContext,
-    getDefaultMessage: config.aiDefaultCommitMessage
-      ? async ({ stagedFiles, defaultMessage }) => {
-          if (!ctx.model) return null;
+  let pipelineResult: CommitPipelineResult;
+  try {
+    pipelineResult = await runCommitPipeline({
+      runGit: (args) => runGit(repoRoot, args, config.timeoutMs),
+      hasUI: ctx.hasUI,
+      confirmCommit: async () =>
+        ctx.ui.confirm(
+          "Repository has uncommitted changes",
+          `Dirty repo ${repoName}: ${formatSummary(dirty.summary)}. Commit now?`,
+        ),
+      askCommitMessage: async (defaultMessage) =>
+        ctx.ui.input("Commit message (empty = default)", defaultMessage),
+      notify: (message, level) => ctx.ui.notify(message, level),
+      mode: config.commitMessageMode,
+      defaultMessage: config.defaultCommitMessage,
+      requireConfirm: true,
+      logContext: baseContext,
+      getDefaultMessage: config.aiDefaultCommitMessage
+        ? async ({ stagedFiles, defaultMessage }) => {
+            if (!ctx.model) return null;
 
-          const diffStatResult = runGit(
-            repoRoot,
-            ["diff", "--cached", "--stat", "--no-color"],
-            config.timeoutMs,
-          );
-          const diffStat =
-            diffStatResult.exitCode === 0 ? diffStatResult.stdout : "";
-
-          let diffPatch: string | undefined;
-          if (config.aiDefaultCommitMessageIncludeDiff) {
-            const patchResult = runGit(
+            const diffStatResult = runGit(
               repoRoot,
-              ["diff", "--cached", "--no-color"],
+              ["diff", "--cached", "--stat", "--no-color"],
               config.timeoutMs,
             );
-            if (patchResult.exitCode === 0) {
-              diffPatch = patchResult.stdout.slice(
-                0,
-                Math.max(0, config.aiDefaultCommitMessageMaxDiffChars),
-              );
-            }
-          }
+            const diffStat =
+              diffStatResult.exitCode === 0 ? diffStatResult.stdout : "";
 
-          const generated = await generateAiDefaultCommitMessage({
-            ctx,
-            stagedFiles,
-            language: config.aiDefaultCommitMessageLanguage,
-            timeoutMs: config.aiDefaultCommitMessageTimeoutMs,
-            diffStat,
-            diffPatch,
-          });
-          return generated ?? defaultMessage;
-        }
-      : undefined,
-  });
+            let diffPatch: string | undefined;
+            if (config.aiDefaultCommitMessageIncludeDiff) {
+              const patchResult = runGit(
+                repoRoot,
+                ["diff", "--cached", "--no-color"],
+                config.timeoutMs,
+              );
+              if (patchResult.exitCode === 0) {
+                diffPatch = patchResult.stdout.slice(
+                  0,
+                  Math.max(0, config.aiDefaultCommitMessageMaxDiffChars),
+                );
+              }
+            }
+
+            const generated = await generateAiDefaultCommitMessage({
+              ctx,
+              stagedFiles,
+              language: config.aiDefaultCommitMessageLanguage,
+              timeoutMs: config.aiDefaultCommitMessageTimeoutMs,
+              diffStat,
+              diffPatch,
+            });
+            return generated ?? defaultMessage;
+          }
+        : undefined,
+    });
+  } catch (error) {
+    repoState.prompted = false;
+    logError({
+      event: "session commit pipeline crashed",
+      trigger,
+      repoRoot,
+      repoName,
+      result: "failed",
+      details: { error: summarizeText(String(error)) },
+    });
+    ctx.ui.notify("Failed to run commit prompt", "warning");
+    return;
+  }
+
+  repoState.prompted = true;
 
   logInfo({
     event: "session commit pipeline finished",
@@ -1149,10 +1288,37 @@ export default function dirtyGitStatusExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", (_event, ctx) => {
-    void handleSessionCheck(ctx, "session_start");
+    queueSessionCheck(ctx, "session_start");
   });
 
   pi.on("session_switch", (_event, ctx) => {
-    void handleSessionCheck(ctx, "session_switch");
+    queueSessionCheck(ctx, "session_switch");
+  });
+
+  pi.on("input", async (event, ctx) => {
+    if (event.source === "extension") return { action: "continue" };
+    const queuedTrigger = consumeQueuedSessionCheck(ctx);
+    if (!queuedTrigger) return { action: "continue" };
+    logInfo({
+      event: "session check execution requested",
+      trigger: queuedTrigger,
+      stage: "queue",
+      result: "input",
+    });
+    await handleSessionCheck(ctx, queuedTrigger);
+    return { action: "continue" };
+  });
+
+  pi.on("before_agent_start", async (_event, ctx) => {
+    const queuedTrigger = consumeQueuedSessionCheck(ctx);
+    if (!queuedTrigger) return {};
+    logInfo({
+      event: "session check execution requested",
+      trigger: queuedTrigger,
+      stage: "queue",
+      result: "before_agent_start",
+    });
+    await handleSessionCheck(ctx, queuedTrigger);
+    return {};
   });
 }

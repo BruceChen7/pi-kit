@@ -95,7 +95,7 @@ describe("createLoggerReady", () => {
 });
 
 describe("settings integration", () => {
-  it("prefers project settings and selects project write scope", async () => {
+  it("ignores project settings and uses global byCwd entry", async () => {
     createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const { globalPath, projectPath } = getSettingsPaths(cwd);
@@ -137,13 +137,14 @@ describe("settings integration", () => {
     const { loadToggleState } = await importSkillToggle();
     const state = loadToggleState(cwd);
 
-    expect(state.writeScope).toBe("project");
-    expect(state.writePath).toBe(projectPath);
-    expect(state.disabledSkills.has("projectskill")).toBe(true);
-    expect(state.disabledSkills.has("global-only")).toBe(false);
+    expect(state.writeScope).toBe("global");
+    expect(state.writePath).toBe(globalPath);
+    expect(state.cwdKey).toBe(cwd);
+    expect(state.disabledSkills.has("global-only")).toBe(true);
+    expect(state.disabledSkills.has("projectskill")).toBe(false);
   });
 
-  it("falls back to global byCwd and writes to global settings", async () => {
+  it("writes disabled skills to global settings", async () => {
     createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const { globalPath } = getSettingsPaths(cwd);
@@ -170,11 +171,6 @@ describe("settings integration", () => {
     const { loadToggleState, saveToggleState } = await importSkillToggle();
     const state = loadToggleState(cwd);
 
-    expect(state.writeScope).toBe("global");
-    expect(state.writePath).toBe(globalPath);
-    expect(state.cwdKey).toBe(cwd);
-    expect(state.disabledSkills.has("gamma")).toBe(true);
-
     state.disabledSkills.add("beta");
     saveToggleState(state);
 
@@ -187,20 +183,24 @@ describe("settings integration", () => {
 });
 
 describe("skill override sync", () => {
-  it("writes project overrides and preserves user entries", async () => {
+  it("writes global overrides and preserves user entries", async () => {
     createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
-    const { projectPath } = getSettingsPaths(cwd);
+    const { globalPath } = getSettingsPaths(cwd);
     const skillPath = path.join(cwd, ".pi", "skills", "alpha", "SKILL.md");
     const overridePath = `-${path.join(cwd, ".pi", "skills", "alpha")}`;
 
-    fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+    fs.mkdirSync(path.dirname(globalPath), { recursive: true });
     fs.writeFileSync(
-      projectPath,
+      globalPath,
       JSON.stringify(
         {
           skillToggle: {
-            disabledSkills: ["Alpha"],
+            byCwd: {
+              [cwd]: {
+                disabledSkills: ["Alpha"],
+              },
+            },
           },
           skills: ["custom"],
         },
@@ -226,17 +226,18 @@ describe("skill override sync", () => {
       cwd,
     );
 
-    const saved = readSettingsFile(projectPath);
+    const saved = readSettingsFile(globalPath);
+    const byCwd = (saved.skillToggle as { byCwd: Record<string, unknown> })
+      .byCwd;
+    const entry = byCwd[cwd] as { managedOverrides?: string[] };
     expect(saved.skills).toEqual(["custom", overridePath]);
-    expect(
-      (saved.skillToggle as { managedOverrides?: string[] }).managedOverrides,
-    ).toEqual([overridePath]);
+    expect(entry.managedOverrides).toEqual([overridePath]);
   });
 
   it("removes global overrides when re-enabled", async () => {
     createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
-    const { globalPath, projectPath } = getSettingsPaths(cwd);
+    const { globalPath } = getSettingsPaths(cwd);
     const skillPath = path.join(
       os.homedir(),
       ".agents",
@@ -245,13 +246,17 @@ describe("skill override sync", () => {
       "SKILL.md",
     );
 
-    fs.mkdirSync(path.dirname(projectPath), { recursive: true });
+    fs.mkdirSync(path.dirname(globalPath), { recursive: true });
     fs.writeFileSync(
-      projectPath,
+      globalPath,
       JSON.stringify(
         {
           skillToggle: {
-            disabledSkills: ["Alpha"],
+            byCwd: {
+              [cwd]: {
+                disabledSkills: ["Alpha"],
+              },
+            },
           },
         },
         null,

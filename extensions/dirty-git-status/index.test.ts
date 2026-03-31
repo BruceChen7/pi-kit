@@ -164,7 +164,7 @@ describe("runCommitPipeline", () => {
       "diff --cached --name-only",
       "commit -m chore: auto",
     ]);
-    expect(notifications.at(-1)?.level).toBe("success");
+    expect(notifications.at(-1)?.level).toBe("info");
   });
 
   it("aborts when user declines confirmation", async () => {
@@ -187,6 +187,35 @@ describe("runCommitPipeline", () => {
       message: null,
     });
     expect(runGit).not.toHaveBeenCalled();
+  });
+
+  it("aborts when confirmation prompt fails", async () => {
+    const runGit = vi.fn(() => ok());
+    const notify = vi.fn();
+
+    const result = await runCommitPipeline({
+      runGit,
+      hasUI: true,
+      confirmCommit: vi.fn(async () => {
+        throw new Error("ui unavailable");
+      }),
+      askCommitMessage: vi.fn(async () => "chore: auto"),
+      notify,
+      mode: "auto",
+      defaultMessage: DEFAULT_COMMIT_MESSAGE,
+      requireConfirm: true,
+    });
+
+    expect(result).toEqual({
+      committed: false,
+      reason: "cancelled",
+      message: null,
+    });
+    expect(runGit).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith(
+      "Failed to open commit confirmation prompt",
+      "warning",
+    );
   });
 
   it("returns no_staged_changes when add produced nothing", async () => {
@@ -350,6 +379,41 @@ describe("runCommitPipeline", () => {
       "add -A",
       "diff --cached --name-only",
       "commit -m feat: ai",
+    ]);
+  });
+
+  it("falls back to default when message prompt fails in auto_with_override", async () => {
+    const commands: string[] = [];
+    const runGit = vi.fn((args: string[]) => {
+      commands.push(args.join(" "));
+      if (args[0] === "add") return ok();
+      if (args[0] === "diff") return ok("file.ts\n");
+      if (args[0] === "commit") return ok("[master 123] chore: auto\n");
+      return fail("unexpected");
+    });
+
+    const result = await runCommitPipeline({
+      runGit,
+      hasUI: true,
+      confirmCommit: vi.fn(async () => true),
+      askCommitMessage: vi.fn(async () => {
+        throw new Error("input unavailable");
+      }),
+      notify: vi.fn(),
+      mode: "auto_with_override",
+      defaultMessage: DEFAULT_COMMIT_MESSAGE,
+      requireConfirm: false,
+    });
+
+    expect(result).toEqual({
+      committed: true,
+      reason: "committed",
+      message: DEFAULT_COMMIT_MESSAGE,
+    });
+    expect(commands).toEqual([
+      "add -A",
+      "diff --cached --name-only",
+      `commit -m ${DEFAULT_COMMIT_MESSAGE}`,
     ]);
   });
 });

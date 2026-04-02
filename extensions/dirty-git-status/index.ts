@@ -4,7 +4,7 @@ import type {
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 import { createLogger } from "../shared/logger.ts";
-import { loadSettings } from "../shared/settings.ts";
+import { loadSettings, updateSettings } from "../shared/settings.ts";
 
 type DirtyGitStatusSettings = {
   enabled?: unknown;
@@ -134,6 +134,15 @@ const DEFAULT_CONFIG: DirtyGitStatusConfig = {
 
 const LOG_NAME = "dirty-git-status";
 const MANUAL_COMMAND = "commit-now";
+const TOGGLE_COMMAND = "dirty-git-status-toggle";
+
+type DirtyGitStatusToggleResult = {
+  enabled: boolean;
+  path: string;
+  scope: "global";
+};
+
+type UpdateSettingsFn = typeof updateSettings;
 
 export const DEFAULT_COMMIT_MESSAGE = DEFAULT_CONFIG.defaultCommitMessage;
 
@@ -174,9 +183,23 @@ const normalizeString = (value: unknown, fallback: string): string =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
+const getDirtyGitStatusSettings = (
+  settings: Record<string, unknown>,
+): Record<string, unknown> => {
+  const dirtyGitStatus = settings.dirtyGitStatus;
+  return isRecord(dirtyGitStatus) ? dirtyGitStatus : {};
+};
+
+const getDirtyGitStatusEnabled = (
+  settings: Record<string, unknown>,
+): boolean => {
+  const dirtyGitStatus = getDirtyGitStatusSettings(settings);
+  return normalizeBoolean(dirtyGitStatus.enabled, DEFAULT_CONFIG.enabled);
+};
+
 const getSettingsConfig = (cwd: string): DirtyGitStatusConfig => {
   const { merged } = loadSettings(cwd);
-  const settings = (merged.dirtyGitStatus ?? {}) as DirtyGitStatusSettings;
+  const settings = getDirtyGitStatusSettings(merged) as DirtyGitStatusSettings;
   const config = {
     enabled: normalizeBoolean(settings.enabled, DEFAULT_CONFIG.enabled),
     checkOnSessionStart: normalizeBoolean(
@@ -455,6 +478,15 @@ export const shouldPromptForDirtyRepo = (input: {
 
   return { shouldPrompt: true, nextPrompted: true };
 };
+
+function getPromptDecisionReason(input: {
+  dirty: boolean;
+  alreadyPrompted: boolean;
+}): "clean" | "dirty" | "already_prompted" {
+  if (!input.dirty) return "clean";
+  if (input.alreadyPrompted) return "already_prompted";
+  return "dirty";
+}
 
 export const selectCommitMessage = (input: {
   mode: CommitMessageMode;
@@ -894,7 +926,7 @@ const generateAiDefaultCommitMessage = async (input: {
           typeof model === "object" &&
           model &&
           "reasoning" in model &&
-          (model as Record<string, unknown>).reasoning
+          (model as unknown as Record<string, unknown>).reasoning
             ? "low"
             : undefined,
       },
@@ -937,6 +969,130 @@ const checkRepoDirty = (
     summary: computeDirtySummary(result.stdout),
   };
 };
+
+function createRepoGitRunner(
+  repoRoot: string,
+  timeoutMs: number,
+): (args: string[]) => StatusOutput {
+  return function runRepoGit(args: string[]): StatusOutput {
+    return runGit(repoRoot, args, timeoutMs);
+  };
+}
+
+function getAiCommitDiffDetails(input: {
+  runRepoGit: (args: string[]) => StatusOutput;
+  config: DirtyGitStatusConfig;
+}): { diffStat: string; diffPatch?: string } {
+  const diffStatResult = input.runRepoGit([
+    "diff",
+    "--cached",
+    "--stat",
+    "--no-color",
+  ]);
+  const diffStat = diffStatResult.exitCode === 0 ? diffStatResult.stdout : "";
+
+  let diffPatch: string | undefined;
+  if (input.config.aiDefaultCommitMessageIncludeDiff) {
+    const patchResult = input.runRepoGit(["diff", "--cached", "--no-color"]);
+    if (patchResult.exitCode === 0) {
+      diffPatch = patchResult.stdout.slice(
+        0,
+        Math.max(0, input.config.aiDefaultCommitMessageMaxDiffChars),
+      );
+    }
+  }
+
+  return { diffStat, diffPatch };
+}
+
+function buildDefaultMessageProvider(input: {
+  ctx: ExtensionContext;
+  config: DirtyGitStatusConfig;
+  runRepoGit: (args: string[]) => StatusOutput;
+}): CommitPipelineInput["getDefaultMessage"] | undefined {
+  if (!input.config.aiDefaultCommitMessage) {
+    return undefined;
+  }
+
+  return async ({ stagedFiles, defaultMessage }) => {
+    if (!input.ctx.model) return null;
+
+    const { diffStat, diffPatch } = getAiCommitDiffDetails({
+      runRepoGit: input.runRepoGit,
+      config: input.config,
+    });
+
+    const generated = await generateAiDefaultCommitMessage({
+      ctx: input.ctx,
+      stagedFiles,
+      language: input.config.aiDefaultCommitMessageLanguage,
+      timeoutMs: input.config.aiDefaultCommitMessageTimeoutMs,
+      diffStat,
+      diffPatch,
+    });
+
+    return generated ?? defaultMessage;
+  };
+}
+
+function buildCommitPipelineInput(input: {
+  ctx: ExtensionContext;
+  config: DirtyGitStatusConfig;
+  trigger: "session_start" | "session_switch" | "manual";
+  repoRoot: string;
+  repoName: string;
+  summary: DirtySummary;
+  confirmTitle: string;
+  requireConfirm: boolean;
+}): CommitPipelineInput {
+  const runRepoGit = createRepoGitRunner(
+    input.repoRoot,
+    input.config.timeoutMs,
+  );
+  const confirmMessage = `Dirty repo ${input.repoName}: ${formatSummary(input.summary)}. Commit now?`;
+
+  return {
+    runGit: runRepoGit,
+    hasUI: input.ctx.hasUI,
+    confirmCommit: async () => {
+      if (!input.ctx.hasUI) return true;
+      return input.ctx.ui.confirm(input.confirmTitle, confirmMessage);
+    },
+    askCommitMessage: async (defaultMessage) => {
+      if (!input.ctx.hasUI) return null;
+      return input.ctx.ui.input(
+        "Commit message (empty = default)",
+        defaultMessage,
+      );
+    },
+    notify: (message, level) => input.ctx.ui.notify(message, level),
+    mode: input.config.commitMessageMode,
+    defaultMessage: input.config.defaultCommitMessage,
+    requireConfirm: input.requireConfirm,
+    logContext: {
+      trigger: input.trigger,
+      repoRoot: input.repoRoot,
+      repoName: input.repoName,
+    },
+    getDefaultMessage: buildDefaultMessageProvider({
+      ctx: input.ctx,
+      config: input.config,
+      runRepoGit,
+    }),
+  };
+}
+
+function getOrCreateRepoState(
+  sessionState: SessionState,
+  repoRoot: string,
+): RepoState {
+  const existing = sessionState.get(repoRoot);
+  if (existing) return existing;
+
+  const next: RepoState = { prompted: false };
+  sessionState.set(repoRoot, next);
+  return next;
+}
 
 const runManualCommit = async (
   ctx: ExtensionContext,
@@ -997,66 +1153,18 @@ const runManualCommit = async (
     return;
   }
 
-  const baseContext = { trigger, repoRoot, repoName };
-
-  const pipelineResult = await runCommitPipeline({
-    runGit: (args) => runGit(repoRoot, args, config.timeoutMs),
-    hasUI: ctx.hasUI,
-    confirmCommit: async () => {
-      if (!ctx.hasUI) return true;
-      return ctx.ui.confirm(
-        "Commit now",
-        `Dirty repo ${repoName}: ${formatSummary(dirty.summary)}. Commit now?`,
-      );
-    },
-    askCommitMessage: async (defaultMessage) => {
-      if (!ctx.hasUI) return null;
-      return ctx.ui.input("Commit message (empty = default)", defaultMessage);
-    },
-    notify: (message, level) => ctx.ui.notify(message, level),
-    mode: config.commitMessageMode,
-    defaultMessage: config.defaultCommitMessage,
-    requireConfirm: ctx.hasUI,
-    logContext: baseContext,
-    getDefaultMessage: config.aiDefaultCommitMessage
-      ? async ({ stagedFiles, defaultMessage }) => {
-          if (!ctx.model) return null;
-
-          const diffStatResult = runGit(
-            repoRoot,
-            ["diff", "--cached", "--stat", "--no-color"],
-            config.timeoutMs,
-          );
-          const diffStat =
-            diffStatResult.exitCode === 0 ? diffStatResult.stdout : "";
-
-          let diffPatch: string | undefined;
-          if (config.aiDefaultCommitMessageIncludeDiff) {
-            const patchResult = runGit(
-              repoRoot,
-              ["diff", "--cached", "--no-color"],
-              config.timeoutMs,
-            );
-            if (patchResult.exitCode === 0) {
-              diffPatch = patchResult.stdout.slice(
-                0,
-                Math.max(0, config.aiDefaultCommitMessageMaxDiffChars),
-              );
-            }
-          }
-
-          const generated = await generateAiDefaultCommitMessage({
-            ctx,
-            stagedFiles,
-            language: config.aiDefaultCommitMessageLanguage,
-            timeoutMs: config.aiDefaultCommitMessageTimeoutMs,
-            diffStat,
-            diffPatch,
-          });
-          return generated ?? defaultMessage;
-        }
-      : undefined,
-  });
+  const pipelineResult = await runCommitPipeline(
+    buildCommitPipelineInput({
+      ctx,
+      config,
+      trigger,
+      repoRoot,
+      repoName,
+      summary: dirty.summary,
+      confirmTitle: "Commit now",
+      requireConfirm: ctx.hasUI,
+    }),
+  );
 
   logInfo({
     event: "manual commit pipeline finished",
@@ -1068,6 +1176,33 @@ const runManualCommit = async (
     details: { message: summarizeText(pipelineResult.message ?? "", 120) },
   });
 };
+
+export const toggleDirtyGitStatus = (
+  cwd: string,
+  update: UpdateSettingsFn = updateSettings,
+): DirtyGitStatusToggleResult => {
+  const result = update(cwd, "global", (settings) => {
+    const dirtyGitStatus = getDirtyGitStatusSettings(settings);
+    return {
+      ...settings,
+      dirtyGitStatus: {
+        ...dirtyGitStatus,
+        enabled: !getDirtyGitStatusEnabled(settings),
+      },
+    };
+  });
+
+  return {
+    enabled: getDirtyGitStatusEnabled(result.settings),
+    path: result.path,
+    scope: "global",
+  };
+};
+
+export const formatDirtyGitStatusToggleMessage = (
+  result: DirtyGitStatusToggleResult,
+): string =>
+  `Dirty git status ${result.enabled ? "enabled" : "disabled"} globally. Updated ${result.path}`;
 
 const handleSessionCheck = async (
   ctx: ExtensionContext,
@@ -1129,10 +1264,7 @@ const handleSessionCheck = async (
   });
 
   const sessionState = getSessionState(ctx);
-  const repoState = sessionState.get(repoRoot) ?? { prompted: false };
-  if (!sessionState.has(repoRoot)) {
-    sessionState.set(repoRoot, repoState);
-  }
+  const repoState = getOrCreateRepoState(sessionState, repoRoot);
 
   const alreadyPrompted = repoState.prompted;
   const decision = shouldPromptForDirtyRepo({
@@ -1140,11 +1272,10 @@ const handleSessionCheck = async (
     alreadyPrompted,
   });
 
-  const decisionReason = dirty.summary.dirty
-    ? alreadyPrompted
-      ? "already_prompted"
-      : "dirty"
-    : "clean";
+  const decisionReason = getPromptDecisionReason({
+    dirty: dirty.summary.dirty,
+    alreadyPrompted,
+  });
 
   logInfo({
     event: "prompt decision evaluated",
@@ -1187,64 +1318,20 @@ const handleSessionCheck = async (
     return;
   }
 
-  const baseContext = { trigger, repoRoot, repoName };
-
   let pipelineResult: CommitPipelineResult;
   try {
-    pipelineResult = await runCommitPipeline({
-      runGit: (args) => runGit(repoRoot, args, config.timeoutMs),
-      hasUI: ctx.hasUI,
-      confirmCommit: async () =>
-        ctx.ui.confirm(
-          "Repository has uncommitted changes",
-          `Dirty repo ${repoName}: ${formatSummary(dirty.summary)}. Commit now?`,
-        ),
-      askCommitMessage: async (defaultMessage) =>
-        ctx.ui.input("Commit message (empty = default)", defaultMessage),
-      notify: (message, level) => ctx.ui.notify(message, level),
-      mode: config.commitMessageMode,
-      defaultMessage: config.defaultCommitMessage,
-      requireConfirm: true,
-      logContext: baseContext,
-      getDefaultMessage: config.aiDefaultCommitMessage
-        ? async ({ stagedFiles, defaultMessage }) => {
-            if (!ctx.model) return null;
-
-            const diffStatResult = runGit(
-              repoRoot,
-              ["diff", "--cached", "--stat", "--no-color"],
-              config.timeoutMs,
-            );
-            const diffStat =
-              diffStatResult.exitCode === 0 ? diffStatResult.stdout : "";
-
-            let diffPatch: string | undefined;
-            if (config.aiDefaultCommitMessageIncludeDiff) {
-              const patchResult = runGit(
-                repoRoot,
-                ["diff", "--cached", "--no-color"],
-                config.timeoutMs,
-              );
-              if (patchResult.exitCode === 0) {
-                diffPatch = patchResult.stdout.slice(
-                  0,
-                  Math.max(0, config.aiDefaultCommitMessageMaxDiffChars),
-                );
-              }
-            }
-
-            const generated = await generateAiDefaultCommitMessage({
-              ctx,
-              stagedFiles,
-              language: config.aiDefaultCommitMessageLanguage,
-              timeoutMs: config.aiDefaultCommitMessageTimeoutMs,
-              diffStat,
-              diffPatch,
-            });
-            return generated ?? defaultMessage;
-          }
-        : undefined,
-    });
+    pipelineResult = await runCommitPipeline(
+      buildCommitPipelineInput({
+        ctx,
+        config,
+        trigger,
+        repoRoot,
+        repoName,
+        summary: dirty.summary,
+        confirmTitle: "Repository has uncommitted changes",
+        requireConfirm: true,
+      }),
+    );
   } catch (error) {
     repoState.prompted = false;
     logError({
@@ -1274,6 +1361,14 @@ const handleSessionCheck = async (
 
 export default function dirtyGitStatusExtension(pi: ExtensionAPI) {
   log = createLogger(LOG_NAME, { stderr: null });
+
+  pi.registerCommand(TOGGLE_COMMAND, {
+    description: "Toggle dirty git status globally",
+    handler: async (_args, ctx) => {
+      const result = toggleDirtyGitStatus(ctx.cwd);
+      ctx.ui.notify(formatDirtyGitStatusToggleMessage(result), "info");
+    },
+  });
 
   pi.registerCommand(MANUAL_COMMAND, {
     description: "Commit current repo changes now",

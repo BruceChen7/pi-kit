@@ -7,6 +7,7 @@ import {
   getSettingsPaths,
   readSettingsFile,
 } from "../shared/settings.js";
+import type { Skill } from "./index.js";
 
 const tempDirs: string[] = [];
 const originalHome = process.env.HOME;
@@ -347,6 +348,81 @@ describe("skill override sync", () => {
     const entry = byCwd[cwd] as { managedOverrides?: string[] };
     expect(saved.skills).toEqual(["custom"]);
     expect(entry.managedOverrides).toBeUndefined();
+  });
+});
+
+describe("formatDisabledSkillsMessage", () => {
+  it("returns an empty-state message when no installed disabled skills exist", async () => {
+    createTempHome();
+    const skillToggle = await importSkillToggle();
+    const formatDisabledSkillsMessage = (
+      skillToggle as {
+        formatDisabledSkillsMessage?: (
+          disabled: Set<string>,
+          skills: Skill[],
+        ) => string;
+      }
+    ).formatDisabledSkillsMessage;
+
+    expect(formatDisabledSkillsMessage).toBeDefined();
+    expect(formatDisabledSkillsMessage?.(new Set(), [])).toBe(
+      "No disabled skills",
+    );
+  });
+
+  it("formats disabled skills using canonical skill names", async () => {
+    createTempHome();
+    const skillToggle = await importSkillToggle();
+    const formatDisabledSkillsMessage = (
+      skillToggle as {
+        formatDisabledSkillsMessage?: (
+          disabled: Set<string>,
+          skills: Skill[],
+        ) => string;
+      }
+    ).formatDisabledSkillsMessage;
+
+    const skills: Skill[] = [
+      {
+        name: "Alpha",
+        description: "",
+        filePath: "/tmp/alpha/SKILL.md",
+      },
+      {
+        name: "Beta Skill",
+        description: "",
+        filePath: "/tmp/beta-skill/SKILL.md",
+      },
+    ];
+
+    expect(
+      formatDisabledSkillsMessage?.(new Set(["beta skill", "alpha"]), skills),
+    ).toBe("Disabled skills (2): Alpha, Beta Skill");
+  });
+
+  it("omits stale disabled skills that are no longer installed", async () => {
+    createTempHome();
+    const skillToggle = await importSkillToggle();
+    const formatDisabledSkillsMessage = (
+      skillToggle as {
+        formatDisabledSkillsMessage?: (
+          disabled: Set<string>,
+          skills: Skill[],
+        ) => string;
+      }
+    ).formatDisabledSkillsMessage;
+
+    const skills: Skill[] = [
+      {
+        name: "Alpha",
+        description: "",
+        filePath: "/tmp/alpha/SKILL.md",
+      },
+    ];
+
+    expect(
+      formatDisabledSkillsMessage?.(new Set(["ghost", "alpha"]), skills),
+    ).toBe("Disabled skills (1): Alpha");
   });
 });
 

@@ -38,10 +38,12 @@ To disable Plannotator Auto explicitly:
 
 ## Behavior
 
-- When the agent `write`/`edit` tool updates the configured plan file (file mode) **or** writes a `YYYY-MM-DD-*.md` file inside the configured plan directory (directory mode), and Plannotator is idle, it queues:
+- When the agent `write`/`edit` tool updates the configured plan file (file mode) **or** writes a `YYYY-MM-DD-*.md` file inside the configured plan directory (directory mode), it queues:
   - `/plannotator-set-file <planFile>`
-  - `/plannotator`
+  - If Plannotator is already active on a different plan file, it queues `/plannotator <oldPlanFile>` to exit, then `/plannotator <planFile>` to re-enter with the new plan; otherwise it queues `/plannotator <planFile>`.
   - `/plannotator-annotate`
+- If the current active plan file already matches the updated plan file, no new commands are queued.
+- If another plan update arrives before the queued commands run, the pending queue is replaced with the newest plan file.
 - Auto-trigger waits until the agent is idle and the prompt editor is empty (to avoid interrupting streaming or overwriting input). It retries briefly if busy.
 - In interactive TUI mode it submits commands by simulating Enter; in non-interactive modes it notifies you to run the commands manually.
 - If the editor has pending input, auto-trigger is skipped and a notification is shown.

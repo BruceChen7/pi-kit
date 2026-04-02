@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   computeDirtySummary,
   DEFAULT_COMMIT_MESSAGE,
+  formatDirtyGitStatusToggleMessage,
   runCommitPipeline,
   type StatusOutput,
   selectCommitMessage,
   shouldPromptForDirtyRepo,
+  toggleDirtyGitStatus,
 } from "./index.js";
 
 const ok = (stdout = ""): StatusOutput => ({
@@ -125,6 +127,52 @@ describe("selectCommitMessage", () => {
       usedDefault: true,
       cancelled: false,
     });
+  });
+});
+
+describe("toggleDirtyGitStatus", () => {
+  it("toggles the global enabled setting off when current config is enabled", () => {
+    let writtenSettings: Record<string, unknown> | undefined;
+    const update = vi.fn((cwd, scope, updater) => {
+      expect(cwd).toBe("/repo");
+      expect(scope).toBe("global");
+      writtenSettings = updater({
+        dirtyGitStatus: {
+          enabled: true,
+          timeoutMs: 2000,
+        },
+      });
+      return {
+        path: "/tmp/global-settings.json",
+        settings: writtenSettings ?? {},
+      };
+    });
+
+    const result = toggleDirtyGitStatus("/repo", update);
+
+    expect(result).toEqual({
+      enabled: false,
+      path: "/tmp/global-settings.json",
+      scope: "global",
+    });
+    expect(writtenSettings).toEqual({
+      dirtyGitStatus: {
+        enabled: false,
+        timeoutMs: 2000,
+      },
+    });
+  });
+
+  it("formats toggle feedback as a global status message", () => {
+    expect(
+      formatDirtyGitStatusToggleMessage({
+        enabled: false,
+        path: "/tmp/global-settings.json",
+        scope: "global",
+      }),
+    ).toBe(
+      "Dirty git status disabled globally. Updated /tmp/global-settings.json",
+    );
   });
 });
 

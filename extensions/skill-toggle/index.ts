@@ -24,7 +24,7 @@ import {
   writeSettingsFile,
 } from "../shared/settings.ts";
 
-interface Skill {
+export interface Skill {
   name: string;
   description: string;
   filePath: string;
@@ -734,20 +734,38 @@ function pruneSettingsFiles(cwd: string, skills: Skill[]): void {
   pruneSettingsFile(globalPath, installed);
 }
 
+function getDisabledSkillDisplayNames(
+  disabled: Set<string>,
+  skills: Skill[],
+): string[] {
+  const installedDisabled = new Set(getInstalledDisabled(disabled, skills));
+  if (installedDisabled.size === 0) return [];
+
+  return skills
+    .filter((skill) => installedDisabled.has(normalizeSkillName(skill.name)))
+    .map((skill) => skill.name)
+    .sort((left, right) => left.localeCompare(right));
+}
+
+export function formatDisabledSkillsMessage(
+  disabled: Set<string>,
+  skills: Skill[],
+): string {
+  const displayNames = getDisabledSkillDisplayNames(disabled, skills);
+  if (displayNames.length === 0) return "No disabled skills";
+  return `Disabled skills (${displayNames.length}): ${displayNames.join(", ")}`;
+}
+
 function formatDisabledList(
   disabled: string[],
   skills: Skill[],
   maxWidth: number,
 ): string {
-  if (disabled.length === 0) return "Disabled: none";
-
-  // Map normalized names back to canonical skill names
-  const displayNames = disabled.map((normalized) => {
-    const skill = skills.find((s) => normalizeSkillName(s.name) === normalized);
-    return skill?.name ?? normalized;
-  });
-
-  const label = `Disabled (${displayNames.length}): ${displayNames.join(", ")}`;
+  const message = formatDisabledSkillsMessage(new Set(disabled), skills);
+  const label =
+    message === "No disabled skills"
+      ? "Disabled: none"
+      : message.replace(/^Disabled skills/, "Disabled");
   return truncateToWidth(label, maxWidth, "…", true);
 }
 
@@ -1111,6 +1129,19 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
       if (didToggle) {
         ctx.ui.notify("Run /reload to update skill commands", "info");
       }
+    },
+  });
+
+  pi.registerCommand("disabled-skills", {
+    description: "Show currently disabled skills",
+    handler: async (_args: string, ctx: ExtensionContext) => {
+      const skills = loadAvailableSkills(pi, ctx.cwd);
+      state = loadToggleState(ctx.cwd);
+      updateStatus(ctx, state.disabledSkills, skills);
+      ctx.ui.notify(
+        formatDisabledSkillsMessage(state.disabledSkills, skills),
+        "info",
+      );
     },
   });
 

@@ -13,8 +13,11 @@ Checks git status when Pi starts a session and prompts for commit if there are u
   - `git commit -m <message>`
 - Keeps a manual command for on-demand commit flow.
 
-## Manual Command
+## Commands
 - `/commit-now` — trigger the same auto-commit flow manually.
+- `/dirty-git-status-toggle` — toggle `dirtyGitStatus.enabled` in global `~/.pi/agent/settings.json`.
+
+> Note: this command only updates the global setting. If a project config also overrides `dirtyGitStatus.enabled`, the project value still takes precedence.
 
 ## Commit Message Strategy
 `dirtyGitStatus.commitMessageMode` supports:

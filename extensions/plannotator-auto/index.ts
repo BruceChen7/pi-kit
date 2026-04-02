@@ -257,20 +257,105 @@ const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
   scheduleTriggerRetry(ctx, "next-command");
 };
 
+const isPlannotatorActive = (state: PlannotatorState | null): boolean =>
+  Boolean(state?.phase && state.phase !== "idle");
+
+const getStatePlanFilePath = (
+  ctx: ExtensionContext,
+  state: PlannotatorState | null,
+): string | null => {
+  const planFilePath = state?.planFilePath;
+  if (!planFilePath) {
+    return null;
+  }
+
+  const resolved = path.isAbsolute(planFilePath)
+    ? planFilePath
+    : path.resolve(ctx.cwd, planFilePath);
+  return resolveCommandPlanPath(ctx, resolved);
+};
+
+const resolveStatePlanFilePath = (
+  ctx: ExtensionContext,
+  state: PlannotatorState | null,
+  fallbackPlanFile: string,
+): string => {
+  const planFilePath = getStatePlanFilePath(ctx, state);
+  if (!planFilePath) {
+    if (isPlannotatorActive(state)) {
+      log?.warn(
+        "plannotator-auto missing active plan file path; using new plan file",
+        {
+          fallbackPlanFile,
+          phase: state?.phase ?? "unknown",
+        },
+      );
+    }
+    return fallbackPlanFile;
+  }
+  return planFilePath;
+};
+
+const buildPlanCommands = (
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  planFile: string,
+  state: PlannotatorState | null,
+): string[] => {
+  const commands: string[] = [];
+  const setFileCommand = buildCommandText(pi, "plannotator-set-file", planFile);
+  if (setFileCommand) {
+    commands.push(setFileCommand);
+  }
+
+  if (isPlannotatorActive(state)) {
+    const oldPlanFile = resolveStatePlanFilePath(ctx, state, planFile);
+    const exitCommand = buildCommandText(pi, "plannotator", oldPlanFile);
+    const enterCommand = buildCommandText(pi, "plannotator", planFile);
+    if (exitCommand) {
+      commands.push(exitCommand);
+    }
+    if (enterCommand) {
+      commands.push(enterCommand);
+    }
+  } else {
+    const enterCommand = buildCommandText(pi, "plannotator", planFile);
+    if (enterCommand) {
+      commands.push(enterCommand);
+    }
+  }
+
+  const annotateCommand = buildCommandText(
+    pi,
+    "plannotator-annotate",
+    planFile,
+  );
+  if (annotateCommand) {
+    commands.push(annotateCommand);
+  }
+
+  return commands;
+};
+
 // Queue auto-trigger; the actual submission happens when it is safe.
 const queuePlanTrigger = (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   planFile: string,
+  state: PlannotatorState | null,
 ): void => {
-  const commands = [
-    buildCommandText(pi, "plannotator-set-file", planFile),
-    buildCommandText(pi, "plannotator", planFile),
-    buildCommandText(pi, "plannotator-annotate", planFile),
-  ].filter((value): value is string => Boolean(value));
+  const commands = buildPlanCommands(pi, ctx, planFile, state);
 
   if (commands.length === 0) {
     return;
+  }
+
+  const replacedPlanFile = pendingTrigger?.planFile;
+  if (replacedPlanFile) {
+    log?.info("plannotator-auto replaced pending trigger", {
+      previousPlanFile: replacedPlanFile,
+      planFile,
+    });
   }
 
   pendingTrigger = {
@@ -282,6 +367,7 @@ const queuePlanTrigger = (
   log?.debug("plannotator-auto queued trigger", {
     planFile,
     commands,
+    replacedPlanFile: replacedPlanFile ?? null,
   });
   tryTriggerPlanMode(ctx, "queue");
 };
@@ -322,14 +408,6 @@ const getPlannotatorState = (
     }
   }
   return state;
-};
-
-const shouldTriggerPlanMode = (ctx: ExtensionContext): boolean => {
-  const state = getPlannotatorState(ctx);
-  if (!state?.phase) {
-    return true;
-  }
-  return state.phase === "idle";
 };
 
 const resolveToolPath = (args: unknown): string | null => {
@@ -384,13 +462,19 @@ const handlePlanFileWrite = (
     return;
   }
 
-  if (!shouldTriggerPlanMode(ctx)) {
-    log?.debug("plannotator-auto skipped trigger (not idle)", {
-      phase: getPlannotatorState(ctx)?.phase ?? "unknown",
+  const state = getPlannotatorState(ctx);
+  const activePlanFile = isPlannotatorActive(state)
+    ? getStatePlanFilePath(ctx, state)
+    : null;
+
+  if (activePlanFile && activePlanFile === planFileForCommand) {
+    log?.debug("plannotator-auto skipped trigger (plan already active)", {
+      phase: state?.phase ?? "unknown",
       toolName,
       planFile: planFileForCommand,
       planMode: planConfig.mode,
       resolvedPlanPath: planConfig.resolvedPlanPath,
+      activePlanFile,
     });
     return;
   }
@@ -400,8 +484,10 @@ const handlePlanFileWrite = (
     planFile: planFileForCommand,
     planMode: planConfig.mode,
     resolvedPlanPath: planConfig.resolvedPlanPath,
+    phase: state?.phase ?? "unknown",
+    activePlanFile: activePlanFile ?? null,
   });
-  queuePlanTrigger(pi, ctx, planFileForCommand);
+  queuePlanTrigger(pi, ctx, planFileForCommand, state);
 };
 
 export default function plannotatorAuto(pi: ExtensionAPI) {

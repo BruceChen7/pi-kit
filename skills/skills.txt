@@ -24,5 +24,5 @@ brainstorming|https://github.com/obra/superpowers.git|skills/brainstorming
 writing-skills|https://github.com/obra/superpowers.git|skills/writing-skills
 x-tweet-fetcher|https://github.com/ythx-101/x-tweet-fetcher.git|
 pre-landing-review|local|skills/planning-suite/pre-landing-review
-code-simplifier|https://github.com/HazAT/pi-config|skills/code-simplifier
+code-simplifier|local|skills/code-simplifier
 software-design-philosophy|https://github.com/luoling8192/software-design-philosophy-skill.git|

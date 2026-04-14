@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type {
@@ -5,7 +6,7 @@ import type {
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 import { createLogger } from "../shared/logger.ts";
-import { loadGlobalSettings } from "../shared/settings.ts";
+import { loadSettings } from "../shared/settings.ts";
 
 type PlannotatorAutoConfig = {
   planFile?: string | null;
@@ -30,6 +31,8 @@ type PlanFileConfig = {
 
 const DEFAULT_PLAN_SUBDIR = "plan";
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
+const TRIGGER_RETRY_DELAY_MS = 120;
+const MAX_PENDING_TRIGGER_AGE_MS = 10_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -53,7 +56,6 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
 };
 
 let log: ReturnType<typeof createLogger> | null = null;
-const toolArgsByCallId = new Map<string, unknown>();
 
 type PendingTrigger = {
   commands: string[];
@@ -65,17 +67,52 @@ type PendingTrigger = {
 let pendingTrigger: PendingTrigger | null = null;
 let pendingRetry: ReturnType<typeof setTimeout> | null = null;
 
-const loadConfig = (options?: {
-  forceReload?: boolean;
-}): PlannotatorAutoConfig => {
-  const { global } = loadGlobalSettings(options);
-  const config = sanitizeConfig(global.plannotatorAuto);
+const clearPendingState = (reason: string): void => {
+  if (pendingRetry) {
+    clearTimeout(pendingRetry);
+    pendingRetry = null;
+  }
+
+  if (pendingTrigger) {
+    log?.debug("plannotator-auto cleared pending trigger", {
+      reason,
+      planFile: pendingTrigger.planFile,
+    });
+  }
+  pendingTrigger = null;
+};
+
+const loadConfig = (
+  cwd: string,
+  options?: {
+    forceReload?: boolean;
+  },
+): PlannotatorAutoConfig => {
+  const { merged } = loadSettings(cwd, options);
+  const config = sanitizeConfig(merged.plannotatorAuto);
   log?.debug("plannotator-auto config loaded", { planFile: config.planFile });
   return config;
 };
 
+const resolveRepoSlug = (cwd: string): string => {
+  try {
+    const topLevel = execSync("git rev-parse --show-toplevel", {
+      cwd,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const repoName = path.basename(topLevel);
+    if (repoName.length > 0) {
+      return repoName;
+    }
+  } catch {
+    // Fall back to cwd basename.
+  }
+  return path.basename(cwd);
+};
+
 const getDefaultPlanDir = (cwd: string): string => {
-  const repoSlug = path.basename(cwd);
+  const repoSlug = resolveRepoSlug(cwd);
   return path.join(".pi", "plans", repoSlug, DEFAULT_PLAN_SUBDIR);
 };
 
@@ -171,7 +208,7 @@ const emitEnterKey = (): boolean => {
 const scheduleTriggerRetry = (
   ctx: ExtensionContext,
   reason: string,
-  delay = 120,
+  delay = TRIGGER_RETRY_DELAY_MS,
 ): void => {
   if (pendingRetry) {
     return;
@@ -179,6 +216,9 @@ const scheduleTriggerRetry = (
 
   pendingRetry = setTimeout(() => {
     pendingRetry = null;
+    if (!pendingTrigger) {
+      return;
+    }
     tryTriggerPlanMode(ctx, reason);
   }, delay);
 };
@@ -188,12 +228,23 @@ const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
     return;
   }
 
+  const ageMs = Date.now() - pendingTrigger.createdAt;
+  if (ageMs > MAX_PENDING_TRIGGER_AGE_MS) {
+    log?.warn("plannotator-auto dropped stale trigger", {
+      reason,
+      planFile: pendingTrigger.planFile,
+      ageMs,
+    });
+    clearPendingState("stale-trigger");
+    return;
+  }
+
   if (!ctx.hasUI) {
     log?.warn("plannotator-auto auto-trigger skipped (no UI)", {
       reason,
       planFile: pendingTrigger.planFile,
     });
-    pendingTrigger = null;
+    clearPendingState("no-ui");
     return;
   }
 
@@ -208,6 +259,15 @@ const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
     return;
   }
 
+  if (ctx.hasPendingMessages()) {
+    log?.debug("plannotator-auto deferring trigger (pending messages)", {
+      reason,
+      planFile: pendingTrigger.planFile,
+    });
+    scheduleTriggerRetry(ctx, "pending-messages");
+    return;
+  }
+
   const editorText = ctx.ui.getEditorText?.() ?? "";
   if (editorText.trim().length > 0) {
     ctx.ui.notify(
@@ -218,13 +278,13 @@ const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
       reason,
       planFile: pendingTrigger.planFile,
     });
-    pendingTrigger = null;
+    clearPendingState("editor-not-empty");
     return;
   }
 
   const [commandText] = pendingTrigger.commands;
   if (!commandText) {
-    pendingTrigger = null;
+    clearPendingState("empty-command-queue");
     return;
   }
 
@@ -238,7 +298,7 @@ const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
       reason,
       planFile: pendingTrigger.planFile,
     });
-    pendingTrigger = null;
+    clearPendingState("stdin-unavailable");
     return;
   }
 
@@ -250,7 +310,7 @@ const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
   });
 
   if (pendingTrigger.commands.length === 0) {
-    pendingTrigger = null;
+    clearPendingState("all-commands-submitted");
     return;
   }
 
@@ -358,6 +418,11 @@ const queuePlanTrigger = (
     });
   }
 
+  if (pendingRetry) {
+    clearTimeout(pendingRetry);
+    pendingRetry = null;
+  }
+
   pendingTrigger = {
     commands,
     planFile,
@@ -376,7 +441,7 @@ const resolvePlanPath = (cwd: string, planFile: string): string =>
   path.resolve(cwd, planFile);
 
 const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
-  const config = loadConfig();
+  const config = loadConfig(ctx.cwd);
   if (config.planFile === null) {
     return null;
   }
@@ -493,26 +558,29 @@ const handlePlanFileWrite = (
 export default function plannotatorAuto(pi: ExtensionAPI) {
   log = createLogger("plannotator-auto", { stderr: null });
 
-  pi.on("tool_execution_start", (event) => {
-    if (event.toolName !== "write" && event.toolName !== "edit") {
-      return;
-    }
-
-    toolArgsByCallId.set(event.toolCallId, event.args);
+  pi.on("session_start", () => {
+    clearPendingState("session-start");
   });
 
-  pi.on("tool_execution_end", (event, ctx) => {
+  pi.on("session_before_switch", () => {
+    clearPendingState("session-before-switch");
+  });
+
+  pi.on("session_shutdown", () => {
+    clearPendingState("session-shutdown");
+  });
+
+  pi.on("tool_result", (event, ctx) => {
     if (event.toolName !== "write" && event.toolName !== "edit") {
       return;
     }
-
-    const args = toolArgsByCallId.get(event.toolCallId);
-    toolArgsByCallId.delete(event.toolCallId);
-    if (!args) {
+    if (event.isError) {
+      log?.debug("plannotator-auto ignoring failed tool result", {
+        toolName: event.toolName,
+      });
       return;
     }
-
-    handlePlanFileWrite(pi, ctx, event.toolName, args);
+    handlePlanFileWrite(pi, ctx, event.toolName, event.input);
   });
 
   pi.on("agent_end", (_event, ctx) => {

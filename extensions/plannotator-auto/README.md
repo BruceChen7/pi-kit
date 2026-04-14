@@ -4,7 +4,10 @@ Auto-configures the Plannotator plan file and enters plan mode after plan update
 
 ## Configuration
 
-By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` (repo slug = basename of the repo) and expects plan files named `YYYY-MM-DD-<slug>.md`. You can override the plan path (relative to the project root) in `~/.pi/agent/settings.json`.
+By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` (repo slug = git repo root basename when available) and expects plan files named `YYYY-MM-DD-<slug>.md`. You can override the plan path (relative to the project root) in either:
+
+- `~/.pi/agent/settings.json` (global)
+- `<project>/.pi/settings.json` (project-local, overrides global)
 
 Directory example:
 
@@ -44,7 +47,7 @@ To disable Plannotator Auto explicitly:
   - `/plannotator-annotate`
 - If the current active plan file already matches the updated plan file, no new commands are queued.
 - If another plan update arrives before the queued commands run, the pending queue is replaced with the newest plan file.
-- Auto-trigger waits until the agent is idle and the prompt editor is empty (to avoid interrupting streaming or overwriting input). It retries briefly if busy.
+- Auto-trigger waits until the agent is idle, has no pending queued messages, and the prompt editor is empty (to avoid interrupting streaming or overwriting input). It retries briefly while busy.
 - In interactive TUI mode it submits commands by simulating Enter; in non-interactive modes it notifies you to run the commands manually.
 - If the editor has pending input, auto-trigger is skipped and a notification is shown.
 

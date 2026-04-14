@@ -29,8 +29,8 @@ Add overrides under the `envGuard` key in either project settings or global sett
 - `env`: environment variables to override
 - `gitDiffFlags`: extra flags appended to `git diff` (string or string array)
 
-- Project: `<project>/.pi/settings.json`
-- Global: `~/.pi/agent/settings.json`
+- Project: `<project>/.pi/third_extension_settings.json`
+- Global: `~/.pi/agent/third_extension_settings.json`
 
 Project settings take precedence over global settings, and both override the defaults.
 

@@ -15,7 +15,7 @@ Checks git status when Pi starts a session and prompts for commit if there are u
 
 ## Commands
 - `/commit-now` — trigger the same auto-commit flow manually.
-- `/dirty-git-status-toggle` — toggle `dirtyGitStatus.enabled` in global `~/.pi/agent/settings.json`.
+- `/dirty-git-status-toggle` — toggle `dirtyGitStatus.enabled` in global `~/.pi/agent/third_extension_settings.json`.
 
 > Note: this command only updates the global setting. If a project config also overrides `dirtyGitStatus.enabled`, the project value still takes precedence.
 
@@ -38,7 +38,7 @@ You can optionally generate the *default* commit message using the currently sel
 - If AI generation fails or times out, it falls back to `defaultCommitMessage`.
 
 ## Configuration
-Set in global `~/.pi/agent/settings.json` or project `<repo>/.pi/settings.json`:
+Set in global `~/.pi/agent/third_extension_settings.json` or project `<repo>/.pi/third_extension_settings.json`:
 
 ```json
 {

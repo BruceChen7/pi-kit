@@ -1,10 +1,21 @@
-import { spawnSync } from "node:child_process";
 import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
+import {
+  checkRepoDirty,
+  computeDirtySummary,
+  DEFAULT_GIT_TIMEOUT_MS,
+  type DirtySummary,
+  getRepoRoot,
+  runGit,
+  type StatusOutput,
+} from "../shared/git.ts";
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings, updateSettings } from "../shared/settings.ts";
+
+export type { DirtySummary, StatusOutput };
+export { checkRepoDirty, computeDirtySummary, getRepoRoot, runGit };
 
 type DirtyGitStatusSettings = {
   enabled?: unknown;
@@ -44,12 +55,6 @@ type RepoState = {
 type SessionState = Map<string, RepoState>;
 
 type NotifyLevel = "info" | "warning" | "error";
-
-export type StatusOutput = {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-};
 
 type CommitMessageSelection = {
   message: string | null;
@@ -97,13 +102,6 @@ type CommitPipelineResult = {
   message: string | null;
 };
 
-export type DirtySummary = {
-  staged: number;
-  unstaged: number;
-  untracked: number;
-  dirty: boolean;
-};
-
 type LogLevel = "info" | "warn" | "error";
 
 type LogContext = {
@@ -121,7 +119,7 @@ type LogContext = {
 const DEFAULT_CONFIG: DirtyGitStatusConfig = {
   enabled: true,
   checkOnSessionStart: true,
-  timeoutMs: 2000,
+  timeoutMs: DEFAULT_GIT_TIMEOUT_MS,
   promptFrequency: "once_per_dirty_session",
   commitMessageMode: "auto_with_override",
   defaultCommitMessage: "chore: auto-commit workspace changes",
@@ -330,30 +328,6 @@ const consumeQueuedSessionCheck = (
   return fallbackTrigger;
 };
 
-const runGit = (
-  cwd: string,
-  args: string[],
-  timeoutMs: number,
-): StatusOutput => {
-  const result = spawnSync("git", args, {
-    cwd,
-    encoding: "utf-8",
-    timeout: timeoutMs,
-  });
-  return {
-    exitCode: result.status ?? 1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
-};
-
-const getRepoRoot = (cwd: string, timeoutMs: number): string | null => {
-  const result = runGit(cwd, ["rev-parse", "--show-toplevel"], timeoutMs);
-  if (result.exitCode !== 0) return null;
-  const root = result.stdout.trim();
-  return root.length > 0 ? root : null;
-};
-
 const repoNameFromRoot = (repoRoot: string): string =>
   repoRoot.split("/").pop() ?? repoRoot;
 
@@ -433,36 +407,6 @@ const logInfo = (context: LogContext): void => logEvent("info", context);
 const logWarn = (context: LogContext): void => logEvent("warn", context);
 
 const logError = (context: LogContext): void => logEvent("error", context);
-
-export const computeDirtySummary = (porcelain: string): DirtySummary => {
-  const lines = porcelain
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0);
-
-  let staged = 0;
-  let unstaged = 0;
-  let untracked = 0;
-
-  for (const line of lines) {
-    if (line.startsWith("??")) {
-      untracked += 1;
-      continue;
-    }
-
-    const index = line[0];
-    const worktree = line[1];
-    if (index && index !== " ") staged += 1;
-    if (worktree && worktree !== " ") unstaged += 1;
-  }
-
-  return {
-    staged,
-    unstaged,
-    untracked,
-    dirty: lines.length > 0,
-  };
-};
 
 export const shouldPromptForDirtyRepo = (input: {
   porcelain: string;
@@ -954,20 +898,6 @@ const generateAiDefaultCommitMessage = async (input: {
   } finally {
     clearTimeout(timer);
   }
-};
-
-const checkRepoDirty = (
-  repoRoot: string,
-  timeoutMs: number,
-): { porcelain: string; summary: DirtySummary } | null => {
-  const result = runGit(repoRoot, ["status", "--porcelain"], timeoutMs);
-  if (result.exitCode !== 0) {
-    return null;
-  }
-  return {
-    porcelain: result.stdout,
-    summary: computeDirtySummary(result.stdout),
-  };
 };
 
 function createRepoGitRunner(

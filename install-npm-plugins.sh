@@ -3,8 +3,8 @@
 # Install pi-agent third-party npm plugins
 # Usage: ./install-npm-plugins.sh [--global | --local]
 #
-# Default: --global (install to ~/.pi/agent/settings.json)
-# --local: install to .pi/settings.json (project scope)
+# Default: --global (install to ~/.pi/agent/third_extension_settings.json)
+# --local: install to .pi/third_extension_settings.json (project scope)
 #
 # Supported plugins:
 #   - npm:pi-mermaid        (Mermaid diagram support)
@@ -40,8 +40,8 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [--global | --local]"
             echo ""
             echo "Options:"
-            echo "  --global, -g   Install to global settings (default, ~/.pi/agent/settings.json)"
-            echo "  --local, -l    Install to project settings (.pi/settings.json)"
+            echo "  --global, -g   Install to global settings (default, ~/.pi/agent/third_extension_settings.json)"
+            echo "  --local, -l    Install to project settings (.pi/third_extension_settings.json)"
             echo "  --help, -h     Show this help message"
             echo ""
             echo "Plugins to be installed:"
@@ -63,7 +63,7 @@ echo "=========================================="
 echo "  Pi Agent NPM Plugins Installer"
 echo "=========================================="
 echo ""
-echo "Scope: $([ "$SCOPE" = "-l" ] && echo "Local (.pi/settings.json)" || echo "Global (~/.pi/agent/settings.json)")"
+echo "Scope: $([ "$SCOPE" = "-l" ] && echo "Local (.pi/third_extension_settings.json)" || echo "Global (~/.pi/agent/third_extension_settings.json)")"
 echo ""
 
 # Check if pi is installed
@@ -88,10 +88,10 @@ is_installed() {
 
     if [ "$SCOPE" = "-l" ]; then
         # Local scope
-        settings_file="$SCRIPT_DIR/.pi/settings.json"
+        settings_file="$SCRIPT_DIR/.pi/third_extension_settings.json"
     else
         # Global scope
-        settings_file="$HOME/.pi/agent/settings.json"
+        settings_file="$HOME/.pi/agent/third_extension_settings.json"
     fi
 
     if [ -f "$settings_file" ]; then

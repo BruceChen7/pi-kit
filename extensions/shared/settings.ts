@@ -19,7 +19,7 @@ export type LoadSettingsOptions = {
   forceReload?: boolean;
 };
 
-const SETTINGS_FILE_NAME = "settings.json";
+const SETTINGS_FILE_NAME = "third_extension_settings.json";
 
 const settingsCache = new Map<string, SettingsBundle>();
 

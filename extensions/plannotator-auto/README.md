@@ -4,7 +4,7 @@ Auto-configures the Plannotator plan file and enters plan mode after plan update
 
 ## Configuration
 
-By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` (repo slug = basename of the repo) and expects plan files named `YYYY-MM-DD-<slug>.md`. You can override the plan path (relative to the project root) in `~/.pi/agent/settings.json`.
+By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` (repo slug = basename of the repo) and expects plan files named `YYYY-MM-DD-<slug>.md`. You can override the plan path (relative to the project root) in `~/.pi/agent/third_extension_settings.json`.
 
 Directory example:
 

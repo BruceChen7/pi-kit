@@ -33,7 +33,12 @@ const createTempSettingsHome = (content: string): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-kit-logger-"));
   tempHomes.push(dir);
 
-  const settingsPath = path.join(dir, ".pi", "agent", "settings.json");
+  const settingsPath = path.join(
+    dir,
+    ".pi",
+    "agent",
+    "third_extension_settings.json",
+  );
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
   fs.writeFileSync(settingsPath, content, "utf8");
   return dir;
@@ -164,7 +169,11 @@ describe("createLogger", () => {
       path.join(os.tmpdir(), "pi-kit-logger-project-"),
     );
     tempHomes.push(projectDir);
-    const projectSettingsPath = path.join(projectDir, ".pi", "settings.json");
+    const projectSettingsPath = path.join(
+      projectDir,
+      ".pi",
+      "third_extension_settings.json",
+    );
     fs.mkdirSync(path.dirname(projectSettingsPath), { recursive: true });
     fs.writeFileSync(
       projectSettingsPath,

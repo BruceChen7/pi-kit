@@ -4,6 +4,11 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
+import {
+  checkRepoDirty,
+  DEFAULT_GIT_TIMEOUT_MS,
+  getRepoRoot,
+} from "../shared/git.ts";
 import { createLogger } from "../shared/logger.ts";
 import { loadGlobalSettings } from "../shared/settings.ts";
 
@@ -30,6 +35,7 @@ type PlanFileConfig = {
 
 const DEFAULT_PLAN_SUBDIR = "plan";
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
+const REVIEW_COMMAND_BASE = "plannotator-review";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -64,6 +70,8 @@ type PendingTrigger = {
 // Defer auto-triggering until the agent is idle to avoid interrupting streaming.
 let pendingTrigger: PendingTrigger | null = null;
 let pendingRetry: ReturnType<typeof setTimeout> | null = null;
+const pendingReviewCommands: string[] = [];
+const pendingReviewByCwd = new Set<string>();
 
 const loadConfig = (options?: {
   forceReload?: boolean;
@@ -183,6 +191,18 @@ const scheduleTriggerRetry = (
   }, delay);
 };
 
+const clearPendingTrigger = (reason: string): void => {
+  if (pendingTrigger || pendingReviewCommands.length > 0) {
+    log?.debug("plannotator-auto cleared pending trigger", {
+      reason,
+      planFile: pendingTrigger?.planFile ?? null,
+      reviewCommands: pendingReviewCommands.length,
+    });
+  }
+  pendingTrigger = null;
+  pendingReviewCommands.length = 0;
+};
+
 const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
   if (!pendingTrigger) {
     return;
@@ -193,7 +213,7 @@ const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
       reason,
       planFile: pendingTrigger.planFile,
     });
-    pendingTrigger = null;
+    clearPendingTrigger("no-ui");
     return;
   }
 
@@ -218,13 +238,13 @@ const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
       reason,
       planFile: pendingTrigger.planFile,
     });
-    pendingTrigger = null;
+    clearPendingTrigger("editor-not-empty");
     return;
   }
 
   const [commandText] = pendingTrigger.commands;
   if (!commandText) {
-    pendingTrigger = null;
+    clearPendingTrigger("no-command");
     return;
   }
 
@@ -238,11 +258,14 @@ const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
       reason,
       planFile: pendingTrigger.planFile,
     });
-    pendingTrigger = null;
+    clearPendingTrigger("stdin-unavailable");
     return;
   }
 
   pendingTrigger.commands.shift();
+  if (pendingReviewCommands[0] === commandText) {
+    pendingReviewCommands.shift();
+  }
   log?.info("plannotator-auto submitted command via stdin", {
     reason,
     planFile: pendingTrigger.planFile,
@@ -250,7 +273,7 @@ const tryTriggerPlanMode = (ctx: ExtensionContext, reason: string): void => {
   });
 
   if (pendingTrigger.commands.length === 0) {
-    pendingTrigger = null;
+    clearPendingTrigger("completed");
     return;
   }
 
@@ -350,6 +373,11 @@ const queuePlanTrigger = (
     return;
   }
 
+  const mergedCommands =
+    pendingReviewCommands.length > 0
+      ? [...commands, ...pendingReviewCommands]
+      : commands;
+
   const replacedPlanFile = pendingTrigger?.planFile;
   if (replacedPlanFile) {
     log?.info("plannotator-auto replaced pending trigger", {
@@ -359,14 +387,14 @@ const queuePlanTrigger = (
   }
 
   pendingTrigger = {
-    commands,
+    commands: mergedCommands,
     planFile,
     createdAt: Date.now(),
   };
 
   log?.debug("plannotator-auto queued trigger", {
     planFile,
-    commands,
+    commands: mergedCommands,
     replacedPlanFile: replacedPlanFile ?? null,
   });
   tryTriggerPlanMode(ctx, "queue");
@@ -434,6 +462,97 @@ const resolvePlanFileForCommand = (
   }
 
   return resolveCommandPlanPath(ctx, targetPath);
+};
+
+const markReviewPending = (ctx: ExtensionContext): void => {
+  pendingReviewByCwd.add(ctx.cwd);
+};
+
+const clearReviewPending = (ctx: ExtensionContext): void => {
+  pendingReviewByCwd.delete(ctx.cwd);
+};
+
+const queueReviewCommand = (
+  ctx: ExtensionContext,
+  commandText: string,
+): void => {
+  pendingReviewCommands.push(commandText);
+
+  if (pendingTrigger) {
+    pendingTrigger.commands.push(commandText);
+  } else {
+    pendingTrigger = {
+      commands: [commandText],
+      planFile: REVIEW_COMMAND_BASE,
+      createdAt: Date.now(),
+    };
+  }
+
+  log?.info("plannotator-auto queued review trigger", {
+    commandText,
+    queuedReviewCommands: pendingReviewCommands.length,
+  });
+
+  tryTriggerPlanMode(ctx, "review-queue");
+};
+
+const maybeQueueReviewOnAgentEnd = (
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+): void => {
+  if (!pendingReviewByCwd.has(ctx.cwd)) {
+    return;
+  }
+
+  if (!ctx.hasUI) {
+    log?.debug("plannotator-auto skipped review (no UI)", {
+      cwd: ctx.cwd,
+    });
+    clearReviewPending(ctx);
+    return;
+  }
+
+  const repoRoot = getRepoRoot(ctx.cwd, DEFAULT_GIT_TIMEOUT_MS);
+  if (!repoRoot) {
+    log?.debug("plannotator-auto skipped review (not a git repo)", {
+      cwd: ctx.cwd,
+    });
+    clearReviewPending(ctx);
+    return;
+  }
+
+  const dirty = checkRepoDirty(repoRoot, DEFAULT_GIT_TIMEOUT_MS);
+  if (!dirty) {
+    log?.warn("plannotator-auto failed to check git status", {
+      cwd: ctx.cwd,
+      repoRoot,
+    });
+    clearReviewPending(ctx);
+    return;
+  }
+
+  if (!dirty.summary.dirty) {
+    log?.debug("plannotator-auto skipped review (repo clean)", {
+      cwd: ctx.cwd,
+      repoRoot,
+      summary: dirty.summary,
+    });
+    clearReviewPending(ctx);
+    return;
+  }
+
+  const reviewCommand = buildCommandText(pi, REVIEW_COMMAND_BASE);
+  if (!reviewCommand) {
+    log?.warn("plannotator-auto review command missing", {
+      cwd: ctx.cwd,
+      repoRoot,
+    });
+    clearReviewPending(ctx);
+    return;
+  }
+
+  clearReviewPending(ctx);
+  queueReviewCommand(ctx, reviewCommand);
 };
 
 const handlePlanFileWrite = (
@@ -512,10 +631,12 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       return;
     }
 
+    markReviewPending(ctx);
     handlePlanFileWrite(pi, ctx, event.toolName, args);
   });
 
   pi.on("agent_end", (_event, ctx) => {
+    maybeQueueReviewOnAgentEnd(pi, ctx);
     tryTriggerPlanMode(ctx, "agent_end");
   });
 }

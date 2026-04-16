@@ -178,7 +178,9 @@ export const createPlanReviewCoordinator = (
     state.plannotatorUnavailableNotified = false;
     resetRetryAttempts(state, ctx.cwd);
 
-    pi.sendUserMessage(formatPlanReviewMessage(result));
+    pi.sendUserMessage(formatPlanReviewMessage(result), {
+      deliverAs: "followUp",
+    });
 
     log?.info("plannotator-auto completed plan review", {
       cwd: ctx.cwd,

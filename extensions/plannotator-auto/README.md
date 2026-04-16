@@ -4,7 +4,7 @@ Automatically opens shared Plannotator review flows via event API for updated pl
 
 ## Configuration
 
-By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` (repo slug = basename of the repo) and expects plan files named `YYYY-MM-DD-<slug>.md`. You can override the plan path (relative to the project root) in `~/.pi/agent/third_extension_settings.json`.
+By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` (repo slug = basename of the repo) and expects plan files named `YYYY-MM-DD-<slug>.md`. You can override the plan directory path (relative to the project root) in `~/.pi/agent/third_extension_settings.json`.
 
 Directory example:
 
@@ -16,15 +16,7 @@ Directory example:
 }
 ```
 
-Single-file example:
-
-```json
-{
-  "plannotatorAuto": {
-    "planFile": ".pi/PLAN.md"
-  }
-}
-```
+`planFile` now only supports directories. Legacy single-file values (for example `.pi/PLAN.md`) are ignored.
 
 To disable Plannotator Auto explicitly:
 
@@ -38,7 +30,7 @@ To disable Plannotator Auto explicitly:
 
 ## Behavior
 
-- When the agent `write`/`edit` tool updates the configured plan file (file mode) **or** writes a `YYYY-MM-DD-*.md` file inside the configured plan directory (directory mode), it queues plan-review work.
+- When the agent `write`/`edit` tool writes a `YYYY-MM-DD-*.md` file inside the configured plan directory, it queues plan-review work.
 - If multiple plan writes happen before dispatch, only the latest pending plan file is kept.
 - Plan review uses the shared Plannotator event channel:
   - start via `plannotator:request` with `action: "plan-review"`

@@ -74,6 +74,7 @@ const createSessionRuntimeState = (): SessionRuntimeState => ({
   pendingPlanReviewByCwd: new Map(),
   activePlanReviewByCwd: new Map(),
   processedPlanReviewIds: new Set(),
+  submittedSingleFilePlanReviewPaths: new Set(),
   pendingPlanReviewRetry: null,
   planReviewRetryAttemptsByCwd: new Map(),
   planReviewInFlight: false,
@@ -506,7 +507,24 @@ const handlePlanFileWrite = async (
     return;
   }
 
+  const state = getSessionState(ctx);
   const targetPath = path.resolve(ctx.cwd, toolPath);
+  if (
+    planConfig.mode === "file" &&
+    state.submittedSingleFilePlanReviewPaths.has(targetPath)
+  ) {
+    log?.info(
+      "plannotator-auto skipped plan review for previously submitted single-file plan",
+      {
+        cwd: ctx.cwd,
+        toolPath,
+        targetPath,
+        sessionKey: getSessionKey(ctx),
+      },
+    );
+    return;
+  }
+
   const planFile = resolvePlanFileForReview(ctx, planConfig, targetPath);
   if (!planFile) {
     log?.debug("plannotator-auto tool write/edit did not match plan file", {
@@ -532,6 +550,7 @@ const handlePlanFileWrite = async (
     planFile,
     resolvedPlanPath: targetPath,
     updatedAt: Date.now(),
+    suppressFutureSingleFileReviews: planConfig.mode === "file",
   });
 };
 

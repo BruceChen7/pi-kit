@@ -3,7 +3,7 @@
 RTK Rewrite 做两件事：
 
 1. **命令重写（pre-exec）**：在 bash 命令执行前，调用 `rtk rewrite <command>` 自动改写命令。
-2. **输出过滤（post-exec）**：在 bash 命令执行后，对 build/test 命令输出做 tail 聚合，减少噪音。
+2. **输出过滤（post-exec）**：在 bash 命令执行后，对**已注册命令**输出做 tail 聚合，减少噪音。
 
 ---
 
@@ -19,7 +19,7 @@ RTK Rewrite 做两件事：
 - 按优先级决定是否跳过 rewrite：
   1. `enabled=false` → 跳过
   2. 命中 `exclude` 前缀 → 跳过
-  3. 命中 `commandRegistry.build/test` 且 `rewriteMatchedBuildTestCommands=false` → 跳过
+  3. 命中 `commands` 且 `rewriteMatchedRegisteredCommands=false` → 跳过
 - 未跳过时调用 `rtk rewrite <command>`
 - 当返回结果满足以下条件时才生效：
   - 退出码为 0
@@ -31,14 +31,13 @@ RTK Rewrite 做两件事：
 
 入口：`pi.on("tool_result")`（仅处理 bash tool result）
 
-- 若插件关闭，或 `buildOutputFiltering=false` 且 `testOutputAggregation=false`，直接跳过
+- 若插件关闭，或 `outputFiltering=false`，直接跳过
 - 取本次执行命令；若这条命令之前被 rewrite 过，会回溯到 **原始命令** 再做匹配
 - 原始命令命中 `exclude` 前缀则跳过
 - 只处理文本类型输出
-- 按顺序尝试过滤器：**build → test**
-  - 第一个命中的过滤器生效（因此同时命中时，build 优先）
+- 命中 `commands` 后执行 tail 截断（`maxLines` + `maxChars`）
 
-### C) Tail 截断规则（build/test 共用）
+### C) Tail 截断规则
 
 对命中的输出执行：
 
@@ -51,15 +50,13 @@ RTK Rewrite 做两件事：
 
 ## 命令匹配来源（配置驱动）
 
-build/test 命令列表完全来自配置，不再内置默认列表。
+匹配列表完全来自配置：
 
-- build 使用：`rtkRewrite.commandRegistry.build`
-- test 使用：`rtkRewrite.commandRegistry.test`
+- 使用：`rtkRewrite.commands`
 
 匹配方式：
 
-- build：**includes 子串匹配**（大小写不敏感）
-- test：按词边界匹配，避免误判（如 `latest` 不会误匹配 `test`）
+- 子串匹配（大小写不敏感）
 
 ---
 
@@ -72,11 +69,10 @@ sequenceDiagram
     participant R as rtk rewrite
     participant B as Bash Tool
     participant TR as tool_result handler
-    participant BF as Build Filter
-    participant TF as Test Filter
+    participant OF as Output Filter
 
     U->>BH: command
-    alt rtkRewrite.enabled=false / 命中 exclude / 命中配置命令且rewriteMatchedBuildTestCommands=false
+    alt rtkRewrite.enabled=false / 命中 exclude / 命中 commands 且 rewriteMatchedRegisteredCommands=false
         BH-->>B: 原命令执行
     else 可重写
         BH->>R: rtk rewrite <command>
@@ -91,25 +87,16 @@ sequenceDiagram
     B-->>TR: bash tool_result(output + command)
     TR->>TR: 回溯原始命令(若被 rewrite 过)
 
-    alt 插件关闭 或 build/test 过滤均关闭 或 命中 exclude
+    alt 插件关闭 / outputFiltering=false / 命中 exclude
         TR-->>U: 原输出
-    else 进入过滤链(build -> test)
-        Note right of BF: build/test 均使用
-配置中的 commandRegistry
-        TR->>BF: matches(command)?
-        alt 命中 Build
-            BF->>BF: tail(maxLines,maxChars)
-            BF-->>TR: filtered output
-            TR-->>U: Build 过滤后输出
-        else 未命中 Build
-            TR->>TF: matches(command)?
-            alt 命中 Test
-                TF->>TF: tail(maxLines,maxChars)
-                TF-->>TR: aggregated output
-                TR-->>U: Test 聚合后输出
-            else 两者都未命中
-                TR-->>U: 原输出
-            end
+    else 匹配 commands
+        TR->>OF: matches(command)?
+        alt 命中
+            OF->>OF: tail(maxLines,maxChars)
+            OF-->>TR: filtered output
+            TR-->>U: 过滤后输出
+        else 未命中
+            TR-->>U: 原输出
         end
     end
 ```
@@ -129,13 +116,9 @@ sequenceDiagram
     "enabled": true,
     "notify": true,
     "exclude": [],
-    "buildOutputFiltering": true,
-    "testOutputAggregation": true,
-    "rewriteMatchedBuildTestCommands": true,
-    "commandRegistry": {
-      "build": ["npm run build", "cargo build"],
-      "test": ["vitest", "cargo test"]
-    },
+    "outputFiltering": true,
+    "rewriteMatchedRegisteredCommands": true,
+    "commands": ["npm run build", "vitest", "cargo test"],
     "outputTailMaxLines": 30,
     "outputTailMaxChars": 4000
   }
@@ -162,15 +145,15 @@ sequenceDiagram
 - `/rtk-rewrite-enable`
 - `/rtk-rewrite-disable`
 - `/rtk-rewrite-toggle`
-- `/rtk-rewrite-build-test-rewrite-toggle`
-- `/rtk-rewrite-commands <build|test> <add|remove|clear|list> [pattern]`
+- `/rtk-rewrite-matched-command-rewrite-toggle`
+- `/rtk-rewrite-commands <add|remove|clear|list> [pattern]`
 - `/rtk-rewrite-exclude <prefix>`
 - `/rtk-rewrite-include <prefix>`
 - `/rtk-rewrite-status`
 
 ### `rtk-rewrite-commands` 示例
 
-- 增加：`/rtk-rewrite-commands build add turbo build`
-- 删除：`/rtk-rewrite-commands test remove vitest`
-- 清空：`/rtk-rewrite-commands build clear`
-- 查看：`/rtk-rewrite-commands test list`
+- 增加：`/rtk-rewrite-commands add turbo build`
+- 删除：`/rtk-rewrite-commands remove vitest`
+- 清空：`/rtk-rewrite-commands clear`
+- 查看：`/rtk-rewrite-commands list`

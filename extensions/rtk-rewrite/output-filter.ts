@@ -31,9 +31,6 @@ const normalizeCommandList = (commands: string[]): string[] => {
   return Array.from(new Set(normalized));
 };
 
-const escapeRegex = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 const sanitizePositiveInteger = (value: unknown, fallback: number): number => {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return fallback;
@@ -82,82 +79,40 @@ const captureOutputTail = (
   return `${TRUNCATION_MARKER}${tailText.slice(-keptChars)}`;
 };
 
-export function isBuildCommand(
+export const isRegisteredCommand = (
   command: string | undefined | null,
-  buildCommands: string[] = [],
-): boolean {
+  commands: string[] = [],
+): boolean => {
   if (typeof command !== "string" || command.length === 0) {
     return false;
   }
 
-  const normalized = normalizeCommandList(buildCommands);
+  const normalized = normalizeCommandList(commands);
   const cmdLower = command.toLowerCase();
   return normalized.some((entry) => cmdLower.includes(entry));
-}
+};
 
-export function isTestCommand(
-  command: string | undefined | null,
-  testCommands: string[] = [],
-): boolean {
-  if (typeof command !== "string" || command.length === 0) {
-    return false;
-  }
-
-  const normalized = normalizeCommandList(testCommands);
-  const cmdLower = command.toLowerCase();
-  return normalized.some((entry) => {
-    const escaped = escapeRegex(entry);
-    return new RegExp(`(?:^|[\\s|;&])${escaped}(?:[\\s|;&]|$)`).test(cmdLower);
-  });
-}
-
-export function filterBuildOutput(
+export const filterCommandOutput = (
   output: string,
   command: string | undefined | null,
-  buildCommands: string[] = [],
+  commands: string[] = [],
   limits: TailCaptureOverrides = {},
-): string | null {
-  if (typeof command !== "string" || !isBuildCommand(command, buildCommands)) {
+): string | null => {
+  if (typeof command !== "string" || !isRegisteredCommand(command, commands)) {
     return null;
   }
 
   return captureOutputTail(output, limits);
-}
+};
 
-export function aggregateTestOutput(
-  output: string,
-  command: string | undefined | null,
-  testCommands: string[] = [],
-  limits: TailCaptureOverrides = {},
-): string | null {
-  if (typeof command !== "string" || !isTestCommand(command, testCommands)) {
-    return null;
-  }
-
-  return captureOutputTail(output, limits);
-}
-
-export const createBuildOutputFilter = (
+export const createOutputFilter = (
   options: CommandFilterOptions,
 ): CommandOutputFilter => ({
-  id: "build",
+  id: "commands",
   enabled: options.enabled,
-  matches: (command) => isBuildCommand(command, options.commands),
+  matches: (command) => isRegisteredCommand(command, options.commands),
   apply: (output, command) =>
-    filterBuildOutput(output, command, options.commands, {
-      maxLines: options.maxLines,
-      maxChars: options.maxChars,
-    }),
-});
-
-export const createTestOutputFilter = (
-  options: CommandFilterOptions,
-): CommandOutputFilter => ({
-  id: "test",
-  enabled: options.enabled,
-  matches: (command) => isTestCommand(command, options.commands),
-  apply: (output, command) =>
-    aggregateTestOutput(output, command, options.commands, {
+    filterCommandOutput(output, command, options.commands, {
       maxLines: options.maxLines,
       maxChars: options.maxChars,
     }),

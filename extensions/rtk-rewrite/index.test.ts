@@ -1,17 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   applyCommandRegistryAction,
-  type CommandRegistry,
   parseCommandRegistryArgs,
-  shouldSkipRewriteForBuildTestCommand,
+  shouldSkipRewriteForRegisteredCommand,
 } from "./index.js";
 
 describe("parseCommandRegistryArgs", () => {
   it("parses add command with multi-word pattern", () => {
-    expect(parseCommandRegistryArgs("build add turbo build")).toEqual({
+    expect(parseCommandRegistryArgs("add turbo build")).toEqual({
       ok: true,
       value: {
-        scope: "build",
         action: "add",
         pattern: "turbo build",
       },
@@ -19,37 +17,35 @@ describe("parseCommandRegistryArgs", () => {
   });
 
   it("parses clear and list without pattern", () => {
-    expect(parseCommandRegistryArgs("test clear")).toEqual({
+    expect(parseCommandRegistryArgs("clear")).toEqual({
       ok: true,
       value: {
-        scope: "test",
         action: "clear",
       },
     });
 
-    expect(parseCommandRegistryArgs("build list")).toEqual({
+    expect(parseCommandRegistryArgs("list")).toEqual({
       ok: true,
       value: {
-        scope: "build",
         action: "list",
       },
     });
   });
 
-  it("returns error for invalid scope", () => {
-    expect(parseCommandRegistryArgs("all add npm run build")).toEqual({
+  it("returns error for invalid action", () => {
+    expect(parseCommandRegistryArgs("build add npm run build")).toEqual({
       ok: false,
-      error: "Scope must be build or test.",
+      error: "Action must be add, remove, clear, or list.",
     });
   });
 
   it("returns error for add/remove without pattern", () => {
-    expect(parseCommandRegistryArgs("build add")).toEqual({
+    expect(parseCommandRegistryArgs("add")).toEqual({
       ok: false,
       error: "Pattern is required for add/remove.",
     });
 
-    expect(parseCommandRegistryArgs("test remove")).toEqual({
+    expect(parseCommandRegistryArgs("remove")).toEqual({
       ok: false,
       error: "Pattern is required for add/remove.",
     });
@@ -57,97 +53,80 @@ describe("parseCommandRegistryArgs", () => {
 });
 
 describe("applyCommandRegistryAction", () => {
-  const initialRegistry: CommandRegistry = {
-    build: ["cargo build"],
-    test: ["vitest"],
-  };
+  const initialCommands = ["cargo build", "vitest"];
 
   it("adds normalized command entries", () => {
-    const result = applyCommandRegistryAction(initialRegistry, {
-      scope: "build",
+    const result = applyCommandRegistryAction(initialCommands, {
       action: "add",
       pattern: "  Turbo Build  ",
     });
 
     expect(result.changed).toBe(true);
-    expect(result.registry.build).toEqual(["cargo build", "turbo build"]);
-    expect(result.registry.test).toEqual(["vitest"]);
+    expect(result.commands).toEqual(["cargo build", "vitest", "turbo build"]);
   });
 
   it("removes command entries", () => {
-    const result = applyCommandRegistryAction(initialRegistry, {
-      scope: "test",
+    const result = applyCommandRegistryAction(initialCommands, {
       action: "remove",
       pattern: "VITEST",
     });
 
     expect(result.changed).toBe(true);
-    expect(result.registry).toEqual({
-      build: ["cargo build"],
-      test: [],
-    });
+    expect(result.commands).toEqual(["cargo build"]);
   });
 
-  it("clears a scoped list", () => {
-    const result = applyCommandRegistryAction(initialRegistry, {
-      scope: "build",
+  it("clears command list", () => {
+    const result = applyCommandRegistryAction(initialCommands, {
       action: "clear",
     });
 
     expect(result.changed).toBe(true);
-    expect(result.registry).toEqual({
-      build: [],
-      test: ["vitest"],
-    });
+    expect(result.commands).toEqual([]);
   });
 
-  it("does not change registry for list action", () => {
-    const result = applyCommandRegistryAction(initialRegistry, {
-      scope: "build",
+  it("does not change list for list action", () => {
+    const result = applyCommandRegistryAction(initialCommands, {
       action: "list",
     });
 
     expect(result.changed).toBe(false);
-    expect(result.registry).toEqual(initialRegistry);
+    expect(result.commands).toEqual(initialCommands);
   });
 });
 
-describe("shouldSkipRewriteForBuildTestCommand", () => {
-  const registry: CommandRegistry = {
-    build: ["npm run build", "cargo build"],
-    test: ["vitest", "cargo test"],
-  };
+describe("shouldSkipRewriteForRegisteredCommand", () => {
+  const commands = ["npm run build", "vitest"];
 
   it("returns false when the switch is enabled", () => {
     expect(
-      shouldSkipRewriteForBuildTestCommand("npm run build", {
-        rewriteMatchedBuildTestCommands: true,
-        commandRegistry: registry,
+      shouldSkipRewriteForRegisteredCommand("npm run build", {
+        rewriteMatchedRegisteredCommands: true,
+        commands,
       }),
     ).toBe(false);
   });
 
   it("returns true for matched commands when switch is disabled", () => {
     expect(
-      shouldSkipRewriteForBuildTestCommand("npm run build", {
-        rewriteMatchedBuildTestCommands: false,
-        commandRegistry: registry,
+      shouldSkipRewriteForRegisteredCommand("npm run build", {
+        rewriteMatchedRegisteredCommands: false,
+        commands,
       }),
     ).toBe(true);
 
     expect(
-      shouldSkipRewriteForBuildTestCommand("vitest run", {
-        rewriteMatchedBuildTestCommands: false,
-        commandRegistry: registry,
+      shouldSkipRewriteForRegisteredCommand("vitest run", {
+        rewriteMatchedRegisteredCommands: false,
+        commands,
       }),
     ).toBe(true);
   });
 
   it("returns false for unmatched commands when switch is disabled", () => {
     expect(
-      shouldSkipRewriteForBuildTestCommand("git status", {
-        rewriteMatchedBuildTestCommands: false,
-        commandRegistry: registry,
+      shouldSkipRewriteForRegisteredCommand("git status", {
+        rewriteMatchedRegisteredCommands: false,
+        commands,
       }),
     ).toBe(false);
   });

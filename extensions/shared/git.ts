@@ -13,7 +13,7 @@ export type DirtySummary = {
   dirty: boolean;
 };
 
-export const DEFAULT_GIT_TIMEOUT_MS = 2000;
+export const DEFAULT_GIT_TIMEOUT_MS = 5000;
 
 export const runGit = (
   cwd: string,

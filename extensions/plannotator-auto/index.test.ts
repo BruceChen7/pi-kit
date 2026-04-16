@@ -9,7 +9,6 @@ type ImportedModule = {
     planConfig: {
       planFile: string;
       resolvedPlanPath: string;
-      mode: "file" | "directory";
     },
     targetPath: string,
   ) => string | null;
@@ -17,7 +16,6 @@ type ImportedModule = {
     planConfig: {
       planFile: string;
       resolvedPlanPath: string;
-      mode: "file" | "directory";
     } | null,
     targetPath: string,
   ) => boolean;
@@ -31,24 +29,7 @@ const importPlannotatorAuto = async (): Promise<ImportedModule> =>
   (await import("./index.js")) as ImportedModule;
 
 describe("resolvePlanFileForReview", () => {
-  it("returns configured file path when the configured plan file was updated", async () => {
-    const { resolvePlanFileForReview } = await importPlannotatorAuto();
-
-    expect(resolvePlanFileForReview).toBeTypeOf("function");
-    expect(
-      resolvePlanFileForReview?.(
-        { cwd: "/repo" },
-        {
-          planFile: ".pi/PLAN.md",
-          resolvedPlanPath: "/repo/.pi/PLAN.md",
-          mode: "file",
-        },
-        "/repo/.pi/PLAN.md",
-      ),
-    ).toBe(".pi/PLAN.md");
-  });
-
-  it("returns repo-relative generated path for directory mode plan files", async () => {
+  it("returns repo-relative generated path for plan files in the configured directory", async () => {
     const { resolvePlanFileForReview } = await importPlannotatorAuto();
 
     expect(
@@ -57,31 +38,29 @@ describe("resolvePlanFileForReview", () => {
         {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
-          mode: "directory",
         },
         "/repo/.pi/plans/repo/plan/2026-04-15-auth-flow.md",
       ),
     ).toBe(".pi/plans/repo/plan/2026-04-15-auth-flow.md");
   });
-});
 
-describe("shouldQueueReviewForToolPath", () => {
-  it("skips code review when only the single configured plan file changed", async () => {
-    const { shouldQueueReviewForToolPath } = await importPlannotatorAuto();
+  it("returns null for legacy single-file paths", async () => {
+    const { resolvePlanFileForReview } = await importPlannotatorAuto();
 
-    expect(shouldQueueReviewForToolPath).toBeTypeOf("function");
     expect(
-      shouldQueueReviewForToolPath?.(
+      resolvePlanFileForReview?.(
+        { cwd: "/repo" },
         {
-          planFile: ".pi/PLAN.md",
-          resolvedPlanPath: "/repo/.pi/PLAN.md",
-          mode: "file",
+          planFile: ".pi/plans/repo/plan",
+          resolvedPlanPath: "/repo/.pi/plans/repo/plan",
         },
         "/repo/.pi/PLAN.md",
       ),
-    ).toBe(false);
+    ).toBeNull();
   });
+});
 
+describe("shouldQueueReviewForToolPath", () => {
   it("skips code review when a generated plan file changed inside the plan directory", async () => {
     const { shouldQueueReviewForToolPath } = await importPlannotatorAuto();
 
@@ -90,11 +69,25 @@ describe("shouldQueueReviewForToolPath", () => {
         {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
-          mode: "directory",
         },
         "/repo/.pi/plans/repo/plan/2026-04-15-auth-flow.md",
       ),
     ).toBe(false);
+  });
+
+  it("still queues code review when a legacy single-file path changed", async () => {
+    const { shouldQueueReviewForToolPath } = await importPlannotatorAuto();
+
+    expect(shouldQueueReviewForToolPath).toBeTypeOf("function");
+    expect(
+      shouldQueueReviewForToolPath?.(
+        {
+          planFile: ".pi/plans/repo/plan",
+          resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+        },
+        "/repo/.pi/PLAN.md",
+      ),
+    ).toBe(true);
   });
 
   it("still queues code review when a non-plan file changed", async () => {
@@ -105,7 +98,6 @@ describe("shouldQueueReviewForToolPath", () => {
         {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
-          mode: "directory",
         },
         "/repo/src/auth.ts",
       ),
@@ -309,34 +301,15 @@ describe("plan review trigger timing", () => {
     }
   });
 
-  it("does not re-trigger single-file plan review after the plan was already submitted once", async () => {
+  it("does not trigger plan review for legacy single-file configuration", async () => {
     vi.resetModules();
-    const reviewResultListeners: Array<(result: unknown) => void> = [];
-    let reviewCounter = 0;
 
-    const startPlanReview = vi.fn(async () => {
-      reviewCounter += 1;
-      return {
-        status: "handled" as const,
-        result: {
-          status: "pending" as const,
-          reviewId: `review-${reviewCounter}`,
-        },
-      };
-    });
+    const startPlanReview = vi.fn();
 
     vi.doMock("./plannotator-api.ts", () => ({
       createRequestPlannotator: vi.fn(() => vi.fn()),
       createReviewResultStore: vi.fn(() => ({
-        onResult: vi.fn((listener: (result: unknown) => void) => {
-          reviewResultListeners.push(listener);
-          return () => {
-            const index = reviewResultListeners.indexOf(listener);
-            if (index >= 0) {
-              reviewResultListeners.splice(index, 1);
-            }
-          };
-        }),
+        onResult: vi.fn(() => vi.fn()),
         getStatus: vi.fn(() => null),
         markPending: vi.fn(),
         markCompleted: vi.fn(),
@@ -368,6 +341,115 @@ describe("plan review trigger timing", () => {
         {
           plannotatorAuto: {
             planFile: planFileRelative,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => false,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      await flushMicrotasks();
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not re-trigger directory-mode plan review after the same plan was approved", async () => {
+    vi.resetModules();
+    const reviewResultListeners: Array<(result: unknown) => void> = [];
+    const startPlanReview = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "pending" as const,
+        reviewId: "review-1",
+      },
+    }));
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn((listener: (result: unknown) => void) => {
+          reviewResultListeners.push(listener);
+          return () => {
+            const index = reviewResultListeners.indexOf(listener);
+            if (index >= 0) {
+              reviewResultListeners.splice(index, 1);
+            }
+          };
+        }),
+        getStatus: vi.fn(() => ({ status: "missing" as const })),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-directory-plan-"),
+    );
+    const planFileRelative = ".pi/plans/pi-kit/plan/2026-04-16-flow.md";
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(
+      planFileAbsolute,
+      "# Plan\n\n## Steps\n- [ ] first\n",
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      `${JSON.stringify(
+        {
+          plannotatorAuto: {
+            planFile: ".pi/plans/pi-kit/plan",
           },
         },
         null,
@@ -423,7 +505,11 @@ describe("plan review trigger timing", () => {
       }
       await firstReviewPromise;
 
-      await fs.writeFile(planFileAbsolute, "# Plan\n\n- [x] revised\n", "utf8");
+      await fs.writeFile(
+        planFileAbsolute,
+        "# Plan\n\n## Steps\n- [x] first\n\n## Review\n- approved\n",
+        "utf8",
+      );
       await emit(
         "tool_execution_start",
         {
@@ -445,12 +531,6 @@ describe("plan review trigger timing", () => {
 
       expect(startPlanReview).toHaveBeenCalledTimes(1);
       expect(api.sendUserMessage).toHaveBeenCalledTimes(1);
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        "Plan review approved.",
-        {
-          deliverAs: "followUp",
-        },
-      );
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });

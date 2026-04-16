@@ -17,7 +17,8 @@
       "./extensions/env-guard",
       "./extensions/rtk-rewrite",
       "./extensions/plannotator-auto",
-      "./extensions/dirty-git-status"
+      "./extensions/dirty-git-status",
+      "./extensions/codex-plan-limits"
     ]
   },
   "scripts": {

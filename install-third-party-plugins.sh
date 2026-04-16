@@ -8,7 +8,6 @@
 #
 # Third-party plugins installed by default:
 #   - npm:@plannotator/pi-extension
-#   - npm:@kmiyh/pi-codex-plan-limits
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,7 +43,6 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Plugins to be installed:"
             echo "  - npm:@plannotator/pi-extension"
-            echo "  - npm:@kmiyh/pi-codex-plan-limits"
             exit 0
             ;;
         *)
@@ -75,7 +73,6 @@ PLUGINS=(
     # "npm:pi-cursor-agent"
     # "npm:pi-subagents"
     "npm:@plannotator/pi-extension"
-    "npm:@kmiyh/pi-codex-plan-limits"
 )
 
 # Function to check if plugin is already in settings

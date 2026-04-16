@@ -12,6 +12,7 @@ export type PendingPlanReview = {
   planFile: string;
   resolvedPlanPath: string;
   updatedAt: number;
+  suppressFutureSingleFileReviews: boolean;
 };
 
 export type ActivePlanReview = {
@@ -24,6 +25,7 @@ export type PlanReviewSessionState = {
   pendingPlanReviewByCwd: Map<string, PendingPlanReview>;
   activePlanReviewByCwd: Map<string, ActivePlanReview>;
   processedPlanReviewIds: Set<string>;
+  submittedSingleFilePlanReviewPaths: Set<string>;
   pendingPlanReviewRetry: ReturnType<typeof setTimeout> | null;
   planReviewRetryAttemptsByCwd: Map<string, number>;
   planReviewInFlight: boolean;

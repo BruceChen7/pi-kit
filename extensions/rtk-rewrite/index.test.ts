@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyCommandRegistryAction,
+  buildStatusMessage,
   parseCommandRegistryArgs,
   shouldSkipRewriteForRegisteredCommand,
 } from "./index.js";
@@ -129,5 +130,51 @@ describe("shouldSkipRewriteForRegisteredCommand", () => {
         commands,
       }),
     ).toBe(false);
+  });
+});
+
+describe("buildStatusMessage", () => {
+  const baseConfig = {
+    enabled: true,
+    notify: true,
+    exclude: ["git"],
+    outputFiltering: true,
+    rewriteMatchedRegisteredCommands: false,
+    commands: ["npm run build", "vitest"],
+    outputTailMaxLines: 30,
+    outputTailMaxChars: 4000,
+  };
+
+  it("includes explicit enabled/disabled state with config snapshot", () => {
+    const message = buildStatusMessage(
+      {
+        ...baseConfig,
+        enabled: false,
+      },
+      "RTK rewrite disabled.",
+      999,
+    );
+
+    expect(message).toContain("RTK rewrite disabled.");
+    expect(message).toContain("RTK rewrite disabled");
+    expect(message).toContain("notify on");
+    expect(message).toContain("exclude: git");
+    expect(message).toContain("matched command rewrite off");
+    expect(message).toContain("output filter on");
+    expect(message).toContain("tail caps: lines 30, chars 4000");
+  });
+
+  it("truncates long status message with ellipsis", () => {
+    const message = buildStatusMessage(
+      {
+        ...baseConfig,
+        exclude: ["a".repeat(120)],
+      },
+      "RTK rewrite enabled.",
+      90,
+    );
+
+    expect(message.length).toBe(90);
+    expect(message.endsWith("...")).toBe(true);
   });
 });

@@ -142,9 +142,7 @@ sequenceDiagram
 
 ## 插件命令
 
-- `/rtk-rewrite-enable`
-- `/rtk-rewrite-disable`
-- `/rtk-rewrite-toggle`
+- `/rtk-rewrite-toggle`（单一开关命令；执行后会明确提示当前是 enabled 还是 disabled，并附带关键配置快照。消息过长时会自动截断并追加 `...`）
 - `/rtk-rewrite-matched-command-rewrite-toggle`
 - `/rtk-rewrite-commands <add|remove|clear|list> [pattern]`
 - `/rtk-rewrite-exclude <prefix>`

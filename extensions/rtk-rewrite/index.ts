@@ -65,6 +65,8 @@ const DEFAULT_CONFIG: RtkRewriteConfig = {
 const RTK_HOOK_ID = "rtk";
 const COMMANDS_USAGE =
   "Usage: /rtk-rewrite-commands <add|remove|clear|list> [pattern]";
+const STATUS_MESSAGE_MAX_LENGTH = 240;
+const ELLIPSIS = "...";
 
 let cachedConfig: RtkRewriteConfig = DEFAULT_CONFIG;
 let configLoaded = false;
@@ -439,7 +441,7 @@ const resolveFilteredOutput = (
 const formatStatus = (config: RtkRewriteConfig): string => {
   const status = config.enabled ? "enabled" : "disabled";
   const notify = config.notify ? "on" : "off";
-  const exclude = config.exclude.length ? config.exclude.join(", ") : "none";
+  const exclude = formatEntries(config.exclude);
   const matchedCommandRewrite = config.rewriteMatchedRegisteredCommands
     ? "on"
     : "off";
@@ -453,23 +455,39 @@ const formatStatus = (config: RtkRewriteConfig): string => {
   return `RTK rewrite ${status} | notify ${notify} | exclude: ${exclude} | matched command rewrite ${matchedCommandRewrite} | output filter ${outputFilter} | tail caps: ${tailCaps}`;
 };
 
+const truncateMessage = (message: string, maxLength: number): string => {
+  if (maxLength <= 0) {
+    return "";
+  }
+
+  if (message.length <= maxLength) {
+    return message;
+  }
+
+  if (maxLength <= ELLIPSIS.length) {
+    return ELLIPSIS.slice(0, maxLength);
+  }
+
+  return `${message.slice(0, maxLength - ELLIPSIS.length)}${ELLIPSIS}`;
+};
+
+export const buildStatusMessage = (
+  config: RtkRewriteConfig,
+  prefix?: string,
+  maxLength = STATUS_MESSAGE_MAX_LENGTH,
+): string => {
+  const message = prefix
+    ? `${prefix} ${formatStatus(config)}`
+    : formatStatus(config);
+  return truncateMessage(message, maxLength);
+};
+
 const notifyStatus = (
   ctx: ExtensionCommandContext,
   config: RtkRewriteConfig,
   prefix?: string,
 ): void => {
-  const message = prefix
-    ? `${prefix} ${formatStatus(config)}`
-    : formatStatus(config);
-  ctx.ui.notify(message, "info");
-};
-
-const handleEnable = (ctx: ExtensionCommandContext, enabled: boolean): void => {
-  const config = updateConfig(ctx.cwd, (current) => ({
-    ...current,
-    enabled,
-  }));
-  notifyStatus(ctx, config, `RTK rewrite ${enabled ? "enabled" : "disabled"}.`);
+  ctx.ui.notify(buildStatusMessage(config, prefix), "info");
 };
 
 const handleToggle = (ctx: ExtensionCommandContext): void => {
@@ -477,7 +495,11 @@ const handleToggle = (ctx: ExtensionCommandContext): void => {
     ...current,
     enabled: !current.enabled,
   }));
-  notifyStatus(ctx, config, "RTK rewrite toggled.");
+  notifyStatus(
+    ctx,
+    config,
+    `RTK rewrite ${config.enabled ? "enabled" : "disabled"}.`,
+  );
 };
 
 const handleMatchedCommandRewriteToggle = (
@@ -627,20 +649,6 @@ export default function (pi: ExtensionAPI) {
         item.type === "text" ? { ...item, text: filtered } : item,
       ),
     };
-  });
-
-  pi.registerCommand("rtk-rewrite-enable", {
-    description: "Enable RTK auto-rewrite",
-    handler: async (_args, ctx) => {
-      handleEnable(ctx, true);
-    },
-  });
-
-  pi.registerCommand("rtk-rewrite-disable", {
-    description: "Disable RTK auto-rewrite",
-    handler: async (_args, ctx) => {
-      handleEnable(ctx, false);
-    },
   });
 
   pi.registerCommand("rtk-rewrite-toggle", {

@@ -1,23 +1,20 @@
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 
-export type PlanFileMode = "file" | "directory";
-
 export type PlanFileConfig = {
   planFile: string;
   resolvedPlanPath: string;
-  mode: PlanFileMode;
 };
 
 export type PendingPlanReview = {
   planFile: string;
   resolvedPlanPath: string;
   updatedAt: number;
-  suppressFutureSingleFileReviews: boolean;
 };
 
 export type ActivePlanReview = {
   reviewId: string;
   planFile: string;
+  resolvedPlanPath: string;
   startedAt: number;
 };
 
@@ -25,7 +22,7 @@ export type PlanReviewSessionState = {
   pendingPlanReviewByCwd: Map<string, PendingPlanReview>;
   activePlanReviewByCwd: Map<string, ActivePlanReview>;
   processedPlanReviewIds: Set<string>;
-  submittedSingleFilePlanReviewPaths: Set<string>;
+  settledPlanReviewPaths: Set<string>;
   pendingPlanReviewRetry: ReturnType<typeof setTimeout> | null;
   planReviewRetryAttemptsByCwd: Map<string, number>;
   planReviewInFlight: boolean;

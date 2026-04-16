@@ -24,7 +24,7 @@ const createPlanReviewState = () => ({
   pendingPlanReviewByCwd: new Map(),
   activePlanReviewByCwd: new Map(),
   processedPlanReviewIds: new Set(),
-  submittedSingleFilePlanReviewPaths: new Set(),
+  settledPlanReviewPaths: new Set(),
   pendingPlanReviewRetry: null as ReturnType<typeof setTimeout> | null,
   planReviewRetryAttemptsByCwd: new Map<string, number>(),
   planReviewInFlight: false,
@@ -225,6 +225,7 @@ describe("PlanReviewCoordinator transition table", () => {
     state.activePlanReviewByCwd.set(ctx.cwd, {
       reviewId: "review-1",
       planFile: ".pi/plans/repo/plan/2026-04-16-flow.md",
+      resolvedPlanPath: "/repo/.pi/plans/repo/plan/2026-04-16-flow.md",
       startedAt: Date.now(),
     });
 
@@ -291,13 +292,13 @@ describe("PlanReviewCoordinator key workflow effects", () => {
       state.activePlanReviewByCwd.set(runtimeCtx.cwd, {
         reviewId: "review-1",
         planFile: planFileRelative,
+        resolvedPlanPath: planFileAbsolute,
         startedAt: 100,
       });
       state.pendingPlanReviewByCwd.set(runtimeCtx.cwd, {
         planFile: planFileRelative,
         resolvedPlanPath: planFileAbsolute,
         updatedAt: 101,
-        suppressFutureSingleFileReviews: false,
       });
 
       await coordinator.runPlanReview(runtimeCtx as never, "agent_end");
@@ -309,6 +310,7 @@ describe("PlanReviewCoordinator key workflow effects", () => {
       );
       expect(state.pendingPlanReviewByCwd.has(runtimeCtx.cwd)).toBe(false);
       expect(state.processedPlanReviewIds.has("review-1")).toBe(true);
+      expect(state.settledPlanReviewPaths.size).toBe(0);
       expect(pi.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -341,7 +343,6 @@ describe("PlanReviewCoordinator key workflow effects", () => {
           planFile: planFileRelative,
           resolvedPlanPath: planFileAbsolute,
           updatedAt: Date.now(),
-          suppressFutureSingleFileReviews: false,
         }),
       ).then(() => {
         settled = true;
@@ -396,6 +397,7 @@ describe("PlanReviewCoordinator key workflow effects", () => {
     state.activePlanReviewByCwd.set(ctx.cwd, {
       reviewId: "review-1",
       planFile: ".pi/plans/repo/plan/2026-04-16-flow.md",
+      resolvedPlanPath: "/repo/.pi/plans/repo/plan/2026-04-16-flow.md",
       startedAt: Date.now(),
     });
     state.planReviewRetryAttemptsByCwd.set(ctx.cwd, 12);

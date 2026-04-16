@@ -164,6 +164,50 @@ describe("createReviewResultStore", () => {
   });
 });
 
+describe("review status requests", () => {
+  it("queries review-status over the shared event channel", async () => {
+    const { createRequestPlannotator, requestReviewStatus } = await import(
+      "./plannotator-api.js"
+    );
+    const { events } = createFakeEvents();
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        action: string;
+        payload: Record<string, unknown>;
+        respond: (response: unknown) => void;
+      };
+      expect(request.action).toBe("review-status");
+      expect(request.payload).toEqual({ reviewId: "review-42" });
+      request.respond({
+        status: "handled",
+        result: {
+          status: "completed",
+          reviewId: "review-42",
+          approved: true,
+          feedback: "Ship it.",
+        },
+      });
+    });
+
+    const requestPlannotator = createRequestPlannotator(events, {
+      timeoutMs: 50,
+    });
+
+    await expect(
+      requestReviewStatus(requestPlannotator, { reviewId: "review-42" }),
+    ).resolves.toEqual({
+      status: "handled",
+      result: {
+        status: "completed",
+        reviewId: "review-42",
+        approved: true,
+        feedback: "Ship it.",
+      },
+    });
+  });
+});
+
 describe("feedback formatting", () => {
   it("formats code review feedback for the coding agent", async () => {
     const { formatCodeReviewMessage } = await import("./plannotator-api.js");
@@ -174,6 +218,20 @@ describe("feedback formatting", () => {
         feedback: "Please add tests.",
       }),
     ).toBe("Please add tests.\n\nPlease address this feedback.");
+  });
+
+  it("formats plan review rejection feedback for the coding agent", async () => {
+    const { formatPlanReviewMessage } = await import("./plannotator-api.js");
+
+    expect(
+      formatPlanReviewMessage({
+        reviewId: "review-5",
+        approved: false,
+        feedback: "Split rollout and add rollback steps.",
+      }),
+    ).toBe(
+      "Split rollout and add rollback steps.\n\nPlease revise the plan and resubmit for review.",
+    );
   });
 
   it("formats annotation feedback with a file header", async () => {

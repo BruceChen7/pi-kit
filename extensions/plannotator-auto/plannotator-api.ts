@@ -208,6 +208,14 @@ export const startPlanReview = async (
   return response;
 };
 
+export const requestReviewStatus = (
+  requestPlannotator: ReturnType<typeof createRequestPlannotator>,
+  payload: {
+    reviewId: string;
+  },
+): Promise<PlannotatorResponseMap["review-status"]> =>
+  requestPlannotator("review-status", payload);
+
 export const requestCodeReview = (
   requestPlannotator: ReturnType<typeof createRequestPlannotator>,
   payload: {
@@ -229,6 +237,25 @@ export const requestAnnotation = (
   },
 ): Promise<PlannotatorResponseMap["annotate"]> =>
   requestPlannotator("annotate", payload);
+
+export const formatPlanReviewMessage = (result: {
+  approved: boolean;
+  feedback?: string;
+}): string => {
+  if (result.approved) {
+    if (!result.feedback?.trim()) {
+      return "# Plan Review\n\nPlan approved. Proceed with implementation.";
+    }
+
+    return `# Plan Review\n\nPlan approved with notes:\n\n${result.feedback}\n\nProceed with implementation and incorporate these notes.`;
+  }
+
+  if (!result.feedback?.trim()) {
+    return "Plan rejected. Please revise the plan and resubmit for review.";
+  }
+
+  return `${result.feedback}\n\nPlease revise the plan and resubmit for review.`;
+};
 
 export const formatCodeReviewMessage = (result: {
   approved: boolean;

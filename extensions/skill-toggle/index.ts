@@ -95,9 +95,22 @@ function normalizeSkillName(name: string): string {
 }
 
 const HOME_DIR = os.homedir();
+const ENV_VAR_TOKEN_REGEX =
+  /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function expandEnvironmentVariables(value: string): string {
+  return value.replace(ENV_VAR_TOKEN_REGEX, (match, braced, bare) => {
+    const key = braced || bare;
+    if (!key) return match;
+    const envValue = process.env[key];
+    return typeof envValue === "string" && envValue.length > 0
+      ? envValue
+      : match;
+  });
 }
 
 function expandHomeShortcut(value: string): string {
@@ -108,16 +121,20 @@ function expandHomeShortcut(value: string): string {
   return value;
 }
 
-function normalizeCwdKey(value: string): string {
-  return path.resolve(expandHomeShortcut(value));
+function expandConfigPath(value: string): string {
+  return expandHomeShortcut(expandEnvironmentVariables(value));
 }
 
-function toTildePath(value: string): string {
+function normalizeCwdKey(value: string): string {
+  return path.resolve(expandConfigPath(value));
+}
+
+function toPortablePath(value: string): string {
   const normalized = path.resolve(value);
-  if (normalized === HOME_DIR) return "~";
+  if (normalized === HOME_DIR) return "$HOME";
   const prefix = `${HOME_DIR}${path.sep}`;
   if (normalized.startsWith(prefix)) {
-    return `~${normalized.slice(HOME_DIR.length)}`;
+    return `$HOME${normalized.slice(HOME_DIR.length)}`;
   }
   return normalized;
 }
@@ -443,8 +460,8 @@ function buildOverridePattern(skill: Skill): string {
     path.basename(skill.filePath) === "SKILL.md"
       ? path.dirname(skill.filePath)
       : skill.filePath;
-  const resolved = path.resolve(expandHomeShortcut(basePath));
-  return `-${resolved}`;
+  const resolved = path.resolve(expandConfigPath(basePath));
+  return `-${toPortablePath(resolved)}`;
 }
 
 function normalizeOverrideName(override: string): string {
@@ -509,7 +526,7 @@ function getGlobalCwdKey(cwd: string): string {
     ? (globalToggle?.byCwd as Record<string, unknown>)
     : undefined;
   const matchedKey = findCwdKey(byCwd, cwd);
-  return matchedKey ?? toTildePath(cwd);
+  return matchedKey ?? toPortablePath(cwd);
 }
 
 function getManagedOverrideEntries(cwd: string): Skill[] {
@@ -572,7 +589,7 @@ export function loadToggleState(cwd: string): ToggleState {
   const globalDisabled = toSkillList(globalEntry?.disabledSkills);
 
   const disabledSkills = globalDisabled ?? [];
-  const cwdKey = matchedKey ?? toTildePath(cwd);
+  const cwdKey = matchedKey ?? toPortablePath(cwd);
 
   // Normalize all disabled skill names for consistent matching
   const normalizedDisabled = disabledSkills.map(normalizeSkillName);

@@ -1,6 +1,6 @@
 # Plannotator Auto
 
-Auto-configures the Plannotator plan file and enters plan mode after plan updates.
+Automatically opens shared Plannotator review flows via event API for updated plan files and non-plan code changes.
 
 ## Configuration
 
@@ -38,17 +38,67 @@ To disable Plannotator Auto explicitly:
 
 ## Behavior
 
-- When the agent `write`/`edit` tool updates the configured plan file (file mode) **or** writes a `YYYY-MM-DD-*.md` file inside the configured plan directory (directory mode), it queues:
-  - `/plannotator-set-file <planFile>`
-  - If Plannotator is already active on a different plan file, it queues `/plannotator <oldPlanFile>` to exit, then `/plannotator <planFile>` to re-enter with the new plan; otherwise it queues `/plannotator <planFile>`.
-  - `/plannotator-annotate`
-- If the current active plan file already matches the updated plan file, no new commands are queued.
-- If another plan update arrives before the queued commands run, the pending queue is replaced with the newest plan file (review commands remain appended).
-- When any `write`/`edit` tool runs, it marks the repo as changed. On `agent_end`, if the repo is dirty and UI is available, it queues `/plannotator-review` and appends it after any pending plan commands (the change flag resets after queuing or if the repo is clean).
-- Auto-trigger waits until the agent is idle and the prompt editor is empty (to avoid interrupting streaming or overwriting input). It retries briefly if busy.
-- In interactive TUI mode it submits commands by simulating Enter; in non-interactive modes it notifies you to run the commands manually.
-- If the editor has pending input, auto-trigger is skipped and a notification is shown.
+- When the agent `write`/`edit` tool updates the configured plan file (file mode) **or** writes a `YYYY-MM-DD-*.md` file inside the configured plan directory (directory mode), it queues plan-review work.
+- If multiple plan writes happen before dispatch, only the latest pending plan file is kept.
+- Plan review uses the shared Plannotator event channel:
+  - start via `plannotator:request` with `action: "plan-review"`
+  - completion via `plannotator:review-result`
+  - fallback recovery via `action: "review-status"` polling
+- For `plan-file-write` triggers, plan review can start even while agent is busy, and `tool_execution_end` now waits for the review decision before letting the run continue.
+- Successful `write`/`edit` calls to **non-plan files** mark code-review as pending. On `agent_end`, if repo is dirty and UI is available, code-review (`action: "code-review"`) is requested.
+- Code review now depends on explicit coordinator signal `isPlanReviewSettled(...)` rather than peeking internal plan-review maps.
+- If Plannotator is unavailable on shared event channel, a warning is shown (no slash-command fallback).
+
+## Architecture (Option B)
+
+`plannotator-auto` now uses an explicit coordinator for plan-review lifecycle:
+
+- `plan-review/coordinator.ts`
+  - single owner of plan-review transitions and side effects
+  - handles queue/start/status-poll/completion and sync-wait policy for `plan-file-write`
+- `plan-review/state-store.ts`
+  - state helpers (snapshot, pending replacement, stale cleanup)
+- `plan-review/policy.ts`
+  - pure policy decisions:
+    - busy deferral policy
+    - retry delay policy (exponential backoff + jitter + cap)
+    - sync wait polling delay policy for active plan reviews
+- `plan-review/types.ts`
+  - shared state/context/type contracts
+- `index.ts`
+  - thin event adapter: classify incoming events and delegate to coordinator
+
+## Plan-review sequence
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Extension as plannotator-auto/index
+    participant Coord as PlanReviewCoordinator
+    participant Store as Session State
+    participant Plannotator
+
+    Agent->>Extension: tool_execution_end(write/edit, path)
+    Extension->>Extension: resolve plan-file match
+    Extension->>Coord: queuePendingPlanReview(...)
+    Coord->>Store: set pending plan
+    Coord->>Coord: runPlanReview("plan-file-write")
+    Coord->>Plannotator: action=plan-review
+    Plannotator-->>Coord: handled + reviewId
+    Coord->>Store: pending -> active(reviewId)
+    loop wait for completed decision
+      Plannotator-->>Coord: review-result (preferred event path)
+      Coord->>Plannotator: action=review-status (backoff+jitter)
+      Plannotator-->>Coord: pending/completed
+    end
+    Coord->>Agent: send plan review feedback message
+    Coord->>Store: clear active / reset retry state
+```
 
 ## Logging
 
 Debug logs go through the shared extension logger (default: `~/.pi/agent/pi-debug.log`).
+Recommended filters:
+- `ext:plannotator-auto`
+- `reviewId`
+- `sessionKey`

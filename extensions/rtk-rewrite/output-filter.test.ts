@@ -21,28 +21,51 @@ describe("isBuildCommand", () => {
 });
 
 describe("filterBuildOutput", () => {
-  it("summarizes successful builds", () => {
-    const output = ["Compiling app v0.1.0", "Finished"].join("\n");
-    const result = filterBuildOutput(output, "cargo build");
-    expect(result).toBe("✓ Build successful (1 units compiled)");
-  });
-
-  it("summarizes build errors and warnings", () => {
+  it("returns last N lines for matching build commands", () => {
     const output = [
-      "Compiling app v0.1.0",
-      "error: missing value",
-      "  --> src/main.rs:1:1",
-      "warning: unused variable",
+      "line 1",
+      "line 2",
+      "line 3",
+      "line 4",
+      "line 5",
+      "line 6",
     ].join("\n");
 
-    const result = filterBuildOutput(output, "cargo build");
-    expect(result).toContain("❌ 1 error(s):");
-    expect(result).toContain("error: missing value");
-    expect(result).toContain("⚠️  1 warning(s)");
+    const result = filterBuildOutput(output, "cargo build", undefined, {
+      maxLines: 3,
+      maxChars: 1_000,
+    });
+
+    expect(result).toBe("line 4\nline 5\nline 6");
   });
 
-  it("returns null when command is not a build", () => {
-    const result = filterBuildOutput("output", "echo hello");
+  it("drops trailing blank lines before taking the tail", () => {
+    const output = ["alpha", "beta", "gamma", "", "", ""].join("\n");
+
+    const result = filterBuildOutput(output, "npm run build", undefined, {
+      maxLines: 2,
+      maxChars: 1_000,
+    });
+
+    expect(result).toBe("beta\ngamma");
+  });
+
+  it("applies maxChars after maxLines and keeps tail-most characters", () => {
+    const output = ["first-line-12345", "second-line-ABCDE"].join("\n");
+
+    const result = filterBuildOutput(output, "go build", undefined, {
+      maxLines: 2,
+      maxChars: 20,
+    });
+
+    expect(result).toBe("...[truncated]\nABCDE");
+  });
+
+  it("returns null when command is not a build command", () => {
+    const result = filterBuildOutput("output", "echo hello", undefined, {
+      maxLines: 3,
+      maxChars: 50,
+    });
     expect(result).toBeNull();
   });
 });
@@ -62,43 +85,39 @@ describe("isTestCommand", () => {
 });
 
 describe("aggregateTestOutput", () => {
-  it("summarizes results and failures", () => {
+  it("returns last N lines for matching test commands", () => {
     const output = [
-      "running 3 tests",
-      "test alpha ... ok",
-      "test beta ... FAILED",
-      "FAIL beta",
-      "  AssertionError: expected 1",
-      "",
-      "2 passed, 1 failed",
+      "test a ... ok",
+      "test b ... ok",
+      "test c ... FAILED",
+      "AssertionError: expected 1",
+      "at src/math.test.ts:12:5",
     ].join("\n");
 
-    const result = aggregateTestOutput(output, "cargo test");
-    expect(result).toContain("📋 Test Results:");
-    expect(result).toContain("✅ 2 passed");
-    expect(result).toContain("❌ 1 failed");
-    expect(result).toContain("Failures:");
-    expect(result).toContain("FAIL beta");
+    const result = aggregateTestOutput(output, "cargo test", undefined, {
+      maxLines: 2,
+      maxChars: 1_000,
+    });
+
+    expect(result).toBe("AssertionError: expected 1\nat src/math.test.ts:12:5");
   });
 
-  it("preserves file/line info in failure summary", () => {
-    const output = [
-      "running 1 test",
-      "FAIL src/math.test.ts",
-      "  ● adds",
-      "    AssertionError: expected 1",
-      "    extra context line",
-      "    at Object.<anonymous> (src/math.test.ts:12:5)",
-      "",
-      "1 failed",
-    ].join("\n");
+  it("applies char cap for test output", () => {
+    const output = ["log-1", "log-2", "final-failure-line-XYZ"].join("\n");
 
-    const result = aggregateTestOutput(output, "npm test");
-    expect(result).toContain("src/math.test.ts:12:5");
+    const result = aggregateTestOutput(output, "npm test", undefined, {
+      maxLines: 3,
+      maxChars: 23,
+    });
+
+    expect(result).toBe("...[truncated]\nline-XYZ");
   });
 
-  it("returns null when command is not a test", () => {
-    const result = aggregateTestOutput("output", "echo hello");
+  it("returns null when command is not a test command", () => {
+    const result = aggregateTestOutput("output", "echo hello", undefined, {
+      maxLines: 3,
+      maxChars: 50,
+    });
     expect(result).toBeNull();
   });
 });

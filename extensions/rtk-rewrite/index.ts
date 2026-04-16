@@ -11,6 +11,8 @@ import {
   createBuildOutputFilter,
   createTestOutputFilter,
   DEFAULT_BUILD_COMMANDS,
+  DEFAULT_OUTPUT_TAIL_MAX_CHARS,
+  DEFAULT_OUTPUT_TAIL_MAX_LINES,
   DEFAULT_TEST_COMMANDS,
   mergeCommandLists,
 } from "./output-filter.ts";
@@ -23,6 +25,8 @@ type RtkRewriteConfig = {
   testOutputAggregation: boolean;
   buildCommands: string[];
   testCommands: string[];
+  outputTailMaxLines: number;
+  outputTailMaxChars: number;
 };
 
 type RtkRewriteSettings = {
@@ -33,6 +37,8 @@ type RtkRewriteSettings = {
   testOutputAggregation?: unknown;
   buildCommands?: unknown;
   testCommands?: unknown;
+  outputTailMaxLines?: unknown;
+  outputTailMaxChars?: unknown;
 };
 
 const DEFAULT_CONFIG: RtkRewriteConfig = {
@@ -43,6 +49,8 @@ const DEFAULT_CONFIG: RtkRewriteConfig = {
   testOutputAggregation: true,
   buildCommands: [],
   testCommands: [],
+  outputTailMaxLines: DEFAULT_OUTPUT_TAIL_MAX_LINES,
+  outputTailMaxChars: DEFAULT_OUTPUT_TAIL_MAX_CHARS,
 };
 
 const RTK_HOOK_ID = "rtk";
@@ -61,6 +69,13 @@ const normalizeEntries = (value: unknown): string[] => {
     ? value.filter((item): item is string => typeof item === "string")
     : [];
   return uniqueList(raw.map(normalizeEntry).filter((item) => item.length > 0));
+};
+
+const sanitizePositiveInteger = (value: unknown, fallback: number): number => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.floor(value);
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -83,6 +98,14 @@ const sanitizeConfig = (value: unknown): RtkRewriteConfig => {
   const exclude = normalizeEntries(raw.exclude);
   const buildCommands = normalizeEntries(raw.buildCommands);
   const testCommands = normalizeEntries(raw.testCommands);
+  const outputTailMaxLines = sanitizePositiveInteger(
+    raw.outputTailMaxLines,
+    DEFAULT_CONFIG.outputTailMaxLines,
+  );
+  const outputTailMaxChars = sanitizePositiveInteger(
+    raw.outputTailMaxChars,
+    DEFAULT_CONFIG.outputTailMaxChars,
+  );
 
   return {
     enabled,
@@ -92,6 +115,8 @@ const sanitizeConfig = (value: unknown): RtkRewriteConfig => {
     testOutputAggregation,
     buildCommands,
     testCommands,
+    outputTailMaxLines,
+    outputTailMaxChars,
   };
 };
 
@@ -127,6 +152,8 @@ const updateConfig = (
         testOutputAggregation: next.testOutputAggregation,
         buildCommands: [...next.buildCommands],
         testCommands: [...next.testCommands],
+        outputTailMaxLines: next.outputTailMaxLines,
+        outputTailMaxChars: next.outputTailMaxChars,
       },
     };
   });
@@ -263,10 +290,14 @@ const resolveFilteredOutput = (
     createBuildOutputFilter({
       enabled: config.buildOutputFiltering,
       commands: buildCommands,
+      maxLines: config.outputTailMaxLines,
+      maxChars: config.outputTailMaxChars,
     }),
     createTestOutputFilter({
       enabled: config.testOutputAggregation,
       commands: testCommands,
+      maxLines: config.outputTailMaxLines,
+      maxChars: config.outputTailMaxChars,
     }),
   ];
 
@@ -289,7 +320,8 @@ const formatStatus = (config: RtkRewriteConfig): string => {
   const exclude = config.exclude.length ? config.exclude.join(", ") : "none";
   const buildFilter = `${config.buildOutputFiltering ? "on" : "off"} (extra: ${formatExtras(config.buildCommands)})`;
   const testFilter = `${config.testOutputAggregation ? "on" : "off"} (extra: ${formatExtras(config.testCommands)})`;
-  return `RTK rewrite ${status} | notify ${notify} | exclude: ${exclude} | build filter ${buildFilter} | test filter ${testFilter}`;
+  const tailCaps = `lines ${config.outputTailMaxLines}, chars ${config.outputTailMaxChars}`;
+  return `RTK rewrite ${status} | notify ${notify} | exclude: ${exclude} | build filter ${buildFilter} | test filter ${testFilter} | tail caps: ${tailCaps}`;
 };
 
 const notifyStatus = (

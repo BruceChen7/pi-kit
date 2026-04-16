@@ -290,7 +290,10 @@ describe("plan review trigger timing", () => {
       });
 
       await reviewPromise;
-      expect(api.sendUserMessage).toHaveBeenCalledWith("Plan review rejected.");
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        "Plan review rejected.",
+        { deliverAs: "followUp" },
+      );
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -427,7 +430,10 @@ describe("plan review trigger timing", () => {
 
       expect(startPlanReview).toHaveBeenCalledTimes(1);
       expect(api.sendUserMessage).toHaveBeenCalledTimes(1);
-      expect(api.sendUserMessage).toHaveBeenCalledWith("Plan review approved.");
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        "Plan review approved.",
+        { deliverAs: "followUp" },
+      );
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });

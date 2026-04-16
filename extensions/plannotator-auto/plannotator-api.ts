@@ -188,6 +188,30 @@ export const createReviewResultStore = (events: EventBus) => {
   };
 };
 
+export const waitForReviewResult = (
+  reviewStore: ReturnType<typeof createReviewResultStore>,
+  reviewId: string,
+): Promise<Extract<ReviewStatusResult, { status: "completed" }>> => {
+  const existing = reviewStore.getStatus(reviewId);
+  if (existing.status === "completed") {
+    return Promise.resolve(existing);
+  }
+
+  return new Promise((resolve) => {
+    const unsubscribe = reviewStore.onResult((result) => {
+      if (result.reviewId !== reviewId) {
+        return;
+      }
+
+      unsubscribe();
+      resolve({
+        status: "completed",
+        ...result,
+      });
+    });
+  });
+};
+
 export const startPlanReview = async (
   requestPlannotator: ReturnType<typeof createRequestPlannotator>,
   reviewStore: ReturnType<typeof createReviewResultStore>,

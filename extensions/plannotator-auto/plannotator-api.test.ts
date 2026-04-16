@@ -162,6 +162,34 @@ describe("createReviewResultStore", () => {
       feedback: "Ship it.",
     });
   });
+
+  it("waits for a matching review result event", async () => {
+    const { createReviewResultStore, waitForReviewResult } = await import(
+      "./plannotator-api.js"
+    );
+    const { events } = createFakeEvents();
+    const store = createReviewResultStore(events);
+
+    const waitPromise = waitForReviewResult(store, "review-9");
+
+    events.emit("plannotator:review-result", {
+      reviewId: "review-8",
+      approved: false,
+      feedback: "Ignore this one.",
+    });
+    events.emit("plannotator:review-result", {
+      reviewId: "review-9",
+      approved: true,
+      feedback: "Ship it.",
+    });
+
+    await expect(waitPromise).resolves.toEqual({
+      status: "completed",
+      reviewId: "review-9",
+      approved: true,
+      feedback: "Ship it.",
+    });
+  });
 });
 
 describe("review status requests", () => {

@@ -193,8 +193,9 @@ const flushMicrotasks = async (): Promise<void> => {
 };
 
 describe("plan review trigger timing", () => {
-  it("starts plan review right after plan-file write even when the agent is still busy", async () => {
+  it("waits for the plan review result after a busy plan-file write", async () => {
     vi.resetModules();
+    let reviewResultListener: ((result: unknown) => void) | null = null;
 
     const startPlanReview = vi.fn(async () => ({
       status: "handled" as const,
@@ -207,12 +208,18 @@ describe("plan review trigger timing", () => {
     vi.doMock("./plannotator-api.ts", () => ({
       createRequestPlannotator: vi.fn(() => vi.fn()),
       createReviewResultStore: vi.fn(() => ({
-        onResult: vi.fn(),
+        onResult: vi.fn((listener: (result: unknown) => void) => {
+          reviewResultListener = listener;
+          return () => {
+            reviewResultListener = null;
+          };
+        }),
         getStatus: vi.fn(() => null),
         markPending: vi.fn(),
+        markCompleted: vi.fn(),
       })),
       formatCodeReviewMessage: vi.fn(() => ""),
-      formatPlanReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review rejected."),
       requestCodeReview: vi.fn(),
       requestReviewStatus: vi.fn(),
       startPlanReview,
@@ -258,7 +265,8 @@ describe("plan review trigger timing", () => {
         },
         ctx,
       );
-      await emit(
+      let settled = false;
+      const reviewPromise = emit(
         "tool_execution_end",
         {
           toolName: "write",
@@ -266,11 +274,23 @@ describe("plan review trigger timing", () => {
           isError: false,
         },
         ctx,
-      );
+      ).then(() => {
+        settled = true;
+      });
 
       await flushMicrotasks();
       expect(startPlanReview).toHaveBeenCalledTimes(1);
-      expect(abort).toHaveBeenCalledTimes(1);
+      expect(settled).toBe(false);
+      expect(abort).not.toHaveBeenCalled();
+
+      reviewResultListener?.({
+        reviewId: "review-immediate",
+        approved: false,
+        feedback: "Please revise the rollout steps.",
+      });
+
+      await reviewPromise;
+      expect(api.sendUserMessage).toHaveBeenCalledWith("Plan review rejected.");
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });

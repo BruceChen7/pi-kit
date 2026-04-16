@@ -19,11 +19,6 @@ export const shouldDeferPlanReviewWhenBusy = (
   isIdle: boolean,
 ): boolean => !isIdle && reason !== "plan-file-write";
 
-export const shouldAbortAfterPlanReviewStart = (
-  reason: PlanReviewCoordinatorReason,
-  isIdle: boolean,
-): boolean => reason === "plan-file-write" && !isIdle;
-
 export const getPlanReviewRetryDelay = (
   reason: Exclude<PlanReviewCoordinatorReason, "plan-file-write" | "agent_end">,
   attempt: number,
@@ -49,4 +44,15 @@ export const getPlanReviewRetryDelay = (
     delayMs: exponential + jitter,
     exhausted: false,
   };
+};
+
+export const getPlanReviewWaitDelay = (attempt: number): number => {
+  const base = BASE_RETRY_DELAY_MS["await-plan-review-result"];
+  const exponential = Math.min(
+    MAX_PLAN_REVIEW_RETRY_DELAY_MS,
+    base * 2 ** Math.max(0, attempt - 1),
+  );
+  const jitter = Math.floor(exponential * 0.15 * Math.random());
+
+  return exponential + jitter;
 };

@@ -476,12 +476,12 @@ const maybeStartCodeReview = async (
   }
 };
 
-const handlePlanFileWrite = (
+const handlePlanFileWrite = async (
   planReviewCoordinator: PlanReviewCoordinator,
   ctx: ExtensionContext,
   args: unknown,
   planConfig: PlanFileConfig | null,
-): void => {
+): Promise<void> => {
   if (!planConfig) {
     log?.debug(
       "plannotator-auto skipped plan-file write handling (plan review disabled)",
@@ -528,7 +528,7 @@ const handlePlanFileWrite = (
     sessionKey: getSessionKey(ctx),
   });
 
-  planReviewCoordinator.queuePendingPlanReview(ctx, {
+  await planReviewCoordinator.queuePendingPlanReview(ctx, {
     planFile,
     resolvedPlanPath: targetPath,
     updatedAt: Date.now(),
@@ -583,7 +583,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     getSessionState(ctx).toolArgsByCallId.set(event.toolCallId, event.args);
   });
 
-  pi.on("tool_execution_end", (event, ctx) => {
+  pi.on("tool_execution_end", async (event, ctx) => {
     if (event.toolName !== "write" && event.toolName !== "edit") {
       return;
     }
@@ -649,7 +649,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       });
     }
 
-    handlePlanFileWrite(planReviewCoordinator, ctx, args, planConfig);
+    await handlePlanFileWrite(planReviewCoordinator, ctx, args, planConfig);
   });
 
   pi.on("agent_end", async (_event, ctx) => {

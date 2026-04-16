@@ -143,6 +143,47 @@ describe("createReviewResultStore", () => {
     expect(store.getStatus("review-3")).toEqual({ status: "pending" });
   });
 
+  it("marks code reviews pending when the shared API returns a reviewId", async () => {
+    const {
+      createRequestPlannotator,
+      createReviewResultStore,
+      startCodeReview,
+    } = await import("./plannotator-api.js");
+    const { events } = createFakeEvents();
+    const store = createReviewResultStore(events);
+    const requestPlannotator = createRequestPlannotator(events, {
+      timeoutMs: 50,
+    });
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        action: string;
+        respond: (response: unknown) => void;
+      };
+      expect(request.action).toBe("code-review");
+      request.respond({
+        status: "handled",
+        result: {
+          status: "pending",
+          reviewId: "review-4",
+        },
+      });
+    });
+
+    const response = await startCodeReview(requestPlannotator, store, {
+      cwd: "/repo",
+    });
+
+    expect(response).toEqual({
+      status: "handled",
+      result: {
+        status: "pending",
+        reviewId: "review-4",
+      },
+    });
+    expect(store.getStatus("review-4")).toEqual({ status: "pending" });
+  });
+
   it("notifies subscribers when a review result arrives", async () => {
     const { createReviewResultStore } = await import("./plannotator-api.js");
     const { events } = createFakeEvents();

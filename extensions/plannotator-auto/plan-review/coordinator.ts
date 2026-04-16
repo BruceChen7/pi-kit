@@ -118,6 +118,15 @@ export const createPlanReviewCoordinator = (
     state.planReviewRetryAttemptsByCwd.delete(cwd);
   };
 
+  const hasSupersedingPendingPlanReview = (
+    state: PlanReviewSessionState,
+    cwd: string,
+    startedAt: number,
+  ): boolean => {
+    const pending = state.pendingPlanReviewByCwd.get(cwd);
+    return Boolean(pending && pending.updatedAt > startedAt);
+  };
+
   const isPlanReviewSettled = (ctx: PlanReviewRuntimeContext): boolean => {
     const state = getSessionState(ctx);
     return (
@@ -172,13 +181,31 @@ export const createPlanReviewCoordinator = (
       return;
     }
 
+    const superseded = hasSupersedingPendingPlanReview(
+      state,
+      ctx.cwd,
+      active.startedAt,
+    );
+
     state.processedPlanReviewIds.add(active.reviewId);
     state.activePlanReviewByCwd.delete(ctx.cwd);
     dropStalePending(state, ctx.cwd, active.startedAt);
     state.plannotatorUnavailableNotified = false;
     resetRetryAttempts(state, ctx.cwd);
 
-    pi.sendUserMessage(formatPlanReviewMessage(result));
+    if (superseded) {
+      log?.info("plannotator-auto suppressed stale plan-review completion", {
+        cwd: ctx.cwd,
+        source,
+        reviewId: active.reviewId,
+        approved: result.approved,
+      });
+      return;
+    }
+
+    pi.sendUserMessage(formatPlanReviewMessage(result), {
+      deliverAs: "followUp",
+    });
 
     log?.info("plannotator-auto completed plan review", {
       cwd: ctx.cwd,

@@ -19,37 +19,6 @@ type CommandFilterOptions = {
 
 type TailCaptureOverrides = Partial<TailCaptureLimits>;
 
-export const DEFAULT_BUILD_COMMANDS = [
-  "cargo build",
-  "cargo check",
-  "bun build",
-  "npm run build",
-  "yarn build",
-  "pnpm build",
-  "tsc",
-  "make",
-  "cmake",
-  "gradle",
-  "mvn",
-  "go build",
-  "go install",
-  "python setup.py build",
-  "pip install",
-];
-
-export const DEFAULT_TEST_COMMANDS = [
-  "test",
-  "jest",
-  "vitest",
-  "pytest",
-  "cargo test",
-  "bun test",
-  "go test",
-  "mocha",
-  "ava",
-  "tap",
-];
-
 export const DEFAULT_OUTPUT_TAIL_MAX_LINES = 30;
 export const DEFAULT_OUTPUT_TAIL_MAX_CHARS = 4000;
 
@@ -60,13 +29,6 @@ const normalizeCommandList = (commands: string[]): string[] => {
     .map((command) => command.trim().toLowerCase())
     .filter((command) => command.length > 0);
   return Array.from(new Set(normalized));
-};
-
-export const mergeCommandLists = (
-  defaults: string[],
-  extra: string[] = [],
-): string[] => {
-  return normalizeCommandList([...defaults, ...extra]);
 };
 
 const escapeRegex = (value: string): string =>
@@ -122,7 +84,7 @@ const captureOutputTail = (
 
 export function isBuildCommand(
   command: string | undefined | null,
-  buildCommands: string[] = DEFAULT_BUILD_COMMANDS,
+  buildCommands: string[] = [],
 ): boolean {
   if (typeof command !== "string" || command.length === 0) {
     return false;
@@ -135,7 +97,7 @@ export function isBuildCommand(
 
 export function isTestCommand(
   command: string | undefined | null,
-  testCommands: string[] = DEFAULT_TEST_COMMANDS,
+  testCommands: string[] = [],
 ): boolean {
   if (typeof command !== "string" || command.length === 0) {
     return false;
@@ -152,7 +114,7 @@ export function isTestCommand(
 export function filterBuildOutput(
   output: string,
   command: string | undefined | null,
-  buildCommands: string[] = DEFAULT_BUILD_COMMANDS,
+  buildCommands: string[] = [],
   limits: TailCaptureOverrides = {},
 ): string | null {
   if (typeof command !== "string" || !isBuildCommand(command, buildCommands)) {
@@ -165,7 +127,7 @@ export function filterBuildOutput(
 export function aggregateTestOutput(
   output: string,
   command: string | undefined | null,
-  testCommands: string[] = DEFAULT_TEST_COMMANDS,
+  testCommands: string[] = [],
   limits: TailCaptureOverrides = {},
 ): string | null {
   if (typeof command !== "string" || !isTestCommand(command, testCommands)) {

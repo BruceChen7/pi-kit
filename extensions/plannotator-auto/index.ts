@@ -18,6 +18,7 @@ import {
 import type {
   PlanFileConfig,
   PlanReviewSessionState,
+  SessionKeyContext,
 } from "./plan-review/types.ts";
 import {
   createRequestPlannotator,
@@ -100,7 +101,7 @@ export const getSessionKey = (ctx: {
   sessionManager: { getSessionFile: () => string | null | undefined };
 }): string => ctx.sessionManager.getSessionFile() ?? `${ctx.cwd}::ephemeral`;
 
-const getSessionState = (ctx: ExtensionContext): SessionRuntimeState => {
+const getSessionState = (ctx: SessionKeyContext): SessionRuntimeState => {
   const key = getSessionKey(ctx);
   const cached = sessionRuntimeState.get(key);
   if (cached) {

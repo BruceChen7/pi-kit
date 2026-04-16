@@ -660,4 +660,139 @@ describe("code review trigger timing", () => {
       await emit("session_shutdown", {}, ctx);
     }
   });
+
+  it("delivers a follow-up when async code review returns annotations without top-level feedback", async () => {
+    vi.resetModules();
+    const reviewResultListeners: Array<(result: unknown) => void> = [];
+    const formatCodeReviewMessage = vi.fn(
+      (result: {
+        approved?: boolean;
+        feedback?: string;
+        annotations?: unknown[];
+      }) => {
+        if (result.feedback?.trim()) {
+          return `${result.feedback}\n\nPlease address this feedback.`;
+        }
+
+        if ((result.annotations?.length ?? 0) > 0) {
+          return "# Code Review\n\nCode review completed with inline annotations. Please address the review comments.";
+        }
+
+        return null;
+      },
+    );
+    const startCodeReview = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "pending" as const,
+        reviewId: "code-review-annotations",
+      },
+    }));
+
+    vi.doMock("../shared/git.ts", () => ({
+      DEFAULT_GIT_TIMEOUT_MS: 1_000,
+      getRepoRoot: vi.fn(() => "/repo"),
+      checkRepoDirty: vi.fn(() => ({
+        summary: {
+          dirty: true,
+        },
+      })),
+    }));
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn((listener: (result: unknown) => void) => {
+          reviewResultListeners.push(listener);
+          return () => {
+            const index = reviewResultListeners.indexOf(listener);
+            if (index >= 0) {
+              reviewResultListeners.splice(index, 1);
+            }
+          };
+        }),
+        getStatus: vi.fn(() => ({ status: "missing" as const })),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatCodeReviewMessage,
+      formatPlanReviewMessage: vi.fn(() => ""),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview,
+      startPlanReview: vi.fn(),
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const ctx: TestCtx = {
+      cwd: "/repo",
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => "/repo/.pi/session.json",
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: "src/app.ts" },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      await emit("agent_end", {}, ctx);
+
+      expect(startCodeReview).toHaveBeenCalledTimes(1);
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
+
+      const annotations = [
+        { file: "src/app.ts", line: 12, text: "Add a test." },
+      ];
+      for (const listener of reviewResultListeners) {
+        listener({
+          reviewId: "code-review-annotations",
+          approved: false,
+          annotations,
+        });
+      }
+
+      expect(formatCodeReviewMessage).toHaveBeenCalledWith({
+        approved: false,
+        feedback: undefined,
+        annotations,
+      });
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        "# Code Review\n\nCode review completed with inline annotations. Please address the review comments.",
+        { deliverAs: "followUp" },
+      );
+      expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+        "Code review closed (no feedback).",
+        "info",
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+    }
+  });
 });

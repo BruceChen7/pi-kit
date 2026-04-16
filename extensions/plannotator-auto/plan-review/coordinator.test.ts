@@ -24,6 +24,7 @@ const createPlanReviewState = () => ({
   pendingPlanReviewByCwd: new Map(),
   activePlanReviewByCwd: new Map(),
   processedPlanReviewIds: new Set(),
+  submittedSingleFilePlanReviewPaths: new Set(),
   pendingPlanReviewRetry: null as ReturnType<typeof setTimeout> | null,
   planReviewRetryAttemptsByCwd: new Map<string, number>(),
   planReviewInFlight: false,
@@ -273,6 +274,7 @@ describe("PlanReviewCoordinator key workflow effects", () => {
           planFile: planFileRelative,
           resolvedPlanPath: planFileAbsolute,
           updatedAt: Date.now(),
+          suppressFutureSingleFileReviews: false,
         }),
       ).then(() => {
         settled = true;

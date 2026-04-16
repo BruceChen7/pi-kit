@@ -296,4 +296,141 @@ describe("plan review trigger timing", () => {
       await fs.rm(repoRoot, { recursive: true, force: true });
     }
   });
+
+  it("does not re-trigger single-file plan review after the plan was already submitted once", async () => {
+    vi.resetModules();
+    let reviewResultListener: ((result: unknown) => void) | null = null;
+    let reviewCounter = 0;
+
+    const startPlanReview = vi.fn(async () => {
+      reviewCounter += 1;
+      return {
+        status: "handled" as const,
+        result: {
+          status: "pending" as const,
+          reviewId: `review-${reviewCounter}`,
+        },
+      };
+    });
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn((listener: (result: unknown) => void) => {
+          reviewResultListener = listener;
+          return () => {
+            reviewResultListener = null;
+          };
+        }),
+        getStatus: vi.fn(() => null),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startPlanReview,
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-"),
+    );
+    const planFileRelative = ".pi/PLAN.md";
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] first\n", "utf8");
+    await fs.writeFile(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      `${JSON.stringify(
+        {
+          plannotatorAuto: {
+            planFile: planFileRelative,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => false,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+
+      const firstReviewPromise = emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      await flushMicrotasks();
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+
+      reviewResultListener?.({
+        reviewId: "review-1",
+        approved: true,
+      });
+      await firstReviewPromise;
+
+      await fs.writeFile(planFileAbsolute, "# Plan\n\n- [x] revised\n", "utf8");
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-2",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-2",
+          isError: false,
+        },
+        ctx,
+      );
+
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      expect(api.sendUserMessage).toHaveBeenCalledTimes(1);
+      expect(api.sendUserMessage).toHaveBeenCalledWith("Plan review approved.");
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
 });

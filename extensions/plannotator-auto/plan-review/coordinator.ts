@@ -590,6 +590,11 @@ export const createPlanReviewCoordinator = (
       if (response.status === "handled") {
         state.plannotatorUnavailableNotified = false;
         state.pendingPlanReviewByCwd.delete(ctx.cwd);
+        if (pending.suppressFutureSingleFileReviews) {
+          state.submittedSingleFilePlanReviewPaths.add(
+            pending.resolvedPlanPath,
+          );
+        }
         state.activePlanReviewByCwd.set(ctx.cwd, {
           reviewId: response.result.reviewId,
           planFile: pending.planFile,

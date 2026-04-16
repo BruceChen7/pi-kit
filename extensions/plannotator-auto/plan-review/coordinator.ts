@@ -7,10 +7,11 @@ import {
   type ReviewResultEvent,
   requestReviewStatus,
   startPlanReview,
+  waitForReviewResult,
 } from "../plannotator-api.ts";
 import {
   getPlanReviewRetryDelay,
-  shouldAbortAfterPlanReviewStart,
+  getPlanReviewWaitDelay,
   shouldDeferPlanReviewWhenBusy,
 } from "./policy.ts";
 import {
@@ -59,6 +60,9 @@ const readPlanContent = (planPath: string): string | null => {
   }
 };
 
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 type RetryReason = Exclude<
   PlanReviewCoordinatorReason,
   "plan-file-write" | "agent_end"
@@ -68,7 +72,7 @@ export type PlanReviewCoordinator = {
   queuePendingPlanReview: (
     ctx: PlanReviewRuntimeContext,
     planReview: PendingPlanReview,
-  ) => void;
+  ) => Promise<void>;
   runPlanReview: (
     ctx: PlanReviewRuntimeContext,
     reason: PlanReviewCoordinatorReason,
@@ -250,6 +254,102 @@ export const createPlanReviewCoordinator = (
       });
       void runPlanReview(ctx, reason);
     }, retry.delayMs);
+  };
+
+  const clearActivePlanReview = (
+    ctx: Pick<PlanReviewRuntimeContext, "cwd" | "ui">,
+    state: PlanReviewSessionState,
+    active: ActivePlanReview,
+    message?: string,
+  ): void => {
+    state.activePlanReviewByCwd.delete(ctx.cwd);
+    dropStalePending(state, ctx.cwd, active.startedAt);
+    resetRetryAttempts(state, ctx.cwd);
+
+    if (!message) {
+      return;
+    }
+
+    ctx.ui.notify(message, "warning");
+  };
+
+  const waitForActivePlanReviewResult = async (
+    ctx: PlanReviewRuntimeContext,
+    _state: PlanReviewSessionState,
+    requestPlannotator: ReturnType<typeof createRequestPlannotator>,
+    active: ActivePlanReview,
+  ): Promise<{ approved: boolean; feedback?: string } | { missing: true }> => {
+    const resultPromise = waitForReviewResult(reviewResults, active.reviewId);
+    let pollAttempt = 0;
+
+    while (true) {
+      const outcome = await Promise.race([
+        resultPromise.then((result) => ({
+          type: "completed" as const,
+          result,
+        })),
+        (async () => {
+          pollAttempt += 1;
+          await delay(getPlanReviewWaitDelay(pollAttempt));
+
+          const statusResponse = await requestReviewStatus(requestPlannotator, {
+            reviewId: active.reviewId,
+          });
+
+          if (statusResponse.status === "handled") {
+            const status = statusResponse.result;
+            if (status.status === "completed") {
+              reviewResults.markCompleted({
+                reviewId: status.reviewId,
+                approved: status.approved,
+                feedback: status.feedback,
+                savedPath: status.savedPath,
+                agentSwitch: status.agentSwitch,
+                permissionMode: status.permissionMode,
+              });
+
+              return {
+                type: "completed" as const,
+                result: status,
+              };
+            }
+
+            if (status.status === "missing") {
+              return { type: "missing" as const };
+            }
+
+            return { type: "pending" as const };
+          }
+
+          if (statusResponse.status === "unavailable") {
+            log?.warn("plannotator-auto sync wait review-status unavailable", {
+              cwd: ctx.cwd,
+              reviewId: active.reviewId,
+              error: statusResponse.error ?? null,
+            });
+            return { type: "pending" as const };
+          }
+
+          log?.warn("plannotator-auto sync wait review-status failed", {
+            cwd: ctx.cwd,
+            reviewId: active.reviewId,
+            error: statusResponse.error ?? null,
+          });
+          return { type: "pending" as const };
+        })(),
+      ]);
+
+      if (outcome.type === "completed") {
+        return {
+          approved: outcome.result.approved,
+          feedback: outcome.result.feedback,
+        };
+      }
+
+      if (outcome.type === "missing") {
+        return { missing: true };
+      }
+    }
   };
 
   const runPlanReview = async (
@@ -505,21 +605,62 @@ export const createPlanReviewCoordinator = (
           state: getPlanReviewStateSnapshot(state, ctx.cwd),
         });
 
-        if (shouldAbortAfterPlanReviewStart(reason, ctx.isIdle())) {
+        resetRetryAttempts(state, ctx.cwd);
+
+        if (reason === "plan-file-write") {
+          const activeReview = state.activePlanReviewByCwd.get(ctx.cwd);
+          if (!activeReview) {
+            return;
+          }
+
           log?.info(
-            "plannotator-auto aborting in-flight agent run after plan-review start",
+            "plannotator-auto waiting synchronously for plan-review result",
             {
               cwd: ctx.cwd,
               reason,
               planFile: pending.planFile,
-              reviewId: response.result.reviewId,
+              reviewId: activeReview.reviewId,
               sessionKey: getSessionKey(ctx),
             },
           );
-          ctx.abort();
+
+          const result = await waitForActivePlanReviewResult(
+            ctx,
+            state,
+            requestPlannotator,
+            activeReview,
+          );
+
+          if ("missing" in result) {
+            log?.warn(
+              "plannotator-auto lost active plan review while waiting synchronously",
+              {
+                cwd: ctx.cwd,
+                reason,
+                planFile: pending.planFile,
+                reviewId: activeReview.reviewId,
+                sessionKey: getSessionKey(ctx),
+              },
+            );
+            clearActivePlanReview(
+              ctx,
+              state,
+              activeReview,
+              "Plannotator lost the active plan review. Please rerun plan review.",
+            );
+            return;
+          }
+
+          handlePlanReviewCompletion(
+            ctx,
+            state,
+            activeReview,
+            result,
+            "status",
+          );
+          return;
         }
 
-        resetRetryAttempts(state, ctx.cwd);
         schedulePlanReviewRetry(ctx, "await-plan-review-result");
         return;
       }
@@ -620,10 +761,10 @@ export const createPlanReviewCoordinator = (
     handleIncomingReviewResult(result);
   });
 
-  const queuePendingPlanReview = (
+  const queuePendingPlanReview = async (
     ctx: PlanReviewRuntimeContext,
     planReview: PendingPlanReview,
-  ): void => {
+  ): Promise<void> => {
     const state = getSessionState(ctx);
     resetRetryAttempts(state, ctx.cwd);
     const replaced = markPlanReviewPending(state, ctx.cwd, planReview);
@@ -635,7 +776,7 @@ export const createPlanReviewCoordinator = (
       sessionKey: getSessionKey(ctx),
     });
 
-    void runPlanReview(ctx, "plan-file-write");
+    await runPlanReview(ctx, "plan-file-write");
   };
 
   return {

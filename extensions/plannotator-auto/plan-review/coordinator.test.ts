@@ -247,14 +247,11 @@ describe("PlanReviewCoordinator transition table", () => {
 });
 
 describe("PlanReviewCoordinator key workflow effects", () => {
-  it("starts plan review on plan-file write while busy and aborts current run", async () => {
-    vi.useFakeTimers();
-
-    const { coordinator, ctx, startPlanReview, state } = await setupCoordinator(
-      {
+  it("waits for the review result on a busy plan-file write instead of aborting", async () => {
+    const { coordinator, ctx, startPlanReview, state, emitReviewResult, pi } =
+      await setupCoordinator({
         isIdle: false,
-      },
-    );
+      });
 
     const repoRoot = await fs.mkdtemp(
       path.join(os.tmpdir(), "plannotator-coordinator-"),
@@ -270,19 +267,41 @@ describe("PlanReviewCoordinator key workflow effects", () => {
     };
 
     try {
-      coordinator.queuePendingPlanReview(runtimeCtx as never, {
-        planFile: planFileRelative,
-        resolvedPlanPath: planFileAbsolute,
-        updatedAt: Date.now(),
+      let settled = false;
+      const reviewPromise = Promise.resolve(
+        coordinator.queuePendingPlanReview(runtimeCtx as never, {
+          planFile: planFileRelative,
+          resolvedPlanPath: planFileAbsolute,
+          updatedAt: Date.now(),
+        }),
+      ).then(() => {
+        settled = true;
       });
 
-      await vi.runOnlyPendingTimersAsync();
       await Promise.resolve();
       await Promise.resolve();
 
       expect(startPlanReview).toHaveBeenCalledTimes(1);
-      expect(runtimeCtx.abort).toHaveBeenCalledTimes(1);
+      expect(settled).toBe(false);
+      expect(runtimeCtx.abort).not.toHaveBeenCalled();
       expect(state.activePlanReviewByCwd.size).toBe(1);
+
+      state.activePlanReviewByCwd.forEach((_active, activeCwd) => {
+        expect(activeCwd).toBe(runtimeCtx.cwd);
+      });
+
+      const [activeReview] = state.activePlanReviewByCwd.values();
+      expect(activeReview?.reviewId).toBe("review-1");
+
+      emitReviewResult({
+        reviewId: "review-1",
+        approved: false,
+        feedback: "Please split implementation and verification.",
+      });
+
+      await reviewPromise;
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+      expect(state.activePlanReviewByCwd.size).toBe(0);
     } finally {
       await fs.rm(repoRoot, { recursive: true, force: true });
     }

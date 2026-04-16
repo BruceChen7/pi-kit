@@ -40,12 +40,11 @@ To disable Plannotator Auto explicitly:
 
 - When the agent `write`/`edit` tool updates the configured plan file (file mode) **or** writes a `YYYY-MM-DD-*.md` file inside the configured plan directory (directory mode), it queues plan-review work.
 - If multiple plan writes happen before dispatch, only the latest pending plan file is kept.
-- Plan review is async and shared-channel based:
+- Plan review uses the shared Plannotator event channel:
   - start via `plannotator:request` with `action: "plan-review"`
   - completion via `plannotator:review-result`
   - fallback recovery via `action: "review-status"` polling
-- For `plan-file-write` triggers, plan review can start even while agent is busy.
-- When plan review is accepted for a busy `plan-file-write` trigger, `ctx.abort()` is called to stop the in-flight run.
+- For `plan-file-write` triggers, plan review can start even while agent is busy, and `tool_execution_end` now waits for the review decision before letting the run continue.
 - Successful `write`/`edit` calls to **non-plan files** mark code-review as pending. On `agent_end`, if repo is dirty and UI is available, code-review (`action: "code-review"`) is requested.
 - Code review now depends on explicit coordinator signal `isPlanReviewSettled(...)` rather than peeking internal plan-review maps.
 - If Plannotator is unavailable on shared event channel, a warning is shown (no slash-command fallback).
@@ -56,14 +55,14 @@ To disable Plannotator Auto explicitly:
 
 - `plan-review/coordinator.ts`
   - single owner of plan-review transitions and side effects
-  - handles queue/start/status-poll/completion/abort policy
+  - handles queue/start/status-poll/completion and sync-wait policy for `plan-file-write`
 - `plan-review/state-store.ts`
   - state helpers (snapshot, pending replacement, stale cleanup)
 - `plan-review/policy.ts`
   - pure policy decisions:
     - busy deferral policy
-    - abort-after-start policy
     - retry delay policy (exponential backoff + jitter + cap)
+    - sync wait polling delay policy for active plan reviews
 - `plan-review/types.ts`
   - shared state/context/type contracts
 - `index.ts`
@@ -87,14 +86,11 @@ sequenceDiagram
     Coord->>Plannotator: action=plan-review
     Plannotator-->>Coord: handled + reviewId
     Coord->>Store: pending -> active(reviewId)
-    alt trigger is busy plan-file-write
-      Coord->>Agent: ctx.abort()
-    end
-    loop until completed
+    loop wait for completed decision
+      Plannotator-->>Coord: review-result (preferred event path)
       Coord->>Plannotator: action=review-status (backoff+jitter)
       Plannotator-->>Coord: pending/completed
     end
-    Plannotator-->>Coord: review-result (event path)
     Coord->>Agent: send plan review feedback message
     Coord->>Store: clear active / reset retry state
 ```

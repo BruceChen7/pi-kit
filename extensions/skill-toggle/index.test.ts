@@ -181,6 +181,48 @@ describe("settings integration", () => {
     const entry = byCwd[cwd] as { disabledSkills: string[] };
     expect(entry.disabledSkills).toEqual(["beta", "gamma"]);
   });
+
+  it("supports HOME env vars in byCwd keys and persists new keys with HOME", async () => {
+    createTempHome();
+    const cwd = path.join(os.homedir(), "workspace", "pi-kit-repo");
+    fs.mkdirSync(cwd, { recursive: true });
+    const { globalPath } = getSettingsPaths(cwd);
+    const envKey = "$HOME/workspace/pi-kit-repo";
+
+    fs.mkdirSync(path.dirname(globalPath), { recursive: true });
+    fs.writeFileSync(
+      globalPath,
+      JSON.stringify(
+        {
+          skillToggle: {
+            byCwd: {
+              [envKey]: {
+                disabledSkills: ["EnvSkill"],
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const { loadToggleState, saveToggleState } = await importSkillToggle();
+    const state = loadToggleState(cwd);
+
+    expect(state.cwdKey).toBe(envKey);
+    expect(state.disabledSkills.has("envskill")).toBe(true);
+
+    state.disabledSkills.add("beta");
+    saveToggleState(state);
+
+    const saved = readSettingsFile(globalPath);
+    const byCwd = (saved.skillToggle as { byCwd: Record<string, unknown> })
+      .byCwd;
+    const entry = byCwd[envKey] as { disabledSkills: string[] };
+    expect(entry.disabledSkills).toEqual(["beta", "envskill"]);
+  });
 });
 
 describe("skill override sync", () => {
@@ -222,6 +264,63 @@ describe("skill override sync", () => {
           description: "Alpha skill",
           filePath: skillPath,
           scope: "project",
+        },
+      ],
+      cwd,
+    );
+
+    const saved = readSettingsFile(globalPath);
+    const byCwd = (saved.skillToggle as { byCwd: Record<string, unknown> })
+      .byCwd;
+    const entry = byCwd[cwd] as { managedOverrides?: string[] };
+    expect(saved.skills).toEqual(["custom", overridePath]);
+    expect(entry.managedOverrides).toEqual([overridePath]);
+  });
+
+  it("stores HOME-based managed overrides using env var shorthand", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const { globalPath } = getSettingsPaths(cwd);
+    const skillPath = path.join(
+      os.homedir(),
+      ".agents",
+      "skills",
+      "alpha",
+      "SKILL.md",
+    );
+    const overridePath = "-$HOME/.agents/skills/alpha";
+
+    fs.mkdirSync(path.dirname(globalPath), { recursive: true });
+    fs.writeFileSync(
+      globalPath,
+      JSON.stringify(
+        {
+          skillToggle: {
+            byCwd: {
+              [cwd]: {
+                disabledSkills: ["Alpha"],
+              },
+            },
+          },
+          skills: ["custom"],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const { loadToggleState, syncSkillOverrides } = await importSkillToggle();
+    const state = loadToggleState(cwd);
+
+    syncSkillOverrides(
+      state,
+      [
+        {
+          name: "Alpha",
+          description: "Alpha skill",
+          filePath: skillPath,
+          scope: "user",
         },
       ],
       cwd,

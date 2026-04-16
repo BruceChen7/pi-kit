@@ -102,6 +102,26 @@ describe("createReviewResultStore", () => {
     });
   });
 
+  it("preserves annotations from async review-result events", async () => {
+    const { createReviewResultStore } = await import("./plannotator-api.js");
+    const { events } = createFakeEvents();
+    const store = createReviewResultStore(events);
+    const annotations = [{ file: "src/app.ts", line: 12, text: "Add a test." }];
+
+    events.emit("plannotator:review-result", {
+      reviewId: "review-annotations",
+      approved: false,
+      annotations,
+    });
+
+    expect(store.getStatus("review-annotations")).toEqual({
+      status: "completed",
+      reviewId: "review-annotations",
+      approved: false,
+      annotations,
+    });
+  });
+
   it("marks plan reviews pending when the shared API returns a reviewId", async () => {
     const {
       createRequestPlannotator,
@@ -201,6 +221,27 @@ describe("createReviewResultStore", () => {
       reviewId: "review-2",
       approved: true,
       feedback: "Ship it.",
+    });
+  });
+
+  it("notifies subscribers with annotations from review results", async () => {
+    const { createReviewResultStore } = await import("./plannotator-api.js");
+    const { events } = createFakeEvents();
+    const store = createReviewResultStore(events);
+    const listener = vi.fn();
+    const annotations = [{ file: "src/app.ts", line: 12, text: "Add a test." }];
+
+    store.onResult(listener);
+    events.emit("plannotator:review-result", {
+      reviewId: "review-annotations",
+      approved: false,
+      annotations,
+    });
+
+    expect(listener).toHaveBeenCalledWith({
+      reviewId: "review-annotations",
+      approved: false,
+      annotations,
     });
   });
 

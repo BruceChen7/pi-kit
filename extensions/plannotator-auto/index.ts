@@ -364,6 +364,7 @@ const handleCodeReviewCompletion = (
   result: {
     approved: boolean;
     feedback?: string;
+    annotations?: unknown[];
   },
   source: "event" | "status" | "direct",
 ): void => {
@@ -546,6 +547,7 @@ const maybeStartCodeReview = async (
             {
               approved: status.approved,
               feedback: status.feedback,
+              annotations: status.annotations,
             },
             "status",
           );
@@ -765,6 +767,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       {
         approved: result.approved,
         feedback: result.feedback,
+        annotations: result.annotations,
       },
       "event",
     );

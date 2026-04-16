@@ -55,6 +55,7 @@ export type ReviewResultEvent = {
   reviewId: string;
   approved: boolean;
   feedback?: string;
+  annotations?: unknown[];
   savedPath?: string;
   agentSwitch?: string;
   permissionMode?: string;
@@ -154,6 +155,7 @@ export const createReviewResultStore = (events: EventBus) => {
       reviewId: result.reviewId,
       approved: Boolean(result.approved),
       feedback: result.feedback,
+      annotations: result.annotations,
       savedPath: result.savedPath,
       agentSwitch: result.agentSwitch,
       permissionMode: result.permissionMode,
@@ -164,6 +166,7 @@ export const createReviewResultStore = (events: EventBus) => {
       reviewId: result.reviewId,
       approved: Boolean(result.approved),
       feedback: result.feedback,
+      annotations: result.annotations,
       savedPath: result.savedPath,
       agentSwitch: result.agentSwitch,
       permissionMode: result.permissionMode,
@@ -313,12 +316,17 @@ export const formatPlanReviewMessage = (result: {
 export const formatCodeReviewMessage = (result: {
   approved: boolean;
   feedback?: string;
+  annotations?: unknown[];
 }): string | null => {
   if (result.approved) {
     return "# Code Review\n\nCode review completed — no changes requested.";
   }
 
   if (!result.feedback?.trim()) {
+    if ((result.annotations?.length ?? 0) > 0) {
+      return "# Code Review\n\nCode review completed with inline annotations. Please address the review comments.";
+    }
+
     return null;
   }
 

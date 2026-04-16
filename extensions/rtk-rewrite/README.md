@@ -16,8 +16,11 @@ RTK Rewrite 做两件事：
 对每条 bash / user_bash 命令：
 
 - 读取配置 `rtkRewrite.enabled`
-- 命令命中 `exclude` 前缀则跳过
-- 调用 `rtk rewrite <command>`
+- 按优先级决定是否跳过 rewrite：
+  1. `enabled=false` → 跳过
+  2. 命中 `exclude` 前缀 → 跳过
+  3. 命中 `commandRegistry.build/test` 且 `rewriteMatchedBuildTestCommands=false` → 跳过
+- 未跳过时调用 `rtk rewrite <command>`
 - 当返回结果满足以下条件时才生效：
   - 退出码为 0
   - stdout 非空
@@ -46,66 +49,17 @@ RTK Rewrite 做两件事：
 
 ---
 
-## 哪些命令会被 hook 过滤（重点）
+## 命令匹配来源（配置驱动）
 
-> 最终匹配列表 = 默认列表 + 配置中的额外列表（去重、trim、lowercase）。
+build/test 命令列表完全来自配置，不再内置默认列表。
 
-### 默认 Build 命令（`buildOutputFiltering`）
+- build 使用：`rtkRewrite.commandRegistry.build`
+- test 使用：`rtkRewrite.commandRegistry.test`
 
-以下任意子串（大小写不敏感）出现在命令中即命中：
+匹配方式：
 
-- `cargo build`
-- `cargo check`
-- `bun build`
-- `npm run build`
-- `yarn build`
-- `pnpm build`
-- `tsc`
-- `make`
-- `cmake`
-- `gradle`
-- `mvn`
-- `go build`
-- `go install`
-- `python setup.py build`
-- `pip install`
-
-匹配特点：**includes 子串匹配**。例如 `cargo build --release` 命中。
-
-### 默认 Test 命令（`testOutputAggregation`）
-
-按“词边界”匹配，避免误判（如 `latest` 不会误匹配 `test`）：
-
-- `test`
-- `jest`
-- `vitest`
-- `pytest`
-- `cargo test`
-- `bun test`
-- `go test`
-- `mocha`
-- `ava`
-- `tap`
-
-匹配分隔符支持：空白、`|`、`;`、`&`。
-
-### 自定义扩展
-
-可通过配置追加命令关键字：
-
-- `buildCommands`: 追加 build 关键字
-- `testCommands`: 追加 test 关键字
-
-示例：
-
-```json
-{
-  "rtkRewrite": {
-    "buildCommands": ["turbo build", "bazel build"],
-    "testCommands": ["turbo test", "bazel test"]
-  }
-}
-```
+- build：**includes 子串匹配**（大小写不敏感）
+- test：按词边界匹配，避免误判（如 `latest` 不会误匹配 `test`）
 
 ---
 
@@ -122,7 +76,7 @@ sequenceDiagram
     participant TF as Test Filter
 
     U->>BH: command
-    alt rtkRewrite.enabled=false 或命中 exclude
+    alt rtkRewrite.enabled=false / 命中 exclude / 命中配置命令且rewriteMatchedBuildTestCommands=false
         BH-->>B: 原命令执行
     else 可重写
         BH->>R: rtk rewrite <command>
@@ -140,14 +94,14 @@ sequenceDiagram
     alt 插件关闭 或 build/test 过滤均关闭 或 命中 exclude
         TR-->>U: 原输出
     else 进入过滤链(build -> test)
-        Note right of BF: 默认 Build 列表:\n cargo build/check, bun/npm/yarn/pnpm build,\n tsc, make/cmake, gradle/mvn,\n go build/install, python setup.py build, pip install
+        Note right of BF: build/test 均使用
+配置中的 commandRegistry
         TR->>BF: matches(command)?
         alt 命中 Build
             BF->>BF: tail(maxLines,maxChars)
             BF-->>TR: filtered output
             TR-->>U: Build 过滤后输出
         else 未命中 Build
-            Note right of TF: 默认 Test 列表:\n test, jest, vitest, pytest,\n cargo/bun/go test, mocha, ava, tap
             TR->>TF: matches(command)?
             alt 命中 Test
                 TF->>TF: tail(maxLines,maxChars)
@@ -177,8 +131,11 @@ sequenceDiagram
     "exclude": [],
     "buildOutputFiltering": true,
     "testOutputAggregation": true,
-    "buildCommands": [],
-    "testCommands": [],
+    "rewriteMatchedBuildTestCommands": true,
+    "commandRegistry": {
+      "build": ["npm run build", "cargo build"],
+      "test": ["vitest", "cargo test"]
+    },
     "outputTailMaxLines": 30,
     "outputTailMaxChars": 4000
   }
@@ -205,6 +162,15 @@ sequenceDiagram
 - `/rtk-rewrite-enable`
 - `/rtk-rewrite-disable`
 - `/rtk-rewrite-toggle`
+- `/rtk-rewrite-build-test-rewrite-toggle`
+- `/rtk-rewrite-commands <build|test> <add|remove|clear|list> [pattern]`
 - `/rtk-rewrite-exclude <prefix>`
 - `/rtk-rewrite-include <prefix>`
 - `/rtk-rewrite-status`
+
+### `rtk-rewrite-commands` 示例
+
+- 增加：`/rtk-rewrite-commands build add turbo build`
+- 删除：`/rtk-rewrite-commands test remove vitest`
+- 清空：`/rtk-rewrite-commands build clear`
+- 查看：`/rtk-rewrite-commands test list`

@@ -1,16 +1,14 @@
 #!/bin/bash
 
-# Install pi-agent third-party npm plugins
-# Usage: ./install-npm-plugins.sh [--global | --local]
+# Install third-party Pi plugins from npm
+# Usage: ./install-third-party-plugins.sh [--global | --local]
 #
 # Default: --global (install to ~/.pi/agent/third_extension_settings.json)
 # --local: install to .pi/third_extension_settings.json (project scope)
 #
-# Supported plugins:
-#   - npm:pi-mermaid        (Mermaid diagram support)
-#   - npm:pi-cursor-agent   (Cursor agent integration)
-#   - npm:pi-subagents      (Sub-agents support)
-#   - npm:@plannotator/pi-extension (Plannotator extension)
+# Third-party plugins installed by default:
+#   - npm:@plannotator/pi-extension
+#   - npm:@kmiyh/pi-codex-plan-limits
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,10 +43,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --help, -h     Show this help message"
             echo ""
             echo "Plugins to be installed:"
-            echo "  - npm:pi-mermaid"
-            echo "  - npm:pi-cursor-agent"
-            echo "  - npm:pi-subagents"
             echo "  - npm:@plannotator/pi-extension"
+            echo "  - npm:@kmiyh/pi-codex-plan-limits"
             exit 0
             ;;
         *)
@@ -60,7 +56,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "=========================================="
-echo "  Pi Agent NPM Plugins Installer"
+echo "  Pi Agent Third-Party Plugins Installer"
 echo "=========================================="
 echo ""
 echo "Scope: $([ "$SCOPE" = "-l" ] && echo "Local (.pi/third_extension_settings.json)" || echo "Global (~/.pi/agent/third_extension_settings.json)")"
@@ -73,12 +69,13 @@ if ! command -v pi &> /dev/null; then
     exit 1
 fi
 
-# List of plugins to install
+# Third-party plugins to install
 PLUGINS=(
-    "npm:pi-mermaid"
-    "npm:pi-cursor-agent"
-    "npm:pi-subagents"
+    # "npm:pi-mermaid"
+    # "npm:pi-cursor-agent"
+    # "npm:pi-subagents"
     "npm:@plannotator/pi-extension"
+    "npm:@kmiyh/pi-codex-plan-limits"
 )
 
 # Function to check if plugin is already in settings

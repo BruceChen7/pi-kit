@@ -243,6 +243,12 @@ describe("PlanReviewCoordinator transition table", () => {
     expect(pi.sendUserMessage).toHaveBeenCalledTimes(
       testCase.expectUserMessage ? 1 : 0,
     );
+    if (testCase.expectUserMessage) {
+      expect(pi.sendUserMessage).toHaveBeenCalledWith(
+        "formatted-plan-review-message",
+        { deliverAs: "followUp" },
+      );
+    }
     expect(ctx.ui.notify).toHaveBeenCalledTimes(testCase.expectNotify ? 1 : 0);
   });
 });
@@ -302,7 +308,10 @@ describe("PlanReviewCoordinator key workflow effects", () => {
       });
 
       await reviewPromise;
-      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+      expect(pi.sendUserMessage).toHaveBeenCalledWith(
+        "formatted-plan-review-message",
+        { deliverAs: "followUp" },
+      );
       expect(state.activePlanReviewByCwd.size).toBe(0);
     } finally {
       await fs.rm(repoRoot, { recursive: true, force: true });

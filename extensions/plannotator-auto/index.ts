@@ -444,7 +444,7 @@ const maybeStartCodeReview = async (
       state.plannotatorUnavailableNotified = false;
       const message = formatCodeReviewMessage(response.result);
       if (message) {
-        pi.sendUserMessage(message);
+        pi.sendUserMessage(message, { deliverAs: "followUp" });
       } else {
         ctx.ui.notify("Code review closed (no feedback).", "info");
       }

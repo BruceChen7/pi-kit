@@ -10,12 +10,29 @@ import { loadGlobalSettings, updateSettings } from "../shared/settings.ts";
 import {
   createBuildOutputFilter,
   createTestOutputFilter,
-  DEFAULT_BUILD_COMMANDS,
   DEFAULT_OUTPUT_TAIL_MAX_CHARS,
   DEFAULT_OUTPUT_TAIL_MAX_LINES,
-  DEFAULT_TEST_COMMANDS,
-  mergeCommandLists,
+  isBuildCommand,
+  isTestCommand,
 } from "./output-filter.ts";
+
+export type CommandRegistry = {
+  build: string[];
+  test: string[];
+};
+
+type CommandScope = keyof CommandRegistry;
+type CommandAction = "add" | "remove" | "clear" | "list";
+
+type ParsedCommandRegistryArgs = {
+  scope: CommandScope;
+  action: CommandAction;
+  pattern?: string;
+};
+
+type ParseCommandRegistryArgsResult =
+  | { ok: true; value: ParsedCommandRegistryArgs }
+  | { ok: false; error: string };
 
 type RtkRewriteConfig = {
   enabled: boolean;
@@ -23,8 +40,8 @@ type RtkRewriteConfig = {
   exclude: string[];
   buildOutputFiltering: boolean;
   testOutputAggregation: boolean;
-  buildCommands: string[];
-  testCommands: string[];
+  rewriteMatchedBuildTestCommands: boolean;
+  commandRegistry: CommandRegistry;
   outputTailMaxLines: number;
   outputTailMaxChars: number;
 };
@@ -35,10 +52,15 @@ type RtkRewriteSettings = {
   exclude?: unknown;
   buildOutputFiltering?: unknown;
   testOutputAggregation?: unknown;
-  buildCommands?: unknown;
-  testCommands?: unknown;
+  rewriteMatchedBuildTestCommands?: unknown;
+  commandRegistry?: unknown;
   outputTailMaxLines?: unknown;
   outputTailMaxChars?: unknown;
+};
+
+const DEFAULT_COMMAND_REGISTRY: CommandRegistry = {
+  build: [],
+  test: [],
 };
 
 const DEFAULT_CONFIG: RtkRewriteConfig = {
@@ -47,13 +69,15 @@ const DEFAULT_CONFIG: RtkRewriteConfig = {
   exclude: [],
   buildOutputFiltering: true,
   testOutputAggregation: true,
-  buildCommands: [],
-  testCommands: [],
+  rewriteMatchedBuildTestCommands: true,
+  commandRegistry: DEFAULT_COMMAND_REGISTRY,
   outputTailMaxLines: DEFAULT_OUTPUT_TAIL_MAX_LINES,
   outputTailMaxChars: DEFAULT_OUTPUT_TAIL_MAX_CHARS,
 };
 
 const RTK_HOOK_ID = "rtk";
+const COMMANDS_USAGE =
+  "Usage: /rtk-rewrite-commands <build|test> <add|remove|clear|list> [pattern]";
 
 let cachedConfig: RtkRewriteConfig = DEFAULT_CONFIG;
 let configLoaded = false;
@@ -81,6 +105,20 @@ const sanitizePositiveInteger = (value: unknown, fallback: number): number => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
+const sanitizeCommandRegistry = (value: unknown): CommandRegistry => {
+  if (!isRecord(value)) {
+    return {
+      build: [...DEFAULT_COMMAND_REGISTRY.build],
+      test: [...DEFAULT_COMMAND_REGISTRY.test],
+    };
+  }
+
+  return {
+    build: normalizeEntries(value.build),
+    test: normalizeEntries(value.test),
+  };
+};
+
 const sanitizeConfig = (value: unknown): RtkRewriteConfig => {
   const raw = isRecord(value) ? (value as RtkRewriteSettings) : {};
   const enabled =
@@ -95,9 +133,12 @@ const sanitizeConfig = (value: unknown): RtkRewriteConfig => {
     typeof raw.testOutputAggregation === "boolean"
       ? raw.testOutputAggregation
       : DEFAULT_CONFIG.testOutputAggregation;
+  const rewriteMatchedBuildTestCommands =
+    typeof raw.rewriteMatchedBuildTestCommands === "boolean"
+      ? raw.rewriteMatchedBuildTestCommands
+      : DEFAULT_CONFIG.rewriteMatchedBuildTestCommands;
   const exclude = normalizeEntries(raw.exclude);
-  const buildCommands = normalizeEntries(raw.buildCommands);
-  const testCommands = normalizeEntries(raw.testCommands);
+  const commandRegistry = sanitizeCommandRegistry(raw.commandRegistry);
   const outputTailMaxLines = sanitizePositiveInteger(
     raw.outputTailMaxLines,
     DEFAULT_CONFIG.outputTailMaxLines,
@@ -113,8 +154,8 @@ const sanitizeConfig = (value: unknown): RtkRewriteConfig => {
     exclude,
     buildOutputFiltering,
     testOutputAggregation,
-    buildCommands,
-    testCommands,
+    rewriteMatchedBuildTestCommands,
+    commandRegistry,
     outputTailMaxLines,
     outputTailMaxChars,
   };
@@ -150,8 +191,11 @@ const updateConfig = (
         exclude: [...next.exclude],
         buildOutputFiltering: next.buildOutputFiltering,
         testOutputAggregation: next.testOutputAggregation,
-        buildCommands: [...next.buildCommands],
-        testCommands: [...next.testCommands],
+        rewriteMatchedBuildTestCommands: next.rewriteMatchedBuildTestCommands,
+        commandRegistry: {
+          build: [...next.commandRegistry.build],
+          test: [...next.commandRegistry.test],
+        },
         outputTailMaxLines: next.outputTailMaxLines,
         outputTailMaxChars: next.outputTailMaxChars,
       },
@@ -175,10 +219,141 @@ const shouldExclude = (command: string, exclude: string[]): boolean => {
   return false;
 };
 
-const formatExtras = (entries: string[]): string => {
+const formatEntries = (entries: string[]): string => {
   if (entries.length === 0) return "none";
   if (entries.length <= 3) return entries.join(", ");
   return `${entries.slice(0, 3).join(", ")} +${entries.length - 3}`;
+};
+
+const formatScopedCommands = (
+  scope: CommandScope,
+  entries: string[],
+  opts?: { previewOnly?: boolean },
+): string => {
+  if (opts?.previewOnly) {
+    return `${scope} (${entries.length}): ${formatEntries(entries)}`;
+  }
+
+  if (entries.length === 0) {
+    return `${scope} commands (0): none`;
+  }
+
+  return `${scope} commands (${entries.length}): ${entries.join(", ")}`;
+};
+
+type RewriteCommandMatchConfig = Pick<
+  RtkRewriteConfig,
+  "rewriteMatchedBuildTestCommands" | "commandRegistry"
+>;
+
+export const shouldSkipRewriteForBuildTestCommand = (
+  command: string,
+  config: RewriteCommandMatchConfig,
+): boolean => {
+  if (config.rewriteMatchedBuildTestCommands) {
+    return false;
+  }
+
+  return (
+    isBuildCommand(command, config.commandRegistry.build) ||
+    isTestCommand(command, config.commandRegistry.test)
+  );
+};
+
+export const parseCommandRegistryArgs = (
+  rawArgs: string,
+): ParseCommandRegistryArgsResult => {
+  const trimmed = rawArgs.trim();
+  if (!trimmed) {
+    return { ok: false, error: COMMANDS_USAGE };
+  }
+
+  const [scopeRaw = "", actionRaw = "", ...rest] = trimmed.split(/\s+/);
+  if (scopeRaw !== "build" && scopeRaw !== "test") {
+    return { ok: false, error: "Scope must be build or test." };
+  }
+
+  if (
+    actionRaw !== "add" &&
+    actionRaw !== "remove" &&
+    actionRaw !== "clear" &&
+    actionRaw !== "list"
+  ) {
+    return { ok: false, error: "Action must be add, remove, clear, or list." };
+  }
+
+  const pattern = rest.join(" ").trim();
+  if ((actionRaw === "add" || actionRaw === "remove") && !pattern) {
+    return { ok: false, error: "Pattern is required for add/remove." };
+  }
+
+  if ((actionRaw === "clear" || actionRaw === "list") && pattern) {
+    return {
+      ok: false,
+      error: "Pattern is not allowed for clear/list.",
+    };
+  }
+
+  return pattern
+    ? {
+        ok: true,
+        value: {
+          scope: scopeRaw,
+          action: actionRaw,
+          pattern,
+        },
+      }
+    : {
+        ok: true,
+        value: {
+          scope: scopeRaw,
+          action: actionRaw,
+        },
+      };
+};
+
+export const applyCommandRegistryAction = (
+  registry: CommandRegistry,
+  command: ParsedCommandRegistryArgs,
+): { registry: CommandRegistry; changed: boolean } => {
+  const next: CommandRegistry = {
+    build: [...registry.build],
+    test: [...registry.test],
+  };
+
+  if (command.action === "list") {
+    return { registry: next, changed: false };
+  }
+
+  if (command.action === "clear") {
+    if (next[command.scope].length === 0) {
+      return { registry: next, changed: false };
+    }
+
+    next[command.scope] = [];
+    return { registry: next, changed: true };
+  }
+
+  const pattern = normalizeEntry(command.pattern ?? "");
+  if (!pattern) {
+    return { registry: next, changed: false };
+  }
+
+  if (command.action === "add") {
+    if (next[command.scope].includes(pattern)) {
+      return { registry: next, changed: false };
+    }
+    next[command.scope] = [...next[command.scope], pattern];
+    return { registry: next, changed: true };
+  }
+
+  const filtered = next[command.scope].filter((entry) => entry !== pattern);
+  if (filtered.length === next[command.scope].length) {
+    return { registry: next, changed: false };
+  }
+
+  next[command.scope] = filtered;
+  return { registry: next, changed: true };
 };
 
 const runRtkRewrite = async (
@@ -228,35 +403,43 @@ const resolveRtkRewrite = async (
     enabled: config.enabled,
   });
 
-  if (config.enabled && !shouldExclude(command, config.exclude)) {
-    const rewritten = await runRtkRewrite(command, ctx);
-    if (rewritten && rewritten !== command) {
-      log?.info("rtk rewrite applied", { source, command, rewritten });
-
-      if (config.notify && ctx.hasUI) {
-        ctx.ui.notify(`RTK rewrite: ${command} → ${rewritten}`, "info");
-      }
-
-      return rewritten;
-    }
-
-    if (!rewritten) {
-      log?.debug("rtk rewrite empty result", { source, command });
-    } else if (rewritten === command) {
-      log?.debug("rtk rewrite no-op", { source, command });
-    }
-
+  if (!config.enabled) {
+    log?.debug("rtk rewrite skipped (disabled)", { source, command });
     return null;
   }
 
-  if (!config.enabled) {
-    log?.debug("rtk rewrite skipped (disabled)", { source, command });
-  } else {
+  if (shouldExclude(command, config.exclude)) {
     log?.debug("rtk rewrite skipped (excluded)", {
       source,
       command,
       exclude: config.exclude,
     });
+    return null;
+  }
+
+  if (shouldSkipRewriteForBuildTestCommand(command, config)) {
+    log?.debug("rtk rewrite skipped (build/test rewrite disabled)", {
+      source,
+      command,
+    });
+    return null;
+  }
+
+  const rewritten = await runRtkRewrite(command, ctx);
+  if (rewritten && rewritten !== command) {
+    log?.info("rtk rewrite applied", { source, command, rewritten });
+
+    if (config.notify && ctx.hasUI) {
+      ctx.ui.notify(`RTK rewrite: ${command} → ${rewritten}`, "info");
+    }
+
+    return rewritten;
+  }
+
+  if (!rewritten) {
+    log?.debug("rtk rewrite empty result", { source, command });
+  } else if (rewritten === command) {
+    log?.debug("rtk rewrite no-op", { source, command });
   }
 
   return null;
@@ -278,24 +461,16 @@ const resolveFilteredOutput = (
   command: string,
   config: RtkRewriteConfig,
 ): string | null => {
-  const buildCommands = mergeCommandLists(
-    DEFAULT_BUILD_COMMANDS,
-    config.buildCommands,
-  );
-  const testCommands = mergeCommandLists(
-    DEFAULT_TEST_COMMANDS,
-    config.testCommands,
-  );
   const filters = [
     createBuildOutputFilter({
       enabled: config.buildOutputFiltering,
-      commands: buildCommands,
+      commands: config.commandRegistry.build,
       maxLines: config.outputTailMaxLines,
       maxChars: config.outputTailMaxChars,
     }),
     createTestOutputFilter({
       enabled: config.testOutputAggregation,
-      commands: testCommands,
+      commands: config.commandRegistry.test,
       maxLines: config.outputTailMaxLines,
       maxChars: config.outputTailMaxChars,
     }),
@@ -318,10 +493,25 @@ const formatStatus = (config: RtkRewriteConfig): string => {
   const status = config.enabled ? "enabled" : "disabled";
   const notify = config.notify ? "on" : "off";
   const exclude = config.exclude.length ? config.exclude.join(", ") : "none";
-  const buildFilter = `${config.buildOutputFiltering ? "on" : "off"} (extra: ${formatExtras(config.buildCommands)})`;
-  const testFilter = `${config.testOutputAggregation ? "on" : "off"} (extra: ${formatExtras(config.testCommands)})`;
+  const buildTestRewrite = config.rewriteMatchedBuildTestCommands
+    ? "on"
+    : "off";
+  const buildFilter = `${config.buildOutputFiltering ? "on" : "off"} (${formatScopedCommands(
+    "build",
+    config.commandRegistry.build,
+    {
+      previewOnly: true,
+    },
+  )})`;
+  const testFilter = `${config.testOutputAggregation ? "on" : "off"} (${formatScopedCommands(
+    "test",
+    config.commandRegistry.test,
+    {
+      previewOnly: true,
+    },
+  )})`;
   const tailCaps = `lines ${config.outputTailMaxLines}, chars ${config.outputTailMaxChars}`;
-  return `RTK rewrite ${status} | notify ${notify} | exclude: ${exclude} | build filter ${buildFilter} | test filter ${testFilter} | tail caps: ${tailCaps}`;
+  return `RTK rewrite ${status} | notify ${notify} | exclude: ${exclude} | build/test rewrite ${buildTestRewrite} | build filter ${buildFilter} | test filter ${testFilter} | tail caps: ${tailCaps}`;
 };
 
 const notifyStatus = (
@@ -349,6 +539,14 @@ const handleToggle = (ctx: ExtensionCommandContext): void => {
     enabled: !current.enabled,
   }));
   notifyStatus(ctx, config, "RTK rewrite toggled.");
+};
+
+const handleBuildTestRewriteToggle = (ctx: ExtensionCommandContext): void => {
+  const config = updateConfig(ctx.cwd, (current) => ({
+    ...current,
+    rewriteMatchedBuildTestCommands: !current.rewriteMatchedBuildTestCommands,
+  }));
+  notifyStatus(ctx, config, "RTK build/test rewrite toggled.");
 };
 
 const handleExclude = (
@@ -385,6 +583,68 @@ const handleInclude = (
   });
 
   notifyStatus(ctx, config, `Included "${entry}".`);
+};
+
+const describeRegistryAction = (
+  command: ParsedCommandRegistryArgs,
+  entries: string[],
+): string => {
+  if (command.action === "add") {
+    return `Added "${normalizeEntry(command.pattern ?? "")}". ${formatScopedCommands(command.scope, entries)}`;
+  }
+
+  if (command.action === "remove") {
+    return `Removed "${normalizeEntry(command.pattern ?? "")}". ${formatScopedCommands(command.scope, entries)}`;
+  }
+
+  return `Cleared ${command.scope} commands. ${formatScopedCommands(command.scope, entries)}`;
+};
+
+const handleCommandRegistry = (
+  ctx: ExtensionCommandContext,
+  rawArgs: string,
+): void => {
+  const parsed = parseCommandRegistryArgs(rawArgs);
+  if (!parsed.ok) {
+    ctx.ui.notify(parsed.error, "warning");
+    if (parsed.error !== COMMANDS_USAGE) {
+      ctx.ui.notify(COMMANDS_USAGE, "info");
+    }
+    return;
+  }
+
+  const command = parsed.value;
+  if (command.action === "list") {
+    const config = loadConfig();
+    const entries = config.commandRegistry[command.scope];
+    ctx.ui.notify(formatScopedCommands(command.scope, entries), "info");
+    return;
+  }
+
+  let changed = false;
+  const config = updateConfig(ctx.cwd, (current) => {
+    const result = applyCommandRegistryAction(current.commandRegistry, command);
+    changed = result.changed;
+    if (!result.changed) {
+      return current;
+    }
+
+    return {
+      ...current,
+      commandRegistry: result.registry,
+    };
+  });
+
+  const entries = config.commandRegistry[command.scope];
+  if (!changed) {
+    ctx.ui.notify(
+      `No changes for ${command.scope} commands. ${formatScopedCommands(command.scope, entries)}`,
+      "info",
+    );
+    return;
+  }
+
+  ctx.ui.notify(describeRegistryAction(command, entries), "info");
 };
 
 export default function (pi: ExtensionAPI) {
@@ -448,6 +708,21 @@ export default function (pi: ExtensionAPI) {
     description: "Toggle RTK auto-rewrite",
     handler: async (_args, ctx) => {
       handleToggle(ctx);
+    },
+  });
+
+  pi.registerCommand("rtk-rewrite-build-test-rewrite-toggle", {
+    description: "Toggle RTK rewrite for matched build/test commands",
+    handler: async (_args, ctx) => {
+      handleBuildTestRewriteToggle(ctx);
+    },
+  });
+
+  pi.registerCommand("rtk-rewrite-commands", {
+    description:
+      "Manage RTK build/test command lists. Usage: /rtk-rewrite-commands <build|test> <add|remove|clear|list> [pattern]",
+    handler: async (args, ctx) => {
+      handleCommandRegistry(ctx, args);
     },
   });
 

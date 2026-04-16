@@ -195,7 +195,7 @@ const flushMicrotasks = async (): Promise<void> => {
 describe("plan review trigger timing", () => {
   it("waits for the plan review result after a busy plan-file write", async () => {
     vi.resetModules();
-    let reviewResultListener: ((result: unknown) => void) | null = null;
+    const reviewResultListeners: Array<(result: unknown) => void> = [];
 
     const startPlanReview = vi.fn(async () => ({
       status: "handled" as const,
@@ -209,9 +209,12 @@ describe("plan review trigger timing", () => {
       createRequestPlannotator: vi.fn(() => vi.fn()),
       createReviewResultStore: vi.fn(() => ({
         onResult: vi.fn((listener: (result: unknown) => void) => {
-          reviewResultListener = listener;
+          reviewResultListeners.push(listener);
           return () => {
-            reviewResultListener = null;
+            const index = reviewResultListeners.indexOf(listener);
+            if (index >= 0) {
+              reviewResultListeners.splice(index, 1);
+            }
           };
         }),
         getStatus: vi.fn(() => null),
@@ -222,6 +225,7 @@ describe("plan review trigger timing", () => {
       formatPlanReviewMessage: vi.fn(() => "Plan review rejected."),
       requestCodeReview: vi.fn(),
       requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
       startPlanReview,
     }));
 
@@ -283,16 +287,21 @@ describe("plan review trigger timing", () => {
       expect(settled).toBe(false);
       expect(abort).not.toHaveBeenCalled();
 
-      reviewResultListener?.({
-        reviewId: "review-immediate",
-        approved: false,
-        feedback: "Please revise the rollout steps.",
-      });
+      for (const listener of reviewResultListeners) {
+        listener({
+          reviewId: "review-immediate",
+          approved: false,
+          feedback: "Please revise the rollout steps.",
+        });
+      }
 
       await reviewPromise;
+      expect(api.sendUserMessage).toHaveBeenCalledTimes(1);
       expect(api.sendUserMessage).toHaveBeenCalledWith(
         "Plan review rejected.",
-        { deliverAs: "followUp" },
+        {
+          deliverAs: "followUp",
+        },
       );
     } finally {
       await emit("session_shutdown", {}, ctx);
@@ -302,7 +311,7 @@ describe("plan review trigger timing", () => {
 
   it("does not re-trigger single-file plan review after the plan was already submitted once", async () => {
     vi.resetModules();
-    let reviewResultListener: ((result: unknown) => void) | null = null;
+    const reviewResultListeners: Array<(result: unknown) => void> = [];
     let reviewCounter = 0;
 
     const startPlanReview = vi.fn(async () => {
@@ -320,9 +329,12 @@ describe("plan review trigger timing", () => {
       createRequestPlannotator: vi.fn(() => vi.fn()),
       createReviewResultStore: vi.fn(() => ({
         onResult: vi.fn((listener: (result: unknown) => void) => {
-          reviewResultListener = listener;
+          reviewResultListeners.push(listener);
           return () => {
-            reviewResultListener = null;
+            const index = reviewResultListeners.indexOf(listener);
+            if (index >= 0) {
+              reviewResultListeners.splice(index, 1);
+            }
           };
         }),
         getStatus: vi.fn(() => null),
@@ -333,6 +345,7 @@ describe("plan review trigger timing", () => {
       formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
       requestCodeReview: vi.fn(),
       requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
       startPlanReview,
     }));
 
@@ -402,10 +415,12 @@ describe("plan review trigger timing", () => {
       await flushMicrotasks();
       expect(startPlanReview).toHaveBeenCalledTimes(1);
 
-      reviewResultListener?.({
-        reviewId: "review-1",
-        approved: true,
-      });
+      for (const listener of reviewResultListeners) {
+        listener({
+          reviewId: "review-1",
+          approved: true,
+        });
+      }
       await firstReviewPromise;
 
       await fs.writeFile(planFileAbsolute, "# Plan\n\n- [x] revised\n", "utf8");
@@ -432,11 +447,137 @@ describe("plan review trigger timing", () => {
       expect(api.sendUserMessage).toHaveBeenCalledTimes(1);
       expect(api.sendUserMessage).toHaveBeenCalledWith(
         "Plan review approved.",
-        { deliverAs: "followUp" },
+        {
+          deliverAs: "followUp",
+        },
       );
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("code review trigger timing", () => {
+  it("delivers code review feedback from async review results", async () => {
+    vi.resetModules();
+    const reviewResultListeners: Array<(result: unknown) => void> = [];
+    const startCodeReview = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "pending" as const,
+        reviewId: "code-review-1",
+      },
+    }));
+
+    vi.doMock("../shared/git.ts", () => ({
+      DEFAULT_GIT_TIMEOUT_MS: 1_000,
+      getRepoRoot: vi.fn(() => "/repo"),
+      checkRepoDirty: vi.fn(() => ({
+        summary: {
+          dirty: true,
+        },
+      })),
+    }));
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn((listener: (result: unknown) => void) => {
+          reviewResultListeners.push(listener);
+          return () => {
+            const index = reviewResultListeners.indexOf(listener);
+            if (index >= 0) {
+              reviewResultListeners.splice(index, 1);
+            }
+          };
+        }),
+        getStatus: vi.fn(() => ({ status: "missing" as const })),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatCodeReviewMessage: vi.fn(
+        (result: { approved?: boolean; feedback?: string }) => {
+          if (result.approved) {
+            return "# Code Review\n\nCode review completed — no changes requested.";
+          }
+
+          if (!result.feedback?.trim()) {
+            return null;
+          }
+
+          return "Please add tests.\n\nPlease address this feedback.";
+        },
+      ),
+      formatPlanReviewMessage: vi.fn(() => ""),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview,
+      startPlanReview: vi.fn(),
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const ctx: TestCtx = {
+      cwd: "/repo",
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => "/repo/.pi/session.json",
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: "src/app.ts" },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      await emit("agent_end", {}, ctx);
+
+      expect(startCodeReview).toHaveBeenCalledTimes(1);
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
+
+      for (const listener of reviewResultListeners) {
+        listener({
+          reviewId: "code-review-1",
+          approved: false,
+          feedback: "Please add tests.",
+        });
+      }
+
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        "Please add tests.\n\nPlease address this feedback.",
+        { deliverAs: "followUp" },
+      );
+      expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+        "Plannotator request timed out.",
+        "warning",
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
     }
   });
 });

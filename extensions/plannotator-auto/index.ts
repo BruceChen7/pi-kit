@@ -24,7 +24,9 @@ import {
   createRequestPlannotator,
   createReviewResultStore,
   formatCodeReviewMessage,
-  requestCodeReview,
+  type ReviewResultEvent,
+  requestReviewStatus,
+  startCodeReview,
 } from "./plannotator-api.ts";
 
 type PlannotatorAutoConfig = {
@@ -35,14 +37,22 @@ type PlannotatorAutoSettings = {
   planFile?: unknown;
 };
 
+type ActiveCodeReview = {
+  reviewId: string;
+  startedAt: number;
+};
+
 type SessionRuntimeState = PlanReviewSessionState & {
   toolArgsByCallId: Map<string, unknown>;
   pendingReviewByCwd: Set<string>;
+  activeCodeReviewByCwd: Map<string, ActiveCodeReview>;
+  processedCodeReviewIds: Set<string>;
   pendingReviewRetry: ReturnType<typeof setTimeout> | null;
   reviewInFlight: boolean;
 };
 
 const DEFAULT_PLAN_SUBDIR = "plan";
+const DEFAULT_CODE_REVIEW_TIMEOUT_MS = 30_000;
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
 const sessionRuntimeState = new Map<string, SessionRuntimeState>();
 
@@ -80,6 +90,8 @@ const createSessionRuntimeState = (): SessionRuntimeState => ({
   planReviewInFlight: false,
   plannotatorUnavailableNotified: false,
   pendingReviewByCwd: new Set<string>(),
+  activeCodeReviewByCwd: new Map<string, ActiveCodeReview>(),
+  processedCodeReviewIds: new Set<string>(),
   pendingReviewRetry: null,
   reviewInFlight: false,
 });
@@ -323,6 +335,7 @@ const notifyCodeReviewUnavailable = (
 
 const scheduleReviewRetry = (
   pi: ExtensionAPI,
+  reviewResults: ReturnType<typeof createReviewResultStore>,
   planReviewCoordinator: PlanReviewCoordinator,
   ctx: ExtensionContext,
   reason: string,
@@ -341,18 +354,96 @@ const scheduleReviewRetry = (
     }
 
     currentState.pendingReviewRetry = null;
-    void maybeStartCodeReview(pi, planReviewCoordinator, ctx, reason);
+    void maybeStartCodeReview(
+      pi,
+      reviewResults,
+      planReviewCoordinator,
+      ctx,
+      reason,
+    );
   }, delay);
+};
+
+const handleCodeReviewCompletion = (
+  pi: ExtensionAPI,
+  ctx: Pick<ExtensionContext, "cwd"> & {
+    ui?: Pick<ExtensionContext["ui"], "notify">;
+  },
+  state: SessionRuntimeState,
+  active: ActiveCodeReview,
+  result: {
+    approved: boolean;
+    feedback?: string;
+  },
+  source: "event" | "status" | "direct",
+): void => {
+  if (state.processedCodeReviewIds.has(active.reviewId)) {
+    return;
+  }
+
+  const superseded = state.pendingReviewByCwd.has(ctx.cwd);
+
+  state.processedCodeReviewIds.add(active.reviewId);
+  state.activeCodeReviewByCwd.delete(ctx.cwd);
+  state.plannotatorUnavailableNotified = false;
+
+  if (superseded) {
+    log?.info("plannotator-auto suppressed stale code-review completion", {
+      cwd: ctx.cwd,
+      source,
+      reviewId: active.reviewId,
+      approved: result.approved,
+    });
+    return;
+  }
+
+  const message = formatCodeReviewMessage(result);
+  if (message) {
+    pi.sendUserMessage(message, { deliverAs: "followUp" });
+    return;
+  }
+
+  ctx.ui?.notify("Code review closed (no feedback).", "info");
+};
+
+const clearActiveCodeReview = (
+  ctx: Pick<ExtensionContext, "cwd">,
+  state: SessionRuntimeState,
+): void => {
+  state.activeCodeReviewByCwd.delete(ctx.cwd);
+};
+
+const findActiveCodeReviewSession = (
+  reviewId: string,
+): {
+  cwd: string;
+  state: SessionRuntimeState;
+} | null => {
+  for (const [sessionKey, state] of sessionRuntimeState.entries()) {
+    for (const [cwd, active] of state.activeCodeReviewByCwd.entries()) {
+      if (active.reviewId === reviewId) {
+        return {
+          cwd,
+          state: sessionRuntimeState.get(sessionKey) ?? state,
+        };
+      }
+    }
+  }
+
+  return null;
 };
 
 const maybeStartCodeReview = async (
   pi: ExtensionAPI,
+  reviewResults: ReturnType<typeof createReviewResultStore>,
   planReviewCoordinator: PlanReviewCoordinator,
   ctx: ExtensionContext,
   reason: string,
 ): Promise<void> => {
   const state = getSessionState(ctx);
-  if (!state.pendingReviewByCwd.has(ctx.cwd) || state.reviewInFlight) {
+  const hasPending = state.pendingReviewByCwd.has(ctx.cwd);
+  const active = state.activeCodeReviewByCwd.get(ctx.cwd);
+  if ((!hasPending && !active) || state.reviewInFlight) {
     return;
   }
 
@@ -367,7 +458,13 @@ const maybeStartCodeReview = async (
   }
 
   if (!ctx.isIdle()) {
-    scheduleReviewRetry(pi, planReviewCoordinator, ctx, "busy-review");
+    scheduleReviewRetry(
+      pi,
+      reviewResults,
+      planReviewCoordinator,
+      ctx,
+      "busy-review",
+    );
     return;
   }
 
@@ -382,6 +479,7 @@ const maybeStartCodeReview = async (
     );
     scheduleReviewRetry(
       pi,
+      reviewResults,
       planReviewCoordinator,
       ctx,
       "review-after-plan-review",
@@ -424,30 +522,125 @@ const maybeStartCodeReview = async (
     return;
   }
 
-  const requestPlannotator = createRequestPlannotator(pi.events);
-  state.reviewInFlight = true;
-  clearReviewPending(ctx);
-
-  log?.info("plannotator-auto starting code review via event API", {
-    cwd: ctx.cwd,
-    repoRoot,
-    reason,
-    sessionKey: getSessionKey(ctx),
+  const requestPlannotator = createRequestPlannotator(pi.events, {
+    timeoutMs: DEFAULT_CODE_REVIEW_TIMEOUT_MS,
   });
+  state.reviewInFlight = true;
 
   try {
-    const response = await requestCodeReview(requestPlannotator, {
+    if (active) {
+      const statusResponse = await requestReviewStatus(requestPlannotator, {
+        reviewId: active.reviewId,
+      });
+
+      if (statusResponse.status === "handled") {
+        const status = statusResponse.result;
+        if (status.status === "pending") {
+          scheduleReviewRetry(
+            pi,
+            reviewResults,
+            planReviewCoordinator,
+            ctx,
+            "pending-code-review-status",
+            1_200,
+          );
+          return;
+        }
+
+        if (status.status === "completed") {
+          handleCodeReviewCompletion(
+            pi,
+            ctx,
+            state,
+            active,
+            {
+              approved: status.approved,
+              feedback: status.feedback,
+            },
+            "status",
+          );
+        } else {
+          clearActiveCodeReview(ctx, state);
+        }
+      } else if (statusResponse.status === "unavailable") {
+        notifyCodeReviewUnavailable(
+          ctx,
+          state,
+          statusResponse.error ??
+            "Plannotator is not loaded. Install/enable the Plannotator extension to use shared review flows.",
+        );
+        scheduleReviewRetry(
+          pi,
+          reviewResults,
+          planReviewCoordinator,
+          ctx,
+          "code-review-status-unavailable",
+          1_200,
+        );
+        return;
+      } else {
+        ctx.ui.notify(
+          statusResponse.error || "Plannotator review-status request failed.",
+          "warning",
+        );
+        scheduleReviewRetry(
+          pi,
+          reviewResults,
+          planReviewCoordinator,
+          ctx,
+          "code-review-status-error",
+          1_200,
+        );
+        return;
+      }
+    }
+
+    if (!state.pendingReviewByCwd.has(ctx.cwd)) {
+      return;
+    }
+
+    log?.info("plannotator-auto starting code review via event API", {
+      cwd: ctx.cwd,
+      repoRoot,
+      reason,
+      sessionKey: getSessionKey(ctx),
+    });
+
+    const response = await startCodeReview(requestPlannotator, reviewResults, {
       cwd: ctx.cwd,
     });
 
     if (response.status === "handled") {
       state.plannotatorUnavailableNotified = false;
-      const message = formatCodeReviewMessage(response.result);
-      if (message) {
-        pi.sendUserMessage(message, { deliverAs: "followUp" });
-      } else {
-        ctx.ui.notify("Code review closed (no feedback).", "info");
+      clearReviewPending(ctx);
+
+      if ("status" in response.result && response.result.status === "pending") {
+        state.activeCodeReviewByCwd.set(ctx.cwd, {
+          reviewId: response.result.reviewId,
+          startedAt: Date.now(),
+        });
+        scheduleReviewRetry(
+          pi,
+          reviewResults,
+          planReviewCoordinator,
+          ctx,
+          "await-code-review-result",
+          1_200,
+        );
+        return;
       }
+
+      handleCodeReviewCompletion(
+        pi,
+        ctx,
+        state,
+        {
+          reviewId: `direct:${Date.now()}`,
+          startedAt: Date.now(),
+        },
+        response.result,
+        "direct",
+      );
       return;
     }
 
@@ -571,6 +764,30 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     log,
   });
 
+  reviewResults.onResult((result: ReviewResultEvent) => {
+    const matched = findActiveCodeReviewSession(result.reviewId);
+    if (!matched) {
+      return;
+    }
+
+    const active = matched.state.activeCodeReviewByCwd.get(matched.cwd);
+    if (!active) {
+      return;
+    }
+
+    handleCodeReviewCompletion(
+      pi,
+      { cwd: matched.cwd },
+      matched.state,
+      active,
+      {
+        approved: result.approved,
+        feedback: result.feedback,
+      },
+      "event",
+    );
+  });
+
   pi.on("session_start", (_event, ctx) => {
     getSessionState(ctx);
     log?.debug("plannotator-auto session started", {
@@ -677,6 +894,12 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       sessionKey: getSessionKey(ctx),
     });
     await planReviewCoordinator.runPlanReview(ctx, "agent_end");
-    await maybeStartCodeReview(pi, planReviewCoordinator, ctx, "agent_end");
+    await maybeStartCodeReview(
+      pi,
+      reviewResults,
+      planReviewCoordinator,
+      ctx,
+      "agent_end",
+    );
   });
 }

@@ -254,6 +254,67 @@ describe("PlanReviewCoordinator transition table", () => {
 });
 
 describe("PlanReviewCoordinator key workflow effects", () => {
+  it("suppresses completion messages for superseded active reviews", async () => {
+    const {
+      coordinator,
+      state,
+      ctx,
+      pi,
+      requestReviewStatus,
+      startPlanReview,
+    } = await setupCoordinator({
+      statusResponse: {
+        status: "handled",
+        result: {
+          status: "completed",
+          reviewId: "review-1",
+          approved: true,
+          feedback: "Outdated review result.",
+        },
+      },
+    });
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-stale-review-"),
+    );
+    const planFileRelative = ".pi/plans/repo/plan/2026-04-16-flow.md";
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] latest\n", "utf8");
+
+    const runtimeCtx = {
+      ...ctx,
+      cwd: repoRoot,
+    };
+
+    try {
+      state.activePlanReviewByCwd.set(runtimeCtx.cwd, {
+        reviewId: "review-1",
+        planFile: planFileRelative,
+        startedAt: 100,
+      });
+      state.pendingPlanReviewByCwd.set(runtimeCtx.cwd, {
+        planFile: planFileRelative,
+        resolvedPlanPath: planFileAbsolute,
+        updatedAt: 101,
+        suppressFutureSingleFileReviews: false,
+      });
+
+      await coordinator.runPlanReview(runtimeCtx as never, "agent_end");
+
+      expect(requestReviewStatus).toHaveBeenCalledTimes(1);
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      expect(state.activePlanReviewByCwd.get(runtimeCtx.cwd)?.reviewId).toBe(
+        "review-1",
+      );
+      expect(state.pendingPlanReviewByCwd.has(runtimeCtx.cwd)).toBe(false);
+      expect(state.processedPlanReviewIds.has("review-1")).toBe(true);
+      expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("waits for the review result on a busy plan-file write instead of aborting", async () => {
     const { coordinator, ctx, startPlanReview, state, emitReviewResult, pi } =
       await setupCoordinator({
@@ -308,6 +369,7 @@ describe("PlanReviewCoordinator key workflow effects", () => {
       });
 
       await reviewPromise;
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
       expect(pi.sendUserMessage).toHaveBeenCalledWith(
         "formatted-plan-review-message",
         { deliverAs: "followUp" },

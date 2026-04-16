@@ -25,8 +25,8 @@ import {
   createReviewResultStore,
   formatCodeReviewMessage,
   type ReviewResultEvent,
+  requestCodeReview,
   requestReviewStatus,
-  startCodeReview,
 } from "./plannotator-api.ts";
 
 type PlannotatorAutoConfig = {
@@ -38,7 +38,8 @@ type PlannotatorAutoSettings = {
 };
 
 type ActiveCodeReview = {
-  reviewId: string;
+  requestKey: string;
+  reviewId?: string;
   startedAt: number;
 };
 
@@ -52,7 +53,9 @@ type SessionRuntimeState = PlanReviewSessionState & {
 };
 
 const DEFAULT_PLAN_SUBDIR = "plan";
+const DEFAULT_CODE_REVIEW_PROBE_TIMEOUT_MS = 1_500;
 const DEFAULT_CODE_REVIEW_TIMEOUT_MS = 30_000;
+const SYNC_CODE_REVIEW_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
 const sessionRuntimeState = new Map<string, SessionRuntimeState>();
 
@@ -298,6 +301,12 @@ const clearReviewPending = (ctx: ExtensionContext): void => {
   getSessionState(ctx).pendingReviewByCwd.delete(ctx.cwd);
 };
 
+const getCodeReviewCompletionKey = (active: ActiveCodeReview): string =>
+  active.reviewId ?? active.requestKey;
+
+const createCodeReviewRequestKey = (): string =>
+  `sync:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+
 const notifyCodeReviewUnavailable = (
   ctx: ExtensionContext,
   state: SessionRuntimeState,
@@ -368,13 +377,14 @@ const handleCodeReviewCompletion = (
   },
   source: "event" | "status" | "direct",
 ): void => {
-  if (state.processedCodeReviewIds.has(active.reviewId)) {
+  const completionKey = getCodeReviewCompletionKey(active);
+  if (state.processedCodeReviewIds.has(completionKey)) {
     return;
   }
 
   const superseded = state.pendingReviewByCwd.has(ctx.cwd);
 
-  state.processedCodeReviewIds.add(active.reviewId);
+  state.processedCodeReviewIds.add(completionKey);
   state.activeCodeReviewByCwd.delete(ctx.cwd);
   state.plannotatorUnavailableNotified = false;
 
@@ -382,7 +392,8 @@ const handleCodeReviewCompletion = (
     log?.info("plannotator-auto suppressed stale code-review completion", {
       cwd: ctx.cwd,
       source,
-      reviewId: active.reviewId,
+      reviewId: active.reviewId ?? null,
+      requestKey: active.requestKey,
       approved: result.approved,
     });
     return;
@@ -423,6 +434,13 @@ const findActiveCodeReviewSession = (
 
   return null;
 };
+
+const probeCodeReviewAvailability = async (
+  requestPlannotator: ReturnType<typeof createRequestPlannotator>,
+): Promise<Awaited<ReturnType<typeof requestReviewStatus>>> =>
+  requestReviewStatus(requestPlannotator, {
+    reviewId: `probe:${Date.now()}`,
+  });
 
 const maybeStartCodeReview = async (
   pi: ExtensionAPI,
@@ -590,6 +608,29 @@ const maybeStartCodeReview = async (
       return;
     }
 
+    const probeRequest = createRequestPlannotator(pi.events, {
+      timeoutMs: DEFAULT_CODE_REVIEW_PROBE_TIMEOUT_MS,
+    });
+    const probeResponse = await probeCodeReviewAvailability(probeRequest);
+    if (probeResponse.status === "unavailable") {
+      notifyCodeReviewUnavailable(
+        ctx,
+        state,
+        probeResponse.error ??
+          "Plannotator is not loaded. Install/enable the Plannotator extension to use shared review flows.",
+      );
+      return;
+    }
+
+    if (probeResponse.status === "error") {
+      ctx.ui.notify(
+        probeResponse.error ||
+          "Plannotator review-status probe failed before code review.",
+        "warning",
+      );
+      return;
+    }
+
     log?.info("plannotator-auto starting code review via event API", {
       cwd: ctx.cwd,
       repoRoot,
@@ -597,16 +638,36 @@ const maybeStartCodeReview = async (
       sessionKey: getSessionKey(ctx),
     });
 
-    const response = await startCodeReview(requestPlannotator, reviewResults, {
+    const syncActive: ActiveCodeReview = {
+      requestKey: createCodeReviewRequestKey(),
+      startedAt: Date.now(),
+    };
+    state.activeCodeReviewByCwd.set(ctx.cwd, syncActive);
+
+    const syncRequestPlannotator = createRequestPlannotator(pi.events, {
+      timeoutMs: SYNC_CODE_REVIEW_TIMEOUT_MS,
+    });
+    const response = await requestCodeReview(syncRequestPlannotator, {
       cwd: ctx.cwd,
     });
+    const currentState = sessionRuntimeState.get(getSessionKey(ctx));
+    if (!currentState) {
+      return;
+    }
+
+    const currentActive = currentState.activeCodeReviewByCwd.get(ctx.cwd);
+    if (!currentActive || currentActive.requestKey !== syncActive.requestKey) {
+      return;
+    }
 
     if (response.status === "handled") {
-      state.plannotatorUnavailableNotified = false;
+      currentState.plannotatorUnavailableNotified = false;
       clearReviewPending(ctx);
 
       if ("status" in response.result && response.result.status === "pending") {
-        state.activeCodeReviewByCwd.set(ctx.cwd, {
+        reviewResults.markPending(response.result.reviewId);
+        currentState.activeCodeReviewByCwd.set(ctx.cwd, {
+          requestKey: syncActive.requestKey,
           reviewId: response.result.reviewId,
           startedAt: Date.now(),
         });
@@ -624,21 +685,29 @@ const maybeStartCodeReview = async (
       handleCodeReviewCompletion(
         pi,
         ctx,
-        state,
-        {
-          reviewId: `direct:${Date.now()}`,
-          startedAt: Date.now(),
-        },
+        currentState,
+        syncActive,
         response.result,
         "direct",
       );
+      if (currentState.pendingReviewByCwd.has(ctx.cwd)) {
+        scheduleReviewRetry(
+          pi,
+          reviewResults,
+          planReviewCoordinator,
+          ctx,
+          "review-after-sync-code-review",
+        );
+      }
       return;
     }
+
+    clearActiveCodeReview(ctx, currentState);
 
     if (response.status === "unavailable") {
       notifyCodeReviewUnavailable(
         ctx,
-        state,
+        currentState,
         response.error ??
           "Plannotator is not loaded. Install/enable the Plannotator extension to use shared review flows.",
       );

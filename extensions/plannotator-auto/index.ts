@@ -17,7 +17,6 @@ import {
 } from "./plan-review/coordinator.ts";
 import type {
   PlanFileConfig,
-  PlanFileMode,
   PlanReviewSessionState,
 } from "./plan-review/types.ts";
 import {
@@ -84,7 +83,7 @@ const createSessionRuntimeState = (): SessionRuntimeState => ({
   pendingPlanReviewByCwd: new Map(),
   activePlanReviewByCwd: new Map(),
   processedPlanReviewIds: new Set(),
-  submittedSingleFilePlanReviewPaths: new Set(),
+  settledPlanReviewPaths: new Set(),
   pendingPlanReviewRetry: null,
   planReviewRetryAttemptsByCwd: new Map(),
   planReviewInFlight: false,
@@ -150,28 +149,20 @@ const getDefaultPlanDir = (cwd: string): string => {
   return path.join(".pi", "plans", repoSlug, DEFAULT_PLAN_SUBDIR);
 };
 
-const statPath = (value: string): fs.Stats | null => {
-  try {
-    return fs.statSync(value);
-  } catch {
-    return null;
-  }
-};
-
-const detectPlanMode = (
+const isConfiguredPlanDirectory = (
   planFile: string,
   resolvedPlanPath: string,
-): PlanFileMode => {
-  const stats = statPath(resolvedPlanPath);
-  if (stats?.isDirectory()) {
-    return "directory";
+): boolean => {
+  if (path.extname(planFile).toLowerCase() === ".md") {
+    return false;
   }
 
-  if (stats?.isFile()) {
-    return "file";
+  try {
+    const stats = fs.statSync(resolvedPlanPath);
+    return stats.isDirectory();
+  } catch {
+    return true;
   }
-
-  return path.extname(planFile).toLowerCase() === ".md" ? "file" : "directory";
 };
 
 const toRepoRelativePath = (
@@ -209,18 +200,27 @@ const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
 
   const planFile = config.planFile ?? getDefaultPlanDir(ctx.cwd);
   const resolvedPlanPath = resolvePlanPath(ctx.cwd, planFile);
-  const mode = detectPlanMode(planFile, resolvedPlanPath);
 
-  log?.debug("plannotator-auto resolved plan path", {
+  if (!isConfiguredPlanDirectory(planFile, resolvedPlanPath)) {
+    log?.debug(
+      "plannotator-auto ignored legacy single-file plan configuration",
+      {
+        planFile,
+        resolvedPlanPath,
+        sessionKey: getSessionKey(ctx),
+      },
+    );
+    return null;
+  }
+
+  log?.debug("plannotator-auto resolved plan directory", {
     planFile,
     resolvedPlanPath,
-    mode,
   });
 
   return {
     planFile,
     resolvedPlanPath,
-    mode,
   };
 };
 
@@ -264,12 +264,6 @@ export const resolvePlanFileForReview = (
   planConfig: PlanFileConfig,
   targetPath: string,
 ): string | null => {
-  if (planConfig.mode === "file") {
-    return targetPath === planConfig.resolvedPlanPath
-      ? planConfig.planFile
-      : null;
-  }
-
   if (!isPlanFileMatch(planConfig.resolvedPlanPath, targetPath)) {
     return null;
   }
@@ -283,10 +277,6 @@ export const shouldQueueReviewForToolPath = (
 ): boolean => {
   if (!planConfig) {
     return true;
-  }
-
-  if (planConfig.mode === "file") {
-    return targetPath !== planConfig.resolvedPlanPath;
   }
 
   return !isPlanFileMatch(planConfig.resolvedPlanPath, targetPath);
@@ -702,19 +692,13 @@ const handlePlanFileWrite = async (
 
   const state = getSessionState(ctx);
   const targetPath = path.resolve(ctx.cwd, toolPath);
-  if (
-    planConfig.mode === "file" &&
-    state.submittedSingleFilePlanReviewPaths.has(targetPath)
-  ) {
-    log?.info(
-      "plannotator-auto skipped plan review for previously submitted single-file plan",
-      {
-        cwd: ctx.cwd,
-        toolPath,
-        targetPath,
-        sessionKey: getSessionKey(ctx),
-      },
-    );
+  if (state.settledPlanReviewPaths.has(targetPath)) {
+    log?.info("plannotator-auto skipped plan review for settled plan", {
+      cwd: ctx.cwd,
+      toolPath,
+      targetPath,
+      sessionKey: getSessionKey(ctx),
+    });
     return;
   }
 
@@ -725,7 +709,6 @@ const handlePlanFileWrite = async (
       toolPath,
       targetPath,
       configuredPlanPath: planConfig.resolvedPlanPath,
-      mode: planConfig.mode,
       sessionKey: getSessionKey(ctx),
     });
     return;
@@ -743,7 +726,6 @@ const handlePlanFileWrite = async (
     planFile,
     resolvedPlanPath: targetPath,
     updatedAt: Date.now(),
-    suppressFutureSingleFileReviews: planConfig.mode === "file",
   });
 };
 
@@ -868,7 +850,6 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
         toolPath,
         targetPath,
         shouldQueueCodeReview,
-        planMode: planConfig?.mode ?? null,
         configuredPlanPath: planConfig?.resolvedPlanPath ?? null,
         sessionKey: getSessionKey(ctx),
       });

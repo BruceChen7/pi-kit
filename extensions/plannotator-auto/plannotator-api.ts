@@ -46,6 +46,11 @@ export type PlanReviewStartResult = {
   reviewId: string;
 };
 
+export type CodeReviewStartResult = {
+  status: "pending";
+  reviewId: string;
+};
+
 export type ReviewResultEvent = {
   reviewId: string;
   approved: boolean;
@@ -60,7 +65,7 @@ export type ReviewStatusResult =
   | ({ status: "completed" } & ReviewResultEvent)
   | { status: "missing" };
 
-export type CodeReviewResult = {
+export type CodeReviewDecision = {
   approved: boolean;
   feedback?: string;
   annotations?: unknown[];
@@ -80,7 +85,9 @@ export type ArchiveResult = {
 export type PlannotatorResponseMap = {
   "plan-review": PlannotatorResponse<PlanReviewStartResult>;
   "review-status": PlannotatorResponse<ReviewStatusResult>;
-  "code-review": PlannotatorResponse<CodeReviewResult>;
+  "code-review": PlannotatorResponse<
+    CodeReviewDecision | CodeReviewStartResult
+  >;
   annotate: PlannotatorResponse<AnnotationResult>;
   "annotate-last": PlannotatorResponse<AnnotationResult>;
   archive: PlannotatorResponse<ArchiveResult>;
@@ -250,6 +257,28 @@ export const requestCodeReview = (
   },
 ): Promise<PlannotatorResponseMap["code-review"]> =>
   requestPlannotator("code-review", payload);
+
+export const startCodeReview = async (
+  requestPlannotator: ReturnType<typeof createRequestPlannotator>,
+  reviewStore: ReturnType<typeof createReviewResultStore>,
+  payload: {
+    cwd?: string;
+    defaultBranch?: string;
+    diffType?: string;
+    prUrl?: string;
+  },
+): Promise<PlannotatorResponseMap["code-review"]> => {
+  const response = await requestCodeReview(requestPlannotator, payload);
+  if (
+    response.status === "handled" &&
+    "status" in response.result &&
+    response.result.status === "pending" &&
+    response.result.reviewId
+  ) {
+    reviewStore.markPending(response.result.reviewId);
+  }
+  return response;
+};
 
 export const requestAnnotation = (
   requestPlannotator: ReturnType<typeof createRequestPlannotator>,

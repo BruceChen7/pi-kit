@@ -57,7 +57,95 @@ const DEFAULT_CODE_REVIEW_PROBE_TIMEOUT_MS = 1_500;
 const DEFAULT_CODE_REVIEW_TIMEOUT_MS = 30_000;
 const SYNC_CODE_REVIEW_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
+const REVIEW_WIDGET_KEY = "plannotator-auto-review";
 const sessionRuntimeState = new Map<string, SessionRuntimeState>();
+const sessionContextByKey = new Map<string, ExtensionContext>();
+
+const getReviewWidgetMessage = (
+  state: SessionRuntimeState,
+  cwd: string,
+): string | null => {
+  const planReviewActive =
+    state.planReviewInFlight ||
+    state.pendingPlanReviewByCwd.has(cwd) ||
+    state.activePlanReviewByCwd.has(cwd);
+  const codeReviewActive =
+    state.reviewInFlight || state.activeCodeReviewByCwd.has(cwd);
+
+  if (planReviewActive && codeReviewActive) {
+    return "Plan/Code review is active";
+  }
+
+  if (planReviewActive) {
+    return "Plan review is active";
+  }
+
+  if (codeReviewActive) {
+    return "Code review is active";
+  }
+
+  return null;
+};
+
+const setReviewWidget = (ctx: ExtensionContext): void => {
+  if (!ctx.hasUI) {
+    return;
+  }
+
+  const ui = ctx.ui as {
+    setWidget?: (
+      key: string,
+      content?: unknown,
+      options?: {
+        placement?: "belowEditor";
+      },
+    ) => void;
+    theme?: {
+      fg?: (tone: string, text: string) => string;
+    };
+  };
+
+  if (typeof ui.setWidget !== "function") {
+    return;
+  }
+
+  const state = getSessionState(ctx);
+  const message = getReviewWidgetMessage(state, ctx.cwd);
+  if (!message) {
+    ui.setWidget(REVIEW_WIDGET_KEY, undefined);
+    return;
+  }
+
+  const line =
+    typeof ui.theme?.fg === "function"
+      ? ui.theme.fg("warning", message)
+      : message;
+  ui.setWidget(REVIEW_WIDGET_KEY, [line], { placement: "belowEditor" });
+};
+
+const clearReviewWidget = (ctx: ExtensionContext): void => {
+  if (!ctx.hasUI) {
+    return;
+  }
+
+  const ui = ctx.ui as {
+    setWidget?: (key: string, content?: unknown) => void;
+  };
+  if (typeof ui.setWidget !== "function") {
+    return;
+  }
+
+  ui.setWidget(REVIEW_WIDGET_KEY, undefined);
+};
+
+const setReviewWidgetBySessionKey = (sessionKey: string): void => {
+  const ctx = sessionContextByKey.get(sessionKey);
+  if (!ctx) {
+    return;
+  }
+
+  setReviewWidget(ctx);
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -377,6 +465,7 @@ const handleCodeReviewCompletion = (
     annotations?: unknown[];
   },
   source: "event" | "status" | "direct",
+  onStateChanged?: () => void,
 ): void => {
   const completionKey = getCodeReviewCompletionKey(active);
   if (state.processedCodeReviewIds.has(completionKey)) {
@@ -388,6 +477,7 @@ const handleCodeReviewCompletion = (
   state.processedCodeReviewIds.add(completionKey);
   state.activeCodeReviewByCwd.delete(ctx.cwd);
   state.plannotatorUnavailableNotified = false;
+  onStateChanged?.();
 
   if (superseded) {
     log?.info("plannotator-auto suppressed stale code-review completion", {
@@ -412,13 +502,17 @@ const handleCodeReviewCompletion = (
 const clearActiveCodeReview = (
   ctx: Pick<ExtensionContext, "cwd">,
   state: SessionRuntimeState,
+  onStateChanged?: () => void,
 ): void => {
-  state.activeCodeReviewByCwd.delete(ctx.cwd);
+  if (state.activeCodeReviewByCwd.delete(ctx.cwd)) {
+    onStateChanged?.();
+  }
 };
 
 const findActiveCodeReviewSession = (
   reviewId: string,
 ): {
+  sessionKey: string;
   cwd: string;
   state: SessionRuntimeState;
 } | null => {
@@ -426,6 +520,7 @@ const findActiveCodeReviewSession = (
     for (const [cwd, active] of state.activeCodeReviewByCwd.entries()) {
       if (active.reviewId === reviewId) {
         return {
+          sessionKey,
           cwd,
           state: sessionRuntimeState.get(sessionKey) ?? state,
         };
@@ -536,6 +631,7 @@ const maybeStartCodeReview = async (
     timeoutMs: DEFAULT_CODE_REVIEW_TIMEOUT_MS,
   });
   state.reviewInFlight = true;
+  setReviewWidget(ctx);
 
   try {
     if (active) {
@@ -569,9 +665,10 @@ const maybeStartCodeReview = async (
               annotations: status.annotations,
             },
             "status",
+            () => setReviewWidget(ctx),
           );
         } else {
-          clearActiveCodeReview(ctx, state);
+          clearActiveCodeReview(ctx, state, () => setReviewWidget(ctx));
         }
       } else if (statusResponse.status === "unavailable") {
         notifyCodeReviewUnavailable(
@@ -645,6 +742,7 @@ const maybeStartCodeReview = async (
       startedAt: Date.now(),
     };
     state.activeCodeReviewByCwd.set(ctx.cwd, syncActive);
+    setReviewWidget(ctx);
 
     const syncRequestPlannotator = createRequestPlannotator(pi.events, {
       timeoutMs: SYNC_CODE_REVIEW_TIMEOUT_MS,
@@ -673,6 +771,7 @@ const maybeStartCodeReview = async (
           reviewId: response.result.reviewId,
           startedAt: Date.now(),
         });
+        setReviewWidget(ctx);
         scheduleReviewRetry(
           pi,
           reviewResults,
@@ -691,6 +790,7 @@ const maybeStartCodeReview = async (
         syncActive,
         response.result,
         "direct",
+        () => setReviewWidget(ctx),
       );
       if (currentState.pendingReviewByCwd.has(ctx.cwd)) {
         scheduleReviewRetry(
@@ -704,7 +804,7 @@ const maybeStartCodeReview = async (
       return;
     }
 
-    clearActiveCodeReview(ctx, currentState);
+    clearActiveCodeReview(ctx, currentState, () => setReviewWidget(ctx));
 
     if (response.status === "unavailable") {
       notifyCodeReviewUnavailable(
@@ -729,6 +829,7 @@ const maybeStartCodeReview = async (
     );
   } finally {
     state.reviewInFlight = false;
+    setReviewWidget(ctx);
   }
 };
 
@@ -815,6 +916,9 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
         sessionKey,
         state,
       })),
+    onStateChanged: (sessionKey) => {
+      setReviewWidgetBySessionKey(sessionKey);
+    },
     log,
   });
 
@@ -840,26 +944,37 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
         annotations: result.annotations,
       },
       "event",
+      () => setReviewWidgetBySessionKey(matched.sessionKey),
     );
   });
 
   pi.on("session_start", (_event, ctx) => {
+    const sessionKey = getSessionKey(ctx);
+    sessionContextByKey.set(sessionKey, ctx);
     getSessionState(ctx);
+    setReviewWidget(ctx);
+
     log?.debug("plannotator-auto session started", {
       cwd: ctx.cwd,
-      sessionKey: getSessionKey(ctx),
+      sessionKey,
     });
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
+    const sessionKey = getSessionKey(ctx);
     log?.debug("plannotator-auto session shutdown", {
       cwd: ctx.cwd,
-      sessionKey: getSessionKey(ctx),
+      sessionKey,
     });
-    clearSessionState(getSessionKey(ctx));
+
+    clearReviewWidget(ctx);
+    sessionContextByKey.delete(sessionKey);
+    clearSessionState(sessionKey);
   });
 
   pi.on("tool_execution_start", (event, ctx) => {
+    sessionContextByKey.set(getSessionKey(ctx), ctx);
+
     if (event.toolName !== "write" && event.toolName !== "edit") {
       return;
     }
@@ -875,6 +990,8 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
   });
 
   pi.on("tool_execution_end", async (event, ctx) => {
+    sessionContextByKey.set(getSessionKey(ctx), ctx);
+
     if (event.toolName !== "write" && event.toolName !== "edit") {
       return;
     }
@@ -940,9 +1057,12 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     }
 
     await handlePlanFileWrite(planReviewCoordinator, ctx, args, planConfig);
+    setReviewWidget(ctx);
   });
 
   pi.on("agent_end", async (_event, ctx) => {
+    sessionContextByKey.set(getSessionKey(ctx), ctx);
+
     log?.debug("plannotator-auto handling agent_end", {
       cwd: ctx.cwd,
       sessionKey: getSessionKey(ctx),
@@ -955,5 +1075,6 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       ctx,
       "agent_end",
     );
+    setReviewWidget(ctx);
   });
 }

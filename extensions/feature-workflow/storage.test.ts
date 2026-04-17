@@ -35,37 +35,50 @@ describe("storage", () => {
     expect(readFeatureRecord(repoRoot, record.id)).toEqual(record);
   });
 
-  it("lists records sorted by updatedAt desc", () => {
+  it("lists records from wt list json and merges stored session metadata", () => {
     const repoRoot = createTempRepo();
 
-    const a: FeatureRecord = {
-      id: "feat-a",
-      name: "A",
+    writeFeatureRecord(repoRoot, {
+      id: "feat-b",
+      name: "Feature B",
       type: "feat",
-      slug: "a",
-      branch: "feat/a",
+      slug: "b",
+      branch: "feat/b",
       base: "main",
-      worktreePath: "/tmp/a",
+      worktreePath: "/tmp/old-b",
+      sessionPath: "/tmp/session-b.json",
       status: "active",
       createdAt: "2026-04-17T00:00:00Z",
       updatedAt: "2026-04-17T00:00:00Z",
-    };
+    });
 
-    const b: FeatureRecord = {
-      ...a,
+    const wtListJson = JSON.stringify([
+      {
+        branch: "feat/a",
+        path: "/tmp/a",
+        commit: { timestamp: 100 },
+      },
+      {
+        branch: "feat/b",
+        path: "/tmp/b",
+        commit: { timestamp: 200 },
+      },
+      {
+        branch: "feature/legacy",
+        path: "/tmp/legacy",
+        commit: { timestamp: 300 },
+      },
+    ]);
+
+    const records = listFeatureRecords(repoRoot, wtListJson);
+
+    expect(records.map((r) => r.id)).toEqual(["feat-b", "feat-a"]);
+    expect(records[0]).toMatchObject({
       id: "feat-b",
-      slug: "b",
       branch: "feat/b",
       worktreePath: "/tmp/b",
-      updatedAt: "2026-04-17T01:00:00Z",
-    };
-
-    writeFeatureRecord(repoRoot, a);
-    writeFeatureRecord(repoRoot, b);
-
-    expect(listFeatureRecords(repoRoot).map((r) => r.id)).toEqual([
-      "feat-b",
-      "feat-a",
-    ]);
+      sessionPath: "/tmp/session-b.json",
+      base: "main",
+    });
   });
 });

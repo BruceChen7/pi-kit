@@ -6,6 +6,8 @@ export type StatusOutput = {
   stderr: string;
 };
 
+export type GitRunner = (args: string[]) => StatusOutput;
+
 export type DirtySummary = {
   staged: number;
   unstaged: number;
@@ -30,6 +32,41 @@ export const runGit = (
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
   };
+};
+
+export const createRepoGitRunner =
+  (repoRoot: string, timeoutMs: number = DEFAULT_GIT_TIMEOUT_MS): GitRunner =>
+  (args) =>
+    runGit(repoRoot, args, timeoutMs);
+
+const parseNonEmptyLines = (value: string): string[] =>
+  value
+    // Split both Unix and Windows newline sequences.
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+export const getCurrentBranchName = (run: GitRunner): string | null => {
+  const result = run(["branch", "--show-current"]);
+  if (result.exitCode !== 0) return null;
+  const branchName = result.stdout.trim();
+  return branchName.length > 0 ? branchName : null;
+};
+
+export const listLocalBranches = (run: GitRunner): string[] => {
+  const result = run(["branch", "--format=%(refname:short)"]);
+  if (result.exitCode !== 0) return [];
+  return parseNonEmptyLines(result.stdout);
+};
+
+export const branchExists = (run: GitRunner, branch: string): boolean => {
+  const result = run([
+    "show-ref",
+    "--verify",
+    "--quiet",
+    `refs/heads/${branch}`,
+  ]);
+  return result.exitCode === 0;
 };
 
 export const getRepoRoot = (

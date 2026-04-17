@@ -5,14 +5,17 @@ import type {
   ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 
-import { checkRepoDirty } from "../shared/git.js";
+import {
+  checkRepoDirty,
+  getCurrentBranchName,
+  listLocalBranches,
+} from "../shared/git.js";
 import { createLogger } from "../shared/logger.js";
 
 import { buildBaseBranchCandidates } from "./base-branches.js";
 import { resolveFeatureWorkflowCommandContext } from "./command-context.js";
 import { loadFeatureWorkflowConfig } from "./config.js";
 import { matchFeatureRecord } from "./feature-query.js";
-import { getCurrentBranchName, listLocalBranches } from "./git.js";
 import { checkBaseBranchFreshness } from "./guards.js";
 import {
   buildFeatureBranchName,

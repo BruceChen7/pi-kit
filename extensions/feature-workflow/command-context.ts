@@ -1,10 +1,14 @@
-import { DEFAULT_GIT_TIMEOUT_MS, getRepoRoot } from "../shared/git.js";
+import {
+  createRepoGitRunner,
+  DEFAULT_GIT_TIMEOUT_MS,
+  type GitRunner,
+  getRepoRoot,
+} from "../shared/git.js";
 
 import {
   type FeatureWorkflowConfig,
   loadFeatureWorkflowConfig,
 } from "./config.js";
-import { createRepoGitRunner, type GitRunner } from "./git.js";
 
 type NotifyLevel = "info" | "warning" | "error";
 

@@ -146,20 +146,6 @@ afterEach(() => {
 describe("PlanReviewCoordinator transition table", () => {
   it.each<StatusResponseCase>([
     {
-      name: "active + pending status -> keep active and schedule retry",
-      statusResponse: {
-        status: "handled",
-        result: {
-          status: "pending",
-        },
-      },
-      expectActive: true,
-      expectProcessed: false,
-      expectRetryScheduled: true,
-      expectUserMessage: false,
-      expectNotify: false,
-    },
-    {
       name: "active + completed status -> complete review and clear active",
       statusResponse: {
         status: "handled",
@@ -247,7 +233,7 @@ describe("PlanReviewCoordinator transition table", () => {
     if (testCase.expectUserMessage) {
       expect(pi.sendUserMessage).toHaveBeenCalledWith(
         "formatted-plan-review-message",
-        { deliverAs: "followUp" },
+        { deliverAs: "steer" },
       );
     }
     expect(ctx.ui.notify).toHaveBeenCalledTimes(testCase.expectNotify ? 1 : 0);
@@ -373,9 +359,127 @@ describe("PlanReviewCoordinator key workflow effects", () => {
       expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
       expect(pi.sendUserMessage).toHaveBeenCalledWith(
         "formatted-plan-review-message",
-        { deliverAs: "followUp" },
+        { deliverAs: "steer" },
       );
       expect(state.activePlanReviewByCwd.size).toBe(0);
+    } finally {
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("waits synchronously when active review status is pending", async () => {
+    const {
+      coordinator,
+      state,
+      ctx,
+      emitReviewResult,
+      pi,
+      requestReviewStatus,
+    } = await setupCoordinator({
+      statusResponse: {
+        status: "handled",
+        result: {
+          status: "pending",
+        },
+      },
+    });
+
+    state.activePlanReviewByCwd.set(ctx.cwd, {
+      reviewId: "review-1",
+      planFile: ".pi/plans/repo/plan/2026-04-16-flow.md",
+      resolvedPlanPath: "/repo/.pi/plans/repo/plan/2026-04-16-flow.md",
+      startedAt: Date.now(),
+    });
+
+    let settled = false;
+    const runPromise = Promise.resolve(
+      coordinator.runPlanReview(ctx as never, "agent_end"),
+    ).then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(requestReviewStatus).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+    expect(state.pendingPlanReviewRetry).toBeNull();
+
+    emitReviewResult({
+      reviewId: "review-1",
+      approved: true,
+      feedback: "Looks good.",
+    });
+
+    await runPromise;
+
+    expect(state.activePlanReviewByCwd.size).toBe(0);
+    expect(pi.sendUserMessage).toHaveBeenCalledWith(
+      "formatted-plan-review-message",
+      { deliverAs: "steer" },
+    );
+  });
+
+  it("waits synchronously after accepted start for non plan-file-write reasons", async () => {
+    const { coordinator, state, ctx, emitReviewResult, pi, startPlanReview } =
+      await setupCoordinator({
+        statusResponse: {
+          status: "handled",
+          result: {
+            status: "pending",
+          },
+        },
+      });
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-agent-end-plan-review-"),
+    );
+    const planFileRelative = ".pi/plans/repo/plan/2026-04-17-agent-end.md";
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] wait\n", "utf8");
+
+    const runtimeCtx = {
+      ...ctx,
+      cwd: repoRoot,
+    };
+
+    try {
+      state.pendingPlanReviewByCwd.set(runtimeCtx.cwd, {
+        planFile: planFileRelative,
+        resolvedPlanPath: planFileAbsolute,
+        updatedAt: Date.now(),
+      });
+
+      let settled = false;
+      const runPromise = Promise.resolve(
+        coordinator.runPlanReview(runtimeCtx as never, "agent_end"),
+      ).then(() => {
+        settled = true;
+      });
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      expect(settled).toBe(false);
+      expect(state.pendingPlanReviewRetry).toBeNull();
+      expect(state.activePlanReviewByCwd.has(runtimeCtx.cwd)).toBe(true);
+
+      emitReviewResult({
+        reviewId: "review-1",
+        approved: false,
+        feedback: "Please adjust acceptance criteria.",
+      });
+
+      await runPromise;
+
+      expect(state.activePlanReviewByCwd.has(runtimeCtx.cwd)).toBe(false);
+      expect(state.pendingPlanReviewByCwd.has(runtimeCtx.cwd)).toBe(false);
+      expect(pi.sendUserMessage).toHaveBeenCalledWith(
+        "formatted-plan-review-message",
+        { deliverAs: "steer" },
+      );
     } finally {
       await fs.rm(repoRoot, { recursive: true, force: true });
     }
@@ -387,10 +491,8 @@ describe("PlanReviewCoordinator key workflow effects", () => {
     const { coordinator, state, ctx, requestReviewStatus } =
       await setupCoordinator({
         statusResponse: {
-          status: "handled",
-          result: {
-            status: "pending",
-          },
+          status: "unavailable",
+          error: "Plannotator request timed out.",
         },
       });
 

@@ -12,14 +12,17 @@ A pi-kit extension that helps you start and manage feature development using Wor
     2) `main`
     3) `master`
     4) `release*` (e.g. `release`, `release/*`, `release-*`) if present
+  - New feature branches embed base in name: `<type>/<base>/<slug>` (example: `feat/main/checkout-v2`).
 
 - `/feature-list`
   - Lists active feature worktrees from `wt list --format json`.
-  - Merges optional session metadata from `<repo>/.pi/features/*.json` when available.
+  - Derives `base` from branch name (`<type>/<base>/<slug>`). Legacy `<type>/<slug>` branches are still listed with empty base.
 
-- `/feature-switch <id|slug|branch>`
+- `/feature-switch <branch|id|slug>`
+  - Canonical lookup key is **branch name** (`<type>/<base>/<slug>`). UI selection also uses branch names to avoid ambiguity.
+  - `id` and `slug` are still accepted as aliases for compatibility. If an alias matches multiple branches, the command asks you to use the full branch name.
   - Ensures the worktree exists via `wt switch`.
-  - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into the feature's worktree session (reusing a previously created session when possible).
+  - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a worktree session rooted at that feature.
 
 - `/feature-validate`
   - Runs basic preflight checks (dirty state + base freshness for the top-priority base).
@@ -28,10 +31,13 @@ A pi-kit extension that helps you start and manage feature development using Wor
 
 Feature/worktree source of truth comes from Worktrunk (`wt list --format json`).
 
-Optional metadata is stored per repo:
+Identity semantics:
+- Canonical key: `branch`
+- Display alias: `id` (`<type>-<normalized-base>-<slug>`, or legacy `<type>-<slug>` when base is empty)
 
-- `<repo>/.pi/features/<feature-id>.json`
-- Records may include `sessionPath` (a pi session file path) so `/feature-switch` can jump back into the same worktree session.
+`base` is derived from branch name:
+- Preferred: `<type>/<base>/<slug>`
+- Legacy supported: `<type>/<slug>` (treated as empty base)
 
 ## Configuration
 

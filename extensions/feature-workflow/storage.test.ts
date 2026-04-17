@@ -1,67 +1,31 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import { describe, expect, it } from "vitest";
 
-import {
-  type FeatureRecord,
-  listFeatureRecords,
-  readFeatureRecord,
-  writeFeatureRecord,
-} from "./storage.js";
+import * as storage from "./storage.js";
 
-const createTempRepo = (): string =>
-  fs.mkdtempSync(path.join(os.tmpdir(), "pi-kit-feature-workflow-"));
+const { findActiveFeatureConflicts, listFeatureRecords } = storage;
 
 describe("storage", () => {
-  it("writes and reads feature records", () => {
-    const repoRoot = createTempRepo();
-
-    const record: FeatureRecord = {
-      id: "feat-checkout-v2",
-      name: "Checkout V2",
-      type: "feat",
-      slug: "checkout-v2",
-      branch: "feat/checkout-v2",
-      base: "main",
-      worktreePath: "/tmp/repo.feat-checkout-v2",
-      status: "active",
-      createdAt: "2026-04-17T00:00:00Z",
-      updatedAt: "2026-04-17T00:00:00Z",
-    };
-
-    writeFeatureRecord(repoRoot, record);
-    expect(readFeatureRecord(repoRoot, record.id)).toEqual(record);
+  it("does not expose local feature-record persistence helpers", () => {
+    expect("writeFeatureRecord" in storage).toBe(false);
+    expect("readFeatureRecord" in storage).toBe(false);
   });
 
-  it("lists records from wt list json and merges stored session metadata", () => {
-    const repoRoot = createTempRepo();
-
-    writeFeatureRecord(repoRoot, {
-      id: "feat-b",
-      name: "Feature B",
-      type: "feat",
-      slug: "b",
-      branch: "feat/b",
-      base: "main",
-      worktreePath: "/tmp/old-b",
-      sessionPath: "/tmp/session-b.json",
-      status: "active",
-      createdAt: "2026-04-17T00:00:00Z",
-      updatedAt: "2026-04-17T00:00:00Z",
-    });
-
+  it("lists records from wt list json", () => {
     const wtListJson = JSON.stringify([
       {
-        branch: "feat/a",
+        branch: "feat/main/a",
         path: "/tmp/a",
         commit: { timestamp: 100 },
       },
       {
-        branch: "feat/b",
+        branch: "feat/release/2026-q2/b",
         path: "/tmp/b",
         commit: { timestamp: 200 },
+      },
+      {
+        branch: "feat/c",
+        path: "/tmp/c",
+        commit: { timestamp: 150 },
       },
       {
         branch: "feature/legacy",
@@ -70,15 +34,100 @@ describe("storage", () => {
       },
     ]);
 
-    const records = listFeatureRecords(repoRoot, wtListJson);
+    const records = listFeatureRecords(wtListJson);
 
-    expect(records.map((r) => r.id)).toEqual(["feat-b", "feat-a"]);
+    expect(records.map((r) => r.id)).toEqual([
+      "feat-release-2026-q2-b",
+      "feat-c",
+      "feat-main-a",
+    ]);
     expect(records[0]).toMatchObject({
-      id: "feat-b",
-      branch: "feat/b",
+      id: "feat-release-2026-q2-b",
+      name: "b",
+      branch: "feat/release/2026-q2/b",
       worktreePath: "/tmp/b",
-      sessionPath: "/tmp/session-b.json",
-      base: "main",
+      base: "release/2026-q2",
+    });
+    expect(records[1]).toMatchObject({
+      id: "feat-c",
+      branch: "feat/c",
+      base: "",
+    });
+    const topRecord = records[0];
+    expect(topRecord).toBeDefined();
+    if (topRecord) {
+      expect(Object.hasOwn(topRecord, "sessionPath")).toBe(false);
+    }
+  });
+
+  it("detects no conflict when active records differ", () => {
+    const activeRecords = listFeatureRecords(
+      JSON.stringify([
+        {
+          branch: "feat/main/another-feature",
+          path: "/tmp/another-feature",
+          commit: { timestamp: 100 },
+        },
+      ]),
+    );
+
+    expect(
+      findActiveFeatureConflicts(activeRecords, {
+        id: "feat-main-checkout-v2",
+        branch: "feat/main/checkout-v2",
+      }),
+    ).toEqual({
+      idConflict: false,
+      branchConflict: false,
+    });
+  });
+
+  it("detects branch conflict while keeping ids base-aware", () => {
+    const activeRecords = listFeatureRecords(
+      JSON.stringify([
+        {
+          branch: "feat/main/checkout-v2",
+          path: "/tmp/checkout-v2",
+          commit: { timestamp: 100 },
+        },
+        {
+          branch: "feat/release/2026-q2/checkout-v2",
+          path: "/tmp/release-checkout-v2",
+          commit: { timestamp: 90 },
+        },
+      ]),
+    );
+
+    expect(
+      findActiveFeatureConflicts(activeRecords, {
+        id: "feat-main-checkout-v2",
+        branch: "feat/main/checkout-v2",
+      }),
+    ).toEqual({
+      idConflict: true,
+      branchConflict: true,
+    });
+  });
+
+  it("does not report id conflict for same slug on different base", () => {
+    const activeRecords = listFeatureRecords(
+      JSON.stringify([
+        {
+          branch: "feat/main/checkout-v2",
+          path: "/tmp/checkout-v2",
+          commit: { timestamp: 100 },
+        },
+      ]),
+    );
+
+    expect(
+      findActiveFeatureConflicts(activeRecords, {
+        id: "feat-release-2026-q2-checkout-v2",
+        branch: "feat/release/2026-q2/checkout-v2",
+      }),
+    ).toEqual({
+      idConflict: false,
+      branchConflict: false,
     });
   });
 });

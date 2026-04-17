@@ -291,9 +291,7 @@ describe("plan review trigger timing", () => {
       expect(api.sendUserMessage).toHaveBeenCalledTimes(1);
       expect(api.sendUserMessage).toHaveBeenCalledWith(
         "Plan review rejected.",
-        {
-          deliverAs: "followUp",
-        },
+        { deliverAs: "steer" },
       );
     } finally {
       await emit("session_shutdown", {}, ctx);
@@ -831,9 +829,10 @@ describe("code review trigger timing", () => {
     );
     const requestReviewStatus = vi.fn(async () => ({
       status: "handled" as const,
-      result: { status: "missing" as const },
+      result: {
+        status: "missing" as const,
+      },
     }));
-
     const requestCodeReview = vi.fn(async () => ({
       status: "handled" as const,
       result: {

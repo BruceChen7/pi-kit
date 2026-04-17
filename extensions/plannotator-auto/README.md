@@ -4,7 +4,7 @@ Automatically opens shared Plannotator review flows via event API for updated pl
 
 ## Configuration
 
-By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` (repo slug = basename of the repo) and expects plan files named `YYYY-MM-DD-<slug>.md`. You can override the plan directory path (relative to the project root) in `~/.pi/agent/third_extension_settings.json`.
+By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` (repo slug = basename of the repo) and expects plan files named `YYYY-MM-DD-<slug>.md`. You can override the plan directory path (relative to the project root) in global settings `~/.pi/agent/third_extension_settings.json`.
 
 Directory example:
 
@@ -18,7 +18,17 @@ Directory example:
 
 `planFile` now only supports directories. Legacy single-file values (for example `.pi/PLAN.md`) are ignored.
 
-To disable Plannotator Auto explicitly:
+Code-review auto-trigger is now **disabled by default**. To enable it globally:
+
+```json
+{
+  "plannotatorAuto": {
+    "codeReviewAutoTrigger": true
+  }
+}
+```
+
+To disable plan review in Plannotator Auto explicitly:
 
 ```json
 {
@@ -37,7 +47,7 @@ To disable Plannotator Auto explicitly:
   - completion via `plannotator:review-result`
   - fallback recovery via `action: "review-status"` polling
 - For `plan-file-write` triggers, plan review can start even while agent is busy, and `tool_execution_end` now waits for the review decision before letting the run continue.
-- Successful `write`/`edit` calls to **non-plan files** mark code-review as pending. On `agent_end`, if repo is dirty and UI is available, code-review (`action: "code-review"`) is requested.
+- Successful `write`/`edit` calls to **non-plan files** mark code-review as pending only when `codeReviewAutoTrigger` is enabled. On `agent_end`, if repo is dirty and UI is available, code-review (`action: "code-review"`) is requested.
 - Async code-review completions now preserve inline `annotations`; if the reviewer returns annotations without top-level `feedback`, PI still receives a follow-up asking it to address the review comments.
 - Code review now depends on explicit coordinator signal `isPlanReviewSettled(...)` rather than peeking internal plan-review maps.
 - If Plannotator is unavailable on shared event channel, a warning is shown (no slash-command fallback).

@@ -5,6 +5,7 @@ import type {
 import {
   checkRepoDirty,
   computeDirtySummary,
+  createRepoGitRunner,
   DEFAULT_GIT_TIMEOUT_MS,
   type DirtySummary,
   getRepoRoot,
@@ -899,15 +900,6 @@ const generateAiDefaultCommitMessage = async (input: {
     clearTimeout(timer);
   }
 };
-
-function createRepoGitRunner(
-  repoRoot: string,
-  timeoutMs: number,
-): (args: string[]) => StatusOutput {
-  return function runRepoGit(args: string[]): StatusOutput {
-    return runGit(repoRoot, args, timeoutMs);
-  };
-}
 
 function getAiCommitDiffDetails(input: {
   runRepoGit: (args: string[]) => StatusOutput;

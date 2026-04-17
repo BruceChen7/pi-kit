@@ -49,6 +49,11 @@ type PlanReviewCoordinatorDeps = {
   ) => PlanReviewSessionState | undefined;
   getSessionKey: (ctx: SessionKeyContext) => string;
   iterateSessionStates: () => Iterable<SessionStateEntry>;
+  onStateChanged?: (
+    sessionKey: string,
+    cwd: string,
+    state: PlanReviewSessionState,
+  ) => void;
   log: Logger | null;
 };
 
@@ -90,8 +95,17 @@ export const createPlanReviewCoordinator = (
     getSessionStateByKey,
     getSessionKey,
     iterateSessionStates,
+    onStateChanged,
     log,
   } = deps;
+
+  const emitStateChanged = (
+    sessionKey: string,
+    cwd: string,
+    state: PlanReviewSessionState,
+  ): void => {
+    onStateChanged?.(sessionKey, cwd, state);
+  };
 
   const dropStalePending = (
     state: PlanReviewSessionState,
@@ -163,6 +177,7 @@ export const createPlanReviewCoordinator = (
   };
 
   const handlePlanReviewCompletion = (
+    sessionKey: string,
     ctx: Pick<PlanReviewRuntimeContext, "cwd">,
     state: PlanReviewSessionState,
     active: ActivePlanReview,
@@ -192,6 +207,7 @@ export const createPlanReviewCoordinator = (
     dropStalePending(state, ctx.cwd, active.startedAt);
     state.plannotatorUnavailableNotified = false;
     resetRetryAttempts(state, ctx.cwd);
+    emitStateChanged(sessionKey, ctx.cwd, state);
 
     if (superseded) {
       log?.info("plannotator-auto suppressed stale plan-review completion", {
@@ -288,6 +304,7 @@ export const createPlanReviewCoordinator = (
   };
 
   const clearActivePlanReview = (
+    sessionKey: string,
     ctx: Pick<PlanReviewRuntimeContext, "cwd" | "ui">,
     state: PlanReviewSessionState,
     active: ActivePlanReview,
@@ -296,6 +313,7 @@ export const createPlanReviewCoordinator = (
     state.activePlanReviewByCwd.delete(ctx.cwd);
     dropStalePending(state, ctx.cwd, active.startedAt);
     resetRetryAttempts(state, ctx.cwd);
+    emitStateChanged(sessionKey, ctx.cwd, state);
 
     if (!message) {
       return;
@@ -387,6 +405,7 @@ export const createPlanReviewCoordinator = (
     ctx: PlanReviewRuntimeContext,
     reason: PlanReviewCoordinatorReason,
   ): Promise<void> => {
+    const sessionKey = getSessionKey(ctx);
     const state = getSessionState(ctx);
     const hasPending = state.pendingPlanReviewByCwd.has(ctx.cwd);
     const hasActive = state.activePlanReviewByCwd.has(ctx.cwd);
@@ -425,9 +444,10 @@ export const createPlanReviewCoordinator = (
       log?.debug("plannotator-auto skipped plan review (no UI)", {
         cwd: ctx.cwd,
         reason,
-        sessionKey: getSessionKey(ctx),
+        sessionKey,
       });
       state.pendingPlanReviewByCwd.delete(ctx.cwd);
+      emitStateChanged(sessionKey, ctx.cwd, state);
       return;
     }
 
@@ -457,6 +477,7 @@ export const createPlanReviewCoordinator = (
 
     const requestPlannotator = createRequestPlannotator(pi.events);
     state.planReviewInFlight = true;
+    emitStateChanged(sessionKey, ctx.cwd, state);
 
     try {
       const active = state.activePlanReviewByCwd.get(ctx.cwd);
@@ -495,6 +516,7 @@ export const createPlanReviewCoordinator = (
 
           if (status.status === "completed") {
             handlePlanReviewCompletion(
+              sessionKey,
               ctx,
               state,
               active,
@@ -514,6 +536,7 @@ export const createPlanReviewCoordinator = (
             state.activePlanReviewByCwd.delete(ctx.cwd);
             dropStalePending(state, ctx.cwd, active.startedAt);
             resetRetryAttempts(state, ctx.cwd);
+            emitStateChanged(sessionKey, ctx.cwd, state);
           }
         } else if (statusResponse.status === "unavailable") {
           log?.warn("plannotator-auto plan-review status unavailable", {
@@ -578,6 +601,7 @@ export const createPlanReviewCoordinator = (
           resolvedPlanPath: pending.resolvedPlanPath,
         });
         state.pendingPlanReviewByCwd.delete(ctx.cwd);
+        emitStateChanged(sessionKey, ctx.cwd, state);
         ctx.ui.notify(
           `Plannotator Auto could not read plan file: ${pending.planFile}`,
           "warning",
@@ -593,6 +617,7 @@ export const createPlanReviewCoordinator = (
           resolvedPlanPath: pending.resolvedPlanPath,
         });
         state.pendingPlanReviewByCwd.delete(ctx.cwd);
+        emitStateChanged(sessionKey, ctx.cwd, state);
         ctx.ui.notify(
           `Plannotator Auto skipped empty plan file: ${pending.planFile}`,
           "warning",
@@ -627,6 +652,7 @@ export const createPlanReviewCoordinator = (
           resolvedPlanPath: pending.resolvedPlanPath,
           startedAt: Date.now(),
         });
+        emitStateChanged(sessionKey, ctx.cwd, state);
 
         log?.info("plannotator-auto plan review request accepted", {
           cwd: ctx.cwd,
@@ -675,6 +701,7 @@ export const createPlanReviewCoordinator = (
               },
             );
             clearActivePlanReview(
+              sessionKey,
               ctx,
               state,
               activeReview,
@@ -684,6 +711,7 @@ export const createPlanReviewCoordinator = (
           }
 
           handlePlanReviewCompletion(
+            sessionKey,
             ctx,
             state,
             activeReview,
@@ -739,12 +767,14 @@ export const createPlanReviewCoordinator = (
       );
     } finally {
       state.planReviewInFlight = false;
+      emitStateChanged(sessionKey, ctx.cwd, state);
     }
   };
 
   const findActiveReviewSession = (
     reviewId: string,
   ): {
+    sessionKey: string;
     cwd: string;
     state: PlanReviewSessionState;
   } | null => {
@@ -752,6 +782,7 @@ export const createPlanReviewCoordinator = (
       for (const [cwd, active] of entry.state.activePlanReviewByCwd.entries()) {
         if (active.reviewId === reviewId) {
           return {
+            sessionKey: entry.sessionKey,
             cwd,
             state: entry.state,
           };
@@ -778,6 +809,7 @@ export const createPlanReviewCoordinator = (
     }
 
     handlePlanReviewCompletion(
+      matched.sessionKey,
       { cwd: matched.cwd },
       matched.state,
       active,
@@ -797,15 +829,17 @@ export const createPlanReviewCoordinator = (
     ctx: PlanReviewRuntimeContext,
     planReview: PendingPlanReview,
   ): Promise<void> => {
+    const sessionKey = getSessionKey(ctx);
     const state = getSessionState(ctx);
     resetRetryAttempts(state, ctx.cwd);
     const replaced = markPlanReviewPending(state, ctx.cwd, planReview);
+    emitStateChanged(sessionKey, ctx.cwd, state);
 
     log?.info("plannotator-auto queued plan review request", {
       cwd: ctx.cwd,
       planFile: planReview.planFile,
       replacedPlanFile: replaced?.planFile ?? null,
-      sessionKey: getSessionKey(ctx),
+      sessionKey,
     });
 
     await runPlanReview(ctx, "plan-file-write");

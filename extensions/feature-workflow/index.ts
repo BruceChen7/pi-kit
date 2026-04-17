@@ -5,36 +5,31 @@ import type {
   ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 
-import {
-  checkRepoDirty,
-  DEFAULT_GIT_TIMEOUT_MS,
-  getRepoRoot,
-} from "../shared/git.js";
+import { checkRepoDirty } from "../shared/git.js";
 import { createLogger } from "../shared/logger.js";
 
 import { buildBaseBranchCandidates } from "./base-branches.js";
+import { resolveFeatureWorkflowCommandContext } from "./command-context.js";
 import { loadFeatureWorkflowConfig } from "./config.js";
-import {
-  branchExists,
-  createRepoGitRunner,
-  getCurrentBranchName,
-  listLocalBranches,
-} from "./git.js";
+import { matchFeatureRecord } from "./feature-query.js";
+import { getCurrentBranchName, listLocalBranches } from "./git.js";
 import { checkBaseBranchFreshness } from "./guards.js";
 import {
   buildFeatureBranchName,
   buildFeatureId,
   type FeatureType,
+  parseFeatureBranchName,
   slugifyFeatureName,
 } from "./naming.js";
 import { forkSessionForWorktree } from "./session-fork.js";
+import { type FeatureRecord, findActiveFeatureConflicts } from "./storage.js";
 import {
-  type FeatureRecord,
-  listFeatureRecords,
-  readFeatureRecord,
-  writeFeatureRecord,
-} from "./storage.js";
-import { buildWtSwitchCreateArgs, parseWtJsonResult } from "./wt.js";
+  createFeatureWorktree,
+  createWtRunner,
+  ensureFeatureWorktree,
+  listFeatureRecordsFromWorktree,
+  type WtRunner,
+} from "./worktree-gateway.js";
 
 const log = createLogger("feature-workflow", {
   minLevel: "debug",
@@ -120,9 +115,6 @@ function buildFeatureInstructions(input: {
   if (input.worktreePath) {
     lines.push(`- worktree: ${input.worktreePath}`);
   }
-  if (input.record.sessionPath) {
-    lines.push(`- session: ${input.record.sessionPath}`);
-  }
   lines.push("");
 
   if (input.switched) {
@@ -142,52 +134,8 @@ function buildFeatureInstructions(input: {
   return `${lines.join("\n")}\n`;
 }
 
-function writeFeatureRecordToKnownRoots(input: {
-  repoRoot: string;
-  worktreePath: string;
-  record: FeatureRecord;
-}): void {
-  writeFeatureRecord(input.repoRoot, input.record);
-  log.debug("feature record written", {
-    id: input.record.id,
-    target: input.repoRoot,
-  });
-
-  const worktreePath = trimToNull(input.worktreePath);
-  if (!worktreePath || worktreePath === input.repoRoot) {
-    log.debug("feature record worktree write skipped", {
-      id: input.record.id,
-      worktreePath,
-      repoRoot: input.repoRoot,
-    });
-    return;
-  }
-
-  try {
-    if (
-      !fs.existsSync(worktreePath) ||
-      !fs.statSync(worktreePath).isDirectory()
-    ) {
-      log.debug("feature record worktree path missing", {
-        id: input.record.id,
-        worktreePath,
-      });
-      return;
-    }
-
-    writeFeatureRecord(worktreePath, input.record);
-    log.debug("feature record written", {
-      id: input.record.id,
-      target: worktreePath,
-    });
-  } catch {
-    // best-effort only
-  }
-}
-
 async function maybeSwitchToWorktreeSession(input: {
   ctx: ExtensionCommandContext;
-  repoRoot: string;
   record: FeatureRecord;
   worktreePath: string;
   enabled: boolean;
@@ -220,29 +168,6 @@ async function maybeSwitchToWorktreeSession(input: {
       switched: false,
       record: input.record,
       skipReason: "missing-worktree-path",
-    };
-  }
-
-  const existingSessionPath = trimToNull(input.record.sessionPath ?? null);
-  if (existingSessionPath && fs.existsSync(existingSessionPath)) {
-    log.debug("worktree session switch reusing existing session", {
-      branch: input.record.branch,
-      sessionPath: existingSessionPath,
-    });
-
-    const result = await input.ctx.switchSession(existingSessionPath);
-    const switched = !result.cancelled;
-    log.debug("worktree session switch finished", {
-      branch: input.record.branch,
-      switched,
-      sessionPath: existingSessionPath,
-      reused: true,
-      skipReason: switched ? null : "cancelled",
-    });
-    return {
-      switched,
-      record: input.record,
-      skipReason: switched ? null : "cancelled",
     };
   }
 
@@ -296,23 +221,14 @@ async function maybeSwitchToWorktreeSession(input: {
     const updated: FeatureRecord = {
       ...input.record,
       worktreePath,
-      sessionPath,
       updatedAt: new Date().toISOString(),
     };
-
-    writeFeatureRecordToKnownRoots({
-      repoRoot: input.repoRoot,
-      worktreePath,
-      record: updated,
-    });
 
     const result = await input.ctx.switchSession(sessionPath);
     const switched = !result.cancelled;
     log.debug("worktree session switch finished", {
       branch: input.record.branch,
       switched,
-      sessionPath,
-      reused: false,
       skipReason: switched ? null : "cancelled",
     });
     return {
@@ -338,30 +254,34 @@ async function maybeSwitchToWorktreeSession(input: {
   }
 }
 
-async function runWt(
-  pi: ExtensionAPI,
-  repoRoot: string,
-  args: string[],
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  log.debug("running wt", {
-    repoRoot,
-    args,
+async function loadFeatureRecordsFromWt(input: {
+  ctx: ExtensionCommandContext;
+  repoRoot: string;
+  runWt: WtRunner;
+}): Promise<FeatureRecord[] | null> {
+  log.debug("loading feature records", {
+    repoRoot: input.repoRoot,
   });
 
-  const result = await pi.exec("wt", ["-C", repoRoot, ...args]);
-  const parsed = {
-    code: result.code ?? 1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-  };
+  const result = await listFeatureRecordsFromWorktree(input.runWt);
+  if (!result.ok) {
+    input.ctx.ui.notify(result.message, "error");
+    log.error("wt list failed", {
+      repoRoot: input.repoRoot,
+      message: result.message,
+    });
+    return null;
+  }
 
-  log.debug("wt finished", {
-    repoRoot,
-    args,
-    code: parsed.code,
-  });
+  return result.records;
+}
 
-  return parsed;
+function buildAmbiguousFeatureQueryMessage(input: {
+  query: string;
+  branches: string[];
+}): string {
+  const preview = input.branches.map((branch) => `- ${branch}`).join("\n");
+  return `Query '${input.query}' matches multiple features. Use a branch name:\n${preview}`;
 }
 
 function formatFeatureList(records: FeatureRecord[]): string {
@@ -376,9 +296,6 @@ function formatFeatureList(records: FeatureRecord[]): string {
       `- ${record.id}  (branch: ${record.branch}, base: ${record.base})`,
     );
     lines.push(`  - path: ${record.worktreePath}`);
-    if (record.sessionPath) {
-      lines.push(`  - session: ${record.sessionPath}`);
-    }
     lines.push(`  - updated: ${record.updatedAt}`);
   }
   return `${lines.join("\n")}\n`;
@@ -423,20 +340,16 @@ async function selectBaseBranch(input: {
 async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   log.debug("feature-start invoked", { cwd: ctx.cwd, hasUI: ctx.hasUI });
 
-  const config = loadFeatureWorkflowConfig(ctx.cwd);
-  if (!config.enabled) {
-    ctx.ui.notify("feature-workflow is disabled", "info");
+  const commandContext = resolveFeatureWorkflowCommandContext({
+    cwd: ctx.cwd,
+    ui: ctx.ui,
+  });
+  if (!commandContext) {
     return;
   }
 
-  const timeoutMs = config.defaults.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
-  const repoRoot = getRepoRoot(ctx.cwd, timeoutMs);
-  if (!repoRoot) {
-    ctx.ui.notify("Not a git repository", "info");
-    return;
-  }
-
-  const runGit = createRepoGitRunner(repoRoot, timeoutMs);
+  const { config, timeoutMs, repoRoot, runGit } = commandContext;
+  const runWt = createWtRunner(pi, repoRoot);
 
   if (config.guards.requireCleanWorkspace) {
     const dirty = checkRepoDirty(repoRoot, timeoutMs);
@@ -477,29 +390,6 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     return;
   }
 
-  const id = buildFeatureId({ type, slug });
-  const branch = buildFeatureBranchName({ type, slug });
-
-  if (config.guards.enforceBranchNaming) {
-    const ok = /^(feat|fix|chore|spike)\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(
-      branch,
-    );
-    if (!ok) {
-      ctx.ui.notify(`Invalid branch name: ${branch}`, "error");
-      return;
-    }
-  }
-
-  if (branchExists(runGit, branch)) {
-    ctx.ui.notify(`Branch already exists: ${branch}`, "error");
-    return;
-  }
-
-  if (readFeatureRecord(repoRoot, id)) {
-    ctx.ui.notify(`Feature record already exists: ${id}`, "error");
-    return;
-  }
-
   const currentBranch = getCurrentBranchName(runGit);
   const localBranches = listLocalBranches(runGit);
   const candidates = buildBaseBranchCandidates({
@@ -511,6 +401,45 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   if (!base) {
     ctx.ui.notify("Cancelled", "info");
     return;
+  }
+
+  const id = buildFeatureId({ type, base, slug });
+  const branch = buildFeatureBranchName({ type, base, slug });
+
+  if (config.guards.enforceBranchNaming) {
+    const parsed = parseFeatureBranchName(branch);
+    const ok =
+      parsed !== null &&
+      parsed.type === type &&
+      parsed.slug === slug &&
+      parsed.base === base;
+    if (!ok) {
+      ctx.ui.notify(`Invalid branch name: ${branch}`, "error");
+      return;
+    }
+  }
+
+  const activeRecords = await loadFeatureRecordsFromWt({
+    ctx,
+    repoRoot,
+    runWt,
+  });
+  if (!activeRecords) return;
+
+  const conflicts = findActiveFeatureConflicts(activeRecords, { id, branch });
+  if (conflicts.branchConflict) {
+    ctx.ui.notify(
+      `Active feature worktree already exists for branch: ${branch}`,
+      "error",
+    );
+    return;
+  }
+
+  if (conflicts.idConflict) {
+    ctx.ui.notify(
+      `Feature alias '${id}' already exists on another base branch. Prefer using full branch names when switching.`,
+      "info",
+    );
   }
 
   if (config.guards.requireFreshBase) {
@@ -538,28 +467,19 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     base,
   });
 
-  const wtResult = await runWt(
-    pi,
-    repoRoot,
-    buildWtSwitchCreateArgs({
+  const createResult = await createFeatureWorktree(runWt, { branch, base });
+  if (!createResult.ok) {
+    ctx.ui.notify(createResult.message, "error");
+    log.error("wt switch --create failed", {
       branch,
       base,
-    }),
-  );
-
-  if (wtResult.code !== 0) {
-    const msg =
-      trimToNull(wtResult.stderr) ??
-      trimToNull(wtResult.stdout) ??
-      "wt switch failed";
-    ctx.ui.notify(msg, "error");
-    log.error("wt switch --create failed", { branch, base, repoRoot, msg });
+      repoRoot,
+      message: createResult.message,
+    });
     return;
   }
 
-  const wtJson = parseWtJsonResult(wtResult.stdout);
-  const worktreePath =
-    wtJson && typeof wtJson.path === "string" ? wtJson.path : "";
+  const worktreePath = createResult.worktreePath;
 
   log.debug("feature-start worktree ready", {
     branch,
@@ -581,11 +501,8 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     updatedAt: now,
   };
 
-  writeFeatureRecordToKnownRoots({ repoRoot, worktreePath, record });
-
   const switchResult = await maybeSwitchToWorktreeSession({
     ctx,
-    repoRoot,
     record,
     worktreePath,
     enabled: config.defaults.autoSwitchToWorktreeSession,
@@ -595,7 +512,6 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     branch,
     switched: switchResult.switched,
     worktreePath: switchResult.record.worktreePath,
-    sessionPath: switchResult.record.sessionPath ?? null,
   });
 
   ctx.ui.setEditorText(
@@ -615,65 +531,27 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   );
 }
 
-async function loadFeatureRecordsFromWt(input: {
-  pi: ExtensionAPI;
-  ctx: ExtensionCommandContext;
-  repoRoot: string;
-}): Promise<FeatureRecord[] | null> {
-  const wtResult = await runWt(input.pi, input.repoRoot, [
-    "list",
-    "--format",
-    "json",
-  ]);
-
-  if (wtResult.code !== 0) {
-    const msg =
-      trimToNull(wtResult.stderr) ??
-      trimToNull(wtResult.stdout) ??
-      "wt list failed";
-    input.ctx.ui.notify(msg, "error");
-    log.error("wt list failed", {
-      repoRoot: input.repoRoot,
-      msg,
-    });
-    return null;
-  }
-
-  return listFeatureRecords(input.repoRoot, wtResult.stdout);
-}
-
 async function runFeatureList(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
-  const config = loadFeatureWorkflowConfig(ctx.cwd);
-  if (!config.enabled) {
-    ctx.ui.notify("feature-workflow is disabled", "info");
+  const commandContext = resolveFeatureWorkflowCommandContext({
+    cwd: ctx.cwd,
+    ui: ctx.ui,
+  });
+  if (!commandContext) {
     return;
   }
 
-  const repoRoot = getRepoRoot(ctx.cwd, config.defaults.gitTimeoutMs);
-  if (!repoRoot) {
-    ctx.ui.notify("Not a git repository", "info");
-    return;
-  }
+  const { repoRoot } = commandContext;
+  const runWt = createWtRunner(pi, repoRoot);
 
-  const records = await loadFeatureRecordsFromWt({ pi, ctx, repoRoot });
+  const records = await loadFeatureRecordsFromWt({
+    ctx,
+    repoRoot,
+    runWt,
+  });
   if (!records) return;
 
   ctx.ui.setEditorText(formatFeatureList(records));
   ctx.ui.notify(`Listed ${records.length} feature(s)`, "info");
-}
-
-function matchFeatureRecord(
-  records: FeatureRecord[],
-  query: string,
-): FeatureRecord | null {
-  const q = query.trim();
-  if (!q) return null;
-  return (
-    records.find((r) => r.id === q) ??
-    records.find((r) => r.slug === q) ??
-    records.find((r) => r.branch === q) ??
-    null
-  );
 }
 
 async function runFeatureSwitch(
@@ -687,19 +565,22 @@ async function runFeatureSwitch(
     hasUI: ctx.hasUI,
   });
 
-  const config = loadFeatureWorkflowConfig(ctx.cwd);
-  if (!config.enabled) {
-    ctx.ui.notify("feature-workflow is disabled", "info");
+  const commandContext = resolveFeatureWorkflowCommandContext({
+    cwd: ctx.cwd,
+    ui: ctx.ui,
+  });
+  if (!commandContext) {
     return;
   }
 
-  const repoRoot = getRepoRoot(ctx.cwd, config.defaults.gitTimeoutMs);
-  if (!repoRoot) {
-    ctx.ui.notify("Not a git repository", "info");
-    return;
-  }
+  const { config, repoRoot } = commandContext;
+  const runWt = createWtRunner(pi, repoRoot);
 
-  const records = await loadFeatureRecordsFromWt({ pi, ctx, repoRoot });
+  const records = await loadFeatureRecordsFromWt({
+    ctx,
+    repoRoot,
+    runWt,
+  });
   if (!records) return;
 
   if (records.length === 0) {
@@ -711,17 +592,30 @@ async function runFeatureSwitch(
   if (!query && ctx.hasUI) {
     const choice = await ctx.ui.select(
       "Switch to feature:",
-      records.map((r) => r.id),
+      records.map((record) => record.branch),
     );
     if (choice === undefined) return;
     query = choice;
   }
 
-  const record = matchFeatureRecord(records, query);
-  if (!record) {
+  const match = matchFeatureRecord(records, query);
+  if (match.kind === "not-found") {
     ctx.ui.notify(`Unknown feature: ${query}`, "error");
     return;
   }
+
+  if (match.kind === "ambiguous-id" || match.kind === "ambiguous-slug") {
+    ctx.ui.notify(
+      buildAmbiguousFeatureQueryMessage({
+        query: match.value,
+        branches: match.branches,
+      }),
+      "error",
+    );
+    return;
+  }
+
+  const record = match.record;
 
   log.debug("feature-switch target resolved", {
     query,
@@ -730,40 +624,26 @@ async function runFeatureSwitch(
     branch: record.branch,
   });
 
-  const wtArgs = [
-    "switch",
-    record.branch,
-    "--no-cd",
-    "--format",
-    "json",
-    "--yes",
-  ];
-
   log.debug("feature-switch preparing worktree", {
     repoRoot,
     branch: record.branch,
   });
 
-  const wtResult = await runWt(pi, repoRoot, wtArgs);
-  if (wtResult.code !== 0) {
-    const msg =
-      trimToNull(wtResult.stderr) ??
-      trimToNull(wtResult.stdout) ??
-      "wt switch failed";
-    ctx.ui.notify(msg, "error");
+  const switchWorktreeResult = await ensureFeatureWorktree(runWt, {
+    branch: record.branch,
+    fallbackWorktreePath: record.worktreePath,
+  });
+  if (!switchWorktreeResult.ok) {
+    ctx.ui.notify(switchWorktreeResult.message, "error");
     log.error("wt switch failed", {
       branch: record.branch,
       repoRoot,
-      msg,
+      message: switchWorktreeResult.message,
     });
     return;
   }
 
-  const wtJson = parseWtJsonResult(wtResult.stdout);
-  const worktreePath =
-    wtJson && typeof wtJson.path === "string"
-      ? wtJson.path
-      : record.worktreePath;
+  const worktreePath = switchWorktreeResult.worktreePath;
 
   log.debug("feature-switch worktree ready", {
     branch: record.branch,
@@ -777,15 +657,8 @@ async function runFeatureSwitch(
     updatedAt: now,
   };
 
-  writeFeatureRecordToKnownRoots({
-    repoRoot,
-    worktreePath: updatedRecord.worktreePath,
-    record: updatedRecord,
-  });
-
   const switchResult = await maybeSwitchToWorktreeSession({
     ctx,
-    repoRoot,
     record: updatedRecord,
     worktreePath: updatedRecord.worktreePath,
     enabled: config.defaults.autoSwitchToWorktreeSession,
@@ -796,7 +669,6 @@ async function runFeatureSwitch(
     switched: switchResult.switched,
     skipReason: switchResult.skipReason,
     worktreePath: switchResult.record.worktreePath,
-    sessionPath: switchResult.record.sessionPath ?? null,
   });
 
   ctx.ui.notify(buildFeatureSwitchNotifyMessage(switchResult), "info");
@@ -806,20 +678,15 @@ async function runFeatureValidate(
   _pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
 ) {
-  const config = loadFeatureWorkflowConfig(ctx.cwd);
-  if (!config.enabled) {
-    ctx.ui.notify("feature-workflow is disabled", "info");
+  const commandContext = resolveFeatureWorkflowCommandContext({
+    cwd: ctx.cwd,
+    ui: ctx.ui,
+  });
+  if (!commandContext) {
     return;
   }
 
-  const timeoutMs = config.defaults.gitTimeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
-  const repoRoot = getRepoRoot(ctx.cwd, timeoutMs);
-  if (!repoRoot) {
-    ctx.ui.notify("Not a git repository", "info");
-    return;
-  }
-
-  const runGit = createRepoGitRunner(repoRoot, timeoutMs);
+  const { config, timeoutMs, repoRoot, runGit } = commandContext;
   const messages: string[] = [];
 
   const dirty = checkRepoDirty(repoRoot, timeoutMs);

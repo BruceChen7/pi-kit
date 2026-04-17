@@ -44,22 +44,19 @@ const writePackageJson = (packageJsonPath, packageJson) => {
   );
 };
 
-const getLatestPiCodingAgentVersion = () => {
-  const output = execFileSync(
-    getNpmCommand(),
-    ["view", PI_CODING_AGENT_PACKAGE, "version"],
-    {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "inherit"],
-    },
-  ).trim();
+const getPiVersion = () => {
+  const output = execFileSync("pi", ["--version"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  }).trim();
 
-  if (!/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(output)) {
-    throw new Error(`Unexpected npm version output: ${output || "<empty>"}`);
+  const match = output.match(/\d+\.\d+\.\d+(?:[-+][\w.-]+)?/);
+  if (!match) {
+    throw new Error(`Unexpected pi --version output: ${output || "<empty>"}`);
   }
 
-  return output;
+  return match[0];
 };
 
 const runInstall = (latestVersion) => {
@@ -92,8 +89,8 @@ export const main = () => {
     currentPackageJson.peerDependencies?.[PI_CODING_AGENT_PACKAGE] ??
     "<missing>";
 
-  console.log(`Resolving latest ${PI_CODING_AGENT_PACKAGE} version...`);
-  const latestVersion = getLatestPiCodingAgentVersion();
+  console.log("Reading current pi version via `pi --version`...");
+  const latestVersion = getPiVersion();
   const targetRange = `^${latestVersion}`;
 
   console.log(`Updating package.json peerDependencies to ${targetRange}`);

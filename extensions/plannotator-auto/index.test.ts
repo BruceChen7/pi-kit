@@ -539,10 +539,157 @@ describe("plan review trigger timing", () => {
 });
 
 describe("code review trigger timing", () => {
+  it("probes plannotator before waiting for a synchronous code review result", async () => {
+    vi.resetModules();
+    let resolveCodeReview:
+      | ((value: {
+          status: "handled";
+          result: {
+            approved: boolean;
+            feedback?: string;
+          };
+        }) => void)
+      | null = null;
+
+    const requestReviewStatus = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "missing" as const,
+      },
+    }));
+    const requestCodeReview = vi.fn(
+      () =>
+        new Promise<{
+          status: "handled";
+          result: {
+            approved: boolean;
+            feedback?: string;
+          };
+        }>((resolve) => {
+          resolveCodeReview = resolve;
+        }),
+    );
+
+    vi.doMock("../shared/git.ts", () => ({
+      DEFAULT_GIT_TIMEOUT_MS: 1_000,
+      getRepoRoot: vi.fn(() => "/repo"),
+      checkRepoDirty: vi.fn(() => ({
+        summary: {
+          dirty: true,
+        },
+      })),
+    }));
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn(() => () => {}),
+        getStatus: vi.fn(() => ({ status: "missing" as const })),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatCodeReviewMessage: vi.fn(
+        (result: { approved?: boolean; feedback?: string }) => {
+          if (result.approved) {
+            return "# Code Review\n\nCode review completed — no changes requested.";
+          }
+
+          if (!result.feedback?.trim()) {
+            return null;
+          }
+
+          return "Please add tests.\n\nPlease address this feedback.";
+        },
+      ),
+      formatPlanReviewMessage: vi.fn(() => ""),
+      requestCodeReview,
+      requestReviewStatus,
+      startCodeReview: vi.fn(),
+      startPlanReview: vi.fn(),
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const ctx: TestCtx = {
+      cwd: "/repo",
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => "/repo/.pi/session.json",
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: "src/app.ts" },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      const agentEndPromise = emit("agent_end", {}, ctx);
+      await flushMicrotasks();
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      expect(requestReviewStatus).toHaveBeenCalledTimes(1);
+      expect(requestCodeReview).toHaveBeenCalledTimes(1);
+      expect(requestReviewStatus.mock.invocationCallOrder[0]).toBeLessThan(
+        requestCodeReview.mock.invocationCallOrder[0],
+      );
+      expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+        "Plannotator request timed out.",
+        "warning",
+      );
+
+      resolveCodeReview?.({
+        status: "handled",
+        result: {
+          approved: false,
+          feedback: "Please add tests.",
+        },
+      });
+      await agentEndPromise;
+
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        "Please add tests.\n\nPlease address this feedback.",
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+    }
+  });
+
   it("delivers code review feedback from async review results", async () => {
     vi.resetModules();
     const reviewResultListeners: Array<(result: unknown) => void> = [];
-    const startCodeReview = vi.fn(async () => ({
+    const requestReviewStatus = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "missing" as const,
+      },
+    }));
+    const requestCodeReview = vi.fn(async () => ({
       status: "handled" as const,
       result: {
         status: "pending" as const,
@@ -590,9 +737,9 @@ describe("code review trigger timing", () => {
         },
       ),
       formatPlanReviewMessage: vi.fn(() => ""),
-      requestCodeReview: vi.fn(),
-      requestReviewStatus: vi.fn(),
-      startCodeReview,
+      requestCodeReview,
+      requestReviewStatus,
+      startCodeReview: vi.fn(),
       startPlanReview: vi.fn(),
     }));
 
@@ -637,7 +784,8 @@ describe("code review trigger timing", () => {
 
       await emit("agent_end", {}, ctx);
 
-      expect(startCodeReview).toHaveBeenCalledTimes(1);
+      expect(requestReviewStatus).toHaveBeenCalledTimes(1);
+      expect(requestCodeReview).toHaveBeenCalledTimes(1);
       expect(api.sendUserMessage).not.toHaveBeenCalled();
 
       for (const listener of reviewResultListeners) {

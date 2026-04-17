@@ -6,6 +6,7 @@ A pi-kit extension that helps you start and manage feature development using Wor
 
 - `/feature-start`
   - Interactive wizard to create a new feature branch + worktree via `wt switch --create`.
+  - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a new session whose `cwd` is the worktree path.
   - Base branch options are derived from **local branches**, prioritized as:
     1) current branch
     2) `main`
@@ -16,8 +17,8 @@ A pi-kit extension that helps you start and manage feature development using Wor
   - Lists feature records stored under `<repo>/.pi/features/*.json`.
 
 - `/feature-switch <id|slug|branch>`
-  - Ensures the worktree exists via `wt switch` and prints the `cd <worktree>` instruction.
-  - Note: pi cannot automatically change its own `cwd`; you typically `cd` into the worktree and start a new pi session there.
+  - Ensures the worktree exists via `wt switch`.
+  - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into the feature's worktree session (reusing a previously created session when possible).
 
 - `/feature-validate`
   - Runs basic preflight checks (dirty state + base freshness for the top-priority base).
@@ -27,6 +28,7 @@ A pi-kit extension that helps you start and manage feature development using Wor
 Feature metadata is stored per repo:
 
 - `<repo>/.pi/features/<feature-id>.json`
+- Records may include `sessionPath` (a pi session file path) so `/feature-switch` can jump back into the same worktree session.
 
 ## Configuration
 
@@ -42,7 +44,8 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
       "enforceBranchNaming": true
     },
     "defaults": {
-      "gitTimeoutMs": 5000
+      "gitTimeoutMs": 5000,
+      "autoSwitchToWorktreeSession": true
     }
   }
 }

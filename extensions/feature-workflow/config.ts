@@ -9,6 +9,7 @@ export type FeatureWorkflowGuards = {
 
 export type FeatureWorkflowDefaults = {
   gitTimeoutMs: number;
+  autoSwitchToWorktreeSession: boolean;
 };
 
 export type FeatureWorkflowConfig = {
@@ -32,6 +33,7 @@ const DEFAULT_CONFIG: FeatureWorkflowConfig = {
   },
   defaults: {
     gitTimeoutMs: DEFAULT_GIT_TIMEOUT_MS,
+    autoSwitchToWorktreeSession: true,
   },
 };
 
@@ -73,6 +75,10 @@ export function loadFeatureWorkflowConfig(cwd: string): FeatureWorkflowConfig {
       gitTimeoutMs: normalizeNumber(
         (defaults as Record<string, unknown>).gitTimeoutMs,
         DEFAULT_CONFIG.defaults.gitTimeoutMs,
+      ),
+      autoSwitchToWorktreeSession: normalizeBoolean(
+        (defaults as Record<string, unknown>).autoSwitchToWorktreeSession,
+        DEFAULT_CONFIG.defaults.autoSwitchToWorktreeSession,
       ),
     },
   };

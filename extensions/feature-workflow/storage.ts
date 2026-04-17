@@ -13,6 +13,7 @@ export type FeatureRecord = {
   branch: string;
   base: string;
   worktreePath: string;
+  sessionPath?: string;
   status: FeatureStatus;
   createdAt: string;
   updatedAt: string;

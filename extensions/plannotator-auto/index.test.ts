@@ -829,7 +829,12 @@ describe("code review trigger timing", () => {
         return null;
       },
     );
-    const startCodeReview = vi.fn(async () => ({
+    const requestReviewStatus = vi.fn(async () => ({
+      status: "handled" as const,
+      result: { status: "missing" as const },
+    }));
+
+    const requestCodeReview = vi.fn(async () => ({
       status: "handled" as const,
       result: {
         status: "pending" as const,
@@ -865,9 +870,9 @@ describe("code review trigger timing", () => {
       })),
       formatCodeReviewMessage,
       formatPlanReviewMessage: vi.fn(() => ""),
-      requestCodeReview: vi.fn(),
-      requestReviewStatus: vi.fn(),
-      startCodeReview,
+      requestCodeReview,
+      requestReviewStatus,
+      startCodeReview: vi.fn(),
       startPlanReview: vi.fn(),
     }));
 
@@ -912,7 +917,8 @@ describe("code review trigger timing", () => {
 
       await emit("agent_end", {}, ctx);
 
-      expect(startCodeReview).toHaveBeenCalledTimes(1);
+      expect(requestReviewStatus).toHaveBeenCalledTimes(1);
+      expect(requestCodeReview).toHaveBeenCalledTimes(1);
       expect(api.sendUserMessage).not.toHaveBeenCalled();
 
       const annotations = [

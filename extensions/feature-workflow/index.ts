@@ -615,7 +615,34 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   );
 }
 
-async function runFeatureList(_pi: ExtensionAPI, ctx: ExtensionCommandContext) {
+async function loadFeatureRecordsFromWt(input: {
+  pi: ExtensionAPI;
+  ctx: ExtensionCommandContext;
+  repoRoot: string;
+}): Promise<FeatureRecord[] | null> {
+  const wtResult = await runWt(input.pi, input.repoRoot, [
+    "list",
+    "--format",
+    "json",
+  ]);
+
+  if (wtResult.code !== 0) {
+    const msg =
+      trimToNull(wtResult.stderr) ??
+      trimToNull(wtResult.stdout) ??
+      "wt list failed";
+    input.ctx.ui.notify(msg, "error");
+    log.error("wt list failed", {
+      repoRoot: input.repoRoot,
+      msg,
+    });
+    return null;
+  }
+
+  return listFeatureRecords(input.repoRoot, wtResult.stdout);
+}
+
+async function runFeatureList(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   const config = loadFeatureWorkflowConfig(ctx.cwd);
   if (!config.enabled) {
     ctx.ui.notify("feature-workflow is disabled", "info");
@@ -628,7 +655,9 @@ async function runFeatureList(_pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     return;
   }
 
-  const records = listFeatureRecords(repoRoot);
+  const records = await loadFeatureRecordsFromWt({ pi, ctx, repoRoot });
+  if (!records) return;
+
   ctx.ui.setEditorText(formatFeatureList(records));
   ctx.ui.notify(`Listed ${records.length} feature(s)`, "info");
 }
@@ -670,7 +699,9 @@ async function runFeatureSwitch(
     return;
   }
 
-  const records = listFeatureRecords(repoRoot);
+  const records = await loadFeatureRecordsFromWt({ pi, ctx, repoRoot });
+  if (!records) return;
+
   if (records.length === 0) {
     ctx.ui.notify("No feature records found", "info");
     return;

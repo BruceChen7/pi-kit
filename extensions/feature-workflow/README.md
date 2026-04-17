@@ -14,7 +14,8 @@ A pi-kit extension that helps you start and manage feature development using Wor
     4) `release*` (e.g. `release`, `release/*`, `release-*`) if present
 
 - `/feature-list`
-  - Lists feature records stored under `<repo>/.pi/features/*.json`.
+  - Lists active feature worktrees from `wt list --format json`.
+  - Merges optional session metadata from `<repo>/.pi/features/*.json` when available.
 
 - `/feature-switch <id|slug|branch>`
   - Ensures the worktree exists via `wt switch`.
@@ -25,7 +26,9 @@ A pi-kit extension that helps you start and manage feature development using Wor
 
 ## Storage
 
-Feature metadata is stored per repo:
+Feature/worktree source of truth comes from Worktrunk (`wt list --format json`).
+
+Optional metadata is stored per repo:
 
 - `<repo>/.pi/features/<feature-id>.json`
 - Records may include `sessionPath` (a pi session file path) so `/feature-switch` can jump back into the same worktree session.

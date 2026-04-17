@@ -31,10 +31,12 @@ import {
 
 type PlannotatorAutoConfig = {
   planFile?: string | null;
+  codeReviewAutoTrigger?: boolean;
 };
 
 type PlannotatorAutoSettings = {
   planFile?: unknown;
+  codeReviewAutoTrigger?: unknown;
 };
 
 type ActiveCodeReview = {
@@ -68,16 +70,22 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
   }
 
   const raw = value as PlannotatorAutoSettings;
+  const next: PlannotatorAutoConfig = {};
+
   if (raw.planFile === null) {
-    return { planFile: null };
+    next.planFile = null;
+  } else if (typeof raw.planFile === "string") {
+    const trimmed = raw.planFile.trim();
+    if (trimmed.length > 0) {
+      next.planFile = trimmed;
+    }
   }
 
-  if (typeof raw.planFile !== "string") {
-    return {};
+  if (typeof raw.codeReviewAutoTrigger === "boolean") {
+    next.codeReviewAutoTrigger = raw.codeReviewAutoTrigger;
   }
 
-  const trimmed = raw.planFile.trim();
-  return trimmed.length > 0 ? { planFile: trimmed } : {};
+  return next;
 };
 
 let log: ReturnType<typeof createLogger> | null = null;
@@ -144,9 +152,14 @@ const loadConfig = (
   log?.debug("plannotator-auto config loaded", {
     cwd,
     planFile: config.planFile,
+    codeReviewAutoTrigger: config.codeReviewAutoTrigger ?? false,
   });
   return config;
 };
+
+const isCodeReviewAutoTriggerEnabled = (
+  ctx: Pick<ExtensionContext, "cwd">,
+): boolean => loadConfig(ctx.cwd).codeReviewAutoTrigger ?? false;
 
 const getDefaultPlanDir = (cwd: string): string => {
   const repoSlug = path.basename(cwd);
@@ -453,6 +466,23 @@ const maybeStartCodeReview = async (
   const state = getSessionState(ctx);
   const hasPending = state.pendingReviewByCwd.has(ctx.cwd);
   const active = state.activeCodeReviewByCwd.get(ctx.cwd);
+  const codeReviewAutoTriggerEnabled = isCodeReviewAutoTriggerEnabled(ctx);
+
+  if (!codeReviewAutoTriggerEnabled && !active) {
+    if (hasPending) {
+      log?.debug(
+        "plannotator-auto skipped review (code-review auto trigger disabled)",
+        {
+          cwd: ctx.cwd,
+          reason,
+          sessionKey: getSessionKey(ctx),
+        },
+      );
+      clearReviewPending(ctx);
+    }
+    return;
+  }
+
   if ((!hasPending && !active) || state.reviewInFlight) {
     return;
   }
@@ -928,7 +958,20 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       });
 
       if (shouldQueueCodeReview) {
-        markReviewPending(ctx);
+        if (isCodeReviewAutoTriggerEnabled(ctx)) {
+          markReviewPending(ctx);
+        } else {
+          log?.debug(
+            "plannotator-auto skipped review queue (code-review auto trigger disabled)",
+            {
+              cwd: ctx.cwd,
+              toolName: event.toolName,
+              toolPath,
+              targetPath,
+              sessionKey: getSessionKey(ctx),
+            },
+          );
+        }
       }
     } else {
       log?.debug("plannotator-auto tool args missing path for review queue", {

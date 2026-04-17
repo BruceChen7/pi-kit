@@ -1,3 +1,5 @@
+import fs from "node:fs";
+
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -25,6 +27,7 @@ import {
   type FeatureType,
   slugifyFeatureName,
 } from "./naming.js";
+import { forkSessionForWorktree } from "./session-fork.js";
 import {
   type FeatureRecord,
   listFeatureRecords,
@@ -33,7 +36,10 @@ import {
 } from "./storage.js";
 import { buildWtSwitchCreateArgs, parseWtJsonResult } from "./wt.js";
 
-const log = createLogger("feature-workflow", { stderr: null });
+const log = createLogger("feature-workflow", {
+  minLevel: "debug",
+  stderr: null,
+});
 
 const FEATURE_TYPES: FeatureType[] = ["feat", "fix", "chore", "spike"];
 
@@ -45,17 +51,317 @@ const trimToNull = (value: string | null | undefined): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+type WorktreeSessionSwitchSkipReason =
+  | "disabled"
+  | "missing-worktree-path"
+  | "cancelled"
+  | "ephemeral-session"
+  | "session-fork-failed"
+  | "session-switch-failed";
+
+type WorktreeSessionSwitchResult = {
+  switched: boolean;
+  record: FeatureRecord;
+  skipReason: WorktreeSessionSwitchSkipReason | null;
+};
+
+function describeWorktreeSessionSkipReason(
+  reason: WorktreeSessionSwitchSkipReason | null,
+): string {
+  switch (reason) {
+    case "disabled":
+      return "auto-switch is disabled in config";
+    case "missing-worktree-path":
+      return "missing worktree path";
+    case "cancelled":
+      return "session switch was cancelled";
+    case "ephemeral-session":
+      return "current session is ephemeral (--no-session)";
+    case "session-fork-failed":
+      return "failed to create a worktree session file";
+    case "session-switch-failed":
+      return "failed to switch to the worktree session";
+    default:
+      return "unknown reason";
+  }
+}
+
+function buildFeatureSwitchNextStep(record: FeatureRecord): string {
+  const worktreePath = trimToNull(record.worktreePath);
+  if (worktreePath) {
+    return `cd ${worktreePath} (or: wt switch ${record.branch})`;
+  }
+  return `wt switch ${record.branch}`;
+}
+
+function buildFeatureSwitchNotifyMessage(
+  result: WorktreeSessionSwitchResult,
+): string {
+  const featureLabel = `${result.record.branch} (base: ${result.record.base})`;
+  if (result.switched) {
+    return `Switched to feature worktree session: ${featureLabel}`;
+  }
+
+  const reason = describeWorktreeSessionSkipReason(result.skipReason);
+  const next = buildFeatureSwitchNextStep(result.record);
+  return `Worktree ready: ${featureLabel} (auto-switch skipped: ${reason}). Next: ${next}`;
+}
+
+function buildFeatureInstructions(input: {
+  title: string;
+  record: FeatureRecord;
+  worktreePath: string;
+  switched: boolean;
+}): string {
+  const lines: string[] = [];
+  lines.push(input.title);
+  lines.push(`- branch: ${input.record.branch}`);
+  lines.push(`- base: ${input.record.base}`);
+  if (input.worktreePath) {
+    lines.push(`- worktree: ${input.worktreePath}`);
+  }
+  if (input.record.sessionPath) {
+    lines.push(`- session: ${input.record.sessionPath}`);
+  }
+  lines.push("");
+
+  if (input.switched) {
+    lines.push("Status:");
+    lines.push("Switched pi to a new session in the worktree.");
+  } else if (input.worktreePath) {
+    lines.push("Next:");
+    lines.push(`cd ${input.worktreePath}`);
+    lines.push(`# or: wt switch ${input.record.branch}`);
+    lines.push("# restart pi in that directory");
+  } else {
+    lines.push("Next:");
+    lines.push(`wt switch ${input.record.branch}`);
+  }
+  lines.push("");
+
+  return `${lines.join("\n")}\n`;
+}
+
+function writeFeatureRecordToKnownRoots(input: {
+  repoRoot: string;
+  worktreePath: string;
+  record: FeatureRecord;
+}): void {
+  writeFeatureRecord(input.repoRoot, input.record);
+  log.debug("feature record written", {
+    id: input.record.id,
+    target: input.repoRoot,
+  });
+
+  const worktreePath = trimToNull(input.worktreePath);
+  if (!worktreePath || worktreePath === input.repoRoot) {
+    log.debug("feature record worktree write skipped", {
+      id: input.record.id,
+      worktreePath,
+      repoRoot: input.repoRoot,
+    });
+    return;
+  }
+
+  try {
+    if (
+      !fs.existsSync(worktreePath) ||
+      !fs.statSync(worktreePath).isDirectory()
+    ) {
+      log.debug("feature record worktree path missing", {
+        id: input.record.id,
+        worktreePath,
+      });
+      return;
+    }
+
+    writeFeatureRecord(worktreePath, input.record);
+    log.debug("feature record written", {
+      id: input.record.id,
+      target: worktreePath,
+    });
+  } catch {
+    // best-effort only
+  }
+}
+
+async function maybeSwitchToWorktreeSession(input: {
+  ctx: ExtensionCommandContext;
+  repoRoot: string;
+  record: FeatureRecord;
+  worktreePath: string;
+  enabled: boolean;
+}): Promise<WorktreeSessionSwitchResult> {
+  log.debug("worktree session switch requested", {
+    branch: input.record.branch,
+    enabled: input.enabled,
+    worktreePath: input.worktreePath,
+  });
+
+  if (!input.enabled) {
+    log.debug("worktree session switch skipped", {
+      branch: input.record.branch,
+      reason: "disabled",
+    });
+    return {
+      switched: false,
+      record: input.record,
+      skipReason: "disabled",
+    };
+  }
+
+  const worktreePath = trimToNull(input.worktreePath);
+  if (!worktreePath) {
+    log.debug("worktree session switch skipped", {
+      branch: input.record.branch,
+      reason: "missing-worktree-path",
+    });
+    return {
+      switched: false,
+      record: input.record,
+      skipReason: "missing-worktree-path",
+    };
+  }
+
+  const existingSessionPath = trimToNull(input.record.sessionPath ?? null);
+  if (existingSessionPath && fs.existsSync(existingSessionPath)) {
+    log.debug("worktree session switch reusing existing session", {
+      branch: input.record.branch,
+      sessionPath: existingSessionPath,
+    });
+
+    const result = await input.ctx.switchSession(existingSessionPath);
+    const switched = !result.cancelled;
+    log.debug("worktree session switch finished", {
+      branch: input.record.branch,
+      switched,
+      sessionPath: existingSessionPath,
+      reused: true,
+      skipReason: switched ? null : "cancelled",
+    });
+    return {
+      switched,
+      record: input.record,
+      skipReason: switched ? null : "cancelled",
+    };
+  }
+
+  const currentSessionFile = trimToNull(
+    input.ctx.sessionManager.getSessionFile(),
+  );
+  if (!currentSessionFile) {
+    input.ctx.ui.notify(
+      "Cannot auto-switch to a worktree session because the current session is ephemeral (--no-session).",
+      "info",
+    );
+    log.warn("worktree session switch unavailable", {
+      branch: input.record.branch,
+      currentSessionFile,
+    });
+    return {
+      switched: false,
+      record: input.record,
+      skipReason: "ephemeral-session",
+    };
+  }
+
+  try {
+    log.debug("worktree session fork started", {
+      branch: input.record.branch,
+      currentSessionFile,
+      sourceOnDisk: fs.existsSync(currentSessionFile),
+      worktreePath,
+    });
+
+    const sessionPath = forkSessionForWorktree({
+      currentSessionFile,
+      worktreePath,
+      sessionManager: input.ctx.sessionManager,
+    });
+    if (!sessionPath) {
+      input.ctx.ui.notify("Failed to create a worktree session file.", "error");
+      log.error("worktree session fork failed", {
+        branch: input.record.branch,
+        currentSessionFile,
+        sourceOnDisk: fs.existsSync(currentSessionFile),
+        worktreePath,
+      });
+      return {
+        switched: false,
+        record: input.record,
+        skipReason: "session-fork-failed",
+      };
+    }
+
+    const updated: FeatureRecord = {
+      ...input.record,
+      worktreePath,
+      sessionPath,
+      updatedAt: new Date().toISOString(),
+    };
+
+    writeFeatureRecordToKnownRoots({
+      repoRoot: input.repoRoot,
+      worktreePath,
+      record: updated,
+    });
+
+    const result = await input.ctx.switchSession(sessionPath);
+    const switched = !result.cancelled;
+    log.debug("worktree session switch finished", {
+      branch: input.record.branch,
+      switched,
+      sessionPath,
+      reused: false,
+      skipReason: switched ? null : "cancelled",
+    });
+    return {
+      switched,
+      record: updated,
+      skipReason: switched ? null : "cancelled",
+    };
+  } catch (error) {
+    input.ctx.ui.notify(
+      `Failed to create/switch worktree session: ${error instanceof Error ? error.message : String(error)}`,
+      "error",
+    );
+    log.error("worktree session switch failed", {
+      branch: input.record.branch,
+      worktreePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      switched: false,
+      record: input.record,
+      skipReason: "session-switch-failed",
+    };
+  }
+}
+
 async function runWt(
   pi: ExtensionAPI,
   repoRoot: string,
   args: string[],
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  log.debug("running wt", {
+    repoRoot,
+    args,
+  });
+
   const result = await pi.exec("wt", ["-C", repoRoot, ...args]);
-  return {
+  const parsed = {
     code: result.code ?? 1,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
   };
+
+  log.debug("wt finished", {
+    repoRoot,
+    args,
+    code: parsed.code,
+  });
+
+  return parsed;
 }
 
 function formatFeatureList(records: FeatureRecord[]): string {
@@ -70,6 +376,9 @@ function formatFeatureList(records: FeatureRecord[]): string {
       `- ${record.id}  (branch: ${record.branch}, base: ${record.base})`,
     );
     lines.push(`  - path: ${record.worktreePath}`);
+    if (record.sessionPath) {
+      lines.push(`  - session: ${record.sessionPath}`);
+    }
     lines.push(`  - updated: ${record.updatedAt}`);
   }
   return `${lines.join("\n")}\n`;
@@ -112,6 +421,8 @@ async function selectBaseBranch(input: {
 }
 
 async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
+  log.debug("feature-start invoked", { cwd: ctx.cwd, hasUI: ctx.hasUI });
+
   const config = loadFeatureWorkflowConfig(ctx.cwd);
   if (!config.enabled) {
     ctx.ui.notify("feature-workflow is disabled", "info");
@@ -221,6 +532,11 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   }
 
   ctx.ui.notify(`Creating worktree for ${branch}…`, "info");
+  log.debug("feature-start creating worktree", {
+    repoRoot,
+    branch,
+    base,
+  });
 
   const wtResult = await runWt(
     pi,
@@ -245,6 +561,12 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   const worktreePath =
     wtJson && typeof wtJson.path === "string" ? wtJson.path : "";
 
+  log.debug("feature-start worktree ready", {
+    branch,
+    base,
+    worktreePath,
+  });
+
   const now = new Date().toISOString();
   const record: FeatureRecord = {
     id,
@@ -259,28 +581,38 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     updatedAt: now,
   };
 
-  writeFeatureRecord(repoRoot, record);
+  writeFeatureRecordToKnownRoots({ repoRoot, worktreePath, record });
 
-  const instructions: string[] = [];
-  instructions.push(`# Feature created: ${id}`);
-  instructions.push(`- branch: ${branch}`);
-  instructions.push(`- base: ${base}`);
-  if (worktreePath) {
-    instructions.push(`- worktree: ${worktreePath}`);
-  }
-  instructions.push("");
-  if (worktreePath) {
-    instructions.push("Next:");
-    instructions.push(`cd ${worktreePath}`);
-    instructions.push(`# or: wt switch ${branch}`);
-  } else {
-    instructions.push("Next:");
-    instructions.push(`wt switch ${branch}`);
-  }
-  instructions.push("");
+  const switchResult = await maybeSwitchToWorktreeSession({
+    ctx,
+    repoRoot,
+    record,
+    worktreePath,
+    enabled: config.defaults.autoSwitchToWorktreeSession,
+  });
 
-  ctx.ui.setEditorText(`${instructions.join("\n")}\n`);
-  ctx.ui.notify(`Feature worktree created: ${branch}`, "info");
+  log.debug("feature-start session switch result", {
+    branch,
+    switched: switchResult.switched,
+    worktreePath: switchResult.record.worktreePath,
+    sessionPath: switchResult.record.sessionPath ?? null,
+  });
+
+  ctx.ui.setEditorText(
+    buildFeatureInstructions({
+      title: `# Feature created: ${id}`,
+      record: switchResult.record,
+      worktreePath: switchResult.record.worktreePath,
+      switched: switchResult.switched,
+    }),
+  );
+
+  ctx.ui.notify(
+    switchResult.switched
+      ? `Switched to feature worktree session: ${branch}`
+      : `Feature worktree created: ${branch}`,
+    "info",
+  );
 }
 
 async function runFeatureList(_pi: ExtensionAPI, ctx: ExtensionCommandContext) {
@@ -320,6 +652,12 @@ async function runFeatureSwitch(
   ctx: ExtensionCommandContext,
   args: string[],
 ) {
+  log.debug("feature-switch invoked", {
+    cwd: ctx.cwd,
+    args,
+    hasUI: ctx.hasUI,
+  });
+
   const config = loadFeatureWorkflowConfig(ctx.cwd);
   if (!config.enabled) {
     ctx.ui.notify("feature-workflow is disabled", "info");
@@ -354,6 +692,13 @@ async function runFeatureSwitch(
     return;
   }
 
+  log.debug("feature-switch target resolved", {
+    query,
+    repoRoot,
+    id: record.id,
+    branch: record.branch,
+  });
+
   const wtArgs = [
     "switch",
     record.branch,
@@ -363,6 +708,11 @@ async function runFeatureSwitch(
     "--yes",
   ];
 
+  log.debug("feature-switch preparing worktree", {
+    repoRoot,
+    branch: record.branch,
+  });
+
   const wtResult = await runWt(pi, repoRoot, wtArgs);
   if (wtResult.code !== 0) {
     const msg =
@@ -370,6 +720,11 @@ async function runFeatureSwitch(
       trimToNull(wtResult.stdout) ??
       "wt switch failed";
     ctx.ui.notify(msg, "error");
+    log.error("wt switch failed", {
+      branch: record.branch,
+      repoRoot,
+      msg,
+    });
     return;
   }
 
@@ -379,20 +734,41 @@ async function runFeatureSwitch(
       ? wtJson.path
       : record.worktreePath;
 
-  const lines: string[] = [];
-  lines.push(`# Feature: ${record.id}`);
-  lines.push(`- branch: ${record.branch}`);
-  lines.push(`- worktree: ${worktreePath || "(unknown)"}`);
-  lines.push("");
-  if (worktreePath) {
-    lines.push("Next:");
-    lines.push(`cd ${worktreePath}`);
-    lines.push("# restart pi in that directory");
-  }
-  lines.push("");
+  log.debug("feature-switch worktree ready", {
+    branch: record.branch,
+    worktreePath,
+  });
 
-  ctx.ui.setEditorText(`${lines.join("\n")}\n`);
-  ctx.ui.notify(`Worktree ready: ${record.branch}`, "info");
+  const now = new Date().toISOString();
+  const updatedRecord: FeatureRecord = {
+    ...record,
+    worktreePath: worktreePath || record.worktreePath,
+    updatedAt: now,
+  };
+
+  writeFeatureRecordToKnownRoots({
+    repoRoot,
+    worktreePath: updatedRecord.worktreePath,
+    record: updatedRecord,
+  });
+
+  const switchResult = await maybeSwitchToWorktreeSession({
+    ctx,
+    repoRoot,
+    record: updatedRecord,
+    worktreePath: updatedRecord.worktreePath,
+    enabled: config.defaults.autoSwitchToWorktreeSession,
+  });
+
+  log.debug("feature-switch session result", {
+    branch: switchResult.record.branch,
+    switched: switchResult.switched,
+    skipReason: switchResult.skipReason,
+    worktreePath: switchResult.record.worktreePath,
+    sessionPath: switchResult.record.sessionPath ?? null,
+  });
+
+  ctx.ui.notify(buildFeatureSwitchNotifyMessage(switchResult), "info");
 }
 
 async function runFeatureValidate(
@@ -472,7 +848,19 @@ export default function featureWorkflowExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     const config = loadFeatureWorkflowConfig(ctx.cwd);
+    log.debug("feature-workflow session_start", {
+      cwd: ctx.cwd,
+      enabled: config.enabled,
+    });
     if (!config.enabled) return;
     log.info("feature-workflow enabled", { cwd: ctx.cwd });
+  });
+
+  pi.on("session_switch", (_event, ctx) => {
+    const config = loadFeatureWorkflowConfig(ctx.cwd);
+    log.debug("feature-workflow session_switch", {
+      cwd: ctx.cwd,
+      enabled: config.enabled,
+    });
   });
 }

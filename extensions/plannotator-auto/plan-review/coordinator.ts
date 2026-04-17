@@ -224,7 +224,7 @@ export const createPlanReviewCoordinator = (
     }
 
     pi.sendUserMessage(formatPlanReviewMessage(result), {
-      deliverAs: "followUp",
+      deliverAs: "steer",
     });
 
     log?.info("plannotator-auto completed plan review", {
@@ -505,12 +505,51 @@ export const createPlanReviewCoordinator = (
         if (statusResponse.status === "handled") {
           const status = statusResponse.result;
           if (status.status === "pending") {
-            log?.debug("plannotator-auto plan review still pending", {
-              cwd: ctx.cwd,
-              reason,
-              reviewId: active.reviewId,
-            });
-            schedulePlanReviewRetry(ctx, "pending-plan-review-status");
+            log?.info(
+              "plannotator-auto waiting synchronously for active plan-review result",
+              {
+                cwd: ctx.cwd,
+                reason,
+                reviewId: active.reviewId,
+                sessionKey: getSessionKey(ctx),
+              },
+            );
+
+            const result = await waitForActivePlanReviewResult(
+              ctx,
+              state,
+              requestPlannotator,
+              active,
+            );
+
+            if ("missing" in result) {
+              log?.warn(
+                "plannotator-auto lost active plan review while waiting synchronously",
+                {
+                  cwd: ctx.cwd,
+                  reason,
+                  reviewId: active.reviewId,
+                  sessionKey: getSessionKey(ctx),
+                },
+              );
+              clearActivePlanReview(
+                sessionKey,
+                ctx,
+                state,
+                active,
+                "Plannotator lost the active plan review. Please rerun plan review.",
+              );
+              return;
+            }
+
+            handlePlanReviewCompletion(
+              sessionKey,
+              ctx,
+              state,
+              active,
+              result,
+              "status",
+            );
             return;
           }
 
@@ -665,14 +704,32 @@ export const createPlanReviewCoordinator = (
 
         resetRetryAttempts(state, ctx.cwd);
 
-        if (reason === "plan-file-write") {
-          const activeReview = state.activePlanReviewByCwd.get(ctx.cwd);
-          if (!activeReview) {
-            return;
-          }
+        const activeReview = state.activePlanReviewByCwd.get(ctx.cwd);
+        if (!activeReview) {
+          return;
+        }
 
-          log?.info(
-            "plannotator-auto waiting synchronously for plan-review result",
+        log?.info(
+          "plannotator-auto waiting synchronously for plan-review result",
+          {
+            cwd: ctx.cwd,
+            reason,
+            planFile: pending.planFile,
+            reviewId: activeReview.reviewId,
+            sessionKey: getSessionKey(ctx),
+          },
+        );
+
+        const result = await waitForActivePlanReviewResult(
+          ctx,
+          state,
+          requestPlannotator,
+          activeReview,
+        );
+
+        if ("missing" in result) {
+          log?.warn(
+            "plannotator-auto lost active plan review while waiting synchronously",
             {
               cwd: ctx.cwd,
               reason,
@@ -681,47 +738,24 @@ export const createPlanReviewCoordinator = (
               sessionKey: getSessionKey(ctx),
             },
           );
-
-          const result = await waitForActivePlanReviewResult(
-            ctx,
-            state,
-            requestPlannotator,
-            activeReview,
-          );
-
-          if ("missing" in result) {
-            log?.warn(
-              "plannotator-auto lost active plan review while waiting synchronously",
-              {
-                cwd: ctx.cwd,
-                reason,
-                planFile: pending.planFile,
-                reviewId: activeReview.reviewId,
-                sessionKey: getSessionKey(ctx),
-              },
-            );
-            clearActivePlanReview(
-              sessionKey,
-              ctx,
-              state,
-              activeReview,
-              "Plannotator lost the active plan review. Please rerun plan review.",
-            );
-            return;
-          }
-
-          handlePlanReviewCompletion(
+          clearActivePlanReview(
             sessionKey,
             ctx,
             state,
             activeReview,
-            result,
-            "status",
+            "Plannotator lost the active plan review. Please rerun plan review.",
           );
           return;
         }
 
-        schedulePlanReviewRetry(ctx, "await-plan-review-result");
+        handlePlanReviewCompletion(
+          sessionKey,
+          ctx,
+          state,
+          activeReview,
+          result,
+          "status",
+        );
         return;
       }
 

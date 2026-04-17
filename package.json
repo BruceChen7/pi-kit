@@ -18,7 +18,8 @@
       "./extensions/rtk-rewrite",
       "./extensions/plannotator-auto",
       "./extensions/dirty-git-status",
-      "./extensions/codex-plan-limits"
+      "./extensions/codex-plan-limits",
+      "./extensions/feature-workflow"
     ]
   },
   "scripts": {

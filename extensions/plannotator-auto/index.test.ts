@@ -568,6 +568,20 @@ describe("code review trigger timing", () => {
         }),
     );
 
+    vi.doMock("../shared/settings.ts", () => ({
+      loadGlobalSettings: vi.fn(() => ({
+        globalPath: "/home/test/.pi/agent/third_extension_settings.json",
+        global: {},
+      })),
+      loadSettings: vi.fn(() => ({
+        merged: {
+          plannotatorAuto: {
+            codeReviewAutoTrigger: true,
+          },
+        },
+      })),
+    }));
+
     vi.doMock("../shared/git.ts", () => ({
       DEFAULT_GIT_TIMEOUT_MS: 1_000,
       getRepoRoot: vi.fn(() => "/repo"),
@@ -693,6 +707,20 @@ describe("code review trigger timing", () => {
         status: "pending" as const,
         reviewId: "code-review-1",
       },
+    }));
+
+    vi.doMock("../shared/settings.ts", () => ({
+      loadGlobalSettings: vi.fn(() => ({
+        globalPath: "/home/test/.pi/agent/third_extension_settings.json",
+        global: {},
+      })),
+      loadSettings: vi.fn(() => ({
+        merged: {
+          plannotatorAuto: {
+            codeReviewAutoTrigger: true,
+          },
+        },
+      })),
     }));
 
     vi.doMock("../shared/git.ts", () => ({
@@ -839,6 +867,20 @@ describe("code review trigger timing", () => {
         status: "pending" as const,
         reviewId: "code-review-annotations",
       },
+    }));
+
+    vi.doMock("../shared/settings.ts", () => ({
+      loadGlobalSettings: vi.fn(() => ({
+        globalPath: "/home/test/.pi/agent/third_extension_settings.json",
+        global: {},
+      })),
+      loadSettings: vi.fn(() => ({
+        merged: {
+          plannotatorAuto: {
+            codeReviewAutoTrigger: true,
+          },
+        },
+      })),
     }));
 
     vi.doMock("../shared/git.ts", () => ({

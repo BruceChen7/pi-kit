@@ -9,7 +9,17 @@ export type WtExecutionResult = {
   stderr: string;
 };
 
-export type WtRunner = (args: string[]) => Promise<WtExecutionResult>;
+export type WtRunOptions = {
+  timeoutMs?: number;
+};
+
+export type WtRunner = (
+  args: string[],
+  options?: WtRunOptions,
+) => Promise<WtExecutionResult>;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 const trimToNull = (value: string | null | undefined): string | null => {
   if (typeof value !== "string") return null;
@@ -32,9 +42,49 @@ const getWorktreePath = (
   return typeof wtJson.path === "string" ? wtJson.path : fallbackPath;
 };
 
+const parsePrimaryWorktreePath = (stdout: string): string | null => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout) as unknown;
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(parsed)) {
+    return null;
+  }
+
+  for (const item of parsed) {
+    if (!isRecord(item)) continue;
+    if (item.is_main !== true) continue;
+    if (typeof item.path !== "string") continue;
+    const path = trimToNull(item.path);
+    if (path) {
+      return path;
+    }
+  }
+
+  return null;
+};
+
 export function createWtRunner(pi: ExtensionAPI, repoRoot: string): WtRunner {
-  return async (args: string[]): Promise<WtExecutionResult> => {
-    const result = await pi.exec("wt", ["-C", repoRoot, ...args]);
+  return async (
+    args: string[],
+    options: WtRunOptions = {},
+  ): Promise<WtExecutionResult> => {
+    const timeout =
+      typeof options.timeoutMs === "number" &&
+      Number.isFinite(options.timeoutMs) &&
+      options.timeoutMs > 0
+        ? options.timeoutMs
+        : undefined;
+
+    const execOptions = typeof timeout === "number" ? { timeout } : undefined;
+
+    const result =
+      typeof execOptions === "undefined"
+        ? await pi.exec("wt", ["-C", repoRoot, ...args])
+        : await pi.exec("wt", ["-C", repoRoot, ...args], execOptions);
     return {
       code: result.code ?? 1,
       stdout: result.stdout ?? "",
@@ -113,5 +163,92 @@ export async function ensureFeatureWorktree(
   return {
     ok: true,
     worktreePath: getWorktreePath(result, input.fallbackWorktreePath),
+  };
+}
+
+export async function runWorktreeHook(
+  runWt: WtRunner,
+  input: {
+    hookType: string;
+    hook?: string | null;
+    branch?: string | null;
+  },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const args = ["hook", input.hookType];
+
+  const hook = trimToNull(input.hook ?? null);
+  if (hook) {
+    args.push(hook);
+  }
+
+  const branch = trimToNull(input.branch ?? null);
+  if (branch) {
+    args.push(`--branch=${branch}`);
+  }
+
+  args.push("--yes");
+
+  const result = await runWt(args);
+  if (result.code !== 0) {
+    return {
+      ok: false,
+      message: toErrorMessage(result, `wt hook ${input.hookType} failed`),
+    };
+  }
+
+  return { ok: true };
+}
+
+export async function runCopyIgnoredToFeatureWorktree(
+  runWt: WtRunner,
+  input: {
+    toBranch: string;
+    fromBranch?: string | null;
+    timeoutMs?: number;
+  },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const args = ["step", "copy-ignored", "--to", input.toBranch];
+
+  const fromBranch = trimToNull(input.fromBranch ?? null);
+  if (fromBranch) {
+    args.push("--from", fromBranch);
+  }
+
+  const result = await runWt(args, {
+    timeoutMs: input.timeoutMs,
+  });
+
+  if (result.code !== 0) {
+    return {
+      ok: false,
+      message: toErrorMessage(result, "wt step copy-ignored failed"),
+    };
+  }
+
+  return { ok: true };
+}
+
+export async function resolvePrimaryWorktreePathFromWt(
+  runWt: WtRunner,
+): Promise<{ ok: true; path: string } | { ok: false; message: string }> {
+  const result = await runWt(["list", "--format", "json"]);
+  if (result.code !== 0) {
+    return {
+      ok: false,
+      message: toErrorMessage(result, "wt list failed"),
+    };
+  }
+
+  const path = parsePrimaryWorktreePath(result.stdout);
+  if (!path) {
+    return {
+      ok: false,
+      message: "Failed to resolve primary worktree path from wt list output",
+    };
+  }
+
+  return {
+    ok: true,
+    path,
   };
 }

@@ -1,11 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import {
+  type SessionEntry,
+  type SessionHeader,
+  SessionManager,
+} from "@mariozechner/pi-coding-agent";
 
 type SessionSnapshotSource = {
-  getHeader(): Record<string, unknown> | null;
-  getEntries(): Record<string, unknown>[];
+  getHeader(): SessionHeader | null;
+  getEntries(): SessionEntry[];
 };
 
 type ForkSessionForWorktreeInput = {
@@ -48,7 +52,7 @@ export function forkSessionForWorktree(
       ? trimToNull(sourceHeader.parentSession)
       : null;
 
-  const snapshotHeader: Record<string, unknown> = {
+  const snapshotHeader: SessionHeader = {
     ...forkedHeader,
     parentSession: headerParent ?? fallbackParent ?? undefined,
   };

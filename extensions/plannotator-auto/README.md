@@ -51,6 +51,7 @@ To disable plan review in Plannotator Auto explicitly:
 - Async code-review completions now preserve inline `annotations`; if the reviewer returns annotations without top-level `feedback`, PI still receives a follow-up asking it to address the review comments.
 - Code review now depends on explicit coordinator signal `isPlanReviewSettled(...)` rather than peeking internal plan-review maps.
 - If Plannotator is unavailable on shared event channel, a warning is shown (no slash-command fallback).
+- Keyboard shortcut `Ctrl+Alt+L` annotates the most recently modified generated plan file (`YYYY-MM-DD-*.md`) in the configured plan directory via shared event API (`action: "annotate"`).
 
 ## Architecture (Option B)
 

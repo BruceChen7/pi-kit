@@ -19,6 +19,16 @@ type ImportedModule = {
     } | null,
     targetPath: string,
   ) => boolean;
+  findLatestPlanFileForAnnotation?: (
+    ctx: { cwd: string },
+    planConfig: {
+      planFile: string;
+      resolvedPlanPath: string;
+    },
+  ) => {
+    absolutePath: string;
+    repoRelativePath: string;
+  } | null;
   getSessionKey?: (ctx: {
     cwd: string;
     sessionManager: { getSessionFile: () => string | null | undefined };
@@ -105,6 +115,54 @@ describe("shouldQueueReviewForToolPath", () => {
   });
 });
 
+describe("findLatestPlanFileForAnnotation", () => {
+  it("returns the most recently modified generated plan file", async () => {
+    const { findLatestPlanFileForAnnotation } = await importPlannotatorAuto();
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-latest-plan-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planDir = path.join(repoRoot, ".pi", "plans", repoName, "plan");
+    const olderPlan = path.join(planDir, "2026-04-17-older.md");
+    const latestPlan = path.join(planDir, "2026-04-18-latest.md");
+    const nonPlanFile = path.join(planDir, "notes.md");
+
+    await fs.mkdir(planDir, { recursive: true });
+    await fs.writeFile(olderPlan, "# Older\n", "utf8");
+    await fs.writeFile(latestPlan, "# Latest\n", "utf8");
+    await fs.writeFile(nonPlanFile, "# Notes\n", "utf8");
+
+    const olderDate = new Date("2026-04-17T00:00:00.000Z");
+    const latestDate = new Date("2026-04-18T00:00:00.000Z");
+    await fs.utimes(olderPlan, olderDate, olderDate);
+    await fs.utimes(latestPlan, latestDate, latestDate);
+
+    try {
+      expect(
+        findLatestPlanFileForAnnotation?.(
+          { cwd: repoRoot },
+          {
+            planFile: path.join(".pi", "plans", repoName, "plan"),
+            resolvedPlanPath: planDir,
+          },
+        ),
+      ).toEqual({
+        absolutePath: latestPlan,
+        repoRelativePath: path.join(
+          ".pi",
+          "plans",
+          repoName,
+          "plan",
+          "2026-04-18-latest.md",
+        ),
+      });
+    } finally {
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("getSessionKey", () => {
   it("falls back to a cwd-scoped ephemeral key when the session file is unavailable", async () => {
     const { getSessionKey } = await importPlannotatorAuto();
@@ -156,9 +214,16 @@ const createFakeEventBus = (): FakeEventBus => {
   };
 };
 
+type ShortcutHandler = (ctx: TestCtx) => unknown;
+type ShortcutRegistration = {
+  description: string;
+  handler: ShortcutHandler;
+};
+
 const createFakePi = () => {
   const handlers = new Map<string, PiEventHandler[]>();
   const events = createFakeEventBus();
+  const shortcuts = new Map<string, ShortcutRegistration>();
 
   return {
     api: {
@@ -167,14 +232,28 @@ const createFakePi = () => {
         list.push(handler);
         handlers.set(name, list);
       },
+      registerShortcut: vi.fn(
+        (shortcut: unknown, registration: ShortcutRegistration) => {
+          shortcuts.set(String(shortcut), registration);
+        },
+      ),
       events,
       sendUserMessage: vi.fn(),
       getCommands: () => [],
     },
+    events,
     emit: async (name: string, event: unknown, ctx: TestCtx): Promise<void> => {
       for (const handler of handlers.get(name) ?? []) {
         await handler(event, ctx);
       }
+    },
+    runShortcut: async (shortcut: string, ctx: TestCtx): Promise<void> => {
+      const registration = shortcuts.get(shortcut);
+      if (!registration) {
+        throw new Error(`Shortcut not registered: ${shortcut}`);
+      }
+
+      await registration.handler(ctx);
     },
   };
 };
@@ -183,6 +262,193 @@ const flushMicrotasks = async (): Promise<void> => {
   await Promise.resolve();
   await Promise.resolve();
 };
+
+describe("annotate latest plan shortcut", () => {
+  it("requests plannotator annotate for the most recently modified plan file", async () => {
+    vi.resetModules();
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, events, runShortcut } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-shortcut-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planDir = path.join(repoRoot, ".pi", "plans", repoName, "plan");
+    const olderPlanPath = path.join(planDir, "2026-04-17-older.md");
+    const latestPlanPath = path.join(planDir, "2026-04-18-latest.md");
+
+    await fs.mkdir(planDir, { recursive: true });
+    await fs.writeFile(olderPlanPath, "# Older\n", "utf8");
+    await fs.writeFile(latestPlanPath, "# Latest\n", "utf8");
+
+    const olderDate = new Date("2026-04-17T00:00:00.000Z");
+    const latestDate = new Date("2026-04-18T00:00:00.000Z");
+    await fs.utimes(olderPlanPath, olderDate, olderDate);
+    await fs.utimes(latestPlanPath, latestDate, latestDate);
+
+    const annotateRequests: Array<{
+      action: string;
+      payload: unknown;
+    }> = [];
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        action: string;
+        payload: { filePath?: string; mode?: string };
+        respond: (response: unknown) => void;
+      };
+
+      annotateRequests.push({
+        action: request.action,
+        payload: request.payload,
+      });
+
+      request.respond({
+        status: "handled",
+        result: {
+          feedback: "Please clarify handoff steps.",
+        },
+      });
+    });
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await runShortcut("ctrl+alt+l", ctx);
+
+      expect(annotateRequests).toHaveLength(1);
+      expect(annotateRequests[0]).toEqual({
+        action: "annotate",
+        payload: {
+          filePath: latestPlanPath,
+          mode: "annotate",
+        },
+      });
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Please clarify handoff steps."),
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("warns when no generated plan files are available", async () => {
+    vi.resetModules();
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, runShortcut } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-shortcut-empty-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planDir = path.join(repoRoot, ".pi", "plans", repoName, "plan");
+    await fs.mkdir(planDir, { recursive: true });
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await runShortcut("ctrl+alt+l", ctx);
+
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining("No plan files found in"),
+        "warning",
+      );
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("warns when plannotator is unavailable for annotate requests", async () => {
+    vi.resetModules();
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, events, runShortcut } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-shortcut-unavailable-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planDir = path.join(repoRoot, ".pi", "plans", repoName, "plan");
+    const latestPlanPath = path.join(planDir, "2026-04-19-latest.md");
+
+    await fs.mkdir(planDir, { recursive: true });
+    await fs.writeFile(latestPlanPath, "# Latest\n", "utf8");
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        respond: (response: unknown) => void;
+      };
+
+      request.respond({
+        status: "unavailable",
+        error: "Plannotator context is not ready yet.",
+      });
+    });
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await runShortcut("ctrl+alt+l", ctx);
+
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        "Plannotator context is not ready yet.",
+        "warning",
+      );
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("plan review trigger timing", () => {
   it("waits for the plan review result after a busy plan-file write", async () => {
@@ -213,8 +479,10 @@ describe("plan review trigger timing", () => {
         markPending: vi.fn(),
         markCompleted: vi.fn(),
       })),
+      formatAnnotationMessage: vi.fn(() => ""),
       formatCodeReviewMessage: vi.fn(() => ""),
       formatPlanReviewMessage: vi.fn(() => "Plan review rejected."),
+      requestAnnotation: vi.fn(),
       requestCodeReview: vi.fn(),
       requestReviewStatus: vi.fn(),
       startCodeReview: vi.fn(),
@@ -312,8 +580,10 @@ describe("plan review trigger timing", () => {
         markPending: vi.fn(),
         markCompleted: vi.fn(),
       })),
+      formatAnnotationMessage: vi.fn(() => ""),
       formatCodeReviewMessage: vi.fn(() => ""),
       formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestAnnotation: vi.fn(),
       requestCodeReview: vi.fn(),
       requestReviewStatus: vi.fn(),
       startCodeReview: vi.fn(),
@@ -417,8 +687,10 @@ describe("plan review trigger timing", () => {
         markPending: vi.fn(),
         markCompleted: vi.fn(),
       })),
+      formatAnnotationMessage: vi.fn(() => ""),
       formatCodeReviewMessage: vi.fn(() => ""),
       formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestAnnotation: vi.fn(),
       requestCodeReview: vi.fn(),
       requestReviewStatus: vi.fn(),
       startCodeReview: vi.fn(),
@@ -600,6 +872,7 @@ describe("code review trigger timing", () => {
         markPending: vi.fn(),
         markCompleted: vi.fn(),
       })),
+      formatAnnotationMessage: vi.fn(() => ""),
       formatCodeReviewMessage: vi.fn(
         (result: { approved?: boolean; feedback?: string }) => {
           if (result.approved) {
@@ -614,6 +887,7 @@ describe("code review trigger timing", () => {
         },
       ),
       formatPlanReviewMessage: vi.fn(() => ""),
+      requestAnnotation: vi.fn(),
       requestCodeReview,
       requestReviewStatus,
       startCodeReview: vi.fn(),
@@ -749,6 +1023,7 @@ describe("code review trigger timing", () => {
         markPending: vi.fn(),
         markCompleted: vi.fn(),
       })),
+      formatAnnotationMessage: vi.fn(() => ""),
       formatCodeReviewMessage: vi.fn(
         (result: { approved?: boolean; feedback?: string }) => {
           if (result.approved) {
@@ -763,6 +1038,7 @@ describe("code review trigger timing", () => {
         },
       ),
       formatPlanReviewMessage: vi.fn(() => ""),
+      requestAnnotation: vi.fn(),
       requestCodeReview,
       requestReviewStatus,
       startCodeReview: vi.fn(),
@@ -909,8 +1185,10 @@ describe("code review trigger timing", () => {
         markPending: vi.fn(),
         markCompleted: vi.fn(),
       })),
+      formatAnnotationMessage: vi.fn(() => ""),
       formatCodeReviewMessage,
       formatPlanReviewMessage: vi.fn(() => ""),
+      requestAnnotation: vi.fn(),
       requestCodeReview,
       requestReviewStatus,
       startCodeReview: vi.fn(),

@@ -6,6 +6,9 @@ import {
   createWtRunner,
   ensureFeatureWorktree,
   listFeatureRecordsFromWorktree,
+  resolvePrimaryWorktreePathFromWt,
+  runCopyIgnoredToFeatureWorktree,
+  runWorktreeHook,
   type WtRunner,
 } from "./worktree-gateway.js";
 
@@ -117,6 +120,74 @@ describe("worktree-gateway", () => {
     expect(result).toEqual({ ok: false, message: "wt list failed" });
   });
 
+  it("runs named hook for a branch", async () => {
+    const runWt: WtRunner = vi.fn().mockResolvedValue(okResult("ok"));
+
+    const result = await runWorktreeHook(runWt, {
+      hookType: "pre-start",
+      hook: "project:deps-link",
+      branch: "feat/main/checkout-v2",
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(runWt).toHaveBeenCalledWith([
+      "hook",
+      "pre-start",
+      "project:deps-link",
+      "--branch=feat/main/checkout-v2",
+      "--yes",
+    ]);
+  });
+
+  it("runs copy-ignored fallback with timeout", async () => {
+    const runWt: WtRunner = vi.fn().mockResolvedValue(okResult("ok"));
+
+    const result = await runCopyIgnoredToFeatureWorktree(runWt, {
+      toBranch: "feat/main/checkout-v2",
+      timeoutMs: 1234,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(runWt).toHaveBeenCalledWith(
+      ["step", "copy-ignored", "--to", "feat/main/checkout-v2"],
+      { timeoutMs: 1234 },
+    );
+  });
+
+  it("resolves primary worktree path from wt list output", async () => {
+    const runWt: WtRunner = vi.fn().mockResolvedValue(
+      okResult(
+        JSON.stringify([
+          {
+            branch: "main",
+            path: "/repo",
+            is_main: true,
+          },
+          {
+            branch: "feat/main/checkout-v2",
+            path: "/repo/.wt/feat-main-checkout-v2",
+            is_main: false,
+          },
+        ]),
+      ),
+    );
+
+    const result = await resolvePrimaryWorktreePathFromWt(runWt);
+    expect(result).toEqual({ ok: true, path: "/repo" });
+  });
+
+  it("returns error when primary worktree path cannot be determined", async () => {
+    const runWt: WtRunner = vi
+      .fn()
+      .mockResolvedValue(okResult(JSON.stringify([])));
+
+    const result = await resolvePrimaryWorktreePathFromWt(runWt);
+    expect(result).toEqual({
+      ok: false,
+      message: "Failed to resolve primary worktree path from wt list output",
+    });
+  });
+
   it("creates wt runner with repo root prefix and normalized result", async () => {
     const exec = vi.fn().mockResolvedValue({
       code: undefined,
@@ -137,5 +208,24 @@ describe("worktree-gateway", () => {
       "json",
     ]);
     expect(result).toEqual({ code: 1, stdout: "", stderr: "" });
+  });
+
+  it("forwards timeout option to pi.exec", async () => {
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: "[]",
+      stderr: "",
+    });
+
+    const pi = { exec } as unknown as ExtensionAPI;
+    const runWt = createWtRunner(pi, "/repo");
+
+    await runWt(["list", "--format", "json"], { timeoutMs: 5000 });
+
+    expect(exec).toHaveBeenCalledWith(
+      "wt",
+      ["-C", "/repo", "list", "--format", "json"],
+      { timeout: 5000 },
+    );
   });
 });

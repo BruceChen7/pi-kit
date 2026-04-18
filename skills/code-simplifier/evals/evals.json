@@ -1,0 +1,29 @@
+{
+  "skill_name": "code-simplifier",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "请帮我简化这个 TypeScript 函数，保持行为不变，并解释为什么更容易维护。\n\nfunction getBadge(role: string, loading: boolean, failed: boolean): string {\n  return loading ? 'loading' : failed ? 'error' : role === 'admin' ? 'root' : role === 'editor' ? 'edit' : 'read';\n}",
+      "expected_output": "Uses clearer conditional structure (no nested ternary), preserves return values, and explains maintainability improvements.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Refactor this Go code for clarity without changing behavior:\n\nfunc process(users []User) []User {\n    if users != nil {\n        if len(users) > 0 {\n            out := []User{}\n            for _, u := range users {\n                if u.Enabled {\n                    out = append(out, u)\n                }\n            }\n            return out\n        }\n    }\n    return nil\n}",
+      "expected_output": "Applies early return and clearer flow, keeps result semantics the same, and avoids unnecessary nesting.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Can you simplify this Zig function and keep exact behavior?\n\nfn decideMode(is_loading: bool, has_error: bool, is_ready: bool) Mode {\n    return if (is_loading) .loading else if (has_error) .error else if (is_ready) .ready else .idle;\n}",
+      "expected_output": "Refactors into explicit readable control flow, preserves all mode outcomes, and keeps Zig idioms clear.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "请简化这个 Python 逻辑，要求可读性优先、行为不变，并说明你如何判断这是更好的设计：\n\ndef score(values):\n    return sum(x * 3 for x in values if x > 10 and x % 2 == 0 and x % 5 != 0)",
+      "expected_output": "Breaks dense expression into readable steps, preserves filtering/math logic, and explicitly explains simplification rationale.",
+      "files": []
+    }
+  ]
+}

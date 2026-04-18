@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -45,11 +45,23 @@ const writePackageJson = (packageJsonPath, packageJson) => {
 };
 
 const getPiVersion = () => {
-  const output = execFileSync("pi", ["--version"], {
+  const result = spawnSync("pi", ["--version"], {
     cwd: process.cwd(),
     encoding: "utf8",
-    stdio: ["ignore", "pipe", "inherit"],
-  }).trim();
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
+
+  if (result.status !== 0) {
+    throw new Error(
+      `pi --version failed with exit code ${result.status ?? "unknown"}: ${output || "<empty>"}`,
+    );
+  }
 
   const match = output.match(/\d+\.\d+\.\d+(?:[-+][\w.-]+)?/);
   if (!match) {

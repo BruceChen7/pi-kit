@@ -12,7 +12,7 @@ A pi-kit extension that helps you start and manage feature development using Wor
     - `settings` → `.pi/third_extension_settings.json`
     - `gitignore` → ensure `.pi/` exists in `.gitignore`
     - `worktreeinclude` → `.worktreeinclude`
-    - `hook-script` → `.pi/pi-feature-workflow-links.sh`
+    - `hook-script` → `$HOME/.pi/pi-feature-workflow-links.sh`
     - `wt-toml` → managed hook block in `.config/wt.toml`
 
 - `/feature-start`
@@ -55,10 +55,10 @@ This command prepares the files needed for ignored-sync and Worktrunk hooks:
 - `.pi/third_extension_settings.json`
 - `.gitignore` (ensures `.pi/` is present)
 - `.worktreeinclude`
-- `.pi/pi-feature-workflow-links.sh`
+- `$HOME/.pi/pi-feature-workflow-links.sh`
 - `.config/wt.toml` (managed block)
 
-After setup, `.pi` artifacts stay local by default (because `.pi/` is ignored). Commit tracked workflow files like `.worktreeinclude` and `.config/wt.toml` if you want to share them with your team.
+After setup, repo-local `.pi` artifacts stay local by default (because `.pi/` is ignored), while the hook script is installed at `$HOME/.pi/pi-feature-workflow-links.sh`. Commit tracked workflow files like `.worktreeinclude` and `.config/wt.toml` if you want to share them with your team.
 
 ### 2) Start a new feature
 
@@ -160,7 +160,7 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
           "required": false,
           "onMissing": {
             "action": "run-hook",
-            "hook": "project:deps-link"
+            "hook": "project-deps-link"
           }
         },
         {
@@ -169,7 +169,7 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
           "required": false,
           "onMissing": {
             "action": "run-hook",
-            "hook": "project:deps-link"
+            "hook": "project-deps-link"
           }
         },
         {
@@ -178,7 +178,7 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
           "required": false,
           "onMissing": {
             "action": "run-hook",
-            "hook": "project:deps-link"
+            "hook": "project-deps-link"
           }
         },
         {
@@ -187,7 +187,7 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
           "required": false,
           "onMissing": {
             "action": "run-hook",
-            "hook": "project:deps-link"
+            "hook": "project-deps-link"
           }
         }
       ],
@@ -219,7 +219,7 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
 
 ## Fast bootstrap (recommended)
 
-Use `/feature-setup` to install the repo-local script/hook wiring:
+Use `/feature-setup` to install hook wiring (with a user-scoped script in `$HOME/.pi`):
 
 ```text
 /feature-setup npm
@@ -230,15 +230,15 @@ By default this command updates:
 - `.pi/third_extension_settings.json`
 - `.gitignore` (adds `.pi/` if missing)
 - `.worktreeinclude`
-- `.pi/pi-feature-workflow-links.sh`
+- `$HOME/.pi/pi-feature-workflow-links.sh`
 - `.config/wt.toml` (managed block)
 
 Example managed block in `.config/wt.toml`:
 
 ```toml
 # >>> pi-kit feature-workflow setup (managed) >>>
-[[pre-start]]
-"project:deps-link" = "bash .pi/pi-feature-workflow-links.sh '{{ primary_worktree_path }}'"
+[pre-start]
+"project-deps-link" = "bash \"$HOME/.pi/pi-feature-workflow-links.sh\" '{{ primary_worktree_path }}'"
 # <<< pi-kit feature-workflow setup (managed) <<<
 ```
 

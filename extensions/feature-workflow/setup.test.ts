@@ -69,6 +69,7 @@ describe("feature-workflow setup args", () => {
 describe("applyFeatureWorkflowSetupProfile", () => {
   it("writes recommended files and is idempotent", () => {
     const repoRoot = createTempDir("pi-kit-feature-setup-");
+    const userHomePath = createTempDir("pi-kit-feature-setup-home-");
     const profile = getFeatureWorkflowSetupProfile("npm");
     expect(profile).not.toBeNull();
     if (!profile) return;
@@ -78,6 +79,7 @@ describe("applyFeatureWorkflowSetupProfile", () => {
       repoRoot,
       profile,
       targets: FEATURE_WORKFLOW_SETUP_TARGETS,
+      userHomePath,
     });
 
     expect(first.changedCount).toBe(5);
@@ -104,7 +106,7 @@ describe("applyFeatureWorkflowSetupProfile", () => {
     );
 
     const scriptPath = path.join(
-      repoRoot,
+      userHomePath,
       ".pi",
       "pi-feature-workflow-links.sh",
     );
@@ -116,8 +118,13 @@ describe("applyFeatureWorkflowSetupProfile", () => {
 
     const wtTomlPath = path.join(repoRoot, ".config", "wt.toml");
     const wtToml = fs.readFileSync(wtTomlPath, "utf-8");
-    expect(wtToml).toContain('"project:deps-link"');
-    expect(wtToml).toContain("bash .pi/pi-feature-workflow-links.sh");
+    expect(wtToml).toContain("[pre-start]");
+    expect(wtToml).not.toContain("[[pre-start]]");
+    expect(wtToml).toContain('"project-deps-link"');
+    expect(wtToml).toContain(
+      'bash \\"$HOME/.pi/pi-feature-workflow-links.sh\\"',
+    );
+    expect(wtToml).not.toContain("bash .pi/pi-feature-workflow-links.sh");
 
     const gitignorePath = path.join(repoRoot, ".gitignore");
     const gitignore = fs.readFileSync(gitignorePath, "utf-8");
@@ -133,10 +140,43 @@ describe("applyFeatureWorkflowSetupProfile", () => {
       repoRoot,
       profile,
       targets: FEATURE_WORKFLOW_SETUP_TARGETS,
+      userHomePath,
     });
 
     expect(second.changedCount).toBe(0);
     expect(second.changes.every((change) => !change.changed)).toBe(true);
+  });
+
+  it("removes .pi entries from .worktreeinclude", () => {
+    const repoRoot = createTempDir("pi-kit-feature-setup-worktreeinclude-");
+    const profile = getFeatureWorkflowSetupProfile("npm");
+    expect(profile).not.toBeNull();
+    if (!profile) return;
+
+    const worktreeIncludePath = path.join(repoRoot, ".worktreeinclude");
+    fs.writeFileSync(
+      worktreeIncludePath,
+      [".pi", ".pi/", ".env", ""].join("\n"),
+    );
+
+    const result = applyFeatureWorkflowSetupProfile({
+      cwd: repoRoot,
+      repoRoot,
+      profile,
+      targets: ["worktreeinclude"],
+    });
+
+    expect(result.changedCount).toBe(1);
+
+    const updated = fs.readFileSync(worktreeIncludePath, "utf-8");
+    expect(updated).not.toMatch(/(^|\n)\.pi\/?(\n|$)/);
+    expect(updated).toContain(".env");
+    expect(updated).toContain(".env.local");
+
+    const change = result.changes.find(
+      (item) => item.target === "worktreeinclude",
+    );
+    expect(change?.message).toContain("Removed entries:");
   });
 
   it("adds missing profile rule without overriding existing node_modules rule", () => {
@@ -225,21 +265,21 @@ describe("applyFeatureWorkflowSetupProfile", () => {
       strategy: "symlink",
       onMissing: {
         action: "run-hook",
-        hook: "project:deps-link",
+        hook: "project-deps-link",
       },
     });
     expect(agentsRule).toMatchObject({
       strategy: "copy",
       onMissing: {
         action: "run-hook",
-        hook: "project:deps-link",
+        hook: "project-deps-link",
       },
     });
     expect(claudeRule).toMatchObject({
       strategy: "copy",
       onMissing: {
         action: "run-hook",
-        hook: "project:deps-link",
+        hook: "project-deps-link",
       },
     });
   });

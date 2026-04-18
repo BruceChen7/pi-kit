@@ -13,8 +13,6 @@ describe("buildWtSwitchCreateArgs", () => {
       "--base",
       "main",
       "--no-cd",
-      "--format",
-      "json",
       "--yes",
     ]);
   });

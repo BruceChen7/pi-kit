@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import path from "node:path";
 
 export type StatusOutput = {
   exitCode: number;
@@ -143,6 +144,19 @@ export const getRepoRoot = (
   if (result.exitCode !== 0) return null;
   const root = result.stdout.trim();
   return root.length > 0 ? root : null;
+};
+
+export const getGitCommonDir = (
+  cwd: string,
+  timeoutMs: number = DEFAULT_GIT_TIMEOUT_MS,
+): string | null => {
+  const result = runGit(cwd, ["rev-parse", "--git-common-dir"], timeoutMs);
+  if (result.exitCode !== 0) return null;
+
+  const commonDir = result.stdout.trim();
+  if (commonDir.length === 0) return null;
+
+  return path.isAbsolute(commonDir) ? commonDir : path.resolve(cwd, commonDir);
 };
 
 export const computeDirtySummary = (porcelain: string): DirtySummary => {

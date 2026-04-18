@@ -7,6 +7,7 @@ import type {
 import {
   checkRepoDirty,
   DEFAULT_GIT_TIMEOUT_MS,
+  getGitCommonDir,
   getRepoRoot,
 } from "../shared/git.ts";
 import { createLogger } from "../shared/logger.ts";
@@ -252,8 +253,18 @@ const isCodeReviewAutoTriggerEnabled = (
   ctx: Pick<ExtensionContext, "cwd">,
 ): boolean => loadConfig(ctx.cwd).codeReviewAutoTrigger ?? false;
 
+const resolveRepoSlugFromGitCommonDir = (cwd: string): string | null => {
+  const commonDir = getGitCommonDir(cwd, DEFAULT_GIT_TIMEOUT_MS);
+  if (!commonDir) {
+    return null;
+  }
+
+  const candidate = path.basename(path.dirname(commonDir)).trim();
+  return candidate.length > 0 ? candidate : null;
+};
+
 const getDefaultPlanDir = (cwd: string): string => {
-  const repoSlug = path.basename(cwd);
+  const repoSlug = resolveRepoSlugFromGitCommonDir(cwd) ?? path.basename(cwd);
   return path.join(".pi", "plans", repoSlug, DEFAULT_PLAN_SUBDIR);
 };
 

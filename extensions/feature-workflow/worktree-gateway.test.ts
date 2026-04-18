@@ -41,10 +41,44 @@ describe("worktree-gateway", () => {
       "--base",
       "main",
       "--no-cd",
-      "--format",
-      "json",
       "--yes",
     ]);
+  });
+
+  it("resolves create worktree path from wt list when switch output is not json", async () => {
+    const runWt: WtRunner = vi
+      .fn()
+      .mockResolvedValueOnce(okResult("Switched to feat/main/checkout-v2"))
+      .mockResolvedValueOnce(
+        okResult(
+          JSON.stringify([
+            {
+              branch: "feat/main/checkout-v2",
+              path: "/repo/.wt/feat-main-checkout-v2",
+            },
+          ]),
+        ),
+      );
+
+    const result = await createFeatureWorktree(runWt, {
+      branch: "feat/main/checkout-v2",
+      base: "main",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      worktreePath: "/repo/.wt/feat-main-checkout-v2",
+    });
+    expect(runWt).toHaveBeenNthCalledWith(1, [
+      "switch",
+      "--create",
+      "feat/main/checkout-v2",
+      "--base",
+      "main",
+      "--no-cd",
+      "--yes",
+    ]);
+    expect(runWt).toHaveBeenNthCalledWith(2, ["list", "--format", "json"]);
   });
 
   it("returns mapped error message when wt create fails", async () => {
@@ -78,8 +112,6 @@ describe("worktree-gateway", () => {
       "switch",
       "feat/main/checkout-v2",
       "--no-cd",
-      "--format",
-      "json",
       "--yes",
     ]);
   });
@@ -120,12 +152,12 @@ describe("worktree-gateway", () => {
     expect(result).toEqual({ ok: false, message: "wt list failed" });
   });
 
-  it("runs named hook for a branch", async () => {
+  it("runs named hook without forwarding branch flags", async () => {
     const runWt: WtRunner = vi.fn().mockResolvedValue(okResult("ok"));
 
     const result = await runWorktreeHook(runWt, {
       hookType: "pre-start",
-      hook: "project:deps-link",
+      hook: "project-deps-link",
       branch: "feat/main/checkout-v2",
     });
 
@@ -133,8 +165,7 @@ describe("worktree-gateway", () => {
     expect(runWt).toHaveBeenCalledWith([
       "hook",
       "pre-start",
-      "project:deps-link",
-      "--branch=feat/main/checkout-v2",
+      "project-deps-link",
       "--yes",
     ]);
   });

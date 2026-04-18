@@ -38,7 +38,7 @@ describe("loadFeatureWorkflowConfig", () => {
           required: false,
           onMissing: {
             action: "run-hook",
-            hook: "project:deps-link",
+            hook: "project-deps-link",
           },
         },
         {
@@ -47,7 +47,7 @@ describe("loadFeatureWorkflowConfig", () => {
           required: false,
           onMissing: {
             action: "run-hook",
-            hook: "project:deps-link",
+            hook: "project-deps-link",
           },
         },
         {
@@ -56,7 +56,7 @@ describe("loadFeatureWorkflowConfig", () => {
           required: false,
           onMissing: {
             action: "run-hook",
-            hook: "project:deps-link",
+            hook: "project-deps-link",
           },
         },
         {
@@ -65,7 +65,7 @@ describe("loadFeatureWorkflowConfig", () => {
           required: false,
           onMissing: {
             action: "run-hook",
-            hook: "project:deps-link",
+            hook: "project-deps-link",
           },
         },
       ],
@@ -154,7 +154,7 @@ describe("loadFeatureWorkflowConfig", () => {
         required: true,
         onMissing: {
           action: "run-hook",
-          hook: "project:deps-link",
+          hook: "project-deps-link",
         },
       },
       {
@@ -172,7 +172,7 @@ describe("loadFeatureWorkflowConfig", () => {
         required: false,
         onMissing: {
           action: "run-hook",
-          hook: "project:deps-link",
+          hook: "project-deps-link",
         },
       },
     ]);

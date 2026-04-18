@@ -1,11 +1,8 @@
 const FEATURE_SETUP_MANAGED_PATHS = new Set<string>([
   ".pi/third_extension_settings.json",
-  ".pi/pi-feature-workflow-links.sh",
   ".gitignore",
   ".worktreeinclude",
   ".config/wt.toml",
-  // Backward compatibility for repos that already have the legacy script path.
-  ".config/pi-feature-workflow-links.sh",
 ]);
 
 const normalizePath = (value: string): string =>

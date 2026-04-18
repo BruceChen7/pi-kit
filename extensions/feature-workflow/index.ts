@@ -36,7 +36,6 @@ import {
   FEATURE_WORKFLOW_SETUP_USAGE,
   type FeatureWorkflowSetupProfile,
   type FeatureWorkflowSetupTarget,
-  formatFeatureWorkflowSetupResult,
   getFeatureWorkflowSetupProfile,
   getFeatureWorkflowSetupTargetMeta,
   listFeatureWorkflowSetupProfiles,
@@ -130,38 +129,6 @@ function buildFeatureSwitchNotifyMessage(
   const reason = describeWorktreeSessionSkipReason(result.skipReason);
   const next = buildFeatureSwitchNextStep(result.record);
   return `Worktree ready: ${featureLabel} (auto-switch skipped: ${reason}). Next: ${next}`;
-}
-
-function buildFeatureInstructions(input: {
-  title: string;
-  record: FeatureRecord;
-  worktreePath: string;
-  switched: boolean;
-}): string {
-  const lines: string[] = [];
-  lines.push(input.title);
-  lines.push(`- branch: ${input.record.branch}`);
-  lines.push(`- base: ${input.record.base}`);
-  if (input.worktreePath) {
-    lines.push(`- worktree: ${input.worktreePath}`);
-  }
-  lines.push("");
-
-  if (input.switched) {
-    lines.push("Status:");
-    lines.push("Switched pi to a new session in the worktree.");
-  } else if (input.worktreePath) {
-    lines.push("Next:");
-    lines.push(`cd ${input.worktreePath}`);
-    lines.push(`# or: wt switch ${input.record.branch}`);
-    lines.push("# restart pi in that directory");
-  } else {
-    lines.push("Next:");
-    lines.push(`wt switch ${input.record.branch}`);
-  }
-  lines.push("");
-
-  return `${lines.join("\n")}\n`;
 }
 
 async function maybeSwitchToWorktreeSession(input: {
@@ -314,21 +281,21 @@ function buildAmbiguousFeatureQueryMessage(input: {
   return `Query '${input.query}' matches multiple features. Use a branch name:\n${preview}`;
 }
 
-function formatFeatureList(records: FeatureRecord[]): string {
+function buildFeatureListNotifyMessage(records: FeatureRecord[]): string {
   if (records.length === 0) {
-    return "No feature records found.";
+    return "No feature records found";
   }
 
-  const lines: string[] = [];
-  lines.push("## Features");
-  for (const record of records) {
-    lines.push(
-      `- ${record.id}  (branch: ${record.branch}, base: ${record.base})`,
-    );
-    lines.push(`  - path: ${record.worktreePath}`);
-    lines.push(`  - updated: ${record.updatedAt}`);
-  }
-  return `${lines.join("\n")}\n`;
+  const previewRecords = records.slice(0, 5);
+  const preview = previewRecords.map((record) => record.branch).join(", ");
+  const remaining = records.length - previewRecords.length;
+  const suffix = remaining > 0 ? ` (+${remaining} more)` : "";
+
+  return `Listed ${records.length} feature(s): ${preview}${suffix}`;
+}
+
+function buildFeaturePreflightNotifyMessage(messages: string[]): string {
+  return `feature preflight: ${messages.join(" | ")}`;
 }
 
 async function selectFeatureType(
@@ -543,7 +510,6 @@ async function runFeatureSetup(ctx: ExtensionCommandContext, args: string[]) {
     targets,
   });
 
-  ctx.ui.setEditorText(formatFeatureWorkflowSetupResult(result));
   ctx.ui.notify(
     result.changedCount > 0
       ? `feature-setup complete: ${result.changedCount} file(s) updated`
@@ -760,15 +726,6 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     worktreePath: switchResult.record.worktreePath,
   });
 
-  ctx.ui.setEditorText(
-    buildFeatureInstructions({
-      title: `# Feature created: ${id}`,
-      record: switchResult.record,
-      worktreePath: switchResult.record.worktreePath,
-      switched: switchResult.switched,
-    }),
-  );
-
   ctx.ui.notify(
     switchResult.switched
       ? `Switched to feature worktree session: ${branch}`
@@ -807,8 +764,7 @@ async function runFeatureList(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   });
   if (!records) return;
 
-  ctx.ui.setEditorText(formatFeatureList(records));
-  ctx.ui.notify(`Listed ${records.length} feature(s)`, "info");
+  ctx.ui.notify(buildFeatureListNotifyMessage(records), "info");
 }
 
 async function runFeatureSwitch(
@@ -1012,8 +968,7 @@ async function runFeatureValidate(
     }
   }
 
-  ctx.ui.setEditorText(`${messages.map((m) => `- ${m}`).join("\n")}\n`);
-  ctx.ui.notify("feature preflight complete", "info");
+  ctx.ui.notify(buildFeaturePreflightNotifyMessage(messages), "info");
 }
 
 export default function featureWorkflowExtension(pi: ExtensionAPI) {

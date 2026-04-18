@@ -46,6 +46,72 @@ const parseNonEmptyLines = (value: string): string[] =>
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
+const normalizePorcelainPath = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (typeof parsed === "string" && parsed.trim().length > 0) {
+        return parsed;
+      }
+    } catch {
+      // fall back to raw path below
+    }
+
+    const unquoted = trimmed.slice(1, -1).trim();
+    if (unquoted.length > 0) {
+      return unquoted;
+    }
+  }
+
+  return trimmed;
+};
+
+const extractPorcelainPath = (line: string): string | null => {
+  if (line.length < 4) {
+    return null;
+  }
+
+  const payload = line.slice(3).trim();
+  if (!payload) {
+    return null;
+  }
+
+  const renameMarker = " -> ";
+  const renamedTarget = payload.includes(renameMarker)
+    ? (payload.split(renameMarker).at(-1) ?? payload)
+    : payload;
+
+  const normalized = normalizePorcelainPath(renamedTarget);
+  return normalized.length > 0 ? normalized : null;
+};
+
+export const listDirtyPaths = (porcelain: string): string[] => {
+  const lines = porcelain
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0);
+
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+
+  for (const line of lines) {
+    const path = extractPorcelainPath(line);
+    if (!path || seen.has(path)) {
+      continue;
+    }
+
+    seen.add(path);
+    deduped.push(path);
+  }
+
+  return deduped;
+};
+
 export const getCurrentBranchName = (run: GitRunner): string | null => {
   const result = run(["branch", "--show-current"]);
   if (result.exitCode !== 0) return null;

@@ -23,8 +23,10 @@ import type {
 import {
   createRequestPlannotator,
   createReviewResultStore,
+  formatAnnotationMessage,
   formatCodeReviewMessage,
   type ReviewResultEvent,
+  requestAnnotation,
   requestCodeReview,
   requestReviewStatus,
 } from "./plannotator-api.ts";
@@ -60,6 +62,7 @@ const DEFAULT_CODE_REVIEW_TIMEOUT_MS = 30_000;
 const SYNC_CODE_REVIEW_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
+const ANNOTATE_LATEST_PLAN_SHORTCUT = "ctrl+alt+l";
 const sessionRuntimeState = new Map<string, SessionRuntimeState>();
 const sessionContextByKey = new Map<string, ExtensionContext>();
 
@@ -385,6 +388,135 @@ export const shouldQueueReviewForToolPath = (
   }
 
   return !isPlanFileMatch(planConfig.resolvedPlanPath, targetPath);
+};
+
+export const findLatestPlanFileForAnnotation = (
+  ctx: Pick<ExtensionContext, "cwd">,
+  planConfig: PlanFileConfig,
+): {
+  absolutePath: string;
+  repoRelativePath: string;
+} | null => {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(planConfig.resolvedPlanPath).sort();
+  } catch {
+    return null;
+  }
+
+  let latestPath: string | null = null;
+  let latestMtimeMs = Number.NEGATIVE_INFINITY;
+
+  for (const entry of entries) {
+    if (!PLAN_FILE_PATTERN.test(entry)) {
+      continue;
+    }
+
+    const candidatePath = path.join(planConfig.resolvedPlanPath, entry);
+    let stats: fs.Stats;
+    try {
+      stats = fs.statSync(candidatePath);
+    } catch {
+      continue;
+    }
+
+    if (!stats.isFile()) {
+      continue;
+    }
+
+    if (stats.mtimeMs >= latestMtimeMs) {
+      latestPath = candidatePath;
+      latestMtimeMs = stats.mtimeMs;
+    }
+  }
+
+  if (!latestPath) {
+    return null;
+  }
+
+  return {
+    absolutePath: latestPath,
+    repoRelativePath: toRepoRelativePath(ctx, latestPath),
+  };
+};
+
+const annotateLatestPlanFile = async (
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+): Promise<void> => {
+  if (!ctx.hasUI) {
+    ctx.ui.notify("Latest plan annotation requires UI mode.", "warning");
+    return;
+  }
+
+  const planConfig = getPlanFileConfig(ctx);
+  if (!planConfig) {
+    ctx.ui.notify(
+      "Plan annotation is disabled because plannotatorAuto.planFile is not set to a plan directory.",
+      "warning",
+    );
+    return;
+  }
+
+  const latestPlan = findLatestPlanFileForAnnotation(ctx, planConfig);
+  if (!latestPlan) {
+    ctx.ui.notify(
+      `No plan files found in ${toRepoRelativePath(ctx, planConfig.resolvedPlanPath)}.`,
+      "warning",
+    );
+    return;
+  }
+
+  const requestPlannotator = createRequestPlannotator(pi.events);
+
+  log?.info("plannotator-auto annotating latest plan file", {
+    cwd: ctx.cwd,
+    planFile: latestPlan.repoRelativePath,
+    sessionKey: getSessionKey(ctx),
+    shortcut: ANNOTATE_LATEST_PLAN_SHORTCUT,
+  });
+
+  try {
+    const response = await requestAnnotation(requestPlannotator, {
+      filePath: latestPlan.absolutePath,
+      mode: "annotate",
+    });
+
+    if (response.status === "handled") {
+      const message = formatAnnotationMessage({
+        filePath: latestPlan.repoRelativePath,
+        feedback: response.result.feedback,
+      });
+
+      if (message) {
+        pi.sendUserMessage(message, { deliverAs: "followUp" });
+      } else {
+        ctx.ui.notify("Plan annotation closed (no feedback).", "info");
+      }
+      return;
+    }
+
+    if (response.status === "unavailable") {
+      ctx.ui.notify(
+        response.error ??
+          "Plannotator is not loaded. Install/enable the Plannotator extension to annotate plans.",
+        "warning",
+      );
+      return;
+    }
+
+    ctx.ui.notify(
+      response.error || "Plannotator annotation request failed.",
+      "warning",
+    );
+  } catch (error) {
+    ctx.ui.notify(
+      error instanceof Error
+        ? error.message
+        : "Plannotator annotation request failed.",
+      "warning",
+    );
+  }
 };
 
 const markReviewPending = (ctx: ExtensionContext): void => {
@@ -950,6 +1082,13 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       setReviewWidgetBySessionKey(sessionKey);
     },
     log,
+  });
+
+  pi.registerShortcut(ANNOTATE_LATEST_PLAN_SHORTCUT, {
+    description: "Annotate latest plan file (Ctrl+Alt+L)",
+    handler: async (ctx) => {
+      await annotateLatestPlanFile(pi, ctx);
+    },
   });
 
   reviewResults.onResult((result: ReviewResultEvent) => {

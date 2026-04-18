@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 .pilot/
 PLAN.md
 *.log
@@ -7,7 +7,8 @@ dist/
 build/
 .pi-memory/
 package-lock.json
-.pi/
+.pi
+.config/wt.toml
 .worktrees/
 docs/
 .alma-snapshots

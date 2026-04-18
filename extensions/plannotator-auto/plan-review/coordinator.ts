@@ -401,6 +401,329 @@ export const createPlanReviewCoordinator = (
     }
   };
 
+  const waitForAndHandlePlanReviewResult = async (
+    sessionKey: string,
+    ctx: PlanReviewRuntimeContext,
+    state: PlanReviewSessionState,
+    reason: PlanReviewCoordinatorReason,
+    requestPlannotator: ReturnType<typeof createRequestPlannotator>,
+    active: ActivePlanReview,
+    options: {
+      waitLogMessage: string;
+      planFile?: string;
+    },
+  ): Promise<void> => {
+    const logData = {
+      cwd: ctx.cwd,
+      reason,
+      reviewId: active.reviewId,
+      sessionKey,
+      ...(options.planFile !== undefined ? { planFile: options.planFile } : {}),
+    };
+
+    log?.info(options.waitLogMessage, logData);
+
+    const result = await waitForActivePlanReviewResult(
+      ctx,
+      state,
+      requestPlannotator,
+      active,
+    );
+
+    if ("missing" in result) {
+      log?.warn(
+        "plannotator-auto lost active plan review while waiting synchronously",
+        logData,
+      );
+      clearActivePlanReview(
+        sessionKey,
+        ctx,
+        state,
+        active,
+        "Plannotator lost the active plan review. Please rerun plan review.",
+      );
+      return;
+    }
+
+    handlePlanReviewCompletion(
+      sessionKey,
+      ctx,
+      state,
+      active,
+      result,
+      "status",
+    );
+  };
+
+  const handleActivePlanReviewIfPresent = async (
+    sessionKey: string,
+    ctx: PlanReviewRuntimeContext,
+    state: PlanReviewSessionState,
+    reason: PlanReviewCoordinatorReason,
+    requestPlannotator: ReturnType<typeof createRequestPlannotator>,
+  ): Promise<"continue" | "stop"> => {
+    const active = state.activePlanReviewByCwd.get(ctx.cwd);
+    if (!active) {
+      return "continue";
+    }
+
+    log?.debug("plannotator-auto checking active plan-review status", {
+      cwd: ctx.cwd,
+      reason,
+      reviewId: active.reviewId,
+      planFile: active.planFile,
+      startedAt: active.startedAt,
+      sessionKey,
+    });
+
+    const statusResponse = await requestReviewStatus(requestPlannotator, {
+      reviewId: active.reviewId,
+    });
+
+    log?.debug("plannotator-auto received plan-review status response", {
+      cwd: ctx.cwd,
+      reason,
+      reviewId: active.reviewId,
+      responseStatus: statusResponse.status,
+    });
+
+    if (statusResponse.status === "unavailable") {
+      log?.warn("plannotator-auto plan-review status unavailable", {
+        cwd: ctx.cwd,
+        reason,
+        reviewId: active.reviewId,
+        error: statusResponse.error ?? null,
+      });
+      notifyPlannotatorUnavailable(
+        ctx,
+        state,
+        statusResponse.error ??
+          "Plannotator is not loaded. Install/enable the Plannotator extension to use shared review flows.",
+      );
+      schedulePlanReviewRetry(ctx, "plan-review-status-unavailable");
+      return "stop";
+    }
+
+    if (statusResponse.status === "error") {
+      log?.warn("plannotator-auto plan-review status request failed", {
+        cwd: ctx.cwd,
+        reason,
+        reviewId: active.reviewId,
+        error: statusResponse.error ?? null,
+      });
+      ctx.ui.notify(
+        statusResponse.error || "Plannotator review-status request failed.",
+        "warning",
+      );
+      schedulePlanReviewRetry(ctx, "plan-review-status-error");
+      return "stop";
+    }
+
+    const status = statusResponse.result;
+
+    if (status.status === "pending") {
+      await waitForAndHandlePlanReviewResult(
+        sessionKey,
+        ctx,
+        state,
+        reason,
+        requestPlannotator,
+        active,
+        {
+          waitLogMessage:
+            "plannotator-auto waiting synchronously for active plan-review result",
+        },
+      );
+      return "stop";
+    }
+
+    if (status.status === "completed") {
+      handlePlanReviewCompletion(
+        sessionKey,
+        ctx,
+        state,
+        active,
+        {
+          approved: status.approved,
+          feedback: status.feedback,
+        },
+        "status",
+      );
+      return "continue";
+    }
+
+    log?.info("plannotator-auto active plan review no longer pending", {
+      cwd: ctx.cwd,
+      reason,
+      reviewId: active.reviewId,
+      status: status.status,
+    });
+    state.activePlanReviewByCwd.delete(ctx.cwd);
+    dropStalePending(state, ctx.cwd, active.startedAt);
+    resetRetryAttempts(state, ctx.cwd);
+    emitStateChanged(sessionKey, ctx.cwd, state);
+    return "continue";
+  };
+
+  const getPendingPlanReviewPayload = (
+    sessionKey: string,
+    ctx: PlanReviewRuntimeContext,
+    state: PlanReviewSessionState,
+    reason: PlanReviewCoordinatorReason,
+  ): { pending: PendingPlanReview; planContent: string } | null => {
+    const pending = state.pendingPlanReviewByCwd.get(ctx.cwd);
+    if (!pending) {
+      log?.debug(
+        "plannotator-auto no pending plan file after status handling",
+        {
+          cwd: ctx.cwd,
+          reason,
+          sessionKey,
+          state: getPlanReviewStateSnapshot(state, ctx.cwd),
+        },
+      );
+      return null;
+    }
+
+    log?.debug("plannotator-auto preparing pending plan file for review", {
+      cwd: ctx.cwd,
+      reason,
+      planFile: pending.planFile,
+      resolvedPlanPath: pending.resolvedPlanPath,
+      updatedAt: pending.updatedAt,
+      sessionKey,
+    });
+
+    const planContent = readPlanContent(pending.resolvedPlanPath);
+    if (planContent === null) {
+      log?.warn("plannotator-auto failed to read pending plan file", {
+        cwd: ctx.cwd,
+        reason,
+        planFile: pending.planFile,
+        resolvedPlanPath: pending.resolvedPlanPath,
+      });
+      state.pendingPlanReviewByCwd.delete(ctx.cwd);
+      emitStateChanged(sessionKey, ctx.cwd, state);
+      ctx.ui.notify(
+        `Plannotator Auto could not read plan file: ${pending.planFile}`,
+        "warning",
+      );
+      return null;
+    }
+
+    if (!planContent.trim()) {
+      log?.info("plannotator-auto skipped empty pending plan file", {
+        cwd: ctx.cwd,
+        reason,
+        planFile: pending.planFile,
+        resolvedPlanPath: pending.resolvedPlanPath,
+      });
+      state.pendingPlanReviewByCwd.delete(ctx.cwd);
+      emitStateChanged(sessionKey, ctx.cwd, state);
+      ctx.ui.notify(
+        `Plannotator Auto skipped empty plan file: ${pending.planFile}`,
+        "warning",
+      );
+      return null;
+    }
+
+    return { pending, planContent };
+  };
+
+  const startPendingPlanReviewAndWait = async (
+    sessionKey: string,
+    ctx: PlanReviewRuntimeContext,
+    state: PlanReviewSessionState,
+    reason: PlanReviewCoordinatorReason,
+    requestPlannotator: ReturnType<typeof createRequestPlannotator>,
+    pending: PendingPlanReview,
+    planContent: string,
+  ): Promise<void> => {
+    log?.info("plannotator-auto starting plan review via event API", {
+      cwd: ctx.cwd,
+      reason,
+      planFile: pending.planFile,
+      sessionKey,
+      contentLength: planContent.length,
+    });
+
+    const response = await startPlanReview(requestPlannotator, reviewResults, {
+      planContent,
+      planFilePath: pending.planFile,
+      origin: "plannotator-auto",
+    });
+
+    if (response.status === "unavailable") {
+      log?.warn("plannotator-auto plan review request unavailable", {
+        cwd: ctx.cwd,
+        reason,
+        planFile: pending.planFile,
+        error: response.error ?? null,
+      });
+      notifyPlannotatorUnavailable(
+        ctx,
+        state,
+        response.error ??
+          "Plannotator is not loaded. Install/enable the Plannotator extension to use shared review flows.",
+      );
+      return;
+    }
+
+    if (response.status === "error") {
+      log?.warn("plannotator-auto plan review request failed", {
+        cwd: ctx.cwd,
+        reason,
+        planFile: pending.planFile,
+        error: response.error ?? null,
+      });
+      ctx.ui.notify(
+        response.error || "Plannotator plan review request failed.",
+        "warning",
+      );
+      return;
+    }
+
+    state.plannotatorUnavailableNotified = false;
+    state.pendingPlanReviewByCwd.delete(ctx.cwd);
+    state.activePlanReviewByCwd.set(ctx.cwd, {
+      reviewId: response.result.reviewId,
+      planFile: pending.planFile,
+      resolvedPlanPath: pending.resolvedPlanPath,
+      startedAt: Date.now(),
+    });
+    emitStateChanged(sessionKey, ctx.cwd, state);
+
+    log?.info("plannotator-auto plan review request accepted", {
+      cwd: ctx.cwd,
+      reason,
+      planFile: pending.planFile,
+      reviewId: response.result.reviewId,
+      sessionKey,
+      state: getPlanReviewStateSnapshot(state, ctx.cwd),
+    });
+
+    resetRetryAttempts(state, ctx.cwd);
+
+    const activeReview = state.activePlanReviewByCwd.get(ctx.cwd);
+    if (!activeReview) {
+      return;
+    }
+
+    await waitForAndHandlePlanReviewResult(
+      sessionKey,
+      ctx,
+      state,
+      reason,
+      requestPlannotator,
+      activeReview,
+      {
+        waitLogMessage:
+          "plannotator-auto waiting synchronously for plan-review result",
+        planFile: pending.planFile,
+      },
+    );
+  };
+
   const runPlanReview = async (
     ctx: PlanReviewRuntimeContext,
     reason: PlanReviewCoordinatorReason,
@@ -416,7 +739,7 @@ export const createPlanReviewCoordinator = (
         {
           cwd: ctx.cwd,
           reason,
-          sessionKey: getSessionKey(ctx),
+          sessionKey,
           state: getPlanReviewStateSnapshot(state, ctx.cwd),
         },
       );
@@ -427,7 +750,7 @@ export const createPlanReviewCoordinator = (
       log?.debug("plannotator-auto skipped plan review (in flight)", {
         cwd: ctx.cwd,
         reason,
-        sessionKey: getSessionKey(ctx),
+        sessionKey,
         state: getPlanReviewStateSnapshot(state, ctx.cwd),
       });
       return;
@@ -436,7 +759,7 @@ export const createPlanReviewCoordinator = (
     log?.debug("plannotator-auto entering plan-review workflow", {
       cwd: ctx.cwd,
       reason,
-      sessionKey: getSessionKey(ctx),
+      sessionKey,
       state: getPlanReviewStateSnapshot(state, ctx.cwd),
     });
 
@@ -456,7 +779,7 @@ export const createPlanReviewCoordinator = (
       log?.debug("plannotator-auto deferred plan review (agent not idle)", {
         cwd: ctx.cwd,
         reason,
-        sessionKey: getSessionKey(ctx),
+        sessionKey,
         state: getPlanReviewStateSnapshot(state, ctx.cwd),
       });
       schedulePlanReviewRetry(ctx, "busy-plan-review");
@@ -469,7 +792,7 @@ export const createPlanReviewCoordinator = (
         {
           cwd: ctx.cwd,
           reason,
-          sessionKey: getSessionKey(ctx),
+          sessionKey,
           state: getPlanReviewStateSnapshot(state, ctx.cwd),
         },
       );
@@ -480,316 +803,41 @@ export const createPlanReviewCoordinator = (
     emitStateChanged(sessionKey, ctx.cwd, state);
 
     try {
-      const active = state.activePlanReviewByCwd.get(ctx.cwd);
-      if (active) {
-        log?.debug("plannotator-auto checking active plan-review status", {
-          cwd: ctx.cwd,
-          reason,
-          reviewId: active.reviewId,
-          planFile: active.planFile,
-          startedAt: active.startedAt,
-          sessionKey: getSessionKey(ctx),
-        });
-
-        const statusResponse = await requestReviewStatus(requestPlannotator, {
-          reviewId: active.reviewId,
-        });
-
-        log?.debug("plannotator-auto received plan-review status response", {
-          cwd: ctx.cwd,
-          reason,
-          reviewId: active.reviewId,
-          responseStatus: statusResponse.status,
-        });
-
-        if (statusResponse.status === "handled") {
-          const status = statusResponse.result;
-          if (status.status === "pending") {
-            log?.info(
-              "plannotator-auto waiting synchronously for active plan-review result",
-              {
-                cwd: ctx.cwd,
-                reason,
-                reviewId: active.reviewId,
-                sessionKey: getSessionKey(ctx),
-              },
-            );
-
-            const result = await waitForActivePlanReviewResult(
-              ctx,
-              state,
-              requestPlannotator,
-              active,
-            );
-
-            if ("missing" in result) {
-              log?.warn(
-                "plannotator-auto lost active plan review while waiting synchronously",
-                {
-                  cwd: ctx.cwd,
-                  reason,
-                  reviewId: active.reviewId,
-                  sessionKey: getSessionKey(ctx),
-                },
-              );
-              clearActivePlanReview(
-                sessionKey,
-                ctx,
-                state,
-                active,
-                "Plannotator lost the active plan review. Please rerun plan review.",
-              );
-              return;
-            }
-
-            handlePlanReviewCompletion(
-              sessionKey,
-              ctx,
-              state,
-              active,
-              result,
-              "status",
-            );
-            return;
-          }
-
-          if (status.status === "completed") {
-            handlePlanReviewCompletion(
-              sessionKey,
-              ctx,
-              state,
-              active,
-              {
-                approved: status.approved,
-                feedback: status.feedback,
-              },
-              "status",
-            );
-          } else {
-            log?.info("plannotator-auto active plan review no longer pending", {
-              cwd: ctx.cwd,
-              reason,
-              reviewId: active.reviewId,
-              status: status.status,
-            });
-            state.activePlanReviewByCwd.delete(ctx.cwd);
-            dropStalePending(state, ctx.cwd, active.startedAt);
-            resetRetryAttempts(state, ctx.cwd);
-            emitStateChanged(sessionKey, ctx.cwd, state);
-          }
-        } else if (statusResponse.status === "unavailable") {
-          log?.warn("plannotator-auto plan-review status unavailable", {
-            cwd: ctx.cwd,
-            reason,
-            reviewId: active.reviewId,
-            error: statusResponse.error ?? null,
-          });
-          notifyPlannotatorUnavailable(
-            ctx,
-            state,
-            statusResponse.error ??
-              "Plannotator is not loaded. Install/enable the Plannotator extension to use shared review flows.",
-          );
-          schedulePlanReviewRetry(ctx, "plan-review-status-unavailable");
-          return;
-        } else {
-          log?.warn("plannotator-auto plan-review status request failed", {
-            cwd: ctx.cwd,
-            reason,
-            reviewId: active.reviewId,
-            error: statusResponse.error ?? null,
-          });
-          ctx.ui.notify(
-            statusResponse.error || "Plannotator review-status request failed.",
-            "warning",
-          );
-          schedulePlanReviewRetry(ctx, "plan-review-status-error");
-          return;
-        }
-      }
-
-      const pending = state.pendingPlanReviewByCwd.get(ctx.cwd);
-      if (!pending) {
-        log?.debug(
-          "plannotator-auto no pending plan file after status handling",
-          {
-            cwd: ctx.cwd,
-            reason,
-            sessionKey: getSessionKey(ctx),
-            state: getPlanReviewStateSnapshot(state, ctx.cwd),
-          },
-        );
-        return;
-      }
-
-      log?.debug("plannotator-auto preparing pending plan file for review", {
-        cwd: ctx.cwd,
+      const activeOutcome = await handleActivePlanReviewIfPresent(
+        sessionKey,
+        ctx,
+        state,
         reason,
-        planFile: pending.planFile,
-        resolvedPlanPath: pending.resolvedPlanPath,
-        updatedAt: pending.updatedAt,
-        sessionKey: getSessionKey(ctx),
-      });
-
-      const planContent = readPlanContent(pending.resolvedPlanPath);
-      if (planContent === null) {
-        log?.warn("plannotator-auto failed to read pending plan file", {
-          cwd: ctx.cwd,
-          reason,
-          planFile: pending.planFile,
-          resolvedPlanPath: pending.resolvedPlanPath,
-        });
-        state.pendingPlanReviewByCwd.delete(ctx.cwd);
-        emitStateChanged(sessionKey, ctx.cwd, state);
-        ctx.ui.notify(
-          `Plannotator Auto could not read plan file: ${pending.planFile}`,
-          "warning",
-        );
-        return;
-      }
-
-      if (!planContent.trim()) {
-        log?.info("plannotator-auto skipped empty pending plan file", {
-          cwd: ctx.cwd,
-          reason,
-          planFile: pending.planFile,
-          resolvedPlanPath: pending.resolvedPlanPath,
-        });
-        state.pendingPlanReviewByCwd.delete(ctx.cwd);
-        emitStateChanged(sessionKey, ctx.cwd, state);
-        ctx.ui.notify(
-          `Plannotator Auto skipped empty plan file: ${pending.planFile}`,
-          "warning",
-        );
-        return;
-      }
-
-      log?.info("plannotator-auto starting plan review via event API", {
-        cwd: ctx.cwd,
-        reason,
-        planFile: pending.planFile,
-        sessionKey: getSessionKey(ctx),
-        contentLength: planContent.length,
-      });
-
-      const response = await startPlanReview(
         requestPlannotator,
-        reviewResults,
-        {
-          planContent,
-          planFilePath: pending.planFile,
-          origin: "plannotator-auto",
-        },
       );
-
-      if (response.status === "handled") {
-        state.plannotatorUnavailableNotified = false;
-        state.pendingPlanReviewByCwd.delete(ctx.cwd);
-        state.activePlanReviewByCwd.set(ctx.cwd, {
-          reviewId: response.result.reviewId,
-          planFile: pending.planFile,
-          resolvedPlanPath: pending.resolvedPlanPath,
-          startedAt: Date.now(),
-        });
-        emitStateChanged(sessionKey, ctx.cwd, state);
-
-        log?.info("plannotator-auto plan review request accepted", {
-          cwd: ctx.cwd,
-          reason,
-          planFile: pending.planFile,
-          reviewId: response.result.reviewId,
-          sessionKey: getSessionKey(ctx),
-          state: getPlanReviewStateSnapshot(state, ctx.cwd),
-        });
-
-        resetRetryAttempts(state, ctx.cwd);
-
-        const activeReview = state.activePlanReviewByCwd.get(ctx.cwd);
-        if (!activeReview) {
-          return;
-        }
-
-        log?.info(
-          "plannotator-auto waiting synchronously for plan-review result",
-          {
-            cwd: ctx.cwd,
-            reason,
-            planFile: pending.planFile,
-            reviewId: activeReview.reviewId,
-            sessionKey: getSessionKey(ctx),
-          },
-        );
-
-        const result = await waitForActivePlanReviewResult(
-          ctx,
-          state,
-          requestPlannotator,
-          activeReview,
-        );
-
-        if ("missing" in result) {
-          log?.warn(
-            "plannotator-auto lost active plan review while waiting synchronously",
-            {
-              cwd: ctx.cwd,
-              reason,
-              planFile: pending.planFile,
-              reviewId: activeReview.reviewId,
-              sessionKey: getSessionKey(ctx),
-            },
-          );
-          clearActivePlanReview(
-            sessionKey,
-            ctx,
-            state,
-            activeReview,
-            "Plannotator lost the active plan review. Please rerun plan review.",
-          );
-          return;
-        }
-
-        handlePlanReviewCompletion(
-          sessionKey,
-          ctx,
-          state,
-          activeReview,
-          result,
-          "status",
-        );
+      if (activeOutcome === "stop") {
         return;
       }
 
-      if (response.status === "unavailable") {
-        log?.warn("plannotator-auto plan review request unavailable", {
-          cwd: ctx.cwd,
-          reason,
-          planFile: pending.planFile,
-          error: response.error ?? null,
-        });
-        notifyPlannotatorUnavailable(
-          ctx,
-          state,
-          response.error ??
-            "Plannotator is not loaded. Install/enable the Plannotator extension to use shared review flows.",
-        );
-        return;
-      }
-
-      log?.warn("plannotator-auto plan review request failed", {
-        cwd: ctx.cwd,
+      const pendingPayload = getPendingPlanReviewPayload(
+        sessionKey,
+        ctx,
+        state,
         reason,
-        planFile: pending.planFile,
-        error: response.error ?? null,
-      });
-      ctx.ui.notify(
-        response.error || "Plannotator plan review request failed.",
-        "warning",
+      );
+      if (!pendingPayload) {
+        return;
+      }
+
+      await startPendingPlanReviewAndWait(
+        sessionKey,
+        ctx,
+        state,
+        reason,
+        requestPlannotator,
+        pendingPayload.pending,
+        pendingPayload.planContent,
       );
     } catch (error) {
       log?.error("plannotator-auto plan-review workflow threw", {
         cwd: ctx.cwd,
         reason,
-        sessionKey: getSessionKey(ctx),
+        sessionKey,
         error: error instanceof Error ? error.message : String(error),
         state: getPlanReviewStateSnapshot(state, ctx.cwd),
       });

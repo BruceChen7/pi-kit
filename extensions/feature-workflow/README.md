@@ -10,7 +10,7 @@ A pi-kit extension that helps you start and manage feature development using Wor
   - Generates/updates profile artifacts idempotently (safe to run repeatedly).
   - Targets:
     - `settings` → `.pi/third_extension_settings.json`
-    - `gitignore` → ensure `.pi/` exists in `.gitignore`
+    - `gitignore` → ensure `.pi/` and `.config/wt.toml` exist in `.gitignore`
     - `worktreeinclude` → `.worktreeinclude`
     - `hook-script` → `$HOME/.pi/pi-feature-workflow-links.sh`
     - `wt-toml` → managed hook block in `.config/wt.toml`
@@ -57,12 +57,12 @@ Run this once in your repo:
 This command prepares the files needed for ignored-sync and Worktrunk hooks:
 
 - `.pi/third_extension_settings.json`
-- `.gitignore` (ensures `.pi/` is present)
+- `.gitignore` (ensures `.pi/` and `.config/wt.toml` are present)
 - `.worktreeinclude`
 - `$HOME/.pi/pi-feature-workflow-links.sh`
 - `.config/wt.toml` (managed block)
 
-After setup, repo-local `.pi` artifacts stay local by default (because `.pi/` is ignored), while the hook script is installed at `$HOME/.pi/pi-feature-workflow-links.sh`. Commit tracked workflow files like `.worktreeinclude` and `.config/wt.toml` if you want to share them with your team.
+After setup, repo-local `.pi` artifacts and `.config/wt.toml` stay local by default (both are gitignored), while the hook script is installed at `$HOME/.pi/pi-feature-workflow-links.sh`. Commit tracked workflow files like `.worktreeinclude` if you want to share them with your team.
 
 ### 2) Start a new feature
 
@@ -231,7 +231,7 @@ Use `/feature-setup` to install hook wiring (with a user-scoped script in `$HOME
 By default this command updates:
 
 - `.pi/third_extension_settings.json`
-- `.gitignore` (adds `.pi/` if missing)
+- `.gitignore` (adds `.pi/` and `.config/wt.toml` if missing)
 - `.worktreeinclude`
 - `$HOME/.pi/pi-feature-workflow-links.sh`
 - `.config/wt.toml` (managed block)

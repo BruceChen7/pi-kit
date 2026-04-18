@@ -1,18 +1,4 @@
+# >>> pi-kit feature-workflow setup (managed) >>>
 [[pre-start]]
-deps-link = """
-if [ -d "{{ primary_worktree_path }}/node_modules" ]; then
-  if [ -L node_modules ]; then
-    ln -sfn "{{ primary_worktree_path }}/node_modules" node_modules
-  elif [ ! -e node_modules ]; then
-    ln -s "{{ primary_worktree_path }}/node_modules" node_modules
-  else
-    echo "[deps-link] skip: ./node_modules exists and is not a symlink"
-  fi
-fi
-"""
-
-[post-start]
-ignored-copy = "wt step copy-ignored"
-
-[step.copy-ignored]
-exclude = [".cache/", ".npm/", ".pnpm-store/"]
+"project:deps-link" = "bash .pi/pi-feature-workflow-links.sh '{{ primary_worktree_path }}'"
+# <<< pi-kit feature-workflow setup (managed) <<<

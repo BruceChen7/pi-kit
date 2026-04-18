@@ -107,7 +107,8 @@ const SETUP_TARGET_METADATA: Record<
   },
   gitignore: {
     label: ".gitignore",
-    description: "Ensure .pi/ is ignored for setup-managed artifacts.",
+    description:
+      "Ensure .pi/ and .config/wt.toml are ignored for setup-managed artifacts.",
   },
   worktreeinclude: {
     label: ".worktreeinclude",
@@ -128,6 +129,7 @@ const WORKTREE_INCLUDE_HEADER = [
   "# Used by: wt step copy-ignored",
 ];
 
+const GITIGNORE_REQUIRED_ENTRIES = [".pi/", ".config/wt.toml"] as const;
 const HOME_SCRIPT_PATH_PREFIX = "$HOME/";
 const HOME_HOOK_SCRIPT_PATH = "$HOME/.pi/pi-feature-workflow-links.sh";
 
@@ -718,6 +720,49 @@ const buildWorktreeIncludeContent = (
   };
 };
 
+const normalizeGitignoreEntry = (value: string): string =>
+  value.trim().replace(/^\.\//, "").replace(/^\/+/, "").replace(/\/+$/, "");
+
+const buildGitignoreContent = (
+  existingContent: string | null,
+): { content: string; changed: boolean; addedEntries: string[] } => {
+  const lines = existingContent === null ? [] : existingContent.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
+  const existingEntries = new Set(
+    lines
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"))
+      .map(normalizeGitignoreEntry),
+  );
+
+  const missingEntries = GITIGNORE_REQUIRED_ENTRIES.filter(
+    (entry) => !existingEntries.has(normalizeGitignoreEntry(entry)),
+  );
+
+  if (missingEntries.length === 0) {
+    return {
+      content: existingContent ?? "",
+      changed: false,
+      addedEntries: [],
+    };
+  }
+
+  const next = [...lines];
+  if (next.length > 0 && next[next.length - 1] !== "") {
+    next.push("");
+  }
+  next.push(...missingEntries);
+
+  return {
+    content: `${next.join("\n")}\n`,
+    changed: true,
+    addedEntries: [...missingEntries],
+  };
+};
+
 const buildSymlinkHookScript = (symlinkPaths: string[]): string => {
   const paths = uniqueStrings(symlinkPaths);
   const lines: string[] = [
@@ -872,9 +917,10 @@ export const applyFeatureWorkflowSetupProfile = (
       target: "gitignore",
       path: toRelativeDisplayPath(input.repoRoot, gitignorePath),
       changed: merged.changed,
-      message: merged.addedEntry
-        ? `Added '${GITIGNORE_PI_ENTRY}' to .gitignore`
-        : `'.pi/' is already present in .gitignore`,
+      message:
+        merged.addedEntries.length > 0
+          ? `Added entries: ${merged.addedEntries.join(", ")}`
+          : "Required entries already present (.pi/, .config/wt.toml)",
     });
   }
 

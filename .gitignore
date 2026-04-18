@@ -8,6 +8,7 @@ build/
 .pi-memory/
 package-lock.json
 /.pi
+.config/wt.toml
 .worktrees/
 docs/
 .alma-snapshots

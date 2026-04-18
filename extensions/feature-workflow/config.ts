@@ -102,7 +102,9 @@ const IGNORED_SYNC_FALLBACK_ON_FAILURE_VALUES = [
   "block",
 ] as const satisfies readonly IgnoredSyncFallbackOnFailure[];
 
-export const DEFAULT_IGNORED_SYNC_HOOK = "project:deps-link";
+export const DEFAULT_IGNORED_SYNC_HOOK = "project-deps-link";
+
+const LEGACY_IGNORED_SYNC_HOOK_ALIASES = new Set(["project:deps-link"]);
 
 export const DEFAULT_IGNORED_SYNC_RULES: IgnoredSyncRule[] = [
   {
@@ -203,6 +205,12 @@ const normalizePositiveNumber = (value: unknown, fallback: number): number => {
 const normalizeString = (value: unknown, fallback: string): string =>
   trimToNull(value) ?? fallback;
 
+const normalizeIgnoredSyncHookName = (value: string): string => {
+  return LEGACY_IGNORED_SYNC_HOOK_ALIASES.has(value)
+    ? DEFAULT_IGNORED_SYNC_HOOK
+    : value;
+};
+
 function normalizeEnum<T extends string>(
   value: unknown,
   allowed: readonly T[],
@@ -268,9 +276,11 @@ const normalizeRuleOnMissing = (
   if (action === "run-hook") {
     return {
       action,
-      hook: normalizeString(
-        source.hook,
-        fallback.hook ?? DEFAULT_IGNORED_SYNC_HOOK,
+      hook: normalizeIgnoredSyncHookName(
+        normalizeString(
+          source.hook,
+          fallback.hook ?? DEFAULT_IGNORED_SYNC_HOOK,
+        ),
       ),
     };
   }

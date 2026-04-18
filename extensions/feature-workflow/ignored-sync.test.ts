@@ -147,7 +147,7 @@ describe("runIgnoredSync", () => {
               required: true,
               onMissing: {
                 action: "run-hook",
-                hook: "project:deps-link",
+                hook: "project-deps-link",
               },
             },
           ],

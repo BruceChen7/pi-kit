@@ -160,7 +160,7 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
           "required": false,
           "onMissing": {
             "action": "run-hook",
-            "hook": "project:deps-link"
+            "hook": "project-deps-link"
           }
         },
         {
@@ -169,7 +169,7 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
           "required": false,
           "onMissing": {
             "action": "run-hook",
-            "hook": "project:deps-link"
+            "hook": "project-deps-link"
           }
         },
         {
@@ -178,7 +178,7 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
           "required": false,
           "onMissing": {
             "action": "run-hook",
-            "hook": "project:deps-link"
+            "hook": "project-deps-link"
           }
         },
         {
@@ -187,7 +187,7 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
           "required": false,
           "onMissing": {
             "action": "run-hook",
-            "hook": "project:deps-link"
+            "hook": "project-deps-link"
           }
         }
       ],
@@ -237,8 +237,8 @@ Example managed block in `.config/wt.toml`:
 
 ```toml
 # >>> pi-kit feature-workflow setup (managed) >>>
-[[pre-start]]
-"project:deps-link" = "bash .pi/pi-feature-workflow-links.sh '{{ primary_worktree_path }}'"
+[pre-start]
+"project-deps-link" = "bash .pi/pi-feature-workflow-links.sh '{{ primary_worktree_path }}'"
 # <<< pi-kit feature-workflow setup (managed) <<<
 ```
 

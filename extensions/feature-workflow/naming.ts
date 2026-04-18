@@ -23,9 +23,7 @@ export function buildFeatureBranchName(input: {
   slug: string;
 }): string {
   const base = input.base.trim();
-  return base
-    ? `${input.type}/${base}/${input.slug}`
-    : `${input.type}/${input.slug}`;
+  return `${input.type}/${base}/${input.slug}`;
 }
 
 export function parseFeatureBranchName(branch: string): {
@@ -39,7 +37,7 @@ export function parseFeatureBranchName(branch: string): {
   const segments = normalized.split("/");
   if (segments.some((segment) => segment.length === 0)) return null;
   if (segments.some((segment) => segment !== segment.trim())) return null;
-  if (segments.length < 2) return null;
+  if (segments.length < 3) return null;
 
   const type = segments[0] as FeatureType;
   if (!FEATURE_TYPE_SET.has(type)) return null;

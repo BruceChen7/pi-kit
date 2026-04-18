@@ -38,20 +38,15 @@ describe("storage", () => {
 
     expect(records.map((r) => r.id)).toEqual([
       "feat-release-2026-q2-b",
-      "feat-c",
       "feat-main-a",
     ]);
+    expect(records.some((record) => record.branch === "feat/c")).toBe(false);
     expect(records[0]).toMatchObject({
       id: "feat-release-2026-q2-b",
       name: "b",
       branch: "feat/release/2026-q2/b",
       worktreePath: "/tmp/b",
       base: "release/2026-q2",
-    });
-    expect(records[1]).toMatchObject({
-      id: "feat-c",
-      branch: "feat/c",
-      base: "",
     });
     const topRecord = records[0];
     expect(topRecord).toBeDefined();

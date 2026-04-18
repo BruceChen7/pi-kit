@@ -183,11 +183,12 @@ export default function codexPlanLimitsExtension(pi: ExtensionAPI) {
     await refresh(ctx);
   }
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", (_event, ctx) => {
     activeCtx = ctx;
     startPolling(ctx);
     if (shouldShowForModel(ctx)) {
-      await refresh(ctx, { force: true });
+      render(ctx);
+      void refresh(ctx, { force: true });
     } else {
       clearWidget(ctx);
     }

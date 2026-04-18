@@ -102,19 +102,21 @@ describe("codex-plan-limits extension", () => {
 
     await emit("session_start", ctx);
 
-    expect(ctx.ui.theme.fg).toHaveBeenCalledWith(
-      "dim",
-      expect.stringContaining("5h"),
-    );
-    expect(ctx.ui.theme.fg).toHaveBeenCalledWith(
-      "dim",
-      expect.stringContaining("Weekly"),
-    );
-    expect(ctx.ui.setWidget).toHaveBeenCalledWith(
-      "codex-plan-limits",
-      [expect.stringContaining("<dim>")],
-      { placement: "belowEditor" },
-    );
+    await vi.waitFor(() => {
+      expect(ctx.ui.theme.fg).toHaveBeenCalledWith(
+        "dim",
+        expect.stringContaining("5h"),
+      );
+      expect(ctx.ui.theme.fg).toHaveBeenCalledWith(
+        "dim",
+        expect.stringContaining("Weekly"),
+      );
+      expect(ctx.ui.setWidget).toHaveBeenCalledWith(
+        "codex-plan-limits",
+        [expect.stringContaining("<dim>")],
+        { placement: "belowEditor" },
+      );
+    });
     expect(ctx.ui.setStatus).not.toHaveBeenCalled();
     expect(ctx.ui.setFooter).not.toHaveBeenCalled();
 
@@ -123,6 +125,33 @@ describe("codex-plan-limits extension", () => {
       "codex-plan-limits",
       undefined,
     );
+  });
+
+  it("does not block session_start while refresh runs in background", async () => {
+    globalThis.fetch = vi.fn(
+      () => new Promise<Response>(() => {}),
+    ) as typeof fetch;
+
+    const { api, emit } = buildPiHarness();
+    const ctx = buildCtx();
+
+    codexPlanLimitsExtension(api as ExtensionAPI);
+
+    const startupResult = await Promise.race([
+      emit("session_start", ctx).then(() => "resolved"),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("timeout"), 50);
+      }),
+    ]);
+
+    expect(startupResult).toBe("resolved");
+    expect(ctx.ui.setWidget).toHaveBeenCalledWith(
+      "codex-plan-limits",
+      [expect.stringContaining("Codex limits loading")],
+      { placement: "belowEditor" },
+    );
+
+    await emit("session_shutdown", ctx);
   });
 
   it("clears widget when model is not eligible", async () => {

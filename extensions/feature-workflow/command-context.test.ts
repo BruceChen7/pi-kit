@@ -17,6 +17,27 @@ const enabledConfig = (
     autoSwitchToWorktreeSession: true,
     ...overrides.defaults,
   },
+  ignoredSync: {
+    enabled: false,
+    mode: "quick",
+    ensureOn: ["feature-start", "feature-switch"],
+    rules: [],
+    lockfile: {
+      enabled: false,
+      path: "package-lock.json",
+      compareWithPrimary: true,
+      onDrift: "warn",
+    },
+    fallback: {
+      copyIgnoredTimeoutMs: 15000,
+      onFailure: "warn",
+    },
+    notifications: {
+      enabled: true,
+      verbose: false,
+    },
+    ...overrides.ignoredSync,
+  },
   ...overrides,
 });
 

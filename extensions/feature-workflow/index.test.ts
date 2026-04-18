@@ -21,6 +21,7 @@ describe("feature-workflow extension", () => {
 
     expect(commands.sort()).toEqual([
       "feature-list",
+      "feature-setup",
       "feature-start",
       "feature-switch",
       "feature-validate",

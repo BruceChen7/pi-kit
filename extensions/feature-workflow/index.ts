@@ -7,7 +7,9 @@ import type {
 
 import {
   checkRepoDirty,
+  DEFAULT_GIT_TIMEOUT_MS,
   getCurrentBranchName,
+  getRepoRoot,
   listLocalBranches,
 } from "../shared/git.js";
 import { createLogger } from "../shared/logger.js";
@@ -17,6 +19,7 @@ import { resolveFeatureWorkflowCommandContext } from "./command-context.js";
 import { loadFeatureWorkflowConfig } from "./config.js";
 import { matchFeatureRecord } from "./feature-query.js";
 import { checkBaseBranchFreshness } from "./guards.js";
+import { runIgnoredSync } from "./ignored-sync.js";
 import {
   buildFeatureBranchName,
   buildFeatureId,
@@ -25,6 +28,20 @@ import {
   slugifyFeatureName,
 } from "./naming.js";
 import { forkSessionForWorktree } from "./session-fork.js";
+import {
+  applyFeatureWorkflowSetupProfile,
+  DEFAULT_FEATURE_WORKFLOW_SETUP_PROFILE_ID,
+  FEATURE_WORKFLOW_SETUP_TARGETS,
+  FEATURE_WORKFLOW_SETUP_USAGE,
+  type FeatureWorkflowSetupProfile,
+  type FeatureWorkflowSetupTarget,
+  formatFeatureWorkflowSetupResult,
+  getFeatureWorkflowSetupProfile,
+  getFeatureWorkflowSetupTargetMeta,
+  listFeatureWorkflowSetupProfiles,
+  parseFeatureWorkflowSetupArgs,
+  resolveFeatureWorkflowSetupTargets,
+} from "./setup.js";
 import { type FeatureRecord, findActiveFeatureConflicts } from "./storage.js";
 import {
   createFeatureWorktree,
@@ -47,6 +64,14 @@ const trimToNull = (value: string | null | undefined): string | null => {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+};
+
+const parseCommandArgs = (rawArgs: string): string[] => {
+  const trimmed = rawArgs.trim();
+  if (!trimmed) return [];
+
+  const tokens = trimmed.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
+  return tokens.map((token) => token.replace(/^["']|["']$/g, ""));
 };
 
 type WorktreeSessionSwitchSkipReason =
@@ -340,6 +365,191 @@ async function selectBaseBranch(input: {
   return trimToNull(choice);
 }
 
+function resolveFeatureSetupProfile(profileId: string | null): {
+  profile: FeatureWorkflowSetupProfile | null;
+  availableProfileIds: string[];
+} {
+  const profiles = listFeatureWorkflowSetupProfiles();
+  const availableProfileIds = profiles.map((profile) => profile.id);
+
+  if (profileId) {
+    return {
+      profile: getFeatureWorkflowSetupProfile(profileId),
+      availableProfileIds,
+    };
+  }
+
+  return {
+    profile:
+      getFeatureWorkflowSetupProfile(
+        DEFAULT_FEATURE_WORKFLOW_SETUP_PROFILE_ID,
+      ) ??
+      profiles[0] ??
+      null,
+    availableProfileIds,
+  };
+}
+
+async function maybeSelectFeatureSetupProfileInteractively(
+  ctx: ExtensionCommandContext,
+  initialProfile: FeatureWorkflowSetupProfile | null,
+  explicitProfileRequested: boolean,
+  skipInteractivePrompts: boolean,
+): Promise<FeatureWorkflowSetupProfile | null> {
+  if (explicitProfileRequested || skipInteractivePrompts || !ctx.hasUI) {
+    return initialProfile;
+  }
+
+  const profiles = listFeatureWorkflowSetupProfiles();
+  if (profiles.length <= 1) {
+    return initialProfile ?? profiles[0] ?? null;
+  }
+
+  const options = profiles.map(
+    (profile) => `${profile.id} — ${profile.description}`,
+  );
+
+  const selected = await ctx.ui.select("feature-setup profile:", options);
+  if (selected === undefined) {
+    return null;
+  }
+
+  const index = options.indexOf(selected);
+  if (index < 0) {
+    return initialProfile;
+  }
+
+  return profiles[index] ?? initialProfile;
+}
+
+async function maybeSelectFeatureSetupTargetsInteractively(
+  ctx: ExtensionCommandContext,
+  input: {
+    parsedOnlyTargets: FeatureWorkflowSetupTarget[] | null;
+    parsedSkipTargets: FeatureWorkflowSetupTarget[];
+    skipInteractivePrompts: boolean;
+  },
+): Promise<FeatureWorkflowSetupTarget[] | null> {
+  if (
+    input.skipInteractivePrompts ||
+    !ctx.hasUI ||
+    input.parsedOnlyTargets !== null ||
+    input.parsedSkipTargets.length > 0
+  ) {
+    return resolveFeatureWorkflowSetupTargets({
+      onlyTargets: input.parsedOnlyTargets,
+      skipTargets: input.parsedSkipTargets,
+    });
+  }
+
+  const mode = await ctx.ui.select("feature-setup scope:", [
+    "Apply all recommended files",
+    "Customize files",
+    "Cancel",
+  ]);
+
+  if (mode === undefined || mode === "Cancel") {
+    return null;
+  }
+
+  if (mode === "Apply all recommended files") {
+    return resolveFeatureWorkflowSetupTargets({
+      onlyTargets: null,
+      skipTargets: [],
+    });
+  }
+
+  const selectedTargets: FeatureWorkflowSetupTarget[] = [];
+  for (const target of FEATURE_WORKFLOW_SETUP_TARGETS) {
+    const meta = getFeatureWorkflowSetupTargetMeta(target);
+    const include = await ctx.ui.confirm(
+      `Include ${meta.label}?`,
+      meta.description,
+    );
+
+    if (include) {
+      selectedTargets.push(target);
+    }
+  }
+
+  return resolveFeatureWorkflowSetupTargets({
+    onlyTargets: selectedTargets,
+    skipTargets: [],
+  });
+}
+
+async function runFeatureSetup(ctx: ExtensionCommandContext, args: string[]) {
+  const parsedArgs = parseFeatureWorkflowSetupArgs(args);
+  if (!parsedArgs.ok) {
+    ctx.ui.notify(parsedArgs.message, "error");
+    ctx.ui.notify(FEATURE_WORKFLOW_SETUP_USAGE, "info");
+    return;
+  }
+
+  const repoRoot = getRepoRoot(ctx.cwd, DEFAULT_GIT_TIMEOUT_MS);
+  if (!repoRoot) {
+    ctx.ui.notify("Not a git repository", "info");
+    return;
+  }
+
+  const profileResolution = resolveFeatureSetupProfile(
+    parsedArgs.value.profileId,
+  );
+  let profile = profileResolution.profile;
+
+  const explicitProfileRequested = parsedArgs.value.profileId !== null;
+  if (!profile && explicitProfileRequested) {
+    const profileId = parsedArgs.value.profileId ?? "";
+    ctx.ui.notify(
+      `Unknown feature-setup profile '${profileId}'. Available: ${profileResolution.availableProfileIds.join(", ")}`,
+      "error",
+    );
+    return;
+  }
+
+  profile = await maybeSelectFeatureSetupProfileInteractively(
+    ctx,
+    profile,
+    explicitProfileRequested,
+    parsedArgs.value.yes,
+  );
+  if (!profile) {
+    ctx.ui.notify("Cancelled", "info");
+    return;
+  }
+
+  const targets = await maybeSelectFeatureSetupTargetsInteractively(ctx, {
+    parsedOnlyTargets: parsedArgs.value.onlyTargets,
+    parsedSkipTargets: parsedArgs.value.skipTargets,
+    skipInteractivePrompts: parsedArgs.value.yes,
+  });
+
+  if (!targets) {
+    ctx.ui.notify("Cancelled", "info");
+    return;
+  }
+
+  if (targets.length === 0) {
+    ctx.ui.notify("No setup targets selected. Nothing to do.", "warning");
+    return;
+  }
+
+  const result = applyFeatureWorkflowSetupProfile({
+    cwd: ctx.cwd,
+    repoRoot,
+    profile,
+    targets,
+  });
+
+  ctx.ui.setEditorText(formatFeatureWorkflowSetupResult(result));
+  ctx.ui.notify(
+    result.changedCount > 0
+      ? `feature-setup complete: ${result.changedCount} file(s) updated`
+      : "feature-setup complete: no file changes needed",
+    "info",
+  );
+}
+
 async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   log.debug("feature-start invoked", { cwd: ctx.cwd, hasUI: ctx.hasUI });
 
@@ -504,6 +714,27 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     updatedAt: now,
   };
 
+  const preSessionIgnoredSync = await runIgnoredSync({
+    command: "feature-start",
+    phase: "before-session-switch",
+    config: config.ignoredSync,
+    repoRoot,
+    worktreePath,
+    branch,
+    runWt,
+    notify: ctx.ui.notify.bind(ctx.ui),
+  });
+
+  if (preSessionIgnoredSync.blocked) {
+    log.warn("ignored sync blocked feature-start", {
+      branch,
+      worktreePath,
+      missingCount: preSessionIgnoredSync.missingCount,
+      unresolvedCount: preSessionIgnoredSync.unresolvedCount,
+    });
+    return;
+  }
+
   const switchResult = await maybeSwitchToWorktreeSession({
     ctx,
     record,
@@ -532,6 +763,17 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
       : `Feature worktree created: ${branch}`,
     "info",
   );
+
+  await runIgnoredSync({
+    command: "feature-start",
+    phase: "after-session-switch",
+    config: config.ignoredSync,
+    repoRoot,
+    worktreePath: switchResult.record.worktreePath,
+    branch,
+    runWt,
+    notify: ctx.ui.notify.bind(ctx.ui),
+  });
 }
 
 async function runFeatureList(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
@@ -602,20 +844,24 @@ async function runFeatureSwitch(
   }
 
   const match = matchFeatureRecord(records, query);
-  if (match.kind === "not-found") {
-    ctx.ui.notify(`Unknown feature: ${query}`, "error");
-    return;
-  }
-
-  if (match.kind === "ambiguous-id" || match.kind === "ambiguous-slug") {
-    ctx.ui.notify(
-      buildAmbiguousFeatureQueryMessage({
-        query: match.value,
-        branches: match.branches,
-      }),
-      "error",
-    );
-    return;
+  switch (match.kind) {
+    case "not-found": {
+      ctx.ui.notify(`Unknown feature: ${query}`, "error");
+      return;
+    }
+    case "ambiguous-id":
+    case "ambiguous-slug": {
+      ctx.ui.notify(
+        buildAmbiguousFeatureQueryMessage({
+          query: match.value,
+          branches: match.branches,
+        }),
+        "error",
+      );
+      return;
+    }
+    case "matched":
+      break;
   }
 
   const record = match.record;
@@ -660,6 +906,27 @@ async function runFeatureSwitch(
     updatedAt: now,
   };
 
+  const preSessionIgnoredSync = await runIgnoredSync({
+    command: "feature-switch",
+    phase: "before-session-switch",
+    config: config.ignoredSync,
+    repoRoot,
+    worktreePath: updatedRecord.worktreePath,
+    branch: updatedRecord.branch,
+    runWt,
+    notify: ctx.ui.notify.bind(ctx.ui),
+  });
+
+  if (preSessionIgnoredSync.blocked) {
+    log.warn("ignored sync blocked feature-switch", {
+      branch: updatedRecord.branch,
+      worktreePath: updatedRecord.worktreePath,
+      missingCount: preSessionIgnoredSync.missingCount,
+      unresolvedCount: preSessionIgnoredSync.unresolvedCount,
+    });
+    return;
+  }
+
   const switchResult = await maybeSwitchToWorktreeSession({
     ctx,
     record: updatedRecord,
@@ -675,6 +942,17 @@ async function runFeatureSwitch(
   });
 
   ctx.ui.notify(buildFeatureSwitchNotifyMessage(switchResult), "info");
+
+  await runIgnoredSync({
+    command: "feature-switch",
+    phase: "after-session-switch",
+    config: config.ignoredSync,
+    repoRoot,
+    worktreePath: switchResult.record.worktreePath,
+    branch: switchResult.record.branch,
+    runWt,
+    notify: ctx.ui.notify.bind(ctx.ui),
+  });
 }
 
 async function runFeatureValidate(
@@ -727,6 +1005,12 @@ async function runFeatureValidate(
 }
 
 export default function featureWorkflowExtension(pi: ExtensionAPI) {
+  pi.registerCommand("feature-setup", {
+    description:
+      "Bootstrap ignored sync defaults + Worktrunk hook/script for this repo",
+    handler: async (args, ctx) => runFeatureSetup(ctx, parseCommandArgs(args)),
+  });
+
   pi.registerCommand("feature-start", {
     description: "Create a feature branch + worktree via Worktrunk",
     handler: async (_args, ctx) => runFeatureStart(pi, ctx),
@@ -739,7 +1023,8 @@ export default function featureWorkflowExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("feature-switch", {
     description: "Prepare switching to an existing feature worktree",
-    handler: async (args, ctx) => runFeatureSwitch(pi, ctx, args),
+    handler: async (args, ctx) =>
+      runFeatureSwitch(pi, ctx, parseCommandArgs(args)),
   });
 
   pi.registerCommand("feature-validate", {
@@ -757,9 +1042,9 @@ export default function featureWorkflowExtension(pi: ExtensionAPI) {
     log.info("feature-workflow enabled", { cwd: ctx.cwd });
   });
 
-  pi.on("session_switch", (_event, ctx) => {
+  pi.on("session_before_switch", (_event, ctx) => {
     const config = loadFeatureWorkflowConfig(ctx.cwd);
-    log.debug("feature-workflow session_switch", {
+    log.debug("feature-workflow session_before_switch", {
       cwd: ctx.cwd,
       enabled: config.enabled,
     });

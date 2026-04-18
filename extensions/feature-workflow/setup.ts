@@ -16,6 +16,7 @@ import {
   type IgnoredSyncEnsureOnCommand,
   type IgnoredSyncRule,
 } from "./config.js";
+import { buildGitignoreContent, GITIGNORE_PI_ENTRY } from "./gitignore.js";
 
 export type FeatureWorkflowSetupTarget =
   | "settings"

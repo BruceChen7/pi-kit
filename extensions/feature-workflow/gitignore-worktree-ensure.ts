@@ -1,22 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const GITIGNORE_FILE = ".gitignore";
+import { buildGitignoreContent, GITIGNORE_FILE } from "./gitignore.js";
 
-type SyncGitignoreSuccess = {
+type EnsureWorktreeGitignoreSuccess = {
   ok: true;
   changed: boolean;
   skipped: boolean;
 };
 
-type SyncGitignoreFailure = {
+type EnsureWorktreeGitignoreFailure = {
   ok: false;
   message: string;
 };
 
-export type SyncGitignoreToWorktreeResult =
-  | SyncGitignoreSuccess
-  | SyncGitignoreFailure;
+export type EnsureWorktreeGitignoreResult =
+  | EnsureWorktreeGitignoreSuccess
+  | EnsureWorktreeGitignoreFailure;
 
 const trimToNull = (value: string | null | undefined): string | null => {
   if (typeof value !== "string") return null;
@@ -32,10 +32,10 @@ const toErrorMessage = (error: unknown): string => {
   return String(error);
 };
 
-export const syncGitignoreToWorktree = (input: {
+export const ensureWorktreeGitignore = (input: {
   repoRoot: string;
   worktreePath: string;
-}): SyncGitignoreToWorktreeResult => {
+}): EnsureWorktreeGitignoreResult => {
   const repoRoot = trimToNull(input.repoRoot);
   const worktreePath = trimToNull(input.worktreePath);
   if (!repoRoot || !worktreePath) {
@@ -71,7 +71,11 @@ export const syncGitignoreToWorktree = (input: {
       ? fs.readFileSync(targetPath, "utf-8")
       : null;
 
-    if (targetContent === sourceContent) {
+    const baselineContent = targetContent ?? sourceContent;
+    const merged = buildGitignoreContent(baselineContent);
+    const nextTargetContent = merged.content;
+
+    if (targetContent === nextTargetContent) {
       return {
         ok: true,
         changed: false,
@@ -80,7 +84,7 @@ export const syncGitignoreToWorktree = (input: {
     }
 
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    fs.writeFileSync(targetPath, sourceContent, "utf-8");
+    fs.writeFileSync(targetPath, nextTargetContent, "utf-8");
 
     return {
       ok: true,

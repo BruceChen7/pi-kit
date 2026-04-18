@@ -19,7 +19,7 @@ import { buildBaseBranchCandidates } from "./base-branches.js";
 import { resolveFeatureWorkflowCommandContext } from "./command-context.js";
 import { loadFeatureWorkflowConfig } from "./config.js";
 import { matchFeatureRecord } from "./feature-query.js";
-import { syncGitignoreToWorktree } from "./gitignore-sync.js";
+import { ensureWorktreeGitignore } from "./gitignore-worktree-ensure.js";
 import { checkBaseBranchFreshness } from "./guards.js";
 import { runIgnoredSync } from "./ignored-sync.js";
 import {
@@ -673,7 +673,7 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 
   const worktreePath = createResult.worktreePath;
 
-  const gitignoreSync = syncGitignoreToWorktree({
+  const gitignoreSync = ensureWorktreeGitignore({
     repoRoot,
     worktreePath,
   });
@@ -882,7 +882,7 @@ async function runFeatureSwitch(
 
   const worktreePath = switchWorktreeResult.worktreePath;
 
-  const gitignoreSync = syncGitignoreToWorktree({
+  const gitignoreSync = ensureWorktreeGitignore({
     repoRoot,
     worktreePath,
   });

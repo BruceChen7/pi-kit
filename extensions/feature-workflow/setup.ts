@@ -16,6 +16,7 @@ import {
   type IgnoredSyncEnsureOnCommand,
   type IgnoredSyncRule,
 } from "./config.js";
+import { buildGitignoreContent, GITIGNORE_PI_ENTRY } from "./gitignore.js";
 
 export type FeatureWorkflowSetupTarget =
   | "settings"
@@ -127,7 +128,6 @@ const WORKTREE_INCLUDE_HEADER = [
   "# Used by: wt step copy-ignored",
 ];
 
-const GITIGNORE_PI_ENTRY = ".pi/";
 const HOME_SCRIPT_PATH_PREFIX = "$HOME/";
 const HOME_HOOK_SCRIPT_PATH = "$HOME/.pi/pi-feature-workflow-links.sh";
 
@@ -715,47 +715,6 @@ const buildWorktreeIncludeContent = (
     changed: true,
     addedEntries: missing,
     removedEntries: uniqueStrings(removedEntries),
-  };
-};
-
-const normalizeGitignoreEntry = (value: string): string =>
-  value.trim().replace(/\/+$/, "");
-
-const buildGitignoreContent = (
-  existingContent: string | null,
-): { content: string; changed: boolean; addedEntry: boolean } => {
-  const lines = existingContent === null ? [] : existingContent.split(/\r?\n/);
-  if (lines.length > 0 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-
-  const hasPiEntry = lines.some((line) => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      return false;
-    }
-
-    return normalizeGitignoreEntry(trimmed) === ".pi";
-  });
-
-  if (hasPiEntry) {
-    return {
-      content: existingContent ?? "",
-      changed: false,
-      addedEntry: false,
-    };
-  }
-
-  const next = [...lines];
-  if (next.length > 0 && next[next.length - 1] !== "") {
-    next.push("");
-  }
-  next.push(GITIGNORE_PI_ENTRY);
-
-  return {
-    content: `${next.join("\n")}\n`,
-    changed: true,
-    addedEntry: true,
   };
 };
 

@@ -17,6 +17,7 @@ A pi-kit extension that helps you start and manage feature development using Wor
 
 - `/feature-start`
   - Interactive wizard to create a new feature branch + worktree via `wt switch --create`.
+  - Explicitly syncs `.gitignore` from the invoking repo root into the newly created worktree.
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a new session whose `cwd` is the worktree path.
   - Base branch options are derived from **local branches**, prioritized as:
     1) current branch (for non-feature branches)
@@ -35,6 +36,7 @@ A pi-kit extension that helps you start and manage feature development using Wor
   - Canonical lookup key is **branch name** (`<type>/<base>/<slug>`). UI selection also uses branch names to avoid ambiguity.
   - `id` and `slug` are still accepted as aliases for compatibility. If an alias matches multiple branches, the command asks you to use the full branch name.
   - Ensures the worktree exists via `wt switch`.
+  - Explicitly syncs `.gitignore` from the invoking repo root into the target worktree.
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a worktree session rooted at that feature.
 
 - `/feature-validate`

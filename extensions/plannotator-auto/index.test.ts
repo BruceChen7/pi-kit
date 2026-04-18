@@ -567,6 +567,123 @@ describe("plan review trigger timing", () => {
     }
   });
 
+  it("uses git common-dir repo slug for default plan review path in worktree sessions", async () => {
+    vi.resetModules();
+    const reviewResultListeners: Array<(result: unknown) => void> = [];
+    const startPlanReview = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "pending" as const,
+        reviewId: "review-worktree",
+      },
+    }));
+
+    vi.doMock("../shared/git.ts", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../shared/git.ts")>();
+      return {
+        ...actual,
+        getGitCommonDir: vi.fn(() => "/workspace/pi-kit/.git"),
+      };
+    });
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn((listener: (result: unknown) => void) => {
+          reviewResultListeners.push(listener);
+          return () => {
+            const index = reviewResultListeners.indexOf(listener);
+            if (index >= 0) {
+              reviewResultListeners.splice(index, 1);
+            }
+          };
+        }),
+        getStatus: vi.fn(() => null),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "pi-kit.feat-worktree-plan-"),
+    );
+    const planFileRelative = ".pi/plans/pi-kit/plan/2026-04-16-worktree.md";
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] verify\n", "utf8");
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => false,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+
+      const reviewPromise = emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      await flushMicrotasks();
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+
+      for (const listener of reviewResultListeners) {
+        listener({
+          reviewId: "review-worktree",
+          approved: true,
+        });
+      }
+
+      await reviewPromise;
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        "Plan review approved.",
+        {
+          deliverAs: "steer",
+        },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("does not trigger plan review for legacy single-file configuration", async () => {
     vi.resetModules();
 
@@ -857,6 +974,7 @@ describe("code review trigger timing", () => {
     vi.doMock("../shared/git.ts", () => ({
       DEFAULT_GIT_TIMEOUT_MS: 1_000,
       getRepoRoot: vi.fn(() => "/repo"),
+      getGitCommonDir: vi.fn(() => "/repo/.git"),
       checkRepoDirty: vi.fn(() => ({
         summary: {
           dirty: true,
@@ -1000,6 +1118,7 @@ describe("code review trigger timing", () => {
     vi.doMock("../shared/git.ts", () => ({
       DEFAULT_GIT_TIMEOUT_MS: 1_000,
       getRepoRoot: vi.fn(() => "/repo"),
+      getGitCommonDir: vi.fn(() => "/repo/.git"),
       checkRepoDirty: vi.fn(() => ({
         summary: {
           dirty: true,
@@ -1162,6 +1281,7 @@ describe("code review trigger timing", () => {
     vi.doMock("../shared/git.ts", () => ({
       DEFAULT_GIT_TIMEOUT_MS: 1_000,
       getRepoRoot: vi.fn(() => "/repo"),
+      getGitCommonDir: vi.fn(() => "/repo/.git"),
       checkRepoDirty: vi.fn(() => ({
         summary: {
           dirty: true,

@@ -4,7 +4,7 @@ Automatically opens shared Plannotator review flows via event API for updated pl
 
 ## Configuration
 
-By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` (repo slug = basename of the repo) and expects plan files named `YYYY-MM-DD-<slug>.md`. You can override the plan directory path (relative to the project root) in global settings `~/.pi/agent/third_extension_settings.json`.
+By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` and expects plan files named `YYYY-MM-DD-<slug>.md`. The `<repo>` slug is derived from Git common-dir root (so feature worktrees share the same default slug as the primary repo). You can override the plan directory path (relative to the project root) in global settings `~/.pi/agent/third_extension_settings.json`.
 
 Directory example:
 

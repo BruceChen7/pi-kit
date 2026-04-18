@@ -10,8 +10,9 @@ A pi-kit extension that helps you start and manage feature development using Wor
   - Generates/updates profile artifacts idempotently (safe to run repeatedly).
   - Targets:
     - `settings` → `.pi/third_extension_settings.json`
+    - `gitignore` → ensure `.pi/` exists in `.gitignore`
     - `worktreeinclude` → `.worktreeinclude`
-    - `hook-script` → `.config/pi-feature-workflow-links.sh`
+    - `hook-script` → `.pi/pi-feature-workflow-links.sh`
     - `wt-toml` → managed hook block in `.config/wt.toml`
 
 - `/feature-start`
@@ -52,11 +53,12 @@ Run this once in your repo:
 This command prepares the files needed for ignored-sync and Worktrunk hooks:
 
 - `.pi/third_extension_settings.json`
+- `.gitignore` (ensures `.pi/` is present)
 - `.worktreeinclude`
-- `.config/pi-feature-workflow-links.sh`
+- `.pi/pi-feature-workflow-links.sh`
 - `.config/wt.toml` (managed block)
 
-After setup, commit these config files to your repo so your team uses the same workflow.
+After setup, `.pi` artifacts stay local by default (because `.pi/` is ignored). Commit tracked workflow files like `.worktreeinclude` and `.config/wt.toml` if you want to share them with your team.
 
 ### 2) Start a new feature
 
@@ -226,8 +228,9 @@ Use `/feature-setup` to install the repo-local script/hook wiring:
 By default this command updates:
 
 - `.pi/third_extension_settings.json`
+- `.gitignore` (adds `.pi/` if missing)
 - `.worktreeinclude`
-- `.config/pi-feature-workflow-links.sh`
+- `.pi/pi-feature-workflow-links.sh`
 - `.config/wt.toml` (managed block)
 
 Example managed block in `.config/wt.toml`:
@@ -235,7 +238,7 @@ Example managed block in `.config/wt.toml`:
 ```toml
 # >>> pi-kit feature-workflow setup (managed) >>>
 [[pre-start]]
-"project:deps-link" = "bash .config/pi-feature-workflow-links.sh '{{ primary_worktree_path }}'"
+"project:deps-link" = "bash .pi/pi-feature-workflow-links.sh '{{ primary_worktree_path }}'"
 # <<< pi-kit feature-workflow setup (managed) <<<
 ```
 

@@ -49,6 +49,7 @@ describe("feature-workflow setup args", () => {
     expect(parsed.value.yes).toBe(true);
 
     expect(resolveFeatureWorkflowSetupTargets(parsed.value)).toEqual([
+      "gitignore",
       "hook-script",
       "wt-toml",
     ]);
@@ -60,7 +61,7 @@ describe("feature-workflow setup args", () => {
     expect(parsed).toEqual({
       ok: false,
       message:
-        "Unknown target 'wat'. Supported targets: settings, worktreeinclude, hook-script, wt-toml.",
+        "Unknown target 'wat'. Supported targets: settings, gitignore, worktreeinclude, hook-script, wt-toml.",
     });
   });
 });
@@ -79,7 +80,7 @@ describe("applyFeatureWorkflowSetupProfile", () => {
       targets: FEATURE_WORKFLOW_SETUP_TARGETS,
     });
 
-    expect(first.changedCount).toBe(4);
+    expect(first.changedCount).toBe(5);
 
     const settingsPath = path.join(
       repoRoot,
@@ -104,7 +105,7 @@ describe("applyFeatureWorkflowSetupProfile", () => {
 
     const scriptPath = path.join(
       repoRoot,
-      ".config",
+      ".pi",
       "pi-feature-workflow-links.sh",
     );
     const scriptContent = fs.readFileSync(scriptPath, "utf-8");
@@ -116,7 +117,11 @@ describe("applyFeatureWorkflowSetupProfile", () => {
     const wtTomlPath = path.join(repoRoot, ".config", "wt.toml");
     const wtToml = fs.readFileSync(wtTomlPath, "utf-8");
     expect(wtToml).toContain('"project:deps-link"');
-    expect(wtToml).toContain("pi-feature-workflow-links.sh");
+    expect(wtToml).toContain("bash .pi/pi-feature-workflow-links.sh");
+
+    const gitignorePath = path.join(repoRoot, ".gitignore");
+    const gitignore = fs.readFileSync(gitignorePath, "utf-8");
+    expect(gitignore).toContain(".pi/");
 
     const worktreeIncludePath = path.join(repoRoot, ".worktreeinclude");
     const worktreeInclude = fs.readFileSync(worktreeIncludePath, "utf-8");

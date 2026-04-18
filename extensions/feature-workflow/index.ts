@@ -10,6 +10,7 @@ import {
   DEFAULT_GIT_TIMEOUT_MS,
   getCurrentBranchName,
   getRepoRoot,
+  listDirtyPaths,
   listLocalBranches,
 } from "../shared/git.js";
 import { createLogger } from "../shared/logger.js";
@@ -42,6 +43,7 @@ import {
   parseFeatureWorkflowSetupArgs,
   resolveFeatureWorkflowSetupTargets,
 } from "./setup.js";
+import { areOnlyFeatureSetupManagedDirtyPaths } from "./setup-dirty-guard.js";
 import { type FeatureRecord, findActiveFeatureConflicts } from "./storage.js";
 import {
   createFeatureWorktree,
@@ -572,11 +574,21 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     }
 
     if (dirty.summary.dirty) {
+      const dirtyPaths = listDirtyPaths(dirty.porcelain);
+      const setupOnlyDirty = areOnlyFeatureSetupManagedDirtyPaths(dirtyPaths);
+
+      if (!setupOnlyDirty) {
+        ctx.ui.notify(
+          `Repository is dirty (staged ${dirty.summary.staged}, unstaged ${dirty.summary.unstaged}, untracked ${dirty.summary.untracked}). Commit/stash first.`,
+          "warning",
+        );
+        return;
+      }
+
       ctx.ui.notify(
-        `Repository is dirty (staged ${dirty.summary.staged}, unstaged ${dirty.summary.unstaged}, untracked ${dirty.summary.untracked}). Commit/stash first.`,
-        "warning",
+        `Workspace has only /feature-setup managed changes (${dirtyPaths.join(", ")}). Continuing /feature-start.`,
+        "info",
       );
-      return;
     }
   }
 

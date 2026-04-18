@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { syncGitignoreToWorktree } from "./gitignore-sync.js";
+import { ensureWorktreeGitignore } from "./gitignore-worktree-ensure.js";
 
 const tempDirs: string[] = [];
 
@@ -22,8 +22,8 @@ afterEach(() => {
   }
 });
 
-describe("syncGitignoreToWorktree", () => {
-  it("copies .gitignore when target worktree differs", () => {
+describe("ensureWorktreeGitignore", () => {
+  it("bootstraps target .gitignore from source when missing", () => {
     const repoRoot = createTempDir("pi-kit-feature-gitignore-source-");
     const worktreePath = createTempDir("pi-kit-feature-gitignore-target-");
 
@@ -32,7 +32,7 @@ describe("syncGitignoreToWorktree", () => {
       "node_modules/\n.pi/\n",
     );
 
-    const result = syncGitignoreToWorktree({ repoRoot, worktreePath });
+    const result = ensureWorktreeGitignore({ repoRoot, worktreePath });
 
     expect(result).toEqual({ ok: true, changed: true, skipped: false });
     expect(
@@ -40,24 +40,47 @@ describe("syncGitignoreToWorktree", () => {
     ).toBe("node_modules/\n.pi/\n");
   });
 
-  it("is idempotent when source and target content already match", () => {
+  it("adds .pi/ to existing target .gitignore without overwriting target entries", () => {
     const repoRoot = createTempDir("pi-kit-feature-gitignore-source-");
     const worktreePath = createTempDir("pi-kit-feature-gitignore-target-");
 
-    const content = "node_modules/\n.pi/\n";
-    fs.writeFileSync(path.join(repoRoot, ".gitignore"), content);
-    fs.writeFileSync(path.join(worktreePath, ".gitignore"), content);
+    fs.writeFileSync(
+      path.join(repoRoot, ".gitignore"),
+      "node_modules/\n.pi/\n",
+    );
+    fs.writeFileSync(path.join(worktreePath, ".gitignore"), "dist/\n");
 
-    const result = syncGitignoreToWorktree({ repoRoot, worktreePath });
+    const result = ensureWorktreeGitignore({ repoRoot, worktreePath });
+
+    expect(result).toEqual({ ok: true, changed: true, skipped: false });
+    expect(
+      fs.readFileSync(path.join(worktreePath, ".gitignore"), "utf-8"),
+    ).toBe("dist/\n\n.pi/\n");
+  });
+
+  it("is idempotent when target already satisfies merged .gitignore content", () => {
+    const repoRoot = createTempDir("pi-kit-feature-gitignore-source-");
+    const worktreePath = createTempDir("pi-kit-feature-gitignore-target-");
+
+    fs.writeFileSync(
+      path.join(repoRoot, ".gitignore"),
+      "node_modules/\n.pi/\n",
+    );
+    fs.writeFileSync(path.join(worktreePath, ".gitignore"), "dist/\n\n.pi/\n");
+
+    const result = ensureWorktreeGitignore({ repoRoot, worktreePath });
 
     expect(result).toEqual({ ok: true, changed: false, skipped: false });
+    expect(
+      fs.readFileSync(path.join(worktreePath, ".gitignore"), "utf-8"),
+    ).toBe("dist/\n\n.pi/\n");
   });
 
   it("skips when source .gitignore is missing", () => {
     const repoRoot = createTempDir("pi-kit-feature-gitignore-source-");
     const worktreePath = createTempDir("pi-kit-feature-gitignore-target-");
 
-    const result = syncGitignoreToWorktree({ repoRoot, worktreePath });
+    const result = ensureWorktreeGitignore({ repoRoot, worktreePath });
 
     expect(result).toEqual({ ok: true, changed: false, skipped: true });
     expect(fs.existsSync(path.join(worktreePath, ".gitignore"))).toBe(false);
@@ -72,7 +95,7 @@ describe("syncGitignoreToWorktree", () => {
     process.chdir(isolatedCwd);
 
     try {
-      const result = syncGitignoreToWorktree({
+      const result = ensureWorktreeGitignore({
         repoRoot,
         worktreePath: "   ",
       });
@@ -88,7 +111,7 @@ describe("syncGitignoreToWorktree", () => {
     const repoRoot = createTempDir("pi-kit-feature-gitignore-same-");
     fs.writeFileSync(path.join(repoRoot, ".gitignore"), ".pi/\n");
 
-    const result = syncGitignoreToWorktree({
+    const result = ensureWorktreeGitignore({
       repoRoot,
       worktreePath: repoRoot,
     });

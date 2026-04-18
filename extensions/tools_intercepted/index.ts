@@ -17,7 +17,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path, {
@@ -45,7 +45,6 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { type Static, Type } from "@sinclair/typebox";
-import { globSync } from "glob";
 import { createLogger } from "../shared/logger.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -246,7 +245,6 @@ function buildFdArgs(
   pattern: string,
   searchPath: string,
   effectiveLimit: number,
-  ignoreFiles: Iterable<string> = [],
 ): string[] {
   const args = [
     "--glob",
@@ -255,10 +253,6 @@ function buildFdArgs(
     "--max-results",
     String(effectiveLimit),
   ];
-
-  for (const ignoreFile of ignoreFiles) {
-    args.push("--ignore-file", ignoreFile);
-  }
 
   args.push(pattern, searchPath);
   return args;
@@ -744,33 +738,7 @@ function createFdTool() {
               const searchPath = resolveToCwd(searchDir || ".", cwd);
               const effectiveLimit = limit ?? DEFAULT_FIND_LIMIT;
 
-              const gitignoreFiles = new Set<string>();
-              const rootGitignore = join(searchPath, ".gitignore");
-              if (existsSync(rootGitignore)) {
-                gitignoreFiles.add(rootGitignore);
-              }
-
-              try {
-                const nestedGitignores = globSync("**/.gitignore", {
-                  cwd: searchPath,
-                  dot: true,
-                  absolute: true,
-                  ignore: ["**/node_modules/**", "**/.git/**"],
-                });
-
-                for (const file of nestedGitignores) {
-                  gitignoreFiles.add(file);
-                }
-              } catch {
-                // Ignore glob errors
-              }
-
-              const args = buildFdArgs(
-                pattern,
-                searchPath,
-                effectiveLimit,
-                gitignoreFiles,
-              );
+              const args = buildFdArgs(pattern, searchPath, effectiveLimit);
 
               if (!commandExists("fd")) {
                 signal?.removeEventListener("abort", onAbort);

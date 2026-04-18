@@ -1,3 +1,5 @@
+import { parseFeatureBranchName } from "./naming.js";
+
 export type BaseBranchCandidatesInput = {
   currentBranch: string | null;
   localBranches: string[];
@@ -24,6 +26,23 @@ const isReleaseBranch = (branch: string): boolean =>
   branch.startsWith("release/") ||
   branch.startsWith("release-");
 
+const LEGACY_FEATURE_BRANCH_PATTERN = /^(?:feat|fix|chore|spike)\/[^/]+$/;
+
+const resolveCurrentBranchCandidate = (
+  currentBranch: string,
+): string | null => {
+  const parsed = parseFeatureBranchName(currentBranch);
+  if (parsed) {
+    return normalizeBranch(parsed.base);
+  }
+
+  if (LEGACY_FEATURE_BRANCH_PATTERN.test(currentBranch)) {
+    return null;
+  }
+
+  return currentBranch;
+};
+
 export function buildBaseBranchCandidates(
   input: BaseBranchCandidatesInput,
 ): string[] {
@@ -34,10 +53,16 @@ export function buildBaseBranchCandidates(
   );
 
   const prioritized: string[] = [];
+  const localSet = new Set(local);
   const current = input.currentBranch
     ? normalizeBranch(input.currentBranch)
     : null;
-  if (current) prioritized.push(current);
+  if (current) {
+    const currentCandidate = resolveCurrentBranchCandidate(current);
+    if (currentCandidate && localSet.has(currentCandidate)) {
+      prioritized.push(currentCandidate);
+    }
+  }
 
   for (const branch of ["main", "master"]) {
     if (local.includes(branch)) prioritized.push(branch);

@@ -19,7 +19,9 @@ A pi-kit extension that helps you start and manage feature development using Wor
   - Interactive wizard to create a new feature branch + worktree via `wt switch --create`.
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a new session whose `cwd` is the worktree path.
   - Base branch options are derived from **local branches**, prioritized as:
-    1) current branch
+    1) current branch (for non-feature branches)
+       - if current branch already matches `<type>/<base>/<slug>`, prioritize its parsed `base`
+       - unsupported old-format `<type>/<slug>` current branches are not auto-prioritized
     2) `main`
     3) `master`
     4) `release*` (e.g. `release`, `release/*`, `release-*`) if present
@@ -27,7 +29,7 @@ A pi-kit extension that helps you start and manage feature development using Wor
 
 - `/feature-list`
   - Lists active feature worktrees from `wt list --format json`.
-  - Derives `base` from branch name (`<type>/<base>/<slug>`). Legacy `<type>/<slug>` branches are still listed with empty base.
+  - Derives `base` from branch name (`<type>/<base>/<slug>`). Branches that do not match this format are ignored.
 
 - `/feature-switch <branch|id|slug>`
   - Canonical lookup key is **branch name** (`<type>/<base>/<slug>`). UI selection also uses branch names to avoid ambiguity.
@@ -126,11 +128,10 @@ Feature/worktree source of truth comes from Worktrunk (`wt list --format json`).
 
 Identity semantics:
 - Canonical key: `branch`
-- Display alias: `id` (`<type>-<normalized-base>-<slug>`, or legacy `<type>-<slug>` when base is empty)
+- Display alias: `id` (`<type>-<normalized-base>-<slug>`)
 
-`base` is derived from branch name:
-- Preferred: `<type>/<base>/<slug>`
-- Legacy supported: `<type>/<slug>` (treated as empty base)
+`base` is derived from branch name and requires:
+- `<type>/<base>/<slug>`
 
 ## Configuration
 

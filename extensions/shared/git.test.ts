@@ -7,6 +7,7 @@ import {
   branchExists,
   createRepoGitRunner,
   getCurrentBranchName,
+  listDirtyPaths,
   listLocalBranches,
 } from "./git.js";
 
@@ -83,6 +84,27 @@ describe("branch helpers", () => {
       "--verify",
       "--quiet",
       "refs/heads/feature/main/test",
+    ]);
+  });
+});
+
+describe("listDirtyPaths", () => {
+  it("parses normal modified and untracked entries", () => {
+    expect(listDirtyPaths(" M package.json\n?? .config/wt.toml\n")).toEqual([
+      "package.json",
+      ".config/wt.toml",
+    ]);
+  });
+
+  it("returns renamed target path", () => {
+    expect(listDirtyPaths("R  old-name.ts -> new-name.ts\n")).toEqual([
+      "new-name.ts",
+    ]);
+  });
+
+  it("parses quoted paths from porcelain output", () => {
+    expect(listDirtyPaths('?? "dir with space/file name.ts"\n')).toEqual([
+      "dir with space/file name.ts",
     ]);
   });
 });

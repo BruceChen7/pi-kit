@@ -18,6 +18,7 @@ import {
 
 export type FeatureWorkflowSetupTarget =
   | "settings"
+  | "gitignore"
   | "worktreeinclude"
   | "hook-script"
   | "wt-toml";
@@ -70,6 +71,7 @@ export type FeatureWorkflowSetupParseResult =
 
 const SETUP_TARGETS: FeatureWorkflowSetupTarget[] = [
   "settings",
+  "gitignore",
   "worktreeinclude",
   "hook-script",
   "wt-toml",
@@ -78,6 +80,9 @@ const SETUP_TARGETS: FeatureWorkflowSetupTarget[] = [
 const SETUP_TARGET_ALIASES: Record<string, FeatureWorkflowSetupTarget> = {
   settings: "settings",
   config: "settings",
+  gitignore: "gitignore",
+  "git-ignore": "gitignore",
+  ignore: "gitignore",
   worktreeinclude: "worktreeinclude",
   "worktree-include": "worktreeinclude",
   include: "worktreeinclude",
@@ -97,12 +102,16 @@ const SETUP_TARGET_METADATA: Record<
     label: ".pi/third_extension_settings.json",
     description: "Enable ignoredSync defaults and add missing profile rules.",
   },
+  gitignore: {
+    label: ".gitignore",
+    description: "Ensure .pi/ is ignored for setup-managed artifacts.",
+  },
   worktreeinclude: {
     label: ".worktreeinclude",
     description: "Add recommended copy-managed ignored entries.",
   },
   "hook-script": {
-    label: ".config/pi-feature-workflow-links.sh",
+    label: ".pi/pi-feature-workflow-links.sh",
     description: "Generate the reusable symlink hook script.",
   },
   "wt-toml": {
@@ -115,6 +124,8 @@ const WORKTREE_INCLUDE_HEADER = [
   "# Files to copy between worktrees (must also be gitignored)",
   "# Used by: wt step copy-ignored",
 ];
+
+const GITIGNORE_PI_ENTRY = ".pi/";
 
 const WT_TOML_MANAGED_BLOCK_START =
   "# >>> pi-kit feature-workflow setup (managed) >>>";
@@ -169,7 +180,7 @@ const SETUP_PROFILES: FeatureWorkflowSetupProfile[] = [
     hook: {
       hookType: "pre-start",
       name: DEFAULT_IGNORED_SYNC_HOOK,
-      scriptRelativePath: ".config/pi-feature-workflow-links.sh",
+      scriptRelativePath: ".pi/pi-feature-workflow-links.sh",
       symlinkPaths: ["node_modules", ".pi", "AGENTS.md", "CLAUDE.md"],
     },
   },
@@ -268,7 +279,7 @@ const parseTargetList = (
     if (!target) {
       return {
         ok: false,
-        message: `Unknown target '${value}'. Supported targets: settings, worktreeinclude, hook-script, wt-toml.`,
+        message: `Unknown target '${value}'. Supported targets: settings, gitignore, worktreeinclude, hook-script, wt-toml.`,
       };
     }
     if (!targets.includes(target)) {
@@ -424,6 +435,10 @@ export const resolveFeatureWorkflowSetupTargets = (
 
   if (selected.has("wt-toml")) {
     selected.add("hook-script");
+  }
+
+  if (selected.has("hook-script")) {
+    selected.add("gitignore");
   }
 
   return SETUP_TARGETS.filter((target) => selected.has(target));
@@ -622,6 +637,47 @@ const buildWorktreeIncludeContent = (
   };
 };
 
+const normalizeGitignoreEntry = (value: string): string =>
+  value.trim().replace(/\/+$/, "");
+
+const buildGitignoreContent = (
+  existingContent: string | null,
+): { content: string; changed: boolean; addedEntry: boolean } => {
+  const lines = existingContent === null ? [] : existingContent.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+
+  const hasPiEntry = lines.some((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      return false;
+    }
+
+    return normalizeGitignoreEntry(trimmed) === ".pi";
+  });
+
+  if (hasPiEntry) {
+    return {
+      content: existingContent ?? "",
+      changed: false,
+      addedEntry: false,
+    };
+  }
+
+  const next = [...lines];
+  if (next.length > 0 && next[next.length - 1] !== "") {
+    next.push("");
+  }
+  next.push(GITIGNORE_PI_ENTRY);
+
+  return {
+    content: `${next.join("\n")}\n`,
+    changed: true,
+    addedEntry: true,
+  };
+};
+
 const buildSymlinkHookScript = (symlinkPaths: string[]): string => {
   const paths = uniqueStrings(symlinkPaths);
   const lines: string[] = [
@@ -755,6 +811,28 @@ export const applyFeatureWorkflowSetupProfile = (
       message: changed
         ? "Updated featureWorkflow ignored sync settings"
         : "Settings already contain the required profile defaults",
+    });
+  }
+
+  if (targets.includes("gitignore")) {
+    const gitignorePath = path.join(input.repoRoot, ".gitignore");
+    const existingContent = fs.existsSync(gitignorePath)
+      ? fs.readFileSync(gitignorePath, "utf-8")
+      : null;
+
+    const merged = buildGitignoreContent(existingContent);
+    if (merged.changed) {
+      fs.mkdirSync(path.dirname(gitignorePath), { recursive: true });
+      fs.writeFileSync(gitignorePath, merged.content, "utf-8");
+    }
+
+    changes.push({
+      target: "gitignore",
+      path: toRelativeDisplayPath(input.repoRoot, gitignorePath),
+      changed: merged.changed,
+      message: merged.addedEntry
+        ? `Added '${GITIGNORE_PI_ENTRY}' to .gitignore`
+        : `'.pi/' is already present in .gitignore`,
     });
   }
 

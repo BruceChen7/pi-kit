@@ -731,7 +731,7 @@ const buildManagedWtTomlBlock = (
 
   return [
     WT_TOML_MANAGED_BLOCK_START,
-    "[[pre-start]]",
+    "[pre-start]",
     `"${escapedKey}" = "${escapedCommand}"`,
     WT_TOML_MANAGED_BLOCK_END,
   ].join("\n");

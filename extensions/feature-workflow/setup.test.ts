@@ -116,7 +116,9 @@ describe("applyFeatureWorkflowSetupProfile", () => {
 
     const wtTomlPath = path.join(repoRoot, ".config", "wt.toml");
     const wtToml = fs.readFileSync(wtTomlPath, "utf-8");
-    expect(wtToml).toContain('"project:deps-link"');
+    expect(wtToml).toContain("[pre-start]");
+    expect(wtToml).not.toContain("[[pre-start]]");
+    expect(wtToml).toContain('"project-deps-link"');
     expect(wtToml).toContain("bash .pi/pi-feature-workflow-links.sh");
 
     const gitignorePath = path.join(repoRoot, ".gitignore");
@@ -225,21 +227,21 @@ describe("applyFeatureWorkflowSetupProfile", () => {
       strategy: "symlink",
       onMissing: {
         action: "run-hook",
-        hook: "project:deps-link",
+        hook: "project-deps-link",
       },
     });
     expect(agentsRule).toMatchObject({
       strategy: "copy",
       onMissing: {
         action: "run-hook",
-        hook: "project:deps-link",
+        hook: "project-deps-link",
       },
     });
     expect(claudeRule).toMatchObject({
       strategy: "copy",
       onMissing: {
         action: "run-hook",
-        hook: "project:deps-link",
+        hook: "project-deps-link",
       },
     });
   });

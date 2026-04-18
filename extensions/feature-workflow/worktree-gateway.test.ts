@@ -157,7 +157,7 @@ describe("worktree-gateway", () => {
 
     const result = await runWorktreeHook(runWt, {
       hookType: "pre-start",
-      hook: "project:deps-link",
+      hook: "project-deps-link",
       branch: "feat/main/checkout-v2",
     });
 
@@ -165,7 +165,7 @@ describe("worktree-gateway", () => {
     expect(runWt).toHaveBeenCalledWith([
       "hook",
       "pre-start",
-      "project:deps-link",
+      "project-deps-link",
       "--branch=feat/main/checkout-v2",
       "--yes",
     ]);

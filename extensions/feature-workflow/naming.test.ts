@@ -49,12 +49,8 @@ describe("parseFeatureBranchName", () => {
     });
   });
 
-  it("keeps compatibility with legacy type/slug branches", () => {
-    expect(parseFeatureBranchName("feat/checkout-v2")).toEqual({
-      type: "feat",
-      base: "",
-      slug: "checkout-v2",
-    });
+  it("rejects legacy type/slug branches", () => {
+    expect(parseFeatureBranchName("feat/checkout-v2")).toBeNull();
   });
 
   it("returns null for invalid branch names", () => {
@@ -78,11 +74,5 @@ describe("buildFeatureId", () => {
         slug: "login-timeout",
       }),
     ).toBe("fix-release-2026-q2-login-timeout");
-  });
-
-  it("keeps legacy shape when base is empty", () => {
-    expect(
-      buildFeatureId({ type: "feat", base: "", slug: "checkout-v2" }),
-    ).toBe("feat-checkout-v2");
   });
 });

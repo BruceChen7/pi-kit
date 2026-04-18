@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import {
@@ -49,6 +50,7 @@ export type FeatureWorkflowSetupApplyInput = {
   repoRoot: string;
   profile: FeatureWorkflowSetupProfile;
   targets: Iterable<FeatureWorkflowSetupTarget>;
+  userHomePath?: string;
 };
 
 export type FeatureWorkflowSetupFileChange = {
@@ -111,7 +113,7 @@ const SETUP_TARGET_METADATA: Record<
     description: "Add recommended copy-managed ignored entries.",
   },
   "hook-script": {
-    label: ".pi/pi-feature-workflow-links.sh",
+    label: "$HOME/.pi/pi-feature-workflow-links.sh",
     description: "Generate the reusable symlink hook script.",
   },
   "wt-toml": {
@@ -126,6 +128,10 @@ const WORKTREE_INCLUDE_HEADER = [
 ];
 
 const GITIGNORE_PI_ENTRY = ".pi/";
+const HOME_SCRIPT_PATH_PREFIX = "$HOME/";
+const HOME_HOOK_SCRIPT_PATH = "$HOME/.pi/pi-feature-workflow-links.sh";
+
+const WORKTREE_INCLUDE_EXCLUDED_ENTRIES = new Set<string>([".pi"]);
 
 const WT_TOML_MANAGED_BLOCK_START =
   "# >>> pi-kit feature-workflow setup (managed) >>>";
@@ -180,7 +186,7 @@ const SETUP_PROFILES: FeatureWorkflowSetupProfile[] = [
     hook: {
       hookType: "pre-start",
       name: DEFAULT_IGNORED_SYNC_HOOK,
-      scriptRelativePath: ".pi/pi-feature-workflow-links.sh",
+      scriptRelativePath: HOME_HOOK_SCRIPT_PATH,
       symlinkPaths: ["node_modules", ".pi", "AGENTS.md", "CLAUDE.md"],
     },
   },
@@ -218,6 +224,45 @@ const uniqueStrings = (values: Iterable<string>): string[] => {
     deduped.push(trimmed);
   }
   return deduped;
+};
+
+const normalizeWorktreeIncludeEntry = (value: string): string =>
+  value.trim().replace(/^\.\//, "").replace(/\/+$/, "");
+
+const isExcludedWorktreeIncludeEntry = (value: string): boolean =>
+  WORKTREE_INCLUDE_EXCLUDED_ENTRIES.has(normalizeWorktreeIncludeEntry(value));
+
+const resolveUserHomePath = (inputHomePath?: string): string => {
+  const explicit = trimToNull(inputHomePath);
+  if (explicit) {
+    return path.resolve(explicit);
+  }
+
+  const fromEnv = trimToNull(process.env.HOME);
+  if (fromEnv) {
+    return path.resolve(fromEnv);
+  }
+
+  return path.resolve(os.homedir());
+};
+
+const resolveHookScriptAbsolutePath = (
+  scriptPath: string,
+  repoRoot: string,
+  userHomePath: string,
+): string => {
+  if (scriptPath.startsWith(HOME_SCRIPT_PATH_PREFIX)) {
+    return path.join(
+      userHomePath,
+      scriptPath.slice(HOME_SCRIPT_PATH_PREFIX.length),
+    );
+  }
+
+  if (path.isAbsolute(scriptPath)) {
+    return scriptPath;
+  }
+
+  return path.join(repoRoot, scriptPath);
 };
 
 const escapeTomlBasicString = (value: string): string =>
@@ -589,13 +634,27 @@ const mergeSettingsWithProfile = (
 const buildWorktreeIncludeContent = (
   existingContent: string | null,
   requiredEntries: string[],
-): { content: string; changed: boolean; addedEntries: string[] } => {
+): {
+  content: string;
+  changed: boolean;
+  addedEntries: string[];
+  removedEntries: string[];
+} => {
+  const normalizedRequiredEntries = requiredEntries.filter(
+    (entry) => !isExcludedWorktreeIncludeEntry(entry),
+  );
+
   if (existingContent === null) {
-    const lines = [...WORKTREE_INCLUDE_HEADER, "", ...requiredEntries];
+    const lines = [
+      ...WORKTREE_INCLUDE_HEADER,
+      "",
+      ...normalizedRequiredEntries,
+    ];
     return {
       content: `${lines.join("\n")}\n`,
       changed: true,
-      addedEntries: [...requiredEntries],
+      addedEntries: [...normalizedRequiredEntries],
+      removedEntries: [],
     };
   }
 
@@ -604,8 +663,25 @@ const buildWorktreeIncludeContent = (
     lines.pop();
   }
 
-  const existingEntries = new Set<string>();
+  const removedEntries: string[] = [];
+  const filteredLines: string[] = [];
+
   for (const line of lines) {
+    const trimmed = line.trim();
+    if (
+      trimmed &&
+      !trimmed.startsWith("#") &&
+      isExcludedWorktreeIncludeEntry(trimmed)
+    ) {
+      removedEntries.push(trimmed);
+      continue;
+    }
+
+    filteredLines.push(line);
+  }
+
+  const existingEntries = new Set<string>();
+  for (const line of filteredLines) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) {
       continue;
@@ -613,27 +689,32 @@ const buildWorktreeIncludeContent = (
     existingEntries.add(trimmed);
   }
 
-  const missing = requiredEntries.filter(
+  const missing = normalizedRequiredEntries.filter(
     (entry) => !existingEntries.has(entry),
   );
-  if (missing.length === 0) {
+
+  if (missing.length === 0 && removedEntries.length === 0) {
     return {
       content: existingContent,
       changed: false,
       addedEntries: [],
+      removedEntries: [],
     };
   }
 
-  const next = [...lines];
-  if (next.length > 0 && next[next.length - 1] !== "") {
-    next.push("");
+  const next = [...filteredLines];
+  if (missing.length > 0) {
+    if (next.length > 0 && next[next.length - 1] !== "") {
+      next.push("");
+    }
+    next.push(...missing);
   }
-  next.push(...missing);
 
   return {
     content: `${next.join("\n")}\n`,
     changed: true,
     addedEntries: missing,
+    removedEntries: uniqueStrings(removedEntries),
   };
 };
 
@@ -725,7 +806,7 @@ const buildSymlinkHookScript = (symlinkPaths: string[]): string => {
 const buildManagedWtTomlBlock = (
   profile: FeatureWorkflowSetupProfile,
 ): string => {
-  const command = `bash ${profile.hook.scriptRelativePath} '{{ primary_worktree_path }}'`;
+  const command = `bash "${profile.hook.scriptRelativePath}" '{{ primary_worktree_path }}'`;
   const escapedKey = escapeTomlBasicString(profile.hook.name);
   const escapedCommand = escapeTomlBasicString(command);
 
@@ -782,6 +863,8 @@ const writeFileIfChanged = (absolutePath: string, content: string): boolean => {
 export const applyFeatureWorkflowSetupProfile = (
   input: FeatureWorkflowSetupApplyInput,
 ): FeatureWorkflowSetupApplyResult => {
+  const userHomePath = resolveUserHomePath(input.userHomePath);
+
   const targets = resolveFeatureWorkflowSetupTargets({
     onlyTargets: uniqueStrings(input.targets) as FeatureWorkflowSetupTarget[],
     skipTargets: [],
@@ -852,21 +935,30 @@ export const applyFeatureWorkflowSetupProfile = (
       fs.writeFileSync(worktreeIncludePath, merged.content, "utf-8");
     }
 
+    const updates: string[] = [];
+    if (merged.addedEntries.length > 0) {
+      updates.push(`Added entries: ${merged.addedEntries.join(", ")}`);
+    }
+    if (merged.removedEntries.length > 0) {
+      updates.push(`Removed entries: ${merged.removedEntries.join(", ")}`);
+    }
+
     changes.push({
       target: "worktreeinclude",
       path: toRelativeDisplayPath(input.repoRoot, worktreeIncludePath),
       changed: merged.changed,
       message:
-        merged.addedEntries.length > 0
-          ? `Added entries: ${merged.addedEntries.join(", ")}`
+        updates.length > 0
+          ? updates.join("; ")
           : "All profile entries already present",
     });
   }
 
   if (targets.includes("hook-script")) {
-    const scriptPath = path.join(
-      input.repoRoot,
+    const scriptPath = resolveHookScriptAbsolutePath(
       input.profile.hook.scriptRelativePath,
+      input.repoRoot,
+      userHomePath,
     );
     const scriptContent = buildSymlinkHookScript(
       input.profile.hook.symlinkPaths,

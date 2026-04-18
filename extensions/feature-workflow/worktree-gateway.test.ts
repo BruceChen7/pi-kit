@@ -152,7 +152,7 @@ describe("worktree-gateway", () => {
     expect(result).toEqual({ ok: false, message: "wt list failed" });
   });
 
-  it("runs named hook for a branch", async () => {
+  it("runs named hook without forwarding branch flags", async () => {
     const runWt: WtRunner = vi.fn().mockResolvedValue(okResult("ok"));
 
     const result = await runWorktreeHook(runWt, {
@@ -166,7 +166,6 @@ describe("worktree-gateway", () => {
       "hook",
       "pre-start",
       "project-deps-link",
-      "--branch=feat/main/checkout-v2",
       "--yes",
     ]);
   });

@@ -236,11 +236,6 @@ export async function runWorktreeHook(
     args.push(hook);
   }
 
-  const branch = trimToNull(input.branch ?? null);
-  if (branch) {
-    args.push(`--branch=${branch}`);
-  }
-
   args.push("--yes");
 
   const result = await runWt(args);

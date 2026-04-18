@@ -1,4 +1,0 @@
-# >>> pi-kit feature-workflow setup (managed) >>>
-[pre-start]
-"project-deps-link" = "bash \"$HOME/.pi/pi-feature-workflow-links.sh\" '{{ primary_worktree_path }}'"
-# <<< pi-kit feature-workflow setup (managed) <<<

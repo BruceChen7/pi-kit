@@ -12,8 +12,6 @@ export function buildWtSwitchCreateArgs(input: {
     "--base",
     input.base,
     "--no-cd",
-    "--format",
-    "json",
     "--yes",
   ];
 }

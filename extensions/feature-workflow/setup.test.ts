@@ -129,6 +129,7 @@ describe("applyFeatureWorkflowSetupProfile", () => {
     const gitignorePath = path.join(repoRoot, ".gitignore");
     const gitignore = fs.readFileSync(gitignorePath, "utf-8");
     expect(gitignore).toContain(".pi/");
+    expect(gitignore).toContain(".config/wt.toml");
 
     const worktreeIncludePath = path.join(repoRoot, ".worktreeinclude");
     const worktreeInclude = fs.readFileSync(worktreeIncludePath, "utf-8");
@@ -145,6 +146,28 @@ describe("applyFeatureWorkflowSetupProfile", () => {
 
     expect(second.changedCount).toBe(0);
     expect(second.changes.every((change) => !change.changed)).toBe(true);
+  });
+
+  it("treats existing gitignore variants as already satisfied", () => {
+    const repoRoot = createTempDir("pi-kit-feature-setup-gitignore-variants-");
+    const profile = getFeatureWorkflowSetupProfile("npm");
+    expect(profile).not.toBeNull();
+    if (!profile) return;
+
+    const gitignorePath = path.join(repoRoot, ".gitignore");
+    fs.writeFileSync(gitignorePath, [".pi", "/.config/wt.toml", ""].join("\n"));
+
+    const result = applyFeatureWorkflowSetupProfile({
+      cwd: repoRoot,
+      repoRoot,
+      profile,
+      targets: ["gitignore"],
+    });
+
+    expect(result.changedCount).toBe(0);
+    expect(fs.readFileSync(gitignorePath, "utf-8")).toBe(
+      [".pi", "/.config/wt.toml", ""].join("\n"),
+    );
   });
 
   it("removes .pi entries from .worktreeinclude", () => {

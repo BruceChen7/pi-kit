@@ -19,6 +19,7 @@ import { buildBaseBranchCandidates } from "./base-branches.js";
 import { resolveFeatureWorkflowCommandContext } from "./command-context.js";
 import { loadFeatureWorkflowConfig } from "./config.js";
 import { matchFeatureRecord } from "./feature-query.js";
+import { syncGitignoreToWorktree } from "./gitignore-sync.js";
 import { checkBaseBranchFreshness } from "./guards.js";
 import { runIgnoredSync } from "./ignored-sync.js";
 import {
@@ -672,10 +673,29 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 
   const worktreePath = createResult.worktreePath;
 
+  const gitignoreSync = syncGitignoreToWorktree({
+    repoRoot,
+    worktreePath,
+  });
+  if (!gitignoreSync.ok) {
+    ctx.ui.notify(
+      `Failed to sync .gitignore to new worktree: ${gitignoreSync.message}`,
+      "warning",
+    );
+    log.warn("feature-start .gitignore sync failed", {
+      branch,
+      base,
+      repoRoot,
+      worktreePath,
+      message: gitignoreSync.message,
+    });
+  }
+
   log.debug("feature-start worktree ready", {
     branch,
     base,
     worktreePath,
+    gitignoreSynced: gitignoreSync.ok ? gitignoreSync.changed : false,
   });
 
   const now = new Date().toISOString();
@@ -862,9 +882,27 @@ async function runFeatureSwitch(
 
   const worktreePath = switchWorktreeResult.worktreePath;
 
+  const gitignoreSync = syncGitignoreToWorktree({
+    repoRoot,
+    worktreePath,
+  });
+  if (!gitignoreSync.ok) {
+    ctx.ui.notify(
+      `Failed to sync .gitignore to target worktree: ${gitignoreSync.message}`,
+      "warning",
+    );
+    log.warn("feature-switch .gitignore sync failed", {
+      branch: record.branch,
+      repoRoot,
+      worktreePath,
+      message: gitignoreSync.message,
+    });
+  }
+
   log.debug("feature-switch worktree ready", {
     branch: record.branch,
     worktreePath,
+    gitignoreSynced: gitignoreSync.ok ? gitignoreSync.changed : false,
   });
 
   const now = new Date().toISOString();

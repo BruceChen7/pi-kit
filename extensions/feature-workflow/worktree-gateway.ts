@@ -42,7 +42,10 @@ const getWorktreePath = (
   return typeof wtJson.path === "string" ? wtJson.path : fallbackPath;
 };
 
-const parsePrimaryWorktreePath = (stdout: string): string | null => {
+const parseWorktreePathFromWtList = (
+  stdout: string,
+  matcher: (item: Record<string, unknown>) => boolean,
+): string | null => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout) as unknown;
@@ -56,7 +59,7 @@ const parsePrimaryWorktreePath = (stdout: string): string | null => {
 
   for (const item of parsed) {
     if (!isRecord(item)) continue;
-    if (item.is_main !== true) continue;
+    if (!matcher(item)) continue;
     if (typeof item.path !== "string") continue;
     const path = trimToNull(item.path);
     if (path) {
@@ -65,6 +68,43 @@ const parsePrimaryWorktreePath = (stdout: string): string | null => {
   }
 
   return null;
+};
+
+const parsePrimaryWorktreePath = (stdout: string): string | null => {
+  return parseWorktreePathFromWtList(stdout, (item) => item.is_main === true);
+};
+
+const parseWorktreePathForBranch = (
+  stdout: string,
+  branch: string,
+): string | null => {
+  const normalizedBranch = trimToNull(branch);
+  if (!normalizedBranch) {
+    return null;
+  }
+
+  return parseWorktreePathFromWtList(
+    stdout,
+    (item) => item.branch === normalizedBranch,
+  );
+};
+
+const resolveWorktreePathForBranchFromWtList = async (
+  runWt: WtRunner,
+  input: {
+    branch: string;
+    fallbackPath: string;
+  },
+): Promise<string> => {
+  const result = await runWt(["list", "--format", "json"]);
+  if (result.code !== 0) {
+    return input.fallbackPath;
+  }
+
+  return (
+    parseWorktreePathForBranch(result.stdout, input.branch) ??
+    input.fallbackPath
+  );
 };
 
 export function createWtRunner(pi: ExtensionAPI, repoRoot: string): WtRunner {
@@ -129,9 +169,20 @@ export async function createFeatureWorktree(
     };
   }
 
+  const switchPath = getWorktreePath(result);
+  if (switchPath) {
+    return {
+      ok: true,
+      worktreePath: switchPath,
+    };
+  }
+
   return {
     ok: true,
-    worktreePath: getWorktreePath(result),
+    worktreePath: await resolveWorktreePathForBranchFromWtList(runWt, {
+      branch: input.branch,
+      fallbackPath: "",
+    }),
   };
 }
 
@@ -144,14 +195,7 @@ export async function ensureFeatureWorktree(
 ): Promise<
   { ok: true; worktreePath: string } | { ok: false; message: string }
 > {
-  const result = await runWt([
-    "switch",
-    input.branch,
-    "--no-cd",
-    "--format",
-    "json",
-    "--yes",
-  ]);
+  const result = await runWt(["switch", input.branch, "--no-cd", "--yes"]);
 
   if (result.code !== 0) {
     return {
@@ -160,9 +204,20 @@ export async function ensureFeatureWorktree(
     };
   }
 
+  const switchPath = getWorktreePath(result, input.fallbackWorktreePath);
+  if (switchPath) {
+    return {
+      ok: true,
+      worktreePath: switchPath,
+    };
+  }
+
   return {
     ok: true,
-    worktreePath: getWorktreePath(result, input.fallbackWorktreePath),
+    worktreePath: await resolveWorktreePathForBranchFromWtList(runWt, {
+      branch: input.branch,
+      fallbackPath: input.fallbackWorktreePath,
+    }),
   };
 }
 

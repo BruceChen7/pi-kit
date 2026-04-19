@@ -4,7 +4,12 @@ Automatically opens shared Plannotator review flows via event API for updated pl
 
 ## Configuration
 
-By default, Plannotator Auto watches the plan directory `.pi/plans/<repo>/plan/` and expects plan files named `YYYY-MM-DD-<slug>.md`. The `<repo>` slug is derived from Git common-dir root (so feature worktrees share the same default slug as the primary repo). You can override the plan directory path (relative to the project root) in global settings `~/.pi/agent/third_extension_settings.json`.
+By default, Plannotator Auto watches generated plan files named `YYYY-MM-DD-<slug>.md` in `.pi/plans/<repo>/plan/`. In worktree sessions without an explicit `planFile` override, it accepts two default directory aliases:
+
+- `.pi/plans/<root-repo>/plan/`, where `<root-repo>` comes from the Git common-dir root
+- `.pi/plans/<cwd-basename>/plan/`, where `<cwd-basename>` is the current worktree directory name
+
+This keeps the primary repo behavior intact while also matching feature-workflow worktree plan directories. You can override the plan directory path (relative to the project root) in global settings `~/.pi/agent/third_extension_settings.json`.
 
 Directory example:
 
@@ -41,6 +46,7 @@ To disable plan review in Plannotator Auto explicitly:
 ## Behavior
 
 - When the agent `write`/`edit` tool writes a `YYYY-MM-DD-*.md` file inside the configured plan directory, it queues plan-review work.
+- Without an explicit `planFile` override, default worktree sessions match either the root-repo or cwd-basename plan directory alias.
 - If multiple plan writes happen before dispatch, only the latest pending plan file is kept.
 - Plan review uses the shared Plannotator event channel:
   - start via `plannotator:request` with `action: "plan-review"`
@@ -51,7 +57,7 @@ To disable plan review in Plannotator Auto explicitly:
 - Async code-review completions now preserve inline `annotations`; if the reviewer returns annotations without top-level `feedback`, PI still receives a follow-up asking it to address the review comments.
 - Code review now depends on explicit coordinator signal `isPlanReviewSettled(...)` rather than peeking internal plan-review maps.
 - If Plannotator is unavailable on shared event channel, a warning is shown (no slash-command fallback).
-- Keyboard shortcut `Ctrl+Alt+L` annotates the most recently modified generated plan file (`YYYY-MM-DD-*.md`) in the configured plan directory via shared event API (`action: "annotate"`).
+- Keyboard shortcut `Ctrl+Alt+L` annotates the most recently modified generated plan file (`YYYY-MM-DD-*.md`) across the configured/default plan directories via shared event API (`action: "annotate"`).
 
 ## Architecture (Option B)
 

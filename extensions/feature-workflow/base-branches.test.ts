@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildBaseBranchCandidates } from "./base-branches.js";
 
 describe("buildBaseBranchCandidates", () => {
-  it("prioritizes non-feature current branch, then main/master, then release* branches", () => {
+  it("prioritizes current branch, then main/master, then release* branches", () => {
     const result = buildBaseBranchCandidates({
       currentBranch: "dev",
       localBranches: [
@@ -28,16 +28,17 @@ describe("buildBaseBranchCandidates", () => {
     ]);
   });
 
-  it("prioritizes parsed base when current branch is already a feature branch", () => {
+  it("prioritizes parsed base when current branch is a managed feature branch", () => {
     const result = buildBaseBranchCandidates({
-      currentBranch: "feat/main/checkout-v2",
+      currentBranch: "main/checkout-v2",
       localBranches: [
         "main",
         "master",
         "release/2026-04",
-        "feat/main/checkout-v2",
+        "main/checkout-v2",
         "dev",
       ],
+      managedFeatureBranches: ["main/checkout-v2"],
     });
 
     expect(result).toEqual([
@@ -45,17 +46,18 @@ describe("buildBaseBranchCandidates", () => {
       "master",
       "release/2026-04",
       "dev",
-      "feat/main/checkout-v2",
+      "main/checkout-v2",
     ]);
   });
 
-  it("does not prioritize unsupported old-format feature branches", () => {
+  it("does not treat unmanaged slash branches as feature branches", () => {
     const result = buildBaseBranchCandidates({
-      currentBranch: "fix/my-work",
-      localBranches: ["main", "fix/my-work", "dev"],
+      currentBranch: "user/demo",
+      localBranches: ["main", "user/demo", "dev"],
+      managedFeatureBranches: ["main/checkout-v2"],
     });
 
-    expect(result).toEqual(["main", "dev", "fix/my-work"]);
+    expect(result).toEqual(["user/demo", "main", "dev"]);
   });
 
   it("filters missing preferred branches and keeps deterministic ordering", () => {

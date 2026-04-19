@@ -12,3 +12,5 @@ package-lock.json
 .worktrees/
 docs/
 .alma-snapshots
+
+.pi/

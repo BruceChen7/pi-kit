@@ -8,10 +8,13 @@ import { clearSettingsCache } from "../shared/settings.js";
 
 import {
   applyFeatureWorkflowSetupProfile,
+  FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE,
   FEATURE_WORKFLOW_SETUP_TARGETS,
   FEATURE_WORKFLOW_WT_TOML_PATH,
   getFeatureWorkflowSetupMissingFiles,
   getFeatureWorkflowSetupProfile,
+  getFeatureWorkflowWorktrunkUserConfigPath,
+  getFeatureWorkflowWorktrunkUserConfigStatus,
   parseFeatureWorkflowSetupArgs,
   resolveFeatureWorkflowSetupTargets,
 } from "./setup.js";
@@ -63,7 +66,7 @@ describe("feature-workflow setup args", () => {
     expect(parsed).toEqual({
       ok: false,
       message:
-        "Unknown target 'wat'. Supported targets: settings, gitignore, worktreeinclude, hook-script, wt-toml.",
+        "Unknown target 'wat'. Supported targets: settings, gitignore, worktreeinclude, hook-script, wt-toml, wt-user-config.",
     });
   });
 });
@@ -84,7 +87,7 @@ describe("applyFeatureWorkflowSetupProfile", () => {
       userHomePath,
     });
 
-    expect(first.changedCount).toBe(5);
+    expect(first.changedCount).toBe(6);
 
     const settingsPath = path.join(
       repoRoot,
@@ -129,6 +132,23 @@ describe("applyFeatureWorkflowSetupProfile", () => {
       'bash \\"$HOME/.pi/pi-feature-workflow-links.sh\\"',
     );
     expect(wtToml).not.toContain("bash .pi/pi-feature-workflow-links.sh");
+
+    const worktrunkUserConfigPath =
+      getFeatureWorkflowWorktrunkUserConfigPath(userHomePath);
+    const worktrunkUserConfig = fs.readFileSync(
+      worktrunkUserConfigPath,
+      "utf-8",
+    );
+    expect(worktrunkUserConfig).toContain(
+      `worktree-path = "${FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE}"`,
+    );
+    expect(
+      getFeatureWorkflowWorktrunkUserConfigStatus({ userHomePath }),
+    ).toEqual({
+      path: worktrunkUserConfigPath,
+      currentTemplate: FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE,
+      needsUpdate: false,
+    });
 
     const gitignorePath = path.join(repoRoot, ".gitignore");
     const gitignore = fs.readFileSync(gitignorePath, "utf-8");
@@ -262,6 +282,98 @@ describe("applyFeatureWorkflowSetupProfile", () => {
       (item) => item.target === "worktreeinclude",
     );
     expect(change?.message).toContain("Removed entries:");
+  });
+
+  it("replaces an existing top-level worktree-path and preserves other config", () => {
+    const repoRoot = createTempDir(
+      "pi-kit-feature-setup-worktrunk-user-config-",
+    );
+    const userHomePath = createTempDir(
+      "pi-kit-feature-setup-worktrunk-user-config-home-",
+    );
+    const profile = getFeatureWorkflowSetupProfile("npm");
+    expect(profile).not.toBeNull();
+    if (!profile) return;
+
+    const userConfigPath =
+      getFeatureWorkflowWorktrunkUserConfigPath(userHomePath);
+    fs.mkdirSync(path.dirname(userConfigPath), { recursive: true });
+    fs.writeFileSync(
+      userConfigPath,
+      [
+        'worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"',
+        "",
+        "[switch]",
+        "no-cd = true",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const result = applyFeatureWorkflowSetupProfile({
+      cwd: repoRoot,
+      repoRoot,
+      profile,
+      targets: ["wt-user-config"],
+      userHomePath,
+    });
+
+    expect(result.changedCount).toBe(1);
+
+    const updated = fs.readFileSync(userConfigPath, "utf-8");
+    expect(updated).toContain(
+      `worktree-path = "${FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE}"`,
+    );
+    expect(updated).toContain("[switch]");
+    expect(updated).toContain("no-cd = true");
+    expect(updated.match(/^\s*worktree-path\s*=/gm)).toHaveLength(1);
+    expect(
+      updated.startsWith(
+        "# >>> pi-kit feature-workflow worktree-path (managed) >>>",
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves an existing recommended top-level worktree-path unchanged", () => {
+    const repoRoot = createTempDir(
+      "pi-kit-feature-setup-worktrunk-user-config-same-",
+    );
+    const userHomePath = createTempDir(
+      "pi-kit-feature-setup-worktrunk-user-config-same-home-",
+    );
+    const profile = getFeatureWorkflowSetupProfile("npm");
+    expect(profile).not.toBeNull();
+    if (!profile) return;
+
+    const userConfigPath =
+      getFeatureWorkflowWorktrunkUserConfigPath(userHomePath);
+    fs.mkdirSync(path.dirname(userConfigPath), { recursive: true });
+    const existing = [
+      `worktree-path = "${FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE}"`,
+      "",
+      "[switch]",
+      "no-cd = true",
+      "",
+    ].join("\n");
+    fs.writeFileSync(userConfigPath, existing, "utf-8");
+
+    const result = applyFeatureWorkflowSetupProfile({
+      cwd: repoRoot,
+      repoRoot,
+      profile,
+      targets: ["wt-user-config"],
+      userHomePath,
+    });
+
+    expect(result.changedCount).toBe(0);
+    expect(fs.readFileSync(userConfigPath, "utf-8")).toBe(existing);
+    expect(
+      getFeatureWorkflowWorktrunkUserConfigStatus({ userHomePath }),
+    ).toEqual({
+      path: userConfigPath,
+      currentTemplate: FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE,
+      needsUpdate: false,
+    });
   });
 
   it("adds missing profile rule without overriding existing node_modules rule", () => {

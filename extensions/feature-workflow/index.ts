@@ -34,6 +34,7 @@ import { forkSessionForWorktree } from "./session-fork.js";
 import {
   applyFeatureWorkflowSetupProfile,
   DEFAULT_FEATURE_WORKFLOW_SETUP_PROFILE_ID,
+  FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE,
   FEATURE_WORKFLOW_SETUP_TARGETS,
   FEATURE_WORKFLOW_SETUP_USAGE,
   type FeatureWorkflowSetupProfile,
@@ -41,6 +42,7 @@ import {
   getFeatureWorkflowSetupMissingFiles,
   getFeatureWorkflowSetupProfile,
   getFeatureWorkflowSetupTargetMeta,
+  getFeatureWorkflowWorktrunkUserConfigStatus,
   listFeatureWorkflowSetupProfiles,
   parseFeatureWorkflowSetupArgs,
   resolveFeatureWorkflowSetupTargets,
@@ -481,6 +483,43 @@ async function maybeSelectFeatureSetupTargetsInteractively(
   });
 }
 
+async function maybeConfirmFeatureSetupWorktrunkUserConfig(
+  ctx: ExtensionCommandContext,
+  input: {
+    targets: FeatureWorkflowSetupTarget[];
+    skipInteractivePrompts: boolean;
+  },
+): Promise<FeatureWorkflowSetupTarget[]> {
+  if (
+    input.skipInteractivePrompts ||
+    !ctx.hasUI ||
+    !input.targets.includes("wt-user-config")
+  ) {
+    return input.targets;
+  }
+
+  const status = getFeatureWorkflowWorktrunkUserConfigStatus();
+  if (!status.needsUpdate) {
+    return input.targets;
+  }
+
+  const currentTemplate = status.currentTemplate ?? "(not set)";
+  const include = await ctx.ui.confirm(
+    "Update Worktrunk user worktree-path?",
+    [
+      `Config: ${status.path}`,
+      `Current: ${currentTemplate}`,
+      `Recommended: ${FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE}`,
+    ].join("\n"),
+  );
+
+  if (include) {
+    return input.targets;
+  }
+
+  return input.targets.filter((target) => target !== "wt-user-config");
+}
+
 async function runFeatureSetup(ctx: ExtensionCommandContext, args: string[]) {
   const parsedArgs = parseFeatureWorkflowSetupArgs(args);
   if (!parsedArgs.ok) {
@@ -532,7 +571,15 @@ async function runFeatureSetup(ctx: ExtensionCommandContext, args: string[]) {
     return;
   }
 
-  if (targets.length === 0) {
+  const effectiveTargets = await maybeConfirmFeatureSetupWorktrunkUserConfig(
+    ctx,
+    {
+      targets,
+      skipInteractivePrompts: parsedArgs.value.yes,
+    },
+  );
+
+  if (effectiveTargets.length === 0) {
     ctx.ui.notify("No setup targets selected. Nothing to do.", "warning");
     return;
   }
@@ -541,7 +588,7 @@ async function runFeatureSetup(ctx: ExtensionCommandContext, args: string[]) {
     cwd: ctx.cwd,
     repoRoot,
     profile,
-    targets,
+    targets: effectiveTargets,
   });
 
   ctx.ui.notify(

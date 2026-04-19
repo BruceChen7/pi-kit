@@ -19,7 +19,8 @@
       "./extensions/plannotator-auto",
       "./extensions/dirty-git-status",
       "./extensions/codex-plan-limits",
-      "./extensions/feature-workflow"
+      "./extensions/feature-workflow",
+      "./extensions/diffx-review"
     ]
   },
   "scripts": {

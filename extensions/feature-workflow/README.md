@@ -14,6 +14,7 @@ A pi-kit extension that helps you start and manage feature development using Wor
     - `worktreeinclude` → `.worktreeinclude`
     - `hook-script` → `$HOME/.pi/pi-feature-workflow-links.sh`
     - `wt-toml` → managed hook block in `.config/wt.toml`
+    - `wt-user-config` → `~/.config/worktrunk/config.toml` `worktree-path`
 
 - `/feature-start`
   - Interactive wizard to create a new feature branch + worktree via `wt switch --create`.
@@ -69,8 +70,9 @@ This command prepares the files needed for Worktrunk-managed lifecycle automatio
 - `.worktreeinclude`
 - `$HOME/.pi/pi-feature-workflow-links.sh`
 - `.config/wt.toml` (managed block)
+- `~/.config/worktrunk/config.toml` (recommended global `worktree-path`)
 
-After setup, repo-local `.pi` artifacts and `.config/wt.toml` stay local by default (both are gitignored), while the hook script is installed at `$HOME/.pi/pi-feature-workflow-links.sh`. Commit tracked workflow files like `.worktreeinclude` if you want to share them with your team.
+After setup, repo-local `.pi` artifacts and `.config/wt.toml` stay local by default (both are gitignored), while the hook script is installed at `$HOME/.pi/pi-feature-workflow-links.sh`. `/feature-setup` also recommends the global Worktrunk template `{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}` so worktree directories look like `pi-kit.fix-annotate-auto-last`. In interactive mode it asks before changing that global setting; `/feature-setup --yes` applies it automatically. Commit tracked workflow files like `.worktreeinclude` if you want to share them with your team.
 
 ### 2) Start a new feature
 
@@ -86,6 +88,8 @@ Then follow the wizard:
 2. choose base branch (usually `main`)
 
 The extension creates branch + worktree through `wt switch --create`, then (by default) switches you into that worktree session automatically.
+
+`/feature-start` chooses the branch name. The final worktree directory name comes from Worktrunk's global `worktree-path` template.
 
 Example branch name:
 
@@ -248,6 +252,7 @@ By default this command updates:
 - `.worktreeinclude`
 - `$HOME/.pi/pi-feature-workflow-links.sh`
 - `.config/wt.toml` (managed block)
+- `~/.config/worktrunk/config.toml` (`worktree-path` recommendation)
 
 Example managed block in `.config/wt.toml`:
 

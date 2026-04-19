@@ -12,6 +12,10 @@ import {
   getManagedFeatureRegistryPath,
   readManagedFeatureRegistry,
 } from "./registry.js";
+import {
+  FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE,
+  getFeatureWorkflowWorktrunkUserConfigPath,
+} from "./setup.js";
 
 const tempDirs: string[] = [];
 
@@ -125,7 +129,7 @@ describe("feature-workflow extension", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it("creates a managed flat feature branch from slug + base prompts", async () => {
+  it("creates a managed slug-only feature branch from the selected slug", async () => {
     const repoRoot = createTempRepoWithMainBranch();
     fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
@@ -157,7 +161,7 @@ describe("feature-workflow extension", () => {
       "rev-parse",
       "--show-toplevel",
     ]).stdout.trim();
-    const worktreePath = path.join(repoRoot, ".wt", "checkout-v2");
+    const worktreePath = path.join(repoRoot, ".wt", "fix-annotate-auto-last");
     const commands = new Map<
       string,
       (args: string, ctx: unknown) => Promise<void>
@@ -206,7 +210,7 @@ describe("feature-workflow extension", () => {
         async input(prompt: string) {
           inputs.push(prompt);
           if (prompt === "Branch slug:") {
-            return "checkout-v2";
+            return "fix-annotate-auto-last";
           }
           throw new Error(`Unexpected input prompt: ${prompt}`);
         },
@@ -251,30 +255,289 @@ describe("feature-workflow extension", () => {
       resolvedRepoRoot,
       "switch",
       "--create",
-      "checkout-v2",
+      "fix-annotate-auto-last",
       "--base",
       "main",
       "--no-cd",
       "--yes",
     ]);
+    expect(exec.mock.calls[1]?.[1]).not.toContain(
+      "master--fix-annotate-auto-last",
+    );
     expect(notifications).toEqual([
       {
-        message: "Creating worktree for checkout-v2…",
+        message: "Creating worktree for fix-annotate-auto-last…",
         level: "info",
       },
       {
-        message: "Feature worktree created: checkout-v2",
+        message: "Feature worktree created: fix-annotate-auto-last",
         level: "info",
       },
     ]);
     expect(readManagedFeatureRegistry(repoRoot)).toEqual([
       {
-        branch: "checkout-v2",
-        slug: "checkout-v2",
+        branch: "fix-annotate-auto-last",
+        slug: "fix-annotate-auto-last",
         createdAt: expect.any(String),
         updatedAt: expect.any(String),
       },
     ]);
     expect(fs.existsSync(getManagedFeatureRegistryPath(repoRoot))).toBe(true);
+  });
+
+  it("updates the Worktrunk user config after interactive confirmation", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const userHomePath = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-kit-feature-setup-home-"),
+    );
+    tempDirs.push(userHomePath);
+    const previousHome = process.env.HOME;
+    process.env.HOME = userHomePath;
+
+    try {
+      const commands = new Map<
+        string,
+        (args: string, ctx: unknown) => Promise<void>
+      >();
+      const notifications: Array<{ message: string; level: string }> = [];
+      const selects: Array<{ prompt: string; options: string[] }> = [];
+      const confirms: Array<{ prompt: string; description: string }> = [];
+
+      extension({
+        registerCommand(
+          name: string,
+          definition: {
+            handler: (args: string, ctx: unknown) => Promise<void>;
+          },
+        ) {
+          commands.set(name, definition.handler);
+        },
+        exec() {
+          throw new Error("exec should not run during feature-setup");
+        },
+        on() {
+          // no-op
+        },
+      } as unknown as ExtensionAPI);
+
+      const handler = commands.get("feature-setup");
+      expect(handler).toBeTypeOf("function");
+      if (!handler) return;
+
+      await handler("npm", {
+        cwd: repoRoot,
+        hasUI: true,
+        ui: {
+          async select(prompt: string, options: string[]) {
+            selects.push({ prompt, options });
+            if (prompt === "feature-setup scope:") {
+              return "Apply all recommended files";
+            }
+            throw new Error(`Unexpected select prompt: ${prompt}`);
+          },
+          async confirm(prompt: string, description: string) {
+            confirms.push({ prompt, description });
+            if (prompt === "Update Worktrunk user worktree-path?") {
+              return true;
+            }
+            throw new Error(`Unexpected confirm prompt: ${prompt}`);
+          },
+          notify(message: string, level: string) {
+            notifications.push({ message, level });
+          },
+        },
+      });
+
+      expect(selects).toEqual([
+        {
+          prompt: "feature-setup scope:",
+          options: ["Apply all recommended files", "Customize files", "Cancel"],
+        },
+      ]);
+      expect(confirms).toEqual([
+        {
+          prompt: "Update Worktrunk user worktree-path?",
+          description: expect.stringContaining(
+            FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE,
+          ),
+        },
+      ]);
+      expect(
+        fs.readFileSync(
+          getFeatureWorkflowWorktrunkUserConfigPath(userHomePath),
+          "utf-8",
+        ),
+      ).toContain(
+        `worktree-path = "${FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE}"`,
+      );
+      expect(notifications).toEqual([
+        {
+          message: "feature-setup complete: 6 file(s) updated",
+          level: "info",
+        },
+      ]);
+    } finally {
+      if (typeof previousHome === "string") {
+        process.env.HOME = previousHome;
+      } else {
+        delete process.env.HOME;
+      }
+    }
+  });
+
+  it("skips only the Worktrunk user config when interactive confirmation is declined", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const userHomePath = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-kit-feature-setup-decline-home-"),
+    );
+    tempDirs.push(userHomePath);
+    const previousHome = process.env.HOME;
+    process.env.HOME = userHomePath;
+
+    try {
+      const commands = new Map<
+        string,
+        (args: string, ctx: unknown) => Promise<void>
+      >();
+      const notifications: Array<{ message: string; level: string }> = [];
+
+      extension({
+        registerCommand(
+          name: string,
+          definition: {
+            handler: (args: string, ctx: unknown) => Promise<void>;
+          },
+        ) {
+          commands.set(name, definition.handler);
+        },
+        exec() {
+          throw new Error("exec should not run during feature-setup");
+        },
+        on() {
+          // no-op
+        },
+      } as unknown as ExtensionAPI);
+
+      const handler = commands.get("feature-setup");
+      expect(handler).toBeTypeOf("function");
+      if (!handler) return;
+
+      await handler("npm", {
+        cwd: repoRoot,
+        hasUI: true,
+        ui: {
+          async select(prompt: string) {
+            if (prompt === "feature-setup scope:") {
+              return "Apply all recommended files";
+            }
+            throw new Error(`Unexpected select prompt: ${prompt}`);
+          },
+          async confirm(prompt: string) {
+            if (prompt === "Update Worktrunk user worktree-path?") {
+              return false;
+            }
+            throw new Error(`Unexpected confirm prompt: ${prompt}`);
+          },
+          notify(message: string, level: string) {
+            notifications.push({ message, level });
+          },
+        },
+      });
+
+      expect(
+        fs.existsSync(getFeatureWorkflowWorktrunkUserConfigPath(userHomePath)),
+      ).toBe(false);
+      expect(fs.existsSync(path.join(repoRoot, ".config", "wt.toml"))).toBe(
+        true,
+      );
+      expect(notifications).toEqual([
+        {
+          message: "feature-setup complete: 5 file(s) updated",
+          level: "info",
+        },
+      ]);
+    } finally {
+      if (typeof previousHome === "string") {
+        process.env.HOME = previousHome;
+      } else {
+        delete process.env.HOME;
+      }
+    }
+  });
+
+  it("auto-applies the Worktrunk user config in --yes mode without prompting", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const userHomePath = fs.mkdtempSync(
+      path.join(os.tmpdir(), "pi-kit-feature-setup-yes-home-"),
+    );
+    tempDirs.push(userHomePath);
+    const previousHome = process.env.HOME;
+    process.env.HOME = userHomePath;
+
+    try {
+      const commands = new Map<
+        string,
+        (args: string, ctx: unknown) => Promise<void>
+      >();
+      const notifications: Array<{ message: string; level: string }> = [];
+
+      extension({
+        registerCommand(
+          name: string,
+          definition: {
+            handler: (args: string, ctx: unknown) => Promise<void>;
+          },
+        ) {
+          commands.set(name, definition.handler);
+        },
+        exec() {
+          throw new Error("exec should not run during feature-setup");
+        },
+        on() {
+          // no-op
+        },
+      } as unknown as ExtensionAPI);
+
+      const handler = commands.get("feature-setup");
+      expect(handler).toBeTypeOf("function");
+      if (!handler) return;
+
+      await handler("npm --yes", {
+        cwd: repoRoot,
+        hasUI: true,
+        ui: {
+          async select(prompt: string) {
+            throw new Error(`Unexpected select prompt: ${prompt}`);
+          },
+          async confirm(prompt: string) {
+            throw new Error(`Unexpected confirm prompt: ${prompt}`);
+          },
+          notify(message: string, level: string) {
+            notifications.push({ message, level });
+          },
+        },
+      });
+
+      expect(
+        fs.readFileSync(
+          getFeatureWorkflowWorktrunkUserConfigPath(userHomePath),
+          "utf-8",
+        ),
+      ).toContain(
+        `worktree-path = "${FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE}"`,
+      );
+      expect(notifications).toEqual([
+        {
+          message: "feature-setup complete: 6 file(s) updated",
+          level: "info",
+        },
+      ]);
+    } finally {
+      if (typeof previousHome === "string") {
+        process.env.HOME = previousHome;
+      } else {
+        delete process.env.HOME;
+      }
+    }
   });
 });

@@ -135,6 +135,7 @@ export function createWtRunner(pi: ExtensionAPI, repoRoot: string): WtRunner {
 
 export async function listFeatureRecordsFromWorktree(
   runWt: WtRunner,
+  managedBranches: Iterable<string>,
 ): Promise<
   { ok: true; records: FeatureRecord[] } | { ok: false; message: string }
 > {
@@ -145,7 +146,7 @@ export async function listFeatureRecordsFromWorktree(
 
   return {
     ok: true,
-    records: listFeatureRecords(result.stdout),
+    records: listFeatureRecords(result.stdout, managedBranches),
   };
 }
 

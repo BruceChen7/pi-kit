@@ -10,44 +10,45 @@ describe("storage", () => {
     expect("readFeatureRecord" in storage).toBe(false);
   });
 
-  it("lists records from wt list json", () => {
+  it("lists only managed records from wt list json", () => {
     const wtListJson = JSON.stringify([
       {
-        branch: "feat/main/a",
+        branch: "main/a",
         path: "/tmp/a",
         commit: { timestamp: 100 },
       },
       {
-        branch: "feat/release/2026-q2/b",
+        branch: "release/2026-q2/b",
         path: "/tmp/b",
         commit: { timestamp: 200 },
       },
       {
-        branch: "feat/c",
-        path: "/tmp/c",
+        branch: "user/demo",
+        path: "/tmp/demo",
         commit: { timestamp: 150 },
       },
       {
-        branch: "feature/legacy",
-        path: "/tmp/legacy",
+        branch: "main/no-worktree",
         commit: { timestamp: 300 },
       },
     ]);
 
-    const records = listFeatureRecords(wtListJson);
-
-    expect(records.map((r) => r.id)).toEqual([
-      "feat-release-2026-q2-b",
-      "feat-main-a",
+    const records = listFeatureRecords(wtListJson, [
+      "main/a",
+      "release/2026-q2/b",
     ]);
-    expect(records.some((record) => record.branch === "feat/c")).toBe(false);
+
+    expect(records.map((r) => r.branch)).toEqual([
+      "release/2026-q2/b",
+      "main/a",
+    ]);
     expect(records[0]).toMatchObject({
-      id: "feat-release-2026-q2-b",
       name: "b",
-      branch: "feat/release/2026-q2/b",
+      branch: "release/2026-q2/b",
       worktreePath: "/tmp/b",
       base: "release/2026-q2",
     });
+    expect(records.some((record) => record.branch === "user/demo")).toBe(false);
     const topRecord = records[0];
     expect(topRecord).toBeDefined();
     if (topRecord) {
@@ -55,74 +56,65 @@ describe("storage", () => {
     }
   });
 
+  it("returns empty list when no managed branches are provided", () => {
+    const records = listFeatureRecords(
+      JSON.stringify([
+        {
+          branch: "main/checkout-v2",
+          path: "/tmp/checkout-v2",
+          commit: { timestamp: 100 },
+        },
+      ]),
+      [],
+    );
+
+    expect(records).toEqual([]);
+  });
+
   it("detects no conflict when active records differ", () => {
     const activeRecords = listFeatureRecords(
       JSON.stringify([
         {
-          branch: "feat/main/another-feature",
+          branch: "main/another-feature",
           path: "/tmp/another-feature",
           commit: { timestamp: 100 },
         },
       ]),
+      ["main/another-feature"],
     );
 
     expect(
       findActiveFeatureConflicts(activeRecords, {
-        id: "feat-main-checkout-v2",
-        branch: "feat/main/checkout-v2",
+        branch: "main/checkout-v2",
       }),
     ).toEqual({
-      idConflict: false,
       branchConflict: false,
     });
   });
 
-  it("detects branch conflict while keeping ids base-aware", () => {
+  it("detects branch conflict", () => {
     const activeRecords = listFeatureRecords(
       JSON.stringify([
         {
-          branch: "feat/main/checkout-v2",
+          branch: "main/checkout-v2",
           path: "/tmp/checkout-v2",
           commit: { timestamp: 100 },
         },
         {
-          branch: "feat/release/2026-q2/checkout-v2",
+          branch: "release/2026-q2/checkout-v2",
           path: "/tmp/release-checkout-v2",
           commit: { timestamp: 90 },
         },
       ]),
+      ["main/checkout-v2", "release/2026-q2/checkout-v2"],
     );
 
     expect(
       findActiveFeatureConflicts(activeRecords, {
-        id: "feat-main-checkout-v2",
-        branch: "feat/main/checkout-v2",
+        branch: "main/checkout-v2",
       }),
     ).toEqual({
-      idConflict: true,
       branchConflict: true,
-    });
-  });
-
-  it("does not report id conflict for same slug on different base", () => {
-    const activeRecords = listFeatureRecords(
-      JSON.stringify([
-        {
-          branch: "feat/main/checkout-v2",
-          path: "/tmp/checkout-v2",
-          commit: { timestamp: 100 },
-        },
-      ]),
-    );
-
-    expect(
-      findActiveFeatureConflicts(activeRecords, {
-        id: "feat-release-2026-q2-checkout-v2",
-        branch: "feat/release/2026-q2/checkout-v2",
-      }),
-    ).toEqual({
-      idConflict: false,
-      branchConflict: false,
     });
   });
 });

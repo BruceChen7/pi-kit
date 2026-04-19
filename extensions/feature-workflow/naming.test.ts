@@ -2,19 +2,21 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildFeatureBranchName,
-  buildFeatureId,
+  isFeatureSlug,
   parseFeatureBranchName,
-  slugifyFeatureName,
 } from "./naming.js";
 
-describe("slugifyFeatureName", () => {
-  it("slugifies common names", () => {
-    expect(slugifyFeatureName("Checkout V2")).toBe("checkout-v2");
-    expect(slugifyFeatureName("Fix: login (OAuth)")).toBe("fix-login-oauth");
+describe("isFeatureSlug", () => {
+  it("accepts lowercase slugs with dashes", () => {
+    expect(isFeatureSlug("checkout-v2")).toBe(true);
+    expect(isFeatureSlug("login2")).toBe(true);
   });
 
-  it("trims and collapses separators", () => {
-    expect(slugifyFeatureName("  Hello   world__x  ")).toBe("hello-world-x");
+  it("rejects empty or non-normalized values", () => {
+    expect(isFeatureSlug("")).toBe(false);
+    expect(isFeatureSlug("Checkout-V2")).toBe(false);
+    expect(isFeatureSlug("checkout_v2")).toBe(false);
+    expect(isFeatureSlug("checkout/v2")).toBe(false);
   });
 });
 
@@ -22,57 +24,40 @@ describe("buildFeatureBranchName", () => {
   it("includes base in the branch path", () => {
     expect(
       buildFeatureBranchName({
-        type: "feat",
         base: "main",
         slug: "checkout-v2",
       }),
-    ).toBe("feat/main/checkout-v2");
+    ).toBe("main/checkout-v2");
   });
 
   it("supports nested base branches", () => {
     expect(
       buildFeatureBranchName({
-        type: "fix",
         base: "release/2026-q2",
         slug: "login-timeout",
       }),
-    ).toBe("fix/release/2026-q2/login-timeout");
+    ).toBe("release/2026-q2/login-timeout");
   });
 });
 
 describe("parseFeatureBranchName", () => {
   it("parses branches that embed base", () => {
-    expect(parseFeatureBranchName("feat/main/checkout-v2")).toEqual({
-      type: "feat",
+    expect(parseFeatureBranchName("main/checkout-v2")).toEqual({
       base: "main",
       slug: "checkout-v2",
     });
   });
 
-  it("rejects legacy type/slug branches", () => {
-    expect(parseFeatureBranchName("feat/checkout-v2")).toBeNull();
+  it("supports nested base branches", () => {
+    expect(parseFeatureBranchName("release/2026-q2/login-timeout")).toEqual({
+      base: "release/2026-q2",
+      slug: "login-timeout",
+    });
   });
 
   it("returns null for invalid branch names", () => {
-    expect(parseFeatureBranchName("feature/main/checkout-v2")).toBeNull();
-    expect(parseFeatureBranchName("feat/main/")).toBeNull();
-  });
-});
-
-describe("buildFeatureId", () => {
-  it("includes base in id when base exists", () => {
-    expect(
-      buildFeatureId({ type: "feat", base: "main", slug: "checkout-v2" }),
-    ).toBe("feat-main-checkout-v2");
-  });
-
-  it("normalizes nested base names", () => {
-    expect(
-      buildFeatureId({
-        type: "fix",
-        base: "release/2026-q2",
-        slug: "login-timeout",
-      }),
-    ).toBe("fix-release-2026-q2-login-timeout");
+    expect(parseFeatureBranchName("checkout-v2")).toBeNull();
+    expect(parseFeatureBranchName("main/")).toBeNull();
+    expect(parseFeatureBranchName("main/Checkout-V2")).toBeNull();
   });
 });

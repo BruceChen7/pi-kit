@@ -131,6 +131,7 @@ const WORKTREE_INCLUDE_HEADER = [
 const GITIGNORE_REQUIRED_ENTRIES = [".pi/", ".config/wt.toml"] as const;
 const HOME_SCRIPT_PATH_PREFIX = "$HOME/";
 const HOME_HOOK_SCRIPT_PATH = "$HOME/.pi/pi-feature-workflow-links.sh";
+export const FEATURE_WORKFLOW_WT_TOML_PATH = ".config/wt.toml";
 
 const WORKTREE_INCLUDE_EXCLUDED_ENTRIES = new Set<string>([".pi"]);
 
@@ -1011,6 +1012,17 @@ export const applyFeatureWorkflowSetupProfile = (
     changes,
     changedCount: changes.filter((change) => change.changed).length,
   };
+};
+
+export const getFeatureWorkflowSetupMissingFiles = (
+  repoRoot: string,
+): string[] => {
+  const missing: string[] = [];
+  const wtTomlPath = path.join(repoRoot, FEATURE_WORKFLOW_WT_TOML_PATH);
+  if (!fs.existsSync(wtTomlPath)) {
+    missing.push(FEATURE_WORKFLOW_WT_TOML_PATH);
+  }
+  return missing;
 };
 
 export const formatFeatureWorkflowSetupResult = (

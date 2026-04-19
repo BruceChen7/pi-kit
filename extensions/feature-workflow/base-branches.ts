@@ -3,6 +3,7 @@ import { parseFeatureBranchName } from "./naming.js";
 export type BaseBranchCandidatesInput = {
   currentBranch: string | null;
   localBranches: string[];
+  managedFeatureBranches?: Iterable<string>;
 };
 
 const normalizeBranch = (value: string): string | null => {
@@ -26,21 +27,16 @@ const isReleaseBranch = (branch: string): boolean =>
   branch.startsWith("release/") ||
   branch.startsWith("release-");
 
-const LEGACY_FEATURE_BRANCH_PATTERN = /^(?:feat|fix|chore|spike)\/[^/]+$/;
-
 const resolveCurrentBranchCandidate = (
   currentBranch: string,
+  managedFeatureBranchSet: Set<string>,
 ): string | null => {
+  if (!managedFeatureBranchSet.has(currentBranch)) {
+    return currentBranch;
+  }
+
   const parsed = parseFeatureBranchName(currentBranch);
-  if (parsed) {
-    return normalizeBranch(parsed.base);
-  }
-
-  if (LEGACY_FEATURE_BRANCH_PATTERN.test(currentBranch)) {
-    return null;
-  }
-
-  return currentBranch;
+  return parsed ? normalizeBranch(parsed.base) : currentBranch;
 };
 
 export function buildBaseBranchCandidates(
@@ -54,11 +50,15 @@ export function buildBaseBranchCandidates(
 
   const prioritized: string[] = [];
   const localSet = new Set(local);
+  const managedFeatureBranchSet = new Set(input.managedFeatureBranches ?? []);
   const current = input.currentBranch
     ? normalizeBranch(input.currentBranch)
     : null;
   if (current) {
-    const currentCandidate = resolveCurrentBranchCandidate(current);
+    const currentCandidate = resolveCurrentBranchCandidate(
+      current,
+      managedFeatureBranchSet,
+    );
     if (currentCandidate && localSet.has(currentCandidate)) {
       prioritized.push(currentCandidate);
     }

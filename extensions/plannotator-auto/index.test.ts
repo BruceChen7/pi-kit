@@ -9,6 +9,7 @@ type ImportedModule = {
     planConfig: {
       planFile: string;
       resolvedPlanPath: string;
+      resolvedPlanPaths: string[];
     },
     targetPath: string,
   ) => string | null;
@@ -16,6 +17,7 @@ type ImportedModule = {
     planConfig: {
       planFile: string;
       resolvedPlanPath: string;
+      resolvedPlanPaths: string[];
     } | null,
     targetPath: string,
   ) => boolean;
@@ -24,6 +26,7 @@ type ImportedModule = {
     planConfig: {
       planFile: string;
       resolvedPlanPath: string;
+      resolvedPlanPaths: string[];
     },
   ) => {
     absolutePath: string;
@@ -48,6 +51,7 @@ describe("resolvePlanFileForReview", () => {
         {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+          resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
         },
         "/repo/.pi/plans/repo/plan/2026-04-15-auth-flow.md",
       ),
@@ -63,10 +67,30 @@ describe("resolvePlanFileForReview", () => {
         {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+          resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
         },
         "/repo/.pi/PLAN.md",
       ),
     ).toBeNull();
+  });
+
+  it("matches generated plan files in any default alias directory", async () => {
+    const { resolvePlanFileForReview } = await importPlannotatorAuto();
+
+    expect(
+      resolvePlanFileForReview?.(
+        { cwd: "/repo" },
+        {
+          planFile: ".pi/plans/pi-kit/plan",
+          resolvedPlanPath: "/repo/.pi/plans/pi-kit/plan",
+          resolvedPlanPaths: [
+            "/repo/.pi/plans/pi-kit/plan",
+            "/repo/.pi/plans/pi-kit.feat-branch/plan",
+          ],
+        },
+        "/repo/.pi/plans/pi-kit.feat-branch/plan/2026-04-15-auth-flow.md",
+      ),
+    ).toBe(".pi/plans/pi-kit.feat-branch/plan/2026-04-15-auth-flow.md");
   });
 });
 
@@ -79,6 +103,7 @@ describe("shouldQueueReviewForToolPath", () => {
         {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+          resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
         },
         "/repo/.pi/plans/repo/plan/2026-04-15-auth-flow.md",
       ),
@@ -94,6 +119,7 @@ describe("shouldQueueReviewForToolPath", () => {
         {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+          resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
         },
         "/repo/.pi/PLAN.md",
       ),
@@ -108,10 +134,29 @@ describe("shouldQueueReviewForToolPath", () => {
         {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+          resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
         },
         "/repo/src/auth.ts",
       ),
     ).toBe(true);
+  });
+
+  it("skips code review for plan files in any default alias directory", async () => {
+    const { shouldQueueReviewForToolPath } = await importPlannotatorAuto();
+
+    expect(
+      shouldQueueReviewForToolPath?.(
+        {
+          planFile: ".pi/plans/pi-kit/plan",
+          resolvedPlanPath: "/repo/.pi/plans/pi-kit/plan",
+          resolvedPlanPaths: [
+            "/repo/.pi/plans/pi-kit/plan",
+            "/repo/.pi/plans/pi-kit.feat-branch/plan",
+          ],
+        },
+        "/repo/.pi/plans/pi-kit.feat-branch/plan/2026-04-15-auth-flow.md",
+      ),
+    ).toBe(false);
   });
 });
 
@@ -145,6 +190,7 @@ describe("findLatestPlanFileForAnnotation", () => {
           {
             planFile: path.join(".pi", "plans", repoName, "plan"),
             resolvedPlanPath: planDir,
+            resolvedPlanPaths: [planDir],
           },
         ),
       ).toEqual({
@@ -153,6 +199,58 @@ describe("findLatestPlanFileForAnnotation", () => {
           ".pi",
           "plans",
           repoName,
+          "plan",
+          "2026-04-18-latest.md",
+        ),
+      });
+    } finally {
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the newest generated plan across default alias directories", async () => {
+    const { findLatestPlanFileForAnnotation } = await importPlannotatorAuto();
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-latest-plan-alias-"),
+    );
+    const rootPlanDir = path.join(repoRoot, ".pi", "plans", "pi-kit", "plan");
+    const worktreePlanDir = path.join(
+      repoRoot,
+      ".pi",
+      "plans",
+      "pi-kit.feat-branch",
+      "plan",
+    );
+    const olderPlan = path.join(rootPlanDir, "2026-04-17-older.md");
+    const latestPlan = path.join(worktreePlanDir, "2026-04-18-latest.md");
+
+    await fs.mkdir(rootPlanDir, { recursive: true });
+    await fs.mkdir(worktreePlanDir, { recursive: true });
+    await fs.writeFile(olderPlan, "# Older\n", "utf8");
+    await fs.writeFile(latestPlan, "# Latest\n", "utf8");
+
+    const olderDate = new Date("2026-04-17T00:00:00.000Z");
+    const latestDate = new Date("2026-04-18T00:00:00.000Z");
+    await fs.utimes(olderPlan, olderDate, olderDate);
+    await fs.utimes(latestPlan, latestDate, latestDate);
+
+    try {
+      expect(
+        findLatestPlanFileForAnnotation?.(
+          { cwd: repoRoot },
+          {
+            planFile: path.join(".pi", "plans", "pi-kit", "plan"),
+            resolvedPlanPath: rootPlanDir,
+            resolvedPlanPaths: [rootPlanDir, worktreePlanDir],
+          },
+        ),
+      ).toEqual({
+        absolutePath: latestPlan,
+        repoRelativePath: path.join(
+          ".pi",
+          "plans",
+          "pi-kit.feat-branch",
           "plan",
           "2026-04-18-latest.md",
         ),
@@ -349,6 +447,102 @@ describe("annotate latest plan shortcut", () => {
     }
   });
 
+  it("considers both default alias directories and picks the newest plan", async () => {
+    vi.resetModules();
+
+    vi.doMock("../shared/git.ts", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../shared/git.ts")>();
+      return {
+        ...actual,
+        getGitCommonDir: vi.fn(() => "/workspace/pi-kit/.git"),
+      };
+    });
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, events, runShortcut } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-shortcut-alias-"),
+    );
+    const rootPlanDir = path.join(repoRoot, ".pi", "plans", "pi-kit", "plan");
+    const worktreePlanDir = path.join(
+      repoRoot,
+      ".pi",
+      "plans",
+      path.basename(repoRoot),
+      "plan",
+    );
+    const olderPlanPath = path.join(rootPlanDir, "2026-04-17-older.md");
+    const latestPlanPath = path.join(worktreePlanDir, "2026-04-18-latest.md");
+
+    await fs.mkdir(rootPlanDir, { recursive: true });
+    await fs.mkdir(worktreePlanDir, { recursive: true });
+    await fs.writeFile(olderPlanPath, "# Older\n", "utf8");
+    await fs.writeFile(latestPlanPath, "# Latest\n", "utf8");
+
+    const olderDate = new Date("2026-04-17T00:00:00.000Z");
+    const latestDate = new Date("2026-04-18T00:00:00.000Z");
+    await fs.utimes(olderPlanPath, olderDate, olderDate);
+    await fs.utimes(latestPlanPath, latestDate, latestDate);
+
+    const annotateRequests: Array<{
+      action: string;
+      payload: unknown;
+    }> = [];
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        action: string;
+        payload: { filePath?: string; mode?: string };
+        respond: (response: unknown) => void;
+      };
+
+      annotateRequests.push({
+        action: request.action,
+        payload: request.payload,
+      });
+
+      request.respond({
+        status: "handled",
+        result: {
+          feedback: "Looks good.",
+        },
+      });
+    });
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await runShortcut("ctrl+alt+l", ctx);
+
+      expect(annotateRequests).toHaveLength(1);
+      expect(annotateRequests[0]).toEqual({
+        action: "annotate",
+        payload: {
+          filePath: latestPlanPath,
+          mode: "annotate",
+        },
+      });
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("warns when no generated plan files are available", async () => {
     vi.resetModules();
 
@@ -443,6 +637,115 @@ describe("annotate latest plan shortcut", () => {
         "warning",
       );
       expect(api.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("limits latest-plan lookup to the explicit configured directory", async () => {
+    vi.resetModules();
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, events, runShortcut } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-shortcut-configured-"),
+    );
+    const configuredPlanDir = path.join(
+      repoRoot,
+      ".pi",
+      "plans",
+      "custom",
+      "plan",
+    );
+    const aliasPlanDir = path.join(
+      repoRoot,
+      ".pi",
+      "plans",
+      path.basename(repoRoot),
+      "plan",
+    );
+    const configuredPlanPath = path.join(
+      configuredPlanDir,
+      "2026-04-17-configured.md",
+    );
+    const aliasPlanPath = path.join(aliasPlanDir, "2026-04-18-alias.md");
+
+    await fs.mkdir(configuredPlanDir, { recursive: true });
+    await fs.mkdir(aliasPlanDir, { recursive: true });
+    await fs.writeFile(configuredPlanPath, "# Configured\n", "utf8");
+    await fs.writeFile(aliasPlanPath, "# Alias\n", "utf8");
+    await fs.writeFile(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      `${JSON.stringify(
+        {
+          plannotatorAuto: {
+            planFile: ".pi/plans/custom/plan",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const annotateRequests: Array<{
+      action: string;
+      payload: unknown;
+    }> = [];
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        action: string;
+        payload: { filePath?: string; mode?: string };
+        respond: (response: unknown) => void;
+      };
+
+      annotateRequests.push({
+        action: request.action,
+        payload: request.payload,
+      });
+
+      request.respond({
+        status: "handled",
+        result: {
+          feedback: "Configured path only.",
+        },
+      });
+    });
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await runShortcut("ctrl+alt+l", ctx);
+
+      expect(annotateRequests).toHaveLength(1);
+      expect(annotateRequests[0]).toEqual({
+        action: "annotate",
+        payload: {
+          filePath: configuredPlanPath,
+          mode: "annotate",
+        },
+      });
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Configured path only."),
+        { deliverAs: "followUp" },
+      );
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -678,6 +981,229 @@ describe("plan review trigger timing", () => {
           deliverAs: "steer",
         },
       );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("also accepts cwd-basename plan directories in worktree sessions", async () => {
+    vi.resetModules();
+    const reviewResultListeners: Array<(result: unknown) => void> = [];
+    const startPlanReview = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "pending" as const,
+        reviewId: "review-worktree-alias",
+      },
+    }));
+
+    vi.doMock("../shared/git.ts", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../shared/git.ts")>();
+      return {
+        ...actual,
+        getGitCommonDir: vi.fn(() => "/workspace/pi-kit/.git"),
+      };
+    });
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn((listener: (result: unknown) => void) => {
+          reviewResultListeners.push(listener);
+          return () => {
+            const index = reviewResultListeners.indexOf(listener);
+            if (index >= 0) {
+              reviewResultListeners.splice(index, 1);
+            }
+          };
+        }),
+        getStatus: vi.fn(() => null),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "pi-kit.feat-worktree-alias-plan-"),
+    );
+    const planFileRelative = `.pi/plans/${path.basename(repoRoot)}/plan/2026-04-16-worktree.md`;
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] verify\n", "utf8");
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => false,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+
+      const reviewPromise = emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      await flushMicrotasks();
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+
+      for (const listener of reviewResultListeners) {
+        listener({
+          reviewId: "review-worktree-alias",
+          approved: true,
+        });
+      }
+
+      await reviewPromise;
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        "Plan review approved.",
+        {
+          deliverAs: "steer",
+        },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat alias directories as plan files when planFile is explicitly configured", async () => {
+    vi.resetModules();
+
+    const startPlanReview = vi.fn();
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn(() => vi.fn()),
+        getStatus: vi.fn(() => null),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { emit, api } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-explicit-dir-"),
+    );
+    const configuredPlanRelative =
+      ".pi/plans/custom/plan/2026-04-16-configured.md";
+    const aliasPlanRelative = `.pi/plans/${path.basename(repoRoot)}/plan/2026-04-16-alias.md`;
+
+    await fs.mkdir(path.dirname(path.join(repoRoot, configuredPlanRelative)), {
+      recursive: true,
+    });
+    await fs.mkdir(path.dirname(path.join(repoRoot, aliasPlanRelative)), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(repoRoot, configuredPlanRelative),
+      "# Configured\n",
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(repoRoot, aliasPlanRelative),
+      "# Alias\n",
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      `${JSON.stringify(
+        {
+          plannotatorAuto: {
+            planFile: ".pi/plans/custom/plan",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => false,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: aliasPlanRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      expect(startPlanReview).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });

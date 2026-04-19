@@ -9,6 +9,8 @@ import { clearSettingsCache } from "../shared/settings.js";
 import {
   applyFeatureWorkflowSetupProfile,
   FEATURE_WORKFLOW_SETUP_TARGETS,
+  FEATURE_WORKFLOW_WT_TOML_PATH,
+  getFeatureWorkflowSetupMissingFiles,
   getFeatureWorkflowSetupProfile,
   parseFeatureWorkflowSetupArgs,
   resolveFeatureWorkflowSetupTargets,
@@ -168,6 +170,62 @@ describe("applyFeatureWorkflowSetupProfile", () => {
     expect(fs.readFileSync(gitignorePath, "utf-8")).toBe(
       [".pi", "/.config/wt.toml", ""].join("\n"),
     );
+  });
+
+  it("recreates missing wt.toml while leaving existing gitignore entries unchanged", () => {
+    const repoRoot = createTempDir("pi-kit-feature-setup-recreate-wt-toml-");
+    const userHomePath = createTempDir("pi-kit-feature-setup-recreate-home-");
+    const profile = getFeatureWorkflowSetupProfile("npm");
+    expect(profile).not.toBeNull();
+    if (!profile) return;
+
+    fs.writeFileSync(
+      path.join(repoRoot, ".gitignore"),
+      [".pi/", ".config/wt.toml", ""].join("\n"),
+    );
+
+    const result = applyFeatureWorkflowSetupProfile({
+      cwd: repoRoot,
+      repoRoot,
+      profile,
+      targets: ["gitignore", "wt-toml"],
+      userHomePath,
+    });
+
+    expect(result.changedCount).toBe(2);
+    expect(
+      result.changes.find((change) => change.target === "gitignore")?.changed,
+    ).toBe(false);
+    expect(
+      result.changes.find((change) => change.target === "wt-toml")?.changed,
+    ).toBe(true);
+    expect(fs.readFileSync(path.join(repoRoot, ".gitignore"), "utf-8")).toBe(
+      [".pi/", ".config/wt.toml", ""].join("\n"),
+    );
+
+    const wtToml = fs.readFileSync(
+      path.join(repoRoot, FEATURE_WORKFLOW_WT_TOML_PATH),
+      "utf-8",
+    );
+    expect(wtToml).toContain("[pre-start]");
+    expect(wtToml).toContain('"project-deps-link"');
+  });
+
+  it("reports missing local wt.toml setup file", () => {
+    const repoRoot = createTempDir("pi-kit-feature-setup-missing-files-");
+
+    expect(getFeatureWorkflowSetupMissingFiles(repoRoot)).toEqual([
+      FEATURE_WORKFLOW_WT_TOML_PATH,
+    ]);
+
+    fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, FEATURE_WORKFLOW_WT_TOML_PATH),
+      "",
+      "utf-8",
+    );
+
+    expect(getFeatureWorkflowSetupMissingFiles(repoRoot)).toEqual([]);
   });
 
   it("removes .pi entries from .worktreeinclude", () => {

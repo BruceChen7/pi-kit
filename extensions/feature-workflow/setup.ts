@@ -141,6 +141,8 @@ const WT_TOML_MANAGED_BLOCK_END =
   "# <<< pi-kit feature-workflow setup (managed) <<<";
 
 export const DEFAULT_FEATURE_WORKFLOW_SETUP_PROFILE_ID = "npm";
+export const DEFAULT_FEATURE_WORKFLOW_COPY_IGNORED_HOOK =
+  "project-copy-ignored";
 
 const cloneRule = (rule: IgnoredSyncRule): IgnoredSyncRule => ({
   ...rule,
@@ -811,13 +813,20 @@ const buildManagedWtTomlBlock = (
   profile: FeatureWorkflowSetupProfile,
 ): string => {
   const command = `bash "${profile.hook.scriptRelativePath}" '{{ primary_worktree_path }}'`;
-  const escapedKey = escapeTomlBasicString(profile.hook.name);
-  const escapedCommand = escapeTomlBasicString(command);
+  const escapedPreStartKey = escapeTomlBasicString(profile.hook.name);
+  const escapedPreStartCommand = escapeTomlBasicString(command);
+  const escapedPostStartKey = escapeTomlBasicString(
+    DEFAULT_FEATURE_WORKFLOW_COPY_IGNORED_HOOK,
+  );
+  const escapedPostStartCommand = escapeTomlBasicString("wt step copy-ignored");
 
   return [
     WT_TOML_MANAGED_BLOCK_START,
     "[pre-start]",
-    `"${escapedKey}" = "${escapedCommand}"`,
+    `"${escapedPreStartKey}" = "${escapedPreStartCommand}"`,
+    "",
+    "[post-start]",
+    `"${escapedPostStartKey}" = "${escapedPostStartCommand}"`,
     WT_TOML_MANAGED_BLOCK_END,
   ].join("\n");
 };
@@ -1001,7 +1010,7 @@ export const applyFeatureWorkflowSetupProfile = (
       path: toRelativeDisplayPath(input.repoRoot, wtTomlPath),
       changed: merged.changed,
       message: merged.changed
-        ? `Managed hook '${input.profile.hook.name}' installed/updated`
+        ? `Managed Worktrunk hook block installed/updated (${input.profile.hook.name}, ${DEFAULT_FEATURE_WORKFLOW_COPY_IGNORED_HOOK})`
         : "Managed hook block already up to date",
     });
   }

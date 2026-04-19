@@ -5,7 +5,7 @@ A pi-kit extension that helps you start and manage feature development using Wor
 ## Commands
 
 - `/feature-setup [profile] [--only=<targets>] [--skip=<targets>] [--yes]`
-  - Bootstraps repo-local ignored-sync + Worktrunk hook setup.
+  - Bootstraps repo-local Worktrunk hook/setup artifacts for feature-workflow.
   - Extensible **profile registry** (currently ships with `npm`; designed to add `pnpm`/`yarn`/custom profiles later).
   - Generates/updates profile artifacts idempotently (safe to run repeatedly).
   - Targets:
@@ -20,7 +20,8 @@ A pi-kit extension that helps you start and manage feature development using Wor
   - Prompts only for:
     1) `Branch slug:`
     2) `Base branch:`
-  - Applies the same `.gitignore` merge rule as `/feature-setup` in the new worktree (ensures `.pi/` exists without overwriting existing target rules).
+  - Keeps command logic thin: collect input, run `wt switch --create`, update the managed-feature registry, and switch the pi session.
+  - Relies on `/feature-setup`-generated Worktrunk hooks for shared ignored-file automation.
   - Records successful creations in a repo-local managed-feature registry under `.pi/` so later commands only operate on feature-workflow-managed branches.
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a new session whose `cwd` is the worktree path.
   - Base branch options are derived from **local branches**, prioritized as:
@@ -41,8 +42,8 @@ A pi-kit extension that helps you start and manage feature development using Wor
 - `/feature-switch <branch|slug>`
   - Canonical lookup key is **branch name** (`<encoded-base>--<slug>`). UI selection also uses branch names to avoid ambiguity.
   - A unique `slug` is accepted as a convenience alias. If a slug matches multiple branches, the command asks you to use the full branch name.
-  - Ensures the worktree exists via `wt switch`.
-  - Applies the same `.gitignore` merge rule as `/feature-setup` in the target worktree (ensures `.pi/` exists without overwriting existing target rules).
+  - Keeps command logic thin: resolve the managed feature target, run `wt switch`, and switch the pi session.
+  - Relies on `/feature-setup`-generated Worktrunk hooks for shared ignored-file automation.
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a worktree session rooted at that feature.
 
 - `/feature-validate`
@@ -60,7 +61,7 @@ Run this once in your repo:
 /feature-setup npm
 ```
 
-This command prepares the files needed for ignored-sync and Worktrunk hooks:
+This command prepares the files needed for Worktrunk-managed lifecycle automation:
 
 - `.pi/third_extension_settings.json`
 - `.gitignore` (ensures `.pi/` and `.config/wt.toml` are present)
@@ -83,7 +84,7 @@ Then follow the wizard:
 1. enter a short slug (for example `checkout-v2`)
 2. choose base branch (usually `main`)
 
-The extension creates branch + worktree and (by default) switches you into that worktree session automatically.
+The extension creates branch + worktree through `wt switch --create`, then (by default) switches you into that worktree session automatically.
 
 Example branch name:
 
@@ -223,12 +224,11 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
 }
 ```
 
-> `/feature-setup npm` will upgrade this baseline with npm profile defaults (including lockfile drift warnings and managed hook/script artifacts).
+> `/feature-setup npm` will upgrade this baseline with npm profile defaults and managed Worktrunk hook/script artifacts. The generated hooks are the primary ignored-file automation path; settings remain available for compatibility/customization.
 
-### ignoredSync modes
+### Hook-driven sync (primary path)
 
-- `quick` (default): session switch first, then best-effort sync and warnings.
-- `strict`: sync before session switch. If required paths remain unresolved and `fallback.onFailure` is `block`, the command aborts.
+After `/feature-setup`, feature-workflow expects shared ignored-file behavior to come from Worktrunk hooks and `wt step copy-ignored`, not from extension-side runtime orchestration.
 
 ## Fast bootstrap (recommended)
 
@@ -252,10 +252,13 @@ Example managed block in `.config/wt.toml`:
 # >>> pi-kit feature-workflow setup (managed) >>>
 [pre-start]
 "project-deps-link" = "bash \"$HOME/.pi/pi-feature-workflow-links.sh\" '{{ primary_worktree_path }}'"
+
+[post-start]
+"project-copy-ignored" = "wt step copy-ignored"
 # <<< pi-kit feature-workflow setup (managed) <<<
 ```
 
-The generated script links profile-defined shared paths (npm profile: `node_modules`, `.pi`, `AGENTS.md`, `CLAUDE.md`) from primary worktree to feature worktree.
+The generated script links profile-defined shared paths (npm profile: `node_modules`, `.pi`, `AGENTS.md`, `CLAUDE.md`) from primary worktree to feature worktree, while the managed `post-start` hook runs `wt step copy-ignored` for copy-managed ignored files.
 
 ## Requirements
 

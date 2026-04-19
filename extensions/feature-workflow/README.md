@@ -17,24 +17,30 @@ A pi-kit extension that helps you start and manage feature development using Wor
 
 - `/feature-start`
   - Interactive wizard to create a new feature branch + worktree via `wt switch --create`.
+  - Prompts only for:
+    1) `Branch slug:`
+    2) `Base branch:`
   - Applies the same `.gitignore` merge rule as `/feature-setup` in the new worktree (ensures `.pi/` exists without overwriting existing target rules).
+  - Records successful creations in a repo-local managed-feature registry under `.pi/` so later commands only operate on feature-workflow-managed branches.
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a new session whose `cwd` is the worktree path.
   - Base branch options are derived from **local branches**, prioritized as:
-    1) current branch (for non-feature branches)
-       - if current branch already matches `<type>/<base>/<slug>`, prioritize its parsed `base`
-       - unsupported old-format `<type>/<slug>` current branches are not auto-prioritized
+    1) current branch
+       - if current branch is a managed feature branch in `<base>/<slug>` form, prioritize its parsed `base`
     2) `main`
     3) `master`
     4) `release*` (e.g. `release`, `release/*`, `release-*`) if present
-  - New feature branches embed base in name: `<type>/<base>/<slug>` (example: `feat/main/checkout-v2`).
+  - New feature branches embed base in name: `<base>/<slug>` (example: `main/checkout-v2`).
 
 - `/feature-list`
   - Lists active feature worktrees from `wt list --format json`.
-  - Derives `base` from branch name (`<type>/<base>/<slug>`). Branches that do not match this format are ignored.
+  - Only shows branches that are both:
+    - active in Worktrunk, and
+    - present in the feature-workflow managed registry
+  - Derives `base` from branch name (`<base>/<slug>`).
 
-- `/feature-switch <branch|id|slug>`
-  - Canonical lookup key is **branch name** (`<type>/<base>/<slug>`). UI selection also uses branch names to avoid ambiguity.
-  - `id` and `slug` are still accepted as aliases for compatibility. If an alias matches multiple branches, the command asks you to use the full branch name.
+- `/feature-switch <branch|slug>`
+  - Canonical lookup key is **branch name** (`<base>/<slug>`). UI selection also uses branch names to avoid ambiguity.
+  - A unique `slug` is accepted as a convenience alias. If a slug matches multiple branches, the command asks you to use the full branch name.
   - Ensures the worktree exists via `wt switch`.
   - Applies the same `.gitignore` merge rule as `/feature-setup` in the target worktree (ensures `.pi/` exists without overwriting existing target rules).
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a worktree session rooted at that feature.
@@ -74,16 +80,15 @@ Run:
 
 Then follow the wizard:
 
-1. choose feature type (`feat`, `fix`, etc.)
+1. enter a short slug (for example `checkout-v2`)
 2. choose base branch (usually `main`)
-3. enter a short slug (for example `checkout-v2`)
 
 The extension creates branch + worktree and (by default) switches you into that worktree session automatically.
 
 Example branch name:
 
 ```text
-feat/main/checkout-v2
+main/checkout-v2
 ```
 
 ### 3) Continue an existing feature later
@@ -97,10 +102,10 @@ List feature worktrees:
 Switch to one:
 
 ```text
-/feature-switch feat/main/checkout-v2
+/feature-switch main/checkout-v2
 ```
 
-Tip: use full branch name (`<type>/<base>/<slug>`) to avoid ambiguity.
+Tip: use the full branch name (`<base>/<slug>`) if the same slug exists under multiple base branches.
 
 ### 4) Run preflight checks before PR / before continuing work
 
@@ -118,7 +123,7 @@ This helps catch common issues early (dirty workspace, stale base).
 
 # later switch back into an existing feature
 /feature-list
-/feature-switch feat/main/checkout-v2
+/feature-switch main/checkout-v2
 
 # before push / PR
 /feature-validate
@@ -126,14 +131,19 @@ This helps catch common issues early (dirty workspace, stale base).
 
 ## Storage
 
-Feature/worktree source of truth comes from Worktrunk (`wt list --format json`).
+Feature/worktree visibility uses two inputs:
+
+1. Worktrunk (`wt list --format json`) for active worktrees
+2. A repo-local feature-workflow managed registry under `.pi/`
 
 Identity semantics:
 - Canonical key: `branch`
-- Display alias: `id` (`<type>-<normalized-base>-<slug>`)
+- Convenience alias: unique `slug`
 
 `base` is derived from branch name and requires:
-- `<type>/<base>/<slug>`
+- `<base>/<slug>`
+
+This registry-based model ensures ordinary slash branches such as `user/demo` are not treated as feature-workflow branches unless they were created by `/feature-start`.
 
 ## Configuration
 

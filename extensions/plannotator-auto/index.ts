@@ -263,9 +263,19 @@ const resolveRepoSlugFromGitCommonDir = (cwd: string): string | null => {
   return candidate.length > 0 ? candidate : null;
 };
 
-const getDefaultPlanDir = (cwd: string): string => {
-  const repoSlug = resolveRepoSlugFromGitCommonDir(cwd) ?? path.basename(cwd);
-  return path.join(".pi", "plans", repoSlug, DEFAULT_PLAN_SUBDIR);
+const getDefaultPlanDirs = (cwd: string): string[] => {
+  const candidates = [
+    resolveRepoSlugFromGitCommonDir(cwd),
+    path.basename(cwd).trim(),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+
+  return Array.from(
+    new Set(
+      candidates.map((candidate) =>
+        path.join(".pi", "plans", candidate, DEFAULT_PLAN_SUBDIR),
+      ),
+    ),
+  );
 };
 
 const isConfiguredPlanDirectory = (
@@ -308,8 +318,14 @@ const isPlanFileMatch = (planDir: string, targetPath: string): boolean => {
   return PLAN_FILE_PATTERN.test(path.basename(targetPath));
 };
 
+const isPlanFileMatchAny = (planDirs: string[], targetPath: string): boolean =>
+  planDirs.some((planDir) => isPlanFileMatch(planDir, targetPath));
+
 const resolvePlanPath = (cwd: string, planFile: string): string =>
   path.resolve(cwd, planFile);
+
+const resolvePlanPaths = (cwd: string, planFiles: string[]): string[] =>
+  planFiles.map((planFile) => resolvePlanPath(cwd, planFile));
 
 const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
   const config = loadConfig(ctx.cwd);
@@ -317,8 +333,12 @@ const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
     return null;
   }
 
-  const planFile = config.planFile ?? getDefaultPlanDir(ctx.cwd);
+  const planFiles = config.planFile
+    ? [config.planFile]
+    : getDefaultPlanDirs(ctx.cwd);
+  const planFile = planFiles[0];
   const resolvedPlanPath = resolvePlanPath(ctx.cwd, planFile);
+  const resolvedPlanPaths = resolvePlanPaths(ctx.cwd, planFiles);
 
   if (!isConfiguredPlanDirectory(planFile, resolvedPlanPath)) {
     log?.debug(
@@ -335,11 +355,13 @@ const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
   log?.debug("plannotator-auto resolved plan directory", {
     planFile,
     resolvedPlanPath,
+    resolvedPlanPaths,
   });
 
   return {
     planFile,
     resolvedPlanPath,
+    resolvedPlanPaths,
   };
 };
 
@@ -383,7 +405,7 @@ export const resolvePlanFileForReview = (
   planConfig: PlanFileConfig,
   targetPath: string,
 ): string | null => {
-  if (!isPlanFileMatch(planConfig.resolvedPlanPath, targetPath)) {
+  if (!isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath)) {
     return null;
   }
 
@@ -398,7 +420,7 @@ export const shouldQueueReviewForToolPath = (
     return true;
   }
 
-  return !isPlanFileMatch(planConfig.resolvedPlanPath, targetPath);
+  return !isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath);
 };
 
 export const findLatestPlanFileForAnnotation = (
@@ -408,36 +430,38 @@ export const findLatestPlanFileForAnnotation = (
   absolutePath: string;
   repoRelativePath: string;
 } | null => {
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(planConfig.resolvedPlanPath).sort();
-  } catch {
-    return null;
-  }
-
   let latestPath: string | null = null;
   let latestMtimeMs = Number.NEGATIVE_INFINITY;
 
-  for (const entry of entries) {
-    if (!PLAN_FILE_PATTERN.test(entry)) {
-      continue;
-    }
-
-    const candidatePath = path.join(planConfig.resolvedPlanPath, entry);
-    let stats: fs.Stats;
+  for (const planDir of planConfig.resolvedPlanPaths) {
+    let entries: string[];
     try {
-      stats = fs.statSync(candidatePath);
+      entries = fs.readdirSync(planDir).sort();
     } catch {
       continue;
     }
 
-    if (!stats.isFile()) {
-      continue;
-    }
+    for (const entry of entries) {
+      if (!PLAN_FILE_PATTERN.test(entry)) {
+        continue;
+      }
 
-    if (stats.mtimeMs >= latestMtimeMs) {
-      latestPath = candidatePath;
-      latestMtimeMs = stats.mtimeMs;
+      const candidatePath = path.join(planDir, entry);
+      let stats: fs.Stats;
+      try {
+        stats = fs.statSync(candidatePath);
+      } catch {
+        continue;
+      }
+
+      if (!stats.isFile()) {
+        continue;
+      }
+
+      if (stats.mtimeMs >= latestMtimeMs) {
+        latestPath = candidatePath;
+        latestMtimeMs = stats.mtimeMs;
+      }
     }
   }
 
@@ -472,7 +496,9 @@ const annotateLatestPlanFile = async (
   const latestPlan = findLatestPlanFileForAnnotation(ctx, planConfig);
   if (!latestPlan) {
     ctx.ui.notify(
-      `No plan files found in ${toRepoRelativePath(ctx, planConfig.resolvedPlanPath)}.`,
+      `No plan files found in ${planConfig.resolvedPlanPaths
+        .map((planDir) => toRepoRelativePath(ctx, planDir))
+        .join(", ")}.`,
       "warning",
     );
     return;

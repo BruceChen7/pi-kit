@@ -11,7 +11,7 @@ type NotFoundFeatureRecordResult = {
 };
 
 type AmbiguousFeatureRecordResult = {
-  kind: "ambiguous-id" | "ambiguous-slug";
+  kind: "ambiguous-slug";
   value: string;
   branches: string[];
 };
@@ -44,19 +44,6 @@ export function matchFeatureRecord(
   const byBranch = records.find((record) => record.branch === value);
   if (byBranch) {
     return { kind: "matched", record: byBranch };
-  }
-
-  const byId = records.filter((record) => record.id === value);
-  const uniqueIdMatch = matchSingle(byId);
-  if (uniqueIdMatch) {
-    return uniqueIdMatch;
-  }
-  if (byId.length > 1) {
-    return {
-      kind: "ambiguous-id",
-      value,
-      branches: toBranches(byId),
-    };
   }
 
   const bySlug = records.filter((record) => record.slug === value);

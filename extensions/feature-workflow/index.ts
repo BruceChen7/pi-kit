@@ -35,6 +35,7 @@ import {
   DEFAULT_FEATURE_WORKFLOW_SETUP_PROFILE_ID,
   FEATURE_WORKFLOW_SETUP_TARGETS,
   FEATURE_WORKFLOW_SETUP_USAGE,
+  getFeatureWorkflowSetupMissingFiles,
   type FeatureWorkflowSetupProfile,
   type FeatureWorkflowSetupTarget,
   getFeatureWorkflowSetupProfile,
@@ -532,6 +533,15 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 
   const { config, timeoutMs, repoRoot, runGit } = commandContext;
   const runWt = createWtRunner(pi, repoRoot);
+
+  const missingSetupFiles = getFeatureWorkflowSetupMissingFiles(repoRoot);
+  if (missingSetupFiles.length > 0) {
+    ctx.ui.notify(
+      `feature-start requires local setup-managed files that are missing: ${missingSetupFiles.join(", ")}. Run /feature-setup first.`,
+      "warning",
+    );
+    return;
+  }
 
   if (config.guards.requireCleanWorkspace) {
     const dirty = checkRepoDirty(repoRoot, timeoutMs);

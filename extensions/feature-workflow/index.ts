@@ -6,6 +6,7 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 
 import {
+  branchExists,
   checkRepoDirty,
   DEFAULT_GIT_TIMEOUT_MS,
   getCurrentBranchName,
@@ -16,6 +17,16 @@ import {
 import { createLogger } from "../shared/logger.js";
 
 import { buildBaseBranchCandidates } from "./base-branches.js";
+import { findFeatureBoardCard, readFeatureBoard } from "./board.js";
+import {
+  laneToSidecarStatus,
+  writeFeatureBoardIndex,
+  writeFeatureCardSidecar,
+} from "./board-sidecar.js";
+import {
+  buildFeatureBoardReconcileMessage,
+  reconcileFeatureBoard,
+} from "./board-reconcile.js";
 import { resolveFeatureWorkflowCommandContext } from "./command-context.js";
 import { loadFeatureWorkflowConfig } from "./config.js";
 import { matchFeatureRecord } from "./feature-query.js";
@@ -76,6 +87,23 @@ const parseCommandArgs = (rawArgs: string): string[] => {
   const tokens = trimmed.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
   return tokens.map((token) => token.replace(/^["']|["']$/g, ""));
 };
+
+function sanitizeCardSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+}
+
+function resolveDefaultBoardBaseBranch(input: {
+  currentBranch: string | null;
+  localBranches: string[];
+  managedFeatureBranches: string[];
+}): string | null {
+  const candidates = buildBaseBranchCandidates(input);
+  return candidates[0] ?? null;
+}
 
 type WorktreeSessionSwitchSkipReason =
   | "disabled"
@@ -975,6 +1003,299 @@ async function runFeatureSwitch(
   });
 }
 
+async function runFeatureBoardStatus(
+  _pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+) {
+  const commandContext = resolveFeatureWorkflowCommandContext({
+    cwd: ctx.cwd,
+    ui: ctx.ui,
+  });
+  if (!commandContext) {
+    return;
+  }
+
+  const board = readFeatureBoard(commandContext.repoRoot);
+  const featureCount = board.cards.filter((card) => card.kind === "feature").length;
+  const childCount = board.cards.filter((card) => card.kind === "child").length;
+  const summary = [
+    `feature board: ${board.path}`,
+    `features ${featureCount}`,
+    `children ${childCount}`,
+    `errors ${board.errors.length}`,
+  ];
+  if (board.errors.length > 0) {
+    summary.push(board.errors.join(" | "));
+  }
+  ctx.ui.notify(summary.join(" | "), board.errors.length > 0 ? "warning" : "info");
+}
+
+async function runFeatureBoardReconcile(
+  _pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+) {
+  const commandContext = resolveFeatureWorkflowCommandContext({
+    cwd: ctx.cwd,
+    ui: ctx.ui,
+  });
+  if (!commandContext) {
+    return;
+  }
+
+  const board = readFeatureBoard(commandContext.repoRoot);
+  const result = reconcileFeatureBoard(
+    commandContext.repoRoot,
+    board,
+    commandContext.runGit,
+  );
+  ctx.ui.notify(
+    buildFeatureBoardReconcileMessage(result),
+    result.ok ? "info" : "warning",
+  );
+}
+
+async function maybePrepareBoardWorktreeSession(input: {
+  ctx: ExtensionCommandContext;
+  record: FeatureRecord;
+  worktreePath: string;
+  enabled: boolean;
+}): Promise<{ record: FeatureRecord; sessionPath: string | null }> {
+  const result = await maybeSwitchToWorktreeSession({
+    ctx: input.ctx,
+    record: input.record,
+    worktreePath: input.worktreePath,
+    enabled: input.enabled,
+  });
+
+  const sessionPath = trimToNull(
+    result.switched
+      ? input.ctx.sessionManager.getSessionFile()
+      : null,
+  );
+
+  return {
+    record: result.record,
+    sessionPath,
+  };
+}
+
+async function runFeatureBoardApply(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  args: string[],
+) {
+  const commandContext = resolveFeatureWorkflowCommandContext({
+    cwd: ctx.cwd,
+    ui: ctx.ui,
+  });
+  if (!commandContext) {
+    return;
+  }
+
+  const { config, repoRoot, runGit } = commandContext;
+  const board = readFeatureBoard(repoRoot);
+  if (board.errors.length > 0) {
+    ctx.ui.notify(`Board has parser errors: ${board.errors.join(" | ")}`, "error");
+    return;
+  }
+
+  const query = trimToNull(args[0]);
+  if (!query) {
+    ctx.ui.notify("Usage: /feature-board-apply <card-id|title>", "error");
+    return;
+  }
+
+  const card = findFeatureBoardCard(board, query);
+  if (!card) {
+    ctx.ui.notify(`Unknown board card: ${query}`, "error");
+    return;
+  }
+
+  const reconcile = reconcileFeatureBoard(repoRoot, board, runGit);
+  const reconcileCard = reconcile.cards.find((entry) => entry.card.id === card.id) ?? null;
+  if (!reconcileCard) {
+    ctx.ui.notify(`Failed to resolve board card: ${card.id}`, "error");
+    return;
+  }
+
+  const blockingError = reconcileCard.issues.find((issue) => issue.severity === "error");
+  if (blockingError) {
+    ctx.ui.notify(blockingError.message, "error");
+    return;
+  }
+
+  const managedFeatureBranches = readManagedFeatureRegistry(repoRoot).map(
+    (record) => record.branch,
+  );
+  const currentBranch = getCurrentBranchName(runGit);
+  const localBranches = listLocalBranches(runGit);
+  const defaultBase = resolveDefaultBoardBaseBranch({
+    currentBranch,
+    localBranches,
+    managedFeatureBranches,
+  });
+  const runWt = createWtRunner(pi, repoRoot);
+  const now = new Date().toISOString();
+
+  let branch = reconcileCard.sidecar?.branch ?? null;
+  let baseBranch = reconcileCard.sidecar?.baseBranch ?? null;
+  let mergeTarget = reconcileCard.sidecar?.mergeTarget ?? null;
+  let parentCardId = reconcileCard.sidecar?.parentCardId ?? card.parentId;
+  let parentBranch = reconcileCard.sidecar?.parentBranch ?? null;
+
+  if (card.kind === "feature") {
+    if (!baseBranch) {
+      baseBranch = defaultBase;
+    }
+    if (!baseBranch) {
+      ctx.ui.notify("Could not determine a default base branch for this feature card.", "error");
+      return;
+    }
+    if (!branch) {
+      const slug = sanitizeCardSlug(card.id) || sanitizeCardSlug(card.title);
+      branch = buildFeatureBranchName({ base: baseBranch, slug });
+    }
+    mergeTarget = mergeTarget ?? baseBranch;
+  } else {
+    const parent = board.cards.find((entry) => entry.id === card.parentId) ?? null;
+    if (!parent) {
+      ctx.ui.notify(`Missing parent feature card for child '${card.id}'.`, "error");
+      return;
+    }
+    const parentReconcile = reconcile.cards.find((entry) => entry.card.id === parent.id) ?? null;
+    const parentSidecar = parentReconcile?.sidecar ?? null;
+    if (!parentSidecar) {
+      ctx.ui.notify(
+        `Parent feature '${parent.id}' must be applied before child '${card.id}'.`,
+        "error",
+      );
+      return;
+    }
+    parentCardId = parent.id;
+    parentBranch = parentSidecar.branch;
+    baseBranch = baseBranch ?? parentSidecar.branch;
+    mergeTarget = mergeTarget ?? parentSidecar.branch;
+    if (!branch) {
+      const slug = sanitizeCardSlug(card.id) || sanitizeCardSlug(card.title);
+      branch = buildFeatureBranchName({ base: parentSidecar.branch, slug });
+    }
+  }
+
+  if (!branch || !baseBranch || !mergeTarget) {
+    ctx.ui.notify(`Failed to resolve branch metadata for board card '${card.id}'.`, "error");
+    return;
+  }
+
+  const worktreeResult =
+    branchExists(runGit, branch)
+      ? await ensureFeatureWorktree(runWt, {
+          branch,
+          fallbackWorktreePath: reconcileCard.sidecar?.worktreePath ?? "",
+        })
+      : await createFeatureWorktree(runWt, {
+          branch,
+          base: baseBranch,
+        });
+
+  if (!worktreeResult.ok) {
+    ctx.ui.notify(worktreeResult.message, "error");
+    return;
+  }
+
+  const worktreePath = worktreeResult.worktreePath;
+  const gitignoreSync = ensureWorktreeGitignore({
+    repoRoot,
+    worktreePath,
+  });
+  if (!gitignoreSync.ok) {
+    ctx.ui.notify(
+      `Failed to sync .gitignore to board-managed worktree: ${gitignoreSync.message}`,
+      "warning",
+    );
+  }
+
+  const record: FeatureRecord = {
+    name: sanitizeCardSlug(card.title) || sanitizeCardSlug(card.id),
+    slug: sanitizeCardSlug(card.title) || sanitizeCardSlug(card.id),
+    branch,
+    base: baseBranch,
+    worktreePath,
+    status: "active",
+    createdAt: reconcileCard.sidecar?.timestamps.createdAt ?? now,
+    updatedAt: now,
+  };
+
+  const preSessionIgnoredSync = await runIgnoredSync({
+    command: "feature-switch",
+    phase: "before-session-switch",
+    config: config.ignoredSync,
+    repoRoot,
+    worktreePath,
+    branch,
+    runWt,
+    notify: ctx.ui.notify.bind(ctx.ui),
+  });
+  if (preSessionIgnoredSync.blocked) {
+    return;
+  }
+
+  const sessionResult = await maybePrepareBoardWorktreeSession({
+    ctx,
+    record,
+    worktreePath,
+    enabled: config.defaults.autoSwitchToWorktreeSession,
+  });
+
+  await runIgnoredSync({
+    command: "feature-switch",
+    phase: "after-session-switch",
+    config: config.ignoredSync,
+    repoRoot,
+    worktreePath: sessionResult.record.worktreePath,
+    branch: sessionResult.record.branch,
+    runWt,
+    notify: ctx.ui.notify.bind(ctx.ui),
+  });
+
+  upsertManagedFeatureBranch(repoRoot, {
+    branch,
+    base: baseBranch,
+    slug: sanitizeCardSlug(card.id) || sanitizeCardSlug(card.title),
+    timestamp: now,
+  });
+
+  writeFeatureCardSidecar(repoRoot, board, {
+    schemaVersion: 1,
+    cardId: card.id,
+    kind: card.kind,
+    title: card.title,
+    branch,
+    baseBranch,
+    parentCardId,
+    parentBranch,
+    mergeTarget,
+    status: laneToSidecarStatus(card.lane),
+    worktreePath: sessionResult.record.worktreePath,
+    sessionPath: sessionResult.sessionPath,
+    specPath: reconcileCard.sidecar?.specPath ?? null,
+    planPath: reconcileCard.sidecar?.planPath ?? null,
+    validation: {
+      lastCheckedAt: now,
+      mergeState: card.lane === "Done" ? "merged" : "unmerged",
+    },
+    timestamps: {
+      createdAt: reconcileCard.sidecar?.timestamps.createdAt ?? now,
+      updatedAt: now,
+    },
+  });
+  writeFeatureBoardIndex(repoRoot, board);
+
+  ctx.ui.notify(
+    `Board card applied: ${card.id} -> ${branch}`,
+    "info",
+  );
+}
+
 async function runFeatureValidate(
   _pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
@@ -1042,6 +1363,22 @@ export default function featureWorkflowExtension(pi: ExtensionAPI) {
   pi.registerCommand("feature-list", {
     description: "List feature records for this repo",
     handler: async (_args, ctx) => runFeatureList(pi, ctx),
+  });
+
+  pi.registerCommand("feature-board-status", {
+    description: "Show board-first feature workflow status for this repo",
+    handler: async (_args, ctx) => runFeatureBoardStatus(pi, ctx),
+  });
+
+  pi.registerCommand("feature-board-reconcile", {
+    description: "Compare kanban board intent against branch/worktree state",
+    handler: async (_args, ctx) => runFeatureBoardReconcile(pi, ctx),
+  });
+
+  pi.registerCommand("feature-board-apply", {
+    description: "Apply branch/worktree/session changes for a board card",
+    handler: async (args, ctx) =>
+      runFeatureBoardApply(pi, ctx, parseCommandArgs(args)),
   });
 
   pi.registerCommand("feature-switch", {

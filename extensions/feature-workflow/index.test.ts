@@ -71,6 +71,9 @@ describe("feature-workflow extension", () => {
     } as unknown as ExtensionAPI);
 
     expect(commands.sort()).toEqual([
+      "feature-board-apply",
+      "feature-board-reconcile",
+      "feature-board-status",
       "feature-list",
       "feature-setup",
       "feature-start",
@@ -277,5 +280,119 @@ describe("feature-workflow extension", () => {
       },
     ]);
     expect(fs.existsSync(getManagedFeatureRegistryPath(repoRoot))).toBe(true);
+  });
+
+  it("applies a feature board card into a branch/worktree sidecar", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    fs.mkdirSync(path.join(repoRoot, "workitems"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, "workitems", "features.kanban.md"),
+      [
+        "## Spec",
+        "",
+        "- [ ] Checkout V2 <!-- card-id: feat-checkout-v2; kind: feature -->",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            guards: {
+              requireCleanWorkspace: false,
+              requireFreshBase: false,
+            },
+            defaults: {
+              autoSwitchToWorktreeSession: false,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const worktreePath = path.join(repoRoot, ".wt", "main-feat-checkout-v2");
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args.includes("switch") && args.includes("--create")) {
+        fs.mkdirSync(worktreePath, { recursive: true });
+        return {
+          code: 0,
+          stdout: JSON.stringify({ action: "created", path: worktreePath }),
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-board-apply");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("feat-checkout-v2", {
+      cwd: repoRoot,
+      hasUI: false,
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+      sessionManager: {
+        getSessionFile() {
+          return null;
+        },
+      },
+      async switchSession() {
+        return { cancelled: false };
+      },
+    });
+
+    const sidecarPath = path.join(
+      repoRoot,
+      "workitems",
+      ".feature-cards",
+      "feat-checkout-v2.json",
+    );
+    expect(fs.existsSync(sidecarPath)).toBe(true);
+    const sidecar = JSON.parse(fs.readFileSync(sidecarPath, "utf-8")) as {
+      branch: string;
+      baseBranch: string;
+      mergeTarget: string;
+    };
+    expect(sidecar).toMatchObject({
+      branch: "main--feat-checkout-v2",
+      baseBranch: "main",
+      mergeTarget: "main",
+    });
+    expect(notifications.at(-1)).toEqual({
+      message: "Board card applied: feat-checkout-v2 -> main--feat-checkout-v2",
+      level: "info",
+    });
   });
 });

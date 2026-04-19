@@ -48,6 +48,23 @@ A pi-kit extension that helps you start and manage feature development using Wor
 - `/feature-validate`
   - Runs basic preflight checks (dirty state + base freshness for the top-priority base).
 
+- `/feature-board-status`
+  - Reads `workitems/features.kanban.md` and reports board path, card counts, and parser errors.
+
+- `/feature-board-reconcile`
+  - Compares kanban board intent against current sidecars, local branches, and worktree state.
+  - Highlights missing sidecars, missing branches, missing worktrees, and illegal `Done` states.
+
+- `/feature-board-apply <card-id|title>`
+  - Applies the next explicit branch/worktree/session step for a board card.
+  - For feature cards:
+    - derives a default base branch from the same candidate logic as `/feature-start`
+    - creates the feature branch + worktree when missing
+  - For child cards:
+    - requires the parent feature card to have been applied first
+    - creates a child branch from the parent feature branch
+  - Writes/updates `workitems/.feature-cards/<card-id>.json` and `workitems/.feature-workflow/board-index.json`
+
 ## Common workflow (beginner-friendly)
 
 If you're new to this extension, follow this flow first. Think of it as a simple “setup once → create feature → switch back later → validate before PR” process.
@@ -128,6 +145,102 @@ This helps catch common issues early (dirty workspace, stale base).
 # before push / PR
 /feature-validate
 ```
+
+## Board-first workflow
+
+This extension now supports a **board-first control plane** for feature orchestration.
+
+### Single source of truth
+
+The kanban board lives at:
+
+```text
+workitems/features.kanban.md
+```
+
+This board expresses:
+
+- lifecycle lane (`Inbox`, `Spec`, `Ready`, `In Progress`, `Review`, `Done`)
+- feature vs child card identity
+- parent/child relationships
+- human-readable titles
+
+Execution metadata lives alongside it in:
+
+```text
+workitems/.feature-cards/<card-id>.json
+workitems/.feature-workflow/board-index.json
+```
+
+The board is the control-plane input. Sidecars extend the board with branch/worktree/session metadata; they do not create cards on their own.
+
+### Board card format
+
+Example:
+
+```text
+## Spec
+
+- [ ] Checkout V2 <!-- card-id: feat-checkout-v2; kind: feature -->
+  - [ ] Split pricing widget <!-- card-id: child-pricing-widget; kind: child; parent: feat-checkout-v2 -->
+```
+
+Rules:
+
+- top-level items are feature cards
+- indented items are child cards
+- every card must declare `card-id`
+- child cards must declare `parent`
+
+### How pi interacts with the board
+
+The interaction model is intentionally explicit:
+
+1. Edit the board to express intent
+   - create a feature card
+   - create a child card
+   - move cards between lifecycle lanes
+2. Ask pi to reconcile intent
+
+```text
+/feature-board-reconcile
+```
+
+3. Ask pi to apply the next safe execution step
+
+```text
+/feature-board-apply feat-checkout-v2
+```
+
+That means:
+
+- dragging a card changes the **desired state**
+- pi commands inspect that desired state and decide what execution work is still missing
+- destructive git actions are not triggered implicitly from a drag
+
+### Typical board-driven flow
+
+```text
+# inspect board status / parser issues
+/feature-board-status
+
+# see what the board still needs
+/feature-board-reconcile
+
+# create the main feature branch/worktree/session for a feature card
+/feature-board-apply feat-checkout-v2
+
+# after adding a child card under that feature, create its child branch/worktree/session
+/feature-board-apply child-pricing-widget
+```
+
+### `Done` semantics
+
+`Done` is a merge-complete state, not “implementation feels finished”.
+
+- a child card in `Done` must already be merged into its parent feature branch
+- a feature card in `Done` must already be merged into its base branch
+- a feature card cannot complete while child cards remain unfinished
 
 ## Storage
 

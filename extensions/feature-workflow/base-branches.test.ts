@@ -30,15 +30,15 @@ describe("buildBaseBranchCandidates", () => {
 
   it("prioritizes parsed base when current branch is a managed feature branch", () => {
     const result = buildBaseBranchCandidates({
-      currentBranch: "main/checkout-v2",
+      currentBranch: "main--checkout-v2",
       localBranches: [
         "main",
         "master",
         "release/2026-04",
-        "main/checkout-v2",
+        "main--checkout-v2",
         "dev",
       ],
-      managedFeatureBranches: ["main/checkout-v2"],
+      managedFeatureBranches: ["main--checkout-v2"],
     });
 
     expect(result).toEqual([
@@ -46,7 +46,7 @@ describe("buildBaseBranchCandidates", () => {
       "master",
       "release/2026-04",
       "dev",
-      "main/checkout-v2",
+      "main--checkout-v2",
     ]);
   });
 
@@ -54,7 +54,7 @@ describe("buildBaseBranchCandidates", () => {
     const result = buildBaseBranchCandidates({
       currentBranch: "user/demo",
       localBranches: ["main", "user/demo", "dev"],
-      managedFeatureBranches: ["main/checkout-v2"],
+      managedFeatureBranches: ["main--checkout-v2"],
     });
 
     expect(result).toEqual(["user/demo", "main", "dev"]);

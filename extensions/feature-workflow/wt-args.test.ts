@@ -6,13 +6,13 @@ describe("buildWtSwitchCreateArgs", () => {
   it("builds stable args for creating a worktree", () => {
     expect(
       buildWtSwitchCreateArgs({
-        branch: "feat/main/checkout-v2",
+        branch: "main--checkout-v2",
         base: "main",
       }),
     ).toEqual([
       "switch",
       "--create",
-      "feat/main/checkout-v2",
+      "main--checkout-v2",
       "--base",
       "main",
       "--no-cd",

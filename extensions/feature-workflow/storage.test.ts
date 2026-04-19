@@ -60,7 +60,7 @@ describe("storage", () => {
     const records = listFeatureRecords(
       JSON.stringify([
         {
-          branch: "main/checkout-v2",
+          branch: "main--checkout-v2",
           path: "/tmp/checkout-v2",
           commit: { timestamp: 100 },
         },
@@ -75,17 +75,17 @@ describe("storage", () => {
     const activeRecords = listFeatureRecords(
       JSON.stringify([
         {
-          branch: "main/another-feature",
+          branch: "main--another-feature",
           path: "/tmp/another-feature",
           commit: { timestamp: 100 },
         },
       ]),
-      ["main/another-feature"],
+      ["main--another-feature"],
     );
 
     expect(
       findActiveFeatureConflicts(activeRecords, {
-        branch: "main/checkout-v2",
+        branch: "main--checkout-v2",
       }),
     ).toEqual({
       branchConflict: false,
@@ -96,22 +96,25 @@ describe("storage", () => {
     const activeRecords = listFeatureRecords(
       JSON.stringify([
         {
-          branch: "main/checkout-v2",
+          branch: "main--checkout-v2",
           path: "/tmp/checkout-v2",
           commit: { timestamp: 100 },
         },
         {
-          branch: "release/2026-q2/checkout-v2",
+          branch: "release%2F2026-q2--checkout-v2",
           path: "/tmp/release-checkout-v2",
           commit: { timestamp: 90 },
         },
       ]),
-      ["main/checkout-v2", "release/2026-q2/checkout-v2"],
+      [
+        "main--checkout-v2",
+        "release%2F2026-q2--checkout-v2",
+      ],
     );
 
     expect(
       findActiveFeatureConflicts(activeRecords, {
-        branch: "main/checkout-v2",
+        branch: "main--checkout-v2",
       }),
     ).toEqual({
       branchConflict: true,

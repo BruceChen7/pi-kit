@@ -25,21 +25,21 @@ A pi-kit extension that helps you start and manage feature development using Wor
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a new session whose `cwd` is the worktree path.
   - Base branch options are derived from **local branches**, prioritized as:
     1) current branch
-       - if current branch is a managed feature branch in `<base>/<slug>` form, prioritize its parsed `base`
+       - if current branch is a managed feature branch in `<encoded-base>--<slug>` form, prioritize its parsed `base`
     2) `main`
     3) `master`
     4) `release*` (e.g. `release`, `release/*`, `release-*`) if present
-  - New feature branches embed base in name: `<base>/<slug>` (example: `main/checkout-v2`).
+  - New feature branches use `<encoded-base>--<slug>` (example: `main--checkout-v2`).
 
 - `/feature-list`
   - Lists active feature worktrees from `wt list --format json`.
   - Only shows branches that are both:
     - active in Worktrunk, and
     - present in the feature-workflow managed registry
-  - Derives `base` from branch name (`<base>/<slug>`).
+  - Derives `base` from branch name (`<encoded-base>--<slug>`), while still understanding legacy `<base>/<slug>` entries.
 
 - `/feature-switch <branch|slug>`
-  - Canonical lookup key is **branch name** (`<base>/<slug>`). UI selection also uses branch names to avoid ambiguity.
+  - Canonical lookup key is **branch name** (`<encoded-base>--<slug>`). UI selection also uses branch names to avoid ambiguity.
   - A unique `slug` is accepted as a convenience alias. If a slug matches multiple branches, the command asks you to use the full branch name.
   - Ensures the worktree exists via `wt switch`.
   - Applies the same `.gitignore` merge rule as `/feature-setup` in the target worktree (ensures `.pi/` exists without overwriting existing target rules).
@@ -88,7 +88,7 @@ The extension creates branch + worktree and (by default) switches you into that 
 Example branch name:
 
 ```text
-main/checkout-v2
+main--checkout-v2
 ```
 
 ### 3) Continue an existing feature later
@@ -102,10 +102,10 @@ List feature worktrees:
 Switch to one:
 
 ```text
-/feature-switch main/checkout-v2
+/feature-switch main--checkout-v2
 ```
 
-Tip: use the full branch name (`<base>/<slug>`) if the same slug exists under multiple base branches.
+Tip: use the full branch name (`<encoded-base>--<slug>`) if the same slug exists under multiple base branches.
 
 ### 4) Run preflight checks before PR / before continuing work
 
@@ -123,7 +123,7 @@ This helps catch common issues early (dirty workspace, stale base).
 
 # later switch back into an existing feature
 /feature-list
-/feature-switch main/checkout-v2
+/feature-switch main--checkout-v2
 
 # before push / PR
 /feature-validate
@@ -141,7 +141,7 @@ Identity semantics:
 - Convenience alias: unique `slug`
 
 `base` is derived from branch name and requires:
-- `<base>/<slug>`
+- `<encoded-base>--<slug>` where `encoded-base` is `encodeURIComponent(base)` (legacy `<base>/<slug>` remains readable)
 
 This registry-based model ensures ordinary slash branches such as `user/demo` are not treated as feature-workflow branches unless they were created by `/feature-start`.
 

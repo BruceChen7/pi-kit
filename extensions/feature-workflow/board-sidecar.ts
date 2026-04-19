@@ -1,7 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { FeatureBoard, FeatureBoardCard, FeatureBoardCardKind } from "./board.js";
+import type {
+  FeatureBoard,
+  FeatureBoardCard,
+  FeatureBoardCardKind,
+} from "./board.js";
 
 export type FeatureBoardCardStatus =
   | "inbox"
@@ -86,7 +90,10 @@ export function getFeatureBoardIndexPath(repoRoot: string): string {
   return path.join(repoRoot, BOARD_INDEX_RELATIVE_PATH);
 }
 
-export function getFeatureCardSidecarPath(repoRoot: string, cardId: string): string {
+export function getFeatureCardSidecarPath(
+  repoRoot: string,
+  cardId: string,
+): string {
   return path.join(getFeatureCardSidecarDir(repoRoot), `${cardId}.json`);
 }
 
@@ -112,8 +119,14 @@ export function readFeatureCardSidecar(
   const mergeTarget = trimToNull(parsed.mergeTarget);
   const title = trimToNull(parsed.title);
   const kind = trimToNull(parsed.kind) as FeatureBoardCardKind | null;
-  const createdAt = trimToNull(parsed.timestamps && (parsed.timestamps as Record<string, unknown>).createdAt);
-  const updatedAt = trimToNull(parsed.timestamps && (parsed.timestamps as Record<string, unknown>).updatedAt);
+  const createdAt = trimToNull(
+    parsed.timestamps &&
+      (parsed.timestamps as Record<string, unknown>).createdAt,
+  );
+  const updatedAt = trimToNull(
+    parsed.timestamps &&
+      (parsed.timestamps as Record<string, unknown>).updatedAt,
+  );
   if (
     !branch ||
     !baseBranch ||
@@ -176,13 +189,19 @@ export function writeFeatureCardSidecar(
   sidecar: FeatureCardSidecar,
 ): void {
   if (!board.cards.some((card) => card.id === sidecar.cardId)) {
-    throw new Error(`Cannot write sidecar for missing board card '${sidecar.cardId}'`);
+    throw new Error(
+      `Cannot write sidecar for missing board card '${sidecar.cardId}'`,
+    );
   }
 
   const sidecarDir = getFeatureCardSidecarDir(repoRoot);
   fs.mkdirSync(sidecarDir, { recursive: true });
   const sidecarPath = getFeatureCardSidecarPath(repoRoot, sidecar.cardId);
-  fs.writeFileSync(`${sidecarPath}`, `${JSON.stringify(sidecar, null, 2)}\n`, "utf-8");
+  fs.writeFileSync(
+    `${sidecarPath}`,
+    `${JSON.stringify(sidecar, null, 2)}\n`,
+    "utf-8",
+  );
 }
 
 export function buildFeatureBoardIndex(

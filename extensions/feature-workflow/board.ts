@@ -172,7 +172,9 @@ export function parseFeatureBoardFromText(
 
     if (depth === 0) {
       if (explicitParent) {
-        errors.push(`Line ${lineNumber}: top-level feature cannot declare parent`);
+        errors.push(
+          `Line ${lineNumber}: top-level feature cannot declare parent`,
+        );
         return;
       }
       const card: FeatureBoardCard = {
@@ -191,7 +193,9 @@ export function parseFeatureBoardFromText(
     }
 
     if (!currentParent) {
-      errors.push(`Line ${lineNumber}: child card appears before any parent feature`);
+      errors.push(
+        `Line ${lineNumber}: child card appears before any parent feature`,
+      );
       return;
     }
     if (!explicitParent) {
@@ -229,7 +233,10 @@ export function parseFeatureBoardFromText(
 
   return {
     path: boardPath,
-    lanes: LANE_NAMES.map((lane) => ({ name: lane, cards: lanes.get(lane) ?? [] })),
+    lanes: LANE_NAMES.map((lane) => ({
+      name: lane,
+      cards: lanes.get(lane) ?? [],
+    })),
     cards,
     errors,
   };

@@ -34,11 +34,13 @@ describe("feature board sidecars", () => {
 
   it("writes and reads a card sidecar for an existing board card", () => {
     const repoRoot = createTempRepo();
-    const board = parseFeatureBoardFromText(`
+    const board = parseFeatureBoardFromText(
+      `
 ## Ready
 
 - [ ] Checkout V2 <!-- card-id: feat-checkout-v2; kind: feature -->
-`.trim());
+`.trim(),
+    );
 
     writeFeatureCardSidecar(repoRoot, board, {
       schemaVersion: 1,
@@ -74,11 +76,13 @@ describe("feature board sidecars", () => {
 
   it("rejects sidecar writes for missing board cards", () => {
     const repoRoot = createTempRepo();
-    const board = parseFeatureBoardFromText(`
+    const board = parseFeatureBoardFromText(
+      `
 ## Ready
 
 - [ ] Checkout V2 <!-- card-id: feat-checkout-v2; kind: feature -->
-`.trim());
+`.trim(),
+    );
 
     expect(() =>
       writeFeatureCardSidecar(repoRoot, board, {
@@ -110,12 +114,14 @@ describe("feature board sidecars", () => {
 
   it("writes board index entries for all cards", () => {
     const repoRoot = createTempRepo();
-    const board = parseFeatureBoardFromText(`
+    const board = parseFeatureBoardFromText(
+      `
 ## Spec
 
 - [ ] Checkout V2 <!-- card-id: feat-checkout-v2; kind: feature -->
   - [ ] Pricing <!-- card-id: child-pricing; kind: child; parent: feat-checkout-v2 -->
-`.trim());
+`.trim(),
+    );
 
     const index = writeFeatureBoardIndex(repoRoot, board);
     expect(Object.keys(index.cards)).toEqual([

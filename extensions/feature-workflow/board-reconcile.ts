@@ -1,9 +1,6 @@
 import fs from "node:fs";
 
-import {
-  branchExists,
-  type GitRunner,
-} from "../shared/git.js";
+import { branchExists, type GitRunner } from "../shared/git.js";
 
 import type { FeatureBoard, FeatureBoardCard } from "./board.js";
 import {
@@ -40,7 +37,11 @@ export type FeatureBoardReconcileResult = {
   cards: FeatureBoardReconcileCard[];
 };
 
-function isBranchMergedIntoTarget(runGit: GitRunner, branch: string, target: string): boolean {
+function isBranchMergedIntoTarget(
+  runGit: GitRunner,
+  branch: string,
+  target: string,
+): boolean {
   const result = runGit(["merge-base", "--is-ancestor", branch, target]);
   return result.exitCode === 0;
 }
@@ -54,10 +55,9 @@ function reconcileCard(
   const sidecar = readFeatureCardSidecar(repoRoot, card.id);
   const issues: FeatureBoardReconcileIssue[] = [];
   const branchPresent = sidecar ? branchExists(runGit, sidecar.branch) : false;
-  const worktreePresent =
-    sidecar?.worktreePath?.trim().length
-      ? fs.existsSync(sidecar.worktreePath)
-      : false;
+  const worktreePresent = sidecar?.worktreePath?.trim().length
+    ? fs.existsSync(sidecar.worktreePath)
+    : false;
   const mergedIntoTarget =
     sidecar && branchPresent
       ? isBranchMergedIntoTarget(runGit, sidecar.branch, sidecar.mergeTarget)
@@ -77,7 +77,8 @@ function reconcileCard(
   }
 
   if (card.kind === "child") {
-    const parent = board.cards.find((entry) => entry.id === card.parentId) ?? null;
+    const parent =
+      board.cards.find((entry) => entry.id === card.parentId) ?? null;
     if (!parent) {
       issues.push({
         cardId: card.id,
@@ -166,11 +167,15 @@ export function reconcileFeatureBoard(
   board: FeatureBoard,
   runGit: GitRunner,
 ): FeatureBoardReconcileResult {
-  const cards = board.cards.map((card) => reconcileCard(repoRoot, board, card, runGit));
+  const cards = board.cards.map((card) =>
+    reconcileCard(repoRoot, board, card, runGit),
+  );
   return {
     ok:
       board.errors.length === 0 &&
-      cards.every((entry) => entry.issues.every((issue) => issue.severity !== "error")),
+      cards.every((entry) =>
+        entry.issues.every((issue) => issue.severity !== "error"),
+      ),
     boardErrors: [...board.errors],
     cards,
   };

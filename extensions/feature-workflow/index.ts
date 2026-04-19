@@ -1016,7 +1016,9 @@ async function runFeatureBoardStatus(
   }
 
   const board = readFeatureBoard(commandContext.repoRoot);
-  const featureCount = board.cards.filter((card) => card.kind === "feature").length;
+  const featureCount = board.cards.filter(
+    (card) => card.kind === "feature",
+  ).length;
   const childCount = board.cards.filter((card) => card.kind === "child").length;
   const summary = [
     `feature board: ${board.path}`,
@@ -1027,7 +1029,10 @@ async function runFeatureBoardStatus(
   if (board.errors.length > 0) {
     summary.push(board.errors.join(" | "));
   }
-  ctx.ui.notify(summary.join(" | "), board.errors.length > 0 ? "warning" : "info");
+  ctx.ui.notify(
+    summary.join(" | "),
+    board.errors.length > 0 ? "warning" : "info",
+  );
 }
 
 async function runFeatureBoardReconcile(
@@ -1068,9 +1073,7 @@ async function maybePrepareBoardWorktreeSession(input: {
   });
 
   const sessionPath = trimToNull(
-    result.switched
-      ? input.ctx.sessionManager.getSessionFile()
-      : null,
+    result.switched ? input.ctx.sessionManager.getSessionFile() : null,
   );
 
   return {
@@ -1095,7 +1098,10 @@ async function runFeatureBoardApply(
   const { config, repoRoot, runGit } = commandContext;
   const board = readFeatureBoard(repoRoot);
   if (board.errors.length > 0) {
-    ctx.ui.notify(`Board has parser errors: ${board.errors.join(" | ")}`, "error");
+    ctx.ui.notify(
+      `Board has parser errors: ${board.errors.join(" | ")}`,
+      "error",
+    );
     return;
   }
 
@@ -1112,13 +1118,16 @@ async function runFeatureBoardApply(
   }
 
   const reconcile = reconcileFeatureBoard(repoRoot, board, runGit);
-  const reconcileCard = reconcile.cards.find((entry) => entry.card.id === card.id) ?? null;
+  const reconcileCard =
+    reconcile.cards.find((entry) => entry.card.id === card.id) ?? null;
   if (!reconcileCard) {
     ctx.ui.notify(`Failed to resolve board card: ${card.id}`, "error");
     return;
   }
 
-  const blockingError = reconcileCard.issues.find((issue) => issue.severity === "error");
+  const blockingError = reconcileCard.issues.find(
+    (issue) => issue.severity === "error",
+  );
   if (blockingError) {
     ctx.ui.notify(blockingError.message, "error");
     return;
@@ -1148,7 +1157,10 @@ async function runFeatureBoardApply(
       baseBranch = defaultBase;
     }
     if (!baseBranch) {
-      ctx.ui.notify("Could not determine a default base branch for this feature card.", "error");
+      ctx.ui.notify(
+        "Could not determine a default base branch for this feature card.",
+        "error",
+      );
       return;
     }
     if (!branch) {
@@ -1157,12 +1169,17 @@ async function runFeatureBoardApply(
     }
     mergeTarget = mergeTarget ?? baseBranch;
   } else {
-    const parent = board.cards.find((entry) => entry.id === card.parentId) ?? null;
+    const parent =
+      board.cards.find((entry) => entry.id === card.parentId) ?? null;
     if (!parent) {
-      ctx.ui.notify(`Missing parent feature card for child '${card.id}'.`, "error");
+      ctx.ui.notify(
+        `Missing parent feature card for child '${card.id}'.`,
+        "error",
+      );
       return;
     }
-    const parentReconcile = reconcile.cards.find((entry) => entry.card.id === parent.id) ?? null;
+    const parentReconcile =
+      reconcile.cards.find((entry) => entry.card.id === parent.id) ?? null;
     const parentSidecar = parentReconcile?.sidecar ?? null;
     if (!parentSidecar) {
       ctx.ui.notify(
@@ -1182,20 +1199,22 @@ async function runFeatureBoardApply(
   }
 
   if (!branch || !baseBranch || !mergeTarget) {
-    ctx.ui.notify(`Failed to resolve branch metadata for board card '${card.id}'.`, "error");
+    ctx.ui.notify(
+      `Failed to resolve branch metadata for board card '${card.id}'.`,
+      "error",
+    );
     return;
   }
 
-  const worktreeResult =
-    branchExists(runGit, branch)
-      ? await ensureFeatureWorktree(runWt, {
-          branch,
-          fallbackWorktreePath: reconcileCard.sidecar?.worktreePath ?? "",
-        })
-      : await createFeatureWorktree(runWt, {
-          branch,
-          base: baseBranch,
-        });
+  const worktreeResult = branchExists(runGit, branch)
+    ? await ensureFeatureWorktree(runWt, {
+        branch,
+        fallbackWorktreePath: reconcileCard.sidecar?.worktreePath ?? "",
+      })
+    : await createFeatureWorktree(runWt, {
+        branch,
+        base: baseBranch,
+      });
 
   if (!worktreeResult.ok) {
     ctx.ui.notify(worktreeResult.message, "error");
@@ -1290,10 +1309,7 @@ async function runFeatureBoardApply(
   });
   writeFeatureBoardIndex(repoRoot, board);
 
-  ctx.ui.notify(
-    `Board card applied: ${card.id} -> ${branch}`,
-    "info",
-  );
+  ctx.ui.notify(`Board card applied: ${card.id} -> ${branch}`, "info");
 }
 
 async function runFeatureValidate(

@@ -35,11 +35,13 @@ afterEach(() => {
 describe("feature board reconcile", () => {
   it("suggests create action when a feature card has no sidecar", () => {
     const repoRoot = createTempRepo();
-    const board = parseFeatureBoardFromText(`
+    const board = parseFeatureBoardFromText(
+      `
 ## Spec
 
 - [ ] Checkout V2 <!-- card-id: feat-checkout-v2; kind: feature -->
-`.trim());
+`.trim(),
+    );
 
     const result = reconcileFeatureBoard(
       repoRoot,
@@ -61,11 +63,13 @@ describe("feature board reconcile", () => {
     runGit(repoRoot, ["commit", "-m", "feature"]);
     runGit(repoRoot, ["checkout", "main"]);
 
-    const board = parseFeatureBoardFromText(`
+    const board = parseFeatureBoardFromText(
+      `
 ## Done
 
 - [ ] Checkout V2 <!-- card-id: feat-checkout-v2; kind: feature -->
-`.trim());
+`.trim(),
+    );
 
     writeFeatureCardSidecar(repoRoot, board, {
       schemaVersion: 1,
@@ -106,7 +110,8 @@ describe("feature board reconcile", () => {
 
   it("blocks parent done state while children are unfinished", () => {
     const repoRoot = createTempRepo();
-    const board = parseFeatureBoardFromText(`
+    const board = parseFeatureBoardFromText(
+      `
 ## Done
 
 - [ ] Checkout V2 <!-- card-id: feat-checkout-v2; kind: feature -->
@@ -114,7 +119,8 @@ describe("feature board reconcile", () => {
 ## Review
 
   - [ ] Pricing <!-- card-id: child-pricing; kind: child; parent: feat-checkout-v2 -->
-`.trim());
+`.trim(),
+    );
 
     const result = reconcileFeatureBoard(
       repoRoot,

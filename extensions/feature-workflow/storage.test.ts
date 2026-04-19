@@ -106,10 +106,7 @@ describe("storage", () => {
           commit: { timestamp: 90 },
         },
       ]),
-      [
-        "main--checkout-v2",
-        "release%2F2026-q2--checkout-v2",
-      ],
+      ["main--checkout-v2", "release%2F2026-q2--checkout-v2"],
     );
 
     expect(

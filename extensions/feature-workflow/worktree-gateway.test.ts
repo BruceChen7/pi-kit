@@ -20,9 +20,7 @@ describe("worktree-gateway", () => {
     const runWt: WtRunner = vi
       .fn()
       .mockResolvedValue(
-        okResult(
-          '{"action":"created","path":"/repo/.wt/main-checkout-v2"}',
-        ),
+        okResult('{"action":"created","path":"/repo/.wt/main-checkout-v2"}'),
       );
 
     const result = await createFeatureWorktree(runWt, {

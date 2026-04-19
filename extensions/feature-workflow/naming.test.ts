@@ -58,9 +58,7 @@ describe("parseFeatureBranchName", () => {
   });
 
   it("decodes nested base branches from flat names", () => {
-    expect(
-      parseFeatureBranchName("release%2F2026-q2--login-timeout"),
-    ).toEqual({
+    expect(parseFeatureBranchName("release%2F2026-q2--login-timeout")).toEqual({
       base: "release/2026-q2",
       slug: "login-timeout",
     });

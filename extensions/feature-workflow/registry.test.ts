@@ -33,34 +33,30 @@ describe("feature registry", () => {
     expect(readManagedFeatureRegistry(repoRoot)).toEqual([]);
   });
 
-  it("upserts managed feature records", () => {
+  it("upserts managed slug-only feature records", () => {
     const repoRoot = createTempRepo();
 
     const created = upsertManagedFeatureBranch(repoRoot, {
-      branch: "main/checkout-v2",
-      base: "main",
+      branch: "checkout-v2",
       slug: "checkout-v2",
       timestamp: "2026-04-19T00:00:00.000Z",
     });
 
     expect(created).toEqual({
-      branch: "main/checkout-v2",
-      base: "main",
+      branch: "checkout-v2",
       slug: "checkout-v2",
       createdAt: "2026-04-19T00:00:00.000Z",
       updatedAt: "2026-04-19T00:00:00.000Z",
     });
 
     const updated = upsertManagedFeatureBranch(repoRoot, {
-      branch: "main/checkout-v2",
-      base: "main",
+      branch: "checkout-v2",
       slug: "checkout-v2",
       timestamp: "2026-04-19T01:00:00.000Z",
     });
 
     expect(updated).toEqual({
-      branch: "main/checkout-v2",
-      base: "main",
+      branch: "checkout-v2",
       slug: "checkout-v2",
       createdAt: "2026-04-19T00:00:00.000Z",
       updatedAt: "2026-04-19T01:00:00.000Z",
@@ -68,12 +64,11 @@ describe("feature registry", () => {
     expect(readManagedFeatureRegistry(repoRoot)).toEqual([updated]);
   });
 
-  it("filters invalid or mismatched registry records when reading", () => {
+  it("keeps reading legacy base-encoded records for compatibility", () => {
     const repoRoot = createTempRepo();
     writeManagedFeatureRegistry(repoRoot, [
       {
-        branch: "main/checkout-v2",
-        base: "main",
+        branch: "checkout-v2",
         slug: "checkout-v2",
         createdAt: "2026-04-19T00:00:00.000Z",
         updatedAt: "2026-04-19T00:00:00.000Z",
@@ -85,8 +80,8 @@ describe("feature registry", () => {
       registryPath,
       JSON.stringify([
         {
-          branch: "main/checkout-v2",
-          base: "wrong",
+          branch: "main--checkout-v2",
+          base: "main",
           slug: "checkout-v2",
           createdAt: "2026-04-19T00:00:00.000Z",
           updatedAt: "2026-04-19T00:00:00.000Z",
@@ -98,6 +93,12 @@ describe("feature registry", () => {
           createdAt: "2026-04-19T00:00:00.000Z",
           updatedAt: "2026-04-19T01:00:00.000Z",
         },
+        {
+          branch: "broken-slug-only",
+          slug: "wrong-slug",
+          createdAt: "2026-04-19T00:00:00.000Z",
+          updatedAt: "2026-04-19T00:00:00.000Z",
+        },
       ]),
       "utf-8",
     );
@@ -105,10 +106,15 @@ describe("feature registry", () => {
     expect(readManagedFeatureRegistry(repoRoot)).toEqual([
       {
         branch: "release/2026-q2/login-timeout",
-        base: "release/2026-q2",
         slug: "login-timeout",
         createdAt: "2026-04-19T00:00:00.000Z",
         updatedAt: "2026-04-19T01:00:00.000Z",
+      },
+      {
+        branch: "main--checkout-v2",
+        slug: "checkout-v2",
+        createdAt: "2026-04-19T00:00:00.000Z",
+        updatedAt: "2026-04-19T00:00:00.000Z",
       },
     ]);
   });
@@ -121,15 +127,13 @@ describe("feature registry", () => {
       registryPath,
       JSON.stringify([
         {
-          branch: "main/checkout-v2",
-          base: "main",
+          branch: "checkout-v2",
           slug: "checkout-v2",
           createdAt: "2026-04-19T00:00:00.000Z",
           updatedAt: "2026-04-19T00:00:00.000Z",
         },
         {
-          branch: "main/checkout-v2",
-          base: "main",
+          branch: "checkout-v2",
           slug: "checkout-v2",
           createdAt: "2026-04-19T00:00:00.000Z",
           updatedAt: "2026-04-19T01:00:00.000Z",
@@ -140,8 +144,7 @@ describe("feature registry", () => {
 
     expect(readManagedFeatureRegistry(repoRoot)).toEqual([
       {
-        branch: "main/checkout-v2",
-        base: "main",
+        branch: "checkout-v2",
         slug: "checkout-v2",
         createdAt: "2026-04-19T00:00:00.000Z",
         updatedAt: "2026-04-19T01:00:00.000Z",

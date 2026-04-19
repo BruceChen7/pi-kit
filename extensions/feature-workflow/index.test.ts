@@ -157,7 +157,7 @@ describe("feature-workflow extension", () => {
       "rev-parse",
       "--show-toplevel",
     ]).stdout.trim();
-    const worktreePath = path.join(repoRoot, ".wt", "main-checkout-v2");
+    const worktreePath = path.join(repoRoot, ".wt", "checkout-v2");
     const commands = new Map<
       string,
       (args: string, ctx: unknown) => Promise<void>
@@ -251,7 +251,7 @@ describe("feature-workflow extension", () => {
       resolvedRepoRoot,
       "switch",
       "--create",
-      "main--checkout-v2",
+      "checkout-v2",
       "--base",
       "main",
       "--no-cd",
@@ -259,18 +259,17 @@ describe("feature-workflow extension", () => {
     ]);
     expect(notifications).toEqual([
       {
-        message: "Creating worktree for main--checkout-v2…",
+        message: "Creating worktree for checkout-v2…",
         level: "info",
       },
       {
-        message: "Feature worktree created: main--checkout-v2",
+        message: "Feature worktree created: checkout-v2",
         level: "info",
       },
     ]);
     expect(readManagedFeatureRegistry(repoRoot)).toEqual([
       {
-        branch: "main--checkout-v2",
-        base: "main",
+        branch: "checkout-v2",
         slug: "checkout-v2",
         createdAt: expect.any(String),
         updatedAt: expect.any(String),

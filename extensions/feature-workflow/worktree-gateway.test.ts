@@ -121,22 +121,24 @@ describe("worktree-gateway", () => {
       okResult(
         JSON.stringify([
           {
-            branch: "feat/main/checkout-v2",
-            path: "/repo/.wt/feat-main-checkout-v2",
+            branch: "main/checkout-v2",
+            path: "/repo/.wt/main-checkout-v2",
             commit: { timestamp: 100 },
           },
         ]),
       ),
     );
 
-    const result = await listFeatureRecordsFromWorktree(runWt);
+    const result = await listFeatureRecordsFromWorktree(runWt, [
+      "main/checkout-v2",
+    ]);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.records).toHaveLength(1);
       expect(result.records[0]).toMatchObject({
-        branch: "feat/main/checkout-v2",
-        worktreePath: "/repo/.wt/feat-main-checkout-v2",
+        branch: "main/checkout-v2",
+        worktreePath: "/repo/.wt/main-checkout-v2",
       });
     }
     expect(runWt).toHaveBeenCalledWith(["list", "--format", "json"]);
@@ -147,7 +149,7 @@ describe("worktree-gateway", () => {
       .fn()
       .mockResolvedValue(failResult("wt list failed"));
 
-    const result = await listFeatureRecordsFromWorktree(runWt);
+    const result = await listFeatureRecordsFromWorktree(runWt, []);
 
     expect(result).toEqual({ ok: false, message: "wt list failed" });
   });

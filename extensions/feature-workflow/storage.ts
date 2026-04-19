@@ -1,15 +1,9 @@
-import {
-  buildFeatureId,
-  type FeatureType,
-  parseFeatureBranchName,
-} from "./naming.js";
+import { parseFeatureBranchName } from "./naming.js";
 
 export type FeatureStatus = "active";
 
 export type FeatureRecord = {
-  id: string;
   name: string;
-  type: FeatureType;
   slug: string;
   branch: string;
   base: string;
@@ -36,7 +30,10 @@ const toIsoFromWtCommitTimestamp = (value: unknown): string | null => {
   return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString();
 };
 
-export function listFeatureRecords(wtListJson: string): FeatureRecord[] {
+export function listFeatureRecords(
+  wtListJson: string,
+  managedBranches: Iterable<string>,
+): FeatureRecord[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(wtListJson) as unknown;
@@ -46,6 +43,11 @@ export function listFeatureRecords(wtListJson: string): FeatureRecord[] {
 
   if (!Array.isArray(parsed)) return [];
 
+  const managedBranchSet = new Set(managedBranches);
+  if (managedBranchSet.size === 0) {
+    return [];
+  }
+
   const records: FeatureRecord[] = [];
 
   for (const item of parsed) {
@@ -53,26 +55,16 @@ export function listFeatureRecords(wtListJson: string): FeatureRecord[] {
 
     const branch = typeof item.branch === "string" ? item.branch : "";
     const worktreePath = typeof item.path === "string" ? item.path : "";
-    if (!branch || !worktreePath) continue;
+    if (!branch || !worktreePath || !managedBranchSet.has(branch)) continue;
 
     const parsedBranch = parseFeatureBranchName(branch);
     if (!parsedBranch) continue;
 
-    const type = parsedBranch.type;
-    const slug = parsedBranch.slug;
-    const id = buildFeatureId({
-      type,
-      base: parsedBranch.base,
-      slug,
-    });
-
     const wtUpdatedAt = toIsoFromWtCommitTimestamp(item.commit) ?? EPOCH_ISO;
 
     records.push({
-      id,
-      name: slug,
-      type,
-      slug,
+      name: parsedBranch.slug,
+      slug: parsedBranch.slug,
       branch,
       base: parsedBranch.base,
       worktreePath,
@@ -88,10 +80,9 @@ export function listFeatureRecords(wtListJson: string): FeatureRecord[] {
 
 export function findActiveFeatureConflicts(
   records: FeatureRecord[],
-  input: { id: string; branch: string },
-): { idConflict: boolean; branchConflict: boolean } {
+  input: { branch: string },
+): { branchConflict: boolean } {
   return {
-    idConflict: records.some((record) => record.id === input.id),
     branchConflict: records.some((record) => record.branch === input.branch),
   };
 }

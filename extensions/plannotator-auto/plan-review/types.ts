@@ -3,6 +3,7 @@ import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 export type PlanFileConfig = {
   planFile: string;
   resolvedPlanPath: string;
+  resolvedPlanPaths: string[];
 };
 
 export type PendingPlanReview = {

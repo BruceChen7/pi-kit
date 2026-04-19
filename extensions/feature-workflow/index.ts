@@ -24,20 +24,22 @@ import { checkBaseBranchFreshness } from "./guards.js";
 import { runIgnoredSync } from "./ignored-sync.js";
 import {
   buildFeatureBranchName,
-  buildFeatureId,
-  type FeatureType,
+  isFeatureSlug,
   parseFeatureBranchName,
-  slugifyFeatureName,
 } from "./naming.js";
+import {
+  readManagedFeatureRegistry,
+  upsertManagedFeatureBranch,
+} from "./registry.js";
 import { forkSessionForWorktree } from "./session-fork.js";
 import {
   applyFeatureWorkflowSetupProfile,
   DEFAULT_FEATURE_WORKFLOW_SETUP_PROFILE_ID,
   FEATURE_WORKFLOW_SETUP_TARGETS,
   FEATURE_WORKFLOW_SETUP_USAGE,
-  getFeatureWorkflowSetupMissingFiles,
   type FeatureWorkflowSetupProfile,
   type FeatureWorkflowSetupTarget,
+  getFeatureWorkflowSetupMissingFiles,
   getFeatureWorkflowSetupProfile,
   getFeatureWorkflowSetupTargetMeta,
   listFeatureWorkflowSetupProfiles,
@@ -58,8 +60,6 @@ const log = createLogger("feature-workflow", {
   minLevel: "debug",
   stderr: null,
 });
-
-const FEATURE_TYPES: FeatureType[] = ["feat", "fix", "chore", "spike"];
 
 const OTHER_BASE_BRANCH = "Other…";
 
@@ -262,7 +262,13 @@ async function loadFeatureRecordsFromWt(input: {
     repoRoot: input.repoRoot,
   });
 
-  const result = await listFeatureRecordsFromWorktree(input.runWt);
+  const managedFeatureBranches = readManagedFeatureRegistry(input.repoRoot).map(
+    (record) => record.branch,
+  );
+  const result = await listFeatureRecordsFromWorktree(
+    input.runWt,
+    managedFeatureBranches,
+  );
   if (!result.ok) {
     input.ctx.ui.notify(result.message, "error");
     log.error("wt list failed", {
@@ -300,15 +306,11 @@ function buildFeaturePreflightNotifyMessage(messages: string[]): string {
   return `feature preflight: ${messages.join(" | ")}`;
 }
 
-async function selectFeatureType(
+async function selectBranchSlug(
   ctx: ExtensionCommandContext,
-): Promise<FeatureType | null> {
+): Promise<string | null> {
   if (!ctx.hasUI) return null;
-  const choice = await ctx.ui.select("Feature type:", FEATURE_TYPES);
-  if (!choice) return null;
-  return FEATURE_TYPES.includes(choice as FeatureType)
-    ? (choice as FeatureType)
-    : null;
+  return trimToNull(await ctx.ui.input("Branch slug:", ""));
 }
 
 async function selectBaseBranch(input: {
@@ -574,29 +576,26 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     return;
   }
 
-  const type = await selectFeatureType(ctx);
-  if (!type) {
-    ctx.ui.notify("Cancelled", "info");
-    return;
-  }
-
-  const name = trimToNull(await ctx.ui.input("Feature name:", ""));
-  if (!name) {
-    ctx.ui.notify("Cancelled", "info");
-    return;
-  }
-
-  const slug = slugifyFeatureName(name);
+  const slug = await selectBranchSlug(ctx);
   if (!slug) {
-    ctx.ui.notify("Invalid feature name (empty slug)", "error");
+    ctx.ui.notify("Cancelled", "info");
     return;
   }
 
+  if (!isFeatureSlug(slug)) {
+    ctx.ui.notify("Invalid branch slug", "error");
+    return;
+  }
+
+  const managedFeatureBranches = readManagedFeatureRegistry(repoRoot).map(
+    (record) => record.branch,
+  );
   const currentBranch = getCurrentBranchName(runGit);
   const localBranches = listLocalBranches(runGit);
   const candidates = buildBaseBranchCandidates({
     currentBranch,
     localBranches,
+    managedFeatureBranches,
   });
 
   const base = await selectBaseBranch({ ctx, candidates });
@@ -605,16 +604,11 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     return;
   }
 
-  const id = buildFeatureId({ type, base, slug });
-  const branch = buildFeatureBranchName({ type, base, slug });
+  const branch = buildFeatureBranchName({ base, slug });
 
   if (config.guards.enforceBranchNaming) {
     const parsed = parseFeatureBranchName(branch);
-    const ok =
-      parsed !== null &&
-      parsed.type === type &&
-      parsed.slug === slug &&
-      parsed.base === base;
+    const ok = parsed !== null && parsed.slug === slug && parsed.base === base;
     if (!ok) {
       ctx.ui.notify(`Invalid branch name: ${branch}`, "error");
       return;
@@ -628,20 +622,13 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   });
   if (!activeRecords) return;
 
-  const conflicts = findActiveFeatureConflicts(activeRecords, { id, branch });
+  const conflicts = findActiveFeatureConflicts(activeRecords, { branch });
   if (conflicts.branchConflict) {
     ctx.ui.notify(
       `Active feature worktree already exists for branch: ${branch}`,
       "error",
     );
     return;
-  }
-
-  if (conflicts.idConflict) {
-    ctx.ui.notify(
-      `Feature alias '${id}' already exists on another base branch. Prefer using full branch names when switching.`,
-      "info",
-    );
   }
 
   if (config.guards.requireFreshBase) {
@@ -710,9 +697,7 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 
   const now = new Date().toISOString();
   const record: FeatureRecord = {
-    id,
-    name,
-    type,
+    name: slug,
     slug,
     branch,
     base,
@@ -721,6 +706,27 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     createdAt: now,
     updatedAt: now,
   };
+
+  try {
+    upsertManagedFeatureBranch(repoRoot, {
+      branch,
+      base,
+      slug,
+      timestamp: now,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.ui.notify(
+      `Feature worktree created, but failed to update managed feature registry: ${message}`,
+      "warning",
+    );
+    log.warn("feature registry upsert failed", {
+      branch,
+      base,
+      repoRoot,
+      message,
+    });
+  }
 
   const preSessionIgnoredSync = await runIgnoredSync({
     command: "feature-start",
@@ -847,7 +853,6 @@ async function runFeatureSwitch(
       ctx.ui.notify(`Unknown feature: ${query}`, "error");
       return;
     }
-    case "ambiguous-id":
     case "ambiguous-slug": {
       ctx.ui.notify(
         buildAmbiguousFeatureQueryMessage({
@@ -867,7 +872,6 @@ async function runFeatureSwitch(
   log.debug("feature-switch target resolved", {
     query,
     repoRoot,
-    id: record.id,
     branch: record.branch,
   });
 
@@ -995,11 +999,15 @@ async function runFeatureValidate(
     `dirty: ${dirty.summary.dirty ? "yes" : "no"} (staged ${dirty.summary.staged}, unstaged ${dirty.summary.unstaged}, untracked ${dirty.summary.untracked})`,
   );
 
+  const managedFeatureBranches = readManagedFeatureRegistry(repoRoot).map(
+    (record) => record.branch,
+  );
   const currentBranch = getCurrentBranchName(runGit);
   const localBranches = listLocalBranches(runGit);
   const candidates = buildBaseBranchCandidates({
     currentBranch,
     localBranches,
+    managedFeatureBranches,
   });
 
   const base = candidates[0] ?? null;

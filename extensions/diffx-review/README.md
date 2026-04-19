@@ -9,6 +9,18 @@ A Pi extension that bridges Pi and diffx, preferably via a direct `diffx` comman
 - `/diffx-finish-review [--resolve-after-reply]`
 - `/diffx-stop-review`
 
+When `/diffx-start-review` is run without explicit `git diff` args in interactive mode, it opens a compare menu with common presets:
+
+- Working tree
+- Staged
+- Base branch vs HEAD
+- Merge-base vs HEAD
+- Single commit
+- Two commits
+- Custom git diff args
+
+If interactive UI is unavailable, pass explicit diff args after `--` instead.
+
 ## Tools
 
 - `diffx_list_comments`
@@ -36,6 +48,32 @@ Set in `~/.pi/agent/third_extension_settings.json` or `<repo>/.pi/third_extensio
   }
 }
 ```
+
+## Examples
+
+```bash
+/diffx-start-review
+```
+
+- opens the compare menu in interactive mode
+
+```bash
+/diffx-start-review -- --cached
+```
+
+- reviews staged changes only
+
+```bash
+/diffx-start-review -- main..HEAD
+```
+
+- compares the current branch against `main`
+
+```bash
+/diffx-start-review -- origin/main...HEAD
+```
+
+- compares from the merge base with `origin/main`
 
 ## Notes
 

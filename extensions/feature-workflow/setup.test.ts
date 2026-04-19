@@ -121,8 +121,10 @@ describe("applyFeatureWorkflowSetupProfile", () => {
     const wtTomlPath = path.join(repoRoot, ".config", "wt.toml");
     const wtToml = fs.readFileSync(wtTomlPath, "utf-8");
     expect(wtToml).toContain("[pre-start]");
+    expect(wtToml).toContain("[post-start]");
     expect(wtToml).not.toContain("[[pre-start]]");
     expect(wtToml).toContain('"project-deps-link"');
+    expect(wtToml).toContain('"project-copy-ignored" = "wt step copy-ignored"');
     expect(wtToml).toContain(
       'bash \\"$HOME/.pi/pi-feature-workflow-links.sh\\"',
     );
@@ -208,7 +210,9 @@ describe("applyFeatureWorkflowSetupProfile", () => {
       "utf-8",
     );
     expect(wtToml).toContain("[pre-start]");
+    expect(wtToml).toContain("[post-start]");
     expect(wtToml).toContain('"project-deps-link"');
+    expect(wtToml).toContain('"project-copy-ignored" = "wt step copy-ignored"');
   });
 
   it("reports missing local wt.toml setup file", () => {

@@ -2,13 +2,55 @@ import path from "node:path";
 
 import type {
   DiffxCommentStats,
+  DiffxComparePresetOption,
   DiffxReviewComment,
   DiffxReviewSession,
   FinishReviewArgs,
   StartReviewArgs,
 } from "./types.ts";
 
-const tokenizeArgs = (rawArgs: string): string[] => {
+export const DIFFX_START_REVIEW_USAGE =
+  "/diffx-start-review [--no-open] [--host=<host>] [--port=<n>] [-- <git diff args>]";
+
+export const DIFFX_COMPARE_PRESET_OPTIONS: DiffxComparePresetOption[] = [
+  {
+    value: "working-tree",
+    label: "Working tree",
+    description: "Compare the current working tree changes",
+  },
+  {
+    value: "staged",
+    label: "Staged",
+    description: "Compare only indexed changes",
+  },
+  {
+    value: "base-branch",
+    label: "Base branch vs HEAD",
+    description: "Compare the current branch against another branch",
+  },
+  {
+    value: "merge-base",
+    label: "Merge-base vs HEAD",
+    description: "Compare from the common ancestor with another branch",
+  },
+  {
+    value: "single-commit",
+    label: "Single commit",
+    description: "Review exactly one commit",
+  },
+  {
+    value: "two-commits",
+    label: "Two commits",
+    description: "Review a commit range",
+  },
+  {
+    value: "custom",
+    label: "Custom git diff args",
+    description: "Enter raw git diff arguments manually",
+  },
+];
+
+export const tokenizeArgs = (rawArgs: string): string[] => {
   const trimmed = rawArgs.trim();
   if (!trimmed) return [];
 
@@ -94,13 +136,35 @@ export const parseStartReviewArgs = (
 
     return {
       value: null,
-      error:
-        "Unknown argument. Usage: /diffx-start-review [--no-open] [--host=<host>] [--port=<n>] [-- <git diff args>]",
+      error: `Unknown argument. Usage: ${DIFFX_START_REVIEW_USAGE}`,
     };
   }
 
   return { value, error: null };
 };
+
+export const parseRawDiffArgs = (rawArgs: string): string[] =>
+  tokenizeArgs(rawArgs);
+
+export const buildBaseBranchDiffArgs = (branch: string): string[] => [
+  `${branch}..HEAD`,
+];
+
+export const buildMergeBaseDiffArgs = (branch: string): string[] => [
+  `${branch}...HEAD`,
+];
+
+export const buildSingleCommitDiffArgs = (sha: string): string[] => [
+  `${sha}^!`,
+];
+
+export const buildCommitRangeDiffArgs = (
+  fromSha: string,
+  toSha: string,
+): string[] => [`${fromSha}..${toSha}`];
+
+export const buildInteractiveMenuRequiredMessage = (): string =>
+  "diffx compare menu requires interactive UI. Pass git diff args explicitly after --.";
 
 export const parseFinishReviewArgs = (
   rawArgs: string,

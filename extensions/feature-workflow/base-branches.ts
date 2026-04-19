@@ -1,12 +1,11 @@
-import { parseFeatureBranchName } from "./naming.js";
-
 export type BaseBranchCandidatesInput = {
   currentBranch: string | null;
   localBranches: string[];
-  managedFeatureBranches?: Iterable<string>;
+  inferredBaseBranch?: string | null;
 };
 
-const normalizeBranch = (value: string): string | null => {
+const normalizeBranch = (value: string | null | undefined): string | null => {
+  if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
 };
@@ -27,18 +26,6 @@ const isReleaseBranch = (branch: string): boolean =>
   branch.startsWith("release/") ||
   branch.startsWith("release-");
 
-const resolveCurrentBranchCandidate = (
-  currentBranch: string,
-  managedFeatureBranchSet: Set<string>,
-): string | null => {
-  if (!managedFeatureBranchSet.has(currentBranch)) {
-    return currentBranch;
-  }
-
-  const parsed = parseFeatureBranchName(currentBranch);
-  return parsed ? normalizeBranch(parsed.base) : currentBranch;
-};
-
 export function buildBaseBranchCandidates(
   input: BaseBranchCandidatesInput,
 ): string[] {
@@ -50,18 +37,16 @@ export function buildBaseBranchCandidates(
 
   const prioritized: string[] = [];
   const localSet = new Set(local);
-  const managedFeatureBranchSet = new Set(input.managedFeatureBranches ?? []);
+  const inferredBaseBranch = normalizeBranch(input.inferredBaseBranch ?? null);
+  if (inferredBaseBranch && localSet.has(inferredBaseBranch)) {
+    prioritized.push(inferredBaseBranch);
+  }
+
   const current = input.currentBranch
     ? normalizeBranch(input.currentBranch)
     : null;
-  if (current) {
-    const currentCandidate = resolveCurrentBranchCandidate(
-      current,
-      managedFeatureBranchSet,
-    );
-    if (currentCandidate && localSet.has(currentCandidate)) {
-      prioritized.push(currentCandidate);
-    }
+  if (current && localSet.has(current)) {
+    prioritized.push(current);
   }
 
   for (const branch of ["main", "master"]) {

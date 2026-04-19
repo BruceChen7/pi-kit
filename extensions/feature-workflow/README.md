@@ -25,29 +25,30 @@ A pi-kit extension that helps you start and manage feature development using Wor
   - Records successful creations in a repo-local managed-feature registry under `.pi/` so later commands only operate on feature-workflow-managed branches.
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a new session whose `cwd` is the worktree path.
   - Base branch options are derived from **local branches**, prioritized as:
-    1) current branch
-       - if current branch is a managed feature branch in `<encoded-base>--<slug>` form, prioritize its parsed `base`
-    2) `main`
-    3) `master`
-    4) `release*` (e.g. `release`, `release/*`, `release-*`) if present
-  - New feature branches use `<encoded-base>--<slug>` (example: `main--checkout-v2`).
+    1) resolved **inferred base** (when git graph inference resolves one)
+    2) current branch
+    3) `main`
+    4) `master`
+    5) `release*` (e.g. `release`, `release/*`, `release-*`) if present
+  - Inferred base is a git-graph heuristic, not historical truth. It uses `fork-point` first, then `merge-base`, over local `main/master/release*` candidates.
+  - New feature branches use the slug directly (example: `checkout-v2`). The selected base branch is used only for creation, not encoded into the branch name.
 
 - `/feature-list`
   - Lists active feature worktrees from `wt list --format json`.
   - Only shows branches that are both:
     - active in Worktrunk, and
     - present in the feature-workflow managed registry
-  - Derives `base` from branch name (`<encoded-base>--<slug>`), while still understanding legacy `<base>/<slug>` entries.
+  - Uses the registry for managed branch identity (`branch` + `slug`). Runtime base information is inferred from git graph, not branch name.
 
 - `/feature-switch <branch|slug>`
-  - Canonical lookup key is **branch name** (`<encoded-base>--<slug>`). UI selection also uses branch names to avoid ambiguity.
-  - A unique `slug` is accepted as a convenience alias. If a slug matches multiple branches, the command asks you to use the full branch name.
-  - Keeps command logic thin: resolve the managed feature target, run `wt switch`, and switch the pi session.
-  - Relies on `/feature-setup`-generated Worktrunk hooks for shared ignored-file automation.
+  - Canonical lookup key is **branch name**. For new branches, branch name is the same as the slug.
+  - A unique `slug` is accepted as a convenience alias. If a slug matches multiple branches (for example during legacy migration), the command asks you to use the full branch name.
+  - Ensures the worktree exists via `wt switch`.
+  - Applies the same `.gitignore` merge rule as `/feature-setup` in the target worktree (ensures `.pi/` exists without overwriting existing target rules).
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a worktree session rooted at that feature.
 
 - `/feature-validate`
-  - Runs basic preflight checks (dirty state + base freshness for the top-priority base).
+  - Runs basic preflight checks (dirty state + inferred-base reporting + base freshness when inference resolves a base branch).
 
 ## Common workflow (beginner-friendly)
 
@@ -89,7 +90,7 @@ The extension creates branch + worktree through `wt switch --create`, then (by d
 Example branch name:
 
 ```text
-main--checkout-v2
+checkout-v2
 ```
 
 ### 3) Continue an existing feature later
@@ -103,10 +104,10 @@ List feature worktrees:
 Switch to one:
 
 ```text
-/feature-switch main--checkout-v2
+/feature-switch checkout-v2
 ```
 
-Tip: use the full branch name (`<encoded-base>--<slug>`) if the same slug exists under multiple base branches.
+Tip: for new branches, the branch name is the slug itself. If you still have legacy branches that reuse a slug, use the full branch name to disambiguate.
 
 ### 4) Run preflight checks before PR / before continuing work
 
@@ -124,7 +125,7 @@ This helps catch common issues early (dirty workspace, stale base).
 
 # later switch back into an existing feature
 /feature-list
-/feature-switch main--checkout-v2
+/feature-switch checkout-v2
 
 # before push / PR
 /feature-validate
@@ -139,12 +140,14 @@ Feature/worktree visibility uses two inputs:
 
 Identity semantics:
 - Canonical key: `branch`
-- Convenience alias: unique `slug`
+- Convenience alias: `slug`
 
-`base` is derived from branch name and requires:
-- `<encoded-base>--<slug>` where `encoded-base` is `encodeURIComponent(base)` (legacy `<base>/<slug>` remains readable)
+Runtime base semantics:
+- base is **inferred** from git graph, not encoded into branch name
+- inference considers local `main`, `master`, and `release*` branches
+- inference prefers `fork-point`, then falls back to `merge-base`
 
-This registry-based model ensures ordinary slash branches such as `user/demo` are not treated as feature-workflow branches unless they were created by `/feature-start`.
+The managed registry is used only to identify feature-workflow-managed branches and their slugs. This ensures ordinary branches such as `user/demo` are not treated as feature-workflow branches unless they were created by `/feature-start` (or carried forward from legacy managed records).
 
 ## Configuration
 

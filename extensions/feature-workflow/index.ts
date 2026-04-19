@@ -8,6 +8,7 @@ import type {
 import {
   checkRepoDirty,
   DEFAULT_GIT_TIMEOUT_MS,
+  type GitRunner,
   getCurrentBranchName,
   getRepoRoot,
   listDirtyPaths,
@@ -21,10 +22,10 @@ import { loadFeatureWorkflowConfig } from "./config.js";
 import { matchFeatureRecord } from "./feature-query.js";
 import { checkBaseBranchFreshness } from "./guards.js";
 import {
-  buildFeatureBranchName,
-  isFeatureSlug,
-  parseFeatureBranchName,
-} from "./naming.js";
+  type InferredBaseBranchResult,
+  inferBaseBranch,
+} from "./infer-base-branch.js";
+import { buildFeatureBranchName, isFeatureSlug } from "./naming.js";
 import {
   readManagedFeatureRegistry,
   upsertManagedFeatureBranch,
@@ -118,17 +119,18 @@ function buildFeatureSwitchNextStep(record: FeatureRecord): string {
   return `wt switch ${record.branch}`;
 }
 
-function buildFeatureSwitchNotifyMessage(
-  result: WorktreeSessionSwitchResult,
-): string {
-  const featureLabel = `${result.record.branch} (base: ${result.record.base})`;
-  if (result.switched) {
-    return `Switched to feature worktree session: ${featureLabel}`;
+function buildFeatureSwitchNotifyMessage(input: {
+  result: WorktreeSessionSwitchResult;
+  inferredBase: InferredBaseBranchResult;
+}): string {
+  const inference = buildInferredBaseMessage(input.inferredBase);
+  if (input.result.switched) {
+    return `Switched to feature worktree session: ${input.result.record.branch} (${inference})`;
   }
 
-  const reason = describeWorktreeSessionSkipReason(result.skipReason);
-  const next = buildFeatureSwitchNextStep(result.record);
-  return `Worktree ready: ${featureLabel} (auto-switch skipped: ${reason}). Next: ${next}`;
+  const reason = describeWorktreeSessionSkipReason(input.result.skipReason);
+  const next = buildFeatureSwitchNextStep(input.result.record);
+  return `Worktree ready: ${input.result.record.branch} (${inference}, auto-switch skipped: ${reason}). Next: ${next}`;
 }
 
 async function maybeSwitchToWorktreeSession(input: {
@@ -260,9 +262,7 @@ async function loadFeatureRecordsFromWt(input: {
     repoRoot: input.repoRoot,
   });
 
-  const managedFeatureBranches = readManagedFeatureRegistry(input.repoRoot).map(
-    (record) => record.branch,
-  );
+  const managedFeatureBranches = readManagedFeatureRegistry(input.repoRoot);
   const result = await listFeatureRecordsFromWorktree(
     input.runWt,
     managedFeatureBranches,
@@ -302,6 +302,38 @@ function buildFeatureListNotifyMessage(records: FeatureRecord[]): string {
 
 function buildFeaturePreflightNotifyMessage(messages: string[]): string {
   return `feature preflight: ${messages.join(" | ")}`;
+}
+
+function resolveInferredBaseBranch(input: {
+  runGit: GitRunner;
+  branch?: string | null;
+}): {
+  currentBranch: string | null;
+  localBranches: string[];
+  inference: InferredBaseBranchResult;
+} {
+  const currentBranch = input.branch ?? getCurrentBranchName(input.runGit);
+  const localBranches = listLocalBranches(input.runGit);
+  return {
+    currentBranch,
+    localBranches,
+    inference: inferBaseBranch({
+      currentBranch,
+      localBranches,
+      runGit: input.runGit,
+    }),
+  };
+}
+
+function buildInferredBaseMessage(result: InferredBaseBranchResult): string {
+  switch (result.kind) {
+    case "resolved":
+      return `inferred base: ${result.branch} (${result.basis}, ${result.confidence})`;
+    case "ambiguous":
+      return `inferred base: ambiguous (${result.candidates.join(", ")})`;
+    case "unknown":
+      return `inferred base: unknown (${result.reason})`;
+  }
 }
 
 async function selectBranchSlug(
@@ -585,15 +617,13 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     return;
   }
 
-  const managedFeatureBranches = readManagedFeatureRegistry(repoRoot).map(
-    (record) => record.branch,
+  const { currentBranch, localBranches, inference } = resolveInferredBaseBranch(
+    { runGit },
   );
-  const currentBranch = getCurrentBranchName(runGit);
-  const localBranches = listLocalBranches(runGit);
   const candidates = buildBaseBranchCandidates({
     currentBranch,
     localBranches,
-    managedFeatureBranches,
+    inferredBaseBranch: inference.kind === "resolved" ? inference.branch : null,
   });
 
   const base = await selectBaseBranch({ ctx, candidates });
@@ -602,15 +632,11 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     return;
   }
 
-  const branch = buildFeatureBranchName({ base, slug });
+  const branch = buildFeatureBranchName({ slug });
 
-  if (config.guards.enforceBranchNaming) {
-    const parsed = parseFeatureBranchName(branch);
-    const ok = parsed !== null && parsed.slug === slug && parsed.base === base;
-    if (!ok) {
-      ctx.ui.notify(`Invalid branch name: ${branch}`, "error");
-      return;
-    }
+  if (config.guards.enforceBranchNaming && branch !== slug) {
+    ctx.ui.notify(`Invalid branch name: ${branch}`, "error");
+    return;
   }
 
   const activeRecords = await loadFeatureRecordsFromWt({
@@ -620,10 +646,21 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   });
   if (!activeRecords) return;
 
-  const conflicts = findActiveFeatureConflicts(activeRecords, { branch });
+  const conflicts = findActiveFeatureConflicts(activeRecords, {
+    branch,
+    slug,
+  });
   if (conflicts.branchConflict) {
     ctx.ui.notify(
       `Active feature worktree already exists for branch: ${branch}`,
+      "error",
+    );
+    return;
+  }
+
+  if (conflicts.slugConflict) {
+    ctx.ui.notify(
+      `Active feature worktree already exists for slug: ${slug}`,
       "error",
     );
     return;
@@ -680,7 +717,6 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     name: slug,
     slug,
     branch,
-    base,
     worktreePath,
     status: "active",
     createdAt: now,
@@ -690,7 +726,6 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   try {
     upsertManagedFeatureBranch(repoRoot, {
       branch,
-      base,
       slug,
       timestamp: now,
     });
@@ -770,7 +805,7 @@ async function runFeatureSwitch(
     return;
   }
 
-  const { config, repoRoot } = commandContext;
+  const { config, repoRoot, runGit } = commandContext;
   const runWt = createWtRunner(pi, repoRoot);
 
   const records = await loadFeatureRecordsFromWt({
@@ -871,7 +906,29 @@ async function runFeatureSwitch(
     worktreePath: switchResult.record.worktreePath,
   });
 
-  ctx.ui.notify(buildFeatureSwitchNotifyMessage(switchResult), "info");
+  const inferredBase = resolveInferredBaseBranch({
+    runGit,
+    branch: switchResult.record.branch,
+  }).inference;
+
+  ctx.ui.notify(
+    buildFeatureSwitchNotifyMessage({
+      result: switchResult,
+      inferredBase,
+    }),
+    "info",
+  );
+
+  await runIgnoredSync({
+    command: "feature-switch",
+    phase: "after-session-switch",
+    config: config.ignoredSync,
+    repoRoot,
+    worktreePath: switchResult.record.worktreePath,
+    branch: switchResult.record.branch,
+    runWt,
+    notify: ctx.ui.notify.bind(ctx.ui),
+  });
 }
 
 async function runFeatureValidate(
@@ -898,28 +955,22 @@ async function runFeatureValidate(
     `dirty: ${dirty.summary.dirty ? "yes" : "no"} (staged ${dirty.summary.staged}, unstaged ${dirty.summary.unstaged}, untracked ${dirty.summary.untracked})`,
   );
 
-  const managedFeatureBranches = readManagedFeatureRegistry(repoRoot).map(
-    (record) => record.branch,
-  );
-  const currentBranch = getCurrentBranchName(runGit);
-  const localBranches = listLocalBranches(runGit);
-  const candidates = buildBaseBranchCandidates({
-    currentBranch,
-    localBranches,
-    managedFeatureBranches,
-  });
+  const { inference } = resolveInferredBaseBranch({ runGit });
+  messages.push(buildInferredBaseMessage(inference));
 
-  const base = candidates[0] ?? null;
-  if (base && config.guards.requireFreshBase) {
-    const freshness = checkBaseBranchFreshness({ runGit, baseBranch: base });
+  if (inference.kind === "resolved" && config.guards.requireFreshBase) {
+    const freshness = checkBaseBranchFreshness({
+      runGit,
+      baseBranch: inference.branch,
+    });
     if (freshness.ok) {
-      messages.push(`base freshness: ok (${base})`);
+      messages.push(`base freshness: ok (${inference.branch})`);
     } else if (freshness.behind !== null) {
       messages.push(
-        `base freshness: FAIL (${base} behind ${freshness.upstream} by ${freshness.behind})`,
+        `base freshness: FAIL (${inference.branch} behind ${freshness.upstream} by ${freshness.behind})`,
       );
     } else {
-      messages.push(`base freshness: FAIL (${base}, unknown)`);
+      messages.push(`base freshness: FAIL (${inference.branch}, unknown)`);
     }
   }
 

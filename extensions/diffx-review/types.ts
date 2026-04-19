@@ -6,6 +6,26 @@ export interface DiffxCommentReply {
   createdAt: number;
 }
 
+export type DiffxComparePreset =
+  | "working-tree"
+  | "staged"
+  | "base-branch"
+  | "merge-base"
+  | "single-commit"
+  | "two-commits"
+  | "custom";
+
+export interface DiffxComparePresetOption {
+  value: DiffxComparePreset;
+  label: string;
+  description: string;
+}
+
+export interface GitCommitSummary {
+  sha: string;
+  title: string;
+}
+
 export interface DiffxReviewComment {
   id: string;
   filePath: string;

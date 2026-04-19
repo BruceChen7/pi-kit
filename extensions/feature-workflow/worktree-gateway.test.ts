@@ -20,24 +20,22 @@ describe("worktree-gateway", () => {
     const runWt: WtRunner = vi
       .fn()
       .mockResolvedValue(
-        okResult(
-          '{"action":"created","path":"/repo/.wt/feat-main-checkout-v2"}',
-        ),
+        okResult('{"action":"created","path":"/repo/.wt/main-checkout-v2"}'),
       );
 
     const result = await createFeatureWorktree(runWt, {
-      branch: "feat/main/checkout-v2",
+      branch: "main--checkout-v2",
       base: "main",
     });
 
     expect(result).toEqual({
       ok: true,
-      worktreePath: "/repo/.wt/feat-main-checkout-v2",
+      worktreePath: "/repo/.wt/main-checkout-v2",
     });
     expect(runWt).toHaveBeenCalledWith([
       "switch",
       "--create",
-      "feat/main/checkout-v2",
+      "main--checkout-v2",
       "--base",
       "main",
       "--no-cd",
@@ -48,31 +46,31 @@ describe("worktree-gateway", () => {
   it("resolves create worktree path from wt list when switch output is not json", async () => {
     const runWt: WtRunner = vi
       .fn()
-      .mockResolvedValueOnce(okResult("Switched to feat/main/checkout-v2"))
+      .mockResolvedValueOnce(okResult("Switched to main--checkout-v2"))
       .mockResolvedValueOnce(
         okResult(
           JSON.stringify([
             {
-              branch: "feat/main/checkout-v2",
-              path: "/repo/.wt/feat-main-checkout-v2",
+              branch: "main--checkout-v2",
+              path: "/repo/.wt/main-checkout-v2",
             },
           ]),
         ),
       );
 
     const result = await createFeatureWorktree(runWt, {
-      branch: "feat/main/checkout-v2",
+      branch: "main--checkout-v2",
       base: "main",
     });
 
     expect(result).toEqual({
       ok: true,
-      worktreePath: "/repo/.wt/feat-main-checkout-v2",
+      worktreePath: "/repo/.wt/main-checkout-v2",
     });
     expect(runWt).toHaveBeenNthCalledWith(1, [
       "switch",
       "--create",
-      "feat/main/checkout-v2",
+      "main--checkout-v2",
       "--base",
       "main",
       "--no-cd",
@@ -87,7 +85,7 @@ describe("worktree-gateway", () => {
       .mockResolvedValue(failResult("base branch missing"));
 
     const result = await createFeatureWorktree(runWt, {
-      branch: "feat/main/checkout-v2",
+      branch: "main--checkout-v2",
       base: "main",
     });
 
@@ -100,17 +98,17 @@ describe("worktree-gateway", () => {
       .mockResolvedValue(okResult('{"action":"already_at"}'));
 
     const result = await ensureFeatureWorktree(runWt, {
-      branch: "feat/main/checkout-v2",
-      fallbackWorktreePath: "/repo/.wt/feat-main-checkout-v2",
+      branch: "main--checkout-v2",
+      fallbackWorktreePath: "/repo/.wt/main-checkout-v2",
     });
 
     expect(result).toEqual({
       ok: true,
-      worktreePath: "/repo/.wt/feat-main-checkout-v2",
+      worktreePath: "/repo/.wt/main-checkout-v2",
     });
     expect(runWt).toHaveBeenCalledWith([
       "switch",
-      "feat/main/checkout-v2",
+      "main--checkout-v2",
       "--no-cd",
       "--yes",
     ]);
@@ -160,7 +158,7 @@ describe("worktree-gateway", () => {
     const result = await runWorktreeHook(runWt, {
       hookType: "pre-start",
       hook: "project-deps-link",
-      branch: "feat/main/checkout-v2",
+      branch: "main--checkout-v2",
     });
 
     expect(result).toEqual({ ok: true });
@@ -176,13 +174,13 @@ describe("worktree-gateway", () => {
     const runWt: WtRunner = vi.fn().mockResolvedValue(okResult("ok"));
 
     const result = await runCopyIgnoredToFeatureWorktree(runWt, {
-      toBranch: "feat/main/checkout-v2",
+      toBranch: "main--checkout-v2",
       timeoutMs: 1234,
     });
 
     expect(result).toEqual({ ok: true });
     expect(runWt).toHaveBeenCalledWith(
-      ["step", "copy-ignored", "--to", "feat/main/checkout-v2"],
+      ["step", "copy-ignored", "--to", "main--checkout-v2"],
       { timeoutMs: 1234 },
     );
   });
@@ -197,8 +195,8 @@ describe("worktree-gateway", () => {
             is_main: true,
           },
           {
-            branch: "feat/main/checkout-v2",
-            path: "/repo/.wt/feat-main-checkout-v2",
+            branch: "main--checkout-v2",
+            path: "/repo/.wt/main-checkout-v2",
             is_main: false,
           },
         ]),

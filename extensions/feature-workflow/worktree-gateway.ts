@@ -1,7 +1,11 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 import { type FeatureRecord, listFeatureRecords } from "./storage.js";
-import { buildWtSwitchCreateArgs, parseWtJsonResult } from "./wt.js";
+import {
+  buildWtSwitchArgs,
+  buildWtSwitchCreateArgs,
+  parseWtJsonResult,
+} from "./wt.js";
 
 export type WtExecutionResult = {
   code: number;
@@ -196,7 +200,11 @@ export async function ensureFeatureWorktree(
 ): Promise<
   { ok: true; worktreePath: string } | { ok: false; message: string }
 > {
-  const result = await runWt(["switch", input.branch, "--no-cd", "--yes"]);
+  const result = await runWt(
+    buildWtSwitchArgs({
+      branch: input.branch,
+    }),
+  );
 
   if (result.code !== 0) {
     return {

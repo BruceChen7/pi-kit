@@ -125,7 +125,7 @@ describe("feature-workflow extension", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it("creates a managed base/slug feature branch from slug + base prompts", async () => {
+  it("creates a managed flat feature branch from slug + base prompts", async () => {
     const repoRoot = createTempRepoWithMainBranch();
     fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
@@ -251,7 +251,7 @@ describe("feature-workflow extension", () => {
       resolvedRepoRoot,
       "switch",
       "--create",
-      "main/checkout-v2",
+      "main--checkout-v2",
       "--base",
       "main",
       "--no-cd",
@@ -259,17 +259,17 @@ describe("feature-workflow extension", () => {
     ]);
     expect(notifications).toEqual([
       {
-        message: "Creating worktree for main/checkout-v2…",
+        message: "Creating worktree for main--checkout-v2…",
         level: "info",
       },
       {
-        message: "Feature worktree created: main/checkout-v2",
+        message: "Feature worktree created: main--checkout-v2",
         level: "info",
       },
     ]);
     expect(readManagedFeatureRegistry(repoRoot)).toEqual([
       {
-        branch: "main/checkout-v2",
+        branch: "main--checkout-v2",
         base: "main",
         slug: "checkout-v2",
         createdAt: expect.any(String),

@@ -16,6 +16,10 @@ export function buildWtSwitchCreateArgs(input: {
   ];
 }
 
+export function buildWtSwitchArgs(input: { branch: string }): string[] {
+  return ["switch", input.branch, "--no-cd", "--yes"];
+}
+
 export function parseWtJsonResult(
   stdout: string,
 ): Record<string, unknown> | null {

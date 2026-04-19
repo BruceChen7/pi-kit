@@ -21,37 +21,53 @@ describe("isFeatureSlug", () => {
 });
 
 describe("buildFeatureBranchName", () => {
-  it("includes base in the branch path", () => {
+  it("builds a flat branch name from base + slug", () => {
     expect(
       buildFeatureBranchName({
         base: "main",
         slug: "checkout-v2",
       }),
-    ).toBe("main/checkout-v2");
+    ).toBe("main--checkout-v2");
   });
 
-  it("supports nested base branches", () => {
+  it("encodes nested base branches safely", () => {
     expect(
       buildFeatureBranchName({
         base: "release/2026-q2",
         slug: "login-timeout",
       }),
-    ).toBe("release/2026-q2/login-timeout");
+    ).toBe("release%2F2026-q2--login-timeout");
+  });
+
+  it("avoids colliding with a leaf base branch like master", () => {
+    expect(
+      buildFeatureBranchName({
+        base: "master",
+        slug: "simple-workflow",
+      }),
+    ).toBe("master--simple-workflow");
   });
 });
 
 describe("parseFeatureBranchName", () => {
-  it("parses branches that embed base", () => {
-    expect(parseFeatureBranchName("main/checkout-v2")).toEqual({
+  it("parses flat branch names", () => {
+    expect(parseFeatureBranchName("main--checkout-v2")).toEqual({
       base: "main",
       slug: "checkout-v2",
     });
   });
 
-  it("supports nested base branches", () => {
-    expect(parseFeatureBranchName("release/2026-q2/login-timeout")).toEqual({
+  it("decodes nested base branches from flat names", () => {
+    expect(parseFeatureBranchName("release%2F2026-q2--login-timeout")).toEqual({
       base: "release/2026-q2",
       slug: "login-timeout",
+    });
+  });
+
+  it("keeps parsing legacy base-first branch names for compatibility", () => {
+    expect(parseFeatureBranchName("main/checkout-v2")).toEqual({
+      base: "main",
+      slug: "checkout-v2",
     });
   });
 
@@ -59,5 +75,7 @@ describe("parseFeatureBranchName", () => {
     expect(parseFeatureBranchName("checkout-v2")).toBeNull();
     expect(parseFeatureBranchName("main/")).toBeNull();
     expect(parseFeatureBranchName("main/Checkout-V2")).toBeNull();
+    expect(parseFeatureBranchName("main--Checkout-V2")).toBeNull();
+    expect(parseFeatureBranchName("release%2F2026-q2--")).toBeNull();
   });
 });

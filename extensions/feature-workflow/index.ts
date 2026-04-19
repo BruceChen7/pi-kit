@@ -19,9 +19,7 @@ import { buildBaseBranchCandidates } from "./base-branches.js";
 import { resolveFeatureWorkflowCommandContext } from "./command-context.js";
 import { loadFeatureWorkflowConfig } from "./config.js";
 import { matchFeatureRecord } from "./feature-query.js";
-import { ensureWorktreeGitignore } from "./gitignore-worktree-ensure.js";
 import { checkBaseBranchFreshness } from "./guards.js";
-import { runIgnoredSync } from "./ignored-sync.js";
 import {
   buildFeatureBranchName,
   isFeatureSlug,
@@ -670,29 +668,11 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
 
   const worktreePath = createResult.worktreePath;
 
-  const gitignoreSync = ensureWorktreeGitignore({
-    repoRoot,
-    worktreePath,
-  });
-  if (!gitignoreSync.ok) {
-    ctx.ui.notify(
-      `Failed to sync .gitignore to new worktree: ${gitignoreSync.message}`,
-      "warning",
-    );
-    log.warn("feature-start .gitignore sync failed", {
-      branch,
-      base,
-      repoRoot,
-      worktreePath,
-      message: gitignoreSync.message,
-    });
-  }
-
   log.debug("feature-start worktree ready", {
     branch,
     base,
     worktreePath,
-    gitignoreSynced: gitignoreSync.ok ? gitignoreSync.changed : false,
+    setupDrivenLifecycle: true,
   });
 
   const now = new Date().toISOString();
@@ -728,27 +708,6 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     });
   }
 
-  const preSessionIgnoredSync = await runIgnoredSync({
-    command: "feature-start",
-    phase: "before-session-switch",
-    config: config.ignoredSync,
-    repoRoot,
-    worktreePath,
-    branch,
-    runWt,
-    notify: ctx.ui.notify.bind(ctx.ui),
-  });
-
-  if (preSessionIgnoredSync.blocked) {
-    log.warn("ignored sync blocked feature-start", {
-      branch,
-      worktreePath,
-      missingCount: preSessionIgnoredSync.missingCount,
-      unresolvedCount: preSessionIgnoredSync.unresolvedCount,
-    });
-    return;
-  }
-
   const switchResult = await maybeSwitchToWorktreeSession({
     ctx,
     record,
@@ -768,17 +727,6 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
       : `Feature worktree created: ${branch}`,
     "info",
   );
-
-  await runIgnoredSync({
-    command: "feature-start",
-    phase: "after-session-switch",
-    config: config.ignoredSync,
-    repoRoot,
-    worktreePath: switchResult.record.worktreePath,
-    branch,
-    runWt,
-    notify: ctx.ui.notify.bind(ctx.ui),
-  });
 }
 
 async function runFeatureList(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
@@ -896,27 +844,10 @@ async function runFeatureSwitch(
 
   const worktreePath = switchWorktreeResult.worktreePath;
 
-  const gitignoreSync = ensureWorktreeGitignore({
-    repoRoot,
-    worktreePath,
-  });
-  if (!gitignoreSync.ok) {
-    ctx.ui.notify(
-      `Failed to sync .gitignore to target worktree: ${gitignoreSync.message}`,
-      "warning",
-    );
-    log.warn("feature-switch .gitignore sync failed", {
-      branch: record.branch,
-      repoRoot,
-      worktreePath,
-      message: gitignoreSync.message,
-    });
-  }
-
   log.debug("feature-switch worktree ready", {
     branch: record.branch,
     worktreePath,
-    gitignoreSynced: gitignoreSync.ok ? gitignoreSync.changed : false,
+    setupDrivenLifecycle: true,
   });
 
   const now = new Date().toISOString();
@@ -925,27 +856,6 @@ async function runFeatureSwitch(
     worktreePath: worktreePath || record.worktreePath,
     updatedAt: now,
   };
-
-  const preSessionIgnoredSync = await runIgnoredSync({
-    command: "feature-switch",
-    phase: "before-session-switch",
-    config: config.ignoredSync,
-    repoRoot,
-    worktreePath: updatedRecord.worktreePath,
-    branch: updatedRecord.branch,
-    runWt,
-    notify: ctx.ui.notify.bind(ctx.ui),
-  });
-
-  if (preSessionIgnoredSync.blocked) {
-    log.warn("ignored sync blocked feature-switch", {
-      branch: updatedRecord.branch,
-      worktreePath: updatedRecord.worktreePath,
-      missingCount: preSessionIgnoredSync.missingCount,
-      unresolvedCount: preSessionIgnoredSync.unresolvedCount,
-    });
-    return;
-  }
 
   const switchResult = await maybeSwitchToWorktreeSession({
     ctx,
@@ -962,17 +872,6 @@ async function runFeatureSwitch(
   });
 
   ctx.ui.notify(buildFeatureSwitchNotifyMessage(switchResult), "info");
-
-  await runIgnoredSync({
-    command: "feature-switch",
-    phase: "after-session-switch",
-    config: config.ignoredSync,
-    repoRoot,
-    worktreePath: switchResult.record.worktreePath,
-    branch: switchResult.record.branch,
-    runWt,
-    notify: ctx.ui.notify.bind(ctx.ui),
-  });
 }
 
 async function runFeatureValidate(

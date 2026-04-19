@@ -1,4 +1,4 @@
-import { parseFeatureBranchName } from "./naming.js";
+import type { ManagedFeatureBranchRecord } from "./registry.js";
 
 export type FeatureStatus = "active";
 
@@ -6,7 +6,6 @@ export type FeatureRecord = {
   name: string;
   slug: string;
   branch: string;
-  base: string;
   worktreePath: string;
   status: FeatureStatus;
   createdAt: string;
@@ -32,7 +31,7 @@ const toIsoFromWtCommitTimestamp = (value: unknown): string | null => {
 
 export function listFeatureRecords(
   wtListJson: string,
-  managedBranches: Iterable<string>,
+  managedBranches: Iterable<ManagedFeatureBranchRecord>,
 ): FeatureRecord[] {
   let parsed: unknown;
   try {
@@ -43,8 +42,10 @@ export function listFeatureRecords(
 
   if (!Array.isArray(parsed)) return [];
 
-  const managedBranchSet = new Set(managedBranches);
-  if (managedBranchSet.size === 0) {
+  const managedBranchMap = new Map(
+    [...managedBranches].map((record) => [record.branch, record]),
+  );
+  if (managedBranchMap.size === 0) {
     return [];
   }
 
@@ -55,18 +56,15 @@ export function listFeatureRecords(
 
     const branch = typeof item.branch === "string" ? item.branch : "";
     const worktreePath = typeof item.path === "string" ? item.path : "";
-    if (!branch || !worktreePath || !managedBranchSet.has(branch)) continue;
-
-    const parsedBranch = parseFeatureBranchName(branch);
-    if (!parsedBranch) continue;
+    const managedRecord = managedBranchMap.get(branch);
+    if (!branch || !worktreePath || !managedRecord) continue;
 
     const wtUpdatedAt = toIsoFromWtCommitTimestamp(item.commit) ?? EPOCH_ISO;
 
     records.push({
-      name: parsedBranch.slug,
-      slug: parsedBranch.slug,
+      name: managedRecord.slug,
+      slug: managedRecord.slug,
       branch,
-      base: parsedBranch.base,
       worktreePath,
       status: "active",
       createdAt: wtUpdatedAt,
@@ -80,9 +78,10 @@ export function listFeatureRecords(
 
 export function findActiveFeatureConflicts(
   records: FeatureRecord[],
-  input: { branch: string },
-): { branchConflict: boolean } {
+  input: { branch: string; slug: string },
+): { branchConflict: boolean; slugConflict: boolean } {
   return {
     branchConflict: records.some((record) => record.branch === input.branch),
+    slugConflict: records.some((record) => record.slug === input.slug),
   };
 }

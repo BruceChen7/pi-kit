@@ -13,13 +13,13 @@ describe("storage", () => {
   it("lists only managed records from wt list json", () => {
     const wtListJson = JSON.stringify([
       {
-        branch: "main/a",
-        path: "/tmp/a",
+        branch: "checkout-v2",
+        path: "/tmp/checkout-v2",
         commit: { timestamp: 100 },
       },
       {
-        branch: "release/2026-q2/b",
-        path: "/tmp/b",
+        branch: "legacy-main--login-timeout",
+        path: "/tmp/login-timeout",
         commit: { timestamp: 200 },
       },
       {
@@ -28,25 +28,35 @@ describe("storage", () => {
         commit: { timestamp: 150 },
       },
       {
-        branch: "main/no-worktree",
+        branch: "no-worktree",
         commit: { timestamp: 300 },
       },
     ]);
 
     const records = listFeatureRecords(wtListJson, [
-      "main/a",
-      "release/2026-q2/b",
+      {
+        branch: "checkout-v2",
+        slug: "checkout-v2",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        branch: "legacy-main--login-timeout",
+        slug: "login-timeout",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
     ]);
 
     expect(records.map((r) => r.branch)).toEqual([
-      "release/2026-q2/b",
-      "main/a",
+      "legacy-main--login-timeout",
+      "checkout-v2",
     ]);
     expect(records[0]).toMatchObject({
-      name: "b",
-      branch: "release/2026-q2/b",
-      worktreePath: "/tmp/b",
-      base: "release/2026-q2",
+      name: "login-timeout",
+      slug: "login-timeout",
+      branch: "legacy-main--login-timeout",
+      worktreePath: "/tmp/login-timeout",
     });
     expect(records.some((record) => record.branch === "user/demo")).toBe(false);
     const topRecord = records[0];
@@ -60,7 +70,7 @@ describe("storage", () => {
     const records = listFeatureRecords(
       JSON.stringify([
         {
-          branch: "main--checkout-v2",
+          branch: "checkout-v2",
           path: "/tmp/checkout-v2",
           commit: { timestamp: 100 },
         },
@@ -75,20 +85,29 @@ describe("storage", () => {
     const activeRecords = listFeatureRecords(
       JSON.stringify([
         {
-          branch: "main--another-feature",
+          branch: "another-feature",
           path: "/tmp/another-feature",
           commit: { timestamp: 100 },
         },
       ]),
-      ["main--another-feature"],
+      [
+        {
+          branch: "another-feature",
+          slug: "another-feature",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
     );
 
     expect(
       findActiveFeatureConflicts(activeRecords, {
-        branch: "main--checkout-v2",
+        branch: "checkout-v2",
+        slug: "checkout-v2",
       }),
     ).toEqual({
       branchConflict: false,
+      slugConflict: false,
     });
   });
 
@@ -96,25 +115,40 @@ describe("storage", () => {
     const activeRecords = listFeatureRecords(
       JSON.stringify([
         {
-          branch: "main--checkout-v2",
+          branch: "checkout-v2",
           path: "/tmp/checkout-v2",
           commit: { timestamp: 100 },
         },
         {
-          branch: "release%2F2026-q2--checkout-v2",
-          path: "/tmp/release-checkout-v2",
+          branch: "legacy-main--checkout-v2",
+          path: "/tmp/legacy-checkout-v2",
           commit: { timestamp: 90 },
         },
       ]),
-      ["main--checkout-v2", "release%2F2026-q2--checkout-v2"],
+      [
+        {
+          branch: "checkout-v2",
+          slug: "checkout-v2",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          branch: "legacy-main--checkout-v2",
+          slug: "checkout-v2",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
     );
 
     expect(
       findActiveFeatureConflicts(activeRecords, {
-        branch: "main--checkout-v2",
+        branch: "checkout-v2",
+        slug: "checkout-v2",
       }),
     ).toEqual({
       branchConflict: true,
+      slugConflict: true,
     });
   });
 });

@@ -1,11 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { parseFeatureBranchName } from "./naming.js";
+import { isFeatureSlug, parseFeatureBranchName } from "./naming.js";
 
 export type ManagedFeatureBranchRecord = {
   branch: string;
-  base: string;
   slug: string;
   createdAt: string;
   updatedAt: string;
@@ -37,20 +36,25 @@ const toManagedFeatureBranchRecord = (
     return null;
   }
 
-  const parsed = parseFeatureBranchName(branch);
-  if (!parsed) {
+  const parsedLegacyBranch = parseFeatureBranchName(branch);
+  const explicitSlug = trimToNull(value.slug);
+  const slug =
+    explicitSlug ??
+    (isFeatureSlug(branch) ? branch : (parsedLegacyBranch?.slug ?? null));
+  if (!slug || !isFeatureSlug(slug)) {
     return null;
   }
 
-  const base = trimToNull(value.base) ?? parsed.base;
-  const slug = trimToNull(value.slug) ?? parsed.slug;
-  if (base !== parsed.base || slug !== parsed.slug) {
+  if (isFeatureSlug(branch) && slug !== branch) {
+    return null;
+  }
+
+  if (parsedLegacyBranch && slug !== parsedLegacyBranch.slug) {
     return null;
   }
 
   return {
     branch,
-    base,
     slug,
     createdAt,
     updatedAt,
@@ -121,7 +125,6 @@ export function upsertManagedFeatureBranch(
   repoRoot: string,
   input: {
     branch: string;
-    base: string;
     slug: string;
     timestamp?: string;
   },
@@ -133,13 +136,11 @@ export function upsertManagedFeatureBranch(
   const nextRecord: ManagedFeatureBranchRecord = match
     ? {
         ...match,
-        base: input.base,
         slug: input.slug,
         updatedAt: timestamp,
       }
     : {
         branch: input.branch,
-        base: input.base,
         slug: input.slug,
         createdAt: timestamp,
         updatedAt: timestamp,

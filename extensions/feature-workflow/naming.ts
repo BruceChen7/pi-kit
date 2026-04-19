@@ -5,12 +5,8 @@ export function isFeatureSlug(value: string): boolean {
   return SLUG_PATTERN.test(value);
 }
 
-export function buildFeatureBranchName(input: {
-  base: string;
-  slug: string;
-}): string {
-  const base = input.base.trim();
-  return `${encodeURIComponent(base)}${FLAT_BRANCH_DELIMITER}${input.slug}`;
+export function buildFeatureBranchName(input: { slug: string }): string {
+  return input.slug.trim();
 }
 
 export function parseFeatureBranchName(branch: string): {

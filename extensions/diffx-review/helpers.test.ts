@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildBaseBranchDiffArgs,
+  buildCommitRangeDiffArgs,
   buildFinishReviewPrompt,
+  buildInteractiveMenuRequiredMessage,
+  buildMergeBaseDiffArgs,
+  buildSingleCommitDiffArgs,
   filterComments,
   parseFinishReviewArgs,
+  parseRawDiffArgs,
   parseStartReviewArgs,
 } from "./helpers.ts";
 import type { DiffxReviewComment, DiffxReviewSession } from "./types.ts";
@@ -68,6 +74,28 @@ describe("diffx-review helpers", () => {
       value: { resolveAfterReply: true },
       error: null,
     });
+  });
+
+  it("builds common compare diff args", () => {
+    expect(buildBaseBranchDiffArgs("main")).toEqual(["main..HEAD"]);
+    expect(buildMergeBaseDiffArgs("main")).toEqual(["main...HEAD"]);
+    expect(buildSingleCommitDiffArgs("abc123")).toEqual(["abc123^!"]);
+    expect(buildCommitRangeDiffArgs("abc123", "def456")).toEqual([
+      "abc123..def456",
+    ]);
+  });
+
+  it("parses raw diff args for custom mode", () => {
+    expect(parseRawDiffArgs("origin/main...HEAD -- src/")).toEqual([
+      "origin/main...HEAD",
+      "--",
+      "src/",
+    ]);
+  });
+
+  it("builds the interactive-menu-required message", () => {
+    expect(buildInteractiveMenuRequiredMessage()).toContain("interactive UI");
+    expect(buildInteractiveMenuRequiredMessage()).toContain("--");
   });
 
   it("filters comments by status and file", () => {

@@ -10,12 +10,14 @@ import { getCommentStats, getComments } from "./client.ts";
 import { loadDiffxReviewConfig } from "./config.ts";
 import {
   buildFinishReviewPrompt,
+  buildInteractiveMenuRequiredMessage,
   buildNoSessionMessage,
   buildStatusMessage,
   filterComments,
   parseFinishReviewArgs,
   parseStartReviewArgs,
 } from "./helpers.ts";
+import { promptForDiffxReviewDiffArgs } from "./menu.ts";
 import {
   clearDiffxReviewSession,
   getDiffxReviewSession,
@@ -118,12 +120,28 @@ const handleStartReview = async (
     repoRoot,
     config.healthcheckTimeoutMs,
   );
-  if (existing.session && existing.comments) {
-    if (config.reuseExistingSession) {
-      notifyActiveStatus(ctx, existing.session, existing.comments, true);
+  if (existing.session && existing.comments && config.reuseExistingSession) {
+    notifyActiveStatus(ctx, existing.session, existing.comments, true);
+    return;
+  }
+
+  let diffArgs = parsed.value.diffArgs;
+  if (diffArgs.length === 0) {
+    if (!ctx.hasUI) {
+      ctx.ui.notify(buildInteractiveMenuRequiredMessage(), "error");
       return;
     }
 
+    const selectedDiffArgs = await promptForDiffxReviewDiffArgs(pi, ctx);
+    if (!selectedDiffArgs) {
+      ctx.ui.notify("Cancelled diffx review start", "info");
+      return;
+    }
+
+    diffArgs = selectedDiffArgs;
+  }
+
+  if (existing.session && existing.comments) {
     await stopDiffxReviewSession(repoRoot);
     ctx.ui.notify(
       "Stopped existing diffx session before starting a fresh one",
@@ -143,7 +161,7 @@ const handleStartReview = async (
     host: parsed.value.host ?? config.host,
     port: parsed.value.port ?? config.defaultPort,
     openInBrowser: parsed.value.noOpen ? false : config.autoOpen,
-    diffArgs: parsed.value.diffArgs,
+    diffArgs,
     startupTimeoutMs: config.startupTimeoutMs,
   };
 

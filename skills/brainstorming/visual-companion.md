@@ -56,12 +56,12 @@ scripts/start-server.sh --project-dir /path/to/project
 
 **Claude Code (Windows):**
 ```bash
-# Windows auto-detects and uses foreground mode, which blocks the tool call.
-# Use run_in_background: true on the Bash tool call so the server survives
-# across conversation turns.
-scripts/start-server.sh --project-dir /path/to/project
+# Windows auto-detects foreground mode in some environments.
+# If your shell tool cannot keep foreground processes alive across turns,
+# run this in a persistent terminal session and keep it open.
+scripts/start-server.sh --project-dir /path/to/project --foreground
 ```
-When calling this via the Bash tool, set `run_in_background: true`. Then read `$SCREEN_DIR/.server-info` on the next turn to get the URL and port.
+Then read `$SCREEN_DIR/.server-info` to get the URL and port.
 
 **Codex:**
 ```bash
@@ -72,12 +72,13 @@ scripts/start-server.sh --project-dir /path/to/project
 
 **Gemini CLI:**
 ```bash
-# Use --foreground and set is_background: true on your shell tool call
-# so the process survives across turns
+# Prefer foreground mode in environments that reap detached processes.
+# If your shell tool supports persistent/background execution, use it.
+# Otherwise run this in a dedicated terminal session.
 scripts/start-server.sh --project-dir /path/to/project --foreground
 ```
 
-**Other environments:** The server must keep running in the background across conversation turns. If your environment reaps detached processes, use `--foreground` and launch the command with your platform's background execution mechanism.
+**Other environments:** The server must keep running across conversation turns. If detached/background processes are reaped, use `--foreground` and run the command in a persistent terminal session (or your platform's supported persistent-background mechanism).
 
 If the URL is unreachable from your browser (common in remote/containerized setups), bind a non-loopback host:
 

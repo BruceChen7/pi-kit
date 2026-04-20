@@ -127,14 +127,7 @@ describe("worktree-gateway", () => {
       ),
     );
 
-    const result = await listFeatureRecordsFromWorktree(runWt, [
-      {
-        branch: "checkout-v2",
-        slug: "checkout-v2",
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      },
-    ]);
+    const result = await listFeatureRecordsFromWorktree(runWt);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -153,7 +146,7 @@ describe("worktree-gateway", () => {
       .fn()
       .mockResolvedValue(failResult("wt list failed"));
 
-    const result = await listFeatureRecordsFromWorktree(runWt, []);
+    const result = await listFeatureRecordsFromWorktree(runWt);
 
     expect(result).toEqual({ ok: false, message: "wt list failed" });
   });

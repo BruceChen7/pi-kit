@@ -17,43 +17,12 @@ const record = (input: { branch: string; slug?: string }): FeatureRecord => {
 };
 
 describe("matchFeatureRecord", () => {
-  it("matches canonical branch before slug alias", () => {
-    const records = [
-      record({ branch: "legacy-main--checkout-v2", slug: "checkout-v2" }),
-      record({ branch: "checkout-v2", slug: "checkout-v2" }),
-    ];
-
-    const result = matchFeatureRecord(records, "checkout-v2");
-
-    expect(result.kind).toBe("matched");
-    if (result.kind === "matched") {
-      expect(result.record.branch).toBe("checkout-v2");
-    }
-  });
-
-  it("returns ambiguous-slug when slug maps to multiple distinct branches", () => {
-    const records = [
-      record({ branch: "main-checkout-v2", slug: "checkout-v2" }),
-      record({ branch: "release-checkout-v2", slug: "checkout-v2" }),
-    ];
-
-    const result = matchFeatureRecord(records, "checkout-v2");
-
-    expect(result).toEqual({
-      kind: "ambiguous-slug",
-      value: "checkout-v2",
-      branches: ["main-checkout-v2", "release-checkout-v2"],
-    });
-  });
-
-  it("falls back to unique slug lookup", () => {
-    const records = [
-      record({ branch: "legacy-main--checkout-v2", slug: "checkout-v2" }),
-    ];
-
-    expect(matchFeatureRecord(records, "checkout-v2")).toMatchObject({
+  it("matches by branch name", () => {
+    expect(
+      matchFeatureRecord([record({ branch: "checkout-v2" })], "checkout-v2"),
+    ).toMatchObject({
       kind: "matched",
-      record: { branch: "legacy-main--checkout-v2" },
+      record: { branch: "checkout-v2" },
     });
   });
 
@@ -66,6 +35,18 @@ describe("matchFeatureRecord", () => {
     expect(result).toEqual({
       kind: "not-found",
       value: "non-existing",
+    });
+  });
+
+  it("does not match slug aliases when branch differs", () => {
+    const result = matchFeatureRecord(
+      [record({ branch: "legacy-main--checkout-v2", slug: "checkout-v2" })],
+      "checkout-v2",
+    );
+
+    expect(result).toEqual({
+      kind: "not-found",
+      value: "checkout-v2",
     });
   });
 });

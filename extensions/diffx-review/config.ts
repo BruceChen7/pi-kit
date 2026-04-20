@@ -7,7 +7,6 @@ type DiffxReviewSettings = {
   diffxCommand?: unknown;
   host?: unknown;
   defaultPort?: unknown;
-  autoOpen?: unknown;
   reuseExistingSession?: unknown;
   healthcheckTimeoutMs?: unknown;
   startupTimeoutMs?: unknown;
@@ -18,7 +17,6 @@ export const DEFAULT_CONFIG: DiffxReviewConfig = {
   diffxCommand: "diffx",
   host: "127.0.0.1",
   defaultPort: null,
-  autoOpen: true,
   reuseExistingSession: true,
   healthcheckTimeoutMs: 1000,
   startupTimeoutMs: 15000,
@@ -72,7 +70,6 @@ export const normalizeDiffxReviewConfig = (
     diffxCommand: diffxCommand ?? DEFAULT_CONFIG.diffxCommand,
     host: host ?? DEFAULT_CONFIG.host,
     defaultPort: normalizeOptionalPort(settings.defaultPort),
-    autoOpen: normalizeBoolean(settings.autoOpen, DEFAULT_CONFIG.autoOpen),
     reuseExistingSession: normalizeBoolean(
       settings.reuseExistingSession,
       DEFAULT_CONFIG.reuseExistingSession,

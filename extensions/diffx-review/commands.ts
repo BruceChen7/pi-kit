@@ -232,7 +232,7 @@ const handleStartReview = async (
     diffxCommand: config.diffxCommand,
     host: parsed.value.host ?? config.host,
     port: parsed.value.port ?? config.defaultPort,
-    openInBrowser: parsed.value.noOpen ? false : config.autoOpen,
+    openInBrowser: !parsed.value.noOpen,
     diffArgs,
     startupTimeoutMs: config.startupTimeoutMs,
   };
@@ -241,19 +241,6 @@ const handleStartReview = async (
     ctx.ui.notify(
       `Started diffx review for ${path.basename(repoRoot)} at ${session.url}`,
       "info",
-    );
-    pi.sendMessage(
-      {
-        customType: "diffx-review",
-        content: `diffx review started: ${session.url}`,
-        display: true,
-        details: {
-          repoRoot,
-          url: session.url,
-          diffArgs: session.diffArgs,
-        },
-      },
-      { deliverAs: "nextTurn" },
     );
   };
 

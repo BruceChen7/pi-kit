@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 import { createLogger } from "../shared/logger.ts";
@@ -15,6 +16,7 @@ const log = createLogger("diffx-review", {
 const sessions = new Map<string, DiffxRuntimeSession>();
 const DIFFX_URL_PATTERN = /diffx server running at (http:\/\/\S+)/i;
 const OUTPUT_TAIL_MAX = 4000;
+const DIFFX_SESSION_FILE = path.join(".pi", "diffx-review-session.json");
 
 const appendTail = (current: string, chunk: string): string => {
   const next = `${current}${chunk}`;
@@ -25,16 +27,125 @@ const appendTail = (current: string, chunk: string): string => {
 
 const cleanupSession = (
   repoRoot: string,
-  child?: ChildProcessWithoutNullStreams,
+  child?: ChildProcessWithoutNullStreams | null,
 ) => {
   const session = sessions.get(repoRoot);
   if (!session) {
+    clearPersistedDiffxReviewSession(repoRoot);
     return;
   }
   if (child && session.child !== child) {
     return;
   }
   sessions.delete(repoRoot);
+  clearPersistedDiffxReviewSession(repoRoot);
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const toPersistedSession = (
+  session: DiffxRuntimeSession | DiffxReviewSession,
+): DiffxReviewSession => ({
+  repoRoot: session.repoRoot,
+  host: session.host,
+  port: session.port,
+  url: session.url,
+  pid: session.pid,
+  startedAt: session.startedAt,
+  diffArgs: [...session.diffArgs],
+  openInBrowser: session.openInBrowser,
+  cwdAtStart: session.cwdAtStart,
+  startCommand: session.startCommand,
+  lastHealthcheckAt: session.lastHealthcheckAt,
+  lastHealthcheckOk: session.lastHealthcheckOk,
+});
+
+const parsePersistedSession = (
+  repoRoot: string,
+  value: unknown,
+): DiffxRuntimeSession | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (
+    typeof value.host !== "string" ||
+    typeof value.url !== "string" ||
+    typeof value.port !== "number" ||
+    typeof value.pid !== "number" ||
+    typeof value.startedAt !== "number" ||
+    typeof value.openInBrowser !== "boolean" ||
+    typeof value.cwdAtStart !== "string" ||
+    typeof value.startCommand !== "string" ||
+    !Array.isArray(value.diffArgs) ||
+    !value.diffArgs.every((item) => typeof item === "string")
+  ) {
+    return null;
+  }
+
+  return {
+    repoRoot,
+    host: value.host,
+    port: value.port,
+    url: value.url,
+    pid: value.pid,
+    startedAt: value.startedAt,
+    diffArgs: [...value.diffArgs],
+    openInBrowser: value.openInBrowser,
+    cwdAtStart: value.cwdAtStart,
+    startCommand: value.startCommand,
+    lastHealthcheckAt:
+      typeof value.lastHealthcheckAt === "number"
+        ? value.lastHealthcheckAt
+        : null,
+    lastHealthcheckOk:
+      typeof value.lastHealthcheckOk === "boolean"
+        ? value.lastHealthcheckOk
+        : null,
+    child: null,
+  };
+};
+
+export const getDiffxReviewSessionFile = (repoRoot: string): string =>
+  path.join(repoRoot, DIFFX_SESSION_FILE);
+
+export const persistDiffxReviewSession = (
+  session: DiffxRuntimeSession | DiffxReviewSession,
+): void => {
+  const sessionFile = getDiffxReviewSessionFile(session.repoRoot);
+  fs.mkdirSync(path.dirname(sessionFile), { recursive: true });
+  fs.writeFileSync(
+    sessionFile,
+    `${JSON.stringify(toPersistedSession(session), null, 2)}\n`,
+    "utf-8",
+  );
+};
+
+export const clearPersistedDiffxReviewSession = (repoRoot: string): void => {
+  fs.rmSync(getDiffxReviewSessionFile(repoRoot), { force: true });
+};
+
+export const loadPersistedDiffxReviewSession = (
+  repoRoot: string,
+): DiffxRuntimeSession | null => {
+  const sessionFile = getDiffxReviewSessionFile(repoRoot);
+  if (!fs.existsSync(sessionFile)) {
+    return null;
+  }
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(sessionFile, "utf-8"));
+    const session = parsePersistedSession(repoRoot, raw);
+    if (!session) {
+      clearPersistedDiffxReviewSession(repoRoot);
+      return null;
+    }
+    return session;
+  } catch {
+    clearPersistedDiffxReviewSession(repoRoot);
+    return null;
+  }
 };
 
 const toPublicSession = (session: DiffxRuntimeSession): DiffxReviewSession => ({
@@ -55,13 +166,20 @@ const toPublicSession = (session: DiffxRuntimeSession): DiffxReviewSession => ({
 export const getDiffxReviewSession = (
   repoRoot: string,
 ): DiffxRuntimeSession | null => {
-  const session = sessions.get(repoRoot) ?? null;
+  const session =
+    sessions.get(repoRoot) ?? loadPersistedDiffxReviewSession(repoRoot) ?? null;
   if (!session) {
     return null;
   }
-  if (session.child.exitCode !== null || session.child.killed) {
+  if (
+    session.child &&
+    (session.child.exitCode !== null || session.child.killed)
+  ) {
     cleanupSession(repoRoot, session.child);
     return null;
+  }
+  if (!sessions.has(repoRoot)) {
+    sessions.set(repoRoot, session);
   }
   return session;
 };
@@ -80,6 +198,7 @@ export const markSessionHealth = (
   }
   session.lastHealthcheckAt = Date.now();
   session.lastHealthcheckOk = healthy;
+  persistDiffxReviewSession(session);
   return toPublicSession(session);
 };
 
@@ -96,15 +215,9 @@ const splitCommandString = (value: string): string[] => {
 export const buildDiffxStartCommand = (
   input: StartDiffxReviewSessionInput,
 ): { command: string; args: string[]; description: string } => {
-  const commandParts = input.diffxCommand
-    ? splitCommandString(input.diffxCommand)
-    : [];
-
-  const command = commandParts[0] || "node";
-  const args =
-    commandParts.length > 0
-      ? commandParts.slice(1)
-      : [path.join(input.diffxPath, "dist", "cli.mjs")];
+  const commandParts = splitCommandString(input.diffxCommand);
+  const command = commandParts[0] || "diffx";
+  const args = commandParts.slice(1);
 
   args.push("--host", input.host);
   if (input.port !== null) {
@@ -240,12 +353,66 @@ export const startDiffxReviewSession = async (
   child.unref();
 
   sessions.set(input.repoRoot, session);
+  persistDiffxReviewSession(session);
   log.info("diffx review session started", {
     repoRoot: input.repoRoot,
     url: session.url,
     pid: session.pid,
   });
   return toPublicSession(session);
+};
+
+const delay = async (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const stopRecoveredSessionByPid = async (
+  session: DiffxRuntimeSession,
+): Promise<{ stopped: boolean; reason: string }> => {
+  if (session.pid <= 0) {
+    cleanupSession(session.repoRoot);
+    return { stopped: true, reason: "kill-failed" };
+  }
+
+  try {
+    process.kill(session.pid, "SIGINT");
+  } catch (error) {
+    const code =
+      error instanceof Error && "code" in error
+        ? String((error as { code?: string }).code ?? "")
+        : "";
+    cleanupSession(session.repoRoot);
+    return {
+      stopped: true,
+      reason: code === "ESRCH" ? "already-exited" : "kill-failed",
+    };
+  }
+
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    await delay(100);
+    try {
+      process.kill(session.pid, 0);
+    } catch (error) {
+      const code =
+        error instanceof Error && "code" in error
+          ? String((error as { code?: string }).code ?? "")
+          : "";
+      cleanupSession(session.repoRoot);
+      return {
+        stopped: true,
+        reason: code === "ESRCH" ? "stopped" : "kill-failed",
+      };
+    }
+  }
+
+  try {
+    process.kill(session.pid, "SIGTERM");
+  } catch {
+    // ignore
+  }
+
+  cleanupSession(session.repoRoot);
+  return { stopped: true, reason: "forced-stop" };
 };
 
 export const stopDiffxReviewSession = async (
@@ -256,9 +423,21 @@ export const stopDiffxReviewSession = async (
     return { stopped: false, reason: "not-found" };
   }
 
-  if (session.child.exitCode !== null || session.child.killed) {
+  if (
+    session.child &&
+    (session.child.exitCode !== null || session.child.killed)
+  ) {
     cleanupSession(repoRoot, session.child);
     return { stopped: true, reason: "already-exited" };
+  }
+  if (!session.child) {
+    const result = await stopRecoveredSessionByPid(session);
+    log.info("diffx review session stopped", {
+      repoRoot,
+      pid: session.pid,
+      reason: result.reason,
+    });
+    return result;
   }
 
   const result = await new Promise<{ stopped: boolean; reason: string }>(
@@ -270,7 +449,7 @@ export const stopDiffxReviewSession = async (
         }
         settled = true;
         clearTimeout(timeout);
-        session.child.off("exit", onExit);
+        session.child?.off("exit", onExit);
         cleanupSession(repoRoot, session.child);
         resolve({ stopped: true, reason });
       };

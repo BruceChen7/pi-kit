@@ -27,6 +27,8 @@ import {
 } from "./runtime.ts";
 import type { DiffxReviewComment, DiffxReviewSession } from "./types.ts";
 
+type ExistingSessionAction = "reuse" | "replace" | "cancel";
+
 const getRepoRootOrNotify = (ctx: ExtensionCommandContext): string | null => {
   const repoRoot = getRepoRoot(ctx.cwd);
   if (!repoRoot) {
@@ -95,6 +97,50 @@ const notifyActiveStatus = (
   ctx.ui.notify(buildStatusMessage({ session, stats, healthy }), "info");
 };
 
+const diffArgsEqual = (left: string[], right: string[]): boolean =>
+  left.length === right.length &&
+  left.every((value, index) => value === right[index]);
+
+const promptForExistingSessionAction = async (
+  ctx: ExtensionCommandContext,
+  existing: DiffxReviewSession,
+  requestedDiffArgs: string[],
+): Promise<ExistingSessionAction> => {
+  if (
+    !ctx.hasUI ||
+    typeof (ctx.ui as { select?: unknown }).select !== "function"
+  ) {
+    return "replace";
+  }
+
+  const select = (
+    ctx.ui as {
+      select: (prompt: string, options: string[]) => Promise<string | null>;
+    }
+  ).select;
+  const currentLabel =
+    existing.diffArgs.length > 0
+      ? existing.diffArgs.join(" ")
+      : "(working tree default)";
+  const requestedLabel =
+    requestedDiffArgs.length > 0
+      ? requestedDiffArgs.join(" ")
+      : "(working tree default)";
+
+  const selected = await select(
+    `Existing diffx review found.\nCurrent: ${currentLabel}\nRequested: ${requestedLabel}`,
+    ["Reuse existing session", "Replace with requested diff", "Cancel"],
+  );
+
+  if (selected === "Reuse existing session") {
+    return "reuse";
+  }
+  if (selected === "Replace with requested diff") {
+    return "replace";
+  }
+  return "cancel";
+};
+
 const handleStartReview = async (
   pi: ExtensionAPI,
   rawArgs: string,
@@ -120,12 +166,18 @@ const handleStartReview = async (
     repoRoot,
     config.healthcheckTimeoutMs,
   );
-  if (existing.session && existing.comments && config.reuseExistingSession) {
+  let diffArgs = parsed.value.diffArgs;
+  const hasExplicitDiffArgs = diffArgs.length > 0;
+  if (
+    existing.session &&
+    existing.comments &&
+    config.reuseExistingSession &&
+    !hasExplicitDiffArgs
+  ) {
     notifyActiveStatus(ctx, existing.session, existing.comments, true);
     return;
   }
 
-  let diffArgs = parsed.value.diffArgs;
   if (diffArgs.length === 0) {
     if (!ctx.hasUI) {
       ctx.ui.notify(buildInteractiveMenuRequiredMessage(), "error");
@@ -139,6 +191,27 @@ const handleStartReview = async (
     }
 
     diffArgs = selectedDiffArgs;
+  }
+
+  if (existing.session && existing.comments && config.reuseExistingSession) {
+    if (diffArgsEqual(existing.session.diffArgs, diffArgs)) {
+      notifyActiveStatus(ctx, existing.session, existing.comments, true);
+      return;
+    }
+
+    const action = await promptForExistingSessionAction(
+      ctx,
+      existing.session,
+      diffArgs,
+    );
+    if (action === "reuse") {
+      notifyActiveStatus(ctx, existing.session, existing.comments, true);
+      return;
+    }
+    if (action === "cancel") {
+      ctx.ui.notify("Cancelled diffx review start", "info");
+      return;
+    }
   }
 
   if (existing.session && existing.comments) {
@@ -157,10 +230,9 @@ const handleStartReview = async (
   const startInput = {
     repoRoot,
     diffxCommand: config.diffxCommand,
-    diffxPath: config.diffxPath,
     host: parsed.value.host ?? config.host,
     port: parsed.value.port ?? config.defaultPort,
-    openInBrowser: parsed.value.noOpen ? false : config.autoOpen,
+    openInBrowser: !parsed.value.noOpen,
     diffArgs,
     startupTimeoutMs: config.startupTimeoutMs,
   };
@@ -169,19 +241,6 @@ const handleStartReview = async (
     ctx.ui.notify(
       `Started diffx review for ${path.basename(repoRoot)} at ${session.url}`,
       "info",
-    );
-    pi.sendMessage(
-      {
-        customType: "diffx-review",
-        content: `diffx review started: ${session.url}`,
-        display: true,
-        details: {
-          repoRoot,
-          url: session.url,
-          diffArgs: session.diffArgs,
-        },
-      },
-      { deliverAs: "nextTurn" },
     );
   };
 
@@ -214,7 +273,7 @@ const handleReviewStatus = async (
   notifyActiveStatus(ctx, active.session, active.comments, true);
 };
 
-const handleFinishReview = async (
+const handleProcessReview = async (
   pi: ExtensionAPI,
   rawArgs: string,
   ctx: ExtensionCommandContext,
@@ -293,11 +352,11 @@ export const registerDiffxReviewCommands = (pi: ExtensionAPI): void => {
     },
   });
 
-  pi.registerCommand("diffx-finish-review", {
+  pi.registerCommand("diffx-process-review", {
     description:
       "Load open diffx review comments into the current agent session",
     handler: async (args, ctx) => {
-      await handleFinishReview(pi, args, ctx);
+      await handleProcessReview(pi, args, ctx);
     },
   });
 

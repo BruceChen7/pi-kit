@@ -1,6 +1,3 @@
-import os from "node:os";
-import path from "node:path";
-
 import { getRepoRoot } from "../shared/git.ts";
 import { loadSettings } from "../shared/settings.ts";
 import type { DiffxReviewConfig } from "./types.ts";
@@ -8,26 +5,18 @@ import type { DiffxReviewConfig } from "./types.ts";
 type DiffxReviewSettings = {
   enabled?: unknown;
   diffxCommand?: unknown;
-  diffxPath?: unknown;
   host?: unknown;
   defaultPort?: unknown;
-  autoOpen?: unknown;
-  startMode?: unknown;
   reuseExistingSession?: unknown;
   healthcheckTimeoutMs?: unknown;
   startupTimeoutMs?: unknown;
 };
 
-export const DEFAULT_DIFFX_PATH = "~/work/diffx";
-
 export const DEFAULT_CONFIG: DiffxReviewConfig = {
   enabled: true,
   diffxCommand: "diffx",
-  diffxPath: path.resolve(os.homedir(), "work", "diffx"),
   host: "127.0.0.1",
   defaultPort: null,
-  autoOpen: true,
-  startMode: "dist",
   reuseExistingSession: true,
   healthcheckTimeoutMs: 1000,
   startupTimeoutMs: 15000,
@@ -69,32 +58,18 @@ const normalizeOptionalPort = (value: unknown): number | null => {
   return null;
 };
 
-export const expandHomePath = (value: string): string => {
-  if (value === "~") {
-    return os.homedir();
-  }
-  if (value.startsWith("~/")) {
-    return path.join(os.homedir(), value.slice(2));
-  }
-  return value;
-};
-
 export const normalizeDiffxReviewConfig = (
   value: unknown,
 ): DiffxReviewConfig => {
   const settings = isRecord(value) ? (value as DiffxReviewSettings) : {};
-  const diffxCommand = trimToNull(settings.diffxCommand);
-  const diffxPath = trimToNull(settings.diffxPath);
   const host = trimToNull(settings.host);
+  const diffxCommand = trimToNull(settings.diffxCommand);
 
   return {
     enabled: normalizeBoolean(settings.enabled, DEFAULT_CONFIG.enabled),
     diffxCommand: diffxCommand ?? DEFAULT_CONFIG.diffxCommand,
-    diffxPath: path.resolve(expandHomePath(diffxPath ?? DEFAULT_DIFFX_PATH)),
     host: host ?? DEFAULT_CONFIG.host,
     defaultPort: normalizeOptionalPort(settings.defaultPort),
-    autoOpen: normalizeBoolean(settings.autoOpen, DEFAULT_CONFIG.autoOpen),
-    startMode: "dist",
     reuseExistingSession: normalizeBoolean(
       settings.reuseExistingSession,
       DEFAULT_CONFIG.reuseExistingSession,

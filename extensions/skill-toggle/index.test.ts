@@ -96,6 +96,65 @@ describe("createLoggerReady", () => {
 });
 
 describe("settings integration", () => {
+  it("uses primary repo byCwd entry when running from a worktree cwd", async () => {
+    createTempHome();
+    const primaryRepoCwd = createTempDir("pi-kit-skill-toggle-primary-");
+    const worktreeCwd = createTempDir("pi-kit-skill-toggle-worktree-");
+    const { globalPath } = getSettingsPaths(worktreeCwd);
+
+    vi.doMock("../shared/git.js", async () => {
+      const actual =
+        await vi.importActual<typeof import("../shared/git.js")>(
+          "../shared/git.js",
+        );
+      return {
+        ...actual,
+        getGitCommonDir: () => path.join(primaryRepoCwd, ".git"),
+        getRepoRoot: () => worktreeCwd,
+      };
+    });
+
+    try {
+      fs.mkdirSync(path.dirname(globalPath), { recursive: true });
+      fs.writeFileSync(
+        globalPath,
+        JSON.stringify(
+          {
+            skillToggle: {
+              byCwd: {
+                [primaryRepoCwd]: {
+                  disabledSkills: ["alpha"],
+                },
+              },
+            },
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const { loadToggleState, saveToggleState } = await importSkillToggle();
+      const state = loadToggleState(worktreeCwd);
+
+      expect(state.cwdKey).toBe(primaryRepoCwd);
+      expect(state.disabledSkills.has("alpha")).toBe(true);
+
+      state.disabledSkills.add("beta");
+      saveToggleState(state);
+
+      const saved = readSettingsFile(globalPath);
+      const byCwd = (saved.skillToggle as { byCwd: Record<string, unknown> })
+        .byCwd;
+      const entry = byCwd[primaryRepoCwd] as { disabledSkills: string[] };
+
+      expect(entry.disabledSkills).toEqual(["alpha", "beta"]);
+      expect(byCwd[worktreeCwd]).toBeUndefined();
+    } finally {
+      vi.doUnmock("../shared/git.js");
+    }
+  });
+
   it("ignores project settings and uses global byCwd entry", async () => {
     createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");

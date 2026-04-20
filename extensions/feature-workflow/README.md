@@ -48,6 +48,14 @@ A pi-kit extension that helps you start and manage feature development using Wor
   - Applies the same `.gitignore` merge rule as `/feature-setup` in the target worktree (ensures `.pi/` exists without overwriting existing target rules).
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a worktree session rooted at that feature.
 
+- `/feature-prune-merged [--yes] [--no-fetch]`
+  - Runs `git fetch --all --prune` first (best-effort) to reduce stale-ref false negatives when detecting merged branches.
+  - Finds all non-main worktrees from `wt list --format json` whose `main_state` is `integrated` or `empty`.
+  - Shows a preview list, asks for confirmation by default, then removes them with `wt remove`.
+  - Uses Worktrunk default branch deletion policy (delete only when safely merged).
+  - `--yes` skips the confirmation prompt.
+  - `--no-fetch` skips the pre-fetch step.
+
 - `/feature-validate`
   - Runs basic preflight checks (dirty state + inferred-base reporting + base freshness when inference resolves a base branch).
 
@@ -133,6 +141,9 @@ This helps catch common issues early (dirty workspace, stale base).
 
 # before push / PR
 /feature-validate
+
+# periodically clean up already-merged worktrees
+/feature-prune-merged
 ```
 
 ## Storage

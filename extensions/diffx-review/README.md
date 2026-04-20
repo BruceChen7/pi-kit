@@ -39,8 +39,7 @@ Recommended minimal config (most users only need this):
   "diffxReview": {
     "enabled": true,
     "diffxCommand": "diffx",
-    "host": "127.0.0.1",
-    "autoOpen": true
+    "host": "127.0.0.1"
   }
 }
 ```

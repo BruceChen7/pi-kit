@@ -88,7 +88,6 @@ describe("diffx-review commands", () => {
       diffxCommand: "diffx",
       host: "127.0.0.1",
       defaultPort: null,
-      autoOpen: true,
       reuseExistingSession: true,
       healthcheckTimeoutMs: 1000,
       startupTimeoutMs: 15000,
@@ -115,12 +114,13 @@ describe("diffx-review commands", () => {
       (args: string, ctx: Record<string, unknown>) => Promise<void>
     >();
     const notifications: Array<{ message: string; level: string }> = [];
+    const sendMessage = vi.fn();
 
     registerDiffxReviewCommands({
       registerCommand(name, definition) {
         commands.set(name, definition.handler);
       },
-      sendMessage: vi.fn(),
+      sendMessage,
       sendUserMessage: vi.fn(),
     } as unknown as ExtensionAPI);
 
@@ -143,6 +143,7 @@ describe("diffx-review commands", () => {
       expect.objectContaining({
         repoRoot: "/repo",
         diffArgs: ["origin/main...HEAD"],
+        openInBrowser: true,
       }),
     );
     expect(notifications).not.toContainEqual(
@@ -150,6 +151,7 @@ describe("diffx-review commands", () => {
         message: expect.stringContaining("No active"),
       }),
     );
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it("registers process-review without the deprecated finish-review alias", async () => {

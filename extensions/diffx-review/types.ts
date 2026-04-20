@@ -49,7 +49,6 @@ export interface DiffxReviewConfig {
   diffxCommand: string;
   host: string;
   defaultPort: number | null;
-  autoOpen: boolean;
   reuseExistingSession: boolean;
   healthcheckTimeoutMs: number;
   startupTimeoutMs: number;

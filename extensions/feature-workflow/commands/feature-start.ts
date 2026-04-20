@@ -8,7 +8,6 @@ import { checkRepoDirty, listDirtyPaths } from "../../shared/git.js";
 import { buildBaseBranchCandidates } from "../base-branches.js";
 import { checkBaseBranchFreshness } from "../guards.js";
 import { buildFeatureBranchName, isFeatureSlug } from "../naming.js";
-import { upsertManagedFeatureBranch } from "../registry.js";
 import { resolveFeatureCommandRuntime } from "../runtime.js";
 import { getFeatureWorkflowSetupMissingFiles } from "../setup.js";
 import { areOnlyFeatureSetupManagedDirtyPaths } from "../setup-dirty-guard.js";
@@ -170,26 +169,6 @@ export async function runFeatureStartCommand(
     createdAt: now,
     updatedAt: now,
   };
-
-  try {
-    upsertManagedFeatureBranch(repoRoot, {
-      branch,
-      slug,
-      timestamp: now,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    ctx.ui.notify(
-      `Feature worktree created, but failed to update managed feature registry: ${message}`,
-      "warning",
-    );
-    commandLog.warn("feature registry upsert failed", {
-      branch,
-      base,
-      repoRoot,
-      message,
-    });
-  }
 
   const beforeSyncResult = await runIgnoredSyncForCommand({
     command: "feature-start",

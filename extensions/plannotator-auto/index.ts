@@ -523,6 +523,7 @@ const annotateLatestPlanFile = async (
       const message = formatAnnotationMessage({
         filePath: latestPlan.repoRelativePath,
         feedback: response.result.feedback,
+        annotations: response.result.annotations,
       });
 
       if (message) {

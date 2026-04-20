@@ -447,6 +447,71 @@ describe("annotate latest plan shortcut", () => {
     }
   });
 
+  it("delivers a follow-up when annotate returns inline comments without top-level feedback", async () => {
+    vi.resetModules();
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, events, runShortcut } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-shortcut-inline-comments-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planDir = path.join(repoRoot, ".pi", "plans", repoName, "plan");
+    const latestPlanPath = path.join(planDir, "2026-04-20-latest.md");
+
+    await fs.mkdir(planDir, { recursive: true });
+    await fs.writeFile(latestPlanPath, "# Latest\n", "utf8");
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        respond: (response: unknown) => void;
+      };
+
+      request.respond({
+        status: "handled",
+        result: {
+          feedback: "",
+          annotations: [{ id: "note-1" }],
+        },
+      });
+    });
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await runShortcut("ctrl+alt+l", ctx);
+
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Annotation completed with inline comments. Please address the annotation feedback above.",
+        ),
+        { deliverAs: "followUp" },
+      );
+      expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+        "Plan annotation closed (no feedback).",
+        "info",
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it("considers both default alias directories and picks the newest plan", async () => {
     vi.resetModules();
 

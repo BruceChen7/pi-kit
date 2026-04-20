@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { isErr, type Result } from "../shared/result.js";
 import {
   getSettingsPaths,
   readSettingsFile,
@@ -69,8 +70,7 @@ export type FeatureWorkflowSetupApplyResult = {
 };
 
 export type FeatureWorkflowSetupParseResult =
-  | { ok: true; value: FeatureWorkflowSetupCliOptions }
-  | { ok: false; message: string };
+  Result<FeatureWorkflowSetupCliOptions>;
 
 const SETUP_TARGETS: FeatureWorkflowSetupTarget[] = [
   "settings",
@@ -527,11 +527,7 @@ export const getFeatureWorkflowSetupTargetMeta = (
   ...SETUP_TARGET_METADATA[target],
 });
 
-const parseTargetList = (
-  raw: string,
-):
-  | { ok: true; targets: FeatureWorkflowSetupTarget[] }
-  | { ok: false; message: string } => {
+const parseTargetList = (raw: string): Result<FeatureWorkflowSetupTarget[]> => {
   const values = uniqueStrings(
     raw.split(",").map((entry) => entry.toLowerCase()),
   );
@@ -545,6 +541,7 @@ const parseTargetList = (
         message: `Unknown target '${value}'. Supported targets: ${SETUP_TARGETS_DISPLAY}.`,
       };
     }
+
     if (!targets.includes(target)) {
       targets.push(target);
     }
@@ -552,17 +549,20 @@ const parseTargetList = (
 
   return {
     ok: true,
-    targets,
+    value: targets,
   };
+};
+
+type ParsedOptionValue = {
+  optionValue: string;
+  consumed: number;
 };
 
 const parseOptionValue = (
   token: string,
   args: string[],
   index: number,
-):
-  | { ok: true; value: string; consumed: number }
-  | { ok: false; message: string } => {
+): Result<ParsedOptionValue> => {
   const equalsIndex = token.indexOf("=");
   if (equalsIndex >= 0) {
     const inlineValue = token.slice(equalsIndex + 1).trim();
@@ -572,7 +572,14 @@ const parseOptionValue = (
         message: `Missing value for option '${token.slice(0, equalsIndex)}'.`,
       };
     }
-    return { ok: true, value: inlineValue, consumed: 1 };
+
+    return {
+      ok: true,
+      value: {
+        optionValue: inlineValue,
+        consumed: 1,
+      },
+    };
   }
 
   const next = trimToNull(args[index + 1]);
@@ -585,8 +592,10 @@ const parseOptionValue = (
 
   return {
     ok: true,
-    value: next,
-    consumed: 2,
+    value: {
+      optionValue: next,
+      consumed: 2,
+    },
   };
 };
 
@@ -613,48 +622,64 @@ export const parseFeatureWorkflowSetupArgs = (
 
     if (token === "--profile" || token.startsWith("--profile=")) {
       const parsedValue = parseOptionValue(token, args, index);
-      if (!parsedValue.ok) {
-        return parsedValue;
+      if (isErr(parsedValue)) {
+        return {
+          ok: false,
+          message: parsedValue.message,
+        };
       }
-      profileId = parsedValue.value;
-      index += parsedValue.consumed;
+
+      profileId = parsedValue.value.optionValue;
+      index += parsedValue.value.consumed;
       continue;
     }
 
     if (token === "--only" || token.startsWith("--only=")) {
       const parsedValue = parseOptionValue(token, args, index);
-      if (!parsedValue.ok) {
-        return parsedValue;
+      if (isErr(parsedValue)) {
+        return {
+          ok: false,
+          message: parsedValue.message,
+        };
       }
 
-      const parsedTargets = parseTargetList(parsedValue.value);
-      if (!parsedTargets.ok) {
-        return parsedTargets;
+      const parsedTargets = parseTargetList(parsedValue.value.optionValue);
+      if (isErr(parsedTargets)) {
+        return {
+          ok: false,
+          message: parsedTargets.message,
+        };
       }
 
-      onlyTargets = parsedTargets.targets;
-      index += parsedValue.consumed;
+      onlyTargets = parsedTargets.value;
+      index += parsedValue.value.consumed;
       continue;
     }
 
     if (token === "--skip" || token.startsWith("--skip=")) {
       const parsedValue = parseOptionValue(token, args, index);
-      if (!parsedValue.ok) {
-        return parsedValue;
+      if (isErr(parsedValue)) {
+        return {
+          ok: false,
+          message: parsedValue.message,
+        };
       }
 
-      const parsedTargets = parseTargetList(parsedValue.value);
-      if (!parsedTargets.ok) {
-        return parsedTargets;
+      const parsedTargets = parseTargetList(parsedValue.value.optionValue);
+      if (isErr(parsedTargets)) {
+        return {
+          ok: false,
+          message: parsedTargets.message,
+        };
       }
 
-      for (const target of parsedTargets.targets) {
+      for (const target of parsedTargets.value) {
         if (!skipTargets.includes(target)) {
           skipTargets.push(target);
         }
       }
 
-      index += parsedValue.consumed;
+      index += parsedValue.value.consumed;
       continue;
     }
 

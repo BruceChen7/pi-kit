@@ -10,27 +10,9 @@ type NotFoundFeatureRecordResult = {
   value: string;
 };
 
-type AmbiguousFeatureRecordResult = {
-  kind: "ambiguous-slug";
-  value: string;
-  branches: string[];
-};
-
 export type MatchFeatureRecordResult =
   | MatchedFeatureRecordResult
-  | NotFoundFeatureRecordResult
-  | AmbiguousFeatureRecordResult;
-
-const toBranches = (records: FeatureRecord[]): string[] =>
-  records.map((record) => record.branch);
-
-const matchSingle = (
-  records: FeatureRecord[],
-): MatchedFeatureRecordResult | null => {
-  if (records.length !== 1) return null;
-  const [record] = records;
-  return record ? { kind: "matched", record } : null;
-};
+  | NotFoundFeatureRecordResult;
 
 export function matchFeatureRecord(
   records: FeatureRecord[],
@@ -44,19 +26,6 @@ export function matchFeatureRecord(
   const byBranch = records.find((record) => record.branch === value);
   if (byBranch) {
     return { kind: "matched", record: byBranch };
-  }
-
-  const bySlug = records.filter((record) => record.slug === value);
-  const uniqueSlugMatch = matchSingle(bySlug);
-  if (uniqueSlugMatch) {
-    return uniqueSlugMatch;
-  }
-  if (bySlug.length > 1) {
-    return {
-      kind: "ambiguous-slug",
-      value,
-      branches: toBranches(bySlug),
-    };
   }
 
   return { kind: "not-found", value };

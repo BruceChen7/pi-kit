@@ -24,7 +24,7 @@ const session: DiffxReviewSession = {
   diffArgs: ["main..HEAD"],
   openInBrowser: true,
   cwdAtStart: "/tmp/repo",
-  startCommand: "node /tmp/diffx/dist/cli.mjs -- main..HEAD",
+  startCommand: "diffx -- main..HEAD",
   lastHealthcheckAt: null,
   lastHealthcheckOk: null,
 };

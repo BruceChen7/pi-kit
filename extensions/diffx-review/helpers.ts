@@ -183,7 +183,7 @@ export const parseFinishReviewArgs = (
     return {
       value: null,
       error:
-        "Unknown argument. Usage: /diffx-finish-review [--resolve-after-reply]",
+        "Unknown argument. Usage: /diffx-process-review [--resolve-after-reply]",
     };
   }
 

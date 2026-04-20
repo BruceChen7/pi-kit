@@ -99,19 +99,32 @@ const showSelectList = async (input: {
   });
 };
 
-const getLocalBranches = async (pi: ExtensionAPI): Promise<string[]> => {
+const getKnownBranches = async (pi: ExtensionAPI): Promise<string[]> => {
   const { stdout, code } = await pi.exec("git", [
-    "branch",
+    "for-each-ref",
+    "refs/heads",
+    "refs/remotes",
     "--format=%(refname:short)",
   ]);
   if (code !== 0) {
     return [];
   }
+
+  const seen = new Set<string>();
   return stdout
     .trim()
     .split("\n")
     .map((branch) => branch.trim())
-    .filter(Boolean);
+    .filter((branch) => {
+      if (!branch || branch === "HEAD" || branch.endsWith("/HEAD")) {
+        return false;
+      }
+      if (seen.has(branch)) {
+        return false;
+      }
+      seen.add(branch);
+      return true;
+    });
 };
 
 const getCurrentBranch = async (pi: ExtensionAPI): Promise<string | null> => {
@@ -122,24 +135,76 @@ const getCurrentBranch = async (pi: ExtensionAPI): Promise<string | null> => {
   return stdout.trim();
 };
 
-const getDefaultBranch = async (pi: ExtensionAPI): Promise<string> => {
+const getDefaultBranch = async (pi: ExtensionAPI): Promise<string | null> => {
   const { stdout, code } = await pi.exec("git", [
     "symbolic-ref",
     "refs/remotes/origin/HEAD",
     "--short",
   ]);
   if (code === 0 && stdout.trim()) {
-    return stdout.trim().replace("origin/", "");
+    return stdout.trim();
   }
 
-  const branches = await getLocalBranches(pi);
+  const branches = await getKnownBranches(pi);
+  if (branches.includes("origin/main")) {
+    return "origin/main";
+  }
+  if (branches.includes("origin/master")) {
+    return "origin/master";
+  }
   if (branches.includes("main")) {
     return "main";
   }
   if (branches.includes("master")) {
     return "master";
   }
-  return branches[0] ?? "main";
+  return branches[0] ?? null;
+};
+
+const scoreBranch = (branch: string, defaultBranch: string | null): number => {
+  if (!defaultBranch) {
+    return 2;
+  }
+  if (branch === defaultBranch) {
+    return 0;
+  }
+  if (branch === defaultBranch.replace(/^origin\//, "")) {
+    return 1;
+  }
+  return 2;
+};
+
+export const getDiffxReviewBranchSelectionState = async (
+  pi: ExtensionAPI,
+): Promise<{
+  branches: string[];
+  currentBranch: string | null;
+  defaultBranch: string | null;
+}> => {
+  const [branches, currentBranch, defaultBranch] = await Promise.all([
+    getKnownBranches(pi),
+    getCurrentBranch(pi),
+    getDefaultBranch(pi),
+  ]);
+
+  const candidates = currentBranch
+    ? branches.filter((branch) => branch !== currentBranch)
+    : branches;
+
+  const sortedBranches = [...candidates].sort((left, right) => {
+    const leftScore = scoreBranch(left, defaultBranch);
+    const rightScore = scoreBranch(right, defaultBranch);
+    if (leftScore !== rightScore) {
+      return leftScore - rightScore;
+    }
+    return left.localeCompare(right);
+  });
+
+  return {
+    branches: sortedBranches,
+    currentBranch,
+    defaultBranch,
+  };
 };
 
 const getRecentCommits = async (
@@ -175,27 +240,14 @@ const selectBranch = async (
   ctx: ExtensionCommandContext,
   title: string,
 ): Promise<string | null> => {
-  const [branches, currentBranch, defaultBranch] = await Promise.all([
-    getLocalBranches(pi),
-    getCurrentBranch(pi),
-    getDefaultBranch(pi),
-  ]);
-
-  const candidates = currentBranch
-    ? branches.filter((branch) => branch !== currentBranch)
-    : branches;
-  if (candidates.length === 0) {
+  const { branches, defaultBranch } =
+    await getDiffxReviewBranchSelectionState(pi);
+  if (branches.length === 0) {
     ctx.ui.notify("No other branches available to compare", "warning");
     return null;
   }
 
-  const sortedBranches = [...candidates].sort((left, right) => {
-    if (left === defaultBranch) return -1;
-    if (right === defaultBranch) return 1;
-    return left.localeCompare(right);
-  });
-
-  const items: SelectItem[] = sortedBranches.map((branch) => ({
+  const items: SelectItem[] = branches.map((branch) => ({
     value: branch,
     label: branch,
     description: branch === defaultBranch ? "(default)" : "",
@@ -206,9 +258,10 @@ const selectBranch = async (
     title,
     items,
     searchable: true,
-    initialValue: sortedBranches.includes(defaultBranch)
-      ? defaultBranch
-      : undefined,
+    initialValue:
+      defaultBranch && branches.includes(defaultBranch)
+        ? defaultBranch
+        : undefined,
   });
 };
 

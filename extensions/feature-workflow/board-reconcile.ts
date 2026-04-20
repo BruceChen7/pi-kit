@@ -4,9 +4,9 @@ import { branchExists, type GitRunner } from "../shared/git.js";
 
 import type { FeatureBoard, FeatureBoardCard } from "./board.js";
 import {
+  type FeatureCardSidecar,
   laneToSidecarStatus,
   readFeatureCardSidecar,
-  type FeatureCardSidecar,
 } from "./board-sidecar.js";
 
 export type FeatureBoardReconcileIssue = {

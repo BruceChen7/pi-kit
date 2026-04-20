@@ -1,5 +1,10 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
+import {
+  runFeatureBoardApplyCommand,
+  runFeatureBoardReconcileCommand,
+  runFeatureBoardStatusCommand,
+} from "./commands/feature-board.js";
 import { runFeatureListCommand } from "./commands/feature-list.js";
 import { runFeaturePruneMergedCommand } from "./commands/feature-prune-merged.js";
 import { runFeatureSetupCommand } from "./commands/feature-setup.js";
@@ -33,6 +38,22 @@ export default function featureWorkflowExtension(pi: ExtensionAPI): void {
   pi.registerCommand("feature-list", {
     description: "List feature records for this repo",
     handler: async (_args, ctx) => runFeatureListCommand(pi, ctx),
+  });
+
+  pi.registerCommand("feature-board-status", {
+    description: "Read feature board status and parser issues",
+    handler: async (_args, ctx) => runFeatureBoardStatusCommand(pi, ctx),
+  });
+
+  pi.registerCommand("feature-board-reconcile", {
+    description: "Reconcile feature board intent against git/worktree state",
+    handler: async (_args, ctx) => runFeatureBoardReconcileCommand(pi, ctx),
+  });
+
+  pi.registerCommand("feature-board-apply", {
+    description: "Apply the next branch/worktree step for a board card",
+    handler: async (args, ctx) =>
+      runFeatureBoardApplyCommand(pi, ctx, parseCommandArgs(args)),
   });
 
   pi.registerCommand("feature-switch", {

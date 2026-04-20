@@ -6,11 +6,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createRepoGitRunner, runGit } from "../shared/git.js";
 import { parseFeatureBoardFromText } from "./board.js";
-import { writeFeatureCardSidecar } from "./board-sidecar.js";
 import {
   buildFeatureBoardReconcileMessage,
   reconcileFeatureBoard,
 } from "./board-reconcile.js";
+import { writeFeatureCardSidecar } from "./board-sidecar.js";
 
 const tempDirs: string[] = [];
 

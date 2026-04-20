@@ -43,6 +43,6 @@ For each GAP, specify:
 
 ## Step 4: Write test plan artifact
 Use the template in `references/test-plan-template.md` and write to:
-`$PLANS_DIR/{user}-{branch}-test-plan-{datetime}.md`
+`.pi/plans/<repo-slug>/plan-eng-review/{user}-{branch}-test-plan-{datetime}.md`
 
 The test plan should list pages/routes, key interactions, edge cases, and critical paths.

@@ -122,7 +122,7 @@ Ask: “Which test would make you confident shipping at 2am?”
 - Information architecture (what users see first/second/third)
 - Interaction state coverage: loading/empty/error/success/partial
 - Accessibility basics
-- If significant UI scope: recommend `/plan-design-review` before implementation.
+- If significant UI scope and gstack design skills are installed: recommend `/plan-design-review` before implementation.
 
 ---
 

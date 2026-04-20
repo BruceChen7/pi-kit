@@ -14,7 +14,6 @@ import {
   type InferredBaseBranchResult,
   inferBaseBranch,
 } from "../infer-base-branch.js";
-import { readManagedFeatureRegistry } from "../registry.js";
 import { forkSessionForWorktree } from "../session-fork.js";
 import type { FeatureRecord } from "../storage.js";
 import {
@@ -284,11 +283,7 @@ export async function loadFeatureRecordsFromWt(input: {
     repoRoot: input.repoRoot,
   });
 
-  const managedFeatureBranches = readManagedFeatureRegistry(input.repoRoot);
-  const result = await listFeatureRecordsFromWorktree(
-    input.runWt,
-    managedFeatureBranches,
-  );
+  const result = await listFeatureRecordsFromWorktree(input.runWt);
   if (result.ok === false) {
     notifyAndLogWtError({
       ctx: input.ctx,

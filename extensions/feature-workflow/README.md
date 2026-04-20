@@ -24,9 +24,8 @@ A pi-kit extension that helps you start and manage feature development using Wor
   - Prompts only for:
     1) `Branch slug:`
     2) `Base branch:`
-  - Keeps command logic thin: collect input, run `wt switch --create`, update the managed-feature registry, and switch the pi session.
+  - Keeps command logic thin: collect input, run `wt switch --create`, and switch the pi session.
   - Relies on `/feature-setup`-generated Worktrunk hooks for shared ignored-file automation.
-  - Records successful creations in a repo-local managed-feature registry under `.pi/` so later commands only operate on feature-workflow-managed branches.
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a new session whose `cwd` is the worktree path.
   - Base branch options are derived from **local branches**, prioritized as:
     1) resolved **inferred base** (when git graph inference resolves one)
@@ -39,17 +38,11 @@ A pi-kit extension that helps you start and manage feature development using Wor
 
 - `/feature-list`
   - Lists active feature worktrees from `wt list --format json`.
-  - Only shows branches that are both:
-    - active in Worktrunk, and
-    - present in the feature-workflow managed registry
-  - Uses the registry for managed branch identity (`branch` + `slug`). Runtime base information is inferred from git graph, not branch name.
+  - Worktrunk is the source of truth for discovery; every active worktree branch is shown.
+  - Runtime base information is inferred from git graph, not branch name.
 
-- `/feature-switch <branch|slug>`
-  - Canonical lookup key is **branch name**. For new branches, branch name is the same as the slug.
-  - Runs runtime ignored-sync checks/actions on both lifecycle phases:
-    - `before-session-switch` (strict mode can block session switch)
-    - `after-session-switch` (quick mode fallback actions)
-  - A unique `slug` is accepted as a convenience alias. If a slug matches multiple branches (for example during legacy migration), the command asks you to use the full branch name.
+- `/feature-switch <branch>`
+  - Lookup key is **branch name**.
   - Ensures the worktree exists via `wt switch`.
   - Applies the same `.gitignore` merge rule as `/feature-setup` in the target worktree (ensures `.pi/` exists without overwriting existing target rules).
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a worktree session rooted at that feature.
@@ -154,21 +147,18 @@ This helps catch common issues early (dirty workspace, stale base).
 
 ## Storage
 
-Feature/worktree visibility uses two inputs:
+Feature/worktree visibility uses one input:
 
 1. Worktrunk (`wt list --format json`) for active worktrees
-2. A repo-local feature-workflow managed registry under `.pi/`
 
 Identity semantics:
 - Canonical key: `branch`
-- Convenience alias: `slug`
+- `slug` mirrors `branch` for UI compatibility
 
 Runtime base semantics:
 - base is **inferred** from git graph, not encoded into branch name
 - inference considers local `main`, `master`, and `release*` branches
 - inference prefers `fork-point`, then falls back to `merge-base`
-
-The managed registry is used only to identify feature-workflow-managed branches and their slugs. This ensures ordinary branches such as `user/demo` are not treated as feature-workflow branches unless they were created by `/feature-start` (or carried forward from legacy managed records).
 
 ## Configuration
 

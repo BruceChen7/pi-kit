@@ -72,6 +72,7 @@ describe("feature-workflow extension", () => {
 
     expect(commands.sort()).toEqual([
       "feature-list",
+      "feature-prune-merged",
       "feature-setup",
       "feature-start",
       "feature-switch",
@@ -1047,5 +1048,466 @@ describe("feature-workflow extension", () => {
         delete process.env.HOME;
       }
     }
+  });
+
+  it("prunes integrated and empty worktrees after confirmation", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const resolvedRepoRoot = runGit(repoRoot, [
+      "rev-parse",
+      "--show-toplevel",
+    ]).stdout.trim();
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const confirmCalls: Array<{ prompt: string; description: string }> = [];
+
+    const wtListJson = JSON.stringify([
+      {
+        branch: "master",
+        path: "/repo",
+        is_main: true,
+        main_state: "is_main",
+      },
+      {
+        branch: "feat/integrated",
+        path: "/repo.feat-integrated",
+        is_main: false,
+        main_state: "integrated",
+      },
+      {
+        branch: "feat/empty",
+        path: "/repo.feat-empty",
+        is_main: false,
+        main_state: "empty",
+      },
+      {
+        branch: "feat/diverged",
+        path: "/repo.feat-diverged",
+        is_main: false,
+        main_state: "diverged",
+      },
+    ]);
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return { code: 0, stdout: wtListJson, stderr: "" };
+      }
+
+      if (args[2] === "remove" && args[3] === "feat/integrated") {
+        return { code: 0, stdout: "{}", stderr: "" };
+      }
+
+      if (args[2] === "remove" && args[3] === "feat/empty") {
+        return { code: 0, stdout: "{}", stderr: "" };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-prune-merged");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        async confirm(prompt: string, description: string) {
+          confirmCalls.push({ prompt, description });
+          return true;
+        },
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+
+    expect(confirmCalls).toEqual([
+      {
+        prompt: "Delete 2 merged worktree(s)?",
+        description: expect.stringContaining("feat/integrated"),
+      },
+    ]);
+
+    expect(exec).toHaveBeenNthCalledWith(1, "wt", [
+      "-C",
+      resolvedRepoRoot,
+      "list",
+      "--format",
+      "json",
+    ]);
+    expect(exec).toHaveBeenNthCalledWith(2, "wt", [
+      "-C",
+      resolvedRepoRoot,
+      "remove",
+      "feat/integrated",
+      "--yes",
+      "--foreground",
+      "--format",
+      "json",
+    ]);
+    expect(exec).toHaveBeenNthCalledWith(3, "wt", [
+      "-C",
+      resolvedRepoRoot,
+      "remove",
+      "feat/empty",
+      "--yes",
+      "--foreground",
+      "--format",
+      "json",
+    ]);
+
+    expect(
+      notifications.some((item) =>
+        item.message.includes("feature-prune-merged: removed 2/2 worktree(s)"),
+      ),
+    ).toBe(true);
+  });
+
+  it("continues pruning when auto-fetch fails", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    runGit(repoRoot, [
+      "remote",
+      "add",
+      "origin",
+      "/tmp/pi-kit-missing-remote-do-not-create",
+    ]);
+    const resolvedRepoRoot = runGit(repoRoot, [
+      "rev-parse",
+      "--show-toplevel",
+    ]).stdout.trim();
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              branch: "feat/integrated",
+              path: "/repo.feat-integrated",
+              is_main: false,
+              main_state: "integrated",
+            },
+          ]),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "remove" && args[3] === "feat/integrated") {
+        return { code: 0, stdout: "{}", stderr: "" };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-prune-merged");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("--yes", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        async confirm(prompt: string) {
+          throw new Error(`confirm should not run: ${prompt}`);
+        },
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+
+    expect(exec).toHaveBeenNthCalledWith(1, "wt", [
+      "-C",
+      resolvedRepoRoot,
+      "list",
+      "--format",
+      "json",
+    ]);
+    expect(exec).toHaveBeenNthCalledWith(2, "wt", [
+      "-C",
+      resolvedRepoRoot,
+      "remove",
+      "feat/integrated",
+      "--yes",
+      "--foreground",
+      "--format",
+      "json",
+    ]);
+    expect(
+      notifications.some(
+        (item) =>
+          item.level === "warning" &&
+          item.message.includes("git fetch --all --prune failed"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not prune when confirmation is declined", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const resolvedRepoRoot = runGit(repoRoot, [
+      "rev-parse",
+      "--show-toplevel",
+    ]).stdout.trim();
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              branch: "feat/integrated",
+              path: "/repo.feat-integrated",
+              is_main: false,
+              main_state: "integrated",
+            },
+          ]),
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-prune-merged");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        async confirm() {
+          return false;
+        },
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledWith("wt", [
+      "-C",
+      resolvedRepoRoot,
+      "list",
+      "--format",
+      "json",
+    ]);
+    expect(
+      notifications.some((item) => item.message.includes("Cancelled")),
+    ).toBe(true);
+  });
+
+  it("skips confirmation in --yes mode when pruning merged worktrees", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const resolvedRepoRoot = runGit(repoRoot, [
+      "rev-parse",
+      "--show-toplevel",
+    ]).stdout.trim();
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              branch: "feat/integrated",
+              path: "/repo.feat-integrated",
+              is_main: false,
+              main_state: "integrated",
+            },
+          ]),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "remove" && args[3] === "feat/integrated") {
+        return { code: 0, stdout: "{}", stderr: "" };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-prune-merged");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("--yes", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        async confirm(prompt: string) {
+          throw new Error(`confirm should not run: ${prompt}`);
+        },
+        notify() {
+          // no-op
+        },
+      },
+    });
+
+    expect(exec).toHaveBeenNthCalledWith(1, "wt", [
+      "-C",
+      resolvedRepoRoot,
+      "list",
+      "--format",
+      "json",
+    ]);
+    expect(exec).toHaveBeenNthCalledWith(2, "wt", [
+      "-C",
+      resolvedRepoRoot,
+      "remove",
+      "feat/integrated",
+      "--yes",
+      "--foreground",
+      "--format",
+      "json",
+    ]);
+  });
+
+  it("reports when no merged worktrees are found", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              branch: "master",
+              path: "/repo",
+              is_main: true,
+              main_state: "is_main",
+            },
+            {
+              branch: "feat/diverged",
+              path: "/repo.feat-diverged",
+              is_main: false,
+              main_state: "diverged",
+            },
+          ]),
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-prune-merged");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        async confirm() {
+          throw new Error(
+            "confirm should not run when there are no candidates",
+          );
+        },
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(
+      notifications.some((item) =>
+        item.message.includes("No merged worktrees to prune"),
+      ),
+    ).toBe(true);
   });
 });

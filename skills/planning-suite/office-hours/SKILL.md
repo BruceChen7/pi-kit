@@ -29,15 +29,17 @@ Recommendation: ... (optional)
 Wait for the user’s response before continuing.
 
 ## Setup & context audit
-1. Determine repo metadata and plan directory:
+> Stateless execution rule: Pi shell calls are often isolated. Recompute repo/path variables inside each command that needs them.
+
+1. Determine repo metadata and ensure plan directory exists:
    ```bash
-   REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-   SLUG=$(basename "$REPO_ROOT")
-   BRANCH=$(git branch --show-current 2>/dev/null || echo "no-branch")
-   USER=$(whoami)
-   DATETIME=$(date +%Y%m%d-%H%M%S)
-   PLANS_DIR="$REPO_ROOT/.pi/plans/$SLUG/office-hours"
-   mkdir -p "$PLANS_DIR"
+   REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \
+   SLUG=$(basename "$REPO_ROOT"); \
+   BRANCH=$(git branch --show-current 2>/dev/null || echo "no-branch"); \
+   USER=$(whoami); \
+   DATETIME=$(date +%Y%m%d-%H%M%S); \
+   mkdir -p "$REPO_ROOT/.pi/plans/$SLUG/office-hours"; \
+   printf "REPO_ROOT=%s\nSLUG=%s\nBRANCH=%s\nUSER=%s\nDATETIME=%s\n" "$REPO_ROOT" "$SLUG" "$BRANCH" "$USER" "$DATETIME"
    ```
 2. Read `AGENTS.md` and `TODOS.md` if they exist.
 3. Run:
@@ -45,7 +47,7 @@ Wait for the user’s response before continuing.
    - `git status -sb`
    - `git diff --stat`
 4. List prior office-hours docs:
-   - `ls -t "$PLANS_DIR"/*.md 2>/dev/null`
+   - `REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); SLUG=$(basename "$REPO_ROOT"); ls -t "$REPO_ROOT/.pi/plans/$SLUG/office-hours"/*.md 2>/dev/null`
 
 ## Phase 1: Mode selection
 Ask the user which mode fits best:
@@ -62,7 +64,7 @@ Ask them one at a time and push for specificity.
 ## Phase 2.5: Related design discovery
 After the user states the problem, extract 3–5 keywords and search:
 ```bash
-rg -n -i "<k1>|<k2>|<k3>" "$REPO_ROOT/.pi/plans" 2>/dev/null
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); rg -n -i "<k1>|<k2>|<k3>" "$REPO_ROOT/.pi/plans" 2>/dev/null
 ```
 If relevant docs exist, read and summarize them, then ask whether to build on them.
 
@@ -74,7 +76,7 @@ Use `references/approaches.md`. Provide at least 2 approaches and ask for approv
 
 ## Phase 5: Write the design doc
 Use the template in `references/design-doc-template.md`.
-- File path: `$PLANS_DIR/{user}-{branch}-office-hours-{datetime}.md`
+- File path: `.pi/plans/<repo-slug>/office-hours/{user}-{branch}-office-hours-{datetime}.md`
 - If a prior doc exists for the same branch, add a `Supersedes:` line.
 
 Present the draft and ask:
@@ -84,4 +86,5 @@ C) Start over
 
 ## Phase 6: Closing
 - Summarize the decision and the immediate next action.
-- Suggest next skills if appropriate: `/plan-ceo-review`, `/plan-eng-review`, `/plan-design-review`.
+- Suggest next skills if appropriate: `/plan-ceo-review`, `/plan-eng-review`.
+- If gstack design skills are installed, optionally suggest `/plan-design-review`.

@@ -27,18 +27,20 @@ Recommendation: ... (optional)
 ```
 
 ## Setup
+> Stateless execution rule: Pi shell calls are often isolated. Recompute repo/path variables inside each command that needs them.
+
 1. Resolve repo metadata:
    ```bash
-   REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-   SLUG=$(basename "$REPO_ROOT")
-   BRANCH=$(git branch --show-current 2>/dev/null || echo "no-branch")
-   PLANS_DIR="$REPO_ROOT/.pi/plans/$SLUG/plan-eng-review"
-   mkdir -p "$PLANS_DIR"
+   REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \
+   SLUG=$(basename "$REPO_ROOT"); \
+   BRANCH=$(git branch --show-current 2>/dev/null || echo "no-branch"); \
+   mkdir -p "$REPO_ROOT/.pi/plans/$SLUG/plan-eng-review"; \
+   printf "REPO_ROOT=%s\nSLUG=%s\nBRANCH=%s\n" "$REPO_ROOT" "$SLUG" "$BRANCH"
    ```
 2. Read `AGENTS.md` and `TODOS.md` if they exist.
 3. Find the latest office-hours design doc (if any):
    ```bash
-   ls -t "$REPO_ROOT/.pi/plans/$SLUG/office-hours"/*.md 2>/dev/null | head -1
+   REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); SLUG=$(basename "$REPO_ROOT"); ls -t "$REPO_ROOT/.pi/plans/$SLUG/office-hours"/*.md 2>/dev/null | head -1
    ```
    If found, read it and use it as plan context.
 4. Ask the user to provide the plan (paste it or point to a file). Read the file if given.
@@ -80,5 +82,5 @@ Always include these sections in your final response:
 
 ## Test plan artifact
 After the test review, write a test plan file:
-- Path: `$PLANS_DIR/{user}-{branch}-test-plan-{datetime}.md`
+- Path: `.pi/plans/<repo-slug>/plan-eng-review/{user}-{branch}-test-plan-{datetime}.md`
 - Template: `references/test-plan-template.md`

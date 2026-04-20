@@ -25,7 +25,7 @@ Each item is tagged with a detection confidence level:
 
 - **[HIGH]** — Reliably detectable via grep/pattern match. Definitive findings.
 - **[MEDIUM]** — Detectable via pattern aggregation or heuristic. Flag as findings but expect some noise.
-- **[LOW]** — Requires understanding visual intent. Present as: "Possible issue — verify visually or run /design-review."
+- **[LOW]** — Requires understanding visual intent. Present as: "Possible issue — verify visually or run /design-review (if gstack design skills are installed)."
 
 ---
 
@@ -39,7 +39,7 @@ Each item is tagged with a detection confidence level:
 **ASK** (everything else — requires design judgment):
 - All AI slop findings, typography structure, spacing choices, interaction state gaps, DESIGN.md violations
 
-**LOW confidence items** → present as "Possible: [description]. Verify visually or run /design-review." Never AUTO-FIX.
+**LOW confidence items** → present as "Possible: [description]. Verify visually or run /design-review (if gstack design skills are installed)." Never AUTO-FIX.
 
 ---
 
@@ -56,7 +56,7 @@ Design Review: N issues (X auto-fixable, Y need input, Z possible)
   Recommended fix: suggested fix
 
 **POSSIBLE (verify visually):**
-- [file:line] Possible issue — verify with /design-review
+- [file:line] Possible issue — verify with /design-review (if installed)
 ```
 
 If no issues found: `Design Review: No issues found.`

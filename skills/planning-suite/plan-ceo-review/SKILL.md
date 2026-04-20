@@ -28,32 +28,40 @@ Recommendation: ... (optional)
 ```
 
 ## Setup
+> Stateless execution rule: Pi shell calls are often isolated. Recompute repo/path variables inside each command that needs them.
+
 1. Resolve repo metadata and base branch:
    ```bash
-   REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-   SLUG=$(basename "$REPO_ROOT")
-   BRANCH=$(git branch --show-current 2>/dev/null || echo "no-branch")
-   BASE=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
-   if [ -z "$BASE" ]; then
-     if git show-ref --verify --quiet refs/remotes/origin/main; then
-       BASE=main
-     elif git show-ref --verify --quiet refs/remotes/origin/master; then
-       BASE=master
-     else
-       BASE=main
-     fi
-   fi
-   PLANS_DIR="$REPO_ROOT/.pi/plans/$SLUG/ceo-review"
-   mkdir -p "$PLANS_DIR"
+   REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); \
+   SLUG=$(basename "$REPO_ROOT"); \
+   BRANCH=$(git branch --show-current 2>/dev/null || echo "no-branch"); \
+   HAS_ORIGIN=false; \
+   if git remote get-url origin >/dev/null 2>&1; then HAS_ORIGIN=true; fi; \
+   if [ "$HAS_ORIGIN" = "true" ]; then \
+     BASE=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@'); \
+     if [ -z "$BASE" ]; then \
+       if git show-ref --verify --quiet refs/remotes/origin/main; then BASE=main; \
+       elif git show-ref --verify --quiet refs/remotes/origin/master; then BASE=master; \
+       else BASE=$(git branch --show-current 2>/dev/null || echo "main"); fi; \
+     fi; \
+     BASE_REF="origin/$BASE"; \
+   else \
+     if git show-ref --verify --quiet refs/heads/main; then BASE=main; \
+     elif git show-ref --verify --quiet refs/heads/master; then BASE=master; \
+     else BASE=$(git branch --show-current 2>/dev/null || echo "main"); fi; \
+     BASE_REF="$BASE"; \
+   fi; \
+   mkdir -p "$REPO_ROOT/.pi/plans/$SLUG/ceo-review"; \
+   printf "REPO_ROOT=%s\nSLUG=%s\nBRANCH=%s\nBASE=%s\nBASE_REF=%s\n" "$REPO_ROOT" "$SLUG" "$BRANCH" "$BASE" "$BASE_REF"
    ```
 2. System audit (context only):
    - `git log --oneline -30`
-   - `git diff --no-ext-diff origin/$BASE --stat` (if origin exists)
+   - `HAS_ORIGIN=false; if git remote get-url origin >/dev/null 2>&1; then HAS_ORIGIN=true; fi; if [ "$HAS_ORIGIN" = "true" ]; then BASE=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@'); [ -z "$BASE" ] && { if git show-ref --verify --quiet refs/remotes/origin/main; then BASE=main; elif git show-ref --verify --quiet refs/remotes/origin/master; then BASE=master; else BASE=$(git branch --show-current 2>/dev/null || echo "main"); fi; }; BASE_REF="origin/$BASE"; else if git show-ref --verify --quiet refs/heads/main; then BASE=main; elif git show-ref --verify --quiet refs/heads/master; then BASE=master; else BASE=$(git branch --show-current 2>/dev/null || echo "main"); fi; BASE_REF="$BASE"; fi; git diff --no-ext-diff "$BASE_REF" --stat 2>/dev/null || true`
    - `git stash list`
    - `rg -n "TODO|FIXME|HACK|XXX" -g "!**/node_modules/**" -g "!**/.git/**" . | head -30`
 3. Read `AGENTS.md`, `TODOS.md`, and any architecture docs if present.
 4. If an office-hours doc exists, read the latest:
-   - `$REPO_ROOT/.pi/plans/$SLUG/office-hours/*.md`
+   - `REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); SLUG=$(basename "$REPO_ROOT"); ls -t "$REPO_ROOT/.pi/plans/$SLUG/office-hours"/*.md 2>/dev/null | head -1`
 5. Ask the user to provide the plan (paste it or point to a file). Read the plan file if given.
 
 ## Step 0: Alternatives (mandatory)
@@ -69,7 +77,7 @@ Use `references/modes.md` to explain and select the mode:
 ## Step 2: Persist the CEO plan (expansion/selective only)
 If the user chose Expansion or Selective Expansion, write the accepted scope decisions using
 `references/ceo-plan-template.md` to:
-- `$PLANS_DIR/{date}-{feature-slug}.md`
+- `.pi/plans/<repo-slug>/ceo-review/{date}-{feature-slug}.md`
 
 ## Step 3: Run the review sections
 Work through `references/review-sections.md` in order. Provide diagrams and call out risks.
@@ -80,4 +88,4 @@ Summarize:
 - Selected mode and approach
 - Top risks and mitigations
 - Open questions
-- Recommended next step (e.g., `/plan-eng-review`, `/plan-design-review`)
+- Recommended next step (e.g., `/plan-eng-review`; optionally `/plan-design-review` if gstack design skills are installed)

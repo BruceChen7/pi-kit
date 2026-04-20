@@ -19,6 +19,7 @@ import {
 import type {
   PlanFileConfig,
   PlanReviewSessionState,
+  ReviewTargetKind,
   SessionKeyContext,
 } from "./plan-review/types.ts";
 import {
@@ -58,10 +59,14 @@ type SessionRuntimeState = PlanReviewSessionState & {
 };
 
 const DEFAULT_PLAN_SUBDIR = "plan";
+const DEFAULT_SPECS_SUBDIR = "specs";
 const DEFAULT_CODE_REVIEW_PROBE_TIMEOUT_MS = 1_500;
 const DEFAULT_CODE_REVIEW_TIMEOUT_MS = 30_000;
-const SYNC_CODE_REVIEW_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
+const SYNC_PLANNOTATOR_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
+const SYNC_CODE_REVIEW_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
+const SYNC_ANNOTATE_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
+const SPEC_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
 const ANNOTATE_LATEST_PLAN_SHORTCUT = "ctrl+alt+l";
 const sessionRuntimeState = new Map<string, SessionRuntimeState>();
@@ -79,11 +84,11 @@ const getReviewWidgetMessage = (
     state.reviewInFlight || state.activeCodeReviewByCwd.has(cwd);
 
   if (planReviewActive && codeReviewActive) {
-    return "Plan/Code review is active";
+    return "Plan/Spec/Code review is active";
   }
 
   if (planReviewActive) {
-    return "Plan review is active";
+    return "Plan/Spec review is active";
   }
 
   if (codeReviewActive) {
@@ -263,7 +268,7 @@ const resolveRepoSlugFromGitCommonDir = (cwd: string): string | null => {
   return candidate.length > 0 ? candidate : null;
 };
 
-const getDefaultPlanDirs = (cwd: string): string[] => {
+const getDefaultReviewRoots = (cwd: string): string[] => {
   const candidates = [
     resolveRepoSlugFromGitCommonDir(cwd),
     path.basename(cwd).trim(),
@@ -271,12 +276,20 @@ const getDefaultPlanDirs = (cwd: string): string[] => {
 
   return Array.from(
     new Set(
-      candidates.map((candidate) =>
-        path.join(".pi", "plans", candidate, DEFAULT_PLAN_SUBDIR),
-      ),
+      candidates.map((candidate) => path.join(".pi", "plans", candidate)),
     ),
   );
 };
+
+const getDefaultPlanDirs = (cwd: string): string[] =>
+  getDefaultReviewRoots(cwd).map((root) =>
+    path.join(root, DEFAULT_PLAN_SUBDIR),
+  );
+
+const getDefaultSpecDirs = (cwd: string): string[] =>
+  getDefaultReviewRoots(cwd).map((root) =>
+    path.join(root, DEFAULT_SPECS_SUBDIR),
+  );
 
 const isConfiguredPlanDirectory = (
   planFile: string,
@@ -321,6 +334,17 @@ const isPlanFileMatch = (planDir: string, targetPath: string): boolean => {
 const isPlanFileMatchAny = (planDirs: string[], targetPath: string): boolean =>
   planDirs.some((planDir) => isPlanFileMatch(planDir, targetPath));
 
+const isSpecFileMatch = (specDir: string, targetPath: string): boolean => {
+  if (path.dirname(targetPath) !== specDir) {
+    return false;
+  }
+
+  return SPEC_FILE_PATTERN.test(path.basename(targetPath));
+};
+
+const isSpecFileMatchAny = (specDirs: string[], targetPath: string): boolean =>
+  specDirs.some((specDir) => isSpecFileMatch(specDir, targetPath));
+
 const resolvePlanPath = (cwd: string, planFile: string): string =>
   path.resolve(cwd, planFile);
 
@@ -336,9 +360,15 @@ const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
   const planFiles = config.planFile
     ? [config.planFile]
     : getDefaultPlanDirs(ctx.cwd);
+  const specFiles = config.planFile
+    ? planFiles.map((planFile) =>
+        path.join(path.dirname(planFile), DEFAULT_SPECS_SUBDIR),
+      )
+    : getDefaultSpecDirs(ctx.cwd);
   const planFile = planFiles[0];
   const resolvedPlanPath = resolvePlanPath(ctx.cwd, planFile);
   const resolvedPlanPaths = resolvePlanPaths(ctx.cwd, planFiles);
+  const resolvedSpecPaths = resolvePlanPaths(ctx.cwd, specFiles);
 
   if (!isConfiguredPlanDirectory(planFile, resolvedPlanPath)) {
     log?.debug(
@@ -356,12 +386,14 @@ const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
     planFile,
     resolvedPlanPath,
     resolvedPlanPaths,
+    resolvedSpecPaths,
   });
 
   return {
     planFile,
     resolvedPlanPath,
     resolvedPlanPaths,
+    resolvedSpecPaths,
   };
 };
 
@@ -400,17 +432,39 @@ const summarizeToolArgs = (
   };
 };
 
+type ReviewTargetMatch = {
+  kind: ReviewTargetKind;
+  reviewFile: string;
+};
+
+const resolveReviewTargetMatch = (
+  ctx: Pick<ExtensionContext, "cwd">,
+  planConfig: PlanFileConfig,
+  targetPath: string,
+): ReviewTargetMatch | null => {
+  if (isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath)) {
+    return {
+      kind: "plan",
+      reviewFile: toRepoRelativePath(ctx, targetPath),
+    };
+  }
+
+  if (isSpecFileMatchAny(planConfig.resolvedSpecPaths, targetPath)) {
+    return {
+      kind: "spec",
+      reviewFile: toRepoRelativePath(ctx, targetPath),
+    };
+  }
+
+  return null;
+};
+
 export const resolvePlanFileForReview = (
   ctx: Pick<ExtensionContext, "cwd">,
   planConfig: PlanFileConfig,
   targetPath: string,
-): string | null => {
-  if (!isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath)) {
-    return null;
-  }
-
-  return toRepoRelativePath(ctx, targetPath);
-};
+): string | null =>
+  resolveReviewTargetMatch(ctx, planConfig, targetPath)?.reviewFile ?? null;
 
 export const shouldQueueReviewForToolPath = (
   planConfig: PlanFileConfig | null,
@@ -420,7 +474,10 @@ export const shouldQueueReviewForToolPath = (
     return true;
   }
 
-  return !isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath);
+  return (
+    !isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath) &&
+    !isSpecFileMatchAny(planConfig.resolvedSpecPaths, targetPath)
+  );
 };
 
 export const findLatestPlanFileForAnnotation = (
@@ -433,34 +490,50 @@ export const findLatestPlanFileForAnnotation = (
   let latestPath: string | null = null;
   let latestMtimeMs = Number.NEGATIVE_INFINITY;
 
-  for (const planDir of planConfig.resolvedPlanPaths) {
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(planDir).sort();
-    } catch {
-      continue;
-    }
+  const candidateSets: Array<{
+    dirs: string[];
+    pattern: RegExp;
+  }> = [
+    {
+      dirs: planConfig.resolvedPlanPaths,
+      pattern: PLAN_FILE_PATTERN,
+    },
+    {
+      dirs: planConfig.resolvedSpecPaths,
+      pattern: SPEC_FILE_PATTERN,
+    },
+  ];
 
-    for (const entry of entries) {
-      if (!PLAN_FILE_PATTERN.test(entry)) {
-        continue;
-      }
-
-      const candidatePath = path.join(planDir, entry);
-      let stats: fs.Stats;
+  for (const candidateSet of candidateSets) {
+    for (const planDir of candidateSet.dirs) {
+      let entries: string[];
       try {
-        stats = fs.statSync(candidatePath);
+        entries = fs.readdirSync(planDir).sort();
       } catch {
         continue;
       }
 
-      if (!stats.isFile()) {
-        continue;
-      }
+      for (const entry of entries) {
+        if (!candidateSet.pattern.test(entry)) {
+          continue;
+        }
 
-      if (stats.mtimeMs >= latestMtimeMs) {
-        latestPath = candidatePath;
-        latestMtimeMs = stats.mtimeMs;
+        const candidatePath = path.join(planDir, entry);
+        let stats: fs.Stats;
+        try {
+          stats = fs.statSync(candidatePath);
+        } catch {
+          continue;
+        }
+
+        if (!stats.isFile()) {
+          continue;
+        }
+
+        if (stats.mtimeMs >= latestMtimeMs) {
+          latestPath = candidatePath;
+          latestMtimeMs = stats.mtimeMs;
+        }
       }
     }
   }
@@ -504,7 +577,9 @@ const annotateLatestPlanFile = async (
     return;
   }
 
-  const requestPlannotator = createRequestPlannotator(pi.events);
+  const requestPlannotator = createRequestPlannotator(pi.events, {
+    timeoutMs: SYNC_ANNOTATE_TIMEOUT_MS,
+  });
 
   log?.info("plannotator-auto annotating latest plan file", {
     cwd: ctx.cwd,
@@ -1075,28 +1150,31 @@ const handlePlanFileWrite = async (
     return;
   }
 
-  const planFile = resolvePlanFileForReview(ctx, planConfig, targetPath);
-  if (!planFile) {
-    log?.debug("plannotator-auto tool write/edit did not match plan file", {
+  const reviewTarget = resolveReviewTargetMatch(ctx, planConfig, targetPath);
+  if (!reviewTarget) {
+    log?.debug("plannotator-auto tool write/edit did not match review target", {
       cwd: ctx.cwd,
       toolPath,
       targetPath,
       configuredPlanPath: planConfig.resolvedPlanPath,
+      configuredSpecPaths: planConfig.resolvedSpecPaths,
       sessionKey: getSessionKey(ctx),
     });
     return;
   }
 
-  log?.info("plannotator-auto detected plan-file update", {
+  log?.info("plannotator-auto detected review-target update", {
     cwd: ctx.cwd,
     toolPath,
     targetPath,
-    planFile,
+    planFile: reviewTarget.reviewFile,
+    kind: reviewTarget.kind,
     sessionKey: getSessionKey(ctx),
   });
 
   await planReviewCoordinator.queuePendingPlanReview(ctx, {
-    planFile,
+    kind: reviewTarget.kind,
+    planFile: reviewTarget.reviewFile,
     resolvedPlanPath: targetPath,
     updatedAt: Date.now(),
   });

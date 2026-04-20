@@ -4,7 +4,12 @@ Automatically opens shared Plannotator review flows via event API for updated pl
 
 ## Configuration
 
-By default, Plannotator Auto watches generated plan files named `YYYY-MM-DD-<slug>.md` in `.pi/plans/<repo>/plan/`. In worktree sessions without an explicit `planFile` override, it accepts two default directory aliases:
+By default, Plannotator Auto watches:
+
+- generated plan files named `YYYY-MM-DD-<slug>.md` in `.pi/plans/<repo>/plan/`
+- generated design specs named `YYYY-MM-DD-<slug>-design.md` in `.pi/plans/<repo>/specs/`
+
+In worktree sessions without an explicit `planFile` override, it accepts two default directory aliases:
 
 - `.pi/plans/<root-repo>/plan/`, where `<root-repo>` comes from the Git common-dir root
 - `.pi/plans/<cwd-basename>/plan/`, where `<cwd-basename>` is the current worktree directory name
@@ -21,7 +26,7 @@ Directory example:
 }
 ```
 
-`planFile` now only supports directories. Legacy single-file values (for example `.pi/PLAN.md`) are ignored.
+`planFile` now only supports directories. Legacy single-file values (for example `.pi/PLAN.md`) are ignored. When `planFile` points at a plan directory like `.pi/plans/my-repo/plan`, Plannotator Auto also derives the sibling spec directory `.pi/plans/my-repo/specs` for spec-review auto-triggering.
 
 Code-review auto-trigger is now **disabled by default**. To enable it globally:
 
@@ -46,7 +51,9 @@ To disable plan review in Plannotator Auto explicitly:
 ## Behavior
 
 - When the agent `write`/`edit` tool writes a `YYYY-MM-DD-*.md` file inside the configured plan directory, it queues plan-review work.
+- When the agent `write`/`edit` tool writes a `YYYY-MM-DD-*-design.md` file inside the sibling `specs/` directory, it queues spec-review work.
 - Without an explicit `planFile` override, default worktree sessions match either the root-repo or cwd-basename plan directory alias.
+- The spec-review trigger uses the same default worktree alias logic and reuses the shared `plan-review` event action, but rewrites PI-facing completion text to `Spec Review`.
 - If multiple plan writes happen before dispatch, only the latest pending plan file is kept.
 - Plan review uses the shared Plannotator event channel:
   - start via `plannotator:request` with `action: "plan-review"`
@@ -57,7 +64,7 @@ To disable plan review in Plannotator Auto explicitly:
 - Async code-review completions now preserve inline `annotations`; if the reviewer returns annotations without top-level `feedback`, PI still receives a follow-up asking it to address the review comments.
 - Code review now depends on explicit coordinator signal `isPlanReviewSettled(...)` rather than peeking internal plan-review maps.
 - If Plannotator is unavailable on shared event channel, a warning is shown (no slash-command fallback).
-- Keyboard shortcut `Ctrl+Alt+L` annotates the most recently modified generated plan file (`YYYY-MM-DD-*.md`) across the configured/default plan directories via shared event API (`action: "annotate"`).
+- Keyboard shortcut `Ctrl+Alt+L` annotates the most recently modified generated review target across the configured/default `plan/` and sibling `specs/` directories (`YYYY-MM-DD-*.md` for plans, `YYYY-MM-DD-*-design.md` for specs) via shared event API (`action: "annotate"`), and now waits synchronously for the annotation result instead of using the short default request timeout.
 
 ## Architecture (Option B)
 

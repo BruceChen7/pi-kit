@@ -210,6 +210,7 @@ describe("PlanReviewCoordinator transition table", () => {
 
     state.activePlanReviewByCwd.set(ctx.cwd, {
       reviewId: "review-1",
+      kind: "plan",
       planFile: ".pi/plans/repo/plan/2026-04-16-flow.md",
       resolvedPlanPath: "/repo/.pi/plans/repo/plan/2026-04-16-flow.md",
       startedAt: Date.now(),
@@ -277,11 +278,13 @@ describe("PlanReviewCoordinator key workflow effects", () => {
     try {
       state.activePlanReviewByCwd.set(runtimeCtx.cwd, {
         reviewId: "review-1",
+        kind: "plan",
         planFile: planFileRelative,
         resolvedPlanPath: planFileAbsolute,
         startedAt: 100,
       });
       state.pendingPlanReviewByCwd.set(runtimeCtx.cwd, {
+        kind: "plan",
         planFile: planFileRelative,
         resolvedPlanPath: planFileAbsolute,
         updatedAt: 101,
@@ -326,6 +329,7 @@ describe("PlanReviewCoordinator key workflow effects", () => {
       let settled = false;
       const reviewPromise = Promise.resolve(
         coordinator.queuePendingPlanReview(runtimeCtx as never, {
+          kind: "plan",
           planFile: planFileRelative,
           resolvedPlanPath: planFileAbsolute,
           updatedAt: Date.now(),
@@ -386,6 +390,7 @@ describe("PlanReviewCoordinator key workflow effects", () => {
 
     state.activePlanReviewByCwd.set(ctx.cwd, {
       reviewId: "review-1",
+      kind: "plan",
       planFile: ".pi/plans/repo/plan/2026-04-16-flow.md",
       resolvedPlanPath: "/repo/.pi/plans/repo/plan/2026-04-16-flow.md",
       startedAt: Date.now(),
@@ -446,6 +451,7 @@ describe("PlanReviewCoordinator key workflow effects", () => {
 
     try {
       state.pendingPlanReviewByCwd.set(runtimeCtx.cwd, {
+        kind: "plan",
         planFile: planFileRelative,
         resolvedPlanPath: planFileAbsolute,
         updatedAt: Date.now(),
@@ -498,6 +504,7 @@ describe("PlanReviewCoordinator key workflow effects", () => {
 
     state.activePlanReviewByCwd.set(ctx.cwd, {
       reviewId: "review-1",
+      kind: "plan",
       planFile: ".pi/plans/repo/plan/2026-04-16-flow.md",
       resolvedPlanPath: "/repo/.pi/plans/repo/plan/2026-04-16-flow.md",
       startedAt: Date.now(),

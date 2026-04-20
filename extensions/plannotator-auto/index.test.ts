@@ -10,6 +10,7 @@ type ImportedModule = {
       planFile: string;
       resolvedPlanPath: string;
       resolvedPlanPaths: string[];
+      resolvedSpecPaths?: string[];
     },
     targetPath: string,
   ) => string | null;
@@ -18,6 +19,7 @@ type ImportedModule = {
       planFile: string;
       resolvedPlanPath: string;
       resolvedPlanPaths: string[];
+      resolvedSpecPaths?: string[];
     } | null,
     targetPath: string,
   ) => boolean;
@@ -27,6 +29,7 @@ type ImportedModule = {
       planFile: string;
       resolvedPlanPath: string;
       resolvedPlanPaths: string[];
+      resolvedSpecPaths?: string[];
     },
   ) => {
     absolutePath: string;
@@ -52,6 +55,7 @@ describe("resolvePlanFileForReview", () => {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
           resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
+          resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
         },
         "/repo/.pi/plans/repo/plan/2026-04-15-auth-flow.md",
       ),
@@ -68,10 +72,28 @@ describe("resolvePlanFileForReview", () => {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
           resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
+          resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
         },
         "/repo/.pi/PLAN.md",
       ),
     ).toBeNull();
+  });
+
+  it("matches generated design specs in the sibling specs directory", async () => {
+    const { resolvePlanFileForReview } = await importPlannotatorAuto();
+
+    expect(
+      resolvePlanFileForReview?.(
+        { cwd: "/repo" },
+        {
+          planFile: ".pi/plans/repo/plan",
+          resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+          resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
+          resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
+        },
+        "/repo/.pi/plans/repo/specs/2026-04-20-auth-design.md",
+      ),
+    ).toBe(".pi/plans/repo/specs/2026-04-20-auth-design.md");
   });
 
   it("matches generated plan files in any default alias directory", async () => {
@@ -86,6 +108,10 @@ describe("resolvePlanFileForReview", () => {
           resolvedPlanPaths: [
             "/repo/.pi/plans/pi-kit/plan",
             "/repo/.pi/plans/pi-kit.feat-branch/plan",
+          ],
+          resolvedSpecPaths: [
+            "/repo/.pi/plans/pi-kit/specs",
+            "/repo/.pi/plans/pi-kit.feat-branch/specs",
           ],
         },
         "/repo/.pi/plans/pi-kit.feat-branch/plan/2026-04-15-auth-flow.md",
@@ -104,6 +130,7 @@ describe("shouldQueueReviewForToolPath", () => {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
           resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
+          resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
         },
         "/repo/.pi/plans/repo/plan/2026-04-15-auth-flow.md",
       ),
@@ -120,6 +147,7 @@ describe("shouldQueueReviewForToolPath", () => {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
           resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
+          resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
         },
         "/repo/.pi/PLAN.md",
       ),
@@ -135,8 +163,41 @@ describe("shouldQueueReviewForToolPath", () => {
           planFile: ".pi/plans/repo/plan",
           resolvedPlanPath: "/repo/.pi/plans/repo/plan",
           resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
+          resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
         },
         "/repo/src/auth.ts",
+      ),
+    ).toBe(true);
+  });
+
+  it("skips code review for generated design specs in the sibling specs directory", async () => {
+    const { shouldQueueReviewForToolPath } = await importPlannotatorAuto();
+
+    expect(
+      shouldQueueReviewForToolPath?.(
+        {
+          planFile: ".pi/plans/repo/plan",
+          resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+          resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
+          resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
+        },
+        "/repo/.pi/plans/repo/specs/2026-04-20-auth-design.md",
+      ),
+    ).toBe(false);
+  });
+
+  it("still queues code review for non-design files inside specs", async () => {
+    const { shouldQueueReviewForToolPath } = await importPlannotatorAuto();
+
+    expect(
+      shouldQueueReviewForToolPath?.(
+        {
+          planFile: ".pi/plans/repo/plan",
+          resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+          resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
+          resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
+        },
+        "/repo/.pi/plans/repo/specs/2026-04-20-auth-notes.md",
       ),
     ).toBe(true);
   });
@@ -152,6 +213,10 @@ describe("shouldQueueReviewForToolPath", () => {
           resolvedPlanPaths: [
             "/repo/.pi/plans/pi-kit/plan",
             "/repo/.pi/plans/pi-kit.feat-branch/plan",
+          ],
+          resolvedSpecPaths: [
+            "/repo/.pi/plans/pi-kit/specs",
+            "/repo/.pi/plans/pi-kit.feat-branch/specs",
           ],
         },
         "/repo/.pi/plans/pi-kit.feat-branch/plan/2026-04-15-auth-flow.md",
@@ -191,6 +256,9 @@ describe("findLatestPlanFileForAnnotation", () => {
             planFile: path.join(".pi", "plans", repoName, "plan"),
             resolvedPlanPath: planDir,
             resolvedPlanPaths: [planDir],
+            resolvedSpecPaths: [
+              path.join(repoRoot, ".pi", "plans", repoName, "specs"),
+            ],
           },
         ),
       ).toEqual({
@@ -243,6 +311,16 @@ describe("findLatestPlanFileForAnnotation", () => {
             planFile: path.join(".pi", "plans", "pi-kit", "plan"),
             resolvedPlanPath: rootPlanDir,
             resolvedPlanPaths: [rootPlanDir, worktreePlanDir],
+            resolvedSpecPaths: [
+              path.join(repoRoot, ".pi", "plans", "pi-kit", "specs"),
+              path.join(
+                repoRoot,
+                ".pi",
+                "plans",
+                "pi-kit.feat-branch",
+                "specs",
+              ),
+            ],
           },
         ),
       ).toEqual({
@@ -253,6 +331,54 @@ describe("findLatestPlanFileForAnnotation", () => {
           "pi-kit.feat-branch",
           "plan",
           "2026-04-18-latest.md",
+        ),
+      });
+    } finally {
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the newest review target across plan and spec directories", async () => {
+    const { findLatestPlanFileForAnnotation } = await importPlannotatorAuto();
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-latest-review-target-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planDir = path.join(repoRoot, ".pi", "plans", repoName, "plan");
+    const specDir = path.join(repoRoot, ".pi", "plans", repoName, "specs");
+    const latestPlan = path.join(planDir, "2026-04-18-latest.md");
+    const latestSpec = path.join(specDir, "2026-04-20-agent-design.md");
+
+    await fs.mkdir(planDir, { recursive: true });
+    await fs.mkdir(specDir, { recursive: true });
+    await fs.writeFile(latestPlan, "# Latest plan\n", "utf8");
+    await fs.writeFile(latestSpec, "# Latest spec\n", "utf8");
+
+    const planDate = new Date("2026-04-18T00:00:00.000Z");
+    const specDate = new Date("2026-04-20T00:00:00.000Z");
+    await fs.utimes(latestPlan, planDate, planDate);
+    await fs.utimes(latestSpec, specDate, specDate);
+
+    try {
+      expect(
+        findLatestPlanFileForAnnotation?.(
+          { cwd: repoRoot },
+          {
+            planFile: path.join(".pi", "plans", repoName, "plan"),
+            resolvedPlanPath: planDir,
+            resolvedPlanPaths: [planDir],
+            resolvedSpecPaths: [specDir],
+          },
+        ),
+      ).toEqual({
+        absolutePath: latestSpec,
+        repoRelativePath: path.join(
+          ".pi",
+          "plans",
+          repoName,
+          "specs",
+          "2026-04-20-agent-design.md",
         ),
       });
     } finally {
@@ -444,6 +570,174 @@ describe("annotate latest plan shortcut", () => {
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("annotates the latest spec when it is newer than the latest plan", async () => {
+    vi.resetModules();
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, events, runShortcut } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-shortcut-latest-spec-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planDir = path.join(repoRoot, ".pi", "plans", repoName, "plan");
+    const specDir = path.join(repoRoot, ".pi", "plans", repoName, "specs");
+    const latestPlanPath = path.join(planDir, "2026-04-18-latest.md");
+    const latestSpecPath = path.join(specDir, "2026-04-20-agent-design.md");
+
+    await fs.mkdir(planDir, { recursive: true });
+    await fs.mkdir(specDir, { recursive: true });
+    await fs.writeFile(latestPlanPath, "# Latest plan\n", "utf8");
+    await fs.writeFile(latestSpecPath, "# Latest spec\n", "utf8");
+
+    const planDate = new Date("2026-04-18T00:00:00.000Z");
+    const specDate = new Date("2026-04-20T00:00:00.000Z");
+    await fs.utimes(latestPlanPath, planDate, planDate);
+    await fs.utimes(latestSpecPath, specDate, specDate);
+
+    const annotateRequests: Array<{
+      action: string;
+      payload: unknown;
+    }> = [];
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        action: string;
+        payload: { filePath?: string; mode?: string };
+        respond: (response: unknown) => void;
+      };
+
+      annotateRequests.push({
+        action: request.action,
+        payload: request.payload,
+      });
+
+      request.respond({
+        status: "handled",
+        result: {
+          feedback: "Please refine the design edge cases.",
+        },
+      });
+    });
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await runShortcut("ctrl+alt+l", ctx);
+
+      expect(annotateRequests).toHaveLength(1);
+      expect(annotateRequests[0]).toEqual({
+        action: "annotate",
+        payload: {
+          filePath: latestSpecPath,
+          mode: "annotate",
+        },
+      });
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Please refine the design edge cases."),
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("waits synchronously for slow annotate responses instead of timing out", async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, events, runShortcut } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-shortcut-sync-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planDir = path.join(repoRoot, ".pi", "plans", repoName, "plan");
+    const latestPlanPath = path.join(planDir, "2026-04-20-latest.md");
+
+    await fs.mkdir(planDir, { recursive: true });
+    await fs.writeFile(latestPlanPath, "# Latest\n", "utf8");
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        respond: (response: unknown) => void;
+      };
+
+      setTimeout(() => {
+        request.respond({
+          status: "handled",
+          result: {
+            feedback: "Slow annotation completed.",
+          },
+        });
+      }, 6_000);
+    });
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+
+      let settled = false;
+      const shortcutPromise = runShortcut("ctrl+alt+l", ctx).then(() => {
+        settled = true;
+      });
+
+      await flushMicrotasks();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await flushMicrotasks();
+
+      expect(settled).toBe(false);
+      expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+        "Plannotator request timed out.",
+        "warning",
+      );
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await shortcutPromise;
+
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Slow annotation completed."),
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+      vi.useRealTimers();
     }
   });
 
@@ -1159,6 +1453,118 @@ describe("plan review trigger timing", () => {
       await reviewPromise;
       expect(api.sendUserMessage).toHaveBeenCalledWith(
         "Plan review approved.",
+        {
+          deliverAs: "steer",
+        },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("triggers spec review for generated design specs and rewrites the user-facing message", async () => {
+    vi.resetModules();
+    const reviewResultListeners: Array<(result: unknown) => void> = [];
+    const startPlanReview = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "pending" as const,
+        reviewId: "review-spec",
+      },
+    }));
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn((listener: (result: unknown) => void) => {
+          reviewResultListeners.push(listener);
+          return () => {
+            const index = reviewResultListeners.indexOf(listener);
+            if (index >= 0) {
+              reviewResultListeners.splice(index, 1);
+            }
+          };
+        }),
+        getStatus: vi.fn(() => ({ status: "missing" as const })),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(
+        () => "# Plan Review\n\nPlan approved. Proceed with implementation.",
+      ),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-spec-review-"),
+    );
+    const specFileRelative =
+      ".pi/plans/pi-kit/specs/2026-04-20-agent-design.md";
+    const specFileAbsolute = path.join(repoRoot, specFileRelative);
+
+    await fs.mkdir(path.dirname(specFileAbsolute), { recursive: true });
+    await fs.writeFile(specFileAbsolute, "# Spec\n\n- draft\n", "utf8");
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => false,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: specFileRelative },
+        },
+        ctx,
+      );
+
+      const reviewPromise = emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      await flushMicrotasks();
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+
+      for (const listener of reviewResultListeners) {
+        listener({
+          reviewId: "review-spec",
+          approved: true,
+        });
+      }
+
+      await reviewPromise;
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        "# Spec Review\n\nSpec approved. Proceed with implementation.",
         {
           deliverAs: "steer",
         },

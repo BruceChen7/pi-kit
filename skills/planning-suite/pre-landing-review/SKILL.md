@@ -17,31 +17,48 @@ You are reviewing code changes, not shipping them. Apply fixes when safe, and as
 - Auto-fix mechanical issues; ask for judgment on risky ones.
 - Do not commit, push, or open a PR.
 
-## Step 0: Detect base branch
+## Step 0: Detect base branch and diff target
 ```bash
-BASE=$(git for-each-ref --format='%(refname:short)' refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
-if [ -z "$BASE" ]; then
-  if git show-ref --verify --quiet refs/remotes/origin/main; then
+HAS_ORIGIN=false
+if git remote get-url origin >/dev/null 2>&1; then
+  HAS_ORIGIN=true
+fi
+
+if [ "$HAS_ORIGIN" = "true" ]; then
+  BASE=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')
+  if [ -z "$BASE" ]; then
+    if git show-ref --verify --quiet refs/remotes/origin/main; then
+      BASE=main
+    elif git show-ref --verify --quiet refs/remotes/origin/master; then
+      BASE=master
+    else
+      BASE=$(git branch --show-current 2>/dev/null || echo "main")
+    fi
+  fi
+  BASE_REF="origin/$BASE"
+else
+  if git show-ref --verify --quiet refs/heads/main; then
     BASE=main
-  elif git show-ref --verify --quiet refs/remotes/origin/master; then
+  elif git show-ref --verify --quiet refs/heads/master; then
     BASE=master
   else
-    BASE=main
+    BASE=$(git branch --show-current 2>/dev/null || echo "main")
   fi
+  BASE_REF="$BASE"
 fi
 ```
 
-Print the detected base branch and use it in all subsequent commands.
+Print `BASE`, `BASE_REF`, and whether `origin` was detected. Use `BASE_REF` in all subsequent diff/log commands.
 
 ## Step 1: Check branch
 1. `git branch --show-current`
 2. If on base branch, stop: **“Nothing to review — you’re on the base branch or have no changes against it.”**
-3. `git fetch origin <base> --quiet && git diff --no-ext-diff origin/<base> --stat` — if empty, stop with the same message.
+3. `if [ "$HAS_ORIGIN" = "true" ]; then git fetch origin <base> --quiet; fi; git diff --no-ext-diff <base-ref> --stat` — if empty, stop with the same message.
 
 ## Step 1.5: Scope drift detection
 1. Read `TODOS.md` if present.
-2. Read PR description if the user provides it (paste or file), and commit messages (`git log origin/<base>..HEAD --oneline`).
-3. Compare stated intent vs files changed (`git diff --no-ext-diff origin/<base> --stat`).
+2. Read PR description if the user provides it (paste or file), and commit messages (`git log <base-ref>..HEAD --oneline`).
+3. Compare stated intent vs files changed (`git diff --no-ext-diff <base-ref> --stat`).
 4. Output:
 ```
 Scope Check: [CLEAN / DRIFT DETECTED / REQUIREMENTS MISSING]
@@ -54,8 +71,8 @@ Read `references/checklist.md`. If missing, stop and report the error.
 
 ## Step 3: Get the diff
 ```
-git fetch origin <base> --quiet
-git diff --no-ext-diff origin/<base>
+if [ "$HAS_ORIGIN" = "true" ]; then git fetch origin <base> --quiet; fi
+git diff --no-ext-diff <base-ref>
 ```
 
 ## Step 4: Two-pass review
@@ -65,7 +82,7 @@ For enum/value completeness, read related files outside the diff.
 ## Step 4.5: Design review (conditional)
 Detect frontend scope by file patterns:
 ```
-FILES=$(git diff --name-only origin/<base>)
+FILES=$(git diff --name-only <base-ref>)
 # Frontend if any file matches: *.ts, *.tsx, *.jsx, *.vue, *.svelte, *.css, *.scss, *.sass, *.less, *.html
 ```
 If frontend files are touched:

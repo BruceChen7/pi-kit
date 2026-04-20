@@ -19,6 +19,38 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Installation result tracking
+newly_installed_items=()
+overwritten_items=()
+failed_items=()
+
+mark_new_item() {
+    newly_installed_items+=("$1")
+}
+
+mark_overwritten_item() {
+    overwritten_items+=("$1")
+}
+
+mark_failed_item() {
+    failed_items+=("$1")
+}
+
+print_summary_section() {
+    local title="$1"
+    shift
+
+    echo "$title"
+    if [ "$#" -eq 0 ]; then
+        echo "  (none)"
+        return
+    fi
+
+    for item in "$@"; do
+        echo "  - $item"
+    done
+}
+
 echo "=========================================="
 echo "  Pi Agent Extensions Installer"
 echo "=========================================="
@@ -36,35 +68,32 @@ if [ ! -d "$TARGET_DIR" ]; then
     mkdir -p "$TARGET_DIR"
 fi
 
-# Function to check if target exists and prompt for overwrite
+# Function to force-install symlink (overwrite when target already exists)
 check_and_install() {
     local source_path="$1"
     local source_name="$2"
     local target_path="$TARGET_DIR/$source_name"
+    local existed="false"
 
     if [ -e "$target_path" ] || [ -L "$target_path" ]; then
-        echo ""
-        echo -e "${YELLOW}Warning: $source_name already exists in target directory${NC}"
-        echo "  Source: $source_path"
-        echo "  Target: $target_path"
-        read -p "  Overwrite? (y/n): " -n 1 -r
-        echo ""
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo "  Skipped: $source_name"
-            return 1
-        fi
-        # Remove existing symlink/file
+        existed="true"
         rm -rf "$target_path"
     fi
 
-    # Create symlink
     if ln -s "$source_path" "$target_path"; then
-        echo -e "${GREEN}✓${NC} Installed: $source_name -> $target_path"
+        if [ "$existed" = "true" ]; then
+            mark_overwritten_item "$source_name"
+            echo -e "${GREEN}✓${NC} Overwritten: $source_name -> $target_path"
+        else
+            mark_new_item "$source_name"
+            echo -e "${GREEN}✓${NC} Installed: $source_name -> $target_path"
+        fi
         return 0
-    else
-        echo -e "${RED}✗${NC} Failed to install: $source_name"
-        return 1
     fi
+
+    mark_failed_item "$source_name"
+    echo -e "${RED}✗${NC} Failed to install: $source_name"
+    return 1
 }
 
 echo "Scanning extensions directory..."
@@ -75,25 +104,25 @@ echo ""
 # - Directory-based extensions: ~/.pi/agent/extensions/skill-toggle/index.ts -> ../shared/logger.ts => ~/.pi/agent/extensions/shared/logger.ts
 install_shared_symlink() {
     local target_dir="$1"
+    local item_name="shared => $target_dir"
+    local existed="false"
 
     if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
-        if [ -L "$target_dir" ]; then
-            current_target=$(readlink "$target_dir")
-            if [ "$current_target" != "$SHARED_SOURCE_DIR" ]; then
-                rm -rf "$target_dir"
-                ln -s "$SHARED_SOURCE_DIR" "$target_dir"
-                echo -e "${GREEN}✓${NC} Updated shared symlink: $target_dir -> $SHARED_SOURCE_DIR"
-            fi
+        existed="true"
+        rm -rf "$target_dir"
+    fi
+
+    if ln -s "$SHARED_SOURCE_DIR" "$target_dir"; then
+        if [ "$existed" = "true" ]; then
+            mark_overwritten_item "$item_name"
+            echo -e "${GREEN}✓${NC} Overwritten shared symlink: $target_dir -> $SHARED_SOURCE_DIR"
         else
-            echo -e "${YELLOW}!${NC} Shared target exists and is not a symlink: $target_dir"
-            echo -e "${YELLOW}!${NC} Please remove it manually to enable shared utility imports"
+            mark_new_item "$item_name"
+            echo -e "${GREEN}✓${NC} Installed shared symlink: $target_dir -> $SHARED_SOURCE_DIR"
         fi
     else
-        if ln -s "$SHARED_SOURCE_DIR" "$target_dir"; then
-            echo -e "${GREEN}✓${NC} Installed shared symlink: $target_dir -> $SHARED_SOURCE_DIR"
-        else
-            echo -e "${RED}✗${NC} Failed to install shared symlink: $target_dir"
-        fi
+        mark_failed_item "$item_name"
+        echo -e "${RED}✗${NC} Failed to install shared symlink: $target_dir"
     fi
 }
 
@@ -119,20 +148,22 @@ mark_installed() {
 for dir in "$EXTENSIONS_DIR"/*/; do
     if [ -d "$dir" ]; then
         dir_name=$(basename "$dir")
-        
+
         # Skip hidden directories
         if [[ "$dir_name" == .* ]]; then
             continue
         fi
-        
+
         # Priority 1: Check if directory has index.ts -> create dir symlink
         if [ -f "$dir/index.ts" ]; then
-            check_and_install "$dir" "$dir_name"
-            mark_installed "$dir_name"
+            if check_and_install "$dir" "$dir_name"; then
+                mark_installed "$dir_name"
+            fi
         # Priority 2: Check if directory has {name}.ts -> create .ts symlink
         elif [ -f "$dir${dir_name}.ts" ]; then
-            check_and_install "$dir${dir_name}.ts" "${dir_name}.ts"
-            mark_installed "${dir_name}.ts"
+            if check_and_install "$dir${dir_name}.ts" "${dir_name}.ts"; then
+                mark_installed "${dir_name}.ts"
+            fi
         else
             echo -e "${YELLOW}!${NC} Skipped (no index.ts or ${dir_name}.ts): $dir_name"
         fi
@@ -143,12 +174,12 @@ done
 for ts_file in "$EXTENSIONS_DIR"/*.ts; do
     if [ -f "$ts_file" ]; then
         ts_name=$(basename "$ts_file")
-        
+
         # Skip if already installed
         if is_installed "$ts_name"; then
             continue
         fi
-        
+
         check_and_install "$ts_file" "$ts_name"
     fi
 done
@@ -163,8 +194,15 @@ echo "=========================================="
 echo ""
 echo "Extensions installed to: $TARGET_DIR"
 echo ""
-echo "To verify, run:"
-echo "  ls -la $TARGET_DIR"
+print_summary_section "Overwritten items:" "${overwritten_items[@]}"
+echo ""
+print_summary_section "Newly installed items:" "${newly_installed_items[@]}"
+
+if [ "${#failed_items[@]}" -gt 0 ]; then
+    echo ""
+    print_summary_section "Failed items:" "${failed_items[@]}"
+fi
+
 echo ""
 echo "To reload pi with new extensions, run:"
 echo "  pi /reload"

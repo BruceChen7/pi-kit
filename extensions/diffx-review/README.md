@@ -1,12 +1,12 @@
 # diffx-review
 
-A Pi extension that bridges Pi and diffx, preferably via a direct `diffx` command and optionally via a local checkout fallback.
+A Pi extension that bridges Pi and diffx through a configured `diffx` command.
 
 ## Commands
 
 - `/diffx-start-review [--no-open] [--host=<host>] [--port=<n>] [-- <git diff args>]`
 - `/diffx-review-status`
-- `/diffx-finish-review [--resolve-after-reply]`
+- `/diffx-process-review [--resolve-after-reply]`
 - `/diffx-stop-review`
 
 When `/diffx-start-review` is run without explicit `git diff` args in interactive mode, it opens a compare menu with common presets:
@@ -51,13 +51,17 @@ Optional advanced overrides (only when needed):
 {
   "diffxReview": {
     "defaultPort": null,
-    "diffxPath": "~/work/diffx",
     "reuseExistingSession": true,
     "healthcheckTimeoutMs": 1000,
     "startupTimeoutMs": 15000
   }
 }
 ```
+
+`diffxCommand` behavior:
+
+- set it to a command string such as `"diffx"` or `"npx diffx-cli"` to launch that command directly
+- if it is omitted, the extension defaults to `"diffx"`
 
 
 
@@ -104,14 +108,14 @@ Common goals:
 1. **Start a review session** with the right diff scope:
    - interactive: `/diffx-start-review`
    - explicit args: `/diffx-start-review -- <git diff args>`
-2. **Let Pi process comments** via diffx tools (`list`, `reply`, `resolve`) while editing code.
-3. **Check progress** any time with `/diffx-review-status`.
-4. **Finish session** with `/diffx-finish-review` (or `/diffx-stop-review` if you want to stop immediately).
+2. **Load comments into the agent** with `/diffx-process-review`.
+3. **Let Pi process comments** via diffx tools (`list`, `reply`, `resolve`) while editing code.
+4. **Check progress** any time with `/diffx-review-status`.
+5. **Stop the session** with `/diffx-stop-review` when you are done with the review server.
 
 ## Notes
 
-- by default the extension first tries the configured `diffxCommand` (default: `diffx`)
-- if the command is unavailable, it falls back to the built local CLI at `<diffxPath>/dist/cli.mjs`
-- if local dist fallback is missing, the extension fails fast and asks you to build diffx first
+- by default the extension starts the configured `diffxCommand` (default: `diffx`)
 - The diffx process is started with `cwd` set to the repo being reviewed
+- session metadata is persisted in the repo so Pi can reconnect to a still-running diffx server after restart
 - diffx comments remain subject to diffx's current in-memory storage behavior

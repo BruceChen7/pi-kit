@@ -46,12 +46,10 @@ export interface DiffxCommentStats {
 
 export interface DiffxReviewConfig {
   enabled: boolean;
-  diffxCommand: string | null;
-  diffxPath: string;
+  diffxCommand: string;
   host: string;
   defaultPort: number | null;
   autoOpen: boolean;
-  startMode: "dist";
   reuseExistingSession: boolean;
   healthcheckTimeoutMs: number;
   startupTimeoutMs: number;
@@ -73,13 +71,12 @@ export interface DiffxReviewSession {
 }
 
 export interface DiffxRuntimeSession extends DiffxReviewSession {
-  child: ChildProcessWithoutNullStreams;
+  child: ChildProcessWithoutNullStreams | null;
 }
 
 export interface StartDiffxReviewSessionInput {
   repoRoot: string;
-  diffxCommand: string | null;
-  diffxPath: string;
+  diffxCommand: string;
   host: string;
   port: number | null;
   openInBrowser: boolean;

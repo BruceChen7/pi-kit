@@ -16,6 +16,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@mariozechner/pi-tui";
+import { getGitCommonDir, getRepoRoot } from "../shared/git.ts";
 import { createLogger } from "../shared/logger.ts";
 import {
   getSettingsPaths,
@@ -151,6 +152,18 @@ function findCwdKey(
     }
   }
   return null;
+}
+
+function resolveSettingsCwd(cwd: string): string {
+  const repoRoot = getRepoRoot(cwd);
+  const commonDir = getGitCommonDir(cwd);
+  if (!repoRoot || !commonDir) {
+    return cwd;
+  }
+
+  const normalizedRepoRoot = path.resolve(repoRoot);
+  const primaryRepoRoot = path.resolve(path.dirname(commonDir));
+  return normalizedRepoRoot !== primaryRepoRoot ? primaryRepoRoot : cwd;
 }
 
 let log: ReturnType<typeof createLogger> | null = null;
@@ -520,13 +533,14 @@ function getManagedOverrideMap(overrides: string[]): Map<string, string> {
 }
 
 function getGlobalCwdKey(cwd: string): string {
+  const settingsCwd = resolveSettingsCwd(cwd);
   const { global: globalSettings } = loadSettings(cwd, { forceReload: true });
   const globalToggle = extractSkillToggle(globalSettings);
   const byCwd = isRecord(globalToggle?.byCwd)
     ? (globalToggle?.byCwd as Record<string, unknown>)
     : undefined;
-  const matchedKey = findCwdKey(byCwd, cwd);
-  return matchedKey ?? toPortablePath(cwd);
+  const matchedKey = findCwdKey(byCwd, settingsCwd);
+  return matchedKey ?? toPortablePath(settingsCwd);
 }
 
 function getManagedOverrideEntries(cwd: string): Skill[] {
@@ -573,6 +587,7 @@ function updateManagedOverrides(
 }
 
 export function loadToggleState(cwd: string): ToggleState {
+  const settingsCwd = resolveSettingsCwd(cwd);
   const { globalPath, global: globalSettings } = loadSettings(cwd, {
     forceReload: true,
   });
@@ -581,7 +596,7 @@ export function loadToggleState(cwd: string): ToggleState {
   const byCwd = isRecord(globalToggle?.byCwd)
     ? (globalToggle?.byCwd as Record<string, unknown>)
     : undefined;
-  const matchedKey = findCwdKey(byCwd, cwd);
+  const matchedKey = findCwdKey(byCwd, settingsCwd);
   const globalEntryRaw = matchedKey && byCwd ? byCwd[matchedKey] : undefined;
   const globalEntry = isRecord(globalEntryRaw)
     ? (globalEntryRaw as SkillToggleSettingsEntry)
@@ -589,7 +604,7 @@ export function loadToggleState(cwd: string): ToggleState {
   const globalDisabled = toSkillList(globalEntry?.disabledSkills);
 
   const disabledSkills = globalDisabled ?? [];
-  const cwdKey = matchedKey ?? toPortablePath(cwd);
+  const cwdKey = matchedKey ?? toPortablePath(settingsCwd);
 
   // Normalize all disabled skill names for consistent matching
   const normalizedDisabled = disabledSkills.map(normalizeSkillName);

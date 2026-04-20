@@ -447,6 +447,87 @@ describe("annotate latest plan shortcut", () => {
     }
   });
 
+  it("waits synchronously for slow annotate responses instead of timing out", async () => {
+    vi.resetModules();
+    vi.useFakeTimers();
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, events, runShortcut } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-shortcut-sync-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planDir = path.join(repoRoot, ".pi", "plans", repoName, "plan");
+    const latestPlanPath = path.join(planDir, "2026-04-20-latest.md");
+
+    await fs.mkdir(planDir, { recursive: true });
+    await fs.writeFile(latestPlanPath, "# Latest\n", "utf8");
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        respond: (response: unknown) => void;
+      };
+
+      setTimeout(() => {
+        request.respond({
+          status: "handled",
+          result: {
+            feedback: "Slow annotation completed.",
+          },
+        });
+      }, 6_000);
+    });
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+
+      let settled = false;
+      const shortcutPromise = runShortcut("ctrl+alt+l", ctx).then(() => {
+        settled = true;
+      });
+
+      await flushMicrotasks();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await flushMicrotasks();
+
+      expect(settled).toBe(false);
+      expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+        "Plannotator request timed out.",
+        "warning",
+      );
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await shortcutPromise;
+
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Slow annotation completed."),
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+      vi.useRealTimers();
+    }
+  });
+
   it("delivers a follow-up when annotate returns inline comments without top-level feedback", async () => {
     vi.resetModules();
 

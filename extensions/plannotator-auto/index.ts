@@ -60,7 +60,9 @@ type SessionRuntimeState = PlanReviewSessionState & {
 const DEFAULT_PLAN_SUBDIR = "plan";
 const DEFAULT_CODE_REVIEW_PROBE_TIMEOUT_MS = 1_500;
 const DEFAULT_CODE_REVIEW_TIMEOUT_MS = 30_000;
-const SYNC_CODE_REVIEW_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
+const SYNC_PLANNOTATOR_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
+const SYNC_CODE_REVIEW_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
+const SYNC_ANNOTATE_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
 const ANNOTATE_LATEST_PLAN_SHORTCUT = "ctrl+alt+l";
@@ -504,7 +506,9 @@ const annotateLatestPlanFile = async (
     return;
   }
 
-  const requestPlannotator = createRequestPlannotator(pi.events);
+  const requestPlannotator = createRequestPlannotator(pi.events, {
+    timeoutMs: SYNC_ANNOTATE_TIMEOUT_MS,
+  });
 
   log?.info("plannotator-auto annotating latest plan file", {
     cwd: ctx.cwd,

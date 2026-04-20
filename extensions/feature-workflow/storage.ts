@@ -1,5 +1,3 @@
-import type { ManagedFeatureBranchRecord } from "./registry.js";
-
 export type FeatureStatus = "active";
 
 export type FeatureRecord = {
@@ -28,10 +26,7 @@ const toIsoFromWtCommitTimestamp = (value: unknown): string | null => {
   return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString();
 };
 
-export function listFeatureRecords(
-  wtListJson: string,
-  managedBranches: Iterable<ManagedFeatureBranchRecord>,
-): FeatureRecord[] {
+export function listFeatureRecords(wtListJson: string): FeatureRecord[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(wtListJson) as unknown;
@@ -41,13 +36,6 @@ export function listFeatureRecords(
 
   if (!Array.isArray(parsed)) return [];
 
-  const managedBranchMap = new Map(
-    [...managedBranches].map((record) => [record.branch, record]),
-  );
-  if (managedBranchMap.size === 0) {
-    return [];
-  }
-
   const records: FeatureRecord[] = [];
 
   for (const item of parsed) {
@@ -55,13 +43,13 @@ export function listFeatureRecords(
 
     const branch = typeof item.branch === "string" ? item.branch : "";
     const worktreePath = typeof item.path === "string" ? item.path : "";
-    const managedRecord = managedBranchMap.get(branch);
-    if (!branch || !worktreePath || !managedRecord) continue;
+    if (!branch || !worktreePath) continue;
 
     const wtUpdatedAt = toIsoFromWtCommitTimestamp(item.commit) ?? EPOCH_ISO;
 
     records.push({
-      slug: managedRecord.slug,
+      name: branch,
+      slug: branch,
       branch,
       worktreePath,
       status: "active",
@@ -74,12 +62,9 @@ export function listFeatureRecords(
   return records;
 }
 
-export function findActiveFeatureConflicts(
+export function hasActiveFeatureBranchConflict(
   records: FeatureRecord[],
-  input: { branch: string; slug: string },
-): { branchConflict: boolean; slugConflict: boolean } {
-  return {
-    branchConflict: records.some((record) => record.branch === input.branch),
-    slugConflict: records.some((record) => record.slug === input.slug),
-  };
+  branch: string,
+): boolean {
+  return records.some((record) => record.branch === branch);
 }

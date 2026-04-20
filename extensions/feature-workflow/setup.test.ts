@@ -69,6 +69,24 @@ describe("feature-workflow setup args", () => {
         "Unknown target 'wat'. Supported targets: settings, gitignore, worktreeinclude, hook-script, wt-toml, wt-user-config.",
     });
   });
+
+  it("returns error when option value is missing", () => {
+    const parsed = parseFeatureWorkflowSetupArgs(["--profile"]);
+
+    expect(parsed).toEqual({
+      ok: false,
+      message: "Missing value for option '--profile'.",
+    });
+  });
+
+  it("returns error when inline option value is empty", () => {
+    const parsed = parseFeatureWorkflowSetupArgs(["--only="]);
+
+    expect(parsed).toEqual({
+      ok: false,
+      message: "Missing value for option '--only'.",
+    });
+  });
 });
 
 describe("applyFeatureWorkflowSetupProfile", () => {

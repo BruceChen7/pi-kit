@@ -9,21 +9,37 @@ function trimTrailingSlash(url: string): string {
   return url.endsWith("/") ? url.slice(0, -1) : url;
 }
 
+function normalizeToken(token: string): string {
+  const trimmed = token.trim();
+  if (trimmed.toLowerCase().startsWith("bearer ")) {
+    return trimmed.slice("bearer ".length).trim();
+  }
+  return trimmed;
+}
+
 export class KanbanRuntimeApi {
-  constructor(
-    private readonly baseUrl: string,
-    private readonly token: string,
-  ) {}
+  private readonly baseUrl: string;
+  private readonly token: string;
+
+  constructor(baseUrl: string, token: string) {
+    this.baseUrl = baseUrl;
+    this.token = normalizeToken(token);
+  }
 
   private buildUrl(path: string): string {
     return `${trimTrailingSlash(this.baseUrl)}${path}`;
   }
 
   private authHeaders(): HeadersInit {
-    return {
-      authorization: `Bearer ${this.token}`,
+    const headers: Record<string, string> = {
       "content-type": "application/json",
     };
+
+    if (this.token) {
+      headers.authorization = `Bearer ${this.token}`;
+    }
+
+    return headers;
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -46,9 +62,6 @@ export class KanbanRuntimeApi {
   async getBoard(): Promise<BoardSnapshot> {
     return this.request<BoardSnapshot>("/kanban/board", {
       method: "GET",
-      headers: {
-        authorization: `Bearer ${this.token}`,
-      },
     });
   }
 
@@ -57,9 +70,6 @@ export class KanbanRuntimeApi {
       `/kanban/cards/${encodeURIComponent(cardId)}/context`,
       {
         method: "GET",
-        headers: {
-          authorization: `Bearer ${this.token}`,
-        },
       },
     );
   }
@@ -81,15 +91,15 @@ export class KanbanRuntimeApi {
       `/kanban/actions/${encodeURIComponent(requestId)}`,
       {
         method: "GET",
-        headers: {
-          authorization: `Bearer ${this.token}`,
-        },
       },
     );
   }
 
   createEventSource(): EventSource {
-    const url = `${this.buildUrl("/kanban/stream")}?token=${encodeURIComponent(this.token)}`;
+    const baseStreamUrl = this.buildUrl("/kanban/stream");
+    const url = this.token
+      ? `${baseStreamUrl}?token=${encodeURIComponent(this.token)}`
+      : baseStreamUrl;
     return new EventSource(url);
   }
 }

@@ -63,12 +63,17 @@ function isAuthorized(
   url: URL,
   token: string,
 ): boolean {
-  const header = req.headers.authorization;
-  if (header === `Bearer ${token}`) {
+  const expectedToken = token.trim();
+  if (!expectedToken) {
     return true;
   }
 
-  return url.searchParams.get("token") === token;
+  const header = req.headers.authorization;
+  if (header === `Bearer ${expectedToken}`) {
+    return true;
+  }
+
+  return url.searchParams.get("token") === expectedToken;
 }
 
 export type KanbanRuntimeServer = {

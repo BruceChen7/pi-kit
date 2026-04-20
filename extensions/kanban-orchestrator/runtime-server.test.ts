@@ -147,6 +147,67 @@ describe("createKanbanRuntimeServer", () => {
     await server.stop();
   });
 
+  it("allows requests without auth when token is disabled", async () => {
+    const dir = createTempDir();
+    const service = new KanbanOrchestratorService({
+      auditLogPath: path.join(dir, "execution.log.jsonl"),
+      createRequestId: () => "req-http-open-1",
+      now: () => "2026-04-20T00:00:00.000Z",
+      actionExecutors: {
+        apply: async () => ({ summary: "applied" }),
+      },
+    });
+
+    const server = createKanbanRuntimeServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "",
+      service,
+      resolveContext: () => ({
+        ok: true,
+        context: {
+          cardId: "feat-checkout-v2",
+          title: "Checkout V2",
+          kind: "feature",
+          lane: "Spec",
+          parentCardId: null,
+          branch: "main--feat-checkout-v2",
+          baseBranch: "main",
+          mergeTarget: "main",
+          worktreePath: "/tmp/wt/main--feat-checkout-v2",
+          session: null,
+        },
+      }),
+      applyBoardPatch: () => ({ ok: true, summary: "board updated" }),
+      readBoard: () => ({
+        path: "workitems/features.kanban.md",
+        lanes: [{ name: "Spec", cards: [] }],
+        cards: [],
+        errors: [],
+      }),
+    });
+
+    await server.start();
+
+    const board = await fetch(`${server.baseUrl}/kanban/board`);
+    expect(board.status).toBe(200);
+
+    const execute = await fetch(`${server.baseUrl}/kanban/actions/execute`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "apply",
+        cardId: "feat-checkout-v2",
+        worktreeKey: "main--feat-checkout-v2",
+      }),
+    });
+    expect(execute.status).toBe(202);
+
+    await server.stop();
+  });
+
   it("serves SSE stream endpoint", async () => {
     const dir = createTempDir();
     const service = new KanbanOrchestratorService({

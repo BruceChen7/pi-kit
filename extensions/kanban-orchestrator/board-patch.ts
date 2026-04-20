@@ -4,7 +4,7 @@ import path from "node:path";
 import {
   getFeatureBoardPath,
   parseFeatureBoardFromText,
-} from "../feature-workflow/board.js";
+} from "./feature-workflow-local.js";
 
 export function applyBoardTextPatch(input: {
   repoRoot: string;

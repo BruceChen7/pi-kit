@@ -44,6 +44,26 @@ afterEach(() => {
   }
 });
 
+async function waitForStatus(
+  statusCommand: (args: string, ctx: unknown) => Promise<void>,
+  requestId: string,
+  ctx: unknown,
+  notifications: Array<{ message: string; level: string }>,
+): Promise<{ status: string }> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await statusCommand(requestId, ctx);
+    const payload = JSON.parse(notifications.at(-1)?.message ?? "{}") as {
+      status: string;
+    };
+    if (payload.status === "success" || payload.status === "failed") {
+      return payload;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  throw new Error(`request '${requestId}' did not reach a terminal state`);
+}
+
 describe("kanban orchestrator commands", () => {
   it("starts, reports, and stops embedded runtime server", async () => {
     const repoRoot = createRepo();
@@ -112,6 +132,63 @@ describe("kanban orchestrator commands", () => {
       running: boolean;
     };
     expect(stopped.running).toBe(false);
+  });
+
+  it("starts runtime without generating token when --token is omitted", async () => {
+    const repoRoot = createRepo();
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec: vi.fn(),
+      sendUserMessage: vi.fn(),
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const start = commands.get("kanban-runtime-start");
+    const stop = commands.get("kanban-runtime-stop");
+    expect(start).toBeTypeOf("function");
+    expect(stop).toBeTypeOf("function");
+    if (!start || !stop) return;
+
+    const ctx = {
+      cwd: repoRoot,
+      hasUI: false,
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+      sessionManager: {
+        getSessionFile() {
+          return null;
+        },
+      },
+      async switchSession() {
+        return { cancelled: false };
+      },
+    };
+
+    await start("--port 0", ctx);
+    const started = JSON.parse(notifications.at(-1)?.message ?? "{}") as {
+      running: boolean;
+      token: string;
+    };
+    expect(started.running).toBe(true);
+    expect(started.token).toBe("");
+
+    await stop("", ctx);
   });
 
   it("executes apply then custom-prompt through registered commands", async () => {
@@ -237,12 +314,12 @@ describe("kanban orchestrator commands", () => {
     };
     expect(queuedPayload.status).toBe("queued");
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    await status(queuedPayload.requestId, ctx);
-    const statusPayload = JSON.parse(notifications.at(-1)?.message ?? "{}") as {
-      status: string;
-    };
+    const statusPayload = await waitForStatus(
+      status,
+      queuedPayload.requestId,
+      ctx,
+      notifications,
+    );
     expect(statusPayload.status).toBe("success");
 
     const sidecarPath = path.join(

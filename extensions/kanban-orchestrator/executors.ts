@@ -4,17 +4,10 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 
 import {
-  runFeatureBoardApplyCommand,
-  runFeatureBoardReconcileCommand,
-} from "../feature-workflow/commands/feature-board.js";
-import { runFeaturePruneMergedCommand } from "../feature-workflow/commands/feature-prune-merged.js";
-import { runFeatureSwitchCommand } from "../feature-workflow/commands/feature-switch.js";
-import { runFeatureValidateCommand } from "../feature-workflow/commands/feature-validate.js";
-
-import {
   type ResolveKanbanCardContextResult,
   resolveKanbanCardContext,
 } from "./context.js";
+import { importFeatureWorkflowModule } from "./feature-workflow-runtime.js";
 import { buildPromptWithKanbanContext } from "./prompt-context.js";
 import type { KanbanActionExecutors } from "./service.js";
 
@@ -48,6 +41,15 @@ type ExecutorDeps = {
     },
   ) => void;
 };
+
+type FeatureBoardCommandsModule =
+  typeof import("../feature-workflow/commands/feature-board.js");
+type FeaturePruneMergedModule =
+  typeof import("../feature-workflow/commands/feature-prune-merged.js");
+type FeatureSwitchModule =
+  typeof import("../feature-workflow/commands/feature-switch.js");
+type FeatureValidateModule =
+  typeof import("../feature-workflow/commands/feature-validate.js");
 
 export function createKanbanActionExecutorsWithDeps(
   deps: ExecutorDeps,
@@ -136,17 +138,50 @@ export function createKanbanActionExecutors(input: {
     throw new Error("sendUserMessage is not available on ExtensionAPI");
   }
 
+  const loadBoardCommands = async (): Promise<FeatureBoardCommandsModule> =>
+    importFeatureWorkflowModule<FeatureBoardCommandsModule>(
+      "commands/feature-board.js",
+    );
+  const loadPruneMergedModule = async (): Promise<FeaturePruneMergedModule> =>
+    importFeatureWorkflowModule<FeaturePruneMergedModule>(
+      "commands/feature-prune-merged.js",
+    );
+  const loadSwitchModule = async (): Promise<FeatureSwitchModule> =>
+    importFeatureWorkflowModule<FeatureSwitchModule>(
+      "commands/feature-switch.js",
+    );
+  const loadValidateModule = async (): Promise<FeatureValidateModule> =>
+    importFeatureWorkflowModule<FeatureValidateModule>(
+      "commands/feature-validate.js",
+    );
+
   return createKanbanActionExecutorsWithDeps({
     runBoardApply: async (cardId: string) =>
-      runFeatureBoardApplyCommand(input.pi, input.ctx, [cardId]),
+      (await loadBoardCommands()).runFeatureBoardApplyCommand(
+        input.pi,
+        input.ctx,
+        [cardId],
+      ),
     runBoardReconcile: async () =>
-      runFeatureBoardReconcileCommand(input.pi, input.ctx),
+      (await loadBoardCommands()).runFeatureBoardReconcileCommand(
+        input.pi,
+        input.ctx,
+      ),
     runFeatureValidate: async () =>
-      runFeatureValidateCommand(input.pi, input.ctx),
+      (await loadValidateModule()).runFeatureValidateCommand(
+        input.pi,
+        input.ctx,
+      ),
     runPruneMerged: async () =>
-      runFeaturePruneMergedCommand(input.pi, input.ctx, ["--yes"]),
+      (await loadPruneMergedModule()).runFeaturePruneMergedCommand(
+        input.pi,
+        input.ctx,
+        ["--yes"],
+      ),
     runFeatureSwitch: async (branch: string) =>
-      runFeatureSwitchCommand(input.pi, input.ctx, [branch]),
+      (await loadSwitchModule()).runFeatureSwitchCommand(input.pi, input.ctx, [
+        branch,
+      ]),
     resolveContext: (cardId: string) =>
       resolveKanbanCardContext({
         repoRoot: input.repoRoot,

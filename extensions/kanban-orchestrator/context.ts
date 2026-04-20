@@ -2,8 +2,8 @@ import {
   type FeatureBoardCard,
   findFeatureBoardCard,
   readFeatureBoard,
-} from "../feature-workflow/board.js";
-import { readFeatureCardSidecar } from "../feature-workflow/board-sidecar.js";
+  readFeatureCardSidecar,
+} from "./feature-workflow-local.js";
 
 import {
   readSessionRegistry,

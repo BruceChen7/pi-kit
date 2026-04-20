@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -7,7 +6,6 @@ import type {
   ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 
-import { readFeatureBoard } from "../feature-workflow/board.js";
 import { getRepoRoot } from "../shared/git.js";
 import {
   handleActionStatusRequest,
@@ -15,10 +13,10 @@ import {
   handleCardContextRequest,
   handleExecuteActionRequest,
 } from "./api-routes.js";
-
 import { applyBoardTextPatch } from "./board-patch.js";
 import { resolveKanbanCardContext } from "./context.js";
 import { createKanbanActionExecutors } from "./executors.js";
+import { readFeatureBoard } from "./feature-workflow-local.js";
 import {
   createKanbanRuntimeServer,
   type KanbanRuntimeServer,
@@ -341,8 +339,7 @@ async function runKanbanRuntimeStartCommand(
   const tokens = [...args];
   const host = popOptionValue(tokens, "--host") ?? "127.0.0.1";
   const portArg = popOptionValue(tokens, "--port");
-  const token =
-    popOptionValue(tokens, "--token") ?? randomBytes(18).toString("base64url");
+  const token = popOptionValue(tokens, "--token") ?? "";
 
   const port = parsePort(portArg);
   if (portArg && port === null) {

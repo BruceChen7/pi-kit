@@ -3,7 +3,6 @@ import type { ManagedFeatureBranchRecord } from "./registry.js";
 export type FeatureStatus = "active";
 
 export type FeatureRecord = {
-  name: string;
   slug: string;
   branch: string;
   worktreePath: string;
@@ -62,7 +61,6 @@ export function listFeatureRecords(
     const wtUpdatedAt = toIsoFromWtCommitTimestamp(item.commit) ?? EPOCH_ISO;
 
     records.push({
-      name: managedRecord.slug,
       slug: managedRecord.slug,
       branch,
       worktreePath,

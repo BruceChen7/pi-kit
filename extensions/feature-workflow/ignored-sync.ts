@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { isErr } from "../shared/result.js";
+
 import {
   DEFAULT_IGNORED_SYNC_HOOK,
   type FeatureWorkflowIgnoredSyncConfig,
@@ -177,7 +179,7 @@ const maybeWarnLockfileDrift = async (
     const primaryPathResult = await deps.resolvePrimaryWorktreePath(
       input.runWt,
     );
-    if (!primaryPathResult.ok) {
+    if (isErr(primaryPathResult)) {
       return `Ignored sync: cannot resolve primary worktree for lockfile drift check (${primaryPathResult.message}).`;
     }
     baselineRoot = primaryPathResult.path;
@@ -286,7 +288,7 @@ export async function runIgnoredSync(
         branch: input.branch,
       });
 
-      if (!hookResult.ok) {
+      if (isErr(hookResult)) {
         actionFailures.push(`hook ${hook}: ${hookResult.message}`);
       } else {
         actionSummaries.push(`hook ${hook}`);
@@ -299,7 +301,7 @@ export async function runIgnoredSync(
       timeoutMs: input.config.fallback.copyIgnoredTimeoutMs,
     });
 
-    if (!copyResult.ok) {
+    if (isErr(copyResult)) {
       actionFailures.push(`wt step copy-ignored: ${copyResult.message}`);
     } else {
       actionSummaries.push("wt step copy-ignored");

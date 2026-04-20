@@ -218,4 +218,43 @@ describe("runIgnoredSync", () => {
       "warning",
     );
   });
+
+  it("warns when primary worktree cannot be resolved for lockfile drift check", async () => {
+    const notify = vi.fn();
+
+    await runIgnoredSync(
+      {
+        command: "feature-switch",
+        phase: "after-session-switch",
+        config: buildConfig({
+          lockfile: {
+            enabled: true,
+            path: "package-lock.json",
+            compareWithPrimary: true,
+            onDrift: "warn",
+          },
+        }),
+        repoRoot: "/repo",
+        worktreePath: "/repo/.wt/feat-main-checkout-v2",
+        branch: "feat/main/checkout-v2",
+        runWt,
+        notify,
+      },
+      {
+        getPathState: () => ({ exists: true, isSymlink: false }),
+        readTextFile: () => null,
+        resolvePrimaryWorktreePath: vi.fn().mockResolvedValue({
+          ok: false,
+          message: "wt list failed",
+        }),
+        runHook: vi.fn().mockResolvedValue({ ok: true }),
+        runCopyIgnored: vi.fn().mockResolvedValue({ ok: true }),
+      },
+    );
+
+    expect(notify).toHaveBeenCalledWith(
+      "Ignored sync: cannot resolve primary worktree for lockfile drift check (wt list failed).",
+      "warning",
+    );
+  });
 });

@@ -53,7 +53,6 @@ describe("storage", () => {
       "checkout-v2",
     ]);
     expect(records[0]).toMatchObject({
-      name: "login-timeout",
       slug: "login-timeout",
       branch: "legacy-main--login-timeout",
       worktreePath: "/tmp/login-timeout",

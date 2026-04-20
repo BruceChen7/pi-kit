@@ -1,116 +1,28 @@
-import fs from "node:fs";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-} from "@mariozechner/pi-coding-agent";
-
-import {
-  checkRepoDirty,
-  DEFAULT_GIT_TIMEOUT_MS,
-  type GitRunner,
-  getCurrentBranchName,
-  getRepoRoot,
-  listDirtyPaths,
-  listLocalBranches,
-} from "../shared/git.js";
 import { createLogger } from "../shared/logger.js";
 
-import { buildBaseBranchCandidates } from "./base-branches.js";
+import { runFeatureListCommand } from "./commands/feature-list.js";
+import { runFeatureSetupCommand } from "./commands/feature-setup.js";
+import { runFeatureStartCommand } from "./commands/feature-start.js";
+import { runFeatureSwitchCommand } from "./commands/feature-switch.js";
+import { trimToNull } from "./commands/shared.js";
+import { runFeatureValidateCommand } from "./commands/feature-validate.js";
 import { resolveFeatureWorkflowCommandContext } from "./command-context.js";
 import { loadFeatureWorkflowConfig } from "./config.js";
-import { matchFeatureRecord } from "./feature-query.js";
-import { checkBaseBranchFreshness } from "./guards.js";
-import {
-  type InferredBaseBranchResult,
-  inferBaseBranch,
-} from "./infer-base-branch.js";
-import { buildFeatureBranchName, isFeatureSlug } from "./naming.js";
-import {
-  readManagedFeatureRegistry,
-  upsertManagedFeatureBranch,
-} from "./registry.js";
-import { forkSessionForWorktree } from "./session-fork.js";
-import {
-  applyFeatureWorkflowSetupProfile,
-  DEFAULT_FEATURE_WORKFLOW_SETUP_PROFILE_ID,
-  FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE,
-  FEATURE_WORKFLOW_SETUP_TARGETS,
-  FEATURE_WORKFLOW_SETUP_USAGE,
-  type FeatureWorkflowSetupProfile,
-  type FeatureWorkflowSetupTarget,
-  getFeatureWorkflowSetupMissingFiles,
-  getFeatureWorkflowSetupProfile,
-  getFeatureWorkflowSetupTargetMeta,
-  getFeatureWorkflowWorktrunkUserConfigStatus,
-  listFeatureWorkflowSetupProfiles,
-  parseFeatureWorkflowSetupArgs,
-  resolveFeatureWorkflowSetupTargets,
-} from "./setup.js";
-import { areOnlyFeatureSetupManagedDirtyPaths } from "./setup-dirty-guard.js";
-import { type FeatureRecord, findActiveFeatureConflicts } from "./storage.js";
-import {
-  createFeatureWorktree,
-  createWtRunner,
-  ensureFeatureWorktree,
-  listFeatureRecordsFromWorktree,
-  type WtRunner,
-} from "./worktree-gateway.js";
+import { createWtRunner } from "./worktree-gateway.js";
 
 const log = createLogger("feature-workflow", {
   minLevel: "debug",
   stderr: null,
 });
 
-const OTHER_BASE_BRANCH = "Other…";
-
-const trimToNull = (value: string | null | undefined): string | null => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
-
-const parseCommandArgs = (rawArgs: string): string[] => {
+function parseCommandArgs(rawArgs: string): string[] {
   const trimmed = rawArgs.trim();
   if (!trimmed) return [];
 
   const tokens = trimmed.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
   return tokens.map((token) => token.replace(/^["']|["']$/g, ""));
-};
-
-type WorktreeSessionSwitchSkipReason =
-  | "disabled"
-  | "missing-worktree-path"
-  | "cancelled"
-  | "ephemeral-session"
-  | "session-fork-failed"
-  | "session-switch-failed";
-
-type WorktreeSessionSwitchResult = {
-  switched: boolean;
-  record: FeatureRecord;
-  skipReason: WorktreeSessionSwitchSkipReason | null;
-};
-
-function describeWorktreeSessionSkipReason(
-  reason: WorktreeSessionSwitchSkipReason | null,
-): string {
-  switch (reason) {
-    case "disabled":
-      return "auto-switch is disabled in config";
-    case "missing-worktree-path":
-      return "missing worktree path";
-    case "cancelled":
-      return "session switch was cancelled";
-    case "ephemeral-session":
-      return "current session is ephemeral (--no-session)";
-    case "session-fork-failed":
-      return "failed to create a worktree session file";
-    case "session-switch-failed":
-      return "failed to switch to the worktree session";
-    default:
-      return "unknown reason";
-  }
 }
 
 function buildFeatureSwitchNextStep(record: FeatureRecord): string {
@@ -1213,23 +1125,24 @@ export default function featureWorkflowExtension(pi: ExtensionAPI) {
   pi.registerCommand("feature-setup", {
     description:
       "Bootstrap ignored sync defaults + Worktrunk hook/script for this repo",
-    handler: async (args, ctx) => runFeatureSetup(ctx, parseCommandArgs(args)),
+    handler: async (args, ctx) =>
+      runFeatureSetupCommand(ctx, parseCommandArgs(args)),
   });
 
   pi.registerCommand("feature-start", {
     description: "Create a feature branch + worktree via Worktrunk",
-    handler: async (_args, ctx) => runFeatureStart(pi, ctx),
+    handler: async (_args, ctx) => runFeatureStartCommand(pi, ctx),
   });
 
   pi.registerCommand("feature-list", {
     description: "List feature records for this repo",
-    handler: async (_args, ctx) => runFeatureList(pi, ctx),
+    handler: async (_args, ctx) => runFeatureListCommand(pi, ctx),
   });
 
   pi.registerCommand("feature-switch", {
     description: "Prepare switching to an existing feature worktree",
     handler: async (args, ctx) =>
-      runFeatureSwitch(pi, ctx, parseCommandArgs(args)),
+      runFeatureSwitchCommand(pi, ctx, parseCommandArgs(args)),
   });
 
   pi.registerCommand("feature-prune-merged", {
@@ -1240,7 +1153,7 @@ export default function featureWorkflowExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("feature-validate", {
     description: "Run feature preflight checks",
-    handler: async (_args, ctx) => runFeatureValidate(pi, ctx),
+    handler: async (_args, ctx) => runFeatureValidateCommand(pi, ctx),
   });
 
   pi.on("session_start", (_event, ctx) => {

@@ -238,15 +238,8 @@ describe("feature-workflow extension", () => {
         options: ["main"],
       },
     ]);
-    expect(exec).toHaveBeenCalledTimes(2);
+    expect(exec).toHaveBeenCalledTimes(1);
     expect(exec).toHaveBeenNthCalledWith(1, "wt", [
-      "-C",
-      resolvedRepoRoot,
-      "list",
-      "--format",
-      "json",
-    ]);
-    expect(exec).toHaveBeenNthCalledWith(2, "wt", [
       "-C",
       resolvedRepoRoot,
       "switch",
@@ -257,7 +250,7 @@ describe("feature-workflow extension", () => {
       "--no-cd",
       "--yes",
     ]);
-    expect(exec.mock.calls[1]?.[1]).not.toContain(
+    expect(exec.mock.calls[0]?.[1]).not.toContain(
       "master--fix-annotate-auto-last",
     );
     expect(notifications).toEqual([
@@ -455,6 +448,529 @@ describe("feature-workflow extension", () => {
         delete process.env.HOME;
       }
     }
+  });
+
+  it("switches feature branch discovered from wt list without managed registry", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const featureBranch = "fix-switch-no-managed-registry";
+    const worktreePath = path.join(repoRoot, ".wt", featureBranch);
+
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            defaults: {
+              autoSwitchToWorktreeSession: false,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              branch: featureBranch,
+              path: worktreePath,
+              commit: { timestamp: 1 },
+            },
+          ]),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "switch") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            action: "switched",
+            path: worktreePath,
+          }),
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-switch");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await expect(
+      handler(featureBranch, {
+        cwd: repoRoot,
+        hasUI: false,
+        ui: {
+          notify(message: string, level: string) {
+            notifications.push({ message, level });
+          },
+        },
+        sessionManager: {
+          getSessionFile() {
+            return null;
+          },
+        },
+        async switchSession() {
+          return { cancelled: false };
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(notifications).toEqual([
+      {
+        message: expect.stringContaining(`Worktree ready: ${featureBranch}`),
+        level: "info",
+      },
+    ]);
+  });
+
+  it("blocks /feature-start session switch in strict ignored-sync mode", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            guards: {
+              requireCleanWorkspace: false,
+              requireFreshBase: false,
+            },
+            defaults: {
+              autoSwitchToWorktreeSession: true,
+            },
+            ignoredSync: {
+              enabled: true,
+              mode: "strict",
+              ensureOn: ["feature-start", "feature-switch"],
+              rules: [
+                {
+                  path: "node_modules",
+                  strategy: "symlink",
+                  required: true,
+                  onMissing: {
+                    action: "run-hook",
+                    hook: "project-deps-link",
+                  },
+                },
+              ],
+              lockfile: {
+                enabled: false,
+                path: "package-lock.json",
+                compareWithPrimary: true,
+                onDrift: "warn",
+              },
+              fallback: {
+                copyIgnoredTimeoutMs: 15000,
+                onFailure: "block",
+              },
+              notifications: {
+                enabled: true,
+                verbose: false,
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const worktreePath = path.join(repoRoot, ".wt", "fix-strict-start-block");
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const switchSession = vi.fn(async () => ({ cancelled: false }));
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args.includes("switch") && args.includes("--create")) {
+        fs.mkdirSync(worktreePath, { recursive: true });
+        return {
+          code: 0,
+          stdout: JSON.stringify({ action: "created", path: worktreePath }),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "hook") {
+        return {
+          code: 1,
+          stdout: "",
+          stderr: "hook failed",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-start");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        async input(prompt: string) {
+          if (prompt === "Branch slug:") {
+            return "fix-strict-start-block";
+          }
+          throw new Error(`Unexpected input prompt: ${prompt}`);
+        },
+        async select(prompt: string) {
+          if (prompt === "Base branch:") {
+            return "main";
+          }
+          throw new Error(`Unexpected select prompt: ${prompt}`);
+        },
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "session.json");
+        },
+      },
+      switchSession,
+    });
+
+    expect(exec.mock.calls.some((call) => call[1][2] === "hook")).toBe(true);
+    expect(switchSession).not.toHaveBeenCalled();
+    expect(notifications).toContainEqual({
+      message:
+        "Ignored sync blocked session switch because required paths are not ready.",
+      level: "error",
+    });
+  });
+
+  it("blocks /feature-switch session switch in strict ignored-sync mode", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const featureBranch = "fix-switch-strict-block";
+    const worktreePath = path.join(repoRoot, ".wt", featureBranch);
+
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            defaults: {
+              autoSwitchToWorktreeSession: true,
+            },
+            ignoredSync: {
+              enabled: true,
+              mode: "strict",
+              ensureOn: ["feature-start", "feature-switch"],
+              rules: [
+                {
+                  path: "node_modules",
+                  strategy: "symlink",
+                  required: true,
+                  onMissing: {
+                    action: "run-hook",
+                    hook: "project-deps-link",
+                  },
+                },
+              ],
+              lockfile: {
+                enabled: false,
+                path: "package-lock.json",
+                compareWithPrimary: true,
+                onDrift: "warn",
+              },
+              fallback: {
+                copyIgnoredTimeoutMs: 15000,
+                onFailure: "block",
+              },
+              notifications: {
+                enabled: true,
+                verbose: false,
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const switchSession = vi.fn(async () => ({ cancelled: false }));
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              branch: featureBranch,
+              path: worktreePath,
+              commit: { timestamp: 1 },
+            },
+          ]),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "switch") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            action: "switched",
+            path: worktreePath,
+          }),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "hook") {
+        return {
+          code: 1,
+          stdout: "",
+          stderr: "hook failed",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-switch");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler(featureBranch, {
+      cwd: repoRoot,
+      hasUI: false,
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "session.json");
+        },
+      },
+      switchSession,
+    });
+
+    expect(exec.mock.calls.some((call) => call[1][2] === "hook")).toBe(true);
+    expect(switchSession).not.toHaveBeenCalled();
+    expect(
+      notifications.some(
+        (entry) => entry.message === `Worktree ready: ${featureBranch}`,
+      ),
+    ).toBe(false);
+    expect(notifications).toContainEqual({
+      message:
+        "Ignored sync blocked session switch because required paths are not ready.",
+      level: "error",
+    });
+  });
+
+  it("runs quick ignored-sync after /feature-start", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            guards: {
+              requireCleanWorkspace: false,
+              requireFreshBase: false,
+            },
+            defaults: {
+              autoSwitchToWorktreeSession: false,
+            },
+            ignoredSync: {
+              enabled: true,
+              mode: "quick",
+              ensureOn: ["feature-start", "feature-switch"],
+              rules: [
+                {
+                  path: "node_modules",
+                  strategy: "copy",
+                  required: false,
+                  onMissing: {
+                    action: "copy-ignored",
+                    hook: null,
+                  },
+                },
+              ],
+              lockfile: {
+                enabled: false,
+                path: "package-lock.json",
+                compareWithPrimary: true,
+                onDrift: "warn",
+              },
+              fallback: {
+                copyIgnoredTimeoutMs: 15000,
+                onFailure: "warn",
+              },
+              notifications: {
+                enabled: true,
+                verbose: false,
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const worktreePath = path.join(repoRoot, ".wt", "fix-start-quick-sync");
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args.includes("switch") && args.includes("--create")) {
+        fs.mkdirSync(worktreePath, { recursive: true });
+        return {
+          code: 0,
+          stdout: JSON.stringify({ action: "created", path: worktreePath }),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "step" && args[3] === "copy-ignored") {
+        return {
+          code: 0,
+          stdout: "",
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-start");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        async input(prompt: string) {
+          if (prompt === "Branch slug:") {
+            return "fix-start-quick-sync";
+          }
+          throw new Error(`Unexpected input prompt: ${prompt}`);
+        },
+        async select(prompt: string) {
+          if (prompt === "Base branch:") {
+            return "main";
+          }
+          throw new Error(`Unexpected select prompt: ${prompt}`);
+        },
+        notify() {
+          // ignore
+        },
+      },
+      sessionManager: {
+        getSessionFile() {
+          return null;
+        },
+      },
+      async switchSession() {
+        return { cancelled: false };
+      },
+    });
+
+    expect(
+      exec.mock.calls.some(
+        (call) => call[1][2] === "step" && call[1][3] === "copy-ignored",
+      ),
+    ).toBe(true);
   });
 
   it("auto-applies the Worktrunk user config in --yes mode without prompting", async () => {

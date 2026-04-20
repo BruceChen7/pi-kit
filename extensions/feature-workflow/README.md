@@ -18,6 +18,9 @@ A pi-kit extension that helps you start and manage feature development using Wor
 
 - `/feature-start`
   - Interactive wizard to create a new feature branch + worktree via `wt switch --create`.
+  - Runs runtime ignored-sync checks/actions on both lifecycle phases:
+    - `before-session-switch` (strict mode can block session switch)
+    - `after-session-switch` (quick mode fallback actions)
   - Prompts only for:
     1) `Branch slug:`
     2) `Base branch:`
@@ -226,9 +229,15 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
 
 > `/feature-setup npm` will upgrade this baseline with npm profile defaults and managed Worktrunk hook/script artifacts. The generated hooks are the primary ignored-file automation path; settings remain available for compatibility/customization.
 
-### Hook-driven sync (primary path)
+### Hook-driven sync + runtime guardrails
 
-After `/feature-setup`, feature-workflow expects shared ignored-file behavior to come from Worktrunk hooks and `wt step copy-ignored`, not from extension-side runtime orchestration.
+After `/feature-setup`, shared ignored-file behavior still primarily comes from Worktrunk hooks and `wt step copy-ignored`.
+
+In addition, feature-workflow now executes runtime ignored-sync checks/actions during command orchestration for both `/feature-start` and `/feature-switch`:
+
+- `mode = "quick"`: run only `after-session-switch` phase
+- `mode = "strict"`: run only `before-session-switch` phase
+  - when required rules stay unresolved and `fallback.onFailure = "block"`, the command blocks session switching
 
 ## Fast bootstrap (recommended)
 

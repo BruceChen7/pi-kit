@@ -1,23 +1,12 @@
-import fs from "node:fs";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-} from "@mariozechner/pi-coding-agent";
-
-import {
-  checkRepoDirty,
-  DEFAULT_GIT_TIMEOUT_MS,
-  type GitRunner,
-  getCurrentBranchName,
-  getRepoRoot,
-  listDirtyPaths,
-  listLocalBranches,
-} from "../shared/git.js";
 import { createLogger } from "../shared/logger.js";
 
-import { buildBaseBranchCandidates } from "./base-branches.js";
-import { resolveFeatureWorkflowCommandContext } from "./command-context.js";
+import { runFeatureListCommand } from "./commands/feature-list.js";
+import { runFeatureSetupCommand } from "./commands/feature-setup.js";
+import { runFeatureStartCommand } from "./commands/feature-start.js";
+import { runFeatureSwitchCommand } from "./commands/feature-switch.js";
+import { runFeatureValidateCommand } from "./commands/feature-validate.js";
 import { loadFeatureWorkflowConfig } from "./config.js";
 import { matchFeatureRecord } from "./feature-query.js";
 import { checkBaseBranchFreshness } from "./guards.js";
@@ -61,15 +50,7 @@ const log = createLogger("feature-workflow", {
   stderr: null,
 });
 
-const OTHER_BASE_BRANCH = "Other…";
-
-const trimToNull = (value: string | null | undefined): string | null => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
-
-const parseCommandArgs = (rawArgs: string): string[] => {
+function parseCommandArgs(rawArgs: string): string[] {
   const trimmed = rawArgs.trim();
   if (!trimmed) return [];
 
@@ -923,78 +904,33 @@ async function runFeatureSwitch(
   });
 }
 
-async function runFeatureValidate(
-  _pi: ExtensionAPI,
-  ctx: ExtensionCommandContext,
-) {
-  const commandContext = resolveFeatureWorkflowCommandContext({
-    cwd: ctx.cwd,
-    ui: ctx.ui,
-  });
-  if (!commandContext) {
-    return;
-  }
-
-  const { config, timeoutMs, repoRoot, runGit } = commandContext;
-  const messages: string[] = [];
-
-  const dirty = checkRepoDirty(repoRoot, timeoutMs);
-  if (!dirty) {
-    ctx.ui.notify("Failed to check git status", "warning");
-    return;
-  }
-  messages.push(
-    `dirty: ${dirty.summary.dirty ? "yes" : "no"} (staged ${dirty.summary.staged}, unstaged ${dirty.summary.unstaged}, untracked ${dirty.summary.untracked})`,
-  );
-
-  const { inference } = resolveInferredBaseBranch({ runGit });
-  messages.push(buildInferredBaseMessage(inference));
-
-  if (inference.kind === "resolved" && config.guards.requireFreshBase) {
-    const freshness = checkBaseBranchFreshness({
-      runGit,
-      baseBranch: inference.branch,
-    });
-    if (freshness.ok) {
-      messages.push(`base freshness: ok (${inference.branch})`);
-    } else if (freshness.behind !== null) {
-      messages.push(
-        `base freshness: FAIL (${inference.branch} behind ${freshness.upstream} by ${freshness.behind})`,
-      );
-    } else {
-      messages.push(`base freshness: FAIL (${inference.branch}, unknown)`);
-    }
-  }
-
-  ctx.ui.notify(buildFeaturePreflightNotifyMessage(messages), "info");
-}
-
-export default function featureWorkflowExtension(pi: ExtensionAPI) {
+export default function featureWorkflowExtension(pi: ExtensionAPI): void {
   pi.registerCommand("feature-setup", {
     description:
       "Bootstrap ignored sync defaults + Worktrunk hook/script for this repo",
-    handler: async (args, ctx) => runFeatureSetup(ctx, parseCommandArgs(args)),
+    handler: async (args, ctx) =>
+      runFeatureSetupCommand(ctx, parseCommandArgs(args)),
   });
 
   pi.registerCommand("feature-start", {
     description: "Create a feature branch + worktree via Worktrunk",
-    handler: async (_args, ctx) => runFeatureStart(pi, ctx),
+    handler: async (_args, ctx) => runFeatureStartCommand(pi, ctx),
   });
 
   pi.registerCommand("feature-list", {
     description: "List feature records for this repo",
-    handler: async (_args, ctx) => runFeatureList(pi, ctx),
+    handler: async (_args, ctx) => runFeatureListCommand(pi, ctx),
   });
 
   pi.registerCommand("feature-switch", {
     description: "Prepare switching to an existing feature worktree",
     handler: async (args, ctx) =>
-      runFeatureSwitch(pi, ctx, parseCommandArgs(args)),
+      runFeatureSwitchCommand(pi, ctx, parseCommandArgs(args)),
   });
 
   pi.registerCommand("feature-validate", {
     description: "Run feature preflight checks",
-    handler: async (_args, ctx) => runFeatureValidate(pi, ctx),
+    handler: async (_args, ctx) => runFeatureValidateCommand(pi, ctx),
   });
 
   pi.on("session_start", (_event, ctx) => {

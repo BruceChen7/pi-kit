@@ -25,6 +25,7 @@ import type {
   PlanReviewCoordinatorReason,
   PlanReviewRuntimeContext,
   PlanReviewSessionState,
+  ReviewTargetKind,
   SessionKeyContext,
 } from "./types.ts";
 
@@ -72,6 +73,25 @@ type RetryReason = Exclude<
   PlanReviewCoordinatorReason,
   "plan-file-write" | "agent_end"
 >;
+
+const formatReviewMessage = (
+  kind: ReviewTargetKind,
+  result: {
+    approved: boolean;
+    feedback?: string;
+  },
+): string => {
+  const message = formatPlanReviewMessage(result);
+  if (kind === "plan") {
+    return message;
+  }
+
+  return message
+    .replace("# Plan Review", "# Spec Review")
+    .replaceAll("Plan approved", "Spec approved")
+    .replaceAll("Plan rejected", "Spec rejected")
+    .replaceAll("revise the plan", "revise the spec");
+};
 
 export type PlanReviewCoordinator = {
   queuePendingPlanReview: (
@@ -214,6 +234,7 @@ export const createPlanReviewCoordinator = (
         cwd: ctx.cwd,
         source,
         reviewId: active.reviewId,
+        kind: active.kind,
         approved: result.approved,
       });
       return;
@@ -223,7 +244,7 @@ export const createPlanReviewCoordinator = (
       state.settledPlanReviewPaths.add(active.resolvedPlanPath);
     }
 
-    pi.sendUserMessage(formatPlanReviewMessage(result), {
+    pi.sendUserMessage(formatReviewMessage(active.kind, result), {
       deliverAs: "steer",
     });
 
@@ -231,6 +252,7 @@ export const createPlanReviewCoordinator = (
       cwd: ctx.cwd,
       source,
       reviewId: active.reviewId,
+      kind: active.kind,
       approved: result.approved,
       hasFeedback: Boolean(result.feedback?.trim()),
     });
@@ -687,6 +709,7 @@ export const createPlanReviewCoordinator = (
     state.pendingPlanReviewByCwd.delete(ctx.cwd);
     state.activePlanReviewByCwd.set(ctx.cwd, {
       reviewId: response.result.reviewId,
+      kind: pending.kind,
       planFile: pending.planFile,
       resolvedPlanPath: pending.resolvedPlanPath,
       startedAt: Date.now(),

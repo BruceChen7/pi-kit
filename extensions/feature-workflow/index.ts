@@ -26,10 +26,6 @@ import {
   inferBaseBranch,
 } from "./infer-base-branch.js";
 import { buildFeatureBranchName, isFeatureSlug } from "./naming.js";
-import {
-  readManagedFeatureRegistry,
-  upsertManagedFeatureBranch,
-} from "./registry.js";
 import { forkSessionForWorktree } from "./session-fork.js";
 import {
   applyFeatureWorkflowSetupProfile,
@@ -48,7 +44,10 @@ import {
   resolveFeatureWorkflowSetupTargets,
 } from "./setup.js";
 import { areOnlyFeatureSetupManagedDirtyPaths } from "./setup-dirty-guard.js";
-import { type FeatureRecord, findActiveFeatureConflicts } from "./storage.js";
+import {
+  type FeatureRecord,
+  hasActiveFeatureBranchConflict,
+} from "./storage.js";
 import {
   createFeatureWorktree,
   createWtRunner,
@@ -264,11 +263,7 @@ async function loadFeatureRecordsFromWt(input: {
     repoRoot: input.repoRoot,
   });
 
-  const managedFeatureBranches = readManagedFeatureRegistry(input.repoRoot);
-  const result = await listFeatureRecordsFromWorktree(
-    input.runWt,
-    managedFeatureBranches,
-  );
+  const result = await listFeatureRecordsFromWorktree(input.runWt);
   if (!result.ok) {
     input.ctx.ui.notify(result.message, "error");
     log.error("wt list failed", {
@@ -279,14 +274,6 @@ async function loadFeatureRecordsFromWt(input: {
   }
 
   return result.records;
-}
-
-function buildAmbiguousFeatureQueryMessage(input: {
-  query: string;
-  branches: string[];
-}): string {
-  const preview = input.branches.map((branch) => `- ${branch}`).join("\n");
-  return `Query '${input.query}' matches multiple features. Use a branch name:\n${preview}`;
 }
 
 function buildFeatureListNotifyMessage(records: FeatureRecord[]): string {
@@ -693,21 +680,9 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
   });
   if (!activeRecords) return;
 
-  const conflicts = findActiveFeatureConflicts(activeRecords, {
-    branch,
-    slug,
-  });
-  if (conflicts.branchConflict) {
+  if (hasActiveFeatureBranchConflict(activeRecords, branch)) {
     ctx.ui.notify(
       `Active feature worktree already exists for branch: ${branch}`,
-      "error",
-    );
-    return;
-  }
-
-  if (conflicts.slugConflict) {
-    ctx.ui.notify(
-      `Active feature worktree already exists for slug: ${slug}`,
       "error",
     );
     return;
@@ -769,26 +744,6 @@ async function runFeatureStart(pi: ExtensionAPI, ctx: ExtensionCommandContext) {
     createdAt: now,
     updatedAt: now,
   };
-
-  try {
-    upsertManagedFeatureBranch(repoRoot, {
-      branch,
-      slug,
-      timestamp: now,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    ctx.ui.notify(
-      `Feature worktree created, but failed to update managed feature registry: ${message}`,
-      "warning",
-    );
-    log.warn("feature registry upsert failed", {
-      branch,
-      base,
-      repoRoot,
-      message,
-    });
-  }
 
   const switchResult = await maybeSwitchToWorktreeSession({
     ctx,
@@ -881,16 +836,6 @@ async function runFeatureSwitch(
   switch (match.kind) {
     case "not-found": {
       ctx.ui.notify(`Unknown feature: ${query}`, "error");
-      return;
-    }
-    case "ambiguous-slug": {
-      ctx.ui.notify(
-        buildAmbiguousFeatureQueryMessage({
-          query: match.value,
-          branches: match.branches,
-        }),
-        "error",
-      );
       return;
     }
     case "matched":

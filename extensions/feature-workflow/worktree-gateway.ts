@@ -1,6 +1,5 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
-import type { ManagedFeatureBranchRecord } from "./registry.js";
 import { type FeatureRecord, listFeatureRecords } from "./storage.js";
 import {
   buildWtSwitchArgs,
@@ -140,7 +139,6 @@ export function createWtRunner(pi: ExtensionAPI, repoRoot: string): WtRunner {
 
 export async function listFeatureRecordsFromWorktree(
   runWt: WtRunner,
-  managedBranches: Iterable<ManagedFeatureBranchRecord>,
 ): Promise<
   { ok: true; records: FeatureRecord[] } | { ok: false; message: string }
 > {
@@ -151,7 +149,7 @@ export async function listFeatureRecordsFromWorktree(
 
   return {
     ok: true,
-    records: listFeatureRecords(result.stdout, managedBranches),
+    records: listFeatureRecords(result.stdout),
   };
 }
 

@@ -1,7 +1,6 @@
 export type FeatureStatus = "active";
 
 export type FeatureRecord = {
-  name: string;
   slug: string;
   branch: string;
   worktreePath: string;

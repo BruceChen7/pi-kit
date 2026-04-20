@@ -48,7 +48,6 @@ export function listFeatureRecords(wtListJson: string): FeatureRecord[] {
     const wtUpdatedAt = toIsoFromWtCommitTimestamp(item.commit) ?? EPOCH_ISO;
 
     records.push({
-      name: branch,
       slug: branch,
       branch,
       worktreePath,

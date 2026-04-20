@@ -336,10 +336,12 @@ export const formatCodeReviewMessage = (result: {
 export const formatAnnotationMessage = (options: {
   filePath: string;
   feedback: string;
+  annotations?: unknown[];
   isFolder?: boolean;
 }): string | null => {
   const feedback = options.feedback.trim();
-  if (!feedback) {
+  const hasAnnotations = (options.annotations?.length ?? 0) > 0;
+  if (!feedback && !hasAnnotations) {
     return null;
   }
 
@@ -347,5 +349,9 @@ export const formatAnnotationMessage = (options: {
     ? `# Markdown Annotations\n\nFolder: ${options.filePath}`
     : `# Markdown Annotations\n\nFile: ${options.filePath}`;
 
-  return `${header}\n\n${feedback}\n\nPlease address the annotation feedback above.`;
+  const body = feedback
+    ? `${feedback}\n\nPlease address the annotation feedback above.`
+    : "Annotation completed with inline comments. Please address the annotation feedback above.";
+
+  return `${header}\n\n${body}`;
 };

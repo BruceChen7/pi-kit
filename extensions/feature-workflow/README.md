@@ -5,7 +5,7 @@ A pi-kit extension that helps you start and manage feature development using Wor
 ## Commands
 
 - `/feature-setup [profile] [--only=<targets>] [--skip=<targets>] [--yes]`
-  - Bootstraps repo-local ignored-sync + Worktrunk hook setup.
+  - Bootstraps repo-local Worktrunk hook/setup artifacts for feature-workflow.
   - Extensible **profile registry** (currently ships with `npm`; designed to add `pnpm`/`yarn`/custom profiles later).
   - Generates/updates profile artifacts idempotently (safe to run repeatedly).
   - Targets:
@@ -14,39 +14,49 @@ A pi-kit extension that helps you start and manage feature development using Wor
     - `worktreeinclude` → `.worktreeinclude`
     - `hook-script` → `$HOME/.pi/pi-feature-workflow-links.sh`
     - `wt-toml` → managed hook block in `.config/wt.toml`
+    - `wt-user-config` → `~/.config/worktrunk/config.toml` `worktree-path`
 
 - `/feature-start`
   - Interactive wizard to create a new feature branch + worktree via `wt switch --create`.
+  - Runs runtime ignored-sync checks/actions on both lifecycle phases:
+    - `before-session-switch` (strict mode can block session switch)
+    - `after-session-switch` (quick mode fallback actions)
   - Prompts only for:
     1) `Branch slug:`
     2) `Base branch:`
-  - Applies the same `.gitignore` merge rule as `/feature-setup` in the new worktree (ensures `.pi/` exists without overwriting existing target rules).
-  - Records successful creations in a repo-local managed-feature registry under `.pi/` so later commands only operate on feature-workflow-managed branches.
+  - Keeps command logic thin: collect input, run `wt switch --create`, and switch the pi session.
+  - Relies on `/feature-setup`-generated Worktrunk hooks for shared ignored-file automation.
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a new session whose `cwd` is the worktree path.
   - Base branch options are derived from **local branches**, prioritized as:
-    1) current branch
-       - if current branch is a managed feature branch in `<encoded-base>--<slug>` form, prioritize its parsed `base`
-    2) `main`
-    3) `master`
-    4) `release*` (e.g. `release`, `release/*`, `release-*`) if present
-  - New feature branches use `<encoded-base>--<slug>` (example: `main--checkout-v2`).
+    1) resolved **inferred base** (when git graph inference resolves one)
+    2) current branch
+    3) `main`
+    4) `master`
+    5) `release*` (e.g. `release`, `release/*`, `release-*`) if present
+  - Inferred base is a git-graph heuristic, not historical truth. It uses `fork-point` first, then `merge-base`, over local `main/master/release*` candidates.
+  - New feature branches use the slug directly (example: `checkout-v2`). The selected base branch is used only for creation, not encoded into the branch name.
 
 - `/feature-list`
   - Lists active feature worktrees from `wt list --format json`.
-  - Only shows branches that are both:
-    - active in Worktrunk, and
-    - present in the feature-workflow managed registry
-  - Derives `base` from branch name (`<encoded-base>--<slug>`), while still understanding legacy `<base>/<slug>` entries.
+  - Worktrunk is the source of truth for discovery; every active worktree branch is shown.
+  - Runtime base information is inferred from git graph, not branch name.
 
-- `/feature-switch <branch|slug>`
-  - Canonical lookup key is **branch name** (`<encoded-base>--<slug>`). UI selection also uses branch names to avoid ambiguity.
-  - A unique `slug` is accepted as a convenience alias. If a slug matches multiple branches, the command asks you to use the full branch name.
+- `/feature-switch <branch>`
+  - Lookup key is **branch name**.
   - Ensures the worktree exists via `wt switch`.
   - Applies the same `.gitignore` merge rule as `/feature-setup` in the target worktree (ensures `.pi/` exists without overwriting existing target rules).
   - If `defaults.autoSwitchToWorktreeSession` is enabled (default: true), pi will switch into a worktree session rooted at that feature.
 
+- `/feature-prune-merged [--yes] [--no-fetch]`
+  - Runs `git fetch --all --prune` first (best-effort) to reduce stale-ref false negatives when detecting merged branches.
+  - Finds all non-main worktrees from `wt list --format json` whose `main_state` is `integrated` or `empty`.
+  - Shows a preview list, asks for confirmation by default, then removes them with `wt remove`.
+  - Uses Worktrunk default branch deletion policy (delete only when safely merged).
+  - `--yes` skips the confirmation prompt.
+  - `--no-fetch` skips the pre-fetch step.
+
 - `/feature-validate`
-  - Runs basic preflight checks (dirty state + base freshness for the top-priority base).
+  - Runs basic preflight checks (dirty state + inferred-base reporting + base freshness when inference resolves a base branch).
 
 - `/feature-board-status`
   - Reads `workitems/features.kanban.md` and reports board path, card counts, and parser errors.
@@ -77,15 +87,16 @@ Run this once in your repo:
 /feature-setup npm
 ```
 
-This command prepares the files needed for ignored-sync and Worktrunk hooks:
+This command prepares the files needed for Worktrunk-managed lifecycle automation:
 
 - `.pi/third_extension_settings.json`
 - `.gitignore` (ensures `.pi/` and `.config/wt.toml` are present)
 - `.worktreeinclude`
 - `$HOME/.pi/pi-feature-workflow-links.sh`
 - `.config/wt.toml` (managed block)
+- `~/.config/worktrunk/config.toml` (recommended global `worktree-path`)
 
-After setup, repo-local `.pi` artifacts and `.config/wt.toml` stay local by default (both are gitignored), while the hook script is installed at `$HOME/.pi/pi-feature-workflow-links.sh`. Commit tracked workflow files like `.worktreeinclude` if you want to share them with your team.
+After setup, repo-local `.pi` artifacts and `.config/wt.toml` stay local by default (both are gitignored), while the hook script is installed at `$HOME/.pi/pi-feature-workflow-links.sh`. `/feature-setup` also recommends the global Worktrunk template `{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}` so worktree directories look like `pi-kit.fix-annotate-auto-last`. In interactive mode it asks before changing that global setting; `/feature-setup --yes` applies it automatically. Commit tracked workflow files like `.worktreeinclude` if you want to share them with your team.
 
 ### 2) Start a new feature
 
@@ -100,12 +111,14 @@ Then follow the wizard:
 1. enter a short slug (for example `checkout-v2`)
 2. choose base branch (usually `main`)
 
-The extension creates branch + worktree and (by default) switches you into that worktree session automatically.
+The extension creates branch + worktree through `wt switch --create`, then (by default) switches you into that worktree session automatically.
+
+`/feature-start` chooses the branch name. The final worktree directory name comes from Worktrunk's global `worktree-path` template.
 
 Example branch name:
 
 ```text
-main--checkout-v2
+checkout-v2
 ```
 
 ### 3) Continue an existing feature later
@@ -119,10 +132,10 @@ List feature worktrees:
 Switch to one:
 
 ```text
-/feature-switch main--checkout-v2
+/feature-switch checkout-v2
 ```
 
-Tip: use the full branch name (`<encoded-base>--<slug>`) if the same slug exists under multiple base branches.
+Tip: for new branches, the branch name is the slug itself. If you still have legacy branches that reuse a slug, use the full branch name to disambiguate.
 
 ### 4) Run preflight checks before PR / before continuing work
 
@@ -140,10 +153,13 @@ This helps catch common issues early (dirty workspace, stale base).
 
 # later switch back into an existing feature
 /feature-list
-/feature-switch main--checkout-v2
+/feature-switch checkout-v2
 
 # before push / PR
 /feature-validate
+
+# periodically clean up already-merged worktrees
+/feature-prune-merged
 ```
 
 ## Board-first workflow
@@ -244,19 +260,18 @@ That means:
 
 ## Storage
 
-Feature/worktree visibility uses two inputs:
+Feature/worktree visibility uses one input:
 
 1. Worktrunk (`wt list --format json`) for active worktrees
-2. A repo-local feature-workflow managed registry under `.pi/`
 
 Identity semantics:
 - Canonical key: `branch`
-- Convenience alias: unique `slug`
+- `slug` mirrors `branch` for UI compatibility
 
-`base` is derived from branch name and requires:
-- `<encoded-base>--<slug>` where `encoded-base` is `encodeURIComponent(base)` (legacy `<base>/<slug>` remains readable)
-
-This registry-based model ensures ordinary slash branches such as `user/demo` are not treated as feature-workflow branches unless they were created by `/feature-start`.
+Runtime base semantics:
+- base is **inferred** from git graph, not encoded into branch name
+- inference considers local `main`, `master`, and `release*` branches
+- inference prefers `fork-point`, then falls back to `merge-base`
 
 ## Configuration
 
@@ -336,12 +351,17 @@ Configure via global `~/.pi/agent/third_extension_settings.json` or project `<re
 }
 ```
 
-> `/feature-setup npm` will upgrade this baseline with npm profile defaults (including lockfile drift warnings and managed hook/script artifacts).
+> `/feature-setup npm` will upgrade this baseline with npm profile defaults and managed Worktrunk hook/script artifacts. The generated hooks are the primary ignored-file automation path; settings remain available for compatibility/customization.
 
-### ignoredSync modes
+### Hook-driven sync + runtime guardrails
 
-- `quick` (default): session switch first, then best-effort sync and warnings.
-- `strict`: sync before session switch. If required paths remain unresolved and `fallback.onFailure` is `block`, the command aborts.
+After `/feature-setup`, shared ignored-file behavior still primarily comes from Worktrunk hooks and `wt step copy-ignored`.
+
+In addition, feature-workflow now executes runtime ignored-sync checks/actions during command orchestration for both `/feature-start` and `/feature-switch`:
+
+- `mode = "quick"`: run only `after-session-switch` phase
+- `mode = "strict"`: run only `before-session-switch` phase
+  - when required rules stay unresolved and `fallback.onFailure = "block"`, the command blocks session switching
 
 ## Fast bootstrap (recommended)
 
@@ -358,6 +378,7 @@ By default this command updates:
 - `.worktreeinclude`
 - `$HOME/.pi/pi-feature-workflow-links.sh`
 - `.config/wt.toml` (managed block)
+- `~/.config/worktrunk/config.toml` (`worktree-path` recommendation)
 
 Example managed block in `.config/wt.toml`:
 
@@ -365,10 +386,13 @@ Example managed block in `.config/wt.toml`:
 # >>> pi-kit feature-workflow setup (managed) >>>
 [pre-start]
 "project-deps-link" = "bash \"$HOME/.pi/pi-feature-workflow-links.sh\" '{{ primary_worktree_path }}'"
+
+[post-start]
+"project-copy-ignored" = "wt step copy-ignored"
 # <<< pi-kit feature-workflow setup (managed) <<<
 ```
 
-The generated script links profile-defined shared paths (npm profile: `node_modules`, `.pi`, `AGENTS.md`, `CLAUDE.md`) from primary worktree to feature worktree.
+The generated script links profile-defined shared paths (npm profile: `node_modules`, `.pi`, `AGENTS.md`, `CLAUDE.md`) from primary worktree to feature worktree, while the managed `post-start` hook runs `wt step copy-ignored` for copy-managed ignored files.
 
 ## Requirements
 

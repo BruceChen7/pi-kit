@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { isErr, type Result } from "../shared/result.js";
 import {
   getSettingsPaths,
   readSettingsFile,
@@ -22,7 +23,8 @@ export type FeatureWorkflowSetupTarget =
   | "gitignore"
   | "worktreeinclude"
   | "hook-script"
-  | "wt-toml";
+  | "wt-toml"
+  | "wt-user-config";
 
 export type FeatureWorkflowSetupProfile = {
   id: string;
@@ -68,8 +70,7 @@ export type FeatureWorkflowSetupApplyResult = {
 };
 
 export type FeatureWorkflowSetupParseResult =
-  | { ok: true; value: FeatureWorkflowSetupCliOptions }
-  | { ok: false; message: string };
+  Result<FeatureWorkflowSetupCliOptions>;
 
 const SETUP_TARGETS: FeatureWorkflowSetupTarget[] = [
   "settings",
@@ -77,6 +78,7 @@ const SETUP_TARGETS: FeatureWorkflowSetupTarget[] = [
   "worktreeinclude",
   "hook-script",
   "wt-toml",
+  "wt-user-config",
 ];
 
 const SETUP_TARGET_ALIASES: Record<string, FeatureWorkflowSetupTarget> = {
@@ -94,6 +96,10 @@ const SETUP_TARGET_ALIASES: Record<string, FeatureWorkflowSetupTarget> = {
   wt: "wt-toml",
   "wt-toml": "wt-toml",
   "wt.toml": "wt-toml",
+  "wt-user-config": "wt-user-config",
+  "user-config": "wt-user-config",
+  "wt-config": "wt-user-config",
+  worktrunk: "wt-user-config",
 };
 
 const SETUP_TARGET_METADATA: Record<
@@ -121,7 +127,14 @@ const SETUP_TARGET_METADATA: Record<
     label: ".config/wt.toml",
     description: "Install/update a managed pre-start hook block.",
   },
+  "wt-user-config": {
+    label: "~/.config/worktrunk/config.toml",
+    description:
+      "Set the recommended global worktree-path template for slug-only worktree directories.",
+  },
 };
+
+const SETUP_TARGETS_DISPLAY = SETUP_TARGETS.join(", ");
 
 const WORKTREE_INCLUDE_HEADER = [
   "# Files to copy between worktrees (must also be gitignored)",
@@ -131,7 +144,10 @@ const WORKTREE_INCLUDE_HEADER = [
 const GITIGNORE_REQUIRED_ENTRIES = [".pi/", ".config/wt.toml"] as const;
 const HOME_SCRIPT_PATH_PREFIX = "$HOME/";
 const HOME_HOOK_SCRIPT_PATH = "$HOME/.pi/pi-feature-workflow-links.sh";
+const WORKTRUNK_USER_CONFIG_RELATIVE_PATH = ".config/worktrunk/config.toml";
 export const FEATURE_WORKFLOW_WT_TOML_PATH = ".config/wt.toml";
+export const FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE =
+  "{{ repo_path }}/../{{ repo }}.{{ branch | sanitize }}";
 
 const WORKTREE_INCLUDE_EXCLUDED_ENTRIES = new Set<string>([".pi"]);
 
@@ -139,8 +155,14 @@ const WT_TOML_MANAGED_BLOCK_START =
   "# >>> pi-kit feature-workflow setup (managed) >>>";
 const WT_TOML_MANAGED_BLOCK_END =
   "# <<< pi-kit feature-workflow setup (managed) <<<";
+const WT_USER_CONFIG_MANAGED_BLOCK_START =
+  "# >>> pi-kit feature-workflow worktree-path (managed) >>>";
+const WT_USER_CONFIG_MANAGED_BLOCK_END =
+  "# <<< pi-kit feature-workflow worktree-path (managed) <<<";
 
 export const DEFAULT_FEATURE_WORKFLOW_SETUP_PROFILE_ID = "npm";
+export const DEFAULT_FEATURE_WORKFLOW_COPY_IGNORED_HOOK =
+  "project-copy-ignored";
 
 const cloneRule = (rule: IgnoredSyncRule): IgnoredSyncRule => ({
   ...rule,
@@ -270,6 +292,200 @@ const resolveHookScriptAbsolutePath = (
 const escapeTomlBasicString = (value: string): string =>
   value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
+export const getFeatureWorkflowWorktrunkUserConfigPath = (
+  inputHomePath?: string,
+): string => {
+  return path.join(
+    resolveUserHomePath(inputHomePath),
+    WORKTRUNK_USER_CONFIG_RELATIVE_PATH,
+  );
+};
+
+const buildManagedWorktrunkUserConfigBlock = (): string => {
+  const escapedTemplate = escapeTomlBasicString(
+    FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE,
+  );
+
+  return [
+    WT_USER_CONFIG_MANAGED_BLOCK_START,
+    `worktree-path = "${escapedTemplate}"`,
+    WT_USER_CONFIG_MANAGED_BLOCK_END,
+  ].join("\n");
+};
+
+const findManagedBlockRange = (
+  source: string,
+  markers: { start: string; end: string },
+): { startIndex: number; replacementEnd: number } | null => {
+  const startIndex = source.indexOf(markers.start);
+  const endIndex = source.indexOf(markers.end);
+  if (startIndex < 0 || endIndex <= startIndex) {
+    return null;
+  }
+
+  return {
+    startIndex,
+    replacementEnd: endIndex + markers.end.length,
+  };
+};
+
+const splitTopLevelTomlPrefix = (
+  source: string,
+): { prefix: string; suffix: string } => {
+  const match = source.match(/^[ \t]*\[[^\n]*\]/m);
+  if (!match || match.index === undefined) {
+    return { prefix: source, suffix: "" };
+  }
+
+  return {
+    prefix: source.slice(0, match.index),
+    suffix: source.slice(match.index),
+  };
+};
+
+const parseTopLevelWorktreePathLine = (line: string): string | null => {
+  const basicMatch = line.match(
+    /^\s*worktree-path\s*=\s*"([^"\n]*)"\s*(?:#.*)?$/,
+  );
+  if (basicMatch) {
+    return basicMatch[1] ?? null;
+  }
+
+  const literalMatch = line.match(
+    /^\s*worktree-path\s*=\s*'([^'\n]*)'\s*(?:#.*)?$/,
+  );
+  return literalMatch?.[1] ?? null;
+};
+
+const readTopLevelWorktreePathTemplate = (source: string): string | null => {
+  const { prefix } = splitTopLevelTomlPrefix(source);
+  for (const line of prefix.split(/\r?\n/)) {
+    const template = parseTopLevelWorktreePathLine(line);
+    if (template !== null) {
+      return template;
+    }
+  }
+
+  return null;
+};
+
+const removeTopLevelWorktreePathEntries = (
+  source: string,
+): { content: string; removed: boolean } => {
+  const { prefix, suffix } = splitTopLevelTomlPrefix(source);
+  const keptLines: string[] = [];
+  let removed = false;
+
+  for (const line of prefix.split(/\r?\n/)) {
+    if (parseTopLevelWorktreePathLine(line) !== null) {
+      removed = true;
+      continue;
+    }
+    keptLines.push(line);
+  }
+
+  return {
+    content: `${keptLines.join("\n")}${suffix}`,
+    removed,
+  };
+};
+
+const upsertManagedWorktrunkUserConfig = (
+  existingContent: string | null,
+): { content: string; changed: boolean } => {
+  const nextBlock = buildManagedWorktrunkUserConfigBlock();
+  const source = existingContent ?? "";
+
+  if (source.includes(nextBlock)) {
+    return {
+      content: source,
+      changed: false,
+    };
+  }
+
+  const managedRange = findManagedBlockRange(source, {
+    start: WT_USER_CONFIG_MANAGED_BLOCK_START,
+    end: WT_USER_CONFIG_MANAGED_BLOCK_END,
+  });
+  if (managedRange) {
+    const nextContent =
+      source.slice(0, managedRange.startIndex) +
+      nextBlock +
+      source.slice(managedRange.replacementEnd);
+    return {
+      content: nextContent,
+      changed: nextContent !== source,
+    };
+  }
+
+  if (
+    readTopLevelWorktreePathTemplate(source) ===
+    FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE
+  ) {
+    return {
+      content: source,
+      changed: false,
+    };
+  }
+
+  const stripped = removeTopLevelWorktreePathEntries(source).content;
+  const remainder = stripped.replace(/^(?:[ \t]*\r?\n)+/, "").trimEnd();
+  const nextContent = remainder
+    ? `${nextBlock}\n\n${remainder}\n`
+    : `${nextBlock}\n`;
+
+  return {
+    content: nextContent,
+    changed: nextContent !== source,
+  };
+};
+
+export const getFeatureWorkflowWorktrunkUserConfigStatus = (
+  input: { userHomePath?: string } = {},
+): {
+  path: string;
+  currentTemplate: string | null;
+  needsUpdate: boolean;
+} => {
+  const userConfigPath = getFeatureWorkflowWorktrunkUserConfigPath(
+    input.userHomePath,
+  );
+  if (!fs.existsSync(userConfigPath)) {
+    return {
+      path: userConfigPath,
+      currentTemplate: null,
+      needsUpdate: true,
+    };
+  }
+
+  const source = fs.readFileSync(userConfigPath, "utf-8");
+  const managedRange = findManagedBlockRange(source, {
+    start: WT_USER_CONFIG_MANAGED_BLOCK_START,
+    end: WT_USER_CONFIG_MANAGED_BLOCK_END,
+  });
+  if (managedRange) {
+    const managedBlock = source.slice(
+      managedRange.startIndex,
+      managedRange.replacementEnd,
+    );
+    const currentTemplate = readTopLevelWorktreePathTemplate(managedBlock);
+    return {
+      path: userConfigPath,
+      currentTemplate,
+      needsUpdate:
+        currentTemplate !== FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE,
+    };
+  }
+
+  const currentTemplate = readTopLevelWorktreePathTemplate(source);
+  return {
+    path: userConfigPath,
+    currentTemplate,
+    needsUpdate:
+      currentTemplate !== FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE,
+  };
+};
+
 const quoteShellArg = (value: string): string =>
   `'${value.replace(/'/g, `'"'"'`)}'`;
 
@@ -311,11 +527,7 @@ export const getFeatureWorkflowSetupTargetMeta = (
   ...SETUP_TARGET_METADATA[target],
 });
 
-const parseTargetList = (
-  raw: string,
-):
-  | { ok: true; targets: FeatureWorkflowSetupTarget[] }
-  | { ok: false; message: string } => {
+const parseTargetList = (raw: string): Result<FeatureWorkflowSetupTarget[]> => {
   const values = uniqueStrings(
     raw.split(",").map((entry) => entry.toLowerCase()),
   );
@@ -326,9 +538,10 @@ const parseTargetList = (
     if (!target) {
       return {
         ok: false,
-        message: `Unknown target '${value}'. Supported targets: settings, gitignore, worktreeinclude, hook-script, wt-toml.`,
+        message: `Unknown target '${value}'. Supported targets: ${SETUP_TARGETS_DISPLAY}.`,
       };
     }
+
     if (!targets.includes(target)) {
       targets.push(target);
     }
@@ -336,17 +549,20 @@ const parseTargetList = (
 
   return {
     ok: true,
-    targets,
+    value: targets,
   };
+};
+
+type ParsedOptionValue = {
+  optionValue: string;
+  consumed: number;
 };
 
 const parseOptionValue = (
   token: string,
   args: string[],
   index: number,
-):
-  | { ok: true; value: string; consumed: number }
-  | { ok: false; message: string } => {
+): Result<ParsedOptionValue> => {
   const equalsIndex = token.indexOf("=");
   if (equalsIndex >= 0) {
     const inlineValue = token.slice(equalsIndex + 1).trim();
@@ -356,7 +572,14 @@ const parseOptionValue = (
         message: `Missing value for option '${token.slice(0, equalsIndex)}'.`,
       };
     }
-    return { ok: true, value: inlineValue, consumed: 1 };
+
+    return {
+      ok: true,
+      value: {
+        optionValue: inlineValue,
+        consumed: 1,
+      },
+    };
   }
 
   const next = trimToNull(args[index + 1]);
@@ -369,8 +592,10 @@ const parseOptionValue = (
 
   return {
     ok: true,
-    value: next,
-    consumed: 2,
+    value: {
+      optionValue: next,
+      consumed: 2,
+    },
   };
 };
 
@@ -397,48 +622,64 @@ export const parseFeatureWorkflowSetupArgs = (
 
     if (token === "--profile" || token.startsWith("--profile=")) {
       const parsedValue = parseOptionValue(token, args, index);
-      if (!parsedValue.ok) {
-        return parsedValue;
+      if (isErr(parsedValue)) {
+        return {
+          ok: false,
+          message: parsedValue.message,
+        };
       }
-      profileId = parsedValue.value;
-      index += parsedValue.consumed;
+
+      profileId = parsedValue.value.optionValue;
+      index += parsedValue.value.consumed;
       continue;
     }
 
     if (token === "--only" || token.startsWith("--only=")) {
       const parsedValue = parseOptionValue(token, args, index);
-      if (!parsedValue.ok) {
-        return parsedValue;
+      if (isErr(parsedValue)) {
+        return {
+          ok: false,
+          message: parsedValue.message,
+        };
       }
 
-      const parsedTargets = parseTargetList(parsedValue.value);
-      if (!parsedTargets.ok) {
-        return parsedTargets;
+      const parsedTargets = parseTargetList(parsedValue.value.optionValue);
+      if (isErr(parsedTargets)) {
+        return {
+          ok: false,
+          message: parsedTargets.message,
+        };
       }
 
-      onlyTargets = parsedTargets.targets;
-      index += parsedValue.consumed;
+      onlyTargets = parsedTargets.value;
+      index += parsedValue.value.consumed;
       continue;
     }
 
     if (token === "--skip" || token.startsWith("--skip=")) {
       const parsedValue = parseOptionValue(token, args, index);
-      if (!parsedValue.ok) {
-        return parsedValue;
+      if (isErr(parsedValue)) {
+        return {
+          ok: false,
+          message: parsedValue.message,
+        };
       }
 
-      const parsedTargets = parseTargetList(parsedValue.value);
-      if (!parsedTargets.ok) {
-        return parsedTargets;
+      const parsedTargets = parseTargetList(parsedValue.value.optionValue);
+      if (isErr(parsedTargets)) {
+        return {
+          ok: false,
+          message: parsedTargets.message,
+        };
       }
 
-      for (const target of parsedTargets.targets) {
+      for (const target of parsedTargets.value) {
         if (!skipTargets.includes(target)) {
           skipTargets.push(target);
         }
       }
 
-      index += parsedValue.consumed;
+      index += parsedValue.value.consumed;
       continue;
     }
 
@@ -811,13 +1052,20 @@ const buildManagedWtTomlBlock = (
   profile: FeatureWorkflowSetupProfile,
 ): string => {
   const command = `bash "${profile.hook.scriptRelativePath}" '{{ primary_worktree_path }}'`;
-  const escapedKey = escapeTomlBasicString(profile.hook.name);
-  const escapedCommand = escapeTomlBasicString(command);
+  const escapedPreStartKey = escapeTomlBasicString(profile.hook.name);
+  const escapedPreStartCommand = escapeTomlBasicString(command);
+  const escapedPostStartKey = escapeTomlBasicString(
+    DEFAULT_FEATURE_WORKFLOW_COPY_IGNORED_HOOK,
+  );
+  const escapedPostStartCommand = escapeTomlBasicString("wt step copy-ignored");
 
   return [
     WT_TOML_MANAGED_BLOCK_START,
     "[pre-start]",
-    `"${escapedKey}" = "${escapedCommand}"`,
+    `"${escapedPreStartKey}" = "${escapedPreStartCommand}"`,
+    "",
+    "[post-start]",
+    `"${escapedPostStartKey}" = "${escapedPostStartCommand}"`,
     WT_TOML_MANAGED_BLOCK_END,
   ].join("\n");
 };
@@ -1001,8 +1249,32 @@ export const applyFeatureWorkflowSetupProfile = (
       path: toRelativeDisplayPath(input.repoRoot, wtTomlPath),
       changed: merged.changed,
       message: merged.changed
-        ? `Managed hook '${input.profile.hook.name}' installed/updated`
+        ? `Managed Worktrunk hook block installed/updated (${input.profile.hook.name}, ${DEFAULT_FEATURE_WORKFLOW_COPY_IGNORED_HOOK})`
         : "Managed hook block already up to date",
+    });
+  }
+
+  if (targets.includes("wt-user-config")) {
+    const userConfigPath = getFeatureWorkflowWorktrunkUserConfigPath(
+      input.userHomePath,
+    );
+    const existingContent = fs.existsSync(userConfigPath)
+      ? fs.readFileSync(userConfigPath, "utf-8")
+      : null;
+
+    const merged = upsertManagedWorktrunkUserConfig(existingContent);
+    if (merged.changed) {
+      fs.mkdirSync(path.dirname(userConfigPath), { recursive: true });
+      fs.writeFileSync(userConfigPath, merged.content, "utf-8");
+    }
+
+    changes.push({
+      target: "wt-user-config",
+      path: toRelativeDisplayPath(input.repoRoot, userConfigPath),
+      changed: merged.changed,
+      message: merged.changed
+        ? "Configured Worktrunk user worktree-path template"
+        : "Worktrunk user worktree-path already matches recommended template",
     });
   }
 

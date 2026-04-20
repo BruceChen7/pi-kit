@@ -20,22 +20,22 @@ describe("worktree-gateway", () => {
     const runWt: WtRunner = vi
       .fn()
       .mockResolvedValue(
-        okResult('{"action":"created","path":"/repo/.wt/main-checkout-v2"}'),
+        okResult('{"action":"created","path":"/repo/.wt/checkout-v2"}'),
       );
 
     const result = await createFeatureWorktree(runWt, {
-      branch: "main--checkout-v2",
+      branch: "checkout-v2",
       base: "main",
     });
 
     expect(result).toEqual({
       ok: true,
-      worktreePath: "/repo/.wt/main-checkout-v2",
+      worktreePath: "/repo/.wt/checkout-v2",
     });
     expect(runWt).toHaveBeenCalledWith([
       "switch",
       "--create",
-      "main--checkout-v2",
+      "checkout-v2",
       "--base",
       "main",
       "--no-cd",
@@ -46,31 +46,31 @@ describe("worktree-gateway", () => {
   it("resolves create worktree path from wt list when switch output is not json", async () => {
     const runWt: WtRunner = vi
       .fn()
-      .mockResolvedValueOnce(okResult("Switched to main--checkout-v2"))
+      .mockResolvedValueOnce(okResult("Switched to checkout-v2"))
       .mockResolvedValueOnce(
         okResult(
           JSON.stringify([
             {
-              branch: "main--checkout-v2",
-              path: "/repo/.wt/main-checkout-v2",
+              branch: "checkout-v2",
+              path: "/repo/.wt/checkout-v2",
             },
           ]),
         ),
       );
 
     const result = await createFeatureWorktree(runWt, {
-      branch: "main--checkout-v2",
+      branch: "checkout-v2",
       base: "main",
     });
 
     expect(result).toEqual({
       ok: true,
-      worktreePath: "/repo/.wt/main-checkout-v2",
+      worktreePath: "/repo/.wt/checkout-v2",
     });
     expect(runWt).toHaveBeenNthCalledWith(1, [
       "switch",
       "--create",
-      "main--checkout-v2",
+      "checkout-v2",
       "--base",
       "main",
       "--no-cd",
@@ -85,7 +85,7 @@ describe("worktree-gateway", () => {
       .mockResolvedValue(failResult("base branch missing"));
 
     const result = await createFeatureWorktree(runWt, {
-      branch: "main--checkout-v2",
+      branch: "checkout-v2",
       base: "main",
     });
 
@@ -98,17 +98,17 @@ describe("worktree-gateway", () => {
       .mockResolvedValue(okResult('{"action":"already_at"}'));
 
     const result = await ensureFeatureWorktree(runWt, {
-      branch: "main--checkout-v2",
-      fallbackWorktreePath: "/repo/.wt/main-checkout-v2",
+      branch: "checkout-v2",
+      fallbackWorktreePath: "/repo/.wt/checkout-v2",
     });
 
     expect(result).toEqual({
       ok: true,
-      worktreePath: "/repo/.wt/main-checkout-v2",
+      worktreePath: "/repo/.wt/checkout-v2",
     });
     expect(runWt).toHaveBeenCalledWith([
       "switch",
-      "main--checkout-v2",
+      "checkout-v2",
       "--no-cd",
       "--yes",
     ]);
@@ -119,24 +119,23 @@ describe("worktree-gateway", () => {
       okResult(
         JSON.stringify([
           {
-            branch: "main/checkout-v2",
-            path: "/repo/.wt/main-checkout-v2",
+            branch: "checkout-v2",
+            path: "/repo/.wt/checkout-v2",
             commit: { timestamp: 100 },
           },
         ]),
       ),
     );
 
-    const result = await listFeatureRecordsFromWorktree(runWt, [
-      "main/checkout-v2",
-    ]);
+    const result = await listFeatureRecordsFromWorktree(runWt);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.records).toHaveLength(1);
       expect(result.records[0]).toMatchObject({
-        branch: "main/checkout-v2",
-        worktreePath: "/repo/.wt/main-checkout-v2",
+        branch: "checkout-v2",
+        slug: "checkout-v2",
+        worktreePath: "/repo/.wt/checkout-v2",
       });
     }
     expect(runWt).toHaveBeenCalledWith(["list", "--format", "json"]);
@@ -147,7 +146,7 @@ describe("worktree-gateway", () => {
       .fn()
       .mockResolvedValue(failResult("wt list failed"));
 
-    const result = await listFeatureRecordsFromWorktree(runWt, []);
+    const result = await listFeatureRecordsFromWorktree(runWt);
 
     expect(result).toEqual({ ok: false, message: "wt list failed" });
   });
@@ -158,7 +157,7 @@ describe("worktree-gateway", () => {
     const result = await runWorktreeHook(runWt, {
       hookType: "pre-start",
       hook: "project-deps-link",
-      branch: "main--checkout-v2",
+      branch: "checkout-v2",
     });
 
     expect(result).toEqual({ ok: true });
@@ -174,13 +173,13 @@ describe("worktree-gateway", () => {
     const runWt: WtRunner = vi.fn().mockResolvedValue(okResult("ok"));
 
     const result = await runCopyIgnoredToFeatureWorktree(runWt, {
-      toBranch: "main--checkout-v2",
+      toBranch: "checkout-v2",
       timeoutMs: 1234,
     });
 
     expect(result).toEqual({ ok: true });
     expect(runWt).toHaveBeenCalledWith(
-      ["step", "copy-ignored", "--to", "main--checkout-v2"],
+      ["step", "copy-ignored", "--to", "checkout-v2"],
       { timeoutMs: 1234 },
     );
   });
@@ -195,8 +194,8 @@ describe("worktree-gateway", () => {
             is_main: true,
           },
           {
-            branch: "main--checkout-v2",
-            path: "/repo/.wt/main-checkout-v2",
+            branch: "checkout-v2",
+            path: "/repo/.wt/checkout-v2",
             is_main: false,
           },
         ]),

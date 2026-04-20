@@ -1,12 +1,8 @@
-import { parseFeatureBranchName } from "./naming.js";
-
 export type FeatureStatus = "active";
 
 export type FeatureRecord = {
-  name: string;
   slug: string;
   branch: string;
-  base: string;
   worktreePath: string;
   status: FeatureStatus;
   createdAt: string;
@@ -30,10 +26,7 @@ const toIsoFromWtCommitTimestamp = (value: unknown): string | null => {
   return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString();
 };
 
-export function listFeatureRecords(
-  wtListJson: string,
-  managedBranches: Iterable<string>,
-): FeatureRecord[] {
+export function listFeatureRecords(wtListJson: string): FeatureRecord[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(wtListJson) as unknown;
@@ -43,11 +36,6 @@ export function listFeatureRecords(
 
   if (!Array.isArray(parsed)) return [];
 
-  const managedBranchSet = new Set(managedBranches);
-  if (managedBranchSet.size === 0) {
-    return [];
-  }
-
   const records: FeatureRecord[] = [];
 
   for (const item of parsed) {
@@ -55,18 +43,13 @@ export function listFeatureRecords(
 
     const branch = typeof item.branch === "string" ? item.branch : "";
     const worktreePath = typeof item.path === "string" ? item.path : "";
-    if (!branch || !worktreePath || !managedBranchSet.has(branch)) continue;
-
-    const parsedBranch = parseFeatureBranchName(branch);
-    if (!parsedBranch) continue;
+    if (!branch || !worktreePath) continue;
 
     const wtUpdatedAt = toIsoFromWtCommitTimestamp(item.commit) ?? EPOCH_ISO;
 
     records.push({
-      name: parsedBranch.slug,
-      slug: parsedBranch.slug,
+      slug: branch,
       branch,
-      base: parsedBranch.base,
       worktreePath,
       status: "active",
       createdAt: wtUpdatedAt,
@@ -78,11 +61,9 @@ export function listFeatureRecords(
   return records;
 }
 
-export function findActiveFeatureConflicts(
+export function hasActiveFeatureBranchConflict(
   records: FeatureRecord[],
-  input: { branch: string },
-): { branchConflict: boolean } {
-  return {
-    branchConflict: records.some((record) => record.branch === input.branch),
-  };
+  branch: string,
+): boolean {
+  return records.some((record) => record.branch === branch);
 }

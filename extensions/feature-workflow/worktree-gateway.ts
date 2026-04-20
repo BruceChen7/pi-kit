@@ -1,7 +1,11 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 import { type FeatureRecord, listFeatureRecords } from "./storage.js";
-import { buildWtSwitchCreateArgs, parseWtJsonResult } from "./wt.js";
+import {
+  buildWtSwitchArgs,
+  buildWtSwitchCreateArgs,
+  parseWtJsonResult,
+} from "./wt.js";
 
 export type WtExecutionResult = {
   code: number;
@@ -27,8 +31,21 @@ const trimToNull = (value: string | null | undefined): string | null => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const EPOCH_ISO = new Date(0).toISOString();
+
 const toErrorMessage = (result: WtExecutionResult, fallback: string): string =>
   trimToNull(result.stderr) ?? trimToNull(result.stdout) ?? fallback;
+
+const toIsoFromWtCommitTimestamp = (value: unknown): string | null => {
+  if (!isRecord(value)) return null;
+  const timestamp = value.timestamp;
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) {
+    return null;
+  }
+
+  const parsed = new Date(timestamp * 1000);
+  return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString();
+};
 
 const getWorktreePath = (
   result: WtExecutionResult,
@@ -135,7 +152,6 @@ export function createWtRunner(pi: ExtensionAPI, repoRoot: string): WtRunner {
 
 export async function listFeatureRecordsFromWorktree(
   runWt: WtRunner,
-  managedBranches: Iterable<string>,
 ): Promise<
   { ok: true; records: FeatureRecord[] } | { ok: false; message: string }
 > {
@@ -146,7 +162,67 @@ export async function listFeatureRecordsFromWorktree(
 
   return {
     ok: true,
-    records: listFeatureRecords(result.stdout, managedBranches),
+    records: listFeatureRecords(result.stdout),
+  };
+}
+
+export function listSwitchableFeatureRecords(
+  wtListJson: string,
+): FeatureRecord[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(wtListJson) as unknown;
+  } catch {
+    return [];
+  }
+
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  const records: FeatureRecord[] = [];
+
+  for (const item of parsed) {
+    if (!isRecord(item)) continue;
+    if (item.is_main === true) continue;
+
+    const branch = trimToNull(
+      typeof item.branch === "string" ? item.branch : null,
+    );
+    const worktreePath = trimToNull(
+      typeof item.path === "string" ? item.path : null,
+    );
+    if (!branch || !worktreePath) continue;
+
+    const updatedAt = toIsoFromWtCommitTimestamp(item.commit) ?? EPOCH_ISO;
+
+    records.push({
+      slug: branch,
+      branch,
+      worktreePath,
+      status: "active",
+      createdAt: updatedAt,
+      updatedAt,
+    });
+  }
+
+  records.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return records;
+}
+
+export async function listSwitchableFeatureRecordsFromWorktree(
+  runWt: WtRunner,
+): Promise<
+  { ok: true; records: FeatureRecord[] } | { ok: false; message: string }
+> {
+  const result = await runWt(["list", "--format", "json"]);
+  if (result.code !== 0) {
+    return { ok: false, message: toErrorMessage(result, "wt list failed") };
+  }
+
+  return {
+    ok: true,
+    records: listSwitchableFeatureRecords(result.stdout),
   };
 }
 
@@ -196,7 +272,11 @@ export async function ensureFeatureWorktree(
 ): Promise<
   { ok: true; worktreePath: string } | { ok: false; message: string }
 > {
-  const result = await runWt(["switch", input.branch, "--no-cd", "--yes"]);
+  const result = await runWt(
+    buildWtSwitchArgs({
+      branch: input.branch,
+    }),
+  );
 
   if (result.code !== 0) {
     return {

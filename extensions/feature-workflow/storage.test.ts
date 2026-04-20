@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import * as storage from "./storage.js";
 
-const { findActiveFeatureConflicts, listFeatureRecords } = storage;
+const { hasActiveFeatureBranchConflict, listFeatureRecords } = storage;
 
 describe("storage", () => {
   it("does not expose local feature-record persistence helpers", () => {
@@ -10,16 +10,16 @@ describe("storage", () => {
     expect("readFeatureRecord" in storage).toBe(false);
   });
 
-  it("lists only managed records from wt list json", () => {
+  it("lists active worktree records directly from wt list json", () => {
     const wtListJson = JSON.stringify([
       {
-        branch: "main/a",
-        path: "/tmp/a",
+        branch: "checkout-v2",
+        path: "/tmp/checkout-v2",
         commit: { timestamp: 100 },
       },
       {
-        branch: "release/2026-q2/b",
-        path: "/tmp/b",
+        branch: "legacy-main--login-timeout",
+        path: "/tmp/login-timeout",
         commit: { timestamp: 200 },
       },
       {
@@ -28,27 +28,23 @@ describe("storage", () => {
         commit: { timestamp: 150 },
       },
       {
-        branch: "main/no-worktree",
+        branch: "no-worktree",
         commit: { timestamp: 300 },
       },
     ]);
 
-    const records = listFeatureRecords(wtListJson, [
-      "main/a",
-      "release/2026-q2/b",
-    ]);
+    const records = listFeatureRecords(wtListJson);
 
     expect(records.map((r) => r.branch)).toEqual([
-      "release/2026-q2/b",
-      "main/a",
+      "legacy-main--login-timeout",
+      "user/demo",
+      "checkout-v2",
     ]);
     expect(records[0]).toMatchObject({
-      name: "b",
-      branch: "release/2026-q2/b",
-      worktreePath: "/tmp/b",
-      base: "release/2026-q2",
+      slug: "legacy-main--login-timeout",
+      branch: "legacy-main--login-timeout",
+      worktreePath: "/tmp/login-timeout",
     });
-    expect(records.some((record) => record.branch === "user/demo")).toBe(false);
     const topRecord = records[0];
     expect(topRecord).toBeDefined();
     if (topRecord) {
@@ -56,65 +52,51 @@ describe("storage", () => {
     }
   });
 
-  it("returns empty list when no managed branches are provided", () => {
-    const records = listFeatureRecords(
-      JSON.stringify([
-        {
-          branch: "main--checkout-v2",
-          path: "/tmp/checkout-v2",
-          commit: { timestamp: 100 },
-        },
-      ]),
-      [],
-    );
-
-    expect(records).toEqual([]);
-  });
-
   it("detects no conflict when active records differ", () => {
     const activeRecords = listFeatureRecords(
       JSON.stringify([
         {
-          branch: "main--another-feature",
+          branch: "another-feature",
           path: "/tmp/another-feature",
           commit: { timestamp: 100 },
         },
       ]),
-      ["main--another-feature"],
     );
 
-    expect(
-      findActiveFeatureConflicts(activeRecords, {
-        branch: "main--checkout-v2",
-      }),
-    ).toEqual({
-      branchConflict: false,
-    });
+    expect(hasActiveFeatureBranchConflict(activeRecords, "checkout-v2")).toBe(
+      false,
+    );
   });
 
-  it("detects branch conflict", () => {
+  it("detects branch conflict when branch names are identical", () => {
     const activeRecords = listFeatureRecords(
       JSON.stringify([
         {
-          branch: "main--checkout-v2",
+          branch: "checkout-v2",
           path: "/tmp/checkout-v2",
           commit: { timestamp: 100 },
         },
+      ]),
+    );
+
+    expect(hasActiveFeatureBranchConflict(activeRecords, "checkout-v2")).toBe(
+      true,
+    );
+  });
+
+  it("does not treat different branches as conflicts anymore", () => {
+    const activeRecords = listFeatureRecords(
+      JSON.stringify([
         {
-          branch: "release%2F2026-q2--checkout-v2",
-          path: "/tmp/release-checkout-v2",
+          branch: "legacy-main--checkout-v2",
+          path: "/tmp/legacy-checkout-v2",
           commit: { timestamp: 90 },
         },
       ]),
-      ["main--checkout-v2", "release%2F2026-q2--checkout-v2"],
     );
 
-    expect(
-      findActiveFeatureConflicts(activeRecords, {
-        branch: "main--checkout-v2",
-      }),
-    ).toEqual({
-      branchConflict: true,
-    });
+    expect(hasActiveFeatureBranchConflict(activeRecords, "checkout-v2")).toBe(
+      false,
+    );
   });
 });

@@ -114,14 +114,18 @@ export const listDirtyPaths = (porcelain: string): string[] => {
 };
 
 export const getCurrentBranchName = (run: GitRunner): string | null => {
-  const result = run(["branch", "--show-current"]);
+  const result = run(["symbolic-ref", "--quiet", "--short", "HEAD"]);
   if (result.exitCode !== 0) return null;
   const branchName = result.stdout.trim();
   return branchName.length > 0 ? branchName : null;
 };
 
 export const listLocalBranches = (run: GitRunner): string[] => {
-  const result = run(["branch", "--format=%(refname:short)"]);
+  const result = run([
+    "for-each-ref",
+    "--format=%(refname:short)",
+    "refs/heads",
+  ]);
   if (result.exitCode !== 0) return [];
   return parseNonEmptyLines(result.stdout);
 };

@@ -6,8 +6,8 @@
     "pi-package"
   ],
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.67.6",
-    "@mariozechner/pi-tui": "^0.67.6"
+    "@mariozechner/pi-coding-agent": "^0.67.68",
+    "@mariozechner/pi-tui": "^0.67.68"
   },
   "pi": {
     "extensions": [

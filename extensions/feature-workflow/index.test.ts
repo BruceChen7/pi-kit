@@ -9,10 +9,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearSettingsCache } from "../shared/settings.js";
 import extension from "./index.js";
 import {
-  getManagedFeatureRegistryPath,
-  readManagedFeatureRegistry,
-} from "./registry.js";
-import {
   FEATURE_WORKFLOW_RECOMMENDED_WORKTREE_PATH_TEMPLATE,
   getFeatureWorkflowWorktrunkUserConfigPath,
 } from "./setup.js";
@@ -129,7 +125,7 @@ describe("feature-workflow extension", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
-  it("creates a managed slug-only feature branch from the selected slug", async () => {
+  it("creates a slug-only feature branch from the selected slug without local registry persistence", async () => {
     const repoRoot = createTempRepoWithMainBranch();
     fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
@@ -267,15 +263,11 @@ describe("feature-workflow extension", () => {
         level: "info",
       },
     ]);
-    expect(readManagedFeatureRegistry(repoRoot)).toEqual([
-      {
-        branch: "fix-annotate-auto-last",
-        slug: "fix-annotate-auto-last",
-        createdAt: expect.any(String),
-        updatedAt: expect.any(String),
-      },
-    ]);
-    expect(fs.existsSync(getManagedFeatureRegistryPath(repoRoot))).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(repoRoot, ".pi", "feature-workflow-branches.json"),
+      ),
+    ).toBe(false);
   });
 
   it("updates the Worktrunk user config after interactive confirmation", async () => {

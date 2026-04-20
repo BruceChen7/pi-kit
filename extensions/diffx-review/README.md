@@ -30,18 +30,28 @@ If interactive UI is unavailable, pass explicit diff args after `--` instead.
 
 ## Configuration
 
-Set in `~/.pi/agent/third_extension_settings.json` or `<repo>/.pi/third_extension_settings.json`:
+Set in `~/.pi/agent/third_extension_settings.json` or `<repo>/.pi/third_extension_settings.json`.
+
+Recommended minimal config (most users only need this):
 
 ```json
 {
   "diffxReview": {
     "enabled": true,
     "diffxCommand": "diffx",
-    "diffxPath": "~/work/diffx",
     "host": "127.0.0.1",
+    "autoOpen": true
+  }
+}
+```
+
+Optional advanced overrides (only when needed):
+
+```json
+{
+  "diffxReview": {
     "defaultPort": null,
-    "autoOpen": true,
-    "startMode": "dist",
+    "diffxPath": "~/work/diffx",
     "reuseExistingSession": true,
     "healthcheckTimeoutMs": 1000,
     "startupTimeoutMs": 15000
@@ -49,31 +59,54 @@ Set in `~/.pi/agent/third_extension_settings.json` or `<repo>/.pi/third_extensio
 }
 ```
 
+
+
+## Usage context
+
+Use `diffx-review` when you want Pi to work against a **specific git diff scope** instead of the whole repository.
+A good default is: pick the smallest diff that matches your review goal.
+
+Common goals:
+
+- **Pre-commit self-check**: review only staged changes (`--cached`)
+- **Branch/PR review**: review your branch delta against base (`main..HEAD`)
+- **Clean PR-only review**: review only commits unique to your branch (`origin/main...HEAD`)
+- **Ad-hoc investigation**: use interactive compare menu and pick custom diff args
+
 ## Examples
 
 ```bash
 /diffx-start-review
 ```
 
-- opens the compare menu in interactive mode
+- opens the compare menu in interactive mode (best for exploratory/manual choice)
 
 ```bash
 /diffx-start-review -- --cached
 ```
 
-- reviews staged changes only
+- reviews staged changes only (typical before commit)
 
 ```bash
 /diffx-start-review -- main..HEAD
 ```
 
-- compares the current branch against `main`
+- compares current branch vs `main` (typical for feature branch review)
 
 ```bash
 /diffx-start-review -- origin/main...HEAD
 ```
 
-- compares from the merge base with `origin/main`
+- compares from merge-base with `origin/main` (typical for PR-equivalent diff)
+
+## Common user workflow
+
+1. **Start a review session** with the right diff scope:
+   - interactive: `/diffx-start-review`
+   - explicit args: `/diffx-start-review -- <git diff args>`
+2. **Let Pi process comments** via diffx tools (`list`, `reply`, `resolve`) while editing code.
+3. **Check progress** any time with `/diffx-review-status`.
+4. **Finish session** with `/diffx-finish-review` (or `/diffx-stop-review` if you want to stop immediately).
 
 ## Notes
 

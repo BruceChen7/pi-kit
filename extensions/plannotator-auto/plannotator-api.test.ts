@@ -356,4 +356,18 @@ describe("feedback formatting", () => {
       "# Markdown Annotations\n\nFile: /repo/README.md\n\nClarify the setup steps.\n\nPlease address the annotation feedback above.",
     );
   });
+
+  it("formats annotation feedback when only inline annotations are returned", async () => {
+    const { formatAnnotationMessage } = await import("./plannotator-api.js");
+
+    expect(
+      formatAnnotationMessage({
+        filePath: "/repo/README.md",
+        feedback: "",
+        annotations: [{ id: "note-1" }],
+      }),
+    ).toBe(
+      "# Markdown Annotations\n\nFile: /repo/README.md\n\nAnnotation completed with inline comments. Please address the annotation feedback above.",
+    );
+  });
 });

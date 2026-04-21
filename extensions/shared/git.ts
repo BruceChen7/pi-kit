@@ -130,6 +130,46 @@ export const listLocalBranches = (run: GitRunner): string[] => {
   return parseNonEmptyLines(result.stdout);
 };
 
+export const listRemoteBranches = (
+  run: GitRunner,
+  remote: string = "origin",
+): string[] => {
+  const normalizedRemote = remote.trim();
+  if (!normalizedRemote) {
+    return [];
+  }
+
+  const result = run([
+    "for-each-ref",
+    "--format=%(refname:short)",
+    `refs/remotes/${normalizedRemote}`,
+  ]);
+  if (result.exitCode !== 0) return [];
+
+  const branches: string[] = [];
+  const seen = new Set<string>();
+
+  for (const ref of parseNonEmptyLines(result.stdout)) {
+    if (!ref.startsWith(`${normalizedRemote}/`)) {
+      continue;
+    }
+
+    if (ref === `${normalizedRemote}/HEAD` || ref.includes(" -> ")) {
+      continue;
+    }
+
+    const branch = ref.slice(normalizedRemote.length + 1).trim();
+    if (!branch || branch === "HEAD" || seen.has(branch)) {
+      continue;
+    }
+
+    seen.add(branch);
+    branches.push(branch);
+  }
+
+  return branches;
+};
+
 export const branchExists = (run: GitRunner, branch: string): boolean => {
   const result = run([
     "show-ref",

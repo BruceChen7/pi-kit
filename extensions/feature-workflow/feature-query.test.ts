@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { matchFeatureRecord } from "./feature-query.js";
+import {
+  buildFeatureSwitchCandidates,
+  matchFeatureRecord,
+  matchFeatureSwitchCandidate,
+} from "./feature-query.js";
 import type { FeatureRecord } from "./storage.js";
 
 const record = (overrides: Partial<FeatureRecord> = {}): FeatureRecord => {
@@ -48,6 +52,106 @@ describe("matchFeatureRecord", () => {
     expect(result).toEqual({
       kind: "not-found",
       value: "checkout-v2",
+    });
+  });
+});
+
+describe("buildFeatureSwitchCandidates", () => {
+  it("adds remote-only origin branches after worktree candidates", () => {
+    const candidates = buildFeatureSwitchCandidates({
+      records: [record({ branch: "checkout-v2" })],
+      originBranches: ["kanban-v2"],
+    });
+
+    expect(candidates).toMatchObject([
+      {
+        kind: "worktree",
+        branch: "checkout-v2",
+        displayLabel: "checkout-v2",
+        fallbackWorktreePath: "/tmp/checkout-v2",
+        matchKeys: ["checkout-v2"],
+      },
+      {
+        kind: "remote",
+        branch: "kanban-v2",
+        displayLabel: "kanban-v2 (remote)",
+        fallbackWorktreePath: "",
+        matchKeys: ["kanban-v2", "origin/kanban-v2"],
+      },
+    ]);
+  });
+
+  it("keeps a single worktree candidate when the same origin branch exists", () => {
+    const candidates = buildFeatureSwitchCandidates({
+      records: [record({ branch: "kanban-v2" })],
+      originBranches: ["kanban-v2"],
+    });
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      kind: "worktree",
+      branch: "kanban-v2",
+      displayLabel: "kanban-v2",
+      matchKeys: ["kanban-v2", "origin/kanban-v2"],
+      remoteRef: "origin/kanban-v2",
+    });
+  });
+});
+
+describe("matchFeatureSwitchCandidate", () => {
+  it("matches remote-only candidates by bare branch name", () => {
+    const candidates = buildFeatureSwitchCandidates({
+      records: [],
+      originBranches: ["kanban-v2"],
+    });
+
+    expect(matchFeatureSwitchCandidate(candidates, "kanban-v2")).toMatchObject({
+      kind: "matched",
+      candidate: {
+        kind: "remote",
+        branch: "kanban-v2",
+      },
+    });
+  });
+
+  it("matches remote-only candidates by origin-prefixed branch name", () => {
+    const candidates = buildFeatureSwitchCandidates({
+      records: [],
+      originBranches: ["kanban-v2"],
+    });
+
+    expect(
+      matchFeatureSwitchCandidate(candidates, "origin/kanban-v2"),
+    ).toMatchObject({
+      kind: "matched",
+      candidate: {
+        kind: "remote",
+        branch: "kanban-v2",
+      },
+    });
+  });
+
+  it("prefers the worktree candidate when the same branch exists locally", () => {
+    const candidates = buildFeatureSwitchCandidates({
+      records: [record({ branch: "kanban-v2" })],
+      originBranches: ["kanban-v2"],
+    });
+
+    expect(matchFeatureSwitchCandidate(candidates, "kanban-v2")).toMatchObject({
+      kind: "matched",
+      candidate: {
+        kind: "worktree",
+        branch: "kanban-v2",
+      },
+    });
+    expect(
+      matchFeatureSwitchCandidate(candidates, "origin/kanban-v2"),
+    ).toMatchObject({
+      kind: "matched",
+      candidate: {
+        kind: "worktree",
+        branch: "kanban-v2",
+      },
     });
   });
 });

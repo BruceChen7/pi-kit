@@ -95,7 +95,8 @@ export function activatePersistedSession(
     throw new Error("Session manager cannot be rebound from shortcut context");
   }
 
-  const mutableSessionManager = sessionManager as unknown as MutableSessionManager;
+  const mutableSessionManager =
+    sessionManager as unknown as MutableSessionManager;
   mutableSessionManager.persist = true;
   mutableSessionManager.sessionDir = path.dirname(sessionPath);
   mutableSessionManager.setSessionFile(sessionPath);

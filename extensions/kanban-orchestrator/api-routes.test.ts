@@ -2,16 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import {
   handleActionStatusRequest,
-  handleActionStreamSubscribe,
   handleBoardPatchRequest,
   handleBoardReadRequest,
   handleCardContextRequest,
   handleCardRuntimeRequest,
   handleExecuteActionRequest,
-  handleTerminalStreamSubscribe,
 } from "./api-routes.js";
-import { KanbanOrchestratorService } from "./service.js";
 import { KanbanRuntimeStateStore } from "./runtime-state.js";
+import { KanbanOrchestratorService } from "./service.js";
 
 describe("kanban orchestrator api routes", () => {
   it("returns 202 with requestId for execute when backend derives worktreeKey", () => {
@@ -229,6 +227,7 @@ describe("kanban orchestrator api routes", () => {
           summary: "agent started",
           requestId: null,
         },
+        conflict: false,
         completion: {
           readyForReview: false,
           completedAt: null,
@@ -240,60 +239,5 @@ describe("kanban orchestrator api routes", () => {
         },
       },
     });
-  });
-
-  it("subscribes to action stream and forwards events", async () => {
-    const service = new KanbanOrchestratorService({
-      auditLogPath: "/tmp/kanban-orchestrator-api.log",
-      createRequestId: () => "req-stream",
-      now: () => "2026-04-20T00:00:00.000Z",
-      actionExecutors: {
-        apply: async () => ({ summary: "ok" }),
-      },
-    });
-
-    const statuses: string[] = [];
-    const unsubscribe = handleActionStreamSubscribe(service, (event) => {
-      statuses.push(event.status);
-    });
-
-    const requestId = service.enqueueAction({
-      action: "apply",
-      cardId: "feat-checkout-v2",
-      worktreeKey: "main--feat-checkout-v2",
-    });
-    await service.waitFor(requestId);
-
-    unsubscribe();
-    expect(statuses).toEqual(["queued", "running", "success"]);
-  });
-
-  it("subscribes to terminal stream and replays buffered chunks", () => {
-    const runtimeState = new KanbanRuntimeStateStore();
-    runtimeState.recordChildLifecycle({
-      type: "child-running",
-      cardId: "child-pricing-widget",
-      summary: "agent started",
-      ts: "2026-04-20T00:00:00.000Z",
-    });
-    runtimeState.appendTerminalChunk({
-      cardId: "child-pricing-widget",
-      chunk: "hello world",
-      ts: "2026-04-20T00:00:01.000Z",
-    });
-
-    const events: string[] = [];
-    const unsubscribe = handleTerminalStreamSubscribe(
-      runtimeState,
-      "child-pricing-widget",
-      (event) => {
-        events.push(
-          event.type === "chunk" ? `${event.type}:${event.chunk}` : event.type,
-        );
-      },
-    );
-    unsubscribe();
-
-    expect(events).toEqual(["ready", "status", "chunk:hello world"]);
   });
 });

@@ -18,7 +18,12 @@ export function parseKanbanActionName(value: string): KanbanActionName | null {
   return isKanbanActionName(trimmed) ? trimmed : null;
 }
 
-export type KanbanExecutionStatus = "queued" | "running" | "success" | "failed";
+export type KanbanExecutionStatus =
+  | "queued"
+  | "running"
+  | "success"
+  | "failed"
+  | "cancelled";
 
 export type ExecutionAuditRecord = {
   ts: string;

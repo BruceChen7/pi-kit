@@ -1,18 +1,12 @@
 import http from "node:http";
 
-import {
-  handleActionStatusRequest,
-  handleActionStreamSubscribe,
-  handleBoardPatchRequest,
-  handleBoardReadRequest,
-  handleBootstrapRequest,
-  handleCardContextRequest,
-  handleCardRuntimeRequest,
-  handleExecuteActionRequest,
-  handleTerminalStreamSubscribe,
-} from "./api-routes.js";
-import type { ResolveKanbanCardContextResult } from "./context.js";
-import type { KanbanOrchestratorService } from "./service.js";
+import type { KanbanApiResponse } from "./api-routes.js";
+import { handleBootstrapRequest } from "./api-routes.js";
+import type {
+  KanbanChildLifecycleEvent,
+  KanbanTerminalEvent,
+} from "./runtime-state.js";
+import type { KanbanActionRequestState } from "./service.js";
 
 function parseJsonBody(
   req: http.IncomingMessage,
@@ -85,23 +79,47 @@ export type KanbanRuntimeServer = {
   readonly baseUrl: string;
 };
 
+export type KanbanRuntimeServerBackend = {
+  executeAction: (body: Record<string, unknown>) => KanbanApiResponse;
+  getActionStatus: (requestId: string) => KanbanApiResponse;
+  cancelAction: (
+    requestId: string,
+  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
+  getCardContext: (cardQuery: string) => KanbanApiResponse;
+  getCardRuntime: (cardQuery: string) => KanbanApiResponse;
+  readBoard: () => KanbanApiResponse;
+  patchBoard: (nextBoardText: string) => KanbanApiResponse;
+  subscribeActionStream: (
+    onEvent: (state: KanbanActionRequestState) => void,
+  ) => () => void;
+  subscribeLifecycleStream: (
+    onEvent: (event: KanbanChildLifecycleEvent) => void,
+  ) => () => void;
+  subscribeTerminalStream: (
+    cardId: string,
+    onEvent: (event: KanbanTerminalEvent) => void,
+  ) => () => void;
+};
+
 export function createKanbanRuntimeServer(input: {
   host: string;
   port: number;
   token: string;
   workspaceId: string;
-  service: KanbanOrchestratorService;
-  resolveContext: (cardQuery: string) => ResolveKanbanCardContextResult;
-  applyBoardPatch: (
-    nextBoardText: string,
-  ) => { ok: true; summary: string } | { ok: false; error: string };
-  readBoard: () => {
-    path: string;
-    lanes: unknown[];
-    cards: unknown[];
-    errors: string[];
-  };
+  backend: KanbanRuntimeServerBackend;
 }): KanbanRuntimeServer {
+  if (!input.backend) {
+    throw new Error("backend is required");
+  }
+
+  if (
+    typeof input.backend.subscribeActionStream !== "function" ||
+    typeof input.backend.subscribeLifecycleStream !== "function" ||
+    typeof input.backend.subscribeTerminalStream !== "function"
+  ) {
+    throw new Error("backend stream subscriptions are required");
+  }
+
   let server: http.Server | null = null;
   let startedPort = input.port;
 
@@ -133,15 +151,14 @@ export function createKanbanRuntimeServer(input: {
 
       res.write("event: ready\ndata: {}\n\n");
 
-      const unsubscribeState = handleActionStreamSubscribe(
-        input.service,
-        (state) => {
-          res.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
+      const unsubscribeState = input.backend.subscribeActionStream((state) => {
+        res.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
+      });
+      const unsubscribeLifecycle = input.backend.subscribeLifecycleStream(
+        (event) => {
+          res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
         },
       );
-      const unsubscribeLifecycle = input.service.subscribeLifecycle((event) => {
-        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-      });
 
       const ping = setInterval(() => {
         res.write(": ping\n\n");
@@ -166,9 +183,17 @@ export function createKanbanRuntimeServer(input: {
 
       if (req.method === "POST" && url.pathname === "/kanban/actions/execute") {
         const body = await parseJsonBody(req);
-        const response = handleExecuteActionRequest(input.service, body, {
-          resolveContext: input.resolveContext,
-        });
+        const response = input.backend.executeAction(body);
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const cancelMatch = url.pathname.match(
+        /^\/kanban\/actions\/([^/]+)\/cancel$/,
+      );
+      if (req.method === "POST" && cancelMatch) {
+        const requestId = decodeURIComponent(cancelMatch[1] ?? "");
+        const response = await input.backend.cancelAction(requestId);
         writeJson(res, response.status, response.body);
         return;
       }
@@ -176,7 +201,7 @@ export function createKanbanRuntimeServer(input: {
       const actionMatch = url.pathname.match(/^\/kanban\/actions\/([^/]+)$/);
       if (req.method === "GET" && actionMatch) {
         const requestId = decodeURIComponent(actionMatch[1] ?? "");
-        const response = handleActionStatusRequest(input.service, requestId);
+        const response = input.backend.getActionStatus(requestId);
         writeJson(res, response.status, response.body);
         return;
       }
@@ -186,13 +211,7 @@ export function createKanbanRuntimeServer(input: {
       );
       if (req.method === "GET" && runtimeMatch) {
         const cardQuery = decodeURIComponent(runtimeMatch[1] ?? "");
-        const response = handleCardRuntimeRequest(
-          cardQuery,
-          input.service,
-          input.resolveContext,
-          (cardId) =>
-            `/kanban/cards/${encodeURIComponent(cardId)}/terminal/stream`,
-        );
+        const response = input.backend.getCardRuntime(cardQuery);
         writeJson(res, response.status, response.body);
         return;
       }
@@ -209,8 +228,7 @@ export function createKanbanRuntimeServer(input: {
         res.setHeader("Connection", "keep-alive");
         res.flushHeaders?.();
 
-        const unsubscribe = handleTerminalStreamSubscribe(
-          input.service,
+        const unsubscribe = input.backend.subscribeTerminalStream(
           cardId,
           (event) => {
             res.write(
@@ -235,16 +253,13 @@ export function createKanbanRuntimeServer(input: {
       );
       if (req.method === "GET" && contextMatch) {
         const cardQuery = decodeURIComponent(contextMatch[1] ?? "");
-        const response = handleCardContextRequest(
-          cardQuery,
-          input.resolveContext,
-        );
+        const response = input.backend.getCardContext(cardQuery);
         writeJson(res, response.status, response.body);
         return;
       }
 
       if (req.method === "GET" && url.pathname === "/kanban/board") {
-        const response = handleBoardReadRequest(input.readBoard);
+        const response = input.backend.readBoard();
         writeJson(res, response.status, response.body);
         return;
       }
@@ -254,9 +269,7 @@ export function createKanbanRuntimeServer(input: {
         const nextBoardText =
           typeof body.nextBoardText === "string" ? body.nextBoardText : "";
 
-        const response = handleBoardPatchRequest(() =>
-          input.applyBoardPatch(nextBoardText),
-        );
+        const response = input.backend.patchBoard(nextBoardText);
         writeJson(res, response.status, response.body);
         return;
       }

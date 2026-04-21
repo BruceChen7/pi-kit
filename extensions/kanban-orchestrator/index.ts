@@ -6,38 +6,34 @@ import type {
   ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 
-import { getRepoRoot } from "../shared/git.js";
 import {
-  handleActionStatusRequest,
-  handleBoardPatchRequest,
-  handleCardContextRequest,
-  handleExecuteActionRequest,
-} from "./api-routes.js";
+  createKanbanDaemon,
+  type KanbanDaemon,
+} from "../../kanban-daemon/daemon.js";
+import { getRepoRoot } from "../shared/git.js";
 import { applyBoardTextPatch } from "./board-patch.js";
 import {
   resolveKanbanCardContext,
   resolveKanbanCardContextByWorktreePath,
 } from "./context.js";
 import { createKanbanActionExecutors } from "./executors.js";
-import { readFeatureBoard } from "./feature-workflow-local.js";
 import {
-  createKanbanRuntimeServer,
-  type KanbanRuntimeServer,
-} from "./runtime-server.js";
+  getFeatureBoardPath,
+  readFeatureBoard,
+} from "./feature-workflow-local.js";
+import { importFeatureWorkflowModule } from "./feature-workflow-runtime.js";
+import { createPiRuntimeAdapterWithDeps } from "./pi-runtime-adapter.js";
+import { createPiRuntimeEventBridge } from "./pi-runtime-event-bridge.js";
 import { KanbanOrchestratorService } from "./service.js";
 
 const KANBAN_WORKFLOW_DIR = path.join("workitems", ".feature-workflow");
 const GLOBAL_ACTIONS = new Set(["reconcile", "validate", "prune-merged"]);
 
-const servicesByRepo = new Map<string, KanbanOrchestratorService>();
-const runtimeServersByRepo = new Map<
-  string,
-  {
-    server: KanbanRuntimeServer;
-    token: string;
-    host: string;
-  }
->();
+type FeatureSwitchModule =
+  typeof import("../feature-workflow/commands/feature-switch.js");
+
+const daemonsByRepo = new Map<string, KanbanDaemon>();
+const piRuntimeEventBridge = createPiRuntimeEventBridge();
 
 export function getKanbanSessionRegistryPath(repoRoot: string): string {
   return path.join(repoRoot, KANBAN_WORKFLOW_DIR, "session-registry.json");
@@ -45,6 +41,10 @@ export function getKanbanSessionRegistryPath(repoRoot: string): string {
 
 export function getKanbanAuditLogPath(repoRoot: string): string {
   return path.join(repoRoot, KANBAN_WORKFLOW_DIR, "execution.log.jsonl");
+}
+
+export function getKanbanLocalStatePath(repoRoot: string): string {
+  return path.join(repoRoot, KANBAN_WORKFLOW_DIR, "kanban-state.sqlite");
 }
 
 function trimToNull(value: string | null | undefined): string | null {
@@ -93,38 +93,57 @@ function resolveRepoRootFromContext(
   return getRepoRoot(ctx.cwd);
 }
 
-function getOrCreateService(input: {
+function createService(input: {
   pi: ExtensionAPI;
   ctx: ExtensionCommandContext;
   repoRoot: string;
 }): KanbanOrchestratorService {
-  const existing = servicesByRepo.get(input.repoRoot);
   const sessionRegistryPath = getKanbanSessionRegistryPath(input.repoRoot);
 
-  if (existing) {
-    existing.setActionExecutors(
-      createKanbanActionExecutors({
-        pi: input.pi,
-        ctx: input.ctx,
-        repoRoot: input.repoRoot,
-        sessionRegistryPath,
-      }),
-    );
-    return existing;
-  }
-
-  const created = new KanbanOrchestratorService({
+  return new KanbanOrchestratorService({
     actionExecutors: createKanbanActionExecutors({
       pi: input.pi,
       ctx: input.ctx,
       repoRoot: input.repoRoot,
       sessionRegistryPath,
+      eventBridge: piRuntimeEventBridge,
     }),
     auditLogPath: getKanbanAuditLogPath(input.repoRoot),
     sessionRegistryPath,
+    localStatePath: getKanbanLocalStatePath(input.repoRoot),
+    repoRoot: input.repoRoot,
+    boardPath: path.join("workitems", "features.kanban.md"),
+    defaultAdapter: "pi",
   });
-  servicesByRepo.set(input.repoRoot, created);
-  return created;
+}
+
+function createDaemonAdapters(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+): Record<string, ReturnType<typeof createPiRuntimeAdapterWithDeps>> {
+  const sendUserMessage =
+    typeof pi.sendUserMessage === "function"
+      ? pi.sendUserMessage.bind(pi)
+      : null;
+  if (!sendUserMessage) {
+    throw new Error("sendUserMessage is not available on ExtensionAPI");
+  }
+
+  const loadSwitchModule = async (): Promise<FeatureSwitchModule> =>
+    importFeatureWorkflowModule<FeatureSwitchModule>(
+      "commands/feature-switch.js",
+    );
+
+  return {
+    pi: createPiRuntimeAdapterWithDeps({
+      runFeatureSwitch: async (branch: string) =>
+        (await loadSwitchModule()).runFeatureSwitchCommand(pi, ctx, [branch]),
+      sendUserMessage: (text, options) => {
+        sendUserMessage(text, options);
+      },
+      eventBridge: piRuntimeEventBridge,
+    }),
+  };
 }
 
 function notifyApiResponse(
@@ -174,6 +193,66 @@ function readBoardSnapshot(
   return readFeatureBoard(repoRoot);
 }
 
+async function getOrCreateDaemon(input: {
+  pi: ExtensionAPI;
+  ctx: ExtensionCommandContext;
+  repoRoot: string;
+  host?: string;
+  port?: number;
+  token?: string;
+  notifyStarted?: boolean;
+}): Promise<KanbanDaemon> {
+  const existing = daemonsByRepo.get(input.repoRoot);
+  if (existing) {
+    return existing;
+  }
+
+  const service = createService({
+    pi: input.pi,
+    ctx: input.ctx,
+    repoRoot: input.repoRoot,
+  });
+
+  const host = input.host ?? "127.0.0.1";
+  const token = input.token ?? "";
+  const daemon = createKanbanDaemon({
+    host,
+    port: input.port ?? 0,
+    token,
+    workspaceId: path.basename(input.repoRoot),
+    service,
+    adapters: createDaemonAdapters(input.pi, input.ctx),
+    boardPath: getFeatureBoardPath(input.repoRoot),
+    resolveContext: (cardQuery) =>
+      resolveCardContext(input.repoRoot, cardQuery),
+    resolveContextByWorktreePath: (worktreePath) =>
+      resolveCardContextByWorktreePath(input.repoRoot, worktreePath),
+    applyBoardPatch: (nextBoardText) =>
+      applyBoardTextPatch({
+        repoRoot: input.repoRoot,
+        nextBoardText,
+      }),
+    readBoard: () => readBoardSnapshot(input.repoRoot),
+  });
+
+  await daemon.start();
+  daemonsByRepo.set(input.repoRoot, daemon);
+
+  if (input.notifyStarted) {
+    input.ctx.ui.notify(
+      JSON.stringify({
+        running: true,
+        baseUrl: daemon.baseUrl,
+        token,
+        host,
+      }),
+      "info",
+    );
+  }
+
+  return daemon;
+}
+
 async function runKanbanActionExecuteCommand(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
@@ -185,7 +264,11 @@ async function runKanbanActionExecuteCommand(
     return;
   }
 
-  const service = getOrCreateService({ pi, ctx, repoRoot });
+  const daemon = await getOrCreateDaemon({
+    pi,
+    ctx,
+    repoRoot,
+  });
 
   const action = trimToNull(args[0]);
   if (!action) {
@@ -209,9 +292,7 @@ async function runKanbanActionExecuteCommand(
       return;
     }
 
-    const contextResponse = handleCardContextRequest(cardQuery, (query) =>
-      resolveCardContext(repoRoot, query),
-    );
+    const contextResponse = daemon.getCardContext(cardQuery);
     if (contextResponse.status !== 200) {
       notifyApiResponse(ctx, contextResponse);
       return;
@@ -229,7 +310,7 @@ async function runKanbanActionExecuteCommand(
     finalPrompt = trimToNull(await ctx.ui.input("Custom prompt:", ""));
   }
 
-  const response = handleExecuteActionRequest(service, {
+  const response = daemon.executeAction({
     action,
     cardId,
     worktreeKey,
@@ -245,6 +326,7 @@ async function runKanbanActionExecuteCommand(
 }
 
 async function runKanbanActionStatusCommand(
+  pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   args: string[],
 ): Promise<void> {
@@ -254,11 +336,11 @@ async function runKanbanActionStatusCommand(
     return;
   }
 
-  const service = servicesByRepo.get(repoRoot);
-  if (!service) {
-    ctx.ui.notify("No orchestrator service for this repo yet", "warning");
-    return;
-  }
+  const daemon = await getOrCreateDaemon({
+    pi,
+    ctx,
+    repoRoot,
+  });
 
   const requestId = trimToNull(args[0]);
   if (!requestId) {
@@ -266,11 +348,12 @@ async function runKanbanActionStatusCommand(
     return;
   }
 
-  const response = handleActionStatusRequest(service, requestId);
+  const response = daemon.getActionStatus(requestId);
   notifyApiResponse(ctx, response);
 }
 
 async function runKanbanCardContextCommand(
+  pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   args: string[],
 ): Promise<void> {
@@ -286,13 +369,17 @@ async function runKanbanCardContextCommand(
     return;
   }
 
-  const response = handleCardContextRequest(cardQuery, (query) =>
-    resolveCardContext(repoRoot, query),
-  );
+  const daemon = await getOrCreateDaemon({
+    pi,
+    ctx,
+    repoRoot,
+  });
+  const response = daemon.getCardContext(cardQuery);
   notifyApiResponse(ctx, response);
 }
 
 async function runKanbanBoardPatchCommand(
+  pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   args: string[],
 ): Promise<void> {
@@ -317,12 +404,12 @@ async function runKanbanBoardPatchCommand(
     return;
   }
 
-  const response = handleBoardPatchRequest(() =>
-    applyBoardTextPatch({
-      repoRoot,
-      nextBoardText: boardText,
-    }),
-  );
+  const daemon = await getOrCreateDaemon({
+    pi,
+    ctx,
+    repoRoot,
+  });
+  const response = daemon.patchBoard(boardText);
   notifyApiResponse(ctx, response);
 }
 
@@ -337,12 +424,12 @@ async function runKanbanRuntimeStartCommand(
     return;
   }
 
-  const existing = runtimeServersByRepo.get(repoRoot);
+  const existing = daemonsByRepo.get(repoRoot);
   if (existing) {
     ctx.ui.notify(
       JSON.stringify({
         running: true,
-        baseUrl: existing.server.baseUrl,
+        baseUrl: existing.baseUrl,
         token: existing.token,
       }),
       "info",
@@ -361,43 +448,15 @@ async function runKanbanRuntimeStartCommand(
     return;
   }
 
-  const service = getOrCreateService({
+  await getOrCreateDaemon({
     pi,
     ctx,
     repoRoot,
-  });
-
-  const server = createKanbanRuntimeServer({
     host,
     port: port ?? 0,
     token,
-    workspaceId: path.basename(repoRoot),
-    service,
-    resolveContext: (cardQuery) => resolveCardContext(repoRoot, cardQuery),
-    applyBoardPatch: (nextBoardText) =>
-      applyBoardTextPatch({
-        repoRoot,
-        nextBoardText,
-      }),
-    readBoard: () => readBoardSnapshot(repoRoot),
+    notifyStarted: true,
   });
-
-  await server.start();
-  runtimeServersByRepo.set(repoRoot, {
-    server,
-    token,
-    host,
-  });
-
-  ctx.ui.notify(
-    JSON.stringify({
-      running: true,
-      baseUrl: server.baseUrl,
-      token,
-      host,
-    }),
-    "info",
-  );
 }
 
 async function runKanbanRuntimeStatusCommand(
@@ -409,7 +468,7 @@ async function runKanbanRuntimeStatusCommand(
     return;
   }
 
-  const entry = runtimeServersByRepo.get(repoRoot);
+  const entry = daemonsByRepo.get(repoRoot);
   if (!entry) {
     ctx.ui.notify(
       JSON.stringify({
@@ -423,7 +482,7 @@ async function runKanbanRuntimeStatusCommand(
   ctx.ui.notify(
     JSON.stringify({
       running: true,
-      baseUrl: entry.server.baseUrl,
+      baseUrl: entry.baseUrl,
       token: entry.token,
       host: entry.host,
     }),
@@ -469,29 +528,14 @@ function extractLastAssistantText(
   return null;
 }
 
-function resolveRuntimeTargetFromSessionCwd(cwd: string): {
-  repoRoot: string;
-  service: KanbanOrchestratorService;
-  cardId: string;
-} | null {
-  for (const [repoRoot, service] of servicesByRepo.entries()) {
-    const result = resolveCardContextByWorktreePath(repoRoot, cwd);
-    if (!result.ok || result.context.kind !== "child") {
-      continue;
+function hasRuntimeTargetForSessionCwd(cwd: string): boolean {
+  for (const daemon of daemonsByRepo.values()) {
+    if (daemon.acceptsRuntimeWorktree(cwd)) {
+      return true;
     }
-
-    if (result.context.lane !== "In Progress") {
-      continue;
-    }
-
-    return {
-      repoRoot,
-      service,
-      cardId: result.context.cardId,
-    };
   }
 
-  return null;
+  return false;
 }
 
 async function runKanbanRuntimeStopCommand(
@@ -503,14 +547,14 @@ async function runKanbanRuntimeStopCommand(
     return;
   }
 
-  const entry = runtimeServersByRepo.get(repoRoot);
+  const entry = daemonsByRepo.get(repoRoot);
   if (!entry) {
     ctx.ui.notify(JSON.stringify({ running: false }), "info");
     return;
   }
 
-  await entry.server.stop();
-  runtimeServersByRepo.delete(repoRoot);
+  await entry.stop();
+  daemonsByRepo.delete(repoRoot);
   ctx.ui.notify(JSON.stringify({ running: false }), "info");
 }
 
@@ -524,20 +568,20 @@ export default function kanbanOrchestratorExtension(pi: ExtensionAPI): void {
   pi.registerCommand("kanban-action-status", {
     description: "Read orchestrated action status by request id",
     handler: async (rawArgs, ctx) =>
-      runKanbanActionStatusCommand(ctx, parseCommandArgs(rawArgs)),
+      runKanbanActionStatusCommand(pi, ctx, parseCommandArgs(rawArgs)),
   });
 
   pi.registerCommand("kanban-card-context", {
     description: "Inspect merged board/sidecar/session context for a card",
     handler: async (rawArgs, ctx) =>
-      runKanbanCardContextCommand(ctx, parseCommandArgs(rawArgs)),
+      runKanbanCardContextCommand(pi, ctx, parseCommandArgs(rawArgs)),
   });
 
   pi.registerCommand("kanban-board-patch", {
     description:
       "Apply explicit board markdown patch (no implicit action execution)",
     handler: async (rawArgs, ctx) =>
-      runKanbanBoardPatchCommand(ctx, parseCommandArgs(rawArgs)),
+      runKanbanBoardPatchCommand(pi, ctx, parseCommandArgs(rawArgs)),
   });
 
   pi.registerCommand("kanban-runtime-start", {
@@ -557,16 +601,12 @@ export default function kanbanOrchestratorExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", async (_event, ctx) => {
-    const target = resolveRuntimeTargetFromSessionCwd(ctx.cwd);
-    if (!target) {
+    if (!hasRuntimeTargetForSessionCwd(ctx.cwd)) {
       return;
     }
 
-    target.service.recordChildLifecycle({
-      type: "child-running",
-      cardId: target.cardId,
-      summary: "agent started",
-      ts: new Date().toISOString(),
+    piRuntimeEventBridge.emitForWorktreePath(ctx.cwd, {
+      type: "agent-started",
     });
   });
 
@@ -575,41 +615,37 @@ export default function kanbanOrchestratorExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    const target = resolveRuntimeTargetFromSessionCwd(ctx.cwd);
-    if (!target) {
+    if (!hasRuntimeTargetForSessionCwd(ctx.cwd)) {
       return;
     }
 
-    target.service.appendTerminalChunk({
-      cardId: target.cardId,
+    piRuntimeEventBridge.emitForWorktreePath(ctx.cwd, {
+      type: "output-delta",
       chunk: event.assistantMessageEvent.delta,
-      ts: new Date().toISOString(),
     });
   });
 
   pi.on("agent_end", async (event, ctx) => {
-    const target = resolveRuntimeTargetFromSessionCwd(ctx.cwd);
-    if (!target) {
+    if (!hasRuntimeTargetForSessionCwd(ctx.cwd)) {
       return;
     }
 
-    target.service.recordChildLifecycle({
-      type: "child-completed",
-      cardId: target.cardId,
+    piRuntimeEventBridge.emitForWorktreePath(ctx.cwd, {
+      type: "agent-completed",
       summary: extractLastAssistantText(event.messages) ?? "agent completed",
-      ts: new Date().toISOString(),
     });
   });
 
   pi.on("session_shutdown", async () => {
-    const entries = [...runtimeServersByRepo.values()];
-    runtimeServersByRepo.clear();
+    const entries = [...daemonsByRepo.values()];
+    daemonsByRepo.clear();
     for (const entry of entries) {
       try {
-        await entry.server.stop();
+        await entry.stop();
       } catch {
         // best effort shutdown
       }
     }
+    piRuntimeEventBridge.clear();
   });
 }

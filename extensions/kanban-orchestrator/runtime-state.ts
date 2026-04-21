@@ -38,9 +38,21 @@ export type KanbanTerminalEvent =
       error: string;
     };
 
+export type KanbanRuntimeExecutionStatus =
+  | "idle"
+  | "queued"
+  | "preparing"
+  | "opening-session"
+  | "running"
+  | "awaiting-reconnect"
+  | "completed"
+  | "failed"
+  | "recoverable-failed"
+  | "cancelled";
+
 export type KanbanCardRuntimeState = {
   cardId: string;
-  status: "idle" | "running" | "completed" | "failed";
+  status: KanbanRuntimeExecutionStatus;
   summary: string | null;
   requestId: string | null;
   startedAt: string | null;
@@ -48,12 +60,13 @@ export type KanbanCardRuntimeState = {
   terminalAvailable: boolean;
   terminalChunks: string[];
   terminalProtocol: "sse-text-stream";
+  conflict: boolean;
 };
 
 export type RuntimeActionStateLike = {
   requestId: string;
   cardId: string;
-  status: "queued" | "running" | "success" | "failed";
+  status: "queued" | "running" | "success" | "failed" | "cancelled";
   summary: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -70,6 +83,7 @@ function createEmptyCardRuntime(cardId: string): KanbanCardRuntimeState {
     terminalAvailable: false,
     terminalChunks: [],
     terminalProtocol: "sse-text-stream",
+    conflict: false,
   };
 }
 
@@ -167,12 +181,14 @@ export class KanbanRuntimeStateStore {
           chunk,
         });
       }
-      if (state.status === "completed") {
+      if (state.status === "completed" || state.status === "cancelled") {
         listener({
           type: "done",
           cardId,
           ts: state.completedAt ?? state.startedAt ?? new Date(0).toISOString(),
-          summary: state.summary ?? "completed",
+          summary:
+            state.summary ??
+            (state.status === "cancelled" ? "cancelled" : "completed"),
         });
       }
       if (state.status === "failed") {
@@ -206,27 +222,115 @@ export class KanbanRuntimeStateStore {
       return;
     }
 
-    const runtime = this.getOrCreate(state.cardId);
-    runtime.requestId = state.requestId;
-
-    if (state.status === "failed") {
-      runtime.status = "failed";
-      runtime.summary = state.summary;
-      runtime.startedAt = state.startedAt;
-      runtime.completedAt = state.finishedAt;
-      this.emitLifecycle({
-        type: "child-failed",
+    if (state.status === "queued") {
+      this.upsertCardRuntime({
         cardId: state.cardId,
+        requestId: state.requestId,
+        status: "queued",
         summary: state.summary,
-        ts: state.finishedAt ?? state.startedAt ?? new Date(0).toISOString(),
       });
+      return;
+    }
+
+    if (state.status === "running") {
+      this.upsertCardRuntime({
+        cardId: state.cardId,
+        requestId: state.requestId,
+        status: "running",
+        summary: state.summary,
+        startedAt: state.startedAt,
+        completedAt: null,
+      });
+      return;
+    }
+
+    if (state.status === "success") {
+      this.upsertCardRuntime({
+        cardId: state.cardId,
+        requestId: state.requestId,
+        status: "completed",
+        summary: state.summary,
+        startedAt: state.startedAt,
+        completedAt: state.finishedAt,
+      });
+      return;
+    }
+
+    if (state.status === "cancelled") {
+      this.upsertCardRuntime({
+        cardId: state.cardId,
+        requestId: state.requestId,
+        status: "cancelled",
+        summary: state.summary,
+        startedAt: state.startedAt,
+        completedAt: state.finishedAt,
+      });
+      if (this.getOrCreate(state.cardId).terminalAvailable) {
+        this.emitTerminal(state.cardId, {
+          type: "done",
+          cardId: state.cardId,
+          ts: state.finishedAt ?? state.startedAt ?? new Date(0).toISOString(),
+          summary: state.summary,
+        });
+      }
+      return;
+    }
+
+    this.upsertCardRuntime({
+      cardId: state.cardId,
+      requestId: state.requestId,
+      status: "failed",
+      summary: state.summary,
+      startedAt: state.startedAt,
+      completedAt: state.finishedAt,
+    });
+    this.emitLifecycle({
+      type: "child-failed",
+      cardId: state.cardId,
+      summary: state.summary,
+      ts: state.finishedAt ?? state.startedAt ?? new Date(0).toISOString(),
+    });
+  }
+
+  upsertCardRuntime(input: {
+    cardId: string;
+    requestId?: string | null;
+    status: KanbanRuntimeExecutionStatus;
+    summary?: string | null;
+    startedAt?: string | null;
+    completedAt?: string | null;
+    terminalAvailable?: boolean;
+    conflict?: boolean;
+  }): void {
+    const state = this.getOrCreate(input.cardId);
+    if (input.requestId !== undefined) {
+      state.requestId = input.requestId;
+    }
+    state.status = input.status;
+    if (input.summary !== undefined) {
+      state.summary = input.summary;
+    }
+    if (input.startedAt !== undefined) {
+      state.startedAt = input.startedAt;
+    }
+    if (input.completedAt !== undefined) {
+      state.completedAt = input.completedAt;
+    }
+    if (input.conflict !== undefined) {
+      state.conflict = input.conflict;
+    }
+    if (input.terminalAvailable) {
+      this.ensureTerminalReady(
+        input.cardId,
+        input.startedAt ?? state.startedAt ?? new Date(0).toISOString(),
+      );
     }
   }
 
   recordChildLifecycle(event: KanbanChildLifecycleEvent): void {
     const state = this.getOrCreate(event.cardId);
     if (event.type === "child-running") {
-      if (state.status === "running") {
+      if (state.status === "running" && state.startedAt) {
         return;
       }
 
@@ -291,6 +395,8 @@ export class KanbanRuntimeStateStore {
 
   getCardRuntime(cardId: string): KanbanCardRuntimeState {
     const state = this.byCardId.get(cardId);
-    return state ? { ...state, terminalChunks: [...state.terminalChunks] } : createEmptyCardRuntime(cardId);
+    return state
+      ? { ...state, terminalChunks: [...state.terminalChunks] }
+      : createEmptyCardRuntime(cardId);
   }
 }

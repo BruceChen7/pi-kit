@@ -284,9 +284,11 @@ describe("kanban orchestrator commands", () => {
 
     const execute = commands.get("kanban-action-execute");
     const status = commands.get("kanban-action-status");
+    const runtimeStatus = commands.get("kanban-runtime-status");
     expect(execute).toBeTypeOf("function");
     expect(status).toBeTypeOf("function");
-    if (!execute || !status) return;
+    expect(runtimeStatus).toBeTypeOf("function");
+    if (!execute || !status || !runtimeStatus) return;
 
     const ctx = {
       cwd: repoRoot,
@@ -314,6 +316,16 @@ describe("kanban orchestrator commands", () => {
     };
     expect(queuedPayload.status).toBe("queued");
 
+    await runtimeStatus("", ctx);
+    const runtimeStatusPayload = JSON.parse(
+      notifications.at(-1)?.message ?? "{}",
+    ) as {
+      running: boolean;
+      baseUrl: string;
+    };
+    expect(runtimeStatusPayload.running).toBe(true);
+    expect(runtimeStatusPayload.baseUrl).toContain("http://127.0.0.1:");
+
     const statusPayload = await waitForStatus(
       status,
       queuedPayload.requestId,
@@ -334,6 +346,20 @@ describe("kanban orchestrator commands", () => {
       'custom-prompt feat-checkout-v2 --prompt "please summarize current plan"',
       ctx,
     );
+    const queuedPrompt = notifications.at(-1)?.message ?? "";
+    const queuedPromptPayload = JSON.parse(queuedPrompt) as {
+      requestId: string;
+      status: string;
+    };
+    expect(queuedPromptPayload.status).toBe("queued");
+
+    const promptStatusPayload = await waitForStatus(
+      status,
+      queuedPromptPayload.requestId,
+      ctx,
+      notifications,
+    );
+    expect(promptStatusPayload.status).toBe("success");
 
     expect(sendUserMessage).toHaveBeenCalledTimes(1);
     expect(sendUserMessage).toHaveBeenCalledWith(

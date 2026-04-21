@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   getKanbanAuditLogPath,
+  getKanbanLocalStatePath,
   getKanbanSessionRegistryPath,
   default as kanbanOrchestratorExtension,
 } from "./index.js";
@@ -28,6 +29,17 @@ describe("kanban orchestrator paths", () => {
         "workitems",
         ".feature-workflow",
         "execution.log.jsonl",
+      ),
+    );
+  });
+
+  it("builds default local state db path", () => {
+    expect(getKanbanLocalStatePath("/repo")).toBe(
+      path.join(
+        "/repo",
+        "workitems",
+        ".feature-workflow",
+        "kanban-state.sqlite",
       ),
     );
   });

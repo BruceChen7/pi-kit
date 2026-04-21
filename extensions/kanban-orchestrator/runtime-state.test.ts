@@ -48,6 +48,7 @@ describe("KanbanRuntimeStateStore", () => {
       terminalAvailable: true,
       terminalChunks: ["hello world"],
       terminalProtocol: "sse-text-stream",
+      conflict: false,
     });
   });
 
@@ -81,6 +82,7 @@ describe("KanbanRuntimeStateStore", () => {
       terminalAvailable: false,
       terminalChunks: [],
       terminalProtocol: "sse-text-stream",
+      conflict: false,
     });
   });
 });

@@ -1,5 +1,4 @@
 import type { ResolveKanbanCardContextResult } from "./context.js";
-import type { KanbanTerminalEvent } from "./runtime-state.js";
 import type {
   KanbanActionRequestState,
   KanbanOrchestratorService,
@@ -203,13 +202,6 @@ export function handleBoardReadRequest(
   };
 }
 
-export function handleActionStreamSubscribe(
-  service: KanbanOrchestratorService,
-  onEvent: (state: KanbanActionRequestState) => void,
-): () => void {
-  return service.subscribe(onEvent);
-}
-
 export function handleCardRuntimeRequest(
   cardQuery: string,
   service: KanbanOrchestratorService,
@@ -241,6 +233,7 @@ export function handleCardRuntimeRequest(
         summary: runtime.summary,
         requestId: runtime.requestId,
       },
+      conflict: runtime.conflict,
       completion: {
         readyForReview: runtime.status === "completed",
         completedAt: runtime.completedAt,
@@ -253,14 +246,6 @@ export function handleCardRuntimeRequest(
       },
     },
   };
-}
-
-export function handleTerminalStreamSubscribe(
-  service: KanbanOrchestratorService,
-  cardId: string,
-  onEvent: (event: KanbanTerminalEvent) => void,
-): () => void {
-  return service.subscribeTerminal(cardId, onEvent);
 }
 
 export function handleBoardPatchRequest(
@@ -279,6 +264,24 @@ export function handleBoardPatchRequest(
   return {
     status: 200,
     body: { summary: result.summary },
+  };
+}
+
+export function handleActionCancelRequest(
+  service: KanbanOrchestratorService,
+  requestId: string,
+): KanbanApiResponse {
+  const state = service.cancelAction(requestId);
+  if (!state) {
+    return {
+      status: 404,
+      body: { error: "request not found" },
+    };
+  }
+
+  return {
+    status: 200,
+    body: serializeState(state),
   };
 }
 

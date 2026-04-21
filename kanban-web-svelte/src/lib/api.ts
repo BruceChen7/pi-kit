@@ -110,35 +110,15 @@ export class KanbanRuntimeApi {
     );
   }
 
-  async openRequirementReview(
+  async updateRequirementBoardStatus(
     requirementId: string,
+    boardStatus: "inbox" | "in_progress" | "done",
   ): Promise<RequirementDetail> {
     return this.request<RequirementDetail>(
-      `/kanban/requirements/${encodeURIComponent(requirementId)}/review/open`,
+      `/kanban/requirements/${encodeURIComponent(requirementId)}/board-status`,
       {
         method: "POST",
-      },
-    );
-  }
-
-  async completeRequirementReview(
-    requirementId: string,
-  ): Promise<RequirementDetail> {
-    return this.request<RequirementDetail>(
-      `/kanban/requirements/${encodeURIComponent(requirementId)}/review/complete`,
-      {
-        method: "POST",
-      },
-    );
-  }
-
-  async reopenRequirementReview(
-    requirementId: string,
-  ): Promise<RequirementDetail> {
-    return this.request<RequirementDetail>(
-      `/kanban/requirements/${encodeURIComponent(requirementId)}/review/reopen`,
-      {
-        method: "POST",
+        body: JSON.stringify({ boardStatus }),
       },
     );
   }

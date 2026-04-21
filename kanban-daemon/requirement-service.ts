@@ -2,19 +2,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { KanbanTerminalEvent } from "../extensions/kanban-orchestrator/runtime-state.js";
 import {
-  KanbanRuntimeStateStore,
-  type KanbanTerminalEvent,
-} from "../extensions/kanban-orchestrator/runtime-state.js";
+  type PtySessionExitInfo,
+  PtySessionManager,
+  type PtyShellFactory,
+} from "./pty-session-manager.js";
 
 export type RequirementBoardStatus = "inbox" | "in_progress" | "done";
-export type RequirementRunStage = "launch" | "running" | "review" | "done";
-export type RequirementSessionStatus =
-  | "idle"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export type RequirementSessionStatus = "live" | "exited" | "failed" | "killed";
 
 export type RequirementProjectRecord = {
   id: string;
@@ -31,7 +27,6 @@ export type RequirementRecord = {
   title: string;
   prompt: string;
   boardStatus: RequirementBoardStatus;
-  runStage: RequirementRunStage;
   activeSessionId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -43,9 +38,11 @@ export type RequirementSessionRecord = {
   requirementId: string;
   command: string;
   status: RequirementSessionStatus;
-  runtimeRef: string | null;
-  startedAt: string | null;
+  shellPid: number | null;
+  startedAt: string;
   finishedAt: string | null;
+  exitCode: number | null;
+  exitReason: "shell-exit" | "restart" | "daemon-shutdown" | "error" | null;
   supersededBy: string | null;
 };
 
@@ -75,7 +72,6 @@ export type RequirementSummary = {
   title: string;
   prompt: string;
   boardStatus: RequirementBoardStatus;
-  runStage: RequirementRunStage;
   updatedAt: string;
   hasActiveSession: boolean;
 };
@@ -96,11 +92,13 @@ export type RequirementDetail = {
   requirement: RequirementRecord;
   project: RequirementProjectRecord;
   activeSession: RequirementSessionRecord | null;
-  runtime: {
+  terminal: {
     summary: string | null;
-    status: "idle" | "running" | "completed" | "failed";
-    terminalAvailable: boolean;
+    status: "idle" | "live" | "exited" | "error";
+    writable: boolean;
+    shellAlive: boolean;
     streamUrl: string;
+    lastExitCode: number | null;
   };
 };
 
@@ -156,18 +154,247 @@ function serialize<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function isBoardStatus(value: unknown): value is RequirementBoardStatus {
+  return value === "inbox" || value === "in_progress" || value === "done";
+}
+
+function isSessionStatus(value: unknown): value is RequirementSessionStatus {
+  return (
+    value === "live" ||
+    value === "exited" ||
+    value === "failed" ||
+    value === "killed"
+  );
+}
+
+function deriveLegacyBoardStatus(
+  input: Record<string, unknown>,
+): RequirementBoardStatus {
+  if (isBoardStatus(input.boardStatus)) {
+    return input.boardStatus;
+  }
+
+  const runStage = trimToNull(
+    typeof input.runStage === "string" ? input.runStage : null,
+  );
+  if (runStage === "done") {
+    return "done";
+  }
+  if (runStage === "running" || runStage === "review") {
+    return "in_progress";
+  }
+  return "inbox";
+}
+
+function normalizeProjectRecord(
+  input: unknown,
+): RequirementProjectRecord | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const record = input as Record<string, unknown>;
+  const id = trimToNull(typeof record.id === "string" ? record.id : null);
+  const name = trimToNull(typeof record.name === "string" ? record.name : null);
+  const projectPath = trimToNull(
+    typeof record.path === "string" ? record.path : null,
+  );
+  const normalizedPath = trimToNull(
+    typeof record.normalizedPath === "string" ? record.normalizedPath : null,
+  );
+  if (!id || !name || !projectPath) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    path: projectPath,
+    normalizedPath: normalizedPath ?? normalizeProjectPath(projectPath),
+    lastOpenedAt:
+      typeof record.lastOpenedAt === "string" ? record.lastOpenedAt : null,
+    lastDetailViewedAt:
+      typeof record.lastDetailViewedAt === "string"
+        ? record.lastDetailViewedAt
+        : null,
+  };
+}
+
+function normalizeRequirementRecord(input: unknown): RequirementRecord | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const record = input as Record<string, unknown>;
+  const id = trimToNull(typeof record.id === "string" ? record.id : null);
+  const projectId = trimToNull(
+    typeof record.projectId === "string" ? record.projectId : null,
+  );
+  const title = trimToNull(
+    typeof record.title === "string" ? record.title : null,
+  );
+  const prompt = trimToNull(
+    typeof record.prompt === "string" ? record.prompt : null,
+  );
+  const createdAt =
+    typeof record.createdAt === "string"
+      ? record.createdAt
+      : new Date(0).toISOString();
+  const updatedAt =
+    typeof record.updatedAt === "string" ? record.updatedAt : createdAt;
+
+  if (!id || !projectId || !title || !prompt) {
+    return null;
+  }
+
+  return {
+    id,
+    projectId,
+    title,
+    prompt,
+    boardStatus: deriveLegacyBoardStatus(record),
+    activeSessionId:
+      typeof record.activeSessionId === "string"
+        ? record.activeSessionId
+        : null,
+    createdAt,
+    updatedAt,
+    completedAt:
+      typeof record.completedAt === "string" ? record.completedAt : null,
+  };
+}
+
+function normalizeSessionRecord(
+  input: unknown,
+): RequirementSessionRecord | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const record = input as Record<string, unknown>;
+  const id = trimToNull(typeof record.id === "string" ? record.id : null);
+  const requirementId = trimToNull(
+    typeof record.requirementId === "string" ? record.requirementId : null,
+  );
+  const command = trimToNull(
+    typeof record.command === "string" ? record.command : null,
+  );
+  const startedAt =
+    typeof record.startedAt === "string"
+      ? record.startedAt
+      : new Date(0).toISOString();
+
+  if (!id || !requirementId || !command) {
+    return null;
+  }
+
+  let status: RequirementSessionStatus;
+  if (isSessionStatus(record.status)) {
+    status = record.status;
+  } else {
+    switch (record.status) {
+      case "running":
+        status = "live";
+        break;
+      case "failed":
+        status = "failed";
+        break;
+      case "cancelled":
+        status = "killed";
+        break;
+      default:
+        status = "exited";
+        break;
+    }
+  }
+
+  return {
+    id,
+    requirementId,
+    command,
+    status,
+    shellPid:
+      typeof record.shellPid === "number" && Number.isFinite(record.shellPid)
+        ? record.shellPid
+        : null,
+    startedAt,
+    finishedAt:
+      typeof record.finishedAt === "string" ? record.finishedAt : null,
+    exitCode:
+      typeof record.exitCode === "number" && Number.isFinite(record.exitCode)
+        ? record.exitCode
+        : null,
+    exitReason:
+      record.exitReason === "shell-exit" ||
+      record.exitReason === "restart" ||
+      record.exitReason === "daemon-shutdown" ||
+      record.exitReason === "error"
+        ? record.exitReason
+        : null,
+    supersededBy:
+      typeof record.supersededBy === "string" ? record.supersededBy : null,
+  };
+}
+
+function normalizeState(input: unknown): PersistedState {
+  if (!input || typeof input !== "object") {
+    return buildDefaultState();
+  }
+
+  const rawRepos =
+    "repos" in input && input.repos && typeof input.repos === "object"
+      ? (input.repos as Record<string, unknown>)
+      : {};
+
+  const repos = Object.fromEntries(
+    Object.entries(rawRepos).map(([repoRoot, rawRepoState]) => {
+      const repo =
+        rawRepoState && typeof rawRepoState === "object"
+          ? (rawRepoState as Record<string, unknown>)
+          : {};
+      const projects = Array.isArray(repo.projects)
+        ? repo.projects.map(normalizeProjectRecord).filter(Boolean)
+        : [];
+      const requirements = Array.isArray(repo.requirements)
+        ? repo.requirements.map(normalizeRequirementRecord).filter(Boolean)
+        : [];
+      const sessions = Array.isArray(repo.sessions)
+        ? repo.sessions.map(normalizeSessionRecord).filter(Boolean)
+        : [];
+
+      return [
+        repoRoot,
+        {
+          projects,
+          requirements,
+          sessions,
+        } satisfies PersistedRepoState,
+      ];
+    }),
+  );
+
+  return { repos };
+}
+
+function compareProjects(
+  left: RequirementProjectRecord,
+  right: RequirementProjectRecord,
+): number {
+  const leftTs = left.lastDetailViewedAt ?? left.lastOpenedAt ?? "";
+  const rightTs = right.lastDetailViewedAt ?? right.lastOpenedAt ?? "";
+  return rightTs.localeCompare(leftTs);
+}
+
 export class RequirementService {
   private readonly statePath: string;
 
   private readonly repoRoot: string;
 
-  private readonly workspaceId: string;
-
-  private readonly runtimeState = new KanbanRuntimeStateStore();
-
   private readonly now: () => string;
 
   private readonly createId: () => string;
+
+  private readonly terminalManager: PtySessionManager;
 
   constructor(input: {
     repoRoot: string;
@@ -175,9 +402,10 @@ export class RequirementService {
     statePath?: string;
     now?: () => string;
     createId?: () => string;
+    createShell?: PtyShellFactory;
+    ptySessionManager?: PtySessionManager;
   }) {
     this.repoRoot = input.repoRoot;
-    this.workspaceId = input.workspaceId;
     this.statePath = input.statePath ?? buildStatePath();
     this.now = input.now ?? (() => new Date().toISOString());
     this.createId =
@@ -192,6 +420,17 @@ export class RequirementService {
 
         return `id-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       });
+    this.terminalManager =
+      input.ptySessionManager ??
+      new PtySessionManager({
+        createShell: input.createShell,
+        now: this.now,
+        onSessionExit: (info) => {
+          this.handleSessionExit(info);
+        },
+      });
+
+    this.reconcilePersistedLiveSessions();
   }
 
   getHome(): RequirementHomeData {
@@ -285,7 +524,6 @@ export class RequirementService {
       title,
       prompt,
       boardStatus: "inbox",
-      runStage: "launch",
       activeSessionId: null,
       createdAt: now,
       updatedAt: now,
@@ -302,21 +540,10 @@ export class RequirementService {
   getRequirementDetail(requirementId: string): RequirementDetail {
     const state = this.readState();
     const repoState = this.ensureRepoState(state);
-    const requirement = repoState.requirements.find(
-      (candidate) => candidate.id === requirementId,
-    );
-    if (!requirement) {
-      throw new Error("requirement not found");
-    }
-
-    const project = repoState.projects.find(
-      (candidate) => candidate.id === requirement.projectId,
-    );
-    if (!project) {
-      throw new Error("project not found");
-    }
-
+    const requirement = this.findRequirement(repoState, requirementId);
+    const project = this.findProject(repoState, requirement.projectId);
     const now = this.now();
+
     project.lastDetailViewedAt = now;
     project.lastOpenedAt = now;
     this.writeState(state);
@@ -324,10 +551,10 @@ export class RequirementService {
     return this.toRequirementDetail(requirement, project, repoState.sessions);
   }
 
-  startRequirement(input: {
+  async startRequirement(input: {
     requirementId: string;
     command: string;
-  }): RequirementDetail {
+  }): Promise<RequirementDetail> {
     const command = trimToNull(input.command);
     if (!command) {
       throw new Error("command is required");
@@ -336,138 +563,126 @@ export class RequirementService {
     const state = this.readState();
     const repoState = this.ensureRepoState(state);
     const requirement = this.findRequirement(repoState, input.requirementId);
-    const existingSession = this.findActiveSession(
+    const project = this.findProject(repoState, requirement.projectId);
+    const activeSession = this.findActiveSession(
       repoState.sessions,
       requirement,
     );
-    const now = this.now();
 
-    const nextSession: RequirementSessionRecord = {
-      id: this.createId(),
-      requirementId: requirement.id,
-      command,
-      status: "running",
-      runtimeRef: `prototype:${requirement.id}`,
-      startedAt: now,
-      finishedAt: null,
-      supersededBy: null,
-    };
-
-    if (existingSession) {
-      existingSession.supersededBy = nextSession.id;
-      existingSession.status = "cancelled";
-      existingSession.finishedAt = now;
+    if (
+      activeSession?.status === "live" &&
+      this.terminalManager.hasLiveSession(requirement.id)
+    ) {
+      throw new Error("requirement session already running; use restart");
     }
 
-    repoState.sessions = [nextSession, ...repoState.sessions];
-    requirement.activeSessionId = nextSession.id;
-    requirement.boardStatus = "in_progress";
-    requirement.runStage = "running";
-    requirement.completedAt = null;
-    requirement.updatedAt = now;
-    this.writeState(state);
+    const now = this.now();
+    const nextSessionId = this.createId();
+    const startResult = await this.terminalManager.startSession({
+      requirementId: requirement.id,
+      sessionId: nextSessionId,
+      cwd: project.path,
+      command,
+    });
 
-    this.runtimeState.upsertCardRuntime({
-      cardId: requirement.id,
-      requestId: nextSession.id,
-      status: "running",
-      summary: `Running ${command}`,
-      startedAt: now,
-      completedAt: null,
-      terminalAvailable: true,
-    });
-    this.runtimeState.appendTerminalChunk({
-      cardId: requirement.id,
-      ts: now,
-      chunk: `$ ${command}\r\n`,
-    });
-    this.runtimeState.appendTerminalChunk({
-      cardId: requirement.id,
-      ts: now,
-      chunk: `[prototype] workspace=${this.workspaceId} requirement=${requirement.title}\r\n`,
-    });
-    this.runtimeState.appendTerminalChunk({
-      cardId: requirement.id,
-      ts: now,
-      chunk: `[prototype] session started. Continue typing or move to review when ready.\r\n`,
-    });
+    const refreshedState = this.readState();
+    const refreshedRepo = this.ensureRepoState(refreshedState);
+    const refreshedRequirement = this.findRequirement(
+      refreshedRepo,
+      requirement.id,
+    );
+    const refreshedProject = this.findProject(
+      refreshedRepo,
+      refreshedRequirement.projectId,
+    );
+    const previousSession = this.findActiveSession(
+      refreshedRepo.sessions,
+      refreshedRequirement,
+    );
+
+    if (previousSession && previousSession.id !== nextSessionId) {
+      previousSession.supersededBy = nextSessionId;
+    }
+
+    const terminalSnapshot = this.terminalManager.getSnapshot(
+      refreshedRequirement.id,
+    );
+    refreshedRepo.sessions = [
+      {
+        id: nextSessionId,
+        requirementId: refreshedRequirement.id,
+        command,
+        status:
+          terminalSnapshot.status === "live"
+            ? "live"
+            : terminalSnapshot.status === "error"
+              ? "failed"
+              : "exited",
+        shellPid: startResult.shellPid,
+        startedAt: now,
+        finishedAt: terminalSnapshot.status === "live" ? null : now,
+        exitCode:
+          terminalSnapshot.status === "live"
+            ? null
+            : terminalSnapshot.lastExitCode,
+        exitReason:
+          terminalSnapshot.status === "live"
+            ? null
+            : terminalSnapshot.status === "error"
+              ? "error"
+              : "shell-exit",
+        supersededBy: null,
+      },
+      ...refreshedRepo.sessions.filter(
+        (session) => session.id !== nextSessionId,
+      ),
+    ];
+    refreshedRequirement.activeSessionId = nextSessionId;
+    refreshedRequirement.boardStatus = "in_progress";
+    refreshedRequirement.completedAt = null;
+    refreshedRequirement.updatedAt = now;
+    this.writeState(refreshedState);
 
     return this.toRequirementDetail(
-      requirement,
-      this.findProject(repoState, requirement.projectId),
-      repoState.sessions,
+      refreshedRequirement,
+      refreshedProject,
+      refreshedRepo.sessions,
     );
   }
 
-  restartRequirement(input: {
+  async restartRequirement(input: {
     requirementId: string;
     command: string;
+  }): Promise<RequirementDetail> {
+    const command = trimToNull(input.command);
+    if (!command) {
+      throw new Error("command is required");
+    }
+
+    await this.terminalManager.terminateSession(input.requirementId, "restart");
+    return this.startRequirement({
+      requirementId: input.requirementId,
+      command,
+    });
+  }
+
+  updateBoardStatus(input: {
+    requirementId: string;
+    boardStatus: RequirementBoardStatus;
   }): RequirementDetail {
-    return this.startRequirement(input);
-  }
-
-  openReview(requirementId: string): RequirementDetail {
-    const state = this.readState();
-    const repoState = this.ensureRepoState(state);
-    const requirement = this.findRequirement(repoState, requirementId);
-    const session = this.findActiveSession(repoState.sessions, requirement);
-    const now = this.now();
-
-    requirement.boardStatus = "in_progress";
-    requirement.runStage = "review";
-    requirement.updatedAt = now;
-    if (session) {
-      session.status = "completed";
-      session.finishedAt = now;
+    if (!isBoardStatus(input.boardStatus)) {
+      throw new Error("board status is required");
     }
-    this.writeState(state);
 
-    this.runtimeState.upsertCardRuntime({
-      cardId: requirement.id,
-      requestId: session?.id ?? requirement.id,
-      status: "completed",
-      summary: "Ready for review",
-      startedAt: session?.startedAt ?? now,
-      completedAt: now,
-      terminalAvailable: true,
-    });
-    this.runtimeState.appendTerminalChunk({
-      cardId: requirement.id,
-      ts: now,
-      chunk: `[prototype] moved to review.\r\n`,
-    });
-
-    return this.toRequirementDetail(
-      requirement,
-      this.findProject(repoState, requirement.projectId),
-      repoState.sessions,
-    );
-  }
-
-  completeReview(requirementId: string): RequirementDetail {
     const state = this.readState();
     const repoState = this.ensureRepoState(state);
-    const requirement = this.findRequirement(repoState, requirementId);
+    const requirement = this.findRequirement(repoState, input.requirementId);
     const now = this.now();
 
-    requirement.boardStatus = "done";
-    requirement.runStage = "done";
-    requirement.completedAt = now;
+    requirement.boardStatus = input.boardStatus;
     requirement.updatedAt = now;
+    requirement.completedAt = input.boardStatus === "done" ? now : null;
     this.writeState(state);
-
-    this.runtimeState.upsertCardRuntime({
-      cardId: requirement.id,
-      status: "completed",
-      summary: "Requirement done",
-      completedAt: now,
-      terminalAvailable: true,
-    });
-    this.runtimeState.appendTerminalChunk({
-      cardId: requirement.id,
-      ts: now,
-      chunk: `[prototype] marked as done.\r\n`,
-    });
 
     return this.toRequirementDetail(
       requirement,
@@ -476,51 +691,11 @@ export class RequirementService {
     );
   }
 
-  reopenReview(requirementId: string): RequirementDetail {
-    const state = this.readState();
-    const repoState = this.ensureRepoState(state);
-    const requirement = this.findRequirement(repoState, requirementId);
-    const session = this.findActiveSession(repoState.sessions, requirement);
-    const now = this.now();
-
-    requirement.boardStatus = "in_progress";
-    requirement.runStage = "running";
-    requirement.completedAt = null;
-    requirement.updatedAt = now;
-    if (session) {
-      session.status = "running";
-      session.finishedAt = null;
-    }
-    this.writeState(state);
-
-    this.runtimeState.upsertCardRuntime({
-      cardId: requirement.id,
-      requestId: session?.id ?? requirement.id,
-      status: "running",
-      summary: "Back in progress",
-      startedAt: session?.startedAt ?? now,
-      completedAt: null,
-      terminalAvailable: true,
-    });
-    this.runtimeState.appendTerminalChunk({
-      cardId: requirement.id,
-      ts: now,
-      chunk: `[prototype] review reopened. Continue the session.\r\n`,
-    });
-
-    return this.toRequirementDetail(
-      requirement,
-      this.findProject(repoState, requirement.projectId),
-      repoState.sessions,
-    );
-  }
-
-  sendTerminalInput(
+  async sendTerminalInput(
     requirementId: string,
     input: string,
-  ): { accepted: boolean; mode: string } {
-    const message = trimToNull(input);
-    if (!message) {
+  ): Promise<{ accepted: boolean; mode: string }> {
+    if (typeof input !== "string" || input.length === 0) {
       throw new Error("input is required");
     }
 
@@ -531,31 +706,15 @@ export class RequirementService {
     if (!requirement) {
       throw new Error("requirement not found");
     }
-    if (requirement.runStage !== "running") {
-      throw new Error("requirement is not running");
+    const activeSession = this.findActiveSession(state.sessions, requirement);
+    if (!activeSession || activeSession.status !== "live") {
+      throw new Error("no active terminal session");
     }
 
-    const now = this.now();
-    this.runtimeState.appendTerminalChunk({
-      cardId: requirement.id,
-      ts: now,
-      chunk: `> ${message}\r\n`,
-    });
-    this.runtimeState.appendTerminalChunk({
-      cardId: requirement.id,
-      ts: now,
-      chunk: `[prototype] simulated agent response for: ${message}\r\n`,
-    });
-    this.runtimeState.upsertCardRuntime({
-      cardId: requirement.id,
-      status: "running",
-      summary: `Responded to: ${message}`,
-      terminalAvailable: true,
-    });
-
+    await this.terminalManager.sendInput(requirementId, input);
     return {
       accepted: true,
-      mode: "line",
+      mode: "raw",
     };
   }
 
@@ -563,7 +722,34 @@ export class RequirementService {
     requirementId: string,
     listener: (event: KanbanTerminalEvent) => void,
   ): () => void {
-    return this.runtimeState.subscribeTerminal(requirementId, listener);
+    return this.terminalManager.subscribe(requirementId, listener);
+  }
+
+  async stop(): Promise<void> {
+    await this.terminalManager.stopAll("daemon-shutdown");
+  }
+
+  private handleSessionExit(info: PtySessionExitInfo): void {
+    const state = this.readState();
+    const repoState = this.ensureRepoState(state);
+    const session = repoState.sessions.find(
+      (candidate) => candidate.id === info.sessionId,
+    );
+    if (!session) {
+      return;
+    }
+
+    session.finishedAt = info.finishedAt;
+    session.exitCode = info.exitCode;
+    session.exitReason = info.reason;
+    session.status =
+      info.reason === "restart" || info.reason === "daemon-shutdown"
+        ? "killed"
+        : info.reason === "error" ||
+            (typeof info.exitCode === "number" && info.exitCode !== 0)
+          ? "failed"
+          : "exited";
+    this.writeState(state);
   }
 
   private buildSummaries(
@@ -577,12 +763,10 @@ export class RequirementService {
         title: requirement.title,
         prompt: requirement.prompt,
         boardStatus: requirement.boardStatus,
-        runStage: requirement.runStage,
         updatedAt: requirement.updatedAt,
-        hasActiveSession: Boolean(
+        hasActiveSession:
           this.findActiveSession(state.sessions, requirement)?.status ===
-            "running",
-        ),
+          "live",
       }));
   }
 
@@ -649,25 +833,85 @@ export class RequirementService {
     project: RequirementProjectRecord,
     sessions: RequirementSessionRecord[],
   ): RequirementDetail {
-    const runtime = this.runtimeState.getCardRuntime(requirement.id);
     const activeSession = this.findActiveSession(sessions, requirement);
+    const terminalSnapshot = this.deriveTerminalSnapshot(
+      requirement,
+      activeSession,
+    );
+
     return {
       requirement: serialize(requirement),
       project: serialize(project),
       activeSession: activeSession ? serialize(activeSession) : null,
-      runtime: {
-        summary: runtime.summary,
-        status:
-          runtime.status === "running"
-            ? "running"
-            : runtime.status === "failed"
-              ? "failed"
-              : runtime.status === "completed"
-                ? "completed"
-                : "idle",
-        terminalAvailable: runtime.terminalAvailable,
+      terminal: {
+        summary: terminalSnapshot.summary,
+        status: terminalSnapshot.status,
+        writable: terminalSnapshot.writable,
+        shellAlive: terminalSnapshot.shellAlive,
         streamUrl: `/kanban/requirements/${encodeURIComponent(requirement.id)}/terminal/stream`,
+        lastExitCode: terminalSnapshot.lastExitCode,
       },
+    };
+  }
+
+  private deriveTerminalSnapshot(
+    requirement: RequirementRecord,
+    activeSession: RequirementSessionRecord | null,
+  ): RequirementDetail["terminal"] {
+    const runtime = this.terminalManager.getSnapshot(requirement.id);
+    if (runtime.status !== "idle") {
+      return {
+        ...runtime,
+        streamUrl: `/kanban/requirements/${encodeURIComponent(requirement.id)}/terminal/stream`,
+      };
+    }
+
+    if (!activeSession) {
+      return {
+        summary: null,
+        status: "idle",
+        writable: false,
+        shellAlive: false,
+        streamUrl: `/kanban/requirements/${encodeURIComponent(requirement.id)}/terminal/stream`,
+        lastExitCode: null,
+      };
+    }
+
+    if (activeSession.status === "failed") {
+      return {
+        summary:
+          activeSession.exitCode === null
+            ? "Shell exited with error"
+            : `Shell exited with code ${activeSession.exitCode}`,
+        status: "error",
+        writable: false,
+        shellAlive: false,
+        streamUrl: `/kanban/requirements/${encodeURIComponent(requirement.id)}/terminal/stream`,
+        lastExitCode: activeSession.exitCode,
+      };
+    }
+
+    if (
+      activeSession.status === "exited" ||
+      activeSession.status === "killed"
+    ) {
+      return {
+        summary: "Shell exited",
+        status: "exited",
+        writable: false,
+        shellAlive: false,
+        streamUrl: `/kanban/requirements/${encodeURIComponent(requirement.id)}/terminal/stream`,
+        lastExitCode: activeSession.exitCode,
+      };
+    }
+
+    return {
+      summary: "Shell unavailable. Restart the session.",
+      status: "error",
+      writable: false,
+      shellAlive: false,
+      streamUrl: `/kanban/requirements/${encodeURIComponent(requirement.id)}/terminal/stream`,
+      lastExitCode: activeSession.exitCode,
     };
   }
 
@@ -726,14 +970,32 @@ export class RequirementService {
     return created;
   }
 
+  private reconcilePersistedLiveSessions(): void {
+    const state = this.readState();
+    const repoState = this.ensureRepoState(state);
+    let changed = false;
+    const finishedAt = this.now();
+
+    for (const session of repoState.sessions) {
+      if (session.status !== "live") {
+        continue;
+      }
+
+      session.status = "killed";
+      session.exitReason = session.exitReason ?? "daemon-shutdown";
+      session.finishedAt = session.finishedAt ?? finishedAt;
+      changed = true;
+    }
+
+    if (changed) {
+      this.writeState(state);
+    }
+  }
+
   private readState(): PersistedState {
     try {
       const raw = fs.readFileSync(this.statePath, "utf8");
-      const parsed = JSON.parse(raw) as PersistedState;
-      if (!parsed || typeof parsed !== "object" || !parsed.repos) {
-        return buildDefaultState();
-      }
-      return parsed;
+      return normalizeState(JSON.parse(raw));
     } catch (error) {
       if (
         error instanceof Error &&
@@ -750,13 +1012,4 @@ export class RequirementService {
     fs.mkdirSync(path.dirname(this.statePath), { recursive: true });
     fs.writeFileSync(this.statePath, JSON.stringify(state, null, 2));
   }
-}
-
-function compareProjects(
-  left: RequirementProjectRecord,
-  right: RequirementProjectRecord,
-): number {
-  const leftTs = left.lastDetailViewedAt ?? left.lastOpenedAt ?? "";
-  const rightTs = right.lastDetailViewedAt ?? right.lastOpenedAt ?? "";
-  return rightTs.localeCompare(leftTs);
 }

@@ -6,14 +6,11 @@ import { KanbanRuntimeApi } from "./lib/api";
 import RequirementCreateForm from "./lib/components/RequirementCreateForm.svelte";
 // biome-ignore lint/correctness/noUnusedImports: Svelte template references component import.
 import RequirementTerminal from "./lib/components/RequirementTerminal.svelte";
-import {
-  pickProjectDirectory,
-  supportsProjectDirectoryAccess,
-} from "./lib/project-browser-access";
+import { buildDefaultStartCommand } from "./lib/terminal/start-command";
 import type {
   HomeResponse,
+  RequirementBoardStatus,
   RequirementDetail,
-  RequirementRunStage,
 } from "./lib/types";
 
 const api = new KanbanRuntimeApi();
@@ -38,7 +35,6 @@ let createPrompt = "";
 let createProjectId: string | null = null;
 let createProjectName = "";
 let createProjectPath = "";
-let authorizedProjectIds: string[] = [];
 let collapsedGroups: Record<string, boolean> = {};
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let selectedRequirementId: string | null = null;
@@ -67,7 +63,8 @@ onMount(() => {
 $: if (detail && detail.requirement.id !== lastDetailId) {
   lastDetailId = detail.requirement.id;
   commandDraft =
-    detail.activeSession?.command ?? `pi ${detail.requirement.prompt}`;
+    detail.activeSession?.command ??
+    buildDefaultStartCommand(detail.requirement.prompt);
 }
 
 $: if (!detail) {
@@ -209,21 +206,7 @@ async function backToHome(): Promise<void> {
 }
 
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template references this helper.
-function stageLabel(stage: RequirementRunStage): string {
-  switch (stage) {
-    case "launch":
-      return "启动";
-    case "running":
-      return "正在运行";
-    case "review":
-      return "Review";
-    case "done":
-      return "Done";
-  }
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references this helper.
-function boardLabel(status: string): string {
+function boardLabel(status: RequirementBoardStatus): string {
   switch (status) {
     case "inbox":
       return "Inbox";
@@ -231,8 +214,22 @@ function boardLabel(status: string): string {
       return "In Progress";
     case "done":
       return "Done";
+  }
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template references this helper.
+function terminalLabel(
+  status: RequirementDetail["terminal"]["status"],
+): string {
+  switch (status) {
+    case "live":
+      return "Connected";
+    case "exited":
+      return "Exited";
+    case "error":
+      return "Error";
     default:
-      return status;
+      return "Idle";
   }
 }
 
@@ -266,21 +263,11 @@ function toggleGroup(
   };
 }
 
-async function ensureProjectAuthorized(projectId: string): Promise<boolean> {
-  if (authorizedProjectIds.includes(projectId)) {
-    return true;
-  }
-  if (!supportsProjectDirectoryAccess()) {
-    return true;
-  }
-
-  try {
-    await pickProjectDirectory();
-    authorizedProjectIds = [...authorizedProjectIds, projectId];
-    return true;
-  } catch {
-    return false;
-  }
+function nextCommand(detailValue: RequirementDetail): string {
+  return (
+    commandDraft.trim() ||
+    buildDefaultStartCommand(detailValue.requirement.prompt)
+  );
 }
 
 // biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
@@ -290,18 +277,11 @@ async function startRequirement(): Promise<void> {
   }
 
   workbenchError = null;
-  const authorized = await ensureProjectAuthorized(detail.project.id);
-  if (!authorized) {
-    workbenchError =
-      "Project authorization is required before starting the prototype session.";
-    return;
-  }
-
   actionSubmitting = true;
   try {
     detail = await api.startRequirement(
       detail.requirement.id,
-      commandDraft.trim() || `pi ${detail.requirement.prompt}`,
+      nextCommand(detail),
     );
     await refreshHome();
   } catch (error) {
@@ -322,7 +302,7 @@ async function restartRequirement(): Promise<void> {
   try {
     detail = await api.restartRequirement(
       detail.requirement.id,
-      commandDraft.trim() || `pi ${detail.requirement.prompt}`,
+      nextCommand(detail),
     );
     await refreshHome();
   } catch (error) {
@@ -333,7 +313,9 @@ async function restartRequirement(): Promise<void> {
 }
 
 // biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
-async function moveToReview(): Promise<void> {
+async function updateBoardStatus(
+  boardStatus: RequirementBoardStatus,
+): Promise<void> {
   if (!detail || actionSubmitting) {
     return;
   }
@@ -341,43 +323,10 @@ async function moveToReview(): Promise<void> {
   actionSubmitting = true;
   workbenchError = null;
   try {
-    detail = await api.openRequirementReview(detail.requirement.id);
-    await refreshHome();
-  } catch (error) {
-    workbenchError = error instanceof Error ? error.message : String(error);
-  } finally {
-    actionSubmitting = false;
-  }
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
-async function completeReview(): Promise<void> {
-  if (!detail || actionSubmitting) {
-    return;
-  }
-
-  actionSubmitting = true;
-  workbenchError = null;
-  try {
-    detail = await api.completeRequirementReview(detail.requirement.id);
-    await refreshHome();
-  } catch (error) {
-    workbenchError = error instanceof Error ? error.message : String(error);
-  } finally {
-    actionSubmitting = false;
-  }
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
-async function reopenReview(): Promise<void> {
-  if (!detail || actionSubmitting) {
-    return;
-  }
-
-  actionSubmitting = true;
-  workbenchError = null;
-  try {
-    detail = await api.reopenRequirementReview(detail.requirement.id);
+    detail = await api.updateRequirementBoardStatus(
+      detail.requirement.id,
+      boardStatus,
+    );
     await refreshHome();
   } catch (error) {
     workbenchError = error instanceof Error ? error.message : String(error);
@@ -433,7 +382,7 @@ async function reopenReview(): Promise<void> {
             </div>
             <div class="badge-row">
               <span class="status-chip">{boardLabel(detail.requirement.boardStatus)}</span>
-              <span class="status-chip emphasis">{stageLabel(detail.requirement.runStage)}</span>
+              <span class="status-chip emphasis">{terminalLabel(detail.terminal.status)}</span>
             </div>
           </div>
 
@@ -450,47 +399,59 @@ async function reopenReview(): Promise<void> {
               <span class="meta-label">Session</span>
               <p>{detail.activeSession?.id ?? "<none>"}</p>
             </div>
-          </div>
-
-          <div class="stage-bar">
-            {#each ["launch", "running", "review", "done"] as stage}
-              <div class:active={detail.requirement.runStage === stage} class="stage-step">
-                <span>{stageLabel(stage as RequirementRunStage)}</span>
-              </div>
-            {/each}
+            <div>
+              <span class="meta-label">Session status</span>
+              <p>{detail.activeSession?.status ?? "idle"}</p>
+            </div>
           </div>
 
           <label class="field-group">
-            <span>Launch command</span>
+            <span>Start command</span>
             <textarea bind:value={commandDraft} class="field-textarea" rows="4"></textarea>
           </label>
+
+          {#if detail.terminal.summary}
+            <p class="subtle">{detail.terminal.summary}</p>
+          {/if}
 
           {#if workbenchError}
             <p class="error">{workbenchError}</p>
           {/if}
 
           <div class="action-grid">
-            {#if detail.requirement.runStage === "launch"}
-              <button class="primary-button" disabled={actionSubmitting} on:click={startRequirement}>
-                {actionSubmitting ? "Starting…" : "Start prototype session"}
-              </button>
-            {:else if detail.requirement.runStage === "running"}
-              <button class="primary-button" disabled={actionSubmitting} on:click={moveToReview}>
-                {actionSubmitting ? "Saving…" : "Move to review"}
-              </button>
-              <button class="secondary-button" disabled={actionSubmitting} on:click={restartRequirement}>
-                Restart session
-              </button>
-            {:else if detail.requirement.runStage === "review"}
-              <button class="primary-button" disabled={actionSubmitting} on:click={completeReview}>
-                Mark done
-              </button>
-              <button class="secondary-button" disabled={actionSubmitting} on:click={reopenReview}>
-                Back to in progress
+            {#if detail.activeSession}
+              <button class="primary-button" disabled={actionSubmitting} on:click={restartRequirement}>
+                {actionSubmitting ? "Restarting…" : "Restart session"}
               </button>
             {:else}
-              <button class="secondary-button" on:click={() => backToHome()}>Back to home</button>
+              <button class="primary-button" disabled={actionSubmitting} on:click={startRequirement}>
+                {actionSubmitting ? "Starting…" : "Start session"}
+              </button>
             {/if}
+          </div>
+
+          <div class="action-grid">
+            <button
+              class="secondary-button"
+              disabled={actionSubmitting || detail.requirement.boardStatus === "inbox"}
+              on:click={() => updateBoardStatus("inbox")}
+            >
+              Move to inbox
+            </button>
+            <button
+              class="secondary-button"
+              disabled={actionSubmitting || detail.requirement.boardStatus === "in_progress"}
+              on:click={() => updateBoardStatus("in_progress")}
+            >
+              Mark in progress
+            </button>
+            <button
+              class="secondary-button"
+              disabled={actionSubmitting || detail.requirement.boardStatus === "done"}
+              on:click={() => updateBoardStatus("done")}
+            >
+              Mark done
+            </button>
           </div>
         </article>
 
@@ -551,13 +512,13 @@ async function reopenReview(): Promise<void> {
                         >
                           <div class="requirement-card__topline">
                             <strong>{requirement.title}</strong>
-                            <span class="status-chip">{stageLabel(requirement.runStage)}</span>
+                            <span class="status-chip">{boardLabel(requirement.boardStatus)}</span>
                           </div>
                           <p>{requirement.prompt}</p>
                           <div class="requirement-card__meta">
                             <span>{new Date(requirement.updatedAt).toLocaleString()}</span>
                             {#if requirement.hasActiveSession}
-                              <span>active session</span>
+                              <span>live session</span>
                             {/if}
                           </div>
                         </button>

@@ -40,6 +40,39 @@ describe("createWTermSurface", () => {
     expect(writes).toEqual(["hello", " world"]);
   });
 
+  it("forwards terminal input through the active input handler", async () => {
+    let onData: ((data: string) => void) | undefined;
+    const received: string[] = [];
+
+    class MockWTerm {
+      constructor(
+        _container: HTMLElement,
+        options?: {
+          onData?: (data: string) => void;
+        },
+      ) {
+        onData = options?.onData;
+      }
+
+      async init(): Promise<void> {}
+      write(): void {}
+      focus(): void {}
+      destroy(): void {}
+    }
+
+    const surface = createWTermSurface(async () => ({
+      WTerm: MockWTerm as unknown as typeof MockWTerm,
+    }));
+
+    surface.setInputHandler((data) => {
+      received.push(data);
+    });
+    await surface.mount({} as HTMLElement);
+    onData?.("pi hello\r");
+
+    expect(received).toEqual(["pi hello\r"]);
+  });
+
   it("destroys the active terminal when the surface is torn down", async () => {
     const destroy = vi.fn();
 

@@ -273,8 +273,8 @@ export async function handleTerminalInputRequest(
     input: string,
   ) => Promise<KanbanApiResponse> | KanbanApiResponse,
 ): Promise<KanbanApiResponse> {
-  const input = trimToNull(body.input);
-  if (!input) {
+  const input = typeof body.input === "string" ? body.input : null;
+  if (input === null || input.length === 0) {
     return {
       status: 400,
       body: { error: "input is required" },

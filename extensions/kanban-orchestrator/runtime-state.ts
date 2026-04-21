@@ -32,6 +32,13 @@ export type KanbanTerminalEvent =
       summary: string;
     }
   | {
+      type: "exit";
+      cardId: string;
+      ts: string;
+      summary: string;
+      exitCode: number | null;
+    }
+  | {
       type: "error";
       cardId: string;
       ts: string;

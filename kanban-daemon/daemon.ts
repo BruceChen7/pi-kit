@@ -40,19 +40,25 @@ function toRequirementErrorStatus(error: unknown): number {
   if (message.includes("not found")) {
     return 404;
   }
-  if (message.includes("required") || message.includes("not running")) {
+  if (message.includes("required") || message.includes("board status")) {
     return 400;
+  }
+  if (
+    message.includes("already running") ||
+    message.includes("no active terminal session")
+  ) {
+    return 409;
   }
   return 500;
 }
 
-function respondWithRequirementDetail(
-  run: () => RequirementDetail,
-): KanbanApiResponse {
+async function respondWithRequirementDetail(
+  run: () => Promise<RequirementDetail> | RequirementDetail,
+): Promise<KanbanApiResponse> {
   try {
     return {
       status: 200,
-      body: run() as unknown as Record<string, unknown>,
+      body: (await run()) as unknown as Record<string, unknown>,
     };
   } catch (error) {
     return {
@@ -91,23 +97,26 @@ export type KanbanDaemon = {
     onEvent: (event: KanbanTerminalEvent) => void,
   ) => () => void;
   getHome: () => KanbanApiResponse;
-  createRequirement: (body: Record<string, unknown>) => KanbanApiResponse;
-  getRequirement: (requirementId: string) => KanbanApiResponse;
+  createRequirement: (
+    body: Record<string, unknown>,
+  ) => Promise<KanbanApiResponse>;
+  getRequirement: (requirementId: string) => Promise<KanbanApiResponse>;
   startRequirement: (
     requirementId: string,
     body: Record<string, unknown>,
-  ) => KanbanApiResponse;
+  ) => Promise<KanbanApiResponse>;
   restartRequirement: (
     requirementId: string,
     body: Record<string, unknown>,
-  ) => KanbanApiResponse;
-  openRequirementReview: (requirementId: string) => KanbanApiResponse;
-  completeRequirementReview: (requirementId: string) => KanbanApiResponse;
-  reopenRequirementReview: (requirementId: string) => KanbanApiResponse;
+  ) => Promise<KanbanApiResponse>;
+  updateRequirementBoardStatus: (
+    requirementId: string,
+    body: Record<string, unknown>,
+  ) => Promise<KanbanApiResponse>;
   sendRequirementTerminalInput: (
     requirementId: string,
     input: string,
-  ) => KanbanApiResponse;
+  ) => Promise<KanbanApiResponse>;
   subscribeRequirementTerminalStream: (
     requirementId: string,
     onEvent: (event: KanbanTerminalEvent) => void,
@@ -239,14 +248,8 @@ export function createKanbanDaemon(input: {
       restartRequirement(requirementId, body) {
         return daemon.restartRequirement(requirementId, body);
       },
-      openRequirementReview(requirementId) {
-        return daemon.openRequirementReview(requirementId);
-      },
-      completeRequirementReview(requirementId) {
-        return daemon.completeRequirementReview(requirementId);
-      },
-      reopenRequirementReview(requirementId) {
-        return daemon.reopenRequirementReview(requirementId);
+      updateRequirementBoardStatus(requirementId, body) {
+        return daemon.updateRequirementBoardStatus(requirementId, body);
       },
       sendRequirementTerminalInput(requirementId, terminalInput) {
         return daemon.sendRequirementTerminalInput(
@@ -461,29 +464,33 @@ export function createKanbanDaemon(input: {
         }),
       );
     },
-    openRequirementReview(requirementId: string) {
+    updateRequirementBoardStatus(
+      requirementId: string,
+      body: Record<string, unknown>,
+    ) {
       return respondWithRequirementDetail(() =>
-        requirementService.openReview(requirementId),
+        requirementService.updateBoardStatus({
+          requirementId,
+          boardStatus:
+            body.boardStatus === "inbox" ||
+            body.boardStatus === "in_progress" ||
+            body.boardStatus === "done"
+              ? body.boardStatus
+              : ("" as never),
+        }),
       );
     },
-    completeRequirementReview(requirementId: string) {
-      return respondWithRequirementDetail(() =>
-        requirementService.completeReview(requirementId),
-      );
-    },
-    reopenRequirementReview(requirementId: string) {
-      return respondWithRequirementDetail(() =>
-        requirementService.reopenReview(requirementId),
-      );
-    },
-    sendRequirementTerminalInput(requirementId: string, terminalInput: string) {
+    async sendRequirementTerminalInput(
+      requirementId: string,
+      terminalInput: string,
+    ) {
       try {
         return {
           status: 200,
-          body: requirementService.sendTerminalInput(
+          body: (await requirementService.sendTerminalInput(
             requirementId,
             terminalInput,
-          ) as unknown as Record<string, unknown>,
+          )) as unknown as Record<string, unknown>,
         };
       } catch (error) {
         return {
@@ -524,6 +531,7 @@ export function createKanbanDaemon(input: {
       stopConflictSubscription?.();
       boardSource?.stop();
       input.service.setSessionStreamHandler(null);
+      await requirementService.stop();
       await server.stop();
     },
   };

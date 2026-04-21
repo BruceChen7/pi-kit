@@ -1,12 +1,14 @@
 import { loadWTermDom, type WTermDomModule } from "./wterm-loader";
 
 export type WTermLoader = () => Promise<WTermDomModule>;
+export type WTermInputHandler = (data: string) => void;
 
 export type WTermSurface = {
   mount(container: HTMLElement): Promise<void>;
   reset(seedText?: string): Promise<void>;
   write(text: string): void;
   focus(): void;
+  setInputHandler(handler: WTermInputHandler | null): void;
   destroy(): void;
 };
 
@@ -21,6 +23,7 @@ export function createWTermSurface(
     : null = null;
   let bufferedChunks: string[] = [];
   let mountVersion = 0;
+  let inputHandler: WTermInputHandler | null = null;
 
   async function createTerm(container: HTMLElement): Promise<void> {
     const version = ++mountVersion;
@@ -43,7 +46,9 @@ export function createWTermSurface(
 
     const nextTerm = new WTerm(container, {
       cursorBlink: true,
-      onData: () => {},
+      onData: (data) => {
+        inputHandler?.(data);
+      },
     });
 
     await nextTerm.init();
@@ -91,9 +96,13 @@ export function createWTermSurface(
     focus(): void {
       activeTerm?.focus();
     },
+    setInputHandler(handler: WTermInputHandler | null): void {
+      inputHandler = handler;
+    },
     destroy(): void {
       mountVersion += 1;
       bufferedChunks = [];
+      inputHandler = null;
       activeTerm?.destroy();
       activeTerm = null;
       if (activeContainer) {

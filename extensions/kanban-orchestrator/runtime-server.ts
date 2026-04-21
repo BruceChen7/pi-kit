@@ -121,14 +121,9 @@ export type KanbanRuntimeServerBackend = {
     requirementId: string,
     body: Record<string, unknown>,
   ) => Promise<KanbanApiResponse> | KanbanApiResponse;
-  openRequirementReview?: (
+  updateRequirementBoardStatus?: (
     requirementId: string,
-  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
-  completeRequirementReview?: (
-    requirementId: string,
-  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
-  reopenRequirementReview?: (
-    requirementId: string,
+    body: Record<string, unknown>,
   ) => Promise<KanbanApiResponse> | KanbanApiResponse;
   sendRequirementTerminalInput?: (
     requirementId: string,
@@ -295,53 +290,22 @@ export function createKanbanRuntimeServer(input: {
         return;
       }
 
-      const requirementReviewOpenMatch = url.pathname.match(
-        /^\/kanban\/requirements\/([^/]+)\/review\/open$/,
+      const requirementBoardStatusMatch = url.pathname.match(
+        /^\/kanban\/requirements\/([^/]+)\/board-status$/,
       );
-      if (req.method === "POST" && requirementReviewOpenMatch) {
-        if (!input.backend.openRequirementReview) {
+      if (req.method === "POST" && requirementBoardStatusMatch) {
+        if (!input.backend.updateRequirementBoardStatus) {
           writeJson(res, 404, { error: "requirement endpoint unavailable" });
           return;
         }
         const requirementId = decodeURIComponent(
-          requirementReviewOpenMatch[1] ?? "",
+          requirementBoardStatusMatch[1] ?? "",
         );
-        const response =
-          await input.backend.openRequirementReview(requirementId);
-        writeJson(res, response.status, response.body);
-        return;
-      }
-
-      const requirementReviewCompleteMatch = url.pathname.match(
-        /^\/kanban\/requirements\/([^/]+)\/review\/complete$/,
-      );
-      if (req.method === "POST" && requirementReviewCompleteMatch) {
-        if (!input.backend.completeRequirementReview) {
-          writeJson(res, 404, { error: "requirement endpoint unavailable" });
-          return;
-        }
-        const requirementId = decodeURIComponent(
-          requirementReviewCompleteMatch[1] ?? "",
+        const body = await parseJsonBody(req);
+        const response = await input.backend.updateRequirementBoardStatus(
+          requirementId,
+          body,
         );
-        const response =
-          await input.backend.completeRequirementReview(requirementId);
-        writeJson(res, response.status, response.body);
-        return;
-      }
-
-      const requirementReviewReopenMatch = url.pathname.match(
-        /^\/kanban\/requirements\/([^/]+)\/review\/reopen$/,
-      );
-      if (req.method === "POST" && requirementReviewReopenMatch) {
-        if (!input.backend.reopenRequirementReview) {
-          writeJson(res, 404, { error: "requirement endpoint unavailable" });
-          return;
-        }
-        const requirementId = decodeURIComponent(
-          requirementReviewReopenMatch[1] ?? "",
-        );
-        const response =
-          await input.backend.reopenRequirementReview(requirementId);
         writeJson(res, response.status, response.body);
         return;
       }

@@ -19,20 +19,13 @@ export type BootstrapResponse =
     };
 
 export type RequirementBoardStatus = "inbox" | "in_progress" | "done";
-export type RequirementRunStage = "launch" | "running" | "review" | "done";
-export type RequirementSessionStatus =
-  | "idle"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export type RequirementSessionStatus = "live" | "exited" | "failed" | "killed";
 
 export type RequirementSummary = {
   id: string;
   title: string;
   prompt: string;
   boardStatus: RequirementBoardStatus;
-  runStage: RequirementRunStage;
   updatedAt: string;
   hasActiveSession: boolean;
 };
@@ -66,7 +59,6 @@ export type RequirementRecord = {
   title: string;
   prompt: string;
   boardStatus: RequirementBoardStatus;
-  runStage: RequirementRunStage;
   activeSessionId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -78,9 +70,11 @@ export type RequirementSessionRecord = {
   requirementId: string;
   command: string;
   status: RequirementSessionStatus;
-  runtimeRef: string | null;
-  startedAt: string | null;
+  shellPid: number | null;
+  startedAt: string;
   finishedAt: string | null;
+  exitCode: number | null;
+  exitReason: "shell-exit" | "restart" | "daemon-shutdown" | "error" | null;
   supersededBy: string | null;
 };
 
@@ -95,11 +89,13 @@ export type RequirementDetail = {
     lastDetailViewedAt: string | null;
   };
   activeSession: RequirementSessionRecord | null;
-  runtime: {
+  terminal: {
     summary: string | null;
-    status: "idle" | "running" | "completed" | "failed";
-    terminalAvailable: boolean;
+    status: "idle" | "live" | "exited" | "error";
+    writable: boolean;
+    shellAlive: boolean;
     streamUrl: string;
+    lastExitCode: number | null;
   };
 };
 

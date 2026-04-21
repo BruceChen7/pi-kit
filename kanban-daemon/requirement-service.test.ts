@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { ManagedPty } from "./pty-session-manager";
 import { RequirementService } from "./requirement-service";
 
 const tempPaths: string[] = [];
@@ -20,7 +21,56 @@ afterEach(() => {
   }
 });
 
-function createService(): RequirementService {
+function createFakeShell() {
+  const dataListeners = new Set<(data: string) => void>();
+  const exitListeners = new Set<
+    (event: { exitCode: number | null; signal: number | null }) => void
+  >();
+  const writes: string[] = [];
+
+  const shell: ManagedPty = {
+    pid: 42,
+    write(data: string) {
+      writes.push(data);
+    },
+    kill() {
+      for (const listener of exitListeners) {
+        listener({ exitCode: 0, signal: null });
+      }
+    },
+    onData(listener) {
+      dataListeners.add(listener);
+      return () => {
+        dataListeners.delete(listener);
+      };
+    },
+    onExit(listener) {
+      exitListeners.add(listener);
+      return () => {
+        exitListeners.delete(listener);
+      };
+    },
+  };
+
+  return {
+    shell,
+    writes,
+    emitData(data: string) {
+      for (const listener of dataListeners) {
+        listener(data);
+      }
+    },
+    emitExit(exitCode: number | null) {
+      for (const listener of exitListeners) {
+        listener({ exitCode, signal: null });
+      }
+    },
+  };
+}
+
+function createService(
+  fakeShell?: ReturnType<typeof createFakeShell>,
+): RequirementService {
   const statePath = path.join(
     fs.mkdtempSync(path.join(os.tmpdir(), "kanban-requirements-")),
     "state.json",
@@ -38,6 +88,7 @@ function createService(): RequirementService {
       let value = 0;
       return () => `id-${++value}`;
     })(),
+    createShell: fakeShell ? () => fakeShell.shell : undefined,
   });
 }
 
@@ -65,7 +116,7 @@ describe("RequirementService", () => {
     });
 
     expect(detail.requirement.boardStatus).toBe("inbox");
-    expect(detail.requirement.runStage).toBe("launch");
+    expect(detail.terminal.status).toBe("idle");
 
     const home = service.getHome();
     expect(home.mode).toBe("project-board");
@@ -74,36 +125,102 @@ describe("RequirementService", () => {
     expect(home.projectGroups[0]?.done).toEqual([]);
   });
 
-  it("starts, reopens, and completes prototype sessions", () => {
-    const service = createService();
+  it("starts real shell sessions, sends raw input, and updates board status", async () => {
+    const fakeShell = createFakeShell();
+    const service = createService(fakeShell);
     const created = service.createRequirement({
       title: "Prototype session",
       prompt: "Simulate pi prompt",
       projectPath: "/repo/demo",
     });
 
-    const running = service.startRequirement({
+    const startPromise = service.startRequirement({
       requirementId: created.requirement.id,
-      command: "pi Simulate pi prompt",
+      command: 'pi "Simulate pi prompt"',
     });
-    expect(running.requirement.runStage).toBe("running");
-    expect(running.activeSession?.status).toBe("running");
+    fakeShell.emitData("$ ");
+    const running = await startPromise;
+
+    expect(running.requirement.boardStatus).toBe("in_progress");
+    expect(running.activeSession?.status).toBe("live");
+    expect(running.terminal.status).toBe("live");
+    expect(fakeShell.writes).toEqual(['pi "Simulate pi prompt"\r']);
 
     expect(
-      service.sendTerminalInput(created.requirement.id, "continue"),
+      await service.sendTerminalInput(created.requirement.id, "continue\r"),
     ).toEqual({
       accepted: true,
-      mode: "line",
+      mode: "raw",
+    });
+    expect(fakeShell.writes).toEqual([
+      'pi "Simulate pi prompt"\r',
+      "continue\r",
+    ]);
+
+    const done = service.updateBoardStatus({
+      requirementId: created.requirement.id,
+      boardStatus: "done",
+    });
+    expect(done.requirement.boardStatus).toBe("done");
+  });
+
+  it("marks active sessions killed when the shell exits during restart", async () => {
+    const firstShell = createFakeShell();
+    const secondShell = createFakeShell();
+    const shells = [firstShell, secondShell];
+    let index = 0;
+
+    const statePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "kanban-requirements-")),
+      "state.json",
+    );
+    tempPaths.push(statePath);
+    const service = new RequirementService({
+      repoRoot: "/repo/demo",
+      workspaceId: "demo",
+      statePath,
+      now: (() => {
+        let value = 0;
+        return () => `2026-04-21T00:00:${String(value++).padStart(2, "0")}Z`;
+      })(),
+      createId: (() => {
+        let value = 0;
+        return () => `id-${++value}`;
+      })(),
+      createShell: () => {
+        const shell = shells[index++];
+        if (!shell) {
+          throw new Error("missing fake shell");
+        }
+        return shell.shell;
+      },
     });
 
-    const review = service.openReview(created.requirement.id);
-    expect(review.requirement.runStage).toBe("review");
+    const created = service.createRequirement({
+      title: "Restartable session",
+      prompt: "Restart me",
+      projectPath: "/repo/demo",
+    });
 
-    const reopened = service.reopenReview(created.requirement.id);
-    expect(reopened.requirement.runStage).toBe("running");
+    const firstStart = service.startRequirement({
+      requirementId: created.requirement.id,
+      command: 'pi "Restart me"',
+    });
+    firstShell.emitData("$ ");
+    await firstStart;
 
-    const done = service.completeReview(created.requirement.id);
-    expect(done.requirement.boardStatus).toBe("done");
-    expect(done.requirement.runStage).toBe("done");
+    const restart = service.restartRequirement({
+      requirementId: created.requirement.id,
+      command: 'pi "Restart me again"',
+    });
+    secondShell.emitData("$ ");
+    const restarted = await restart;
+
+    expect(restarted.activeSession?.id).toBe("id-4");
+    expect(restarted.activeSession?.status).toBe("live");
+
+    const detail = service.getRequirementDetail(created.requirement.id);
+    expect(detail.activeSession?.id).toBe("id-4");
+    expect(detail.activeSession?.status).toBe("live");
   });
 });

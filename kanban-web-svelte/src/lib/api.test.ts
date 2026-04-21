@@ -78,11 +78,13 @@ describe("KanbanRuntimeApi", () => {
             requirement: { id: "req-1" },
             project: { id: "project-1" },
             activeSession: null,
-            runtime: {
+            terminal: {
               summary: null,
               status: "idle",
-              terminalAvailable: false,
+              writable: false,
+              shellAlive: false,
               streamUrl: "/kanban/requirements/req-1/terminal/stream",
+              lastExitCode: null,
             },
           }),
           requestInit: init,
@@ -126,11 +128,13 @@ describe("KanbanRuntimeApi", () => {
             requirement: { id: "req-1" },
             project: { id: "project-1" },
             activeSession: { id: "session-1" },
-            runtime: {
-              summary: "Running pi hello",
-              status: "running",
-              terminalAvailable: true,
+            terminal: {
+              summary: "Shell running in /tmp/demo",
+              status: "live",
+              writable: true,
+              shellAlive: true,
               streamUrl: "/kanban/requirements/req-1/terminal/stream",
+              lastExitCode: null,
             },
           }),
           requestInit: init,
@@ -152,7 +156,45 @@ describe("KanbanRuntimeApi", () => {
     expect(init.body).toBe(JSON.stringify({ command: "pi hello" }));
   });
 
-  it("sends terminal line input to requirement sessions", async () => {
+  it("updates requirement board status", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            requirement: { id: "req-1" },
+            project: { id: "project-1" },
+            activeSession: null,
+            terminal: {
+              summary: null,
+              status: "idle",
+              writable: false,
+              shellAlive: false,
+              streamUrl: "/kanban/requirements/req-1/terminal/stream",
+              lastExitCode: null,
+            },
+          }),
+          requestInit: init,
+        } as unknown as Response;
+      },
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new KanbanRuntimeApi();
+    await api.updateRequirementBoardStatus("req-1", "done");
+
+    const [input, init] = fetchMock.mock.calls[0] as unknown as [
+      RequestInfo | URL,
+      RequestInit,
+    ];
+    expect(String(input)).toBe("/kanban/requirements/req-1/board-status");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ boardStatus: "done" }));
+  });
+
+  it("sends raw terminal input to requirement sessions", async () => {
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, init?: RequestInit) => {
         return {
@@ -160,7 +202,7 @@ describe("KanbanRuntimeApi", () => {
           status: 200,
           json: async () => ({
             accepted: true,
-            mode: "line",
+            mode: "raw",
           }),
           requestInit: init,
         } as unknown as Response;

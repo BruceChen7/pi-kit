@@ -14,11 +14,9 @@ Current primary endpoints:
 4. `GET /kanban/requirements/:id`
 5. `POST /kanban/requirements/:id/start`
 6. `POST /kanban/requirements/:id/restart`
-7. `POST /kanban/requirements/:id/review/open`
-8. `POST /kanban/requirements/:id/review/complete`
-9. `POST /kanban/requirements/:id/review/reopen`
-10. `GET /kanban/requirements/:id/terminal/stream`
-11. `POST /kanban/requirements/:id/terminal/input`
+7. `POST /kanban/requirements/:id/board-status`
+8. `GET /kanban/requirements/:id/terminal/stream`
+9. `POST /kanban/requirements/:id/terminal/input`
 
 The browser no longer manages runtime `baseUrl` or `token` through the UI.
 Those details stay behind the backend boundary.
@@ -125,25 +123,24 @@ http://127.0.0.1:4174
 2. 这 3 组都应可以折叠
 3. 点击任意 requirement 应进入全屏工作台
 
-### 5. 验证启动与 terminal 原型
+### 5. 验证真实 PTY 启动与 terminal 交互
 
 在工作台里：
 
-1. 默认会看到可编辑启动命令，通常是 `pi + prompt`
-2. 点击 **Start prototype session**
-3. 如果浏览器要求目录授权，选择对应项目目录
-4. 启动后，右侧 wterm 应显示 prototype terminal 输出
-5. 可以继续发送一行输入，验证 `/kanban/requirements/:id/terminal/input`
+1. 默认会看到可编辑的 **Start command**，通常是 `pi "<prompt>"`
+2. 点击 **Start session**
+3. 启动后，右侧 wterm 应显示真实 shell 输出
+4. shell 会自动执行 `pi "<prompt>"`
+5. 继续直接在 wterm 中输入，验证 `/kanban/requirements/:id/terminal/input` 会把原始键盘输入透传给 PTY
+6. 如果 `pi` 退出，shell 仍应保留；点击 **Restart session** 可重开一个新的 shell
 
-### 6. 验证 review 流程
+### 6. 验证看板状态流转
 
 在工作台里继续操作：
 
-1. 点击 **Move to review**
-2. 然后执行其中一种：
-   - **Mark done**
-   - **Back to in progress**
-3. 返回首页后确认 requirement 在对应分组中正确移动
+1. 点击 **Mark in progress** / **Mark done** / **Move to inbox**
+2. 返回首页后确认 requirement 在对应分组中正确移动
+3. 确认看板状态变化不依赖 terminal 是否仍然存活
 
 ### 7. 快捷键验证
 
@@ -173,5 +170,6 @@ npm run preview
 - If there **are unfinished requirements**, homepage shows project-grouped `Inbox / In Progress / Done`
 - All 3 groups are collapsible
 - Clicking a requirement opens a full-screen workbench
-- Clicking **Start prototype session** opens the current prototype path and streams output into wterm
+- Clicking **Start session** creates a real PTY-backed shell in the requirement project and streams it into wterm
+- Keyboard input goes directly through `@wterm` to `/kanban/requirements/:id/terminal/input`
 - `Ctrl + Shift + T` opens the create modal from anywhere

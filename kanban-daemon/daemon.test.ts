@@ -737,6 +737,352 @@ describe("createKanbanDaemon", () => {
     await daemon.stop();
   });
 
+  it("sends terminal line input through the active adapter session", async () => {
+    const dir = createTempDir();
+    const repoRoot = "/tmp/repo-terminal-input";
+    const sendPrompt = vi.fn(async () => {});
+    const service = new KanbanOrchestratorService({
+      repoRoot,
+      boardPath: "workitems/features.kanban.md",
+      defaultAdapter: "pi",
+      localStatePath: path.join(dir, "kanban-state.sqlite"),
+      auditLogPath: path.join(dir, "execution.log.jsonl"),
+      actionExecutors: {},
+    });
+    const recovery = service.getRecoveryContext();
+    if (!recovery) {
+      throw new Error("missing recovery context");
+    }
+    recovery.store.upsertTask({
+      taskId: "task-terminal-input-1",
+      repoId: repoRoot,
+      cardId: "child-terminal-input",
+      intentType: "open-session",
+      runtimeState: "completed",
+      conflict: false,
+      attempt: 1,
+      createdAt: "2026-04-21T00:00:00.000Z",
+      updatedAt: "2026-04-21T00:00:02.000Z",
+      request: {
+        action: "open-session",
+        worktreeKey: "wt-child-terminal-input",
+        startedAt: "2026-04-21T00:00:01.000Z",
+        finishedAt: "2026-04-21T00:00:02.000Z",
+      },
+      summary: "session opened",
+    });
+    recovery.store.upsertSession({
+      sessionId: "session-terminal-input-1",
+      taskId: "task-terminal-input-1",
+      adapterType: "pi",
+      adapterSessionRef: "chat:child-terminal-input",
+      repoPath: repoRoot,
+      worktreePath: "wt-child-terminal-input",
+      status: "running",
+      resumable: true,
+      lastEventAt: "2026-04-21T00:00:02.000Z",
+      createdAt: "2026-04-21T00:00:01.000Z",
+      updatedAt: "2026-04-21T00:00:02.000Z",
+    });
+    service.refreshPersistedRuntimeStates();
+
+    const daemon = createKanbanDaemon({
+      host: "127.0.0.1",
+      port: 0,
+      token: "",
+      workspaceId: "workspace-kanban-drive",
+      service,
+      adapters: {
+        pi: {
+          kind: "pi",
+          openSession: vi.fn(),
+          resumeSession: vi.fn(),
+          sendPrompt,
+          interrupt: vi.fn(),
+          closeSession: vi.fn(),
+          getSessionStatus: vi.fn(),
+          streamEvents: vi.fn(async function* () {}),
+        },
+      },
+      resolveContext: () => ({
+        ok: true,
+        context: {
+          cardId: "child-terminal-input",
+          lane: "In Progress",
+          branch: "child-terminal-input",
+          worktreePath: "wt-child-terminal-input",
+          session: {
+            chatJid: "chat:child-terminal-input",
+            worktreePath: "wt-child-terminal-input",
+            lastActiveAt: "2026-04-21T00:00:02.000Z",
+          },
+        },
+      }),
+      applyBoardPatch: () => ({ ok: true, summary: "board updated" }),
+      readBoard: () => ({
+        path: "workitems/features.kanban.md",
+        lanes: [],
+        cards: [{ id: "child-terminal-input", lane: "In Progress" }],
+        errors: [],
+      }),
+    });
+
+    const response = await daemon.sendTerminalInput(
+      "child-terminal-input",
+      "continue the task",
+    );
+
+    expect(response).toEqual({
+      status: 200,
+      body: {
+        accepted: true,
+        mode: "line",
+      },
+    });
+    expect(sendPrompt).toHaveBeenCalledWith({
+      sessionRef: "chat:child-terminal-input",
+      prompt: "continue the task",
+    });
+  });
+
+  it("returns 409 when terminal line input has no active session", async () => {
+    const dir = createTempDir();
+    const service = new KanbanOrchestratorService({
+      repoRoot: "/tmp/repo-terminal-input-missing-session",
+      boardPath: "workitems/features.kanban.md",
+      defaultAdapter: "pi",
+      localStatePath: path.join(dir, "kanban-state.sqlite"),
+      auditLogPath: path.join(dir, "execution.log.jsonl"),
+      actionExecutors: {},
+    });
+    const daemon = createKanbanDaemon({
+      host: "127.0.0.1",
+      port: 0,
+      token: "",
+      workspaceId: "workspace-kanban-drive",
+      service,
+      adapters: {},
+      resolveContext: () => ({
+        ok: true,
+        context: {
+          cardId: "child-terminal-input-missing-session",
+          lane: "In Progress",
+          branch: "child-terminal-input-missing-session",
+          worktreePath: "wt-child-terminal-input-missing-session",
+          session: null,
+        },
+      }),
+      applyBoardPatch: () => ({ ok: true, summary: "board updated" }),
+      readBoard: () => ({
+        path: "workitems/features.kanban.md",
+        lanes: [],
+        cards: [],
+        errors: [],
+      }),
+    });
+
+    await expect(
+      daemon.sendTerminalInput("child-terminal-input-missing-session", "hello"),
+    ).resolves.toEqual({
+      status: 409,
+      body: {
+        error: "no active terminal session",
+      },
+    });
+  });
+
+  it("returns 503 when the active terminal adapter is unavailable", async () => {
+    const dir = createTempDir();
+    const repoRoot = "/tmp/repo-terminal-input-missing-adapter";
+    const service = new KanbanOrchestratorService({
+      repoRoot,
+      boardPath: "workitems/features.kanban.md",
+      defaultAdapter: "pi",
+      localStatePath: path.join(dir, "kanban-state.sqlite"),
+      auditLogPath: path.join(dir, "execution.log.jsonl"),
+      actionExecutors: {},
+    });
+    const recovery = service.getRecoveryContext();
+    if (!recovery) {
+      throw new Error("missing recovery context");
+    }
+    recovery.store.upsertTask({
+      taskId: "task-terminal-input-2",
+      repoId: repoRoot,
+      cardId: "child-terminal-input-missing-adapter",
+      intentType: "open-session",
+      runtimeState: "completed",
+      conflict: false,
+      attempt: 1,
+      createdAt: "2026-04-21T00:00:00.000Z",
+      updatedAt: "2026-04-21T00:00:02.000Z",
+      request: {
+        action: "open-session",
+        worktreeKey: "wt-child-terminal-input-missing-adapter",
+        startedAt: "2026-04-21T00:00:01.000Z",
+        finishedAt: "2026-04-21T00:00:02.000Z",
+      },
+      summary: "session opened",
+    });
+    recovery.store.upsertSession({
+      sessionId: "session-terminal-input-2",
+      taskId: "task-terminal-input-2",
+      adapterType: "pi",
+      adapterSessionRef: "chat:child-terminal-input-missing-adapter",
+      repoPath: repoRoot,
+      worktreePath: "wt-child-terminal-input-missing-adapter",
+      status: "running",
+      resumable: true,
+      lastEventAt: "2026-04-21T00:00:02.000Z",
+      createdAt: "2026-04-21T00:00:01.000Z",
+      updatedAt: "2026-04-21T00:00:02.000Z",
+    });
+    service.refreshPersistedRuntimeStates();
+
+    const daemon = createKanbanDaemon({
+      host: "127.0.0.1",
+      port: 0,
+      token: "",
+      workspaceId: "workspace-kanban-drive",
+      service,
+      adapters: {},
+      resolveContext: () => ({
+        ok: true,
+        context: {
+          cardId: "child-terminal-input-missing-adapter",
+          lane: "In Progress",
+          branch: "child-terminal-input-missing-adapter",
+          worktreePath: "wt-child-terminal-input-missing-adapter",
+          session: {
+            chatJid: "chat:child-terminal-input-missing-adapter",
+            worktreePath: "wt-child-terminal-input-missing-adapter",
+            lastActiveAt: "2026-04-21T00:00:02.000Z",
+          },
+        },
+      }),
+      applyBoardPatch: () => ({ ok: true, summary: "board updated" }),
+      readBoard: () => ({
+        path: "workitems/features.kanban.md",
+        lanes: [],
+        cards: [],
+        errors: [],
+      }),
+    });
+
+    await expect(
+      daemon.sendTerminalInput(
+        "child-terminal-input-missing-adapter",
+        "continue",
+      ),
+    ).resolves.toEqual({
+      status: 503,
+      body: {
+        error: "runtime adapter unavailable",
+      },
+    });
+  });
+
+  it("returns 500 when adapter terminal input fails", async () => {
+    const dir = createTempDir();
+    const repoRoot = "/tmp/repo-terminal-input-send-failed";
+    const service = new KanbanOrchestratorService({
+      repoRoot,
+      boardPath: "workitems/features.kanban.md",
+      defaultAdapter: "pi",
+      localStatePath: path.join(dir, "kanban-state.sqlite"),
+      auditLogPath: path.join(dir, "execution.log.jsonl"),
+      actionExecutors: {},
+    });
+    const recovery = service.getRecoveryContext();
+    if (!recovery) {
+      throw new Error("missing recovery context");
+    }
+    recovery.store.upsertTask({
+      taskId: "task-terminal-input-3",
+      repoId: repoRoot,
+      cardId: "child-terminal-input-send-failed",
+      intentType: "open-session",
+      runtimeState: "completed",
+      conflict: false,
+      attempt: 1,
+      createdAt: "2026-04-21T00:00:00.000Z",
+      updatedAt: "2026-04-21T00:00:02.000Z",
+      request: {
+        action: "open-session",
+        worktreeKey: "wt-child-terminal-input-send-failed",
+        startedAt: "2026-04-21T00:00:01.000Z",
+        finishedAt: "2026-04-21T00:00:02.000Z",
+      },
+      summary: "session opened",
+    });
+    recovery.store.upsertSession({
+      sessionId: "session-terminal-input-3",
+      taskId: "task-terminal-input-3",
+      adapterType: "pi",
+      adapterSessionRef: "chat:child-terminal-input-send-failed",
+      repoPath: repoRoot,
+      worktreePath: "wt-child-terminal-input-send-failed",
+      status: "running",
+      resumable: true,
+      lastEventAt: "2026-04-21T00:00:02.000Z",
+      createdAt: "2026-04-21T00:00:01.000Z",
+      updatedAt: "2026-04-21T00:00:02.000Z",
+    });
+    service.refreshPersistedRuntimeStates();
+
+    const daemon = createKanbanDaemon({
+      host: "127.0.0.1",
+      port: 0,
+      token: "",
+      workspaceId: "workspace-kanban-drive",
+      service,
+      adapters: {
+        pi: {
+          kind: "pi",
+          openSession: vi.fn(),
+          resumeSession: vi.fn(),
+          sendPrompt: vi.fn(async () => {
+            throw new Error("send failed");
+          }),
+          interrupt: vi.fn(),
+          closeSession: vi.fn(),
+          getSessionStatus: vi.fn(),
+          streamEvents: vi.fn(async function* () {}),
+        },
+      },
+      resolveContext: () => ({
+        ok: true,
+        context: {
+          cardId: "child-terminal-input-send-failed",
+          lane: "In Progress",
+          branch: "child-terminal-input-send-failed",
+          worktreePath: "wt-child-terminal-input-send-failed",
+          session: {
+            chatJid: "chat:child-terminal-input-send-failed",
+            worktreePath: "wt-child-terminal-input-send-failed",
+            lastActiveAt: "2026-04-21T00:00:02.000Z",
+          },
+        },
+      }),
+      applyBoardPatch: () => ({ ok: true, summary: "board updated" }),
+      readBoard: () => ({
+        path: "workitems/features.kanban.md",
+        lanes: [],
+        cards: [],
+        errors: [],
+      }),
+    });
+
+    await expect(
+      daemon.sendTerminalInput("child-terminal-input-send-failed", "continue"),
+    ).resolves.toEqual({
+      status: 500,
+      body: {
+        error: "send failed",
+      },
+    });
+  });
+
   it("serves the existing /kanban bootstrap surface through the daemon wrapper", async () => {
     const dir = createTempDir();
     const service = new KanbanOrchestratorService({

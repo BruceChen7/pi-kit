@@ -1,6 +1,5 @@
-import type { BoardSnapshot, ChildLifecycleEvent } from "./types";
+import type { BoardLane, BoardSnapshot, ChildLifecycleEvent } from "./types";
 import type { InspectorTab } from "./ui-types";
-import type { BoardLane } from "./types";
 
 export type ChildLifecycleReaction = {
   focusChildId: string | null;

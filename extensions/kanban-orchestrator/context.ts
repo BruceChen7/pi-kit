@@ -95,8 +95,12 @@ export function resolveKanbanCardContextByWorktreePath(input: {
       sidecar: readFeatureCardSidecar(input.repoRoot, card.id),
     }))
     .filter(
-      (entry): entry is { card: FeatureBoardCard; sidecar: NonNullable<ReturnType<typeof readFeatureCardSidecar>> } =>
-        Boolean(entry.sidecar?.worktreePath),
+      (
+        entry,
+      ): entry is {
+        card: FeatureBoardCard;
+        sidecar: NonNullable<ReturnType<typeof readFeatureCardSidecar>>;
+      } => Boolean(entry.sidecar?.worktreePath),
     )
     .filter((entry) => {
       const candidate = entry.sidecar.worktreePath;
@@ -106,7 +110,10 @@ export function resolveKanbanCardContextByWorktreePath(input: {
         normalizedWorktreePath.startsWith(`${candidate}\\`)
       );
     })
-    .sort((left, right) => right.sidecar.worktreePath.length - left.sidecar.worktreePath.length)[0];
+    .sort(
+      (left, right) =>
+        right.sidecar.worktreePath.length - left.sidecar.worktreePath.length,
+    )[0];
 
   if (!match) {
     return {

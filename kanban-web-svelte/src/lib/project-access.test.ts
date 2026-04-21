@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   RECENT_PROJECT_LIMIT,
-  upsertRecentProjects,
   type RecentProjectEntry,
   type SameEntryHandle,
+  upsertRecentProjects,
 } from "./project-access";
 
 class FakeHandle implements SameEntryHandle {
@@ -18,7 +18,10 @@ class FakeHandle implements SameEntryHandle {
   }
 }
 
-function createEntry(id: string, lastUsedAt: string): RecentProjectEntry<FakeHandle> {
+function createEntry(
+  id: string,
+  lastUsedAt: string,
+): RecentProjectEntry<FakeHandle> {
   return {
     id,
     name: id,

@@ -267,6 +267,23 @@ export function handleBoardPatchRequest(
   };
 }
 
+export async function handleTerminalInputRequest(
+  body: Record<string, unknown>,
+  sendTerminalInput: (
+    input: string,
+  ) => Promise<KanbanApiResponse> | KanbanApiResponse,
+): Promise<KanbanApiResponse> {
+  const input = trimToNull(body.input);
+  if (!input) {
+    return {
+      status: 400,
+      body: { error: "input is required" },
+    };
+  }
+
+  return await sendTerminalInput(input);
+}
+
 export function handleActionCancelRequest(
   service: KanbanOrchestratorService,
   requestId: string,

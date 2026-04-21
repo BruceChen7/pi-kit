@@ -2,6 +2,10 @@
 import { onDestroy } from "svelte";
 
 import { KanbanRuntimeApi } from "../api";
+import {
+  canSendTerminalLineInput,
+  submitTerminalLineInput,
+} from "../terminal/line-input";
 import { createWTermSurface } from "../terminal/wterm-surface";
 import type { CardRuntimeDetail } from "../types";
 
@@ -13,14 +17,32 @@ const api = new KanbanRuntimeApi();
 const terminalSurface = createWTermSurface();
 
 let runtimeDetail: CardRuntimeDetail | null = null;
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let loadingRuntime = false;
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let terminalError: string | null = null;
 let connectionStatus: "idle" | "connecting" | "connected" | "done" | "error" =
   "idle";
 let currentKey = "";
 let currentRequestId = 0;
 let stream: EventSource | null = null;
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let hasTerminalOutput = false;
+let terminalInput = "";
+let submittingInput = false;
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
+let inputError: string | null = null;
+
+$: canSendInput = canSendTerminalLineInput({
+  cardId,
+  runtimeDetail,
+  unavailableMessage,
+  terminalInput,
+  submittingInput,
+});
+$: terminalInputHint = runtimeDetail?.session
+  ? "Send one line to the active session"
+  : "Open a session before sending input";
 
 $: nextKey = cardId ?? "";
 $: if (nextKey !== currentKey) {
@@ -37,6 +59,7 @@ function disconnectStream(): void {
   stream = null;
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte use: directive references this function.
 function mountTerminalSurface(node: HTMLDivElement): { destroy: () => void } {
   void terminalSurface.mount(node).catch((error) => {
     terminalError = error instanceof Error ? error.message : String(error);
@@ -50,11 +73,35 @@ function mountTerminalSurface(node: HTMLDivElement): { destroy: () => void } {
   };
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template submit handler references this function.
+async function submitLineInput(): Promise<void> {
+  if (submittingInput) {
+    return;
+  }
+
+  inputError = null;
+  submittingInput = true;
+  const result = await submitTerminalLineInput({
+    cardId,
+    runtimeDetail,
+    unavailableMessage,
+    terminalInput,
+    submittingInput: false,
+    sendTerminalInput: (cardId, input) => api.sendTerminalInput(cardId, input),
+  });
+  terminalInput = result.nextValue;
+  inputError = result.error;
+  submittingInput = false;
+}
+
 async function refreshTerminal(): Promise<void> {
   disconnectStream();
   const requestId = ++currentRequestId;
   runtimeDetail = null;
   hasTerminalOutput = false;
+  terminalInput = "";
+  inputError = null;
+  submittingInput = false;
   terminalError = null;
   connectionStatus = cardId && !unavailableMessage ? "connecting" : "idle";
 
@@ -203,5 +250,25 @@ onDestroy(() => {
     </div>
 
     <div class="terminal-surface wterm-host" use:mountTerminalSurface></div>
+
+    <form class="terminal-input-form" on:submit|preventDefault={() => void submitLineInput()}>
+      <span class="badge">line input</span>
+      <input
+        class="terminal-input-field"
+        type="text"
+        bind:value={terminalInput}
+        placeholder={terminalInputHint}
+        disabled={!runtimeDetail?.session || submittingInput}
+      />
+      <button type="submit" disabled={!canSendInput}>
+        {submittingInput ? "Sending…" : "Send"}
+      </button>
+    </form>
+
+    {#if inputError}
+      <p class="error">{inputError}</p>
+    {:else if !runtimeDetail?.session}
+      <p class="subtle">{terminalInputHint}</p>
+    {/if}
   {/if}
 </section>

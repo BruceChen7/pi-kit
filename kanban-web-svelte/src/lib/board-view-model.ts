@@ -35,10 +35,10 @@ export function deriveSelectionState(
 
   const cardById = new Map(board.cards.map((card) => [card.id, card]));
   const selectedChild = selection.selectedChildId
-    ? cardById.get(selection.selectedChildId) ?? null
+    ? (cardById.get(selection.selectedChildId) ?? null)
     : null;
   const selectedFeature = selection.selectedFeatureId
-    ? cardById.get(selection.selectedFeatureId) ?? null
+    ? (cardById.get(selection.selectedFeatureId) ?? null)
     : null;
 
   if (selectedChild?.kind === "child") {

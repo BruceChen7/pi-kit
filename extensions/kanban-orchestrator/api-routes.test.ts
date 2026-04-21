@@ -7,6 +7,7 @@ import {
   handleCardContextRequest,
   handleCardRuntimeRequest,
   handleExecuteActionRequest,
+  handleTerminalInputRequest,
 } from "./api-routes.js";
 import { KanbanRuntimeStateStore } from "./runtime-state.js";
 import { KanbanOrchestratorService } from "./service.js";
@@ -175,6 +176,36 @@ describe("kanban orchestrator api routes", () => {
     expect(response).toEqual({
       status: 400,
       body: { error: "invalid lane transition" },
+    });
+  });
+
+  it("returns 400 for malformed terminal line input payload", async () => {
+    const response = await handleTerminalInputRequest(
+      { input: "   " },
+      async () => ({
+        status: 200,
+        body: { accepted: true, mode: "line" },
+      }),
+    );
+
+    expect(response).toEqual({
+      status: 400,
+      body: { error: "input is required" },
+    });
+  });
+
+  it("passes validated terminal line input to the backend delegate", async () => {
+    const response = await handleTerminalInputRequest(
+      { input: "continue" },
+      async (input) => ({
+        status: 200,
+        body: { accepted: input === "continue", mode: "line" },
+      }),
+    );
+
+    expect(response).toEqual({
+      status: 200,
+      body: { accepted: true, mode: "line" },
     });
   });
 

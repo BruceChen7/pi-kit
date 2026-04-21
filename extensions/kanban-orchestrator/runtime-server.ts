@@ -1,7 +1,10 @@
 import http from "node:http";
 
 import type { KanbanApiResponse } from "./api-routes.js";
-import { handleBootstrapRequest } from "./api-routes.js";
+import {
+  handleBootstrapRequest,
+  handleTerminalInputRequest,
+} from "./api-routes.js";
 import type {
   KanbanChildLifecycleEvent,
   KanbanTerminalEvent,
@@ -87,6 +90,10 @@ export type KanbanRuntimeServerBackend = {
   ) => Promise<KanbanApiResponse> | KanbanApiResponse;
   getCardContext: (cardQuery: string) => KanbanApiResponse;
   getCardRuntime: (cardQuery: string) => KanbanApiResponse;
+  sendTerminalInput: (
+    cardQuery: string,
+    input: string,
+  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
   readBoard: () => KanbanApiResponse;
   patchBoard: (nextBoardText: string) => KanbanApiResponse;
   subscribeActionStream: (
@@ -212,6 +219,21 @@ export function createKanbanRuntimeServer(input: {
       if (req.method === "GET" && runtimeMatch) {
         const cardQuery = decodeURIComponent(runtimeMatch[1] ?? "");
         const response = input.backend.getCardRuntime(cardQuery);
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const terminalInputMatch = url.pathname.match(
+        /^\/kanban\/cards\/([^/]+)\/terminal\/input$/,
+      );
+      if (req.method === "POST" && terminalInputMatch) {
+        const cardId = decodeURIComponent(terminalInputMatch[1] ?? "");
+        const body = await parseJsonBody(req);
+        const response = await handleTerminalInputRequest(
+          body,
+          (terminalInput) =>
+            input.backend.sendTerminalInput(cardId, terminalInput),
+        );
         writeJson(res, response.status, response.body);
         return;
       }

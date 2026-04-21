@@ -37,6 +37,10 @@ export type KanbanDaemon = {
   cancelAction: (requestId: string) => Promise<KanbanApiResponse>;
   getCardContext: (cardQuery: string) => KanbanApiResponse;
   getCardRuntime: (cardQuery: string) => KanbanApiResponse;
+  sendTerminalInput: (
+    cardQuery: string,
+    input: string,
+  ) => Promise<KanbanApiResponse>;
   readBoard: () => KanbanApiResponse;
   patchBoard: (nextBoardText: string) => KanbanApiResponse;
   subscribeActionStream: (
@@ -136,6 +140,9 @@ export function createKanbanDaemon(input: {
       getCardRuntime(cardQuery) {
         return daemon.getCardRuntime(cardQuery);
       },
+      sendTerminalInput(cardQuery, input) {
+        return daemon.sendTerminalInput(cardQuery, input);
+      },
       readBoard() {
         return daemon.readBoard();
       },
@@ -221,6 +228,70 @@ export function createKanbanDaemon(input: {
         (cardId) =>
           `/kanban/cards/${encodeURIComponent(cardId)}/terminal/stream`,
       );
+    },
+    async sendTerminalInput(cardQuery: string, terminalInput: string) {
+      const contextResult = input.resolveContext(cardQuery);
+      if (!contextResult.ok) {
+        return {
+          status: 404,
+          body: { error: contextResult.error },
+        };
+      }
+
+      if (!contextResult.context.session || !recoveryContext) {
+        return {
+          status: 409,
+          body: { error: "no active terminal session" },
+        };
+      }
+
+      const runtime = input.service.getCardRuntime(
+        contextResult.context.cardId,
+      );
+      if (!runtime.requestId) {
+        return {
+          status: 409,
+          body: { error: "no active terminal session" },
+        };
+      }
+
+      const session = recoveryContext.store.getSessionByTask(runtime.requestId);
+      if (!session) {
+        return {
+          status: 409,
+          body: { error: "no active terminal session" },
+        };
+      }
+
+      const adapter = input.adapters?.[session.adapterType];
+      if (!adapter) {
+        return {
+          status: 503,
+          body: { error: "runtime adapter unavailable" },
+        };
+      }
+
+      try {
+        await adapter.sendPrompt({
+          sessionRef: session.adapterSessionRef,
+          prompt: terminalInput,
+        });
+      } catch (error) {
+        return {
+          status: 500,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+
+      return {
+        status: 200,
+        body: {
+          accepted: true,
+          mode: "line",
+        },
+      };
     },
     readBoard() {
       return handleBoardReadRequest(

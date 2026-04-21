@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-
-import type { ActionState, BoardSnapshot } from "./types";
 import {
   deriveFeatureOverview,
   deriveOverviewActionTargets,
   deriveSelectionState,
   deriveVisibleActionLog,
 } from "./board-view-model";
+import type { ActionState, BoardSnapshot } from "./types";
 
 const board: BoardSnapshot = {
   path: "workitems/features.kanban.md",

@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-
-import type { ActionState, BoardSnapshot } from "./types";
 import {
   applyLaneTransition,
-  deriveAutomationReaction,
   deriveAutoDispatchCardIds,
+  deriveAutomationReaction,
   serializeBoardSnapshot,
 } from "./board-automation";
+import type { ActionState, BoardSnapshot } from "./types";
 
 const board: BoardSnapshot = {
   path: "workitems/features.kanban.md",
@@ -113,23 +112,25 @@ const board: BoardSnapshot = {
 
 describe("board automation", () => {
   it("serializes feature-first board text with repeated lane sections for cross-lane children", () => {
-    expect(serializeBoardSnapshot(board)).toBe([
-      "## Spec",
-      "",
-      "- [ ] Feature one <!-- card-id: F-1; kind: feature -->",
-      "",
-      "## Ready",
-      "",
-      "  - [ ] Child ready <!-- card-id: C-1; kind: child; parent: F-1 -->",
-      "",
-      "## In Progress",
-      "",
-      "  - [ ] Child active <!-- card-id: C-2; kind: child; parent: F-1 -->",
-      "",
-      "## Review",
-      "",
-      "  - [ ] Child review <!-- card-id: C-3; kind: child; parent: F-1 -->",
-    ].join("\n"));
+    expect(serializeBoardSnapshot(board)).toBe(
+      [
+        "## Spec",
+        "",
+        "- [ ] Feature one <!-- card-id: F-1; kind: feature -->",
+        "",
+        "## Ready",
+        "",
+        "  - [ ] Child ready <!-- card-id: C-1; kind: child; parent: F-1 -->",
+        "",
+        "## In Progress",
+        "",
+        "  - [ ] Child active <!-- card-id: C-2; kind: child; parent: F-1 -->",
+        "",
+        "## Review",
+        "",
+        "  - [ ] Child review <!-- card-id: C-3; kind: child; parent: F-1 -->",
+      ].join("\n"),
+    );
   });
 
   it("moves a child card to a new lane and rebuilds lane buckets", () => {
@@ -143,9 +144,9 @@ describe("board automation", () => {
     );
     expect(next.lanes.find((lane) => lane.name === "Ready")?.cards).toEqual([]);
     expect(
-      next.lanes.find((lane) => lane.name === "In Progress")?.cards.map(
-        (card) => card.id,
-      ),
+      next.lanes
+        .find((lane) => lane.name === "In Progress")
+        ?.cards.map((card) => card.id),
     ).toEqual(["C-1", "C-2"]);
   });
 

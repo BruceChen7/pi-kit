@@ -93,6 +93,19 @@ export class KanbanRuntimeApi {
     );
   }
 
+  async sendTerminalInput(
+    cardId: string,
+    input: string,
+  ): Promise<{ accepted: boolean; mode: string }> {
+    return this.request<{ accepted: boolean; mode: string }>(
+      `/kanban/cards/${encodeURIComponent(cardId)}/terminal/input`,
+      {
+        method: "POST",
+        body: JSON.stringify({ input }),
+      },
+    );
+  }
+
   createEventSource(): EventSource {
     return new EventSource("/kanban/stream");
   }

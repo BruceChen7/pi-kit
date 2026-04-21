@@ -1,5 +1,5 @@
-import type { InspectorTab } from "./ui-types";
 import type { ActionState, BoardCard, BoardLane, BoardSnapshot } from "./types";
+import type { InspectorTab } from "./ui-types";
 
 export type AutomationReaction = {
   focusChildId: string | null;

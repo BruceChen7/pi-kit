@@ -27,7 +27,9 @@ export async function openProjectWorkspace<THandle>(input: {
   candidate: ProjectOpenCandidate<THandle>;
   mode: "restore" | "select" | "recent";
   ensureAccess: (candidate: ProjectOpenCandidate<THandle>) => Promise<boolean>;
-  readBoard: (candidate: ProjectOpenCandidate<THandle>) => Promise<ProjectBoardReadResult>;
+  readBoard: (
+    candidate: ProjectOpenCandidate<THandle>,
+  ) => Promise<ProjectBoardReadResult>;
 }): Promise<ProjectOpenResult<THandle>> {
   const hasAccess = await input.ensureAccess(input.candidate);
   if (!hasAccess) {

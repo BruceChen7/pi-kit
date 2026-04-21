@@ -14,16 +14,19 @@ export let onOpenReview: (card: BoardCard) => void;
 export let onRetryCard: (card: BoardCard) => void;
 export let actionsEnabled = true;
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template references this helper.
 function statusClass(status: ActionState["status"]): string {
   return `badge ${status}`;
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template references this helper.
 function isSelected(card: BoardCard): boolean {
   return card.kind === "feature"
     ? card.id === selectedFeatureId
     : card.id === selectedChildId;
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template references this helper.
 function isActiveExecution(card: BoardCard): boolean {
   return card.kind === "child" && card.id === activeExecutionCardId;
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
-import type { OverviewAction } from "../ui-types";
 import type { ActionState, BoardCard } from "../types";
+import type { OverviewAction } from "../ui-types";
 
 export let feature: BoardCard | null;
 export let runningCount: number;

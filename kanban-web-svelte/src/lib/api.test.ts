@@ -145,6 +145,41 @@ describe("KanbanRuntimeApi", () => {
     );
   });
 
+  it("sends terminal line input through same-origin runtime API", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            accepted: true,
+            mode: "line",
+          }),
+          requestInit: init,
+        } as unknown as Response;
+      },
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new KanbanRuntimeApi();
+    await api.sendTerminalInput("child-pricing-widget", "continue");
+
+    const [input, init] = fetchMock.mock.calls[0] as unknown as [
+      RequestInfo | URL,
+      RequestInit,
+    ];
+    expect(String(input)).toBe(
+      "/kanban/cards/child-pricing-widget/terminal/input",
+    );
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(
+      JSON.stringify({
+        input: "continue",
+      }),
+    );
+  });
+
   it("loads card runtime detail", async () => {
     const fetchMock = vi.fn(async () => {
       return {

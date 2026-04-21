@@ -6,10 +6,15 @@ import {
   deriveSelectionState,
   deriveVisibleActionLog,
 } from "./lib/board-view-model";
+// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
 import BoardPane from "./lib/components/BoardPane.svelte";
+// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
 import FeatureOverview from "./lib/components/FeatureOverview.svelte";
+// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
 import InspectorPane from "./lib/components/InspectorPane.svelte";
+// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
 import ProjectContextBar from "./lib/components/ProjectContextBar.svelte";
+// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
 import ProjectPickerView from "./lib/components/ProjectPickerView.svelte";
 import {
   buildInitialProjectBoard,
@@ -29,9 +34,12 @@ import type { InspectorTab, OverviewAction } from "./lib/ui-types";
 
 const projectAccessStore =
   typeof window === "undefined" ? null : new BrowserProjectAccessStore();
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this constant.
 const overviewActions: OverviewAction[] = [];
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this constant.
 const terminalUnavailableMessage: string | null = null;
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let projectPhase:
   | "restoring-last-project"
   | "needs-project-selection"
@@ -40,11 +48,16 @@ let projectPhase:
   | "project-data-error"
   | "workspace-ready"
   | "unsupported-browser" = "restoring-last-project";
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let projectError: string | null = null;
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let projectDataError: string | null = null;
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let initializationError: string | null = null;
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let loadingProject = false;
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let recentProjects: BrowserRecentProject[] = [];
 let currentProject: BrowserRecentProject | null = null;
 let pendingProject: BrowserRecentProject | null = null;
@@ -52,6 +65,7 @@ let board: BoardSnapshot | null = null;
 
 let selectedFeatureId: string | null = null;
 let selectedChildId: string | null = null;
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let activeInspectorTab: InspectorTab = "context";
 
 $: selectedFeature =
@@ -89,6 +103,7 @@ $: if (board) {
   selectedChildId = null;
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 function selectCard(card: BoardCard): void {
   if (card.kind === "feature") {
     selectedFeatureId = card.id;
@@ -100,8 +115,10 @@ function selectCard(card: BoardCard): void {
   selectedChildId = card.id;
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 function runOverviewAction(_actionId: string): void {}
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 function openUnavailableActionDialog(_card: BoardCard): void {
   projectError =
     "Runtime actions are unavailable for local project boards in this flow.";
@@ -128,6 +145,7 @@ async function refreshRecentProjects(): Promise<void> {
   recentProjects = (await projectAccessStore?.listRecentProjects()) ?? [];
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 async function selectFolder(): Promise<void> {
   if (!projectAccessStore) {
     return;
@@ -151,10 +169,12 @@ async function selectFolder(): Promise<void> {
   }
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 async function openRecentProject(project: BrowserRecentProject): Promise<void> {
   await openProject(project, "recent");
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 async function reloadProject(): Promise<void> {
   if (!currentProject) {
     return;
@@ -226,6 +246,7 @@ async function openProject(
   }
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 async function createPendingProjectBoard(): Promise<void> {
   if (!pendingProject) {
     return;

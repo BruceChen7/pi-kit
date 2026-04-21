@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-
-import type { BoardSnapshot, ChildLifecycleEvent } from "./types";
 import { deriveChildLifecycleReaction } from "./runtime-lifecycle";
+import type { BoardSnapshot, ChildLifecycleEvent } from "./types";
 
 const board: BoardSnapshot = {
   path: "workitems/features.kanban.md",
@@ -60,7 +59,9 @@ function makeEvent(type: ChildLifecycleEvent["type"]): ChildLifecycleEvent {
 
 describe("runtime lifecycle", () => {
   it("focuses terminal on child-running", () => {
-    expect(deriveChildLifecycleReaction(board, makeEvent("child-running"))).toEqual({
+    expect(
+      deriveChildLifecycleReaction(board, makeEvent("child-running")),
+    ).toEqual({
       focusChildId: "C-1",
       nextTab: "terminal",
       targetLane: null,
@@ -68,7 +69,9 @@ describe("runtime lifecycle", () => {
   });
 
   it("moves child to review only on child-completed", () => {
-    expect(deriveChildLifecycleReaction(board, makeEvent("child-completed"))).toEqual({
+    expect(
+      deriveChildLifecycleReaction(board, makeEvent("child-completed")),
+    ).toEqual({
       focusChildId: "C-1",
       nextTab: "handoff",
       targetLane: "Review",
@@ -76,7 +79,9 @@ describe("runtime lifecycle", () => {
   });
 
   it("switches to logs on child-failed", () => {
-    expect(deriveChildLifecycleReaction(board, makeEvent("child-failed"))).toEqual({
+    expect(
+      deriveChildLifecycleReaction(board, makeEvent("child-failed")),
+    ).toEqual({
       focusChildId: "C-1",
       nextTab: "logs",
       targetLane: null,

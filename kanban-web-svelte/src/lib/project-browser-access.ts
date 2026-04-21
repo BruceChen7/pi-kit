@@ -1,7 +1,7 @@
 import {
   RECENT_PROJECT_LIMIT,
-  upsertRecentProjects,
   type RecentProjectEntry,
+  upsertRecentProjects,
 } from "./project-access";
 
 const DATABASE_NAME = "kanban-project-access";
@@ -11,8 +11,12 @@ const STATE_KEY = "project-access-state";
 type ProjectPermissionState = "granted" | "prompt" | "denied";
 
 type ProjectPermissionHandle = FileSystemDirectoryHandle & {
-  queryPermission?(descriptor?: { mode?: "read" | "readwrite" }): Promise<ProjectPermissionState>;
-  requestPermission?(descriptor?: { mode?: "read" | "readwrite" }): Promise<ProjectPermissionState>;
+  queryPermission?(descriptor?: {
+    mode?: "read" | "readwrite";
+  }): Promise<ProjectPermissionState>;
+  requestPermission?(descriptor?: {
+    mode?: "read" | "readwrite";
+  }): Promise<ProjectPermissionState>;
 };
 
 type PersistedProjectState = {
@@ -28,9 +32,11 @@ export function supportsProjectDirectoryAccess(): boolean {
 }
 
 export async function pickProjectDirectory(): Promise<ProjectPermissionHandle> {
-  const picker = ((window as unknown) as {
-    showDirectoryPicker: () => Promise<ProjectPermissionHandle>;
-  }).showDirectoryPicker;
+  const picker = (
+    window as unknown as {
+      showDirectoryPicker: () => Promise<ProjectPermissionHandle>;
+    }
+  ).showDirectoryPicker;
   return picker();
 }
 
@@ -41,7 +47,8 @@ export async function ensureProjectAccess(input: {
   const permissionDescriptor = {
     mode: "readwrite" as const,
   };
-  const currentPermission = await input.handle.queryPermission?.(permissionDescriptor);
+  const currentPermission =
+    await input.handle.queryPermission?.(permissionDescriptor);
   if (currentPermission === "granted") {
     return true;
   }
@@ -50,7 +57,8 @@ export async function ensureProjectAccess(input: {
     return false;
   }
 
-  const nextPermission = await input.handle.requestPermission?.(permissionDescriptor);
+  const nextPermission =
+    await input.handle.requestPermission?.(permissionDescriptor);
   return nextPermission === "granted";
 }
 
@@ -66,10 +74,14 @@ export class BrowserProjectAccessStore {
       return null;
     }
 
-    return state.entries.find((entry) => entry.id === state.lastProjectId) ?? null;
+    return (
+      state.entries.find((entry) => entry.id === state.lastProjectId) ?? null
+    );
   }
 
-  async rememberProject(handle: ProjectPermissionHandle): Promise<BrowserRecentProject> {
+  async rememberProject(
+    handle: ProjectPermissionHandle,
+  ): Promise<BrowserRecentProject> {
     const state = await this.loadState();
     const existing = await findMatchingProject(state.entries, handle);
     const candidate: BrowserRecentProject = {
@@ -149,7 +161,9 @@ async function openProjectDatabase(): Promise<IDBDatabase> {
   return requestToPromise(request);
 }
 
-function requestToPromise<TResult>(request: IDBRequest<TResult>): Promise<TResult> {
+function requestToPromise<TResult>(
+  request: IDBRequest<TResult>,
+): Promise<TResult> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => {
       resolve(request.result);
@@ -188,7 +202,10 @@ async function findMatchingProject(
 }
 
 function createProjectId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
 

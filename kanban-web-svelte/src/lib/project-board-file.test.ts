@@ -104,7 +104,10 @@ describe("project board files", () => {
   it("creates the nested board file and reads it back", async () => {
     const root = new FakeDirectoryHandle("demo-project");
 
-    await createProjectBoardFile(root, buildInitialProjectBoard("demo-project"));
+    await createProjectBoardFile(
+      root,
+      buildInitialProjectBoard("demo-project"),
+    );
 
     const loaded = await readProjectBoardFile(root);
 

@@ -1,13 +1,14 @@
 <script lang="ts">
-import InspectorTerminal from "./InspectorTerminal.svelte";
-
-import type { InspectorTab } from "../ui-types";
 import type {
   ActionState,
   BoardCard,
   CardContext,
   ChildLifecycleEvent,
 } from "../types";
+
+import type { InspectorTab } from "../ui-types";
+// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
+import InspectorTerminal from "./InspectorTerminal.svelte";
 
 export let selectedFeature: BoardCard | null;
 export let selectedChild: BoardCard | null;
@@ -24,6 +25,7 @@ export let onOpenActionDialog: (card: BoardCard) => void;
 export let actionsEnabled = true;
 export let terminalUnavailableMessage: string | null = null;
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this tab list.
 const tabs: InspectorTab[] = ["terminal", "context", "logs", "handoff"];
 
 $: latestStatusLabel = latestLifecycle

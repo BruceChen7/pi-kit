@@ -12,7 +12,9 @@ export type RecentProjectEntry<THandle extends SameEntryHandle> = {
   lastUsedAt: string;
 };
 
-export async function upsertRecentProjects<THandle extends SameEntryHandle>(input: {
+export async function upsertRecentProjects<
+  THandle extends SameEntryHandle,
+>(input: {
   entries: RecentProjectEntry<THandle>[];
   candidate: RecentProjectEntry<THandle>;
   limit?: number;

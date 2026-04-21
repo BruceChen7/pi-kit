@@ -25,7 +25,8 @@ describe("openProjectWorkspace", () => {
 
     expect(result).toEqual({
       status: "access-error",
-      message: "Unable to restore the last project. Please select a folder again.",
+      message:
+        "Unable to restore the last project. Please select a folder again.",
     });
   });
 

@@ -52,6 +52,18 @@ function createBackend(overrides?: {
     status: number;
     body: Record<string, unknown>;
   };
+  sendTerminalInput?: (
+    cardQuery: string,
+    input: string,
+  ) =>
+    | Promise<{
+        status: number;
+        body: Record<string, unknown>;
+      }>
+    | {
+        status: number;
+        body: Record<string, unknown>;
+      };
   subscribeActionStream?: (onEvent: (state: unknown) => void) => () => void;
   subscribeLifecycleStream?: (
     onEvent: (event: KanbanChildLifecycleEvent) => void,
@@ -134,6 +146,16 @@ function createBackend(overrides?: {
           status: 200,
           body: {
             summary: "board updated",
+          },
+        })),
+    ),
+    sendTerminalInput: vi.fn(
+      overrides?.sendTerminalInput ??
+        (() => ({
+          status: 200,
+          body: {
+            accepted: true,
+            mode: "line",
           },
         })),
     ),
@@ -329,6 +351,25 @@ describe("createKanbanRuntimeServer", () => {
     expect(runtime.status).toBe(200);
     expect(backend.getCardRuntime).toHaveBeenCalledWith("feat-checkout-v2");
 
+    const terminalInput = await fetch(
+      `${server.baseUrl}/kanban/cards/feat-checkout-v2/terminal/input`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer test-token",
+        },
+        body: JSON.stringify({
+          input: "continue",
+        }),
+      },
+    );
+    expect(terminalInput.status).toBe(200);
+    expect(backend.sendTerminalInput).toHaveBeenCalledWith(
+      "feat-checkout-v2",
+      "continue",
+    );
+
     const board = await fetch(`${server.baseUrl}/kanban/board`, {
       headers: {
         authorization: "Bearer test-token",
@@ -458,6 +499,41 @@ describe("createKanbanRuntimeServer", () => {
     expect(text).toContain("event: child-running");
 
     await reader?.cancel();
+    await server.stop();
+  });
+
+  it("returns 400 for invalid terminal input payloads", async () => {
+    createTempDir();
+    const backend = createBackend();
+
+    const server = createKanbanRuntimeServer({
+      host: "127.0.0.1",
+      port: 0,
+      token: "test-token",
+      workspaceId: "workspace-kanban-drive",
+      backend,
+    });
+
+    await server.start();
+
+    const response = await fetch(
+      `${server.baseUrl}/kanban/cards/child-pricing-widget/terminal/input`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer test-token",
+        },
+        body: JSON.stringify({ input: "   " }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "input is required",
+    });
+    expect(backend.sendTerminalInput).not.toHaveBeenCalled();
+
     await server.stop();
   });
 

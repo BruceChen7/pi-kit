@@ -24,9 +24,10 @@ type CopySessionPathResult =
   | { ok: true; path: string; persistedNow: boolean }
   | { ok: false; reason: string };
 
-type MutableSessionManager = SessionManager & {
+type MutableSessionManager = {
   persist: boolean;
   sessionDir: string;
+  setSessionFile: (sessionPath: string) => void;
 };
 
 function showStatus(
@@ -94,7 +95,7 @@ export function activatePersistedSession(
     throw new Error("Session manager cannot be rebound from shortcut context");
   }
 
-  const mutableSessionManager = sessionManager as MutableSessionManager;
+  const mutableSessionManager = sessionManager as unknown as MutableSessionManager;
   mutableSessionManager.persist = true;
   mutableSessionManager.sessionDir = path.dirname(sessionPath);
   mutableSessionManager.setSessionFile(sessionPath);
@@ -194,6 +195,8 @@ export default function sessionPathCopyExtension(pi: ExtensionAPI) {
 
   pi.registerShortcut(Key.ctrlShift("j"), {
     description: "Copy current session JSONL path (Ctrl+Shift+J)",
-    handler: (ctx) => copyCurrentSessionPath(ctx, { clearTimerRef }),
+    handler: async (ctx) => {
+      await copyCurrentSessionPath(ctx, { clearTimerRef });
+    },
   });
 }

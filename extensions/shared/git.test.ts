@@ -9,6 +9,7 @@ import {
   getCurrentBranchName,
   listDirtyPaths,
   listLocalBranches,
+  listRemoteBranches,
 } from "./git.js";
 
 const tempDirs: string[] = [];
@@ -73,6 +74,22 @@ describe("branch helpers", () => {
   it("returns empty list when branch listing fails", () => {
     const run = () => ({ exitCode: 128, stdout: "", stderr: "fail" });
     expect(listLocalBranches(run)).toEqual([]);
+  });
+
+  it("lists remote branches for the requested remote and filters HEAD refs", () => {
+    const run = () => ({
+      exitCode: 0,
+      stdout:
+        "origin/main\n origin/feature/a \norigin/HEAD\norigin/feature/a\nupstream/release\n",
+      stderr: "",
+    });
+
+    expect(listRemoteBranches(run)).toEqual(["main", "feature/a"]);
+  });
+
+  it("returns empty list when remote branch listing fails", () => {
+    const run = () => ({ exitCode: 128, stdout: "", stderr: "fail" });
+    expect(listRemoteBranches(run, "origin")).toEqual([]);
   });
 
   it("checks local branch ref existence via show-ref", () => {

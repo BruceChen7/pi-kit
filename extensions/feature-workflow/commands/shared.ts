@@ -48,6 +48,24 @@ export function trimToNull(value: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function syncProcessCwd(input: {
+  ctx: ExtensionCommandContext;
+  branch: string;
+  worktreePath: string;
+}): void {
+  try {
+    process.chdir(input.worktreePath);
+  } catch (error) {
+    const message = `Switched session to ${input.branch}, but failed to align process cwd: ${error instanceof Error ? error.message : String(error)}`;
+    input.ctx.ui.notify(message, "warning");
+    commandLog.warn("worktree process cwd sync failed", {
+      branch: input.branch,
+      worktreePath: input.worktreePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function describeWorktreeSessionSkipReason(
   reason: WorktreeSessionSwitchSkipReason | null,
 ): string {
@@ -210,6 +228,13 @@ export async function maybeSwitchToWorktreeSession(input: {
 
     const result = await input.ctx.switchSession(sessionPath);
     const switched = !result.cancelled;
+    if (switched) {
+      syncProcessCwd({
+        ctx: input.ctx,
+        branch: input.record.branch,
+        worktreePath,
+      });
+    }
     commandLog.debug("worktree session switch finished", {
       branch: input.record.branch,
       switched,

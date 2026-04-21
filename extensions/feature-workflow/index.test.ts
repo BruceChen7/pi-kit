@@ -126,6 +126,216 @@ describe("feature-workflow extension", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
+  it("allows /feature-start when the workspace has only untracked files", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            guards: {
+              requireCleanWorkspace: true,
+              requireFreshBase: false,
+            },
+            defaults: {
+              autoSwitchToWorktreeSession: false,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    runGit(repoRoot, [
+      "add",
+      ".config/wt.toml",
+      ".pi/third_extension_settings.json",
+    ]);
+    runGit(repoRoot, ["commit", "-m", "setup"]);
+    fs.writeFileSync(path.join(repoRoot, "notes.txt"), "scratch\n", "utf-8");
+
+    const resolvedRepoRoot = runGit(repoRoot, [
+      "rev-parse",
+      "--show-toplevel",
+    ]).stdout.trim();
+    const worktreePath = path.join(repoRoot, ".wt", "fix-untracked-create");
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args.includes("switch") && args.includes("--create")) {
+        fs.mkdirSync(worktreePath, { recursive: true });
+        return {
+          code: 0,
+          stdout: JSON.stringify({ action: "created", path: worktreePath }),
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-start");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        async input(prompt: string) {
+          if (prompt === "Branch slug:") {
+            return "fix-untracked-create";
+          }
+          throw new Error(`Unexpected input prompt: ${prompt}`);
+        },
+        async select(prompt: string) {
+          if (prompt === "Base branch:") {
+            return "main";
+          }
+          throw new Error(`Unexpected select prompt: ${prompt}`);
+        },
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+      sessionManager: {
+        getSessionFile() {
+          return null;
+        },
+      },
+      async switchSession() {
+        return { cancelled: false };
+      },
+    });
+
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledWith("wt", [
+      "-C",
+      resolvedRepoRoot,
+      "switch",
+      "--create",
+      "fix-untracked-create",
+      "--base",
+      "main",
+      "--no-cd",
+      "--yes",
+    ]);
+    expect(notifications).toContainEqual({
+      message:
+        "Workspace has only untracked files (notes.txt). Continuing /feature-start.",
+      level: "info",
+    });
+  });
+
+  it("blocks /feature-start when tracked changes are present", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            guards: {
+              requireCleanWorkspace: true,
+              requireFreshBase: false,
+            },
+            defaults: {
+              autoSwitchToWorktreeSession: false,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    runGit(repoRoot, [
+      "add",
+      ".config/wt.toml",
+      ".pi/third_extension_settings.json",
+    ]);
+    runGit(repoRoot, ["commit", "-m", "setup"]);
+    fs.writeFileSync(path.join(repoRoot, "README.md"), "changed\n", "utf-8");
+    fs.writeFileSync(path.join(repoRoot, "scratch.txt"), "scratch\n", "utf-8");
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const exec = vi.fn();
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-start");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        async input(prompt: string) {
+          throw new Error(`input should not run: ${prompt}`);
+        },
+        async select(prompt: string) {
+          throw new Error(`select should not run: ${prompt}`);
+        },
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+    });
+
+    expect(exec).not.toHaveBeenCalled();
+    expect(notifications).toEqual([
+      {
+        message:
+          "Repository is dirty (staged 0, unstaged 1, untracked 1). Commit/stash first.",
+        level: "warning",
+      },
+    ]);
+  });
+
   it("creates a slug-only feature branch from the selected slug without local registry persistence", async () => {
     const repoRoot = createTempRepoWithMainBranch();
     fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });

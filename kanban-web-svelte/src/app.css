@@ -518,11 +518,26 @@ select {
   background: #0f172a;
   color: #e2e8f0;
   padding: 1rem;
-  font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono",
-    monospace;
+  font-family:
+    "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 0.9rem;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+.terminal-surface.wterm-host {
+  padding: 0;
+  white-space: normal;
+}
+
+.terminal-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.terminal-mode-row .subtle {
+  margin: 0;
 }
 
 .detail-grid {

@@ -6,32 +6,31 @@ import {
   deriveSelectionState,
   deriveVisibleActionLog,
 } from "./lib/board-view-model";
-import {
-  BrowserProjectAccessStore,
-  ensureProjectAccess,
-  pickProjectDirectory,
-  supportsProjectDirectoryAccess,
-  type BrowserRecentProject,
-} from "./lib/project-browser-access";
+import BoardPane from "./lib/components/BoardPane.svelte";
+import FeatureOverview from "./lib/components/FeatureOverview.svelte";
+import InspectorPane from "./lib/components/InspectorPane.svelte";
+import ProjectContextBar from "./lib/components/ProjectContextBar.svelte";
+import ProjectPickerView from "./lib/components/ProjectPickerView.svelte";
 import {
   buildInitialProjectBoard,
   createProjectBoardFile,
   readProjectBoardFile,
 } from "./lib/project-board-file";
-import ProjectContextBar from "./lib/components/ProjectContextBar.svelte";
-import ProjectPickerView from "./lib/components/ProjectPickerView.svelte";
-import BoardPane from "./lib/components/BoardPane.svelte";
-import FeatureOverview from "./lib/components/FeatureOverview.svelte";
-import InspectorPane from "./lib/components/InspectorPane.svelte";
+import {
+  BrowserProjectAccessStore,
+  type BrowserRecentProject,
+  ensureProjectAccess,
+  pickProjectDirectory,
+  supportsProjectDirectoryAccess,
+} from "./lib/project-browser-access";
 import { openProjectWorkspace } from "./lib/project-entry-controller";
-import type { InspectorTab, OverviewAction } from "./lib/ui-types";
 import type { BoardCard, BoardSnapshot } from "./lib/types";
+import type { InspectorTab, OverviewAction } from "./lib/ui-types";
 
 const projectAccessStore =
   typeof window === "undefined" ? null : new BrowserProjectAccessStore();
 const overviewActions: OverviewAction[] = [];
-const terminalUnavailableMessage =
-  "Runtime terminal is unavailable for local project boards in this flow yet.";
+const terminalUnavailableMessage: string | null = null;
 
 let projectPhase:
   | "restoring-last-project"
@@ -104,7 +103,8 @@ function selectCard(card: BoardCard): void {
 function runOverviewAction(_actionId: string): void {}
 
 function openUnavailableActionDialog(_card: BoardCard): void {
-  projectError = "Runtime actions are unavailable for local project boards in this flow.";
+  projectError =
+    "Runtime actions are unavailable for local project boards in this flow.";
 }
 
 async function initializeProjectAccess(): Promise<void> {
@@ -241,7 +241,8 @@ async function createPendingProjectBoard(): Promise<void> {
     );
     await openProject(pendingProject, "recent");
   } catch (error) {
-    initializationError = error instanceof Error ? error.message : String(error);
+    initializationError =
+      error instanceof Error ? error.message : String(error);
   } finally {
     loadingProject = false;
   }

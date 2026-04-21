@@ -2,6 +2,7 @@
 import { onDestroy } from "svelte";
 
 import { KanbanRuntimeApi } from "../api";
+import { createWTermSurface } from "../terminal/wterm-surface";
 import type { CardRuntimeDetail } from "../types";
 
 export let cardId: string | null;
@@ -9,9 +10,9 @@ export let activeExecutionCardId: string | null;
 export let unavailableMessage: string | null = null;
 
 const api = new KanbanRuntimeApi();
+const terminalSurface = createWTermSurface();
 
 let runtimeDetail: CardRuntimeDetail | null = null;
-let terminalOutput = "";
 let loadingRuntime = false;
 let terminalError: string | null = null;
 let connectionStatus: "idle" | "connecting" | "connected" | "done" | "error" =
@@ -19,6 +20,7 @@ let connectionStatus: "idle" | "connecting" | "connected" | "done" | "error" =
 let currentKey = "";
 let currentRequestId = 0;
 let stream: EventSource | null = null;
+let hasTerminalOutput = false;
 
 $: nextKey = cardId ?? "";
 $: if (nextKey !== currentKey) {
@@ -35,18 +37,43 @@ function disconnectStream(): void {
   stream = null;
 }
 
+function mountTerminalSurface(node: HTMLDivElement): { destroy: () => void } {
+  void terminalSurface.mount(node).catch((error) => {
+    terminalError = error instanceof Error ? error.message : String(error);
+    connectionStatus = "error";
+  });
+
+  return {
+    destroy: () => {
+      terminalSurface.destroy();
+    },
+  };
+}
+
 async function refreshTerminal(): Promise<void> {
   disconnectStream();
+  const requestId = ++currentRequestId;
   runtimeDetail = null;
-  terminalOutput = "";
+  hasTerminalOutput = false;
   terminalError = null;
   connectionStatus = cardId && !unavailableMessage ? "connecting" : "idle";
+
+  try {
+    await terminalSurface.reset();
+  } catch (error) {
+    if (requestId !== currentRequestId) {
+      return;
+    }
+
+    terminalError = error instanceof Error ? error.message : String(error);
+    connectionStatus = "error";
+    return;
+  }
 
   if (!cardId || unavailableMessage) {
     return;
   }
 
-  const requestId = ++currentRequestId;
   loadingRuntime = true;
 
   try {
@@ -70,7 +97,11 @@ async function refreshTerminal(): Promise<void> {
         const payload = JSON.parse((event as MessageEvent<string>).data) as {
           chunk?: string;
         };
-        terminalOutput += payload.chunk ?? "";
+        const chunk = payload.chunk ?? "";
+        if (chunk) {
+          hasTerminalOutput = true;
+        }
+        terminalSurface.write(chunk);
       } catch (error) {
         terminalError = error instanceof Error ? error.message : String(error);
         connectionStatus = "error";
@@ -114,6 +145,7 @@ async function refreshTerminal(): Promise<void> {
 
 onDestroy(() => {
   disconnectStream();
+  terminalSurface.destroy();
 });
 </script>
 
@@ -159,6 +191,17 @@ onDestroy(() => {
       </div>
     </div>
 
-    <pre class="terminal-surface">{terminalOutput || runtimeDetail?.execution.summary || "Waiting for terminal output…"}</pre>
+    <div class="terminal-mode-row">
+      <span class="badge">read-only</span>
+      <p class="subtle">
+        {#if hasTerminalOutput}
+          Live daemon terminal output is streaming into this surface.
+        {:else}
+          Waiting for terminal output…
+        {/if}
+      </p>
+    </div>
+
+    <div class="terminal-surface wterm-host" use:mountTerminalSurface></div>
   {/if}
 </section>

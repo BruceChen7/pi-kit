@@ -50,18 +50,20 @@ export let onRunAction: (actionId: string) => void;
       </article>
     </div>
 
-    <div class="overview-actions">
-      {#each actions as action}
-        <button disabled={action.disabled} on:click={() => onRunAction(action.id)}>
-          {action.label}
-        </button>
-      {/each}
-    </div>
+    {#if actions.length > 0}
+      <div class="overview-actions">
+        {#each actions as action}
+          <button disabled={action.disabled} on:click={() => onRunAction(action.id)}>
+            {action.label}
+          </button>
+        {/each}
+      </div>
 
-    <ul class="overview-hints">
-      {#each actions as action}
-        <li class:muted={action.disabled}>{action.label}: {action.hint}</li>
-      {/each}
-    </ul>
+      <ul class="overview-hints">
+        {#each actions as action}
+          <li class:muted={action.disabled}>{action.label}: {action.hint}</li>
+        {/each}
+      </ul>
+    {/if}
   {/if}
 </section>

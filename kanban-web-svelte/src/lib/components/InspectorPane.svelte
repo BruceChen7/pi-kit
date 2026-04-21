@@ -21,6 +21,8 @@ export let latestLifecycle: ChildLifecycleEvent | null;
 export let actionLog: ActionState[];
 export let onSelectTab: (tab: InspectorTab) => void;
 export let onOpenActionDialog: (card: BoardCard) => void;
+export let actionsEnabled = true;
+export let terminalUnavailableMessage: string | null = null;
 
 const tabs: InspectorTab[] = ["terminal", "context", "logs", "handoff"];
 
@@ -40,7 +42,7 @@ $: latestSummary =
         <p class="subtle">Feature scope: {selectedFeature.title} ({selectedFeature.id})</p>
       {/if}
     </div>
-    {#if selectedChild}
+    {#if selectedChild && actionsEnabled}
       <button on:click={() => onOpenActionDialog(selectedChild)}>Actions</button>
     {/if}
   </div>
@@ -85,7 +87,11 @@ $: latestSummary =
 
     <div class="inspector-body">
       {#if activeTab === "terminal"}
-        <InspectorTerminal cardId={selectedChild.id} {activeExecutionCardId} />
+        <InspectorTerminal
+          cardId={selectedChild.id}
+          {activeExecutionCardId}
+          unavailableMessage={terminalUnavailableMessage}
+        />
       {:else if activeTab === "context"}
         {#if loadingContext}
           <p>Loading child context…</p>

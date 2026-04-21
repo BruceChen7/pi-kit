@@ -75,7 +75,9 @@ select {
 .connection-panel,
 .overview-pane,
 .board-pane,
-.inspector-pane {
+.inspector-pane,
+.project-picker-pane,
+.project-context-bar {
   padding: 1rem;
 }
 
@@ -161,6 +163,66 @@ select {
   flex-wrap: wrap;
   gap: 0.65rem;
   margin-top: 1rem;
+}
+
+.project-picker-actions {
+  margin-top: 1rem;
+}
+
+.project-context-actions {
+  margin-top: 0;
+}
+
+.recent-projects-section {
+  margin-top: 1.25rem;
+}
+
+.recent-projects-section.compact {
+  margin-top: 1rem;
+}
+
+.recent-projects-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.recent-project-list {
+  list-style: none;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.recent-project-card {
+  width: 100%;
+  text-align: left;
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border-radius: 16px;
+  background: #f8fbff;
+}
+
+.recent-project-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.recent-project-chip {
+  border-radius: 999px;
+  background: #f8fbff;
+}
+
+.current-project-chip {
+  border-color: #bfdbfe;
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .board-pane,
@@ -559,6 +621,12 @@ select {
 .dialog textarea {
   min-height: 120px;
   resize: vertical;
+}
+
+.dialog-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: #58667a;
 }
 
 .error {

@@ -1,281 +1,93 @@
 <script lang="ts">
 import { onMount } from "svelte";
 
-import { KanbanRuntimeApi } from "./lib/api";
-import {
-  applyLaneTransition,
-  deriveAutomationReaction,
-  deriveAutoDispatchCardIds,
-  serializeBoardSnapshot,
-} from "./lib/board-automation";
 import {
   deriveFeatureOverview,
-  deriveOverviewActionTargets,
   deriveSelectionState,
   deriveVisibleActionLog,
 } from "./lib/board-view-model";
+import {
+  BrowserProjectAccessStore,
+  ensureProjectAccess,
+  pickProjectDirectory,
+  supportsProjectDirectoryAccess,
+  type BrowserRecentProject,
+} from "./lib/project-browser-access";
+import {
+  buildInitialProjectBoard,
+  createProjectBoardFile,
+  readProjectBoardFile,
+} from "./lib/project-board-file";
+import ProjectContextBar from "./lib/components/ProjectContextBar.svelte";
+import ProjectPickerView from "./lib/components/ProjectPickerView.svelte";
 import BoardPane from "./lib/components/BoardPane.svelte";
 import FeatureOverview from "./lib/components/FeatureOverview.svelte";
 import InspectorPane from "./lib/components/InspectorPane.svelte";
-import { waitForBootstrapReady } from "./lib/bootstrap";
-import { deriveChildLifecycleReaction } from "./lib/runtime-lifecycle";
+import { openProjectWorkspace } from "./lib/project-entry-controller";
 import type { InspectorTab, OverviewAction } from "./lib/ui-types";
-import type {
-  ActionState,
-  BoardCard,
-  BoardLane,
-  BoardSnapshot,
-  CardContext,
-  ChildLifecycleEvent,
-} from "./lib/types";
+import type { BoardCard, BoardSnapshot } from "./lib/types";
 
-type ActionOption = {
-  value: string;
-  label: string;
-  needsPrompt: boolean;
-};
+const projectAccessStore =
+  typeof window === "undefined" ? null : new BrowserProjectAccessStore();
+const overviewActions: OverviewAction[] = [];
+const terminalUnavailableMessage =
+  "Runtime terminal is unavailable for local project boards in this flow yet.";
 
-const ACTION_OPTIONS: ActionOption[] = [
-  { value: "apply", label: "Apply", needsPrompt: false },
-  { value: "open-session", label: "Open Session", needsPrompt: false },
-  { value: "custom-prompt", label: "Custom Prompt", needsPrompt: true },
-  { value: "reconcile", label: "Reconcile", needsPrompt: false },
-  { value: "validate", label: "Validate", needsPrompt: false },
-  { value: "prune-merged", label: "Prune Merged", needsPrompt: false },
-];
+let projectPhase:
+  | "restoring-last-project"
+  | "needs-project-selection"
+  | "project-init-required"
+  | "loading-project-board"
+  | "project-data-error"
+  | "workspace-ready"
+  | "unsupported-browser" = "restoring-last-project";
+let projectError: string | null = null;
+let projectDataError: string | null = null;
+let initializationError: string | null = null;
+let loadingProject = false;
 
-const GLOBAL_ACTIONS = new Set(["reconcile", "validate", "prune-merged"]);
-const inFlightAutoDispatchCardIds = new Set<string>();
-const api = new KanbanRuntimeApi();
-
-let appPhase: "initializing" | "ready" | "degraded" | "fatal-error" =
-  "initializing";
-let bootstrapError: string | null = null;
-let syncWarning: string | null = null;
+let recentProjects: BrowserRecentProject[] = [];
+let currentProject: BrowserRecentProject | null = null;
+let pendingProject: BrowserRecentProject | null = null;
 let board: BoardSnapshot | null = null;
-let loadingBoard = false;
-let runtimeError: string | null = null;
-let stream: EventSource | null = null;
-let streamReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-let latestStatusByCard: Record<string, ActionState> = {};
-let latestLifecycleByCard: Record<string, ChildLifecycleEvent> = {};
-let actionLog: ActionState[] = [];
 
 let selectedFeatureId: string | null = null;
 let selectedChildId: string | null = null;
-let activeExecutionCardId: string | null = null;
-let activeInspectorTab: InspectorTab = "terminal";
-
-let inspectorContext: CardContext | null = null;
-let loadingInspectorContext = false;
-let inspectorError: string | null = null;
-let inspectorContextCardId: string | null = null;
-let inspectorContextRequestId = 0;
-
-let activeCard: BoardCard | null = null;
-let activeContext: CardContext | null = null;
-let dialogOpen = false;
-let dialogLoadingContext = false;
-let dialogError: string | null = null;
-let selectedAction = "apply";
-let promptText = "";
-let executingAction = false;
+let activeInspectorTab: InspectorTab = "context";
 
 $: selectedFeature =
   board?.cards.find(
     (card) => card.kind === "feature" && card.id === selectedFeatureId,
   ) ?? null;
-
 $: selectedChild =
   board?.cards.find(
     (card) => card.kind === "child" && card.id === selectedChildId,
   ) ?? null;
-
-$: selectedLifecycle = selectedChild
-  ? (latestLifecycleByCard[selectedChild.id] ?? null)
-  : null;
-
 $: featureOverview = deriveFeatureOverview(board, selectedFeatureId, {
-  latestStatusByCard,
-  actionLog,
+  latestStatusByCard: {},
+  actionLog: [],
 });
-
-$: overviewTargets = deriveOverviewActionTargets(
-  featureOverview.children,
-  latestStatusByCard,
-);
-
 $: visibleActionLog = deriveVisibleActionLog(
-  actionLog,
+  [],
   board,
   selectedFeatureId,
   selectedChildId,
 );
-
-$: overviewActions = buildOverviewActions(overviewTargets);
-
-$: if (selectedChildId !== inspectorContextCardId) {
-  void refreshInspectorContext(selectedChildId);
-}
-
-const selectedActionMeta = ACTION_OPTIONS.find(
-  (option) => option.value === selectedAction,
-);
-
-function clearSyncWarning(): void {
-  syncWarning = null;
-  if (appPhase !== "fatal-error") {
-    appPhase = "ready";
+$: if (board) {
+  const normalized = deriveSelectionState(board, {
+    selectedFeatureId,
+    selectedChildId,
+  });
+  if (
+    normalized.selectedFeatureId !== selectedFeatureId ||
+    normalized.selectedChildId !== selectedChildId
+  ) {
+    selectedFeatureId = normalized.selectedFeatureId;
+    selectedChildId = normalized.selectedChildId;
   }
-}
-
-function setSyncWarning(message: string): void {
-  syncWarning = message;
-  if (appPhase !== "fatal-error") {
-    appPhase = "degraded";
-  }
-}
-
-function scheduleStreamReconnect(): void {
-  if (streamReconnectTimer) {
-    return;
-  }
-
-  streamReconnectTimer = setTimeout(() => {
-    streamReconnectTimer = null;
-    void loadBoard();
-    connectStream();
-  }, 1_500);
-}
-
-async function loadBoard(): Promise<boolean> {
-  const previousBoard = board;
-  loadingBoard = true;
-  runtimeError = null;
-
-  try {
-    const nextBoard = await api.getBoard();
-    board = nextBoard;
-
-    const normalizedSelection = deriveSelectionState(nextBoard, {
-      selectedFeatureId,
-      selectedChildId,
-    });
-    selectedFeatureId = normalizedSelection.selectedFeatureId;
-    selectedChildId = normalizedSelection.selectedChildId;
-
-    const autoDispatchCardIds = deriveAutoDispatchCardIds(
-      previousBoard,
-      nextBoard,
-      latestStatusByCard,
-    ).filter((cardId) => !inFlightAutoDispatchCardIds.has(cardId));
-
-    for (const cardId of autoDispatchCardIds) {
-      const childCard = nextBoard.cards.find(
-        (card) => card.kind === "child" && card.id === cardId,
-      );
-      if (!childCard || childCard.kind !== "child") {
-        continue;
-      }
-
-      await autoDispatchChild(childCard);
-    }
-
-    return true;
-  } catch (error) {
-    runtimeError = error instanceof Error ? error.message : String(error);
-    return false;
-  } finally {
-    loadingBoard = false;
-  }
-}
-
-async function fetchCardContext(cardId: string): Promise<CardContext> {
-  return api.getCardContext(cardId);
-}
-
-function pushActionState(state: ActionState): void {
-  actionLog = [state, ...actionLog].slice(0, 40);
-  if (state.cardId && state.cardId !== "__global__") {
-    latestStatusByCard = {
-      ...latestStatusByCard,
-      [state.cardId]: state,
-    };
-  }
-}
-
-function pushLifecycleEvent(event: ChildLifecycleEvent): void {
-  latestLifecycleByCard = {
-    ...latestLifecycleByCard,
-    [event.cardId]: event,
-  };
-}
-
-function connectStream(): void {
-  disconnectStream();
-
-  try {
-    const next = api.createEventSource();
-
-    next.addEventListener("ready", () => {
-      clearSyncWarning();
-    });
-
-    next.addEventListener("state", (event) => {
-      try {
-        const payload = JSON.parse(
-          (event as MessageEvent<string>).data,
-        ) as ActionState;
-        clearSyncWarning();
-        void handleIncomingActionState(payload);
-      } catch (error) {
-        setSyncWarning(error instanceof Error ? error.message : String(error));
-      }
-    });
-
-    for (const lifecycleType of [
-      "child-running",
-      "child-completed",
-      "child-failed",
-    ] as const) {
-      next.addEventListener(lifecycleType, (event) => {
-        try {
-          const payload = JSON.parse(
-            (event as MessageEvent<string>).data,
-          ) as ChildLifecycleEvent;
-          clearSyncWarning();
-          void handleIncomingChildLifecycleEvent(payload);
-        } catch (error) {
-          setSyncWarning(
-            error instanceof Error ? error.message : String(error),
-          );
-        }
-      });
-    }
-
-    next.onerror = () => {
-      setSyncWarning("Realtime sync unavailable, retrying");
-      scheduleStreamReconnect();
-    };
-
-    stream = next;
-  } catch (error) {
-    setSyncWarning(error instanceof Error ? error.message : String(error));
-    scheduleStreamReconnect();
-  }
-}
-
-function disconnectStream(): void {
-  if (streamReconnectTimer) {
-    clearTimeout(streamReconnectTimer);
-    streamReconnectTimer = null;
-  }
-
-  if (stream) {
-    stream.close();
-    stream = null;
-  }
+} else if (selectedFeatureId || selectedChildId) {
+  selectedFeatureId = null;
+  selectedChildId = null;
 }
 
 function selectCard(card: BoardCard): void {
@@ -289,436 +101,194 @@ function selectCard(card: BoardCard): void {
   selectedChildId = card.id;
 }
 
-function focusChild(card: BoardCard, tab: InspectorTab): void {
-  if (card.kind !== "child") {
-    return;
-  }
+function runOverviewAction(_actionId: string): void {}
 
-  selectedFeatureId = card.parentId;
-  selectedChildId = card.id;
-  activeInspectorTab = tab;
+function openUnavailableActionDialog(_card: BoardCard): void {
+  projectError = "Runtime actions are unavailable for local project boards in this flow.";
 }
 
-async function refreshInspectorContext(cardId: string | null): Promise<void> {
-  inspectorContextCardId = cardId;
-
-  if (!cardId) {
-    inspectorContext = null;
-    inspectorError = null;
-    loadingInspectorContext = false;
+async function initializeProjectAccess(): Promise<void> {
+  if (!supportsProjectDirectoryAccess()) {
+    projectPhase = "unsupported-browser";
     return;
   }
 
-  const requestId = ++inspectorContextRequestId;
-  loadingInspectorContext = true;
-  inspectorError = null;
+  await refreshRecentProjects();
+
+  const lastProject = await projectAccessStore?.getLastProject();
+  if (!lastProject) {
+    projectPhase = "needs-project-selection";
+    return;
+  }
+
+  await openProject(lastProject, "restore");
+}
+
+async function refreshRecentProjects(): Promise<void> {
+  recentProjects = (await projectAccessStore?.listRecentProjects()) ?? [];
+}
+
+async function selectFolder(): Promise<void> {
+  if (!projectAccessStore) {
+    return;
+  }
+
+  loadingProject = true;
+  projectError = null;
 
   try {
-    const context = await fetchCardContext(cardId);
-    if (requestId !== inspectorContextRequestId) {
-      return;
-    }
-
-    inspectorContext = context;
+    const handle = await pickProjectDirectory();
+    const candidate = await projectAccessStore.rememberProject(handle);
+    await refreshRecentProjects();
+    await openProject(candidate, "select");
   } catch (error) {
-    if (requestId !== inspectorContextRequestId) {
-      return;
+    const message = error instanceof Error ? error.message : String(error);
+    if (message !== "The user aborted a request.") {
+      projectError = message;
     }
-
-    inspectorContext = null;
-    inspectorError = error instanceof Error ? error.message : String(error);
   } finally {
-    if (requestId === inspectorContextRequestId) {
-      loadingInspectorContext = false;
-    }
+    loadingProject = false;
   }
 }
 
-async function openActionDialog(
-  card: BoardCard,
-  initialAction = "apply",
+async function openRecentProject(project: BrowserRecentProject): Promise<void> {
+  await openProject(project, "recent");
+}
+
+async function reloadProject(): Promise<void> {
+  if (!currentProject) {
+    return;
+  }
+
+  await openProject(currentProject, "recent");
+}
+
+async function openProject(
+  project: BrowserRecentProject,
+  mode: "restore" | "select" | "recent",
 ): Promise<void> {
-  activeCard = card;
-  activeContext = null;
-  selectedAction = initialAction;
-  promptText = "";
-  dialogError = null;
-  dialogOpen = true;
-  dialogLoadingContext = true;
+  loadingProject = true;
+  projectError = null;
+  projectDataError = null;
+  initializationError = null;
+  projectPhase =
+    mode === "restore" ? "restoring-last-project" : "loading-project-board";
 
   try {
-    if (card.id === selectedChildId && inspectorContext) {
-      activeContext = inspectorContext;
+    const result = await openProjectWorkspace({
+      candidate: project,
+      mode,
+      ensureAccess: async (candidate) =>
+        ensureProjectAccess({
+          handle: candidate.handle,
+          mode,
+        }),
+      readBoard: async (candidate) => readProjectBoardFile(candidate.handle),
+    });
+
+    if (result.status === "access-error") {
+      pendingProject = null;
+      if (!currentProject) {
+        board = null;
+        projectPhase = "needs-project-selection";
+      } else {
+        projectPhase = "workspace-ready";
+      }
+      projectError = result.message;
+      await refreshRecentProjects();
       return;
     }
 
-    activeContext = await fetchCardContext(card.id);
-  } catch (error) {
-    dialogError = error instanceof Error ? error.message : String(error);
-  } finally {
-    dialogLoadingContext = false;
-  }
-}
-
-function closeDialog(): void {
-  dialogOpen = false;
-  activeCard = null;
-  activeContext = null;
-  dialogError = null;
-  promptText = "";
-  selectedAction = "apply";
-}
-
-async function executeAction(): Promise<void> {
-  if (!activeCard) return;
-
-  dialogError = null;
-  executingAction = true;
-
-  try {
-    await executeCardAction({
-      card: activeCard,
-      action: selectedAction,
-      payload:
-        selectedAction === "custom-prompt"
-          ? {
-              prompt: promptText,
-            }
-          : undefined,
-      requiredPrompt: selectedActionMeta?.needsPrompt ?? false,
-      tabOnStart: selectedAction === "apply" ? "terminal" : null,
-    });
-
-    closeDialog();
-  } catch (error) {
-    dialogError = error instanceof Error ? error.message : String(error);
-  } finally {
-    executingAction = false;
-  }
-}
-
-async function executeCardAction(input: {
-  card: BoardCard;
-  action: string;
-  payload?: Record<string, unknown>;
-  requiredPrompt?: boolean;
-  tabOnStart?: InspectorTab | null;
-}): Promise<ActionState> {
-  const isGlobalAction = GLOBAL_ACTIONS.has(input.action);
-  if (input.requiredPrompt && !String(input.payload?.prompt ?? "").trim()) {
-    throw new Error("Please input a prompt for custom-prompt.");
-  }
-
-  if (input.card.kind === "child" && input.tabOnStart) {
-    focusChild(input.card, input.tabOnStart);
-    activeExecutionCardId = input.card.id;
-  }
-
-  const cardId = isGlobalAction ? "__global__" : input.card.id;
-  const executeResult = await api.executeAction({
-    action: input.action,
-    cardId,
-    payload: input.payload,
-  });
-
-  const queuedState: ActionState = {
-    requestId: executeResult.requestId,
-    action: input.action,
-    cardId,
-    worktreeKey: isGlobalAction ? "__global__" : input.card.id,
-    status: executeResult.status,
-    summary: "queued",
-    startedAt: null,
-    finishedAt: null,
-    durationMs: null,
-  };
-  pushActionState(queuedState);
-  return queuedState;
-}
-
-async function autoDispatchChild(card: BoardCard): Promise<void> {
-  if (card.kind !== "child") {
-    return;
-  }
-
-  inFlightAutoDispatchCardIds.add(card.id);
-  try {
-    await executeCardAction({
-      card,
-      action: "apply",
-      tabOnStart: "terminal",
-    });
-  } catch (error) {
-    runtimeError = error instanceof Error ? error.message : String(error);
-    activeExecutionCardId = null;
-    activeInspectorTab = "logs";
-  } finally {
-    inFlightAutoDispatchCardIds.delete(card.id);
-  }
-}
-
-async function moveCardToLane(
-  card: BoardCard,
-  targetLane: BoardLane,
-  focusTab: InspectorTab,
-): Promise<void> {
-  if (!board || card.lane === targetLane) {
-    if (card.kind === "child") {
-      focusChild(card, focusTab);
+    if (result.status === "init-required") {
+      pendingProject = result.project;
+      projectPhase = "project-init-required";
+      await refreshRecentProjects();
+      return;
     }
-    return;
-  }
 
-  runtimeError = null;
-  if (card.kind === "child") {
-    focusChild(card, focusTab);
-  } else {
-    selectCard(card);
-    activeInspectorTab = focusTab;
-  }
-
-  try {
-    const nextBoard = applyLaneTransition(board, {
-      cardId: card.id,
-      targetLane,
-    });
-    await api.patchBoard(serializeBoardSnapshot(nextBoard));
-    await loadBoard();
+    currentProject = result.project;
+    pendingProject = null;
+    board = result.board;
+    projectPhase = "workspace-ready";
+    await projectAccessStore?.markProjectActive(result.project);
+    await refreshRecentProjects();
   } catch (error) {
-    runtimeError = error instanceof Error ? error.message : String(error);
+    projectDataError = error instanceof Error ? error.message : String(error);
+    pendingProject = null;
+    if (!currentProject) {
+      board = null;
+      projectPhase = "project-data-error";
+    } else {
+      projectPhase = "workspace-ready";
+    }
+  } finally {
+    loadingProject = false;
   }
 }
 
-async function handleIncomingActionState(state: ActionState): Promise<void> {
-  pushActionState(state);
-
-  if (state.cardId === "__global__") {
+async function createPendingProjectBoard(): Promise<void> {
+  if (!pendingProject) {
     return;
   }
 
-  const reaction = deriveAutomationReaction(board, state);
-  if (reaction.focusChildId && reaction.nextTab && board) {
-    const card = board.cards.find(
-      (entry) => entry.id === reaction.focusChildId,
+  loadingProject = true;
+  initializationError = null;
+
+  try {
+    await createProjectBoardFile(
+      pendingProject.handle,
+      buildInitialProjectBoard(pendingProject.name),
     );
-    if (card && card.kind === "child") {
-      focusChild(card, reaction.nextTab);
-    }
-  }
-
-  if (state.status === "queued" || state.status === "running") {
-    activeExecutionCardId = state.cardId;
-  }
-
-  if (state.status === "failed") {
-    activeExecutionCardId = null;
-  }
-}
-
-async function handleIncomingChildLifecycleEvent(
-  event: ChildLifecycleEvent,
-): Promise<void> {
-  pushLifecycleEvent(event);
-
-  const reaction = deriveChildLifecycleReaction(board, event);
-  const card = getCardById(event.cardId);
-
-  if (
-    reaction.focusChildId &&
-    card &&
-    card.kind === "child" &&
-    reaction.nextTab
-  ) {
-    focusChild(card, reaction.nextTab);
-  }
-
-  if (event.type === "child-running") {
-    activeExecutionCardId = event.cardId;
-    return;
-  }
-
-  activeExecutionCardId = null;
-
-  if (event.type === "child-completed" && card && card.kind === "child") {
-    await moveCardToLane(card, "Review", "handoff");
-  }
-}
-
-function buildOverviewActions(targets: {
-  runningChildId: string | null;
-  reviewChildId: string | null;
-  blockedChildId: string | null;
-  dispatchChildId: string | null;
-}): OverviewAction[] {
-  return [
-    {
-      id: "resume-last-running",
-      label: "Resume Last Running",
-      disabled: !targets.runningChildId,
-      hint: targets.runningChildId
-        ? `Focus ${targets.runningChildId}`
-        : "No child is currently running",
-    },
-    {
-      id: "open-next-review",
-      label: "Open Next Review",
-      disabled: !targets.reviewChildId,
-      hint: targets.reviewChildId
-        ? `Open ${targets.reviewChildId}`
-        : "No child is in review",
-    },
-    {
-      id: "retry-blocked",
-      label: "Retry Blocked",
-      disabled: !targets.blockedChildId,
-      hint: targets.blockedChildId
-        ? `Retry ${targets.blockedChildId}`
-        : "No blocked child detected from action events",
-    },
-    {
-      id: "dispatch-next",
-      label: "Dispatch Next",
-      disabled: !targets.dispatchChildId,
-      hint: targets.dispatchChildId
-        ? `Move ${targets.dispatchChildId} to In Progress`
-        : "No ready child available",
-    },
-  ];
-}
-
-function getCardById(cardId: string | null): BoardCard | null {
-  if (!board || !cardId) {
-    return null;
-  }
-
-  return board.cards.find((card) => card.id === cardId) ?? null;
-}
-
-function runOverviewAction(actionId: string): void {
-  const runningChild = getCardById(overviewTargets.runningChildId);
-  const reviewChild = getCardById(overviewTargets.reviewChildId);
-  const blockedChild = getCardById(overviewTargets.blockedChildId);
-  const readyChild = getCardById(overviewTargets.dispatchChildId);
-
-  if (actionId === "resume-last-running" && runningChild) {
-    focusChild(runningChild, "terminal");
-    return;
-  }
-
-  if (actionId === "open-next-review" && reviewChild) {
-    focusChild(reviewChild, "handoff");
-    return;
-  }
-
-  if (actionId === "retry-blocked" && blockedChild) {
-    void executeCardAction({
-      card: blockedChild,
-      action: "apply",
-      tabOnStart: "terminal",
-    }).catch((error: unknown) => {
-      runtimeError = error instanceof Error ? error.message : String(error);
-    });
-    return;
-  }
-
-  if (actionId === "dispatch-next" && readyChild) {
-    void moveCardToLane(readyChild, "In Progress", "terminal");
-  }
-}
-
-function handleBoardStartCard(card: BoardCard): void {
-  void moveCardToLane(card, "In Progress", "terminal");
-}
-
-function handleBoardFocusRun(card: BoardCard): void {
-  focusChild(card, "terminal");
-}
-
-function handleBoardOpenReview(card: BoardCard): void {
-  focusChild(card, "handoff");
-}
-
-function handleBoardRetryCard(card: BoardCard): void {
-  void executeCardAction({
-    card,
-    action: "apply",
-    tabOnStart: "terminal",
-  }).catch((error: unknown) => {
-    runtimeError = error instanceof Error ? error.message : String(error);
-  });
-}
-
-async function initializeApp(): Promise<void> {
-  appPhase = "initializing";
-  bootstrapError = null;
-  runtimeError = null;
-  syncWarning = null;
-
-  try {
-    await waitForBootstrapReady({
-      bootstrap: () => api.bootstrap(),
-    });
-
-    const boardLoaded = await loadBoard();
-    if (!boardLoaded) {
-      throw new Error(runtimeError ?? "Unable to load board");
-    }
-
-    appPhase = "ready";
-    connectStream();
+    await openProject(pendingProject, "recent");
   } catch (error) {
-    appPhase = "fatal-error";
-    bootstrapError = error instanceof Error ? error.message : String(error);
+    initializationError = error instanceof Error ? error.message : String(error);
+  } finally {
+    loadingProject = false;
   }
 }
 
 onMount(() => {
-  void initializeApp();
-
-  return () => {
-    disconnectStream();
-  };
+  void initializeProjectAccess();
 });
 </script>
 
 <main class="app-shell">
-  <section class="shell-panel connection-panel">
-    <div class="panel-header">
-      <div>
-        <p class="eyebrow">Product UI</p>
-        <h1>Kanban Drive Console</h1>
-        <p class="subtle">
-          {#if appPhase === "initializing"}
-            Preparing kanban workspace…
-          {:else if appPhase === "fatal-error"}
-            Unable to prepare the kanban workspace.
-          {:else}
-            Runtime bootstrap and stream handling stay in the background.
-          {/if}
-        </p>
-      </div>
-      <div class="actions">
-        <button on:click={() => void initializeApp()} disabled={appPhase === "initializing"}>
-          {#if appPhase === "initializing"}Preparing…{:else}Retry Bootstrap{/if}
-        </button>
-        <button on:click={() => void loadBoard()} disabled={loadingBoard || appPhase === "fatal-error"}>
-          {#if loadingBoard}Loading…{:else}Reload Board{/if}
-        </button>
-      </div>
-    </div>
+  {#if currentProject && board}
+    <ProjectContextBar
+      currentProjectName={currentProject.name}
+      currentProjectId={currentProject.id}
+      {recentProjects}
+      loading={loadingProject}
+      onSelectFolder={() => void selectFolder()}
+      onReloadProject={() => void reloadProject()}
+      onSelectRecent={(project) => {
+        void openRecentProject(project);
+      }}
+    />
 
-    {#if bootstrapError}
-      <p class="error">{bootstrapError}</p>
+    {#if projectError}
+      <section class="shell-panel connection-panel">
+        <p class="error">{projectError}</p>
+      </section>
     {/if}
-    {#if syncWarning}
-      <p class="subtle">{syncWarning}</p>
+    {#if projectDataError}
+      <section class="shell-panel connection-panel">
+        <p class="error">{projectDataError}</p>
+      </section>
     {/if}
-    {#if runtimeError}
-      <p class="error">{runtimeError}</p>
-    {/if}
-  </section>
 
-  {#if appPhase !== "fatal-error" && board}
+    <section class="shell-panel connection-panel">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Local Project Board</p>
+          <h1>Kanban Drive Console</h1>
+          <p class="subtle">
+            Local project board loaded from `.pi/kanban/board.json`. Runtime automation stays read-only in this flow.
+          </p>
+        </div>
+      </div>
+    </section>
+
     <FeatureOverview
       feature={featureOverview.feature}
       runningCount={featureOverview.runningCount}
@@ -732,92 +302,124 @@ onMount(() => {
     <section class="workspace-grid">
       <BoardPane
         {board}
-        {latestStatusByCard}
+        latestStatusByCard={{}}
         {selectedFeatureId}
         {selectedChildId}
-        activeExecutionCardId={activeExecutionCardId}
+        activeExecutionCardId={null}
+        actionsEnabled={false}
         onSelectCard={selectCard}
-        onOpenCardActions={openActionDialog}
-        onStartCard={handleBoardStartCard}
-        onFocusRun={handleBoardFocusRun}
-        onOpenReview={handleBoardOpenReview}
-        onRetryCard={handleBoardRetryCard}
+        onOpenCardActions={openUnavailableActionDialog}
+        onStartCard={() => {}}
+        onFocusRun={() => {}}
+        onOpenReview={() => {}}
+        onRetryCard={() => {}}
       />
 
       <InspectorPane
         {selectedFeature}
         {selectedChild}
-        activeExecutionCardId={activeExecutionCardId}
+        activeExecutionCardId={null}
         activeTab={activeInspectorTab}
-        context={inspectorContext}
-        loadingContext={loadingInspectorContext}
-        contextError={inspectorError}
-        latestStatus={selectedChild ? latestStatusByCard[selectedChild.id] ?? null : null}
-        latestLifecycle={selectedLifecycle}
+        context={null}
+        loadingContext={false}
+        contextError={null}
+        latestStatus={null}
+        latestLifecycle={null}
         actionLog={visibleActionLog}
+        actionsEnabled={false}
+        {terminalUnavailableMessage}
         onSelectTab={(tab) => {
           activeInspectorTab = tab;
         }}
-        onOpenActionDialog={openActionDialog}
+        onOpenActionDialog={openUnavailableActionDialog}
       />
     </section>
+  {:else if projectPhase === "unsupported-browser"}
+    <section class="shell-panel project-picker-pane">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Browser Support</p>
+          <h1>Open this app in Chrome or Edge</h1>
+          <p class="subtle">
+            This browser can't choose folders directly. For the best experience, reopen this page in the desktop version of Chrome or Edge.
+          </p>
+        </div>
+      </div>
+    </section>
+  {:else if projectPhase === "project-data-error"}
+    <section class="shell-panel project-picker-pane">
+      <div class="panel-header">
+        <div>
+          <p class="eyebrow">Project Error</p>
+          <h1>Unable to read the project board</h1>
+          <p class="subtle">{projectDataError ?? "The board file is invalid or unreadable."}</p>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button on:click={() => void selectFolder()} disabled={loadingProject}>Select Folder</button>
+      </div>
+    </section>
+  {:else}
+    <ProjectPickerView
+      loading={loadingProject}
+      error={projectError}
+      {recentProjects}
+      onSelectFolder={() => void selectFolder()}
+      onSelectRecent={(project) => {
+        void openRecentProject(project);
+      }}
+    />
   {/if}
 </main>
 
-{#if dialogOpen && activeCard}
+{#if projectPhase === "project-init-required" && pendingProject}
   <div
     class="dialog-backdrop"
     role="button"
     tabindex="0"
-    on:click|self={closeDialog}
+    on:click|self={() => {
+      pendingProject = null;
+      initializationError = null;
+      projectPhase = currentProject ? "workspace-ready" : "needs-project-selection";
+    }}
     on:keydown={(event) => {
-      if (event.key === "Escape" || event.key === "Enter") {
-        closeDialog();
+      if (event.key === "Escape") {
+        pendingProject = null;
+        initializationError = null;
+        projectPhase = currentProject ? "workspace-ready" : "needs-project-selection";
       }
     }}
   >
     <section class="dialog" role="dialog" aria-modal="true">
-      <h3>{activeCard.title} ({activeCard.id})</h3>
+      <p class="eyebrow">Project Setup Required</p>
+      <h3>No board file found for {pendingProject.name}</h3>
+      <p>
+        This project does not have `.pi/kanban/board.json` yet. Continuing will create:
+      </p>
 
-      {#if dialogLoadingContext}
-        <p>Loading card context…</p>
-      {:else if activeContext}
-        <p>
-          Branch: {activeContext.branch ?? "<none>"}
-          <br />
-          Worktree: {activeContext.worktreePath ?? "<none>"}
-          <br />
-          Session: {activeContext.session?.chatJid ?? "<none>"}
-        </p>
-      {/if}
+      <ul class="dialog-list">
+        <li>`.pi/kanban/`</li>
+        <li>`.pi/kanban/board.json`</li>
+        <li>an empty board with Inbox, In Progress, and Done lanes</li>
+      </ul>
 
-      <label>
-        Action
-        <select bind:value={selectedAction}>
-          {#each ACTION_OPTIONS as option}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </label>
-
-      {#if selectedActionMeta?.needsPrompt}
-        <label>
-          Prompt
-          <textarea
-            bind:value={promptText}
-            placeholder="Describe what the agent should do for this card"
-          ></textarea>
-        </label>
-      {/if}
-
-      {#if dialogError}
-        <p class="error">{dialogError}</p>
+      {#if initializationError}
+        <p class="error">{initializationError}</p>
       {/if}
 
       <div class="actions">
-        <button on:click={closeDialog}>Cancel</button>
-        <button on:click={() => void executeAction()} disabled={executingAction}>
-          {#if executingAction}Executing…{:else}Confirm Execute{/if}
+        <button
+          on:click={() => {
+            pendingProject = null;
+            initializationError = null;
+            projectPhase = currentProject ? "workspace-ready" : "needs-project-selection";
+          }}
+        >
+          Cancel
+        </button>
+        <button on:click={() => void createPendingProjectBoard()} disabled={loadingProject}>
+          {#if loadingProject}Creating…{:else}Create and Open Board{/if}
         </button>
       </div>
     </section>

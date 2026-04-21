@@ -12,6 +12,7 @@ export let onStartCard: (card: BoardCard) => void;
 export let onFocusRun: (card: BoardCard) => void;
 export let onOpenReview: (card: BoardCard) => void;
 export let onRetryCard: (card: BoardCard) => void;
+export let actionsEnabled = true;
 
 function statusClass(status: ActionState["status"]): string {
   return `badge ${status}`;
@@ -94,35 +95,37 @@ function isActiveExecution(card: BoardCard): boolean {
                     {/if}
                   </button>
 
-                  <div class="card-controls">
-                    {#if card.kind === "child" && card.lane === "Ready"}
-                      <button class="quick-button primary" on:click={() => onStartCard(card)}>
-                        Start
-                      </button>
-                    {/if}
+                  {#if actionsEnabled}
+                    <div class="card-controls">
+                      {#if card.kind === "child" && card.lane === "Ready"}
+                        <button class="quick-button primary" on:click={() => onStartCard(card)}>
+                          Start
+                        </button>
+                      {/if}
 
-                    {#if card.kind === "child" && card.lane === "In Progress"}
-                      <button class="quick-button" on:click={() => onFocusRun(card)}>
-                        Focus Run
-                      </button>
-                    {/if}
+                      {#if card.kind === "child" && card.lane === "In Progress"}
+                        <button class="quick-button" on:click={() => onFocusRun(card)}>
+                          Focus Run
+                        </button>
+                      {/if}
 
-                    {#if card.kind === "child" && card.lane === "Review"}
-                      <button class="quick-button" on:click={() => onOpenReview(card)}>
-                        Open Review
-                      </button>
-                    {/if}
+                      {#if card.kind === "child" && card.lane === "Review"}
+                        <button class="quick-button" on:click={() => onOpenReview(card)}>
+                          Open Review
+                        </button>
+                      {/if}
 
-                    {#if card.kind === "child" && latestStatusByCard[card.id]?.status === "failed"}
-                      <button class="quick-button warning" on:click={() => onRetryCard(card)}>
-                        Retry
-                      </button>
-                    {/if}
+                      {#if card.kind === "child" && latestStatusByCard[card.id]?.status === "failed"}
+                        <button class="quick-button warning" on:click={() => onRetryCard(card)}>
+                          Retry
+                        </button>
+                      {/if}
 
-                    <button class="ghost-button" on:click={() => onOpenCardActions(card)}>
-                      Actions
-                    </button>
-                  </div>
+                      <button class="ghost-button" on:click={() => onOpenCardActions(card)}>
+                        Actions
+                      </button>
+                    </div>
+                  {/if}
                 </article>
               </li>
             {/each}

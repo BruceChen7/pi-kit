@@ -6,6 +6,7 @@ import type { CardRuntimeDetail } from "../types";
 
 export let cardId: string | null;
 export let activeExecutionCardId: string | null;
+export let unavailableMessage: string | null = null;
 
 const api = new KanbanRuntimeApi();
 
@@ -39,9 +40,9 @@ async function refreshTerminal(): Promise<void> {
   runtimeDetail = null;
   terminalOutput = "";
   terminalError = null;
-  connectionStatus = cardId ? "connecting" : "idle";
+  connectionStatus = cardId && !unavailableMessage ? "connecting" : "idle";
 
-  if (!cardId) {
+  if (!cardId || unavailableMessage) {
     return;
   }
 
@@ -124,7 +125,7 @@ onDestroy(() => {
     </div>
     <div class="summary-pill wide">
       <span class="pill-label">Runtime summary</span>
-      <strong>{runtimeDetail?.execution.summary ?? "Waiting for runtime detail"}</strong>
+      <strong>{unavailableMessage ?? runtimeDetail?.execution.summary ?? "Waiting for runtime detail"}</strong>
     </div>
   </div>
 
@@ -134,6 +135,8 @@ onDestroy(() => {
     <p class="error">{terminalError}</p>
   {:else if !cardId}
     <p class="empty-state">Select a child card to attach the terminal surface.</p>
+  {:else if unavailableMessage}
+    <p class="empty-state">{unavailableMessage}</p>
   {:else if !runtimeDetail?.terminal.available}
     <p class="empty-state">No live terminal available for this child yet.</p>
   {:else}

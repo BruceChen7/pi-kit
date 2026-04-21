@@ -18,6 +18,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function getTrimmedRecordString(
+  record: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = record[key];
+  return typeof value === "string" ? trimToNull(value) : null;
+}
+
 function parsePruneCandidatesFromWtList(
   stdout: string,
 ): WorktreePruneCandidate[] {
@@ -36,9 +44,9 @@ function parsePruneCandidatesFromWtList(
   for (const item of parsed) {
     if (!isRecord(item)) continue;
 
-    const branch = trimToNull(item.branch);
-    const path = trimToNull(item.path);
-    const mainState = trimToNull(item.main_state);
+    const branch = getTrimmedRecordString(item, "branch");
+    const path = getTrimmedRecordString(item, "path");
+    const mainState = getTrimmedRecordString(item, "main_state");
     const isMain = item.is_main === true;
 
     if (!branch || !path || !mainState || isMain) {

@@ -8,6 +8,7 @@ export let reviewCount: number;
 export let blockedCount: number;
 export let recentAction: ActionState | null;
 export let actions: OverviewAction[];
+export let onCreateFeature: () => void;
 export let onRunAction: (actionId: string) => void;
 </script>
 
@@ -17,9 +18,12 @@ export let onRunAction: (actionId: string) => void;
       <p class="eyebrow">Feature Overview</p>
       <h2>{feature ? feature.title : "Select a feature"}</h2>
     </div>
-    {#if feature}
-      <span class="feature-id">{feature.id}</span>
-    {/if}
+    <div class="overview-header-actions">
+      {#if feature}
+        <span class="feature-id">{feature.id}</span>
+      {/if}
+      <button on:click={onCreateFeature}>+ New Feature</button>
+    </div>
   </div>
 
   {#if !feature}

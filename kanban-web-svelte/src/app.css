@@ -307,7 +307,10 @@ select {
 .card-controls,
 .log-meta-grid,
 .inspector-summary-row,
-.overview-actions {
+.overview-actions,
+.overview-header-actions,
+.inspector-header-actions,
+.inline-form-actions {
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
@@ -414,6 +417,30 @@ select {
 
 .inspector-summary-row {
   margin-top: 1rem;
+}
+
+.inline-form,
+.dialog-form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.inline-form {
+  margin-top: 1rem;
+  padding: 0.95rem;
+  border: 1px solid #d7deea;
+  border-radius: 16px;
+  background: #f8fbff;
+}
+
+.inline-form label,
+.dialog-form label {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.form-error {
+  margin: 0;
 }
 
 .summary-pill {

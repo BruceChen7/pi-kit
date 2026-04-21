@@ -6,11 +6,11 @@ import type {
 import { checkRepoDirty, listDirtyPaths } from "../../shared/git.js";
 
 import { buildBaseBranchCandidates } from "../base-branches.js";
+import { evaluateFeatureStartWorkspace } from "../feature-start-workspace-guard.js";
 import { checkBaseBranchFreshness } from "../guards.js";
 import { buildFeatureBranchName, isFeatureSlug } from "../naming.js";
 import { resolveFeatureCommandRuntime } from "../runtime.js";
 import { getFeatureWorkflowSetupMissingFiles } from "../setup.js";
-import { areOnlyFeatureSetupManagedDirtyPaths } from "../setup-dirty-guard.js";
 import type { FeatureRecord } from "../storage.js";
 import { createFeatureWorktree } from "../worktree-gateway.js";
 import {
@@ -54,20 +54,21 @@ export async function runFeatureStartCommand(
 
     if (dirty.summary.dirty) {
       const dirtyPaths = listDirtyPaths(dirty.porcelain);
-      const setupOnlyDirty = areOnlyFeatureSetupManagedDirtyPaths(dirtyPaths);
+      const workspaceGuard = evaluateFeatureStartWorkspace({
+        summary: dirty.summary,
+        dirtyPaths,
+      });
 
-      if (!setupOnlyDirty) {
-        ctx.ui.notify(
-          `Repository is dirty (staged ${dirty.summary.staged}, unstaged ${dirty.summary.unstaged}, untracked ${dirty.summary.untracked}). Commit/stash first.`,
-          "warning",
-        );
-        return;
+      if (
+        workspaceGuard.notifyMessage &&
+        typeof workspaceGuard.notifyLevel === "string"
+      ) {
+        ctx.ui.notify(workspaceGuard.notifyMessage, workspaceGuard.notifyLevel);
       }
 
-      ctx.ui.notify(
-        `Workspace has only /feature-setup managed changes (${dirtyPaths.join(", ")}). Continuing /feature-start.`,
-        "info",
-      );
+      if (!workspaceGuard.allow) {
+        return;
+      }
     }
   }
 

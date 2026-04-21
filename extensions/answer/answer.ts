@@ -90,7 +90,7 @@ const previewText = (value: string, max = 200): string => {
 };
 
 /**
- * Prefer Codex mini for extraction when available, otherwise fallback to haiku or the current model.
+ * Prefer a supported Codex extraction model when available, otherwise fallback to haiku or the current model.
  */
 export async function selectExtractionModel(
   currentModel: Model<Api>,
@@ -102,22 +102,46 @@ export async function selectExtractionModel(
       | { ok: true; apiKey?: string; headers?: Record<string, string> }
       | { ok: false; error: string }
     >;
+    isUsingOAuth?: (model: Model<Api>) => boolean;
   },
 ): Promise<Model<Api>> {
+  const currentModelUsesCodexOAuth = Boolean(
+    currentModel.provider === "openai-codex" &&
+      modelRegistry.isUsingOAuth?.(currentModel),
+  );
+  if (currentModelUsesCodexOAuth) {
+    log?.info("using current codex oauth model for extraction", {
+      modelId: currentModel.id,
+    });
+    return currentModel;
+  }
+
   const codexModel = modelRegistry.find("openai-codex", CODEX_MODEL_ID);
   if (codexModel) {
-    const auth = await modelRegistry.getApiKeyAndHeaders(codexModel);
-    const hasAuth = auth.ok && Boolean(auth.apiKey || auth.headers);
-    log?.debug("codex model check", {
-      modelId: codexModel.id,
-      hasAuth,
-      authError: auth.ok ? undefined : auth.error,
-    });
-    if (hasAuth) {
-      log?.info("using codex model for extraction", {
+    const codexModelUsesOAuth = Boolean(
+      modelRegistry.isUsingOAuth?.(codexModel),
+    );
+    if (!codexModelUsesOAuth) {
+      const auth = await modelRegistry.getApiKeyAndHeaders(codexModel);
+      const hasAuth = auth.ok && Boolean(auth.apiKey || auth.headers);
+      log?.debug("codex model check", {
         modelId: codexModel.id,
+        hasAuth,
+        authError: auth.ok ? undefined : auth.error,
       });
-      return codexModel;
+      if (hasAuth) {
+        log?.info("using codex model for extraction", {
+          modelId: codexModel.id,
+        });
+        return codexModel;
+      }
+    } else {
+      log?.info(
+        "skipping hard-coded codex extraction model for oauth account",
+        {
+          modelId: codexModel.id,
+        },
+      );
     }
   } else {
     log?.debug("codex model not found", {

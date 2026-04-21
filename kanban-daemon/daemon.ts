@@ -25,7 +25,44 @@ import type {
 import { createKanbanBoardSource } from "./board-source.js";
 import { reconcileBoardRuntimeConflicts } from "./conflict-monitor.js";
 import { recoverKanbanTasks } from "./recovery.js";
+import {
+  type RequirementDetail,
+  RequirementService,
+} from "./requirement-service.js";
 import { consumeRuntimeSessionStream } from "./runtime-stream.js";
+
+function toRequirementErrorStatus(error: unknown): number {
+  if (!(error instanceof Error)) {
+    return 500;
+  }
+
+  const message = error.message.toLowerCase();
+  if (message.includes("not found")) {
+    return 404;
+  }
+  if (message.includes("required") || message.includes("not running")) {
+    return 400;
+  }
+  return 500;
+}
+
+function respondWithRequirementDetail(
+  run: () => RequirementDetail,
+): KanbanApiResponse {
+  try {
+    return {
+      status: 200,
+      body: run() as unknown as Record<string, unknown>,
+    };
+  } catch (error) {
+    return {
+      status: toRequirementErrorStatus(error),
+      body: {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
 
 export type KanbanDaemon = {
   readonly host: string;
@@ -51,6 +88,28 @@ export type KanbanDaemon = {
   ) => () => void;
   subscribeTerminalStream: (
     cardId: string,
+    onEvent: (event: KanbanTerminalEvent) => void,
+  ) => () => void;
+  getHome: () => KanbanApiResponse;
+  createRequirement: (body: Record<string, unknown>) => KanbanApiResponse;
+  getRequirement: (requirementId: string) => KanbanApiResponse;
+  startRequirement: (
+    requirementId: string,
+    body: Record<string, unknown>,
+  ) => KanbanApiResponse;
+  restartRequirement: (
+    requirementId: string,
+    body: Record<string, unknown>,
+  ) => KanbanApiResponse;
+  openRequirementReview: (requirementId: string) => KanbanApiResponse;
+  completeRequirementReview: (requirementId: string) => KanbanApiResponse;
+  reopenRequirementReview: (requirementId: string) => KanbanApiResponse;
+  sendRequirementTerminalInput: (
+    requirementId: string,
+    input: string,
+  ) => KanbanApiResponse;
+  subscribeRequirementTerminalStream: (
+    requirementId: string,
     onEvent: (event: KanbanTerminalEvent) => void,
   ) => () => void;
   start: () => Promise<void>;
@@ -79,7 +138,14 @@ export function createKanbanDaemon(input: {
     cards: unknown[];
     errors: string[];
   };
+  requirementService?: RequirementService;
 }): KanbanDaemon {
+  const requirementService =
+    input.requirementService ??
+    new RequirementService({
+      repoRoot: input.workspaceId,
+      workspaceId: input.workspaceId,
+    });
   const recoveryContext = input.service.getRecoveryContext();
   if (recoveryContext && input.adapters) {
     input.service.setSessionStreamHandler(async (target) => {
@@ -157,6 +223,42 @@ export function createKanbanDaemon(input: {
       },
       subscribeTerminalStream(cardId, onEvent) {
         return daemon.subscribeTerminalStream(cardId, onEvent);
+      },
+      getHome() {
+        return daemon.getHome();
+      },
+      createRequirement(body) {
+        return daemon.createRequirement(body);
+      },
+      getRequirement(requirementId) {
+        return daemon.getRequirement(requirementId);
+      },
+      startRequirement(requirementId, body) {
+        return daemon.startRequirement(requirementId, body);
+      },
+      restartRequirement(requirementId, body) {
+        return daemon.restartRequirement(requirementId, body);
+      },
+      openRequirementReview(requirementId) {
+        return daemon.openRequirementReview(requirementId);
+      },
+      completeRequirementReview(requirementId) {
+        return daemon.completeRequirementReview(requirementId);
+      },
+      reopenRequirementReview(requirementId) {
+        return daemon.reopenRequirementReview(requirementId);
+      },
+      sendRequirementTerminalInput(requirementId, terminalInput) {
+        return daemon.sendRequirementTerminalInput(
+          requirementId,
+          terminalInput,
+        );
+      },
+      subscribeRequirementTerminalStream(requirementId, onEvent) {
+        return daemon.subscribeRequirementTerminalStream(
+          requirementId,
+          onEvent,
+        );
       },
     },
   });
@@ -315,6 +417,85 @@ export function createKanbanDaemon(input: {
     },
     subscribeTerminalStream(cardId, onEvent) {
       return input.service.subscribeTerminal(cardId, onEvent);
+    },
+    getHome() {
+      return {
+        status: 200,
+        body: requirementService.getHome() as unknown as Record<
+          string,
+          unknown
+        >,
+      };
+    },
+    createRequirement(body: Record<string, unknown>) {
+      return respondWithRequirementDetail(() =>
+        requirementService.createRequirement({
+          title: typeof body.title === "string" ? body.title : "",
+          prompt: typeof body.prompt === "string" ? body.prompt : "",
+          projectId: typeof body.projectId === "string" ? body.projectId : null,
+          projectName:
+            typeof body.projectName === "string" ? body.projectName : null,
+          projectPath:
+            typeof body.projectPath === "string" ? body.projectPath : null,
+        }),
+      );
+    },
+    getRequirement(requirementId: string) {
+      return respondWithRequirementDetail(() =>
+        requirementService.getRequirementDetail(requirementId),
+      );
+    },
+    startRequirement(requirementId: string, body: Record<string, unknown>) {
+      return respondWithRequirementDetail(() =>
+        requirementService.startRequirement({
+          requirementId,
+          command: typeof body.command === "string" ? body.command : "",
+        }),
+      );
+    },
+    restartRequirement(requirementId: string, body: Record<string, unknown>) {
+      return respondWithRequirementDetail(() =>
+        requirementService.restartRequirement({
+          requirementId,
+          command: typeof body.command === "string" ? body.command : "",
+        }),
+      );
+    },
+    openRequirementReview(requirementId: string) {
+      return respondWithRequirementDetail(() =>
+        requirementService.openReview(requirementId),
+      );
+    },
+    completeRequirementReview(requirementId: string) {
+      return respondWithRequirementDetail(() =>
+        requirementService.completeReview(requirementId),
+      );
+    },
+    reopenRequirementReview(requirementId: string) {
+      return respondWithRequirementDetail(() =>
+        requirementService.reopenReview(requirementId),
+      );
+    },
+    sendRequirementTerminalInput(requirementId: string, terminalInput: string) {
+      try {
+        return {
+          status: 200,
+          body: requirementService.sendTerminalInput(
+            requirementId,
+            terminalInput,
+          ) as unknown as Record<string, unknown>,
+        };
+      } catch (error) {
+        return {
+          status: toRequirementErrorStatus(error),
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+    },
+    subscribeRequirementTerminalStream(requirementId, onEvent) {
+      return requirementService.subscribeTerminalStream(requirementId, onEvent);
     },
     async start() {
       boardSource?.start();

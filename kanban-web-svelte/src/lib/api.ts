@@ -1,10 +1,8 @@
 import type {
-  ActionState,
-  BoardSnapshot,
   BootstrapResponse,
-  CardContext,
-  CardRuntimeDetail,
-  ExecuteResponse,
+  HomeResponse,
+  RequirementDetail,
+  TerminalInputResponse,
 } from "./types";
 
 function normalizePath(path: string): string {
@@ -58,74 +56,104 @@ export class KanbanRuntimeApi {
     });
   }
 
-  async getBoard(): Promise<BoardSnapshot> {
-    return this.request<BoardSnapshot>("/kanban/board", {
+  async getHome(): Promise<HomeResponse> {
+    return this.request<HomeResponse>("/kanban/home", {
       method: "GET",
     });
   }
 
-  async getCardContext(cardId: string): Promise<CardContext> {
-    return this.request<CardContext>(
-      `/kanban/cards/${encodeURIComponent(cardId)}/context`,
-      {
-        method: "GET",
-      },
-    );
-  }
-
-  async executeAction(input: {
-    action: string;
-    cardId: string;
-    payload?: Record<string, unknown>;
-  }): Promise<ExecuteResponse> {
-    return this.request<ExecuteResponse>("/kanban/actions/execute", {
+  async createRequirement(input: {
+    title: string;
+    prompt: string;
+    projectId?: string | null;
+    projectName?: string | null;
+    projectPath?: string | null;
+  }): Promise<RequirementDetail> {
+    return this.request<RequirementDetail>("/kanban/requirements", {
       method: "POST",
       body: JSON.stringify(input),
     });
   }
 
-  async getActionStatus(requestId: string): Promise<ActionState> {
-    return this.request<ActionState>(
-      `/kanban/actions/${encodeURIComponent(requestId)}`,
+  async getRequirement(requirementId: string): Promise<RequirementDetail> {
+    return this.request<RequirementDetail>(
+      `/kanban/requirements/${encodeURIComponent(requirementId)}`,
       {
         method: "GET",
       },
     );
   }
 
-  async patchBoard(nextBoardText: string): Promise<{ summary: string }> {
-    return this.request<{ summary: string }>("/kanban/board", {
-      method: "PATCH",
-      body: JSON.stringify({
-        nextBoardText,
-      }),
-    });
-  }
-
-  async getCardRuntime(cardId: string): Promise<CardRuntimeDetail> {
-    return this.request<CardRuntimeDetail>(
-      `/kanban/cards/${encodeURIComponent(cardId)}/runtime`,
+  async startRequirement(
+    requirementId: string,
+    command: string,
+  ): Promise<RequirementDetail> {
+    return this.request<RequirementDetail>(
+      `/kanban/requirements/${encodeURIComponent(requirementId)}/start`,
       {
-        method: "GET",
+        method: "POST",
+        body: JSON.stringify({ command }),
       },
     );
   }
 
-  async sendTerminalInput(
-    cardId: string,
+  async restartRequirement(
+    requirementId: string,
+    command: string,
+  ): Promise<RequirementDetail> {
+    return this.request<RequirementDetail>(
+      `/kanban/requirements/${encodeURIComponent(requirementId)}/restart`,
+      {
+        method: "POST",
+        body: JSON.stringify({ command }),
+      },
+    );
+  }
+
+  async openRequirementReview(
+    requirementId: string,
+  ): Promise<RequirementDetail> {
+    return this.request<RequirementDetail>(
+      `/kanban/requirements/${encodeURIComponent(requirementId)}/review/open`,
+      {
+        method: "POST",
+      },
+    );
+  }
+
+  async completeRequirementReview(
+    requirementId: string,
+  ): Promise<RequirementDetail> {
+    return this.request<RequirementDetail>(
+      `/kanban/requirements/${encodeURIComponent(requirementId)}/review/complete`,
+      {
+        method: "POST",
+      },
+    );
+  }
+
+  async reopenRequirementReview(
+    requirementId: string,
+  ): Promise<RequirementDetail> {
+    return this.request<RequirementDetail>(
+      `/kanban/requirements/${encodeURIComponent(requirementId)}/review/reopen`,
+      {
+        method: "POST",
+      },
+    );
+  }
+
+  async sendRequirementTerminalInput(
+    requirementId: string,
     input: string,
-  ): Promise<{ accepted: boolean; mode: string }> {
-    return this.request<{ accepted: boolean; mode: string }>(
-      `/kanban/cards/${encodeURIComponent(cardId)}/terminal/input`,
+  ): Promise<TerminalInputResponse> {
+    return this.request<TerminalInputResponse>(
+      `/kanban/requirements/${encodeURIComponent(requirementId)}/terminal/input`,
       {
         method: "POST",
         body: JSON.stringify({ input }),
       },
     );
-  }
-
-  createEventSource(): EventSource {
-    return new EventSource("/kanban/stream");
   }
 
   createTerminalEventSource(streamUrl: string): EventSource {

@@ -1,652 +1,620 @@
 <script lang="ts">
-import { onMount, tick } from "svelte";
-import { addChildCard, addFeatureCard } from "./lib/board-editor";
+import { onMount } from "svelte";
+
+import { KanbanRuntimeApi } from "./lib/api";
+// biome-ignore lint/correctness/noUnusedImports: Svelte template references component import.
+import RequirementCreateForm from "./lib/components/RequirementCreateForm.svelte";
+// biome-ignore lint/correctness/noUnusedImports: Svelte template references component import.
+import RequirementTerminal from "./lib/components/RequirementTerminal.svelte";
 import {
-  deriveFeatureOverview,
-  deriveSelectionState,
-  deriveVisibleActionLog,
-} from "./lib/board-view-model";
-// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
-import BoardPane from "./lib/components/BoardPane.svelte";
-// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
-import FeatureOverview from "./lib/components/FeatureOverview.svelte";
-// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
-import InspectorPane from "./lib/components/InspectorPane.svelte";
-// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
-import ProjectContextBar from "./lib/components/ProjectContextBar.svelte";
-// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
-import ProjectPickerView from "./lib/components/ProjectPickerView.svelte";
-import {
-  buildInitialProjectBoard,
-  createProjectBoardFile,
-  readProjectBoardFile,
-} from "./lib/project-board-file";
-import {
-  BrowserProjectAccessStore,
-  type BrowserRecentProject,
-  ensureProjectAccess,
   pickProjectDirectory,
   supportsProjectDirectoryAccess,
 } from "./lib/project-browser-access";
-import { openProjectWorkspace } from "./lib/project-entry-controller";
-import { getLocalProjectBoardRuntimeMode } from "./lib/project-runtime-mode";
-import type { BoardCard, BoardSnapshot } from "./lib/types";
-import type { InspectorTab, OverviewAction } from "./lib/ui-types";
+import type {
+  HomeResponse,
+  RequirementDetail,
+  RequirementRunStage,
+} from "./lib/types";
 
-const projectAccessStore =
-  typeof window === "undefined" ? null : new BrowserProjectAccessStore();
-const localProjectBoardRuntimeMode = getLocalProjectBoardRuntimeMode();
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this constant.
-const overviewActions: OverviewAction[] = [];
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this constant.
-const terminalUnavailableMessage =
-  localProjectBoardRuntimeMode.terminalUnavailableMessage;
+const api = new KanbanRuntimeApi();
 
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
-let projectPhase:
-  | "restoring-last-project"
-  | "needs-project-selection"
-  | "project-init-required"
-  | "loading-project-board"
-  | "project-data-error"
-  | "workspace-ready"
-  | "unsupported-browser" = "restoring-last-project";
+let appPhase: "booting" | "ready" | "error" = "booting";
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
-let projectError: string | null = null;
+let appError: string | null = null;
+let home: HomeResponse | null = null;
+let detail: RequirementDetail | null = null;
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
-let projectDataError: string | null = null;
+let createModalOpen = false;
+let createSubmitting = false;
+let actionSubmitting = false;
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
-let initializationError: string | null = null;
+let createError: string | null = null;
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
-let loadingProject = false;
-
+let workbenchError: string | null = null;
+let commandDraft = "";
+let createTitle = "";
+let createPrompt = "";
+let createProjectId: string | null = null;
+let createProjectName = "";
+let createProjectPath = "";
+let authorizedProjectIds: string[] = [];
+let collapsedGroups: Record<string, boolean> = {};
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
-let recentProjects: BrowserRecentProject[] = [];
-let currentProject: BrowserRecentProject | null = null;
-let pendingProject: BrowserRecentProject | null = null;
-let board: BoardSnapshot | null = null;
-
-let featureDialogOpen = false;
-let featureTitle = "";
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
-let featureFormError: string | null = null;
-let featureSubmitting = false;
-let featureTitleInput: HTMLInputElement | null = null;
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
-let childFormOpen = false;
-let childTitle = "";
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
-let childFormError: string | null = null;
-let childSubmitting = false;
-
-let selectedFeatureId: string | null = null;
-let selectedChildId: string | null = null;
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
-let activeInspectorTab: InspectorTab = "context";
-
-$: selectedFeature =
-  board?.cards.find(
-    (card) => card.kind === "feature" && card.id === selectedFeatureId,
-  ) ?? null;
-$: if (featureDialogOpen) {
-  void focusFeatureTitleInput();
-}
-$: selectedChild =
-  board?.cards.find(
-    (card) => card.kind === "child" && card.id === selectedChildId,
-  ) ?? null;
-$: featureOverview = deriveFeatureOverview(board, selectedFeatureId, {
-  latestStatusByCard: {},
-  actionLog: [],
-});
-$: visibleActionLog = deriveVisibleActionLog(
-  [],
-  board,
-  selectedFeatureId,
-  selectedChildId,
-);
-$: if (board) {
-  const normalized = deriveSelectionState(board, {
-    selectedFeatureId,
-    selectedChildId,
-  });
-  if (
-    normalized.selectedFeatureId !== selectedFeatureId ||
-    normalized.selectedChildId !== selectedChildId
-  ) {
-    selectedFeatureId = normalized.selectedFeatureId;
-    selectedChildId = normalized.selectedChildId;
-  }
-} else if (selectedFeatureId || selectedChildId) {
-  selectedFeatureId = null;
-  selectedChildId = null;
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-function selectCard(card: BoardCard): void {
-  if (card.kind === "feature") {
-    selectedFeatureId = card.id;
-    selectedChildId = null;
-    return;
-  }
-
-  selectedFeatureId = card.parentId;
-  selectedChildId = card.id;
-}
-
-async function focusFeatureTitleInput(): Promise<void> {
-  await tick();
-  featureTitleInput?.focus();
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-function runOverviewAction(_actionId: string): void {}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-function openFeatureDialog(): void {
-  featureDialogOpen = true;
-  featureTitle = "";
-  featureFormError = null;
-}
-
-function resetFeatureDialog(): void {
-  featureDialogOpen = false;
-  featureTitle = "";
-  featureFormError = null;
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-function closeFeatureDialog(): void {
-  if (featureSubmitting) {
-    return;
-  }
-
-  resetFeatureDialog();
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-function openChildForm(): void {
-  if (!selectedFeature) {
-    childFormError = "Select a feature before adding a child.";
-    return;
-  }
-
-  childFormOpen = true;
-  childTitle = "";
-  childFormError = null;
-}
-
-function resetChildForm(): void {
-  childFormOpen = false;
-  childTitle = "";
-  childFormError = null;
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-function closeChildForm(): void {
-  if (childSubmitting) {
-    return;
-  }
-
-  resetChildForm();
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-async function submitFeatureForm(): Promise<void> {
-  if (!board || !currentProject) {
-    return;
-  }
-
-  let result: ReturnType<typeof addFeatureCard>;
-
-  try {
-    result = addFeatureCard(board, featureTitle);
-  } catch (error) {
-    featureFormError = error instanceof Error ? error.message : String(error);
-    return;
-  }
-
-  featureSubmitting = true;
-  featureFormError = null;
-
-  try {
-    await createProjectBoardFile(currentProject.handle, result.board);
-    board = result.board;
-    selectedFeatureId = result.card.id;
-    selectedChildId = null;
-    resetFeatureDialog();
-  } catch {
-    featureFormError = "Failed to save board changes. Please try again.";
-  } finally {
-    featureSubmitting = false;
-  }
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-async function submitChildForm(): Promise<void> {
-  if (!board || !currentProject || !selectedFeature) {
-    childFormError = "Select a feature before adding a child.";
-    return;
-  }
-
-  let result: ReturnType<typeof addChildCard>;
-
-  try {
-    result = addChildCard(board, selectedFeature.id, childTitle);
-  } catch (error) {
-    childFormError = error instanceof Error ? error.message : String(error);
-    return;
-  }
-
-  childSubmitting = true;
-  childFormError = null;
-
-  try {
-    await createProjectBoardFile(currentProject.handle, result.board);
-    board = result.board;
-    selectedFeatureId = selectedFeature.id;
-    selectedChildId = result.card.id;
-    resetChildForm();
-  } catch {
-    childFormError = "Failed to save board changes. Please try again.";
-  } finally {
-    childSubmitting = false;
-  }
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-function openUnavailableActionDialog(_card: BoardCard): void {
-  projectError =
-    "Runtime actions are unavailable for local project boards in this flow.";
-}
-
-async function initializeProjectAccess(): Promise<void> {
-  if (!supportsProjectDirectoryAccess()) {
-    projectPhase = "unsupported-browser";
-    return;
-  }
-
-  await refreshRecentProjects();
-
-  const lastProject = await projectAccessStore?.getLastProject();
-  if (!lastProject) {
-    projectPhase = "needs-project-selection";
-    return;
-  }
-
-  await openProject(lastProject, "restore");
-}
-
-async function refreshRecentProjects(): Promise<void> {
-  recentProjects = (await projectAccessStore?.listRecentProjects()) ?? [];
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-async function selectFolder(): Promise<void> {
-  if (!projectAccessStore) {
-    return;
-  }
-
-  loadingProject = true;
-  projectError = null;
-
-  try {
-    const handle = await pickProjectDirectory();
-    const candidate = await projectAccessStore.rememberProject(handle);
-    await refreshRecentProjects();
-    await openProject(candidate, "select");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message !== "The user aborted a request.") {
-      projectError = message;
-    }
-  } finally {
-    loadingProject = false;
-  }
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-async function openRecentProject(project: BrowserRecentProject): Promise<void> {
-  await openProject(project, "recent");
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-async function reloadProject(): Promise<void> {
-  if (!currentProject) {
-    return;
-  }
-
-  await openProject(currentProject, "recent");
-}
-
-async function openProject(
-  project: BrowserRecentProject,
-  mode: "restore" | "select" | "recent",
-): Promise<void> {
-  loadingProject = true;
-  projectError = null;
-  projectDataError = null;
-  initializationError = null;
-  projectPhase =
-    mode === "restore" ? "restoring-last-project" : "loading-project-board";
-
-  try {
-    const result = await openProjectWorkspace({
-      candidate: project,
-      mode,
-      ensureAccess: async (candidate) =>
-        ensureProjectAccess({
-          handle: candidate.handle,
-          mode,
-        }),
-      readBoard: async (candidate) => readProjectBoardFile(candidate.handle),
-    });
-
-    if (result.status === "access-error") {
-      pendingProject = null;
-      if (!currentProject) {
-        board = null;
-        projectPhase = "needs-project-selection";
-      } else {
-        projectPhase = "workspace-ready";
-      }
-      projectError = result.message;
-      await refreshRecentProjects();
-      return;
-    }
-
-    if (result.status === "init-required") {
-      pendingProject = result.project;
-      projectPhase = "project-init-required";
-      await refreshRecentProjects();
-      return;
-    }
-
-    currentProject = result.project;
-    pendingProject = null;
-    board = result.board;
-    featureDialogOpen = false;
-    childFormOpen = false;
-    featureFormError = null;
-    childFormError = null;
-    projectPhase = "workspace-ready";
-    await projectAccessStore?.markProjectActive(result.project);
-    await refreshRecentProjects();
-  } catch (error) {
-    projectDataError = error instanceof Error ? error.message : String(error);
-    pendingProject = null;
-    if (!currentProject) {
-      board = null;
-      projectPhase = "project-data-error";
-    } else {
-      projectPhase = "workspace-ready";
-    }
-  } finally {
-    loadingProject = false;
-  }
-}
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
-async function createPendingProjectBoard(): Promise<void> {
-  if (!pendingProject) {
-    return;
-  }
-
-  loadingProject = true;
-  initializationError = null;
-
-  try {
-    await createProjectBoardFile(
-      pendingProject.handle,
-      buildInitialProjectBoard(pendingProject.name),
-    );
-    await openProject(pendingProject, "recent");
-  } catch (error) {
-    initializationError =
-      error instanceof Error ? error.message : String(error);
-  } finally {
-    loadingProject = false;
-  }
-}
+let selectedRequirementId: string | null = null;
+let lastDetailId = "";
 
 onMount(() => {
-  void initializeProjectAccess();
+  void initialize();
+  const keyHandler = (event: KeyboardEvent) => {
+    if (
+      event.key.toLowerCase() === "t" &&
+      event.ctrlKey &&
+      event.shiftKey &&
+      !event.metaKey
+    ) {
+      event.preventDefault();
+      openCreateModal();
+    }
+  };
+
+  window.addEventListener("keydown", keyHandler);
+  return () => {
+    window.removeEventListener("keydown", keyHandler);
+  };
 });
+
+$: if (detail && detail.requirement.id !== lastDetailId) {
+  lastDetailId = detail.requirement.id;
+  commandDraft =
+    detail.activeSession?.command ?? `pi ${detail.requirement.prompt}`;
+}
+
+$: if (!detail) {
+  lastDetailId = "";
+}
+
+async function initialize(): Promise<void> {
+  appPhase = "booting";
+  appError = null;
+
+  try {
+    await waitForBootstrapReady();
+    await refreshHome();
+    appPhase = "ready";
+  } catch (error) {
+    appPhase = "error";
+    appError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function waitForBootstrapReady(): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const bootstrap = await api.bootstrap();
+    if (bootstrap.status === "ready") {
+      return;
+    }
+    if (bootstrap.status === "failed") {
+      throw new Error(bootstrap.error);
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, bootstrap.retryAfterMs);
+    });
+  }
+
+  throw new Error("kanban bootstrap did not become ready");
+}
+
+async function refreshHome(): Promise<void> {
+  home = await api.getHome();
+  seedCreateProjectDefaults();
+}
+
+function seedCreateProjectDefaults(): void {
+  if (createProjectId || createProjectName || createProjectPath) {
+    return;
+  }
+
+  const preferredProject =
+    detail?.project ??
+    home?.recentProjects.find(
+      (project) => project.id === home?.lastViewedProjectId,
+    ) ??
+    home?.recentProjects[0] ??
+    null;
+  if (!preferredProject) {
+    return;
+  }
+
+  createProjectId = preferredProject.id;
+  createProjectName = preferredProject.name;
+  createProjectPath = preferredProject.path;
+}
+
+function openCreateModal(): void {
+  createModalOpen = true;
+  seedCreateProjectDefaults();
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
+function closeCreateModal(): void {
+  if (createSubmitting) {
+    return;
+  }
+  createModalOpen = false;
+  createError = null;
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
+function chooseProject(projectId: string): void {
+  const project = home?.recentProjects.find(
+    (candidate) => candidate.id === projectId,
+  );
+  if (!project) {
+    return;
+  }
+
+  createProjectId = project.id;
+  createProjectName = project.name;
+  createProjectPath = project.path;
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte form handlers reference this function.
+async function submitCreate(): Promise<void> {
+  createSubmitting = true;
+  createError = null;
+
+  try {
+    detail = await api.createRequirement({
+      title: createTitle,
+      prompt: createPrompt,
+      projectId: createProjectId,
+      projectName: createProjectName,
+      projectPath: createProjectPath,
+    });
+    selectedRequirementId = detail.requirement.id;
+    createModalOpen = false;
+    createTitle = "";
+    createPrompt = "";
+    createProjectId = detail.project.id;
+    createProjectName = detail.project.name;
+    createProjectPath = detail.project.path;
+    await refreshHome();
+  } catch (error) {
+    createError = error instanceof Error ? error.message : String(error);
+  } finally {
+    createSubmitting = false;
+  }
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
+async function openRequirement(requirementId: string): Promise<void> {
+  workbenchError = null;
+  selectedRequirementId = requirementId;
+  try {
+    detail = await api.getRequirement(requirementId);
+    await refreshHome();
+  } catch (error) {
+    workbenchError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
+async function backToHome(): Promise<void> {
+  detail = null;
+  selectedRequirementId = null;
+  workbenchError = null;
+  await refreshHome();
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template references this helper.
+function stageLabel(stage: RequirementRunStage): string {
+  switch (stage) {
+    case "launch":
+      return "启动";
+    case "running":
+      return "正在运行";
+    case "review":
+      return "Review";
+    case "done":
+      return "Done";
+  }
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template references this helper.
+function boardLabel(status: string): string {
+  switch (status) {
+    case "inbox":
+      return "Inbox";
+    case "in_progress":
+      return "In Progress";
+    case "done":
+      return "Done";
+    default:
+      return status;
+  }
+}
+
+function groupKey(
+  projectId: string,
+  lane: "inbox" | "inProgress" | "done",
+): string {
+  return `${projectId}:${lane}`;
+}
+
+function isCollapsed(
+  projectId: string,
+  lane: "inbox" | "inProgress" | "done",
+): boolean {
+  const key = groupKey(projectId, lane);
+  if (key in collapsedGroups) {
+    return collapsedGroups[key] ?? false;
+  }
+  return lane === "done";
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
+function toggleGroup(
+  projectId: string,
+  lane: "inbox" | "inProgress" | "done",
+): void {
+  const key = groupKey(projectId, lane);
+  collapsedGroups = {
+    ...collapsedGroups,
+    [key]: !isCollapsed(projectId, lane),
+  };
+}
+
+async function ensureProjectAuthorized(projectId: string): Promise<boolean> {
+  if (authorizedProjectIds.includes(projectId)) {
+    return true;
+  }
+  if (!supportsProjectDirectoryAccess()) {
+    return true;
+  }
+
+  try {
+    await pickProjectDirectory();
+    authorizedProjectIds = [...authorizedProjectIds, projectId];
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
+async function startRequirement(): Promise<void> {
+  if (!detail || actionSubmitting) {
+    return;
+  }
+
+  workbenchError = null;
+  const authorized = await ensureProjectAuthorized(detail.project.id);
+  if (!authorized) {
+    workbenchError =
+      "Project authorization is required before starting the prototype session.";
+    return;
+  }
+
+  actionSubmitting = true;
+  try {
+    detail = await api.startRequirement(
+      detail.requirement.id,
+      commandDraft.trim() || `pi ${detail.requirement.prompt}`,
+    );
+    await refreshHome();
+  } catch (error) {
+    workbenchError = error instanceof Error ? error.message : String(error);
+  } finally {
+    actionSubmitting = false;
+  }
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
+async function restartRequirement(): Promise<void> {
+  if (!detail || actionSubmitting) {
+    return;
+  }
+
+  actionSubmitting = true;
+  workbenchError = null;
+  try {
+    detail = await api.restartRequirement(
+      detail.requirement.id,
+      commandDraft.trim() || `pi ${detail.requirement.prompt}`,
+    );
+    await refreshHome();
+  } catch (error) {
+    workbenchError = error instanceof Error ? error.message : String(error);
+  } finally {
+    actionSubmitting = false;
+  }
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
+async function moveToReview(): Promise<void> {
+  if (!detail || actionSubmitting) {
+    return;
+  }
+
+  actionSubmitting = true;
+  workbenchError = null;
+  try {
+    detail = await api.openRequirementReview(detail.requirement.id);
+    await refreshHome();
+  } catch (error) {
+    workbenchError = error instanceof Error ? error.message : String(error);
+  } finally {
+    actionSubmitting = false;
+  }
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
+async function completeReview(): Promise<void> {
+  if (!detail || actionSubmitting) {
+    return;
+  }
+
+  actionSubmitting = true;
+  workbenchError = null;
+  try {
+    detail = await api.completeRequirementReview(detail.requirement.id);
+    await refreshHome();
+  } catch (error) {
+    workbenchError = error instanceof Error ? error.message : String(error);
+  } finally {
+    actionSubmitting = false;
+  }
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: Svelte event handlers reference this function.
+async function reopenReview(): Promise<void> {
+  if (!detail || actionSubmitting) {
+    return;
+  }
+
+  actionSubmitting = true;
+  workbenchError = null;
+  try {
+    detail = await api.reopenRequirementReview(detail.requirement.id);
+    await refreshHome();
+  } catch (error) {
+    workbenchError = error instanceof Error ? error.message : String(error);
+  } finally {
+    actionSubmitting = false;
+  }
+}
 </script>
 
-<main class="app-shell">
-  {#if currentProject && board}
-    <ProjectContextBar
-      currentProjectName={currentProject.name}
-      currentProjectId={currentProject.id}
-      {recentProjects}
-      loading={loadingProject}
-      onSelectFolder={() => void selectFolder()}
-      onReloadProject={() => void reloadProject()}
-      onSelectRecent={(project) => {
-        void openRecentProject(project);
-      }}
-    />
+<svelte:head>
+  <title>Kanban prototype</title>
+</svelte:head>
 
-    {#if projectError}
-      <section class="shell-panel connection-panel">
-        <p class="error">{projectError}</p>
-      </section>
-    {/if}
-    {#if projectDataError}
-      <section class="shell-panel connection-panel">
-        <p class="error">{projectDataError}</p>
-      </section>
-    {/if}
-
-    <section class="shell-panel connection-panel">
-      <div class="panel-header">
-        <div>
-          <p class="eyebrow">Local Project Board</p>
-          <h1>Kanban Drive Console</h1>
-          <p class="subtle">
-            Local project board loaded from `.pi/kanban/board.json`. Runtime automation stays read-only in this flow.
-          </p>
-        </div>
+{#if appPhase === "booting"}
+  <main class="app-shell centered-shell">
+    <div class="hero-card">
+      <p class="label">Kanban</p>
+      <h1>Loading prototype…</h1>
+      <p class="subtle">Bootstrapping daemon-backed requirement workspace.</p>
+    </div>
+  </main>
+{:else if appPhase === "error"}
+  <main class="app-shell centered-shell">
+    <div class="hero-card">
+      <p class="label">Kanban</p>
+      <h1>Failed to load</h1>
+      <p class="error">{appError}</p>
+      <button class="primary-button" on:click={() => initialize()}>Retry</button>
+    </div>
+  </main>
+{:else}
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="label">Requirement-centered kanban</p>
+        <h1>{detail ? detail.requirement.title : "Kanban home"}</h1>
       </div>
-    </section>
+      <div class="topbar-actions">
+        {#if detail}
+          <button class="secondary-button" on:click={() => backToHome()}>Back home</button>
+        {/if}
+        <button class="primary-button" on:click={openCreateModal}>New requirement</button>
+      </div>
+    </header>
 
-    <FeatureOverview
-      feature={featureOverview.feature}
-      runningCount={featureOverview.runningCount}
-      reviewCount={featureOverview.reviewCount}
-      blockedCount={featureOverview.blockedCount}
-      recentAction={featureOverview.recentAction}
-      actions={overviewActions}
-      onCreateFeature={openFeatureDialog}
-      onRunAction={runOverviewAction}
-    />
+    {#if detail}
+      <section class="workbench-grid">
+        <article class="workbench-panel">
+          <div class="workbench-panel__header">
+            <div>
+              <p class="label">Project</p>
+              <h2>{detail.project.name}</h2>
+            </div>
+            <div class="badge-row">
+              <span class="status-chip">{boardLabel(detail.requirement.boardStatus)}</span>
+              <span class="status-chip emphasis">{stageLabel(detail.requirement.runStage)}</span>
+            </div>
+          </div>
 
-    <section class="workspace-grid">
-      <BoardPane
-        {board}
-        latestStatusByCard={{}}
-        {selectedFeatureId}
-        {selectedChildId}
-        activeExecutionCardId={null}
-        actionsEnabled={localProjectBoardRuntimeMode.actionsEnabled}
-        onSelectCard={selectCard}
-        onOpenCardActions={openUnavailableActionDialog}
-        onStartCard={() => {}}
-        onFocusRun={() => {}}
-        onOpenReview={() => {}}
-        onRetryCard={() => {}}
-      />
+          <div class="meta-list">
+            <div>
+              <span class="meta-label">Prompt</span>
+              <p>{detail.requirement.prompt}</p>
+            </div>
+            <div>
+              <span class="meta-label">Project path</span>
+              <p>{detail.project.path}</p>
+            </div>
+            <div>
+              <span class="meta-label">Session</span>
+              <p>{detail.activeSession?.id ?? "<none>"}</p>
+            </div>
+          </div>
 
-      <InspectorPane
-        {selectedFeature}
-        {selectedChild}
-        activeExecutionCardId={null}
-        activeTab={activeInspectorTab}
-        context={null}
-        loadingContext={false}
-        contextError={null}
-        latestStatus={null}
-        latestLifecycle={null}
-        actionLog={visibleActionLog}
-        actionsEnabled={localProjectBoardRuntimeMode.actionsEnabled}
-        childFormOpen={childFormOpen}
-        childTitle={childTitle}
-        childError={childFormError}
-        childSubmitting={childSubmitting}
-        {terminalUnavailableMessage}
-        onSelectTab={(tab) => {
-          activeInspectorTab = tab;
-        }}
-        onOpenActionDialog={openUnavailableActionDialog}
-        onOpenChildForm={openChildForm}
-        onChangeChildTitle={(value) => {
-          childTitle = value;
-          if (childFormError === "Title is required") {
-            childFormError = null;
+          <div class="stage-bar">
+            {#each ["launch", "running", "review", "done"] as stage}
+              <div class:active={detail.requirement.runStage === stage} class="stage-step">
+                <span>{stageLabel(stage as RequirementRunStage)}</span>
+              </div>
+            {/each}
+          </div>
+
+          <label class="field-group">
+            <span>Launch command</span>
+            <textarea bind:value={commandDraft} class="field-textarea" rows="4"></textarea>
+          </label>
+
+          {#if workbenchError}
+            <p class="error">{workbenchError}</p>
+          {/if}
+
+          <div class="action-grid">
+            {#if detail.requirement.runStage === "launch"}
+              <button class="primary-button" disabled={actionSubmitting} on:click={startRequirement}>
+                {actionSubmitting ? "Starting…" : "Start prototype session"}
+              </button>
+            {:else if detail.requirement.runStage === "running"}
+              <button class="primary-button" disabled={actionSubmitting} on:click={moveToReview}>
+                {actionSubmitting ? "Saving…" : "Move to review"}
+              </button>
+              <button class="secondary-button" disabled={actionSubmitting} on:click={restartRequirement}>
+                Restart session
+              </button>
+            {:else if detail.requirement.runStage === "review"}
+              <button class="primary-button" disabled={actionSubmitting} on:click={completeReview}>
+                Mark done
+              </button>
+              <button class="secondary-button" disabled={actionSubmitting} on:click={reopenReview}>
+                Back to in progress
+              </button>
+            {:else}
+              <button class="secondary-button" on:click={() => backToHome()}>Back to home</button>
+            {/if}
+          </div>
+        </article>
+
+        <RequirementTerminal {detail} />
+      </section>
+    {:else if home?.mode === "empty-create"}
+      <section class="centered-shell">
+        <form class="hero-card large" on:submit|preventDefault={submitCreate}>
+          <RequirementCreateForm
+            bind:title={createTitle}
+            bind:prompt={createPrompt}
+            bind:selectedProjectId={createProjectId}
+            bind:projectName={createProjectName}
+            bind:projectPath={createProjectPath}
+            error={createError}
+            recentProjects={home?.recentProjects ?? []}
+            submitting={createSubmitting}
+            subheading="No unfinished requirements yet. Start from a single demand, prompt, and project path."
+            onChooseProject={chooseProject}
+          />
+        </form>
+      </section>
+    {:else}
+      <section class="project-board">
+        {#each home?.projectGroups ?? [] as group}
+          <article class="project-section">
+            <header class="project-section__header">
+              <div>
+                <h2>{group.project.name}</h2>
+                <p class="subtle">{group.project.path}</p>
+              </div>
+              <button class="secondary-button small" on:click={openCreateModal}>Add requirement</button>
+            </header>
+
+            <div class="lane-grid">
+              {#each [
+                { key: "inbox", title: "Inbox", items: group.inbox },
+                { key: "inProgress", title: "In Progress", items: group.inProgress },
+                { key: "done", title: "Done", items: group.done },
+              ] as lane}
+                <section class="lane-panel">
+                  <button class="lane-panel__header" on:click={() => toggleGroup(group.project.id, lane.key as "inbox" | "inProgress" | "done") }>
+                    <span>{lane.title}</span>
+                    <span>{lane.items.length} · {isCollapsed(group.project.id, lane.key as "inbox" | "inProgress" | "done") ? "collapsed" : "open"}</span>
+                  </button>
+
+                  {#if !isCollapsed(group.project.id, lane.key as "inbox" | "inProgress" | "done")}
+                    <div class="lane-list">
+                      {#if lane.items.length === 0}
+                        <p class="subtle">No requirements</p>
+                      {/if}
+
+                      {#each lane.items as requirement}
+                        <button
+                          class:selected={selectedRequirementId === requirement.id}
+                          class="requirement-card"
+                          on:click={() => openRequirement(requirement.id)}
+                        >
+                          <div class="requirement-card__topline">
+                            <strong>{requirement.title}</strong>
+                            <span class="status-chip">{stageLabel(requirement.runStage)}</span>
+                          </div>
+                          <p>{requirement.prompt}</p>
+                          <div class="requirement-card__meta">
+                            <span>{new Date(requirement.updatedAt).toLocaleString()}</span>
+                            {#if requirement.hasActiveSession}
+                              <span>active session</span>
+                            {/if}
+                          </div>
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                </section>
+              {/each}
+            </div>
+          </article>
+        {/each}
+      </section>
+    {/if}
+
+    {#if createModalOpen}
+      <div
+        aria-hidden="true"
+        class="modal-backdrop"
+        on:click={closeCreateModal}
+        on:keydown={(event) => {
+          if (event.key === "Escape") {
+            closeCreateModal();
           }
         }}
-        onSubmitChildForm={() => void submitChildForm()}
-        onCancelChildForm={closeChildForm}
-      />
-    </section>
-  {:else if projectPhase === "unsupported-browser"}
-    <section class="shell-panel project-picker-pane">
-      <div class="panel-header">
-        <div>
-          <p class="eyebrow">Browser Support</p>
-          <h1>Open this app in Chrome or Edge</h1>
-          <p class="subtle">
-            This browser can't choose folders directly. For the best experience, reopen this page in the desktop version of Chrome or Edge.
-          </p>
-        </div>
-      </div>
-    </section>
-  {:else if projectPhase === "project-data-error"}
-    <section class="shell-panel project-picker-pane">
-      <div class="panel-header">
-        <div>
-          <p class="eyebrow">Project Error</p>
-          <h1>Unable to read the project board</h1>
-          <p class="subtle">{projectDataError ?? "The board file is invalid or unreadable."}</p>
-        </div>
-      </div>
-
-      <div class="actions">
-        <button on:click={() => void selectFolder()} disabled={loadingProject}>Select Folder</button>
-      </div>
-    </section>
-  {:else}
-    <ProjectPickerView
-      loading={loadingProject}
-      error={projectError}
-      {recentProjects}
-      onSelectFolder={() => void selectFolder()}
-      onSelectRecent={(project) => {
-        void openRecentProject(project);
-      }}
-    />
-  {/if}
-</main>
-
-{#if featureDialogOpen}
-  <div
-    class="dialog-backdrop"
-    role="button"
-    tabindex="0"
-    on:click|self={closeFeatureDialog}
-    on:keydown={(event) => {
-      if (event.key === "Escape") {
-        closeFeatureDialog();
-      }
-    }}
-  >
-    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="create-feature-title">
-      <p class="eyebrow">New Feature</p>
-      <h3 id="create-feature-title">Add a feature to the board</h3>
-
-      <form class="dialog-form" on:submit|preventDefault={() => void submitFeatureForm()}>
-        <label>
-          <span>Title</span>
-          <input
-            bind:this={featureTitleInput}
-            bind:value={featureTitle}
-            placeholder="e.g. Improve login flow"
-            on:input={() => {
-              if (featureFormError === "Title is required") {
-                featureFormError = null;
-              }
-            }}
-          />
-        </label>
-
-        {#if featureFormError}
-          <p class="error form-error">{featureFormError}</p>
-        {/if}
-
-        <div class="actions">
-          <button type="button" on:click={closeFeatureDialog} disabled={featureSubmitting}>
-            Cancel
-          </button>
-          <button type="submit" disabled={featureSubmitting}>
-            {#if featureSubmitting}Creating…{:else}Create Feature{/if}
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-{/if}
-
-{#if projectPhase === "project-init-required" && pendingProject}
-  <div
-    class="dialog-backdrop"
-    role="button"
-    tabindex="0"
-    on:click|self={() => {
-      pendingProject = null;
-      initializationError = null;
-      projectPhase = currentProject ? "workspace-ready" : "needs-project-selection";
-    }}
-    on:keydown={(event) => {
-      if (event.key === "Escape") {
-        pendingProject = null;
-        initializationError = null;
-        projectPhase = currentProject ? "workspace-ready" : "needs-project-selection";
-      }
-    }}
-  >
-    <section class="dialog" role="dialog" aria-modal="true">
-      <p class="eyebrow">Project Setup Required</p>
-      <h3>No board file found for {pendingProject.name}</h3>
-      <p>
-        This project does not have `.pi/kanban/board.json` yet. Continuing will create:
-      </p>
-
-      <ul class="dialog-list">
-        <li>`.pi/kanban/`</li>
-        <li>`.pi/kanban/board.json`</li>
-        <li>an empty board with Inbox, In Progress, and Done lanes</li>
-      </ul>
-
-      {#if initializationError}
-        <p class="error">{initializationError}</p>
-      {/if}
-
-      <div class="actions">
-        <button
-          on:click={() => {
-            pendingProject = null;
-            initializationError = null;
-            projectPhase = currentProject ? "workspace-ready" : "needs-project-selection";
-          }}
+      >
+        <div
+          aria-modal="true"
+          class="modal-card-shell"
+          role="dialog"
+          tabindex="-1"
+          on:click|stopPropagation
+          on:keydown|stopPropagation={() => {}}
         >
-          Cancel
-        </button>
-        <button on:click={() => void createPendingProjectBoard()} disabled={loadingProject}>
-          {#if loadingProject}Creating…{:else}Create and Open Board{/if}
-        </button>
+          <form class="modal-card" on:submit|preventDefault={submitCreate}>
+            <div class="modal-card__header">
+              <div>
+                <p class="label">Ctrl + Shift + T</p>
+                <h2>Create requirement</h2>
+              </div>
+              <button class="icon-button" type="button" on:click={closeCreateModal}>✕</button>
+            </div>
+
+            <RequirementCreateForm
+              bind:title={createTitle}
+              bind:prompt={createPrompt}
+              bind:selectedProjectId={createProjectId}
+              bind:projectName={createProjectName}
+              bind:projectPath={createProjectPath}
+              error={createError}
+              recentProjects={home?.recentProjects ?? []}
+              submitting={createSubmitting}
+              subheading="Default project follows the last requirement workbench you opened."
+              onChooseProject={chooseProject}
+            />
+          </form>
+        </div>
       </div>
-    </section>
-  </div>
+    {/if}
+  </main>
 {/if}

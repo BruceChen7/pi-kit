@@ -2,16 +2,23 @@
 
 A Svelte-based Kanban web UI module for the embedded `kanban-orchestrator` runtime in `pi-kit`.
 
-## C2 runtime model
+## Runtime model
 
-The UI now uses a bootstrap + same-origin proxy model:
+The UI now uses a bootstrap + same-origin proxy model, but the product flow has been rebuilt around **projects + requirements + sessions**.
+
+Current primary endpoints:
 
 1. `POST /kanban/bootstrap`
-2. `GET /kanban/board`
-3. `GET /kanban/stream`
-4. `POST /kanban/actions/execute`
-5. `GET /kanban/cards/:id/context`
-6. `GET /kanban/cards/:id/runtime`
+2. `GET /kanban/home`
+3. `POST /kanban/requirements`
+4. `GET /kanban/requirements/:id`
+5. `POST /kanban/requirements/:id/start`
+6. `POST /kanban/requirements/:id/restart`
+7. `POST /kanban/requirements/:id/review/open`
+8. `POST /kanban/requirements/:id/review/complete`
+9. `POST /kanban/requirements/:id/review/reopen`
+10. `GET /kanban/requirements/:id/terminal/stream`
+11. `POST /kanban/requirements/:id/terminal/input`
 
 The browser no longer manages runtime `baseUrl` or `token` through the UI.
 Those details stay behind the backend boundary.
@@ -26,65 +33,44 @@ skinparam packageStyle rectangle
 package "Frontend / kanban-web-svelte" {
   [App.svelte] as App
   [KanbanRuntimeApi] as Api
-  [waitForBootstrapReady] as Bootstrap
-  [BoardPane.svelte] as BoardPane
-  [FeatureOverview.svelte] as Overview
-  [InspectorPane.svelte] as Inspector
-  [InspectorTerminal.svelte] as Terminal
-  [board-view-model.ts] as BoardVM
-  [board-automation.ts] as Automation
-  [runtime-lifecycle.ts] as Lifecycle
+  [RequirementCreateForm.svelte] as CreateForm
+  [RequirementTerminal.svelte] as Terminal
 }
 
 package "Backend / kanban-orchestrator" {
   [runtime-server.ts] as RuntimeServer
-  [api-routes.ts] as Routes
-  [KanbanOrchestratorService] as Service
-  [context.ts] as Context
-  [runtime-state.ts] as RuntimeState
-  [feature-workflow-local.ts] as BoardSource
-  [board-patch.ts] as BoardPatch
 }
 
-App --> Bootstrap : homepage init
+package "Backend / kanban-daemon" {
+  [RequirementService] as RequirementService
+}
+
 App --> Api : same-origin /kanban/*
-App --> BoardVM : derive visible UI state
-App --> Automation : lane transitions / auto-dispatch
-App --> Lifecycle : lifecycle reactions
-App --> BoardPane
-App --> Overview
-App --> Inspector
-Inspector --> Terminal
-Terminal --> Api : runtime detail + terminal SSE
+App --> CreateForm : empty-create + modal create
+App --> Terminal : workbench terminal view
+Terminal --> Api : terminal stream + input
 
 Api --> RuntimeServer : /kanban/bootstrap
-Api --> RuntimeServer : /kanban/board
-Api --> RuntimeServer : /kanban/stream
-Api --> RuntimeServer : /kanban/actions/execute
-Api --> RuntimeServer : /kanban/cards/:id/*
-
-RuntimeServer --> Routes : route handling
-Routes --> Service : action status / execution / streams
-Routes --> Context : card context resolution
-Routes --> RuntimeState : runtime detail / terminal state
-Routes --> BoardSource : board read
-Routes --> BoardPatch : board patch
-Context --> BoardSource
-Service --> RuntimeState : lifecycle + terminal updates
+Api --> RuntimeServer : /kanban/home
+Api --> RuntimeServer : /kanban/requirements/*
+RuntimeServer --> RequirementService : requirement/project/session state
+RequirementService --> RuntimeServer : requirement detail + terminal events
 @enduml
 ```
 
-## Local development
+## 启动与本地验证
 
-### 1. Start the embedded runtime
+### 1. 启动 daemon runtime
 
-Inside your target repo session:
+在目标 repo 的 pi session 里运行：
 
 ```text
 /kanban-runtime-start --port 17888
 ```
 
-### 2. Run the Svelte app
+预期：runtime 启动后，对外提供 `/kanban/*` 接口。
+
+### 2. 启动前端
 
 ```bash
 cd kanban-web-svelte
@@ -92,20 +78,86 @@ npm install
 npm run dev
 ```
 
-Default dev URL: `http://localhost:4174`
+默认地址：
 
-### 3. Dev proxy
+```text
+http://127.0.0.1:4174
+```
 
-The Vite dev server proxies same-origin `/kanban/*` requests to:
+### 3. 前端代理到 daemon
+
+Vite dev server 会把同源 `/kanban/*` 请求代理到：
 
 - `KANBAN_PROXY_TARGET`
-- default: `http://127.0.0.1:17888`
+- 默认值：`http://127.0.0.1:17888`
 
-Example:
+如果 runtime 不在默认端口，可以显式指定：
 
 ```bash
 KANBAN_PROXY_TARGET=http://127.0.0.1:17888 npm run dev
 ```
+
+### 4. 打开页面验证
+
+浏览器打开：
+
+```text
+http://127.0.0.1:4174
+```
+
+然后按下面流程验收：
+
+#### 场景 A：没有未完成 requirement
+
+1. 首页应直接进入创建表单
+2. 填写：
+   - Requirement name
+   - Prompt
+   - Project name / Project path
+3. 提交后应直接进入 requirement 全屏工作台
+
+#### 场景 B：有未完成 requirement
+
+1. 首页应显示按项目分组的：
+   - `Inbox`
+   - `In Progress`
+   - `Done`
+2. 这 3 组都应可以折叠
+3. 点击任意 requirement 应进入全屏工作台
+
+### 5. 验证启动与 terminal 原型
+
+在工作台里：
+
+1. 默认会看到可编辑启动命令，通常是 `pi + prompt`
+2. 点击 **Start prototype session**
+3. 如果浏览器要求目录授权，选择对应项目目录
+4. 启动后，右侧 wterm 应显示 prototype terminal 输出
+5. 可以继续发送一行输入，验证 `/kanban/requirements/:id/terminal/input`
+
+### 6. 验证 review 流程
+
+在工作台里继续操作：
+
+1. 点击 **Move to review**
+2. 然后执行其中一种：
+   - **Mark done**
+   - **Back to in progress**
+3. 返回首页后确认 requirement 在对应分组中正确移动
+
+### 7. 快捷键验证
+
+任意页面按：
+
+```text
+Ctrl + Shift + T
+```
+
+预期：
+
+- 打开创建弹框
+- 默认项目优先取最近一次进入详情页的项目
+- 仍然允许切换历史项目或手填 path
 
 ## Build
 
@@ -117,7 +169,9 @@ npm run preview
 ## Current UI behavior
 
 - Homepage bootstraps automatically via `POST /kanban/bootstrap`
-- Board loads automatically after bootstrap succeeds
-- Stream connection stays in the background
-- Users see product-level states such as preparing, degraded sync, or fatal bootstrap failure
-- Action execution sends business intent only; backend derives runtime execution details
+- If there are **no unfinished requirements**, homepage opens the create flow directly
+- If there **are unfinished requirements**, homepage shows project-grouped `Inbox / In Progress / Done`
+- All 3 groups are collapsible
+- Clicking a requirement opens a full-screen workbench
+- Clicking **Start prototype session** opens the current prototype path and streams output into wterm
+- `Ctrl + Shift + T` opens the create modal from anywhere

@@ -10,6 +10,7 @@ import {
   createKanbanDaemon,
   type KanbanDaemon,
 } from "../../kanban-daemon/daemon.js";
+import { RequirementService } from "../../kanban-daemon/requirement-service.js";
 import { getRepoRoot } from "../shared/git.js";
 import { applyBoardTextPatch } from "./board-patch.js";
 import {
@@ -233,6 +234,10 @@ async function getOrCreateDaemon(input: {
         nextBoardText,
       }),
     readBoard: () => readBoardSnapshot(input.repoRoot),
+    requirementService: new RequirementService({
+      repoRoot: input.repoRoot,
+      workspaceId: path.basename(input.repoRoot),
+    }),
   });
 
   await daemon.start();

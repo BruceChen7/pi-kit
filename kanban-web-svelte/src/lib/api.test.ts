@@ -40,17 +40,50 @@ describe("KanbanRuntimeApi", () => {
     expect(init.method).toBe("POST");
   });
 
-  it("loads board through same-origin requests without auth headers", async () => {
+  it("loads the new home endpoint", async () => {
+    const fetchMock = vi.fn(async () => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          mode: "empty-create",
+          hasUnfinishedRequirements: false,
+          lastViewedProjectId: null,
+          recentProjects: [],
+          projectGroups: [],
+        }),
+      } as unknown as Response;
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new KanbanRuntimeApi();
+    await api.getHome();
+
+    const [input, init] = fetchMock.mock.calls[0] as unknown as [
+      RequestInfo | URL,
+      RequestInit,
+    ];
+    expect(String(input)).toBe("/kanban/home");
+    expect(init.method).toBe("GET");
+  });
+
+  it("creates requirements through same-origin requests", async () => {
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, init?: RequestInit) => {
         return {
           ok: true,
           status: 200,
           json: async () => ({
-            path: "workitems/features.kanban.md",
-            lanes: [],
-            cards: [],
-            errors: [],
+            requirement: { id: "req-1" },
+            project: { id: "project-1" },
+            activeSession: null,
+            runtime: {
+              summary: null,
+              status: "idle",
+              terminalAvailable: false,
+              streamUrl: "/kanban/requirements/req-1/terminal/stream",
+            },
           }),
           requestInit: init,
         } as unknown as Response;
@@ -60,65 +93,45 @@ describe("KanbanRuntimeApi", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const api = new KanbanRuntimeApi();
-    await api.getBoard();
-
-    const [input, init] = fetchMock.mock.calls[0] as unknown as [
-      RequestInfo | URL,
-      RequestInit,
-    ];
-    expect(String(input)).toBe("/kanban/board");
-    expect(init.method).toBe("GET");
-    const headers = init.headers as Record<string, string>;
-    expect(headers.authorization).toBeUndefined();
-  });
-
-  it("executes actions without frontend-derived worktreeKey", async () => {
-    const fetchMock = vi.fn(
-      async (_input: RequestInfo | URL, init?: RequestInit) => {
-        return {
-          ok: true,
-          status: 202,
-          json: async () => ({
-            requestId: "req-123",
-            status: "queued",
-          }),
-          requestInit: init,
-        } as unknown as Response;
-      },
-    );
-
-    vi.stubGlobal("fetch", fetchMock);
-
-    const api = new KanbanRuntimeApi();
-    await api.executeAction({
-      action: "apply",
-      cardId: "child-pricing-widget",
-      payload: { prompt: "hello" },
+    await api.createRequirement({
+      title: "Build inbox flow",
+      prompt: "Create the new kanban experience",
+      projectPath: "/tmp/demo",
+      projectName: "demo",
     });
 
     const [input, init] = fetchMock.mock.calls[0] as unknown as [
       RequestInfo | URL,
       RequestInit,
     ];
-    expect(String(input)).toBe("/kanban/actions/execute");
+    expect(String(input)).toBe("/kanban/requirements");
     expect(init.method).toBe("POST");
     expect(init.body).toBe(
       JSON.stringify({
-        action: "apply",
-        cardId: "child-pricing-widget",
-        payload: { prompt: "hello" },
+        title: "Build inbox flow",
+        prompt: "Create the new kanban experience",
+        projectPath: "/tmp/demo",
+        projectName: "demo",
       }),
     );
   });
 
-  it("patches board markdown through same-origin runtime API", async () => {
+  it("starts a requirement with a command", async () => {
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, init?: RequestInit) => {
         return {
           ok: true,
           status: 200,
           json: async () => ({
-            summary: "board updated",
+            requirement: { id: "req-1" },
+            project: { id: "project-1" },
+            activeSession: { id: "session-1" },
+            runtime: {
+              summary: "Running pi hello",
+              status: "running",
+              terminalAvailable: true,
+              streamUrl: "/kanban/requirements/req-1/terminal/stream",
+            },
           }),
           requestInit: init,
         } as unknown as Response;
@@ -128,24 +141,18 @@ describe("KanbanRuntimeApi", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const api = new KanbanRuntimeApi();
-    await api.patchBoard(
-      "## Spec\n\n- [ ] X <!-- card-id: x; kind: feature -->",
-    );
+    await api.startRequirement("req-1", "pi hello");
 
     const [input, init] = fetchMock.mock.calls[0] as unknown as [
       RequestInfo | URL,
       RequestInit,
     ];
-    expect(String(input)).toBe("/kanban/board");
-    expect(init.method).toBe("PATCH");
-    expect(init.body).toBe(
-      JSON.stringify({
-        nextBoardText: "## Spec\n\n- [ ] X <!-- card-id: x; kind: feature -->",
-      }),
-    );
+    expect(String(input)).toBe("/kanban/requirements/req-1/start");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ command: "pi hello" }));
   });
 
-  it("sends terminal line input through same-origin runtime API", async () => {
+  it("sends terminal line input to requirement sessions", async () => {
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, init?: RequestInit) => {
         return {
@@ -163,61 +170,30 @@ describe("KanbanRuntimeApi", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const api = new KanbanRuntimeApi();
-    await api.sendTerminalInput("child-pricing-widget", "continue");
+    await api.sendRequirementTerminalInput("req-1", "continue");
 
     const [input, init] = fetchMock.mock.calls[0] as unknown as [
       RequestInfo | URL,
       RequestInit,
     ];
-    expect(String(input)).toBe(
-      "/kanban/cards/child-pricing-widget/terminal/input",
-    );
+    expect(String(input)).toBe("/kanban/requirements/req-1/terminal/input");
     expect(init.method).toBe("POST");
-    expect(init.body).toBe(
-      JSON.stringify({
-        input: "continue",
-      }),
-    );
+    expect(init.body).toBe(JSON.stringify({ input: "continue" }));
   });
 
-  it("loads card runtime detail", async () => {
-    const fetchMock = vi.fn(async () => {
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          cardId: "child-pricing-widget",
-          lane: "In Progress",
-          session: {
-            chatJid: "chat:child-pricing-widget",
-            worktreePath: "/tmp/wt/child-pricing-widget",
-          },
-          execution: {
-            status: "running",
-            summary: "agent started",
-            requestId: null,
-          },
-          completion: {
-            readyForReview: false,
-            completedAt: null,
-          },
-          terminal: {
-            available: true,
-            protocol: "sse-text-stream",
-            streamUrl: "/kanban/cards/child-pricing-widget/terminal/stream",
-          },
-        }),
-      } as unknown as Response;
-    });
+  it("creates terminal event sources from relative stream urls", () => {
+    class MockEventSource {
+      constructor(public readonly url: string) {}
+    }
 
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", MockEventSource);
 
     const api = new KanbanRuntimeApi();
-    const runtime = await api.getCardRuntime("child-pricing-widget");
+    const stream = api.createTerminalEventSource(
+      "/kanban/requirements/req-1/terminal/stream",
+    ) as unknown as MockEventSource;
 
-    expect(runtime.terminal.streamUrl).toBe(
-      "/kanban/cards/child-pricing-widget/terminal/stream",
-    );
+    expect(stream.url).toBe("/kanban/requirements/req-1/terminal/stream");
   });
 
   it("surfaces HTTP status when error responses have an empty body", async () => {
@@ -235,38 +211,6 @@ describe("KanbanRuntimeApi", () => {
 
     const api = new KanbanRuntimeApi();
 
-    await expect(api.getCardRuntime("child-pricing-widget")).rejects.toThrow(
-      "HTTP 404",
-    );
-  });
-
-  it("creates same-origin event sources", () => {
-    class MockEventSource {
-      constructor(public readonly url: string) {}
-    }
-
-    vi.stubGlobal("EventSource", MockEventSource);
-
-    const api = new KanbanRuntimeApi();
-    const stream = api.createEventSource() as unknown as MockEventSource;
-
-    expect(stream.url).toBe("/kanban/stream");
-  });
-
-  it("creates terminal event sources from relative stream urls", () => {
-    class MockEventSource {
-      constructor(public readonly url: string) {}
-    }
-
-    vi.stubGlobal("EventSource", MockEventSource);
-
-    const api = new KanbanRuntimeApi();
-    const stream = api.createTerminalEventSource(
-      "/kanban/cards/child-pricing-widget/terminal/stream",
-    ) as unknown as MockEventSource;
-
-    expect(stream.url).toBe(
-      "/kanban/cards/child-pricing-widget/terminal/stream",
-    );
+    await expect(api.getRequirement("req-404")).rejects.toThrow("HTTP 404");
   });
 });

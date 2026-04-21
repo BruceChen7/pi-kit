@@ -1,48 +1,3 @@
-export type BoardLane =
-  | "Inbox"
-  | "Spec"
-  | "Ready"
-  | "In Progress"
-  | "Review"
-  | "Done";
-
-export type BoardCard = {
-  id: string;
-  title: string;
-  kind: "feature" | "child";
-  parentId: string | null;
-  lane: BoardLane;
-  lineNumber: number;
-  depth: 0 | 1;
-};
-
-export type BoardSnapshot = {
-  path: string;
-  lanes: Array<{
-    name: BoardLane;
-    cards: BoardCard[];
-  }>;
-  cards: BoardCard[];
-  errors: string[];
-};
-
-export type CardContext = {
-  cardId: string;
-  title: string;
-  kind: "feature" | "child";
-  lane: BoardLane;
-  parentCardId: string | null;
-  branch: string | null;
-  baseBranch: string | null;
-  mergeTarget: string | null;
-  worktreePath: string | null;
-  session: {
-    chatJid: string;
-    worktreePath: string;
-    lastActiveAt: string;
-  } | null;
-};
-
 export type BootstrapResponse =
   | {
       status: "ready";
@@ -63,49 +18,92 @@ export type BootstrapResponse =
       error: string;
     };
 
-export type ExecuteResponse = {
-  requestId: string;
-  status: "queued" | "running" | "success" | "failed";
+export type RequirementBoardStatus = "inbox" | "in_progress" | "done";
+export type RequirementRunStage = "launch" | "running" | "review" | "done";
+export type RequirementSessionStatus =
+  | "idle"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type RequirementSummary = {
+  id: string;
+  title: string;
+  prompt: string;
+  boardStatus: RequirementBoardStatus;
+  runStage: RequirementRunStage;
+  updatedAt: string;
+  hasActiveSession: boolean;
 };
 
-export type ActionState = {
-  requestId: string;
-  action: string;
-  cardId: string;
-  worktreeKey: string;
-  status: "queued" | "running" | "success" | "failed";
-  summary: string;
+export type HomeProjectGroup = {
+  project: {
+    id: string;
+    name: string;
+    path: string;
+  };
+  inbox: RequirementSummary[];
+  inProgress: RequirementSummary[];
+  done: RequirementSummary[];
+};
+
+export type HomeResponse = {
+  mode: "empty-create" | "project-board";
+  hasUnfinishedRequirements: boolean;
+  lastViewedProjectId: string | null;
+  recentProjects: Array<{
+    id: string;
+    name: string;
+    path: string;
+  }>;
+  projectGroups: HomeProjectGroup[];
+};
+
+export type RequirementRecord = {
+  id: string;
+  projectId: string;
+  title: string;
+  prompt: string;
+  boardStatus: RequirementBoardStatus;
+  runStage: RequirementRunStage;
+  activeSessionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+};
+
+export type RequirementSessionRecord = {
+  id: string;
+  requirementId: string;
+  command: string;
+  status: RequirementSessionStatus;
+  runtimeRef: string | null;
   startedAt: string | null;
   finishedAt: string | null;
-  durationMs: number | null;
+  supersededBy: string | null;
 };
 
-export type ChildLifecycleEvent = {
-  type: "child-running" | "child-completed" | "child-failed";
-  cardId: string;
-  summary: string;
-  ts: string;
-};
-
-export type CardRuntimeDetail = {
-  cardId: string;
-  lane: BoardLane;
-  session: {
-    chatJid: string;
-    worktreePath: string;
-  } | null;
-  execution: {
-    status: "idle" | "running" | "completed" | "failed";
+export type RequirementDetail = {
+  requirement: RequirementRecord;
+  project: {
+    id: string;
+    name: string;
+    path: string;
+    normalizedPath: string;
+    lastOpenedAt: string | null;
+    lastDetailViewedAt: string | null;
+  };
+  activeSession: RequirementSessionRecord | null;
+  runtime: {
     summary: string | null;
-    requestId: string | null;
-  };
-  completion: {
-    readyForReview: boolean;
-    completedAt: string | null;
-  };
-  terminal: {
-    available: boolean;
-    protocol: "sse-text-stream";
+    status: "idle" | "running" | "completed" | "failed";
+    terminalAvailable: boolean;
     streamUrl: string;
   };
+};
+
+export type TerminalInputResponse = {
+  accepted: boolean;
+  mode: string;
 };

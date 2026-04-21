@@ -106,6 +106,38 @@ export type KanbanRuntimeServerBackend = {
     cardId: string,
     onEvent: (event: KanbanTerminalEvent) => void,
   ) => () => void;
+  getHome?: () => Promise<KanbanApiResponse> | KanbanApiResponse;
+  createRequirement?: (
+    body: Record<string, unknown>,
+  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
+  getRequirement?: (
+    requirementId: string,
+  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
+  startRequirement?: (
+    requirementId: string,
+    body: Record<string, unknown>,
+  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
+  restartRequirement?: (
+    requirementId: string,
+    body: Record<string, unknown>,
+  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
+  openRequirementReview?: (
+    requirementId: string,
+  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
+  completeRequirementReview?: (
+    requirementId: string,
+  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
+  reopenRequirementReview?: (
+    requirementId: string,
+  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
+  sendRequirementTerminalInput?: (
+    requirementId: string,
+    input: string,
+  ) => Promise<KanbanApiResponse> | KanbanApiResponse;
+  subscribeRequirementTerminalStream?: (
+    requirementId: string,
+    onEvent: (event: KanbanTerminalEvent) => void,
+  ) => () => void;
 };
 
 export function createKanbanRuntimeServer(input: {
@@ -185,6 +217,197 @@ export function createKanbanRuntimeServer(input: {
           workspaceId: input.workspaceId,
         });
         writeJson(res, response.status, response.body);
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/kanban/home") {
+        if (!input.backend.getHome) {
+          writeJson(res, 404, { error: "home endpoint unavailable" });
+          return;
+        }
+        const response = await input.backend.getHome();
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      if (req.method === "POST" && url.pathname === "/kanban/requirements") {
+        if (!input.backend.createRequirement) {
+          writeJson(res, 404, { error: "requirement endpoint unavailable" });
+          return;
+        }
+        const body = await parseJsonBody(req);
+        const response = await input.backend.createRequirement(body);
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const requirementMatch = url.pathname.match(
+        /^\/kanban\/requirements\/([^/]+)$/,
+      );
+      if (req.method === "GET" && requirementMatch) {
+        if (!input.backend.getRequirement) {
+          writeJson(res, 404, { error: "requirement endpoint unavailable" });
+          return;
+        }
+        const requirementId = decodeURIComponent(requirementMatch[1] ?? "");
+        const response = await input.backend.getRequirement(requirementId);
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const requirementStartMatch = url.pathname.match(
+        /^\/kanban\/requirements\/([^/]+)\/start$/,
+      );
+      if (req.method === "POST" && requirementStartMatch) {
+        if (!input.backend.startRequirement) {
+          writeJson(res, 404, { error: "requirement endpoint unavailable" });
+          return;
+        }
+        const requirementId = decodeURIComponent(
+          requirementStartMatch[1] ?? "",
+        );
+        const body = await parseJsonBody(req);
+        const response = await input.backend.startRequirement(
+          requirementId,
+          body,
+        );
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const requirementRestartMatch = url.pathname.match(
+        /^\/kanban\/requirements\/([^/]+)\/restart$/,
+      );
+      if (req.method === "POST" && requirementRestartMatch) {
+        if (!input.backend.restartRequirement) {
+          writeJson(res, 404, { error: "requirement endpoint unavailable" });
+          return;
+        }
+        const requirementId = decodeURIComponent(
+          requirementRestartMatch[1] ?? "",
+        );
+        const body = await parseJsonBody(req);
+        const response = await input.backend.restartRequirement(
+          requirementId,
+          body,
+        );
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const requirementReviewOpenMatch = url.pathname.match(
+        /^\/kanban\/requirements\/([^/]+)\/review\/open$/,
+      );
+      if (req.method === "POST" && requirementReviewOpenMatch) {
+        if (!input.backend.openRequirementReview) {
+          writeJson(res, 404, { error: "requirement endpoint unavailable" });
+          return;
+        }
+        const requirementId = decodeURIComponent(
+          requirementReviewOpenMatch[1] ?? "",
+        );
+        const response =
+          await input.backend.openRequirementReview(requirementId);
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const requirementReviewCompleteMatch = url.pathname.match(
+        /^\/kanban\/requirements\/([^/]+)\/review\/complete$/,
+      );
+      if (req.method === "POST" && requirementReviewCompleteMatch) {
+        if (!input.backend.completeRequirementReview) {
+          writeJson(res, 404, { error: "requirement endpoint unavailable" });
+          return;
+        }
+        const requirementId = decodeURIComponent(
+          requirementReviewCompleteMatch[1] ?? "",
+        );
+        const response =
+          await input.backend.completeRequirementReview(requirementId);
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const requirementReviewReopenMatch = url.pathname.match(
+        /^\/kanban\/requirements\/([^/]+)\/review\/reopen$/,
+      );
+      if (req.method === "POST" && requirementReviewReopenMatch) {
+        if (!input.backend.reopenRequirementReview) {
+          writeJson(res, 404, { error: "requirement endpoint unavailable" });
+          return;
+        }
+        const requirementId = decodeURIComponent(
+          requirementReviewReopenMatch[1] ?? "",
+        );
+        const response =
+          await input.backend.reopenRequirementReview(requirementId);
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const requirementTerminalInputMatch = url.pathname.match(
+        /^\/kanban\/requirements\/([^/]+)\/terminal\/input$/,
+      );
+      if (req.method === "POST" && requirementTerminalInputMatch) {
+        if (!input.backend.sendRequirementTerminalInput) {
+          writeJson(res, 404, { error: "requirement endpoint unavailable" });
+          return;
+        }
+        const requirementId = decodeURIComponent(
+          requirementTerminalInputMatch[1] ?? "",
+        );
+        const body = await parseJsonBody(req);
+        const response = await handleTerminalInputRequest(
+          body,
+          (terminalInput) =>
+            input.backend.sendRequirementTerminalInput?.(
+              requirementId,
+              terminalInput,
+            ) ?? {
+              status: 404,
+              body: { error: "requirement endpoint unavailable" },
+            },
+        );
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const requirementTerminalMatch = url.pathname.match(
+        /^\/kanban\/requirements\/([^/]+)\/terminal\/stream$/,
+      );
+      if (req.method === "GET" && requirementTerminalMatch) {
+        if (!input.backend.subscribeRequirementTerminalStream) {
+          writeJson(res, 404, { error: "requirement endpoint unavailable" });
+          return;
+        }
+        const requirementId = decodeURIComponent(
+          requirementTerminalMatch[1] ?? "",
+        );
+        writeCorsHeaders(res);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders?.();
+
+        const unsubscribe = input.backend.subscribeRequirementTerminalStream(
+          requirementId,
+          (event) => {
+            res.write(
+              `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+            );
+          },
+        );
+
+        const ping = setInterval(() => {
+          res.write(": ping\n\n");
+        }, 15_000);
+
+        req.on("close", () => {
+          clearInterval(ping);
+          unsubscribe();
+        });
         return;
       }
 

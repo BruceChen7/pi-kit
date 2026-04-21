@@ -86,6 +86,26 @@ assert_present \
   'REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); SLUG=$(basename "$REPO_ROOT"); ls -t "$REPO_ROOT/.pi/plans/$SLUG/office-hours"/*.md 2>/dev/null | head -1' \
   "plan-eng-review office-hours lookup recomputes state inline"
 
+assert_absent \
+  "skills/brainstorming/scripts/start-server.sh" \
+  ".superpowers/brainstorm/" \
+  "brainstorming start-server avoids storing sessions at repo root"
+
+assert_absent \
+  "skills/brainstorming/visual-companion.md" \
+  ".superpowers/brainstorm/" \
+  "brainstorming visual companion docs avoid repo-root .superpowers storage"
+
+assert_present \
+  "skills/brainstorming/scripts/start-server.sh" \
+  'SCREEN_DIR="${PROJECT_DIR}/.pi/brainstorm/${SESSION_ID}"' \
+  "brainstorming start-server stores sessions under .pi"
+
+assert_present \
+  "skills/brainstorming/visual-companion.md" \
+  '`.pi/brainstorm/`' \
+  "brainstorming visual companion docs point to .pi storage"
+
 if [ "$failures" -gt 0 ]; then
   printf '\n%s verification checks failed.\n' "$failures" >&2
   exit 1

@@ -5,6 +5,15 @@ import type {
   TerminalInputResponse,
 } from "./types";
 
+const defaultRequirementTerminal: RequirementDetail["terminal"] = {
+  summary: null,
+  status: "idle",
+  writable: false,
+  shellAlive: false,
+  streamUrl: "",
+  lastExitCode: null,
+};
+
 function normalizePath(path: string): string {
   const trimmed = path.trim();
   if (!trimmed) {
@@ -26,6 +35,18 @@ async function readJsonPayload(
 
     throw error;
   }
+}
+
+function normalizeRequirementDetail(
+  payload: RequirementDetail,
+): RequirementDetail {
+  return {
+    ...payload,
+    terminal: {
+      ...defaultRequirementTerminal,
+      ...(payload.terminal ?? {}),
+    },
+  };
 }
 
 export class KanbanRuntimeApi {
@@ -69,58 +90,63 @@ export class KanbanRuntimeApi {
     projectName?: string | null;
     projectPath?: string | null;
   }): Promise<RequirementDetail> {
-    return this.request<RequirementDetail>("/kanban/requirements", {
+    const payload = await this.request<RequirementDetail>("/kanban/requirements", {
       method: "POST",
       body: JSON.stringify(input),
     });
+    return normalizeRequirementDetail(payload);
   }
 
   async getRequirement(requirementId: string): Promise<RequirementDetail> {
-    return this.request<RequirementDetail>(
+    const payload = await this.request<RequirementDetail>(
       `/kanban/requirements/${encodeURIComponent(requirementId)}`,
       {
         method: "GET",
       },
     );
+    return normalizeRequirementDetail(payload);
   }
 
   async startRequirement(
     requirementId: string,
     command: string,
   ): Promise<RequirementDetail> {
-    return this.request<RequirementDetail>(
+    const payload = await this.request<RequirementDetail>(
       `/kanban/requirements/${encodeURIComponent(requirementId)}/start`,
       {
         method: "POST",
         body: JSON.stringify({ command }),
       },
     );
+    return normalizeRequirementDetail(payload);
   }
 
   async restartRequirement(
     requirementId: string,
     command: string,
   ): Promise<RequirementDetail> {
-    return this.request<RequirementDetail>(
+    const payload = await this.request<RequirementDetail>(
       `/kanban/requirements/${encodeURIComponent(requirementId)}/restart`,
       {
         method: "POST",
         body: JSON.stringify({ command }),
       },
     );
+    return normalizeRequirementDetail(payload);
   }
 
   async updateRequirementBoardStatus(
     requirementId: string,
     boardStatus: "inbox" | "in_progress" | "done",
   ): Promise<RequirementDetail> {
-    return this.request<RequirementDetail>(
+    const payload = await this.request<RequirementDetail>(
       `/kanban/requirements/${encodeURIComponent(requirementId)}/board-status`,
       {
         method: "POST",
         body: JSON.stringify({ boardStatus }),
       },
     );
+    return normalizeRequirementDetail(payload);
   }
 
   async sendRequirementTerminalInput(

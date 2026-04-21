@@ -382,7 +382,7 @@ async function updateBoardStatus(
             </div>
             <div class="badge-row">
               <span class="status-chip">{boardLabel(detail.requirement.boardStatus)}</span>
-              <span class="status-chip emphasis">{terminalLabel(detail.terminal.status)}</span>
+              <span class="status-chip emphasis">{terminalLabel(detail.terminal?.status ?? "idle")}</span>
             </div>
           </div>
 
@@ -410,7 +410,7 @@ async function updateBoardStatus(
             <textarea bind:value={commandDraft} class="field-textarea" rows="4"></textarea>
           </label>
 
-          {#if detail.terminal.summary}
+          {#if detail.terminal?.summary}
             <p class="subtle">{detail.terminal.summary}</p>
           {/if}
 

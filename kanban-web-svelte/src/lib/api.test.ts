@@ -194,6 +194,34 @@ describe("KanbanRuntimeApi", () => {
     expect(init.body).toBe(JSON.stringify({ boardStatus: "done" }));
   });
 
+  it("normalizes missing terminal payloads on requirement detail responses", async () => {
+    const fetchMock = vi.fn(async () => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          requirement: { id: "req-1" },
+          project: { id: "project-1" },
+          activeSession: null,
+        }),
+      } as unknown as Response;
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new KanbanRuntimeApi();
+    const detail = await api.getRequirement("req-1");
+
+    expect(detail.terminal).toEqual({
+      summary: null,
+      status: "idle",
+      writable: false,
+      shellAlive: false,
+      streamUrl: "",
+      lastExitCode: null,
+    });
+  });
+
   it("sends raw terminal input to requirement sessions", async () => {
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, init?: RequestInit) => {

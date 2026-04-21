@@ -1477,8 +1477,6 @@ describe("feature-workflow extension", () => {
       "feat/integrated",
       "--yes",
       "--foreground",
-      "--format",
-      "json",
     ]);
     expect(exec).toHaveBeenNthCalledWith(3, "wt", [
       "-C",
@@ -1487,8 +1485,6 @@ describe("feature-workflow extension", () => {
       "feat/empty",
       "--yes",
       "--foreground",
-      "--format",
-      "json",
     ]);
 
     expect(
@@ -1584,8 +1580,6 @@ describe("feature-workflow extension", () => {
       "feat/integrated",
       "--yes",
       "--foreground",
-      "--format",
-      "json",
     ]);
     expect(
       notifications.some(
@@ -1750,8 +1744,6 @@ describe("feature-workflow extension", () => {
       "feat/integrated",
       "--yes",
       "--foreground",
-      "--format",
-      "json",
     ]);
   });
 

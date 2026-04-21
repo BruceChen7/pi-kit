@@ -220,6 +220,26 @@ describe("KanbanRuntimeApi", () => {
     );
   });
 
+  it("surfaces HTTP status when error responses have an empty body", async () => {
+    const fetchMock = vi.fn(async () => {
+      return {
+        ok: false,
+        status: 404,
+        json: async () => {
+          throw new SyntaxError("Unexpected end of JSON input");
+        },
+      } as unknown as Response;
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const api = new KanbanRuntimeApi();
+
+    await expect(api.getCardRuntime("child-pricing-widget")).rejects.toThrow(
+      "HTTP 404",
+    );
+  });
+
   it("creates same-origin event sources", () => {
     class MockEventSource {
       constructor(public readonly url: string) {}

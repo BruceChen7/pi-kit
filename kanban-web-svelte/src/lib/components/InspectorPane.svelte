@@ -1,8 +1,5 @@
 <script lang="ts">
 import { tick } from "svelte";
-
-// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
-import InspectorTerminal from "./InspectorTerminal.svelte";
 import type {
   ActionState,
   BoardCard,
@@ -10,6 +7,8 @@ import type {
   ChildLifecycleEvent,
 } from "../types";
 import type { InspectorTab } from "../ui-types";
+// biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
+import InspectorTerminal from "./InspectorTerminal.svelte";
 
 export let selectedFeature: BoardCard | null;
 export let selectedChild: BoardCard | null;

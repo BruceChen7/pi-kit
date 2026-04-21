@@ -1,6 +1,6 @@
 <script lang="ts">
 import { onMount, tick } from "svelte";
-
+import { addChildCard, addFeatureCard } from "./lib/board-editor";
 import {
   deriveFeatureOverview,
   deriveSelectionState,
@@ -16,7 +16,6 @@ import InspectorPane from "./lib/components/InspectorPane.svelte";
 import ProjectContextBar from "./lib/components/ProjectContextBar.svelte";
 // biome-ignore lint/correctness/noUnusedImports: Svelte template references component imports.
 import ProjectPickerView from "./lib/components/ProjectPickerView.svelte";
-import { addChildCard, addFeatureCard } from "./lib/board-editor";
 import {
   buildInitialProjectBoard,
   createProjectBoardFile,
@@ -30,15 +29,18 @@ import {
   supportsProjectDirectoryAccess,
 } from "./lib/project-browser-access";
 import { openProjectWorkspace } from "./lib/project-entry-controller";
+import { getLocalProjectBoardRuntimeMode } from "./lib/project-runtime-mode";
 import type { BoardCard, BoardSnapshot } from "./lib/types";
 import type { InspectorTab, OverviewAction } from "./lib/ui-types";
 
 const projectAccessStore =
   typeof window === "undefined" ? null : new BrowserProjectAccessStore();
+const localProjectBoardRuntimeMode = getLocalProjectBoardRuntimeMode();
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this constant.
 const overviewActions: OverviewAction[] = [];
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this constant.
-const terminalUnavailableMessage: string | null = null;
+const terminalUnavailableMessage =
+  localProjectBoardRuntimeMode.terminalUnavailableMessage;
 
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let projectPhase:
@@ -66,12 +68,15 @@ let board: BoardSnapshot | null = null;
 
 let featureDialogOpen = false;
 let featureTitle = "";
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let featureFormError: string | null = null;
 let featureSubmitting = false;
 let featureTitleInput: HTMLInputElement | null = null;
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let childFormOpen = false;
 let childTitle = "";
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template consumes this state.
 let childFormError: string | null = null;
 let childSubmitting = false;
 
@@ -138,6 +143,7 @@ async function focusFeatureTitleInput(): Promise<void> {
 // biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 function runOverviewAction(_actionId: string): void {}
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 function openFeatureDialog(): void {
   featureDialogOpen = true;
   featureTitle = "";
@@ -150,6 +156,7 @@ function resetFeatureDialog(): void {
   featureFormError = null;
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 function closeFeatureDialog(): void {
   if (featureSubmitting) {
     return;
@@ -158,6 +165,7 @@ function closeFeatureDialog(): void {
   resetFeatureDialog();
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 function openChildForm(): void {
   if (!selectedFeature) {
     childFormError = "Select a feature before adding a child.";
@@ -175,6 +183,7 @@ function resetChildForm(): void {
   childFormError = null;
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 function closeChildForm(): void {
   if (childSubmitting) {
     return;
@@ -183,6 +192,7 @@ function closeChildForm(): void {
   resetChildForm();
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 async function submitFeatureForm(): Promise<void> {
   if (!board || !currentProject) {
     return;
@@ -213,6 +223,7 @@ async function submitFeatureForm(): Promise<void> {
   }
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: Svelte template event handlers reference this function.
 async function submitChildForm(): Promise<void> {
   if (!board || !currentProject || !selectedFeature) {
     childFormError = "Select a feature before adding a child.";
@@ -459,7 +470,7 @@ onMount(() => {
         {selectedFeatureId}
         {selectedChildId}
         activeExecutionCardId={null}
-        actionsEnabled={false}
+        actionsEnabled={localProjectBoardRuntimeMode.actionsEnabled}
         onSelectCard={selectCard}
         onOpenCardActions={openUnavailableActionDialog}
         onStartCard={() => {}}
@@ -479,7 +490,7 @@ onMount(() => {
         latestStatus={null}
         latestLifecycle={null}
         actionLog={visibleActionLog}
-        actionsEnabled={false}
+        actionsEnabled={localProjectBoardRuntimeMode.actionsEnabled}
         childFormOpen={childFormOpen}
         childTitle={childTitle}
         childError={childFormError}

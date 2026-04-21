@@ -16,6 +16,20 @@ function normalizePath(path: string): string {
   return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
 }
 
+async function readJsonPayload(
+  response: Response,
+): Promise<Record<string, unknown> | null> {
+  try {
+    return (await response.json()) as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
 export class KanbanRuntimeApi {
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(normalizePath(path), {
@@ -26,9 +40,13 @@ export class KanbanRuntimeApi {
       },
     });
 
-    const payload = (await response.json()) as Record<string, unknown>;
+    const payload = await readJsonPayload(response);
     if (!response.ok) {
-      throw new Error(String(payload.error ?? `HTTP ${response.status}`));
+      throw new Error(String(payload?.error ?? `HTTP ${response.status}`));
+    }
+
+    if (!payload) {
+      throw new Error(`HTTP ${response.status}`);
     }
 
     return payload as T;

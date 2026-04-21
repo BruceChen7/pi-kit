@@ -160,8 +160,6 @@ export async function runFeaturePruneMergedCommand(
       candidate.branch,
       "--yes",
       "--foreground",
-      "--format",
-      "json",
     ]);
 
     if (removeResult.code === 0) {

@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import {
+  type ExtensionAPI,
+  SessionManager,
+} from "@mariozechner/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { clearSettingsCache } from "../shared/settings.js";
@@ -765,6 +768,111 @@ describe("feature-workflow extension", () => {
         level: "info",
       },
     ]);
+  });
+
+  it("aligns process cwd when /feature-switch auto-switches sessions", async () => {
+    const initialCwd = process.cwd();
+    const repoRoot = createTempRepoWithMainBranch();
+    const featureBranch = "fix-switch-process-cwd";
+    const worktreePath = path.join(repoRoot, ".wt", featureBranch);
+    const sessionManager = SessionManager.create(repoRoot);
+
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            defaults: {
+              autoSwitchToWorktreeSession: true,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              branch: featureBranch,
+              path: worktreePath,
+              commit: { timestamp: 1 },
+            },
+          ]),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "switch") {
+        fs.mkdirSync(worktreePath, { recursive: true });
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            action: "switched",
+            path: worktreePath,
+          }),
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+    const switchSession = vi.fn(async () => ({ cancelled: false }));
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-switch");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    process.chdir(repoRoot);
+
+    try {
+      await expect(
+        handler(featureBranch, {
+          cwd: repoRoot,
+          hasUI: false,
+          ui: {
+            notify() {
+              // no-op
+            },
+          },
+          sessionManager,
+          switchSession,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(switchSession).toHaveBeenCalledTimes(1);
+      expect(fs.realpathSync(process.cwd())).toBe(
+        fs.realpathSync(worktreePath),
+      );
+    } finally {
+      process.chdir(initialCwd);
+    }
   });
 
   it("blocks /feature-start session switch in strict ignored-sync mode", async () => {

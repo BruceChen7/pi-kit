@@ -770,6 +770,255 @@ describe("feature-workflow extension", () => {
     ]);
   });
 
+  it("switches a remote-only origin branch by bare query", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const resolvedRepoRoot = runGit(repoRoot, [
+      "rev-parse",
+      "--show-toplevel",
+    ]).stdout.trim();
+    const featureBranch = "kanban-v2";
+    const worktreePath = path.join(repoRoot, ".wt", featureBranch);
+    const headSha = runGit(repoRoot, ["rev-parse", "HEAD"]).stdout.trim();
+
+    runGit(repoRoot, [
+      "update-ref",
+      `refs/remotes/origin/${featureBranch}`,
+      headSha,
+    ]);
+
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            defaults: {
+              autoSwitchToWorktreeSession: false,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([]),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "switch") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            action: "switched",
+            path: worktreePath,
+          }),
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-switch");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await expect(
+      handler(featureBranch, {
+        cwd: repoRoot,
+        hasUI: false,
+        ui: {
+          notify(message: string, level: string) {
+            notifications.push({ message, level });
+          },
+        },
+        sessionManager: {
+          getSessionFile() {
+            return null;
+          },
+        },
+        async switchSession() {
+          return { cancelled: false };
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(exec).toHaveBeenNthCalledWith(1, "wt", [
+      "-C",
+      resolvedRepoRoot,
+      "list",
+      "--format",
+      "json",
+    ]);
+    expect(exec).toHaveBeenNthCalledWith(2, "wt", [
+      "-C",
+      resolvedRepoRoot,
+      "switch",
+      featureBranch,
+      "--no-cd",
+      "--yes",
+    ]);
+    expect(notifications).toEqual([
+      {
+        message: expect.stringContaining(`Worktree ready: ${featureBranch}`),
+        level: "info",
+      },
+    ]);
+  });
+
+  it("shows remote-only origin branches in the /feature-switch picker", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const featureBranch = "kanban-v2";
+    const existingBranch = "checkout-v2";
+    const worktreePath = path.join(repoRoot, ".wt", featureBranch);
+    const headSha = runGit(repoRoot, ["rev-parse", "HEAD"]).stdout.trim();
+
+    runGit(repoRoot, [
+      "update-ref",
+      `refs/remotes/origin/${featureBranch}`,
+      headSha,
+    ]);
+
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            defaults: {
+              autoSwitchToWorktreeSession: false,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    let selectOptions: string[] = [];
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              branch: existingBranch,
+              path: path.join(repoRoot, ".wt", existingBranch),
+              commit: { timestamp: 1 },
+            },
+          ]),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "switch") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            action: "switched",
+            path: worktreePath,
+          }),
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-switch");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await expect(
+      handler("", {
+        cwd: repoRoot,
+        hasUI: true,
+        ui: {
+          async select(prompt: string, options: string[]) {
+            expect(prompt).toBe("Switch to feature:");
+            selectOptions = options;
+            return `${featureBranch} (remote)`;
+          },
+          notify(message: string, level: string) {
+            notifications.push({ message, level });
+          },
+        },
+        sessionManager: {
+          getSessionFile() {
+            return null;
+          },
+        },
+        async switchSession() {
+          return { cancelled: false };
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(selectOptions).toEqual([
+      existingBranch,
+      `${featureBranch} (remote)`,
+    ]);
+    expect(exec.mock.calls.some((call) => call[1][2] === "switch")).toBe(true);
+    expect(notifications).toEqual([
+      {
+        message: expect.stringContaining(`Worktree ready: ${featureBranch}`),
+        level: "info",
+      },
+    ]);
+  });
+
   it("aligns process cwd when /feature-switch auto-switches sessions", async () => {
     const initialCwd = process.cwd();
     const repoRoot = createTempRepoWithMainBranch();

@@ -3,7 +3,12 @@ import type {
   ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 
-import { matchFeatureRecord } from "../feature-query.js";
+import { listRemoteBranches } from "../../shared/git.js";
+import {
+  buildFeatureSwitchCandidates,
+  type FeatureSwitchCandidate,
+  matchFeatureSwitchCandidate,
+} from "../feature-query.js";
 import { resolveFeatureCommandRuntime } from "../runtime.js";
 import type { FeatureRecord } from "../storage.js";
 import {
@@ -51,49 +56,66 @@ export async function runFeatureSwitchCommand(
     return;
   }
 
-  const records = switchableResult.records;
+  const candidates = buildFeatureSwitchCandidates({
+    records: switchableResult.records,
+    originBranches: listRemoteBranches(runGit, "origin"),
+  });
 
-  if (records.length === 0) {
-    ctx.ui.notify("No feature records found", "info");
+  if (candidates.length === 0) {
+    ctx.ui.notify("No switchable features found", "info");
     return;
   }
 
   let query = args[0] ?? "";
+  let selectedCandidate: FeatureSwitchCandidate | null = null;
   if (!query && ctx.hasUI) {
     const choice = await ctx.ui.select(
       "Switch to feature:",
-      records.map((record) => record.branch),
+      candidates.map((candidate) => candidate.displayLabel),
     );
     if (choice === undefined) return;
-    query = choice;
-  }
 
-  const match = matchFeatureRecord(records, query);
-  switch (match.kind) {
-    case "not-found": {
-      ctx.ui.notify(`Unknown feature: ${query}`, "error");
+    query = choice;
+    selectedCandidate =
+      candidates.find((candidate) => candidate.displayLabel === choice) ?? null;
+    if (!selectedCandidate) {
+      ctx.ui.notify(`Unknown feature: ${choice}`, "error");
       return;
     }
-    case "matched":
-      break;
   }
 
-  const record = match.record;
+  if (!selectedCandidate) {
+    const match = matchFeatureSwitchCandidate(candidates, query);
+    switch (match.kind) {
+      case "not-found": {
+        ctx.ui.notify(`Unknown feature: ${match.value}`, "error");
+        return;
+      }
+      case "matched":
+        selectedCandidate = match.candidate;
+        break;
+    }
+  }
+
+  const branch = selectedCandidate.branch;
 
   commandLog.debug("feature-switch target resolved", {
     query,
     repoRoot,
-    branch: record.branch,
+    branch,
+    source: selectedCandidate.kind,
+    remoteRef: selectedCandidate.remoteRef,
   });
 
   commandLog.debug("feature-switch preparing worktree", {
     repoRoot,
-    branch: record.branch,
+    branch,
+    source: selectedCandidate.kind,
   });
 
   const switchWorktreeResult = await ensureFeatureWorktree(runWt, {
-    branch: record.branch,
-    fallbackWorktreePath: record.worktreePath,
+    branch,
+    fallbackWorktreePath: selectedCandidate.fallbackWorktreePath,
   });
   if (switchWorktreeResult.ok === false) {
     notifyAndLogWtError({
@@ -101,7 +123,7 @@ export async function runFeatureSwitchCommand(
       message: switchWorktreeResult.message,
       scope: "wt switch failed",
       meta: {
-        branch: record.branch,
+        branch,
         repoRoot,
       },
     });
@@ -111,17 +133,27 @@ export async function runFeatureSwitchCommand(
   const worktreePath = switchWorktreeResult.worktreePath;
 
   commandLog.debug("feature-switch worktree ready", {
-    branch: record.branch,
+    branch,
     worktreePath,
     setupDrivenLifecycle: true,
+    source: selectedCandidate.kind,
   });
 
   const now = new Date().toISOString();
-  const updatedRecord: FeatureRecord = {
-    ...record,
-    worktreePath: worktreePath || record.worktreePath,
-    updatedAt: now,
-  };
+  const updatedRecord: FeatureRecord = selectedCandidate.record
+    ? {
+        ...selectedCandidate.record,
+        worktreePath: worktreePath || selectedCandidate.record.worktreePath,
+        updatedAt: now,
+      }
+    : {
+        slug: branch,
+        branch,
+        worktreePath,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      };
 
   const beforeSyncResult = await runIgnoredSyncForCommand({
     command: "feature-switch",

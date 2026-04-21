@@ -4,6 +4,7 @@ import path from "node:path";
 
 const PI_CODING_AGENT_PACKAGE = "@mariozechner/pi-coding-agent";
 const PI_TUI_PACKAGE = "@mariozechner/pi-tui";
+const DEFAULT_GLOBAL_PI_BIN = "/opt/homebrew/bin/pi";
 
 const getNpmCommand = () => (process.platform === "win32" ? "npm.cmd" : "npm");
 
@@ -33,6 +34,9 @@ export const updatePeerDependencies = (packageJson, latestVersion) => {
   };
 };
 
+export const resolvePiBinary = (env = process.env) =>
+  env.PI_BIN || DEFAULT_GLOBAL_PI_BIN;
+
 const readPackageJson = (packageJsonPath) =>
   JSON.parse(readFileSync(packageJsonPath, "utf8"));
 
@@ -45,7 +49,7 @@ const writePackageJson = (packageJsonPath, packageJson) => {
 };
 
 const getPiVersion = () => {
-  const result = spawnSync("pi", ["--version"], {
+  const result = spawnSync(resolvePiBinary(), ["--version"], {
     cwd: process.cwd(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],

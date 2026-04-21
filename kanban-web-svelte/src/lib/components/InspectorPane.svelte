@@ -1,4 +1,6 @@
 <script lang="ts">
+import { tick } from "svelte";
+
 import InspectorTerminal from "./InspectorTerminal.svelte";
 
 import type { InspectorTab } from "../ui-types";
@@ -21,16 +23,34 @@ export let latestLifecycle: ChildLifecycleEvent | null;
 export let actionLog: ActionState[];
 export let onSelectTab: (tab: InspectorTab) => void;
 export let onOpenActionDialog: (card: BoardCard) => void;
+export let onOpenChildForm: () => void;
+export let onChangeChildTitle: (value: string) => void;
+export let onSubmitChildForm: () => void;
+export let onCancelChildForm: () => void;
 export let actionsEnabled = true;
+export let childFormOpen = false;
+export let childTitle = "";
+export let childError: string | null = null;
+export let childSubmitting = false;
 export let terminalUnavailableMessage: string | null = null;
+
+let childTitleInput: HTMLInputElement | null = null;
 
 const tabs: InspectorTab[] = ["terminal", "context", "logs", "handoff"];
 
 $: latestStatusLabel = latestLifecycle
   ? latestLifecycle.type.replace("child-", "")
   : (latestStatus?.status ?? "idle");
+$: if (childFormOpen) {
+  void focusChildTitleInput();
+}
 $: latestSummary =
   latestLifecycle?.summary ?? latestStatus?.summary ?? "No action summary yet";
+
+async function focusChildTitleInput(): Promise<void> {
+  await tick();
+  childTitleInput?.focus();
+}
 </script>
 
 <section class="shell-panel inspector-pane">
@@ -42,17 +62,54 @@ $: latestSummary =
         <p class="subtle">Feature scope: {selectedFeature.title} ({selectedFeature.id})</p>
       {/if}
     </div>
-    {#if selectedChild && actionsEnabled}
-      <button on:click={() => onOpenActionDialog(selectedChild)}>Actions</button>
-    {/if}
+    <div class="inspector-header-actions">
+      {#if selectedFeature}
+        <button on:click={onOpenChildForm}>+ Add Child</button>
+      {/if}
+      {#if selectedChild && actionsEnabled}
+        <button on:click={() => onOpenActionDialog(selectedChild)}>Actions</button>
+      {/if}
+    </div>
   </div>
+
+  {#if childFormOpen}
+    <form class="inline-form" on:submit|preventDefault={onSubmitChildForm}>
+      <label>
+        <span>Title</span>
+        <input
+          bind:this={childTitleInput}
+          value={childTitle}
+          placeholder="e.g. Implement form validation"
+          on:input={(event) =>
+            onChangeChildTitle((event.currentTarget as HTMLInputElement).value)}
+        />
+      </label>
+
+      {#if childError}
+        <p class="error form-error">{childError}</p>
+      {/if}
+
+      <div class="inline-form-actions">
+        <button type="button" on:click={onCancelChildForm} disabled={childSubmitting}>
+          Cancel
+        </button>
+        <button type="submit" disabled={childSubmitting}>
+          {#if childSubmitting}Creating…{:else}Create Child{/if}
+        </button>
+      </div>
+    </form>
+  {/if}
 
   {#if !selectedChild}
     <p class="empty-state">
       {#if selectedFeature}
-        Feature selected. Choose a child card to inspect terminal, context, logs, and handoff.
+        {#if childFormOpen}
+          Add a child under the current feature, or choose an existing child card to inspect.
+        {:else}
+          Feature selected. Add a child from the button above, or choose an existing child card to inspect.
+        {/if}
       {:else}
-        Choose a feature, then a child card, to populate the inspector.
+        Choose a feature first, then add or inspect child cards here.
       {/if}
     </p>
   {:else}

@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onMount } from "svelte";
+import { onMount, tick } from "svelte";
 
 import {
   deriveFeatureOverview,
@@ -11,6 +11,7 @@ import FeatureOverview from "./lib/components/FeatureOverview.svelte";
 import InspectorPane from "./lib/components/InspectorPane.svelte";
 import ProjectContextBar from "./lib/components/ProjectContextBar.svelte";
 import ProjectPickerView from "./lib/components/ProjectPickerView.svelte";
+import { addChildCard, addFeatureCard } from "./lib/board-editor";
 import {
   buildInitialProjectBoard,
   createProjectBoardFile,
@@ -50,6 +51,17 @@ let currentProject: BrowserRecentProject | null = null;
 let pendingProject: BrowserRecentProject | null = null;
 let board: BoardSnapshot | null = null;
 
+let featureDialogOpen = false;
+let featureTitle = "";
+let featureFormError: string | null = null;
+let featureSubmitting = false;
+let featureTitleInput: HTMLInputElement | null = null;
+
+let childFormOpen = false;
+let childTitle = "";
+let childFormError: string | null = null;
+let childSubmitting = false;
+
 let selectedFeatureId: string | null = null;
 let selectedChildId: string | null = null;
 let activeInspectorTab: InspectorTab = "context";
@@ -58,6 +70,9 @@ $: selectedFeature =
   board?.cards.find(
     (card) => card.kind === "feature" && card.id === selectedFeatureId,
   ) ?? null;
+$: if (featureDialogOpen) {
+  void focusFeatureTitleInput();
+}
 $: selectedChild =
   board?.cards.find(
     (card) => card.kind === "child" && card.id === selectedChildId,
@@ -100,7 +115,118 @@ function selectCard(card: BoardCard): void {
   selectedChildId = card.id;
 }
 
+async function focusFeatureTitleInput(): Promise<void> {
+  await tick();
+  featureTitleInput?.focus();
+}
+
 function runOverviewAction(_actionId: string): void {}
+
+function openFeatureDialog(): void {
+  featureDialogOpen = true;
+  featureTitle = "";
+  featureFormError = null;
+}
+
+function resetFeatureDialog(): void {
+  featureDialogOpen = false;
+  featureTitle = "";
+  featureFormError = null;
+}
+
+function closeFeatureDialog(): void {
+  if (featureSubmitting) {
+    return;
+  }
+
+  resetFeatureDialog();
+}
+
+function openChildForm(): void {
+  if (!selectedFeature) {
+    childFormError = "Select a feature before adding a child.";
+    return;
+  }
+
+  childFormOpen = true;
+  childTitle = "";
+  childFormError = null;
+}
+
+function resetChildForm(): void {
+  childFormOpen = false;
+  childTitle = "";
+  childFormError = null;
+}
+
+function closeChildForm(): void {
+  if (childSubmitting) {
+    return;
+  }
+
+  resetChildForm();
+}
+
+async function submitFeatureForm(): Promise<void> {
+  if (!board || !currentProject) {
+    return;
+  }
+
+  let result: ReturnType<typeof addFeatureCard>;
+
+  try {
+    result = addFeatureCard(board, featureTitle);
+  } catch (error) {
+    featureFormError = error instanceof Error ? error.message : String(error);
+    return;
+  }
+
+  featureSubmitting = true;
+  featureFormError = null;
+
+  try {
+    await createProjectBoardFile(currentProject.handle, result.board);
+    board = result.board;
+    selectedFeatureId = result.card.id;
+    selectedChildId = null;
+    resetFeatureDialog();
+  } catch {
+    featureFormError = "Failed to save board changes. Please try again.";
+  } finally {
+    featureSubmitting = false;
+  }
+}
+
+async function submitChildForm(): Promise<void> {
+  if (!board || !currentProject || !selectedFeature) {
+    childFormError = "Select a feature before adding a child.";
+    return;
+  }
+
+  let result: ReturnType<typeof addChildCard>;
+
+  try {
+    result = addChildCard(board, selectedFeature.id, childTitle);
+  } catch (error) {
+    childFormError = error instanceof Error ? error.message : String(error);
+    return;
+  }
+
+  childSubmitting = true;
+  childFormError = null;
+
+  try {
+    await createProjectBoardFile(currentProject.handle, result.board);
+    board = result.board;
+    selectedFeatureId = selectedFeature.id;
+    selectedChildId = result.card.id;
+    resetChildForm();
+  } catch {
+    childFormError = "Failed to save board changes. Please try again.";
+  } finally {
+    childSubmitting = false;
+  }
+}
 
 function openUnavailableActionDialog(_card: BoardCard): void {
   projectError =
@@ -209,6 +335,10 @@ async function openProject(
     currentProject = result.project;
     pendingProject = null;
     board = result.board;
+    featureDialogOpen = false;
+    childFormOpen = false;
+    featureFormError = null;
+    childFormError = null;
     projectPhase = "workspace-ready";
     await projectAccessStore?.markProjectActive(result.project);
     await refreshRecentProjects();
@@ -297,6 +427,7 @@ onMount(() => {
       blockedCount={featureOverview.blockedCount}
       recentAction={featureOverview.recentAction}
       actions={overviewActions}
+      onCreateFeature={openFeatureDialog}
       onRunAction={runOverviewAction}
     />
 
@@ -328,11 +459,24 @@ onMount(() => {
         latestLifecycle={null}
         actionLog={visibleActionLog}
         actionsEnabled={false}
+        childFormOpen={childFormOpen}
+        childTitle={childTitle}
+        childError={childFormError}
+        childSubmitting={childSubmitting}
         {terminalUnavailableMessage}
         onSelectTab={(tab) => {
           activeInspectorTab = tab;
         }}
         onOpenActionDialog={openUnavailableActionDialog}
+        onOpenChildForm={openChildForm}
+        onChangeChildTitle={(value) => {
+          childTitle = value;
+          if (childFormError === "Title is required") {
+            childFormError = null;
+          }
+        }}
+        onSubmitChildForm={() => void submitChildForm()}
+        onCancelChildForm={closeChildForm}
       />
     </section>
   {:else if projectPhase === "unsupported-browser"}
@@ -373,6 +517,54 @@ onMount(() => {
     />
   {/if}
 </main>
+
+{#if featureDialogOpen}
+  <div
+    class="dialog-backdrop"
+    role="button"
+    tabindex="0"
+    on:click|self={closeFeatureDialog}
+    on:keydown={(event) => {
+      if (event.key === "Escape") {
+        closeFeatureDialog();
+      }
+    }}
+  >
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="create-feature-title">
+      <p class="eyebrow">New Feature</p>
+      <h3 id="create-feature-title">Add a feature to the board</h3>
+
+      <form class="dialog-form" on:submit|preventDefault={() => void submitFeatureForm()}>
+        <label>
+          <span>Title</span>
+          <input
+            bind:this={featureTitleInput}
+            bind:value={featureTitle}
+            placeholder="e.g. Improve login flow"
+            on:input={() => {
+              if (featureFormError === "Title is required") {
+                featureFormError = null;
+              }
+            }}
+          />
+        </label>
+
+        {#if featureFormError}
+          <p class="error form-error">{featureFormError}</p>
+        {/if}
+
+        <div class="actions">
+          <button type="button" on:click={closeFeatureDialog} disabled={featureSubmitting}>
+            Cancel
+          </button>
+          <button type="submit" disabled={featureSubmitting}>
+            {#if featureSubmitting}Creating…{:else}Create Feature{/if}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
 
 {#if projectPhase === "project-init-required" && pendingProject}
   <div

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { updatePeerDependencies } from "./update-pi-coding-agent.mjs";
+import {
+  resolvePiBinary,
+  updatePeerDependencies,
+} from "./update-pi-coding-agent.mjs";
 
 describe("updatePeerDependencies", () => {
   it("updates both pi-coding-agent and pi-tui peer dependencies to the latest range", () => {
@@ -63,5 +66,19 @@ describe("updatePeerDependencies", () => {
       "@mariozechner/pi-tui": "^0.67.3",
       react: "^19.0.0",
     });
+  });
+});
+
+describe("resolvePiBinary", () => {
+  it("prefers the explicit PI_BIN override", () => {
+    expect(
+      resolvePiBinary({
+        PI_BIN: "/custom/bin/pi",
+      }),
+    ).toBe("/custom/bin/pi");
+  });
+
+  it("falls back to the default global pi path", () => {
+    expect(resolvePiBinary({})).toBe("/opt/homebrew/bin/pi");
   });
 });

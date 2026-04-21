@@ -5,8 +5,11 @@ import {
   handleActionStreamSubscribe,
   handleBoardPatchRequest,
   handleBoardReadRequest,
+  handleBootstrapRequest,
   handleCardContextRequest,
+  handleCardRuntimeRequest,
   handleExecuteActionRequest,
+  handleTerminalStreamSubscribe,
 } from "./api-routes.js";
 import type { ResolveKanbanCardContextResult } from "./context.js";
 import type { KanbanOrchestratorService } from "./service.js";
@@ -86,6 +89,7 @@ export function createKanbanRuntimeServer(input: {
   host: string;
   port: number;
   token: string;
+  workspaceId: string;
   service: KanbanOrchestratorService;
   resolveContext: (cardQuery: string) => ResolveKanbanCardContextResult;
   applyBoardPatch: (
@@ -129,12 +133,15 @@ export function createKanbanRuntimeServer(input: {
 
       res.write("event: ready\ndata: {}\n\n");
 
-      const unsubscribe = handleActionStreamSubscribe(
+      const unsubscribeState = handleActionStreamSubscribe(
         input.service,
         (state) => {
           res.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
         },
       );
+      const unsubscribeLifecycle = input.service.subscribeLifecycle((event) => {
+        res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      });
 
       const ping = setInterval(() => {
         res.write(": ping\n\n");
@@ -142,15 +149,26 @@ export function createKanbanRuntimeServer(input: {
 
       req.on("close", () => {
         clearInterval(ping);
-        unsubscribe();
+        unsubscribeState();
+        unsubscribeLifecycle();
       });
       return;
     }
 
     try {
+      if (req.method === "POST" && url.pathname === "/kanban/bootstrap") {
+        const response = handleBootstrapRequest({
+          workspaceId: input.workspaceId,
+        });
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/kanban/actions/execute") {
         const body = await parseJsonBody(req);
-        const response = handleExecuteActionRequest(input.service, body);
+        const response = handleExecuteActionRequest(input.service, body, {
+          resolveContext: input.resolveContext,
+        });
         writeJson(res, response.status, response.body);
         return;
       }
@@ -160,6 +178,55 @@ export function createKanbanRuntimeServer(input: {
         const requestId = decodeURIComponent(actionMatch[1] ?? "");
         const response = handleActionStatusRequest(input.service, requestId);
         writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const runtimeMatch = url.pathname.match(
+        /^\/kanban\/cards\/([^/]+)\/runtime$/,
+      );
+      if (req.method === "GET" && runtimeMatch) {
+        const cardQuery = decodeURIComponent(runtimeMatch[1] ?? "");
+        const response = handleCardRuntimeRequest(
+          cardQuery,
+          input.service,
+          input.resolveContext,
+          (cardId) =>
+            `/kanban/cards/${encodeURIComponent(cardId)}/terminal/stream`,
+        );
+        writeJson(res, response.status, response.body);
+        return;
+      }
+
+      const terminalMatch = url.pathname.match(
+        /^\/kanban\/cards\/([^/]+)\/terminal\/stream$/,
+      );
+      if (req.method === "GET" && terminalMatch) {
+        const cardId = decodeURIComponent(terminalMatch[1] ?? "");
+        writeCorsHeaders(res);
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders?.();
+
+        const unsubscribe = handleTerminalStreamSubscribe(
+          input.service,
+          cardId,
+          (event) => {
+            res.write(
+              `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+            );
+          },
+        );
+
+        const ping = setInterval(() => {
+          res.write(": ping\n\n");
+        }, 15_000);
+
+        req.on("close", () => {
+          clearInterval(ping);
+          unsubscribe();
+        });
         return;
       }
 

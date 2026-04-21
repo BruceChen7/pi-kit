@@ -43,6 +43,26 @@ export type CardContext = {
   } | null;
 };
 
+export type BootstrapResponse =
+  | {
+      status: "ready";
+      sessionId: string;
+      workspaceId?: string;
+      capabilities?: {
+        stream: boolean;
+        actions: boolean;
+      };
+    }
+  | {
+      status: "pending";
+      retryAfterMs: number;
+      message?: string;
+    }
+  | {
+      status: "failed";
+      error: string;
+    };
+
 export type ExecuteResponse = {
   requestId: string;
   status: "queued" | "running" | "success" | "failed";
@@ -58,4 +78,34 @@ export type ActionState = {
   startedAt: string | null;
   finishedAt: string | null;
   durationMs: number | null;
+};
+
+export type ChildLifecycleEvent = {
+  type: "child-running" | "child-completed" | "child-failed";
+  cardId: string;
+  summary: string;
+  ts: string;
+};
+
+export type CardRuntimeDetail = {
+  cardId: string;
+  lane: BoardLane;
+  session: {
+    chatJid: string;
+    worktreePath: string;
+  } | null;
+  execution: {
+    status: "idle" | "running" | "completed" | "failed";
+    summary: string | null;
+    requestId: string | null;
+  };
+  completion: {
+    readyForReview: boolean;
+    completedAt: string | null;
+  };
+  terminal: {
+    available: boolean;
+    protocol: "sse-text-stream";
+    streamUrl: string;
+  };
 };

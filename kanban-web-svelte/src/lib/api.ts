@@ -1,52 +1,27 @@
 import type {
   ActionState,
   BoardSnapshot,
+  BootstrapResponse,
   CardContext,
+  CardRuntimeDetail,
   ExecuteResponse,
 } from "./types";
 
-function trimTrailingSlash(url: string): string {
-  return url.endsWith("/") ? url.slice(0, -1) : url;
-}
-
-function normalizeToken(token: string): string {
-  const trimmed = token.trim();
-  if (trimmed.toLowerCase().startsWith("bearer ")) {
-    return trimmed.slice("bearer ".length).trim();
+function normalizePath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    throw new Error("kanban api path is required");
   }
-  return trimmed;
+
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
 }
 
 export class KanbanRuntimeApi {
-  private readonly baseUrl: string;
-  private readonly token: string;
-
-  constructor(baseUrl: string, token: string) {
-    this.baseUrl = baseUrl;
-    this.token = normalizeToken(token);
-  }
-
-  private buildUrl(path: string): string {
-    return `${trimTrailingSlash(this.baseUrl)}${path}`;
-  }
-
-  private authHeaders(): HeadersInit {
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-    };
-
-    if (this.token) {
-      headers.authorization = `Bearer ${this.token}`;
-    }
-
-    return headers;
-  }
-
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(this.buildUrl(path), {
+    const response = await fetch(normalizePath(path), {
       ...init,
       headers: {
-        ...this.authHeaders(),
+        "content-type": "application/json",
         ...(init?.headers ?? {}),
       },
     });
@@ -57,6 +32,12 @@ export class KanbanRuntimeApi {
     }
 
     return payload as T;
+  }
+
+  async bootstrap(): Promise<BootstrapResponse> {
+    return this.request<BootstrapResponse>("/kanban/bootstrap", {
+      method: "POST",
+    });
   }
 
   async getBoard(): Promise<BoardSnapshot> {
@@ -77,7 +58,6 @@ export class KanbanRuntimeApi {
   async executeAction(input: {
     action: string;
     cardId: string;
-    worktreeKey: string;
     payload?: Record<string, unknown>;
   }): Promise<ExecuteResponse> {
     return this.request<ExecuteResponse>("/kanban/actions/execute", {
@@ -95,11 +75,29 @@ export class KanbanRuntimeApi {
     );
   }
 
+  async patchBoard(nextBoardText: string): Promise<{ summary: string }> {
+    return this.request<{ summary: string }>("/kanban/board", {
+      method: "PATCH",
+      body: JSON.stringify({
+        nextBoardText,
+      }),
+    });
+  }
+
+  async getCardRuntime(cardId: string): Promise<CardRuntimeDetail> {
+    return this.request<CardRuntimeDetail>(
+      `/kanban/cards/${encodeURIComponent(cardId)}/runtime`,
+      {
+        method: "GET",
+      },
+    );
+  }
+
   createEventSource(): EventSource {
-    const baseStreamUrl = this.buildUrl("/kanban/stream");
-    const url = this.token
-      ? `${baseStreamUrl}?token=${encodeURIComponent(this.token)}`
-      : baseStreamUrl;
-    return new EventSource(url);
+    return new EventSource("/kanban/stream");
+  }
+
+  createTerminalEventSource(streamUrl: string): EventSource {
+    return new EventSource(streamUrl.trim());
   }
 }

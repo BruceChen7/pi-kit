@@ -67,3 +67,68 @@ export function resolveKanbanCardContext(input: {
     },
   };
 }
+
+export function resolveKanbanCardContextByWorktreePath(input: {
+  repoRoot: string;
+  worktreePath: string;
+  sessionRegistryPath: string;
+}): ResolveKanbanCardContextResult {
+  const board = readFeatureBoard(input.repoRoot);
+  if (board.errors.length > 0) {
+    return {
+      ok: false,
+      error: `feature board parser errors: ${board.errors.join(" | ")}`,
+    };
+  }
+
+  const normalizedWorktreePath = input.worktreePath.trim();
+  if (!normalizedWorktreePath) {
+    return {
+      ok: false,
+      error: "worktree path is required",
+    };
+  }
+
+  const match = board.cards
+    .map((card) => ({
+      card,
+      sidecar: readFeatureCardSidecar(input.repoRoot, card.id),
+    }))
+    .filter(
+      (entry): entry is { card: FeatureBoardCard; sidecar: NonNullable<ReturnType<typeof readFeatureCardSidecar>> } =>
+        Boolean(entry.sidecar?.worktreePath),
+    )
+    .filter((entry) => {
+      const candidate = entry.sidecar.worktreePath;
+      return (
+        normalizedWorktreePath === candidate ||
+        normalizedWorktreePath.startsWith(`${candidate}/`) ||
+        normalizedWorktreePath.startsWith(`${candidate}\\`)
+      );
+    })
+    .sort((left, right) => right.sidecar.worktreePath.length - left.sidecar.worktreePath.length)[0];
+
+  if (!match) {
+    return {
+      ok: false,
+      error: `Unknown worktree path: ${input.worktreePath}`,
+    };
+  }
+
+  const registry = readSessionRegistry(input.sessionRegistryPath);
+  return {
+    ok: true,
+    context: {
+      cardId: match.card.id,
+      title: match.card.title,
+      kind: match.card.kind,
+      lane: match.card.lane,
+      parentCardId: match.card.parentId,
+      branch: match.sidecar.branch,
+      baseBranch: match.sidecar.baseBranch,
+      mergeTarget: match.sidecar.mergeTarget,
+      worktreePath: match.sidecar.worktreePath,
+      session: registry.cards[match.card.id] ?? null,
+    },
+  };
+}

@@ -14,7 +14,10 @@ import {
   handleExecuteActionRequest,
 } from "./api-routes.js";
 import { applyBoardTextPatch } from "./board-patch.js";
-import { resolveKanbanCardContext } from "./context.js";
+import {
+  resolveKanbanCardContext,
+  resolveKanbanCardContextByWorktreePath,
+} from "./context.js";
 import { createKanbanActionExecutors } from "./executors.js";
 import { readFeatureBoard } from "./feature-workflow-local.js";
 import {
@@ -150,6 +153,17 @@ function resolveCardContext(
   return resolveKanbanCardContext({
     repoRoot,
     cardQuery,
+    sessionRegistryPath: getKanbanSessionRegistryPath(repoRoot),
+  });
+}
+
+function resolveCardContextByWorktreePath(
+  repoRoot: string,
+  worktreePath: string,
+): ReturnType<typeof resolveKanbanCardContextByWorktreePath> {
+  return resolveKanbanCardContextByWorktreePath({
+    repoRoot,
+    worktreePath,
     sessionRegistryPath: getKanbanSessionRegistryPath(repoRoot),
   });
 }
@@ -357,6 +371,7 @@ async function runKanbanRuntimeStartCommand(
     host,
     port: port ?? 0,
     token,
+    workspaceId: path.basename(repoRoot),
     service,
     resolveContext: (cardQuery) => resolveCardContext(repoRoot, cardQuery),
     applyBoardPatch: (nextBoardText) =>
@@ -414,6 +429,69 @@ async function runKanbanRuntimeStatusCommand(
     }),
     "info",
   );
+}
+
+function extractLastAssistantText(
+  messages: Array<{ role?: string; content?: unknown }>,
+): string | null {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message?.role !== "assistant") {
+      continue;
+    }
+
+    const content = message.content;
+    if (typeof content === "string" && content.trim().length > 0) {
+      return content.trim();
+    }
+
+    if (Array.isArray(content)) {
+      const parts = content
+        .map((part) => {
+          if (!part || typeof part !== "object") {
+            return null;
+          }
+
+          const candidate =
+            (part as { type?: unknown; text?: unknown }).type === "text"
+              ? (part as { text?: unknown }).text
+              : null;
+          return typeof candidate === "string" ? candidate : null;
+        })
+        .filter((part): part is string => Boolean(part))
+        .join("");
+      if (parts.trim().length > 0) {
+        return parts.trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+function resolveRuntimeTargetFromSessionCwd(cwd: string): {
+  repoRoot: string;
+  service: KanbanOrchestratorService;
+  cardId: string;
+} | null {
+  for (const [repoRoot, service] of servicesByRepo.entries()) {
+    const result = resolveCardContextByWorktreePath(repoRoot, cwd);
+    if (!result.ok || result.context.kind !== "child") {
+      continue;
+    }
+
+    if (result.context.lane !== "In Progress") {
+      continue;
+    }
+
+    return {
+      repoRoot,
+      service,
+      cardId: result.context.cardId,
+    };
+  }
+
+  return null;
 }
 
 async function runKanbanRuntimeStopCommand(
@@ -476,6 +554,51 @@ export default function kanbanOrchestratorExtension(pi: ExtensionAPI): void {
   pi.registerCommand("kanban-runtime-stop", {
     description: "Stop embedded kanban runtime HTTP server",
     handler: async (_rawArgs, ctx) => runKanbanRuntimeStopCommand(ctx),
+  });
+
+  pi.on("before_agent_start", async (_event, ctx) => {
+    const target = resolveRuntimeTargetFromSessionCwd(ctx.cwd);
+    if (!target) {
+      return;
+    }
+
+    target.service.recordChildLifecycle({
+      type: "child-running",
+      cardId: target.cardId,
+      summary: "agent started",
+      ts: new Date().toISOString(),
+    });
+  });
+
+  pi.on("message_update", async (event, ctx) => {
+    if (event.assistantMessageEvent.type !== "text_delta") {
+      return;
+    }
+
+    const target = resolveRuntimeTargetFromSessionCwd(ctx.cwd);
+    if (!target) {
+      return;
+    }
+
+    target.service.appendTerminalChunk({
+      cardId: target.cardId,
+      chunk: event.assistantMessageEvent.delta,
+      ts: new Date().toISOString(),
+    });
+  });
+
+  pi.on("agent_end", async (event, ctx) => {
+    const target = resolveRuntimeTargetFromSessionCwd(ctx.cwd);
+    if (!target) {
+      return;
+    }
+
+    target.service.recordChildLifecycle({
+      type: "child-completed",
+      cardId: target.cardId,
+      summary: extractLastAssistantText(event.messages) ?? "agent completed",
+      ts: new Date().toISOString(),
+    });
   });
 
   pi.on("session_shutdown", async () => {

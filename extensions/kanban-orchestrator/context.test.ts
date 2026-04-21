@@ -4,7 +4,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { resolveKanbanCardContext } from "./context.js";
+import {
+  resolveKanbanCardContext,
+  resolveKanbanCardContextByWorktreePath,
+} from "./context.js";
 
 const tempDirs: string[] = [];
 
@@ -161,6 +164,91 @@ describe("resolveKanbanCardContext", () => {
           worktreePath: "/tmp/wt/main--feat-checkout-v2",
           lastActiveAt: "2026-04-20T00:00:00.000Z",
         },
+      },
+    });
+  });
+
+  it("resolves child context from worktree path", () => {
+    const repoRoot = createTempDir();
+    fs.mkdirSync(path.join(repoRoot, "workitems", ".feature-cards"), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(repoRoot, "workitems", ".feature-workflow"), {
+      recursive: true,
+    });
+
+    fs.writeFileSync(
+      path.join(repoRoot, "workitems", "features.kanban.md"),
+      [
+        "## In Progress",
+        "",
+        "- [ ] Checkout V2 <!-- card-id: feat-checkout-v2; kind: feature -->",
+        "  - [ ] Split pricing widget <!-- card-id: child-pricing-widget; kind: child; parent: feat-checkout-v2 -->",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    fs.writeFileSync(
+      path.join(
+        repoRoot,
+        "workitems",
+        ".feature-cards",
+        "child-pricing-widget.json",
+      ),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          branch: "main--feat-checkout-v2--child-pricing-widget",
+          baseBranch: "main--feat-checkout-v2",
+          mergeTarget: "main--feat-checkout-v2",
+          title: "Split pricing widget",
+          kind: "child",
+          status: "in_progress",
+          worktreePath: "/tmp/wt/main--feat-checkout-v2--child-pricing-widget",
+          sessionPath: null,
+          parentCardId: "feat-checkout-v2",
+          parentBranch: "main--feat-checkout-v2",
+          specPath: null,
+          planPath: null,
+          validation: {
+            lastCheckedAt: null,
+            mergeState: "unknown",
+          },
+          timestamps: {
+            createdAt: "2026-04-20T00:00:00.000Z",
+            updatedAt: "2026-04-20T00:00:00.000Z",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf-8",
+    );
+
+    const result = resolveKanbanCardContextByWorktreePath({
+      repoRoot,
+      worktreePath: "/tmp/wt/main--feat-checkout-v2--child-pricing-widget/src",
+      sessionRegistryPath: path.join(
+        repoRoot,
+        "workitems",
+        ".feature-workflow",
+        "session-registry.json",
+      ),
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      context: {
+        cardId: "child-pricing-widget",
+        title: "Split pricing widget",
+        kind: "child",
+        lane: "In Progress",
+        parentCardId: "feat-checkout-v2",
+        branch: "main--feat-checkout-v2--child-pricing-widget",
+        baseBranch: "main--feat-checkout-v2",
+        mergeTarget: "main--feat-checkout-v2",
+        worktreePath: "/tmp/wt/main--feat-checkout-v2--child-pricing-widget",
+        session: null,
       },
     });
   });

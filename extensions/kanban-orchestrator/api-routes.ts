@@ -1,8 +1,11 @@
 import type { ResolveKanbanCardContextResult } from "./context.js";
+import type { KanbanTerminalEvent } from "./runtime-state.js";
 import type {
   KanbanActionRequestState,
   KanbanOrchestratorService,
 } from "./service.js";
+
+const GLOBAL_ACTIONS = new Set(["reconcile", "validate", "prune-merged"]);
 
 export type KanbanApiResponse = {
   status: number;
@@ -31,19 +34,87 @@ function serializeState(
   };
 }
 
+function deriveExecuteWorktreeKey(input: {
+  action: string;
+  cardId: string;
+  worktreeKey: string | null;
+  resolveContext?: (cardQuery: string) => ResolveKanbanCardContextResult;
+}):
+  | { ok: true; worktreeKey: string }
+  | { ok: false; status: number; error: string } {
+  if (input.worktreeKey) {
+    return {
+      ok: true,
+      worktreeKey: input.worktreeKey,
+    };
+  }
+
+  if (GLOBAL_ACTIONS.has(input.action)) {
+    return {
+      ok: true,
+      worktreeKey: "__global__",
+    };
+  }
+
+  if (!input.resolveContext) {
+    return {
+      ok: false,
+      status: 400,
+      error: "worktreeKey is required when card context cannot be resolved",
+    };
+  }
+
+  const contextResult = input.resolveContext(input.cardId);
+  if (!contextResult.ok) {
+    return {
+      ok: false,
+      status: 404,
+      error: contextResult.error,
+    };
+  }
+
+  const worktreeKey =
+    trimToNull(contextResult.context.worktreePath) ??
+    trimToNull(contextResult.context.branch) ??
+    contextResult.context.cardId;
+
+  return {
+    ok: true,
+    worktreeKey,
+  };
+}
+
 export function handleExecuteActionRequest(
   service: KanbanOrchestratorService,
   body: Record<string, unknown>,
+  options?: {
+    resolveContext?: (cardQuery: string) => ResolveKanbanCardContextResult;
+  },
 ): KanbanApiResponse {
   const action = trimToNull(body.action);
   const cardId = trimToNull(body.cardId);
   const worktreeKey = trimToNull(body.worktreeKey);
 
-  if (!action || !cardId || !worktreeKey) {
+  if (!action || !cardId) {
     return {
       status: 400,
       body: {
-        error: "action, cardId, and worktreeKey are required",
+        error: "action and cardId are required",
+      },
+    };
+  }
+
+  const derived = deriveExecuteWorktreeKey({
+    action,
+    cardId,
+    worktreeKey,
+    resolveContext: options?.resolveContext,
+  });
+  if (!derived.ok) {
+    return {
+      status: derived.status,
+      body: {
+        error: derived.error,
       },
     };
   }
@@ -52,7 +123,7 @@ export function handleExecuteActionRequest(
     const requestId = service.enqueueAction({
       action,
       cardId,
-      worktreeKey,
+      worktreeKey: derived.worktreeKey,
       payload:
         body.payload && typeof body.payload === "object"
           ? (body.payload as Record<string, unknown>)
@@ -74,6 +145,24 @@ export function handleExecuteActionRequest(
       },
     };
   }
+}
+
+export function handleBootstrapRequest(input: {
+  workspaceId: string;
+}): KanbanApiResponse {
+  const workspaceId = input.workspaceId.trim();
+  return {
+    status: 200,
+    body: {
+      status: "ready",
+      workspaceId,
+      sessionId: `workspace:${workspaceId}`,
+      capabilities: {
+        stream: true,
+        actions: true,
+      },
+    },
+  };
 }
 
 export function handleCardContextRequest(
@@ -119,6 +208,59 @@ export function handleActionStreamSubscribe(
   onEvent: (state: KanbanActionRequestState) => void,
 ): () => void {
   return service.subscribe(onEvent);
+}
+
+export function handleCardRuntimeRequest(
+  cardQuery: string,
+  service: KanbanOrchestratorService,
+  resolveContext: (cardQuery: string) => ResolveKanbanCardContextResult,
+  buildTerminalStreamUrl: (cardId: string) => string,
+): KanbanApiResponse {
+  const contextResult = resolveContext(cardQuery);
+  if (!contextResult.ok) {
+    return {
+      status: 404,
+      body: { error: contextResult.error },
+    };
+  }
+
+  const runtime = service.getCardRuntime(contextResult.context.cardId);
+  return {
+    status: 200,
+    body: {
+      cardId: contextResult.context.cardId,
+      lane: contextResult.context.lane,
+      session: contextResult.context.session
+        ? {
+            chatJid: contextResult.context.session.chatJid,
+            worktreePath: contextResult.context.session.worktreePath,
+          }
+        : null,
+      execution: {
+        status: runtime.status,
+        summary: runtime.summary,
+        requestId: runtime.requestId,
+      },
+      completion: {
+        readyForReview: runtime.status === "completed",
+        completedAt: runtime.completedAt,
+      },
+      terminal: {
+        available:
+          runtime.terminalAvailable || Boolean(contextResult.context.session),
+        protocol: runtime.terminalProtocol,
+        streamUrl: buildTerminalStreamUrl(contextResult.context.cardId),
+      },
+    },
+  };
+}
+
+export function handleTerminalStreamSubscribe(
+  service: KanbanOrchestratorService,
+  cardId: string,
+  onEvent: (event: KanbanTerminalEvent) => void,
+): () => void {
+  return service.subscribeTerminal(cardId, onEvent);
 }
 
 export function handleBoardPatchRequest(

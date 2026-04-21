@@ -6,12 +6,15 @@ import {
   handleBoardPatchRequest,
   handleBoardReadRequest,
   handleCardContextRequest,
+  handleCardRuntimeRequest,
   handleExecuteActionRequest,
+  handleTerminalStreamSubscribe,
 } from "./api-routes.js";
 import { KanbanOrchestratorService } from "./service.js";
+import { KanbanRuntimeStateStore } from "./runtime-state.js";
 
 describe("kanban orchestrator api routes", () => {
-  it("returns 202 with requestId for execute", () => {
+  it("returns 202 with requestId for execute when backend derives worktreeKey", () => {
     const service = new KanbanOrchestratorService({
       auditLogPath: "/tmp/kanban-orchestrator-api.log",
       createRequestId: () => "req-100",
@@ -21,11 +24,23 @@ describe("kanban orchestrator api routes", () => {
       },
     });
 
-    const response = handleExecuteActionRequest(service, {
-      action: "apply",
-      cardId: "feat-checkout-v2",
-      worktreeKey: "main--feat-checkout-v2",
-    });
+    const response = handleExecuteActionRequest(
+      service,
+      {
+        action: "apply",
+        cardId: "feat-checkout-v2",
+      },
+      {
+        resolveContext: () => ({
+          ok: true,
+          context: {
+            cardId: "feat-checkout-v2",
+            worktreePath: "/tmp/wt/main--feat-checkout-v2",
+            branch: "main--feat-checkout-v2",
+          },
+        }),
+      },
+    );
 
     expect(response).toEqual({
       status: 202,
@@ -34,6 +49,34 @@ describe("kanban orchestrator api routes", () => {
         status: "queued",
       },
     });
+    expect(service.getState("req-100")?.worktreeKey).toBe(
+      "/tmp/wt/main--feat-checkout-v2",
+    );
+  });
+
+  it("returns 202 for global execute without worktreeKey", () => {
+    const service = new KanbanOrchestratorService({
+      auditLogPath: "/tmp/kanban-orchestrator-api.log",
+      createRequestId: () => "req-global-100",
+      now: () => "2026-04-20T00:00:00.000Z",
+      actionExecutors: {
+        reconcile: async () => ({ summary: "reconciled" }),
+      },
+    });
+
+    const response = handleExecuteActionRequest(service, {
+      action: "reconcile",
+      cardId: "__global__",
+    });
+
+    expect(response).toEqual({
+      status: 202,
+      body: {
+        requestId: "req-global-100",
+        status: "queued",
+      },
+    });
+    expect(service.getState("req-global-100")?.worktreeKey).toBe("__global__");
   });
 
   it("returns 400 for malformed execute payload", () => {
@@ -45,7 +88,6 @@ describe("kanban orchestrator api routes", () => {
     const response = handleExecuteActionRequest(service, {
       action: "",
       cardId: "",
-      worktreeKey: "",
     });
 
     expect(response.status).toBe(400);
@@ -138,6 +180,68 @@ describe("kanban orchestrator api routes", () => {
     });
   });
 
+  it("returns card runtime detail with terminal metadata", () => {
+    const runtimeState = new KanbanRuntimeStateStore();
+    runtimeState.recordChildLifecycle({
+      type: "child-running",
+      cardId: "child-pricing-widget",
+      summary: "agent started",
+      ts: "2026-04-20T00:00:00.000Z",
+    });
+
+    const response = handleCardRuntimeRequest(
+      "child-pricing-widget",
+      runtimeState,
+      () => ({
+        ok: true,
+        context: {
+          cardId: "child-pricing-widget",
+          title: "Split pricing widget",
+          kind: "child",
+          lane: "In Progress",
+          parentCardId: "feat-checkout-v2",
+          branch: "main--feat-checkout-v2--child-pricing-widget",
+          baseBranch: "main--feat-checkout-v2",
+          mergeTarget: "main--feat-checkout-v2",
+          worktreePath: "/tmp/wt/main--feat-checkout-v2--child-pricing-widget",
+          session: {
+            chatJid: "chat:child-pricing-widget",
+            worktreePath:
+              "/tmp/wt/main--feat-checkout-v2--child-pricing-widget",
+            lastActiveAt: "2026-04-20T00:00:00.000Z",
+          },
+        },
+      }),
+      (cardId) => `/kanban/cards/${cardId}/terminal/stream`,
+    );
+
+    expect(response).toEqual({
+      status: 200,
+      body: {
+        cardId: "child-pricing-widget",
+        lane: "In Progress",
+        session: {
+          chatJid: "chat:child-pricing-widget",
+          worktreePath: "/tmp/wt/main--feat-checkout-v2--child-pricing-widget",
+        },
+        execution: {
+          status: "running",
+          summary: "agent started",
+          requestId: null,
+        },
+        completion: {
+          readyForReview: false,
+          completedAt: null,
+        },
+        terminal: {
+          available: true,
+          protocol: "sse-text-stream",
+          streamUrl: "/kanban/cards/child-pricing-widget/terminal/stream",
+        },
+      },
+    });
+  });
+
   it("subscribes to action stream and forwards events", async () => {
     const service = new KanbanOrchestratorService({
       auditLogPath: "/tmp/kanban-orchestrator-api.log",
@@ -162,5 +266,34 @@ describe("kanban orchestrator api routes", () => {
 
     unsubscribe();
     expect(statuses).toEqual(["queued", "running", "success"]);
+  });
+
+  it("subscribes to terminal stream and replays buffered chunks", () => {
+    const runtimeState = new KanbanRuntimeStateStore();
+    runtimeState.recordChildLifecycle({
+      type: "child-running",
+      cardId: "child-pricing-widget",
+      summary: "agent started",
+      ts: "2026-04-20T00:00:00.000Z",
+    });
+    runtimeState.appendTerminalChunk({
+      cardId: "child-pricing-widget",
+      chunk: "hello world",
+      ts: "2026-04-20T00:00:01.000Z",
+    });
+
+    const events: string[] = [];
+    const unsubscribe = handleTerminalStreamSubscribe(
+      runtimeState,
+      "child-pricing-widget",
+      (event) => {
+        events.push(
+          event.type === "chunk" ? `${event.type}:${event.chunk}` : event.type,
+        );
+      },
+    );
+    unsubscribe();
+
+    expect(events).toEqual(["ready", "status", "chunk:hello world"]);
   });
 });

@@ -1,5 +1,11 @@
 import { appendExecutionAuditLog } from "./audit-log.js";
 import { WorktreeLockManager } from "./lock-manager.js";
+import {
+  type KanbanChildLifecycleEvent,
+  type KanbanCardRuntimeState,
+  type KanbanTerminalEvent,
+  KanbanRuntimeStateStore,
+} from "./runtime-state.js";
 import { upsertSessionRegistryCard } from "./session-registry.js";
 import {
   type KanbanActionName,
@@ -83,6 +89,8 @@ export class KanbanOrchestratorService {
 
   private readonly createRequestId: () => string;
 
+  private readonly runtimeState = new KanbanRuntimeStateStore();
+
   private readonly auditLogPath: string;
 
   private readonly sessionRegistryPath: string | null;
@@ -108,6 +116,7 @@ export class KanbanOrchestratorService {
 
   private setState(state: KanbanActionRequestState): void {
     this.states.set(state.requestId, state);
+    this.runtimeState.recordActionState(state);
     for (const listener of this.listeners) {
       listener(state);
     }
@@ -122,6 +131,35 @@ export class KanbanOrchestratorService {
 
   setActionExecutors(nextExecutors: KanbanActionExecutors): void {
     this.actionExecutors = nextExecutors;
+  }
+
+  subscribeLifecycle(
+    listener: (event: KanbanChildLifecycleEvent) => void,
+  ): () => void {
+    return this.runtimeState.subscribeLifecycle(listener);
+  }
+
+  subscribeTerminal(
+    cardId: string,
+    listener: (event: KanbanTerminalEvent) => void,
+  ): () => void {
+    return this.runtimeState.subscribeTerminal(cardId, listener);
+  }
+
+  recordChildLifecycle(event: KanbanChildLifecycleEvent): void {
+    this.runtimeState.recordChildLifecycle(event);
+  }
+
+  appendTerminalChunk(input: {
+    cardId: string;
+    chunk: string;
+    ts: string;
+  }): void {
+    this.runtimeState.appendTerminalChunk(input);
+  }
+
+  getCardRuntime(cardId: string): KanbanCardRuntimeState {
+    return this.runtimeState.getCardRuntime(cardId);
   }
 
   enqueueAction(input: {

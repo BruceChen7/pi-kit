@@ -2,17 +2,31 @@
 import { onMount } from "svelte";
 
 import { KanbanRuntimeApi } from "./lib/api";
-import { validateRuntimeConnection } from "./lib/connection";
 import {
-  getBrowserStorage,
-  readRuntimeConnectionFromStorage,
-  writeRuntimeConnectionToStorage,
-} from "./lib/runtime-settings";
+  applyLaneTransition,
+  deriveAutomationReaction,
+  deriveAutoDispatchCardIds,
+  serializeBoardSnapshot,
+} from "./lib/board-automation";
+import {
+  deriveFeatureOverview,
+  deriveOverviewActionTargets,
+  deriveSelectionState,
+  deriveVisibleActionLog,
+} from "./lib/board-view-model";
+import BoardPane from "./lib/components/BoardPane.svelte";
+import FeatureOverview from "./lib/components/FeatureOverview.svelte";
+import InspectorPane from "./lib/components/InspectorPane.svelte";
+import { waitForBootstrapReady } from "./lib/bootstrap";
+import { deriveChildLifecycleReaction } from "./lib/runtime-lifecycle";
+import type { InspectorTab, OverviewAction } from "./lib/ui-types";
 import type {
   ActionState,
   BoardCard,
+  BoardLane,
   BoardSnapshot,
   CardContext,
+  ChildLifecycleEvent,
 } from "./lib/types";
 
 type ActionOption = {
@@ -31,83 +45,154 @@ const ACTION_OPTIONS: ActionOption[] = [
 ];
 
 const GLOBAL_ACTIONS = new Set(["reconcile", "validate", "prune-merged"]);
+const inFlightAutoDispatchCardIds = new Set<string>();
+const api = new KanbanRuntimeApi();
 
-const runtimeStorage = getBrowserStorage();
-const initialConnection = readRuntimeConnectionFromStorage(runtimeStorage, {
-  defaultBaseUrl: "http://127.0.0.1:17888",
-});
-
-let baseUrl = initialConnection.baseUrl;
-let token = initialConnection.token;
-
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references are not tracked here.
+let appPhase: "initializing" | "ready" | "degraded" | "fatal-error" =
+  "initializing";
+let bootstrapError: string | null = null;
+let syncWarning: string | null = null;
 let board: BoardSnapshot | null = null;
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references are not tracked here.
 let loadingBoard = false;
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references are not tracked here.
 let runtimeError: string | null = null;
-
-let streamStatus: "disconnected" | "connecting" | "connected" | "error" =
-  "disconnected";
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references are not tracked here.
-let streamError: string | null = null;
 let stream: EventSource | null = null;
+let streamReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 let latestStatusByCard: Record<string, ActionState> = {};
+let latestLifecycleByCard: Record<string, ChildLifecycleEvent> = {};
 let actionLog: ActionState[] = [];
+
+let selectedFeatureId: string | null = null;
+let selectedChildId: string | null = null;
+let activeExecutionCardId: string | null = null;
+let activeInspectorTab: InspectorTab = "terminal";
+
+let inspectorContext: CardContext | null = null;
+let loadingInspectorContext = false;
+let inspectorError: string | null = null;
+let inspectorContextCardId: string | null = null;
+let inspectorContextRequestId = 0;
 
 let activeCard: BoardCard | null = null;
 let activeContext: CardContext | null = null;
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references are not tracked here.
 let dialogOpen = false;
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references are not tracked here.
 let dialogLoadingContext = false;
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references are not tracked here.
 let dialogError: string | null = null;
 let selectedAction = "apply";
 let promptText = "";
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references are not tracked here.
 let executingAction = false;
 
-$: {
-  writeRuntimeConnectionToStorage(runtimeStorage, {
-    baseUrl,
-    token,
-  });
+$: selectedFeature =
+  board?.cards.find(
+    (card) => card.kind === "feature" && card.id === selectedFeatureId,
+  ) ?? null;
+
+$: selectedChild =
+  board?.cards.find(
+    (card) => card.kind === "child" && card.id === selectedChildId,
+  ) ?? null;
+
+$: selectedLifecycle = selectedChild
+  ? (latestLifecycleByCard[selectedChild.id] ?? null)
+  : null;
+
+$: featureOverview = deriveFeatureOverview(board, selectedFeatureId, {
+  latestStatusByCard,
+  actionLog,
+});
+
+$: overviewTargets = deriveOverviewActionTargets(
+  featureOverview.children,
+  latestStatusByCard,
+);
+
+$: visibleActionLog = deriveVisibleActionLog(
+  actionLog,
+  board,
+  selectedFeatureId,
+  selectedChildId,
+);
+
+$: overviewActions = buildOverviewActions(overviewTargets);
+
+$: if (selectedChildId !== inspectorContextCardId) {
+  void refreshInspectorContext(selectedChildId);
 }
 
 const selectedActionMeta = ACTION_OPTIONS.find(
   (option) => option.value === selectedAction,
 );
 
-function connectionErrorMessage(): string | null {
-  return validateRuntimeConnection({
-    baseUrl,
-    token,
-  });
+function clearSyncWarning(): void {
+  syncWarning = null;
+  if (appPhase !== "fatal-error") {
+    appPhase = "ready";
+  }
 }
 
-function createApi(): KanbanRuntimeApi {
-  const error = connectionErrorMessage();
-  if (error) {
-    throw new Error(error);
+function setSyncWarning(message: string): void {
+  syncWarning = message;
+  if (appPhase !== "fatal-error") {
+    appPhase = "degraded";
+  }
+}
+
+function scheduleStreamReconnect(): void {
+  if (streamReconnectTimer) {
+    return;
   }
 
-  return new KanbanRuntimeApi(baseUrl.trim(), token.trim());
+  streamReconnectTimer = setTimeout(() => {
+    streamReconnectTimer = null;
+    void loadBoard();
+    connectStream();
+  }, 1_500);
 }
 
-async function loadBoard(): Promise<void> {
+async function loadBoard(): Promise<boolean> {
+  const previousBoard = board;
   loadingBoard = true;
   runtimeError = null;
 
   try {
-    const api = createApi();
-    board = await api.getBoard();
+    const nextBoard = await api.getBoard();
+    board = nextBoard;
+
+    const normalizedSelection = deriveSelectionState(nextBoard, {
+      selectedFeatureId,
+      selectedChildId,
+    });
+    selectedFeatureId = normalizedSelection.selectedFeatureId;
+    selectedChildId = normalizedSelection.selectedChildId;
+
+    const autoDispatchCardIds = deriveAutoDispatchCardIds(
+      previousBoard,
+      nextBoard,
+      latestStatusByCard,
+    ).filter((cardId) => !inFlightAutoDispatchCardIds.has(cardId));
+
+    for (const cardId of autoDispatchCardIds) {
+      const childCard = nextBoard.cards.find(
+        (card) => card.kind === "child" && card.id === cardId,
+      );
+      if (!childCard || childCard.kind !== "child") {
+        continue;
+      }
+
+      await autoDispatchChild(childCard);
+    }
+
+    return true;
   } catch (error) {
     runtimeError = error instanceof Error ? error.message : String(error);
+    return false;
   } finally {
     loadingBoard = false;
   }
+}
+
+async function fetchCardContext(cardId: string): Promise<CardContext> {
+  return api.getCardContext(cardId);
 }
 
 function pushActionState(state: ActionState): void {
@@ -120,17 +205,21 @@ function pushActionState(state: ActionState): void {
   }
 }
 
+function pushLifecycleEvent(event: ChildLifecycleEvent): void {
+  latestLifecycleByCard = {
+    ...latestLifecycleByCard,
+    [event.cardId]: event,
+  };
+}
+
 function connectStream(): void {
   disconnectStream();
-  streamStatus = "connecting";
-  streamError = null;
 
   try {
-    const api = createApi();
     const next = api.createEventSource();
 
     next.addEventListener("ready", () => {
-      streamStatus = "connected";
+      clearSyncWarning();
     });
 
     next.addEventListener("state", (event) => {
@@ -138,50 +227,132 @@ function connectStream(): void {
         const payload = JSON.parse(
           (event as MessageEvent<string>).data,
         ) as ActionState;
-        pushActionState(payload);
+        clearSyncWarning();
+        void handleIncomingActionState(payload);
       } catch (error) {
-        streamError = error instanceof Error ? error.message : String(error);
-        streamStatus = "error";
+        setSyncWarning(error instanceof Error ? error.message : String(error));
       }
     });
 
+    for (const lifecycleType of [
+      "child-running",
+      "child-completed",
+      "child-failed",
+    ] as const) {
+      next.addEventListener(lifecycleType, (event) => {
+        try {
+          const payload = JSON.parse(
+            (event as MessageEvent<string>).data,
+          ) as ChildLifecycleEvent;
+          clearSyncWarning();
+          void handleIncomingChildLifecycleEvent(payload);
+        } catch (error) {
+          setSyncWarning(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+      });
+    }
+
     next.onerror = () => {
-      if (streamStatus !== "connected") {
-        streamStatus = "error";
-        streamError = "Unable to connect to /kanban/stream";
-      }
+      setSyncWarning("Realtime sync unavailable, retrying");
+      scheduleStreamReconnect();
     };
 
     stream = next;
   } catch (error) {
-    streamStatus = "error";
-    streamError = error instanceof Error ? error.message : String(error);
+    setSyncWarning(error instanceof Error ? error.message : String(error));
+    scheduleStreamReconnect();
   }
 }
 
 function disconnectStream(): void {
+  if (streamReconnectTimer) {
+    clearTimeout(streamReconnectTimer);
+    streamReconnectTimer = null;
+  }
+
   if (stream) {
     stream.close();
     stream = null;
   }
-  if (streamStatus !== "error") {
-    streamStatus = "disconnected";
+}
+
+function selectCard(card: BoardCard): void {
+  if (card.kind === "feature") {
+    selectedFeatureId = card.id;
+    selectedChildId = null;
+    return;
+  }
+
+  selectedFeatureId = card.parentId;
+  selectedChildId = card.id;
+}
+
+function focusChild(card: BoardCard, tab: InspectorTab): void {
+  if (card.kind !== "child") {
+    return;
+  }
+
+  selectedFeatureId = card.parentId;
+  selectedChildId = card.id;
+  activeInspectorTab = tab;
+}
+
+async function refreshInspectorContext(cardId: string | null): Promise<void> {
+  inspectorContextCardId = cardId;
+
+  if (!cardId) {
+    inspectorContext = null;
+    inspectorError = null;
+    loadingInspectorContext = false;
+    return;
+  }
+
+  const requestId = ++inspectorContextRequestId;
+  loadingInspectorContext = true;
+  inspectorError = null;
+
+  try {
+    const context = await fetchCardContext(cardId);
+    if (requestId !== inspectorContextRequestId) {
+      return;
+    }
+
+    inspectorContext = context;
+  } catch (error) {
+    if (requestId !== inspectorContextRequestId) {
+      return;
+    }
+
+    inspectorContext = null;
+    inspectorError = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (requestId === inspectorContextRequestId) {
+      loadingInspectorContext = false;
+    }
   }
 }
 
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references are not tracked here.
-async function openActionDialog(card: BoardCard): Promise<void> {
+async function openActionDialog(
+  card: BoardCard,
+  initialAction = "apply",
+): Promise<void> {
   activeCard = card;
   activeContext = null;
-  selectedAction = "apply";
+  selectedAction = initialAction;
   promptText = "";
   dialogError = null;
   dialogOpen = true;
   dialogLoadingContext = true;
 
   try {
-    const api = createApi();
-    activeContext = await api.getCardContext(card.id);
+    if (card.id === selectedChildId && inspectorContext) {
+      activeContext = inspectorContext;
+      return;
+    }
+
+    activeContext = await fetchCardContext(card.id);
   } catch (error) {
     dialogError = error instanceof Error ? error.message : String(error);
   } finally {
@@ -198,53 +369,24 @@ function closeDialog(): void {
   selectedAction = "apply";
 }
 
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references are not tracked here.
 async function executeAction(): Promise<void> {
   if (!activeCard) return;
 
   dialogError = null;
-
-  const isGlobalAction = GLOBAL_ACTIONS.has(selectedAction);
-  if (!isGlobalAction && !activeContext) {
-    dialogError = "Card context is required before executing this action.";
-    return;
-  }
-
-  if (selectedActionMeta?.needsPrompt && !promptText.trim()) {
-    dialogError = "Please input a prompt for custom-prompt.";
-    return;
-  }
-
-  const cardId = isGlobalAction ? "__global__" : activeCard.id;
-  const worktreeKey = isGlobalAction
-    ? "__global__"
-    : (activeContext?.worktreePath ?? activeContext?.branch ?? activeCard.id);
-
   executingAction = true;
+
   try {
-    const api = createApi();
-    const executeResult = await api.executeAction({
+    await executeCardAction({
+      card: activeCard,
       action: selectedAction,
-      cardId,
-      worktreeKey,
       payload:
         selectedAction === "custom-prompt"
           ? {
               prompt: promptText,
             }
           : undefined,
-    });
-
-    pushActionState({
-      requestId: executeResult.requestId,
-      action: selectedAction,
-      cardId,
-      worktreeKey,
-      status: executeResult.status,
-      summary: "queued",
-      startedAt: null,
-      finishedAt: null,
-      durationMs: null,
+      requiredPrompt: selectedActionMeta?.needsPrompt ?? false,
+      tabOnStart: selectedAction === "apply" ? "terminal" : null,
     });
 
     closeDialog();
@@ -255,19 +397,283 @@ async function executeAction(): Promise<void> {
   }
 }
 
-// biome-ignore lint/correctness/noUnusedVariables: Svelte template references are not tracked here.
-function statusClass(status: ActionState["status"]): string {
-  return `badge ${status}`;
+async function executeCardAction(input: {
+  card: BoardCard;
+  action: string;
+  payload?: Record<string, unknown>;
+  requiredPrompt?: boolean;
+  tabOnStart?: InspectorTab | null;
+}): Promise<ActionState> {
+  const isGlobalAction = GLOBAL_ACTIONS.has(input.action);
+  if (input.requiredPrompt && !String(input.payload?.prompt ?? "").trim()) {
+    throw new Error("Please input a prompt for custom-prompt.");
+  }
+
+  if (input.card.kind === "child" && input.tabOnStart) {
+    focusChild(input.card, input.tabOnStart);
+    activeExecutionCardId = input.card.id;
+  }
+
+  const cardId = isGlobalAction ? "__global__" : input.card.id;
+  const executeResult = await api.executeAction({
+    action: input.action,
+    cardId,
+    payload: input.payload,
+  });
+
+  const queuedState: ActionState = {
+    requestId: executeResult.requestId,
+    action: input.action,
+    cardId,
+    worktreeKey: isGlobalAction ? "__global__" : input.card.id,
+    status: executeResult.status,
+    summary: "queued",
+    startedAt: null,
+    finishedAt: null,
+    durationMs: null,
+  };
+  pushActionState(queuedState);
+  return queuedState;
+}
+
+async function autoDispatchChild(card: BoardCard): Promise<void> {
+  if (card.kind !== "child") {
+    return;
+  }
+
+  inFlightAutoDispatchCardIds.add(card.id);
+  try {
+    await executeCardAction({
+      card,
+      action: "apply",
+      tabOnStart: "terminal",
+    });
+  } catch (error) {
+    runtimeError = error instanceof Error ? error.message : String(error);
+    activeExecutionCardId = null;
+    activeInspectorTab = "logs";
+  } finally {
+    inFlightAutoDispatchCardIds.delete(card.id);
+  }
+}
+
+async function moveCardToLane(
+  card: BoardCard,
+  targetLane: BoardLane,
+  focusTab: InspectorTab,
+): Promise<void> {
+  if (!board || card.lane === targetLane) {
+    if (card.kind === "child") {
+      focusChild(card, focusTab);
+    }
+    return;
+  }
+
+  runtimeError = null;
+  if (card.kind === "child") {
+    focusChild(card, focusTab);
+  } else {
+    selectCard(card);
+    activeInspectorTab = focusTab;
+  }
+
+  try {
+    const nextBoard = applyLaneTransition(board, {
+      cardId: card.id,
+      targetLane,
+    });
+    await api.patchBoard(serializeBoardSnapshot(nextBoard));
+    await loadBoard();
+  } catch (error) {
+    runtimeError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function handleIncomingActionState(state: ActionState): Promise<void> {
+  pushActionState(state);
+
+  if (state.cardId === "__global__") {
+    return;
+  }
+
+  const reaction = deriveAutomationReaction(board, state);
+  if (reaction.focusChildId && reaction.nextTab && board) {
+    const card = board.cards.find(
+      (entry) => entry.id === reaction.focusChildId,
+    );
+    if (card && card.kind === "child") {
+      focusChild(card, reaction.nextTab);
+    }
+  }
+
+  if (state.status === "queued" || state.status === "running") {
+    activeExecutionCardId = state.cardId;
+  }
+
+  if (state.status === "failed") {
+    activeExecutionCardId = null;
+  }
+}
+
+async function handleIncomingChildLifecycleEvent(
+  event: ChildLifecycleEvent,
+): Promise<void> {
+  pushLifecycleEvent(event);
+
+  const reaction = deriveChildLifecycleReaction(board, event);
+  const card = getCardById(event.cardId);
+
+  if (
+    reaction.focusChildId &&
+    card &&
+    card.kind === "child" &&
+    reaction.nextTab
+  ) {
+    focusChild(card, reaction.nextTab);
+  }
+
+  if (event.type === "child-running") {
+    activeExecutionCardId = event.cardId;
+    return;
+  }
+
+  activeExecutionCardId = null;
+
+  if (event.type === "child-completed" && card && card.kind === "child") {
+    await moveCardToLane(card, "Review", "handoff");
+  }
+}
+
+function buildOverviewActions(targets: {
+  runningChildId: string | null;
+  reviewChildId: string | null;
+  blockedChildId: string | null;
+  dispatchChildId: string | null;
+}): OverviewAction[] {
+  return [
+    {
+      id: "resume-last-running",
+      label: "Resume Last Running",
+      disabled: !targets.runningChildId,
+      hint: targets.runningChildId
+        ? `Focus ${targets.runningChildId}`
+        : "No child is currently running",
+    },
+    {
+      id: "open-next-review",
+      label: "Open Next Review",
+      disabled: !targets.reviewChildId,
+      hint: targets.reviewChildId
+        ? `Open ${targets.reviewChildId}`
+        : "No child is in review",
+    },
+    {
+      id: "retry-blocked",
+      label: "Retry Blocked",
+      disabled: !targets.blockedChildId,
+      hint: targets.blockedChildId
+        ? `Retry ${targets.blockedChildId}`
+        : "No blocked child detected from action events",
+    },
+    {
+      id: "dispatch-next",
+      label: "Dispatch Next",
+      disabled: !targets.dispatchChildId,
+      hint: targets.dispatchChildId
+        ? `Move ${targets.dispatchChildId} to In Progress`
+        : "No ready child available",
+    },
+  ];
+}
+
+function getCardById(cardId: string | null): BoardCard | null {
+  if (!board || !cardId) {
+    return null;
+  }
+
+  return board.cards.find((card) => card.id === cardId) ?? null;
+}
+
+function runOverviewAction(actionId: string): void {
+  const runningChild = getCardById(overviewTargets.runningChildId);
+  const reviewChild = getCardById(overviewTargets.reviewChildId);
+  const blockedChild = getCardById(overviewTargets.blockedChildId);
+  const readyChild = getCardById(overviewTargets.dispatchChildId);
+
+  if (actionId === "resume-last-running" && runningChild) {
+    focusChild(runningChild, "terminal");
+    return;
+  }
+
+  if (actionId === "open-next-review" && reviewChild) {
+    focusChild(reviewChild, "handoff");
+    return;
+  }
+
+  if (actionId === "retry-blocked" && blockedChild) {
+    void executeCardAction({
+      card: blockedChild,
+      action: "apply",
+      tabOnStart: "terminal",
+    }).catch((error: unknown) => {
+      runtimeError = error instanceof Error ? error.message : String(error);
+    });
+    return;
+  }
+
+  if (actionId === "dispatch-next" && readyChild) {
+    void moveCardToLane(readyChild, "In Progress", "terminal");
+  }
+}
+
+function handleBoardStartCard(card: BoardCard): void {
+  void moveCardToLane(card, "In Progress", "terminal");
+}
+
+function handleBoardFocusRun(card: BoardCard): void {
+  focusChild(card, "terminal");
+}
+
+function handleBoardOpenReview(card: BoardCard): void {
+  focusChild(card, "handoff");
+}
+
+function handleBoardRetryCard(card: BoardCard): void {
+  void executeCardAction({
+    card,
+    action: "apply",
+    tabOnStart: "terminal",
+  }).catch((error: unknown) => {
+    runtimeError = error instanceof Error ? error.message : String(error);
+  });
+}
+
+async function initializeApp(): Promise<void> {
+  appPhase = "initializing";
+  bootstrapError = null;
+  runtimeError = null;
+  syncWarning = null;
+
+  try {
+    await waitForBootstrapReady({
+      bootstrap: () => api.bootstrap(),
+    });
+
+    const boardLoaded = await loadBoard();
+    if (!boardLoaded) {
+      throw new Error(runtimeError ?? "Unable to load board");
+    }
+
+    appPhase = "ready";
+    connectStream();
+  } catch (error) {
+    appPhase = "fatal-error";
+    bootstrapError = error instanceof Error ? error.message : String(error);
+  }
 }
 
 onMount(() => {
-  const initialError = connectionErrorMessage();
-  if (initialError) {
-    runtimeError = initialError;
-  } else {
-    void loadBoard();
-    connectStream();
-  }
+  void initializeApp();
 
   return () => {
     disconnectStream();
@@ -275,178 +681,145 @@ onMount(() => {
 });
 </script>
 
-<main class="app">
-    <section class="panel">
-        <h2>Kanban Runtime Connection</h2>
-        <div class="settings-grid">
-            <label for="base-url">Base URL</label>
-            <input
-                id="base-url"
-                bind:value={baseUrl}
-                placeholder="http://127.0.0.1:17888"
-            />
-
-            <label for="token">Token (Optional)</label>
-            <input
-                id="token"
-                bind:value={token}
-                placeholder="Bearer token (optional)"
-            />
-        </div>
-
-        <div class="actions">
-            <button on:click={() => void loadBoard()} disabled={loadingBoard}>
-                {#if loadingBoard}Loading…{:else}Reload Board{/if}
-            </button>
-            <button on:click={connectStream}>Reconnect Stream</button>
-            <button on:click={disconnectStream}>Disconnect Stream</button>
-        </div>
-
-        <p class="status">
-            Stream: <strong>{streamStatus}</strong>
-            {#if streamError}
-                <span class="error"> · {streamError}</span>
-            {/if}
+<main class="app-shell">
+  <section class="shell-panel connection-panel">
+    <div class="panel-header">
+      <div>
+        <p class="eyebrow">Product UI</p>
+        <h1>Kanban Drive Console</h1>
+        <p class="subtle">
+          {#if appPhase === "initializing"}
+            Preparing kanban workspace…
+          {:else if appPhase === "fatal-error"}
+            Unable to prepare the kanban workspace.
+          {:else}
+            Runtime bootstrap and stream handling stay in the background.
+          {/if}
         </p>
-        {#if runtimeError}
-            <p class="error">{runtimeError}</p>
-        {/if}
-    </section>
+      </div>
+      <div class="actions">
+        <button on:click={() => void initializeApp()} disabled={appPhase === "initializing"}>
+          {#if appPhase === "initializing"}Preparing…{:else}Retry Bootstrap{/if}
+        </button>
+        <button on:click={() => void loadBoard()} disabled={loadingBoard || appPhase === "fatal-error"}>
+          {#if loadingBoard}Loading…{:else}Reload Board{/if}
+        </button>
+      </div>
+    </div>
 
-    <section class="panel">
-        <h2>Board</h2>
-        {#if !board}
-            <p>No board loaded yet.</p>
-        {:else}
-            {#if board.errors.length > 0}
-                <p class="error">Board errors: {board.errors.join(" | ")}</p>
-            {/if}
-            <div class="board">
-                {#each board.lanes as lane}
-                    <article class="lane">
-                        <h3>{lane.name}</h3>
-                        <ul class="cards">
-                            {#each lane.cards as card}
-                                <li>
-                                    <button
-                                        class="card-btn"
-                                        on:click={() =>
-                                            void openActionDialog(card)}
-                                    >
-                                        <div class="card-title">
-                                            {card.title}
-                                        </div>
-                                        <div class="card-meta">
-                                            <span>{card.id}</span>
-                                            <span>{card.kind}</span>
-                                        </div>
-                                        {#if latestStatusByCard[card.id]}
-                                            <div class="card-meta">
-                                                <span
-                                                    class={statusClass(
-                                                        latestStatusByCard[
-                                                            card.id
-                                                        ].status,
-                                                    )}
-                                                >
-                                                    {latestStatusByCard[card.id]
-                                                        .status}
-                                                </span>
-                                                <span
-                                                    >{latestStatusByCard[
-                                                        card.id
-                                                    ].summary}</span
-                                                >
-                                            </div>
-                                        {/if}
-                                    </button>
-                                </li>
-                            {/each}
-                        </ul>
-                    </article>
-                {/each}
-            </div>
-        {/if}
-    </section>
+    {#if bootstrapError}
+      <p class="error">{bootstrapError}</p>
+    {/if}
+    {#if syncWarning}
+      <p class="subtle">{syncWarning}</p>
+    {/if}
+    {#if runtimeError}
+      <p class="error">{runtimeError}</p>
+    {/if}
+  </section>
 
-    <section class="panel">
-        <h2>Recent Action Events</h2>
-        {#if actionLog.length === 0}
-            <p>No action events yet.</p>
-        {:else}
-            <ul class="log-list">
-                {#each actionLog as state}
-                    <li class="log-item">
-                        <strong>{state.status}</strong>
-                        · {state.action}
-                        · {state.cardId}
-                        <div>{state.summary}</div>
-                    </li>
-                {/each}
-            </ul>
-        {/if}
+  {#if appPhase !== "fatal-error" && board}
+    <FeatureOverview
+      feature={featureOverview.feature}
+      runningCount={featureOverview.runningCount}
+      reviewCount={featureOverview.reviewCount}
+      blockedCount={featureOverview.blockedCount}
+      recentAction={featureOverview.recentAction}
+      actions={overviewActions}
+      onRunAction={runOverviewAction}
+    />
+
+    <section class="workspace-grid">
+      <BoardPane
+        {board}
+        {latestStatusByCard}
+        {selectedFeatureId}
+        {selectedChildId}
+        activeExecutionCardId={activeExecutionCardId}
+        onSelectCard={selectCard}
+        onOpenCardActions={openActionDialog}
+        onStartCard={handleBoardStartCard}
+        onFocusRun={handleBoardFocusRun}
+        onOpenReview={handleBoardOpenReview}
+        onRetryCard={handleBoardRetryCard}
+      />
+
+      <InspectorPane
+        {selectedFeature}
+        {selectedChild}
+        activeExecutionCardId={activeExecutionCardId}
+        activeTab={activeInspectorTab}
+        context={inspectorContext}
+        loadingContext={loadingInspectorContext}
+        contextError={inspectorError}
+        latestStatus={selectedChild ? latestStatusByCard[selectedChild.id] ?? null : null}
+        latestLifecycle={selectedLifecycle}
+        actionLog={visibleActionLog}
+        onSelectTab={(tab) => {
+          activeInspectorTab = tab;
+        }}
+        onOpenActionDialog={openActionDialog}
+      />
     </section>
+  {/if}
 </main>
 
 {#if dialogOpen && activeCard}
-    <div
-        class="dialog-backdrop"
-        role="button"
-        tabindex="0"
-        on:click|self={closeDialog}
-        on:keydown={(event) => {
-            if (event.key === "Escape" || event.key === "Enter") {
-                closeDialog();
-            }
-        }}
-    >
-        <section class="dialog" role="dialog" aria-modal="true">
-            <h3>{activeCard.title} ({activeCard.id})</h3>
+  <div
+    class="dialog-backdrop"
+    role="button"
+    tabindex="0"
+    on:click|self={closeDialog}
+    on:keydown={(event) => {
+      if (event.key === "Escape" || event.key === "Enter") {
+        closeDialog();
+      }
+    }}
+  >
+    <section class="dialog" role="dialog" aria-modal="true">
+      <h3>{activeCard.title} ({activeCard.id})</h3>
 
-            {#if dialogLoadingContext}
-                <p>Loading card context…</p>
-            {:else if activeContext}
-                <p>
-                    Branch: {activeContext.branch ?? "<none>"}
-                    <br />
-                    Worktree: {activeContext.worktreePath ?? "<none>"}
-                    <br />
-                    Session: {activeContext.session?.chatJid ?? "<none>"}
-                </p>
-            {/if}
+      {#if dialogLoadingContext}
+        <p>Loading card context…</p>
+      {:else if activeContext}
+        <p>
+          Branch: {activeContext.branch ?? "<none>"}
+          <br />
+          Worktree: {activeContext.worktreePath ?? "<none>"}
+          <br />
+          Session: {activeContext.session?.chatJid ?? "<none>"}
+        </p>
+      {/if}
 
-            <label>
-                Action
-                <select bind:value={selectedAction}>
-                    {#each ACTION_OPTIONS as option}
-                        <option value={option.value}>{option.label}</option>
-                    {/each}
-                </select>
-            </label>
+      <label>
+        Action
+        <select bind:value={selectedAction}>
+          {#each ACTION_OPTIONS as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </label>
 
-            {#if selectedActionMeta?.needsPrompt}
-                <label>
-                    Prompt
-                    <textarea
-                        bind:value={promptText}
-                        placeholder="Describe what the agent should do for this card"
-                    ></textarea>
-                </label>
-            {/if}
+      {#if selectedActionMeta?.needsPrompt}
+        <label>
+          Prompt
+          <textarea
+            bind:value={promptText}
+            placeholder="Describe what the agent should do for this card"
+          ></textarea>
+        </label>
+      {/if}
 
-            {#if dialogError}
-                <p class="error">{dialogError}</p>
-            {/if}
+      {#if dialogError}
+        <p class="error">{dialogError}</p>
+      {/if}
 
-            <div class="actions">
-                <button on:click={closeDialog}>Cancel</button>
-                <button
-                    on:click={() => void executeAction()}
-                    disabled={executingAction}
-                >
-                    {#if executingAction}Executing…{:else}Confirm Execute{/if}
-                </button>
-            </div>
-        </section>
-    </div>
+      <div class="actions">
+        <button on:click={closeDialog}>Cancel</button>
+        <button on:click={() => void executeAction()} disabled={executingAction}>
+          {#if executingAction}Executing…{:else}Confirm Execute{/if}
+        </button>
+      </div>
+    </section>
+  </div>
 {/if}

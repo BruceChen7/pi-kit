@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { FeatureWorkflowIgnoredSyncConfig } from "./config.js";
-import { runIgnoredSync } from "./ignored-sync.js";
+import { evaluateIgnoredSyncRules, runIgnoredSync } from "./ignored-sync.js";
 import type { WtRunner } from "./worktree-gateway.js";
 
 const runWt: WtRunner = vi.fn();
@@ -31,6 +31,43 @@ const buildConfig = (
 });
 
 describe("runIgnoredSync", () => {
+  it("evaluates rule readiness for missing and wrong symlink states", () => {
+    const evaluations = evaluateIgnoredSyncRules({
+      worktreePath: "/repo/.wt/feat-main-checkout-v2",
+      rules: [
+        {
+          path: "node_modules",
+          strategy: "symlink",
+          required: true,
+          onMissing: {
+            action: "run-hook",
+            hook: "project-deps-link",
+          },
+        },
+        {
+          path: "AGENTS.md",
+          strategy: "copy",
+          required: false,
+          onMissing: {
+            action: "copy-ignored",
+            hook: null,
+          },
+        },
+      ],
+      getPathState: (absolutePath) => {
+        if (absolutePath.endsWith("node_modules")) {
+          return { exists: true, isSymlink: false };
+        }
+        return { exists: false, isSymlink: false };
+      },
+    });
+
+    expect(evaluations.map((evaluation) => evaluation.status)).toEqual([
+      "not-symlink",
+      "missing",
+    ]);
+  });
+
   it("skips quick mode before session switch", async () => {
     const notify = vi.fn();
 

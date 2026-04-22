@@ -1,5 +1,7 @@
 import type { FeatureRecord } from "./storage.js";
 
+import { trimToNull } from "./utils.js";
+
 export type FeatureSwitchCandidate = {
   kind: "worktree" | "remote";
   branch: string;
@@ -32,12 +34,6 @@ export type MatchFeatureRecordResult =
 export type MatchFeatureSwitchCandidateResult =
   | MatchedFeatureSwitchCandidateResult
   | NotFoundFeatureQueryResult;
-
-const trimToNull = (value: string | null | undefined): string | null => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
 
 const addMatchKey = (matchKeys: string[], value: string | null): void => {
   if (!value || matchKeys.includes(value)) {

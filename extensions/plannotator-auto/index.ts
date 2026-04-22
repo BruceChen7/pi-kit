@@ -1282,6 +1282,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     reviewResults,
     getSessionState: (ctx) => getSessionState(ctx),
     getSessionStateByKey: (sessionKey) => sessionRuntimeState.get(sessionKey),
+    getSessionContextByKey: (sessionKey) => sessionContextByKey.get(sessionKey),
     getSessionKey,
     iterateSessionStates: () =>
       Array.from(sessionRuntimeState.entries()).map(([sessionKey, state]) => ({

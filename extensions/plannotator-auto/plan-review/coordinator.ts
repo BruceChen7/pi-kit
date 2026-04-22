@@ -3,7 +3,6 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
   createRequestPlannotator,
   type createReviewResultStore,
-  formatPlanReviewMessage,
   type ReviewResultEvent,
   requestReviewStatus,
   startPlanReview,
@@ -48,6 +47,9 @@ type PlanReviewCoordinatorDeps = {
   getSessionStateByKey: (
     sessionKey: string,
   ) => PlanReviewSessionState | undefined;
+  getSessionContextByKey: (
+    sessionKey: string,
+  ) => PlanReviewRuntimeContext | undefined;
   getSessionKey: (ctx: SessionKeyContext) => string;
   iterateSessionStates: () => Iterable<SessionStateEntry>;
   onStateChanged?: (
@@ -74,24 +76,8 @@ type RetryReason = Exclude<
   "plan-file-write" | "agent_end"
 >;
 
-const formatReviewMessage = (
-  kind: ReviewTargetKind,
-  result: {
-    approved: boolean;
-    feedback?: string;
-  },
-): string => {
-  const message = formatPlanReviewMessage(result);
-  if (kind === "plan") {
-    return message;
-  }
-
-  return message
-    .replace("# Plan Review", "# Spec Review")
-    .replaceAll("Plan approved", "Spec approved")
-    .replaceAll("Plan rejected", "Spec rejected")
-    .replaceAll("revise the plan", "revise the spec");
-};
+const getReviewDraftReadyMessage = (kind: ReviewTargetKind): string =>
+  `Plannotator ${kind} review draft is ready. Submit it manually in Plannotator to continue.`;
 
 export type PlanReviewCoordinator = {
   queuePendingPlanReview: (
@@ -113,6 +99,7 @@ export const createPlanReviewCoordinator = (
     reviewResults,
     getSessionState,
     getSessionStateByKey,
+    getSessionContextByKey,
     getSessionKey,
     iterateSessionStates,
     onStateChanged,
@@ -206,6 +193,7 @@ export const createPlanReviewCoordinator = (
       feedback?: string;
     },
     source: "event" | "status",
+    runtimeCtx?: Pick<PlanReviewRuntimeContext, "abort" | "isIdle" | "ui">,
   ): void => {
     if (state.processedPlanReviewIds.has(active.reviewId)) {
       log?.debug("plannotator-auto ignored duplicate plan-review completion", {
@@ -240,13 +228,11 @@ export const createPlanReviewCoordinator = (
       return;
     }
 
-    if (result.approved) {
-      state.settledPlanReviewPaths.add(active.resolvedPlanPath);
+    const shouldAbort = Boolean(runtimeCtx && !runtimeCtx.isIdle());
+    runtimeCtx?.ui.notify(getReviewDraftReadyMessage(active.kind), "info");
+    if (shouldAbort) {
+      runtimeCtx.abort();
     }
-
-    pi.sendUserMessage(formatReviewMessage(active.kind, result), {
-      deliverAs: "steer",
-    });
 
     log?.info("plannotator-auto completed plan review", {
       cwd: ctx.cwd,
@@ -255,6 +241,7 @@ export const createPlanReviewCoordinator = (
       kind: active.kind,
       approved: result.approved,
       hasFeedback: Boolean(result.feedback?.trim()),
+      aborted: shouldAbort,
     });
   };
 
@@ -474,6 +461,7 @@ export const createPlanReviewCoordinator = (
       active,
       result,
       "status",
+      ctx,
     );
   };
 
@@ -570,6 +558,7 @@ export const createPlanReviewCoordinator = (
           feedback: status.feedback,
         },
         "status",
+        ctx,
       );
       return "continue";
     }
@@ -923,6 +912,7 @@ export const createPlanReviewCoordinator = (
         feedback: result.feedback,
       },
       "event",
+      getSessionContextByKey(matched.sessionKey),
     );
   };
 

@@ -1,6 +1,8 @@
 import { DEFAULT_GIT_TIMEOUT_MS } from "../shared/git.js";
 import { loadSettings } from "../shared/settings.js";
 
+import { isRecord, trimToNull } from "./utils.js";
+
 export type FeatureWorkflowGuards = {
   requireCleanWorkspace: boolean;
   requireFreshBase: boolean;
@@ -178,15 +180,6 @@ const DEFAULT_CONFIG: FeatureWorkflowConfig = {
     autoSwitchToWorktreeSession: true,
   },
   ignoredSync: DEFAULT_IGNORED_SYNC,
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-const trimToNull = (value: unknown): string | null => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
 };
 
 const normalizeBoolean = (value: unknown, fallback: boolean): boolean =>

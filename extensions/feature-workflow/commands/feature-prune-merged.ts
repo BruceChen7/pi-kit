@@ -4,68 +4,11 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 
 import { resolveFeatureCommandRuntime } from "../runtime.js";
+import {
+  listPruneCandidatesFromWtList,
+  type WorktreePruneCandidate,
+} from "../wt-list.js";
 import { trimToNull } from "./shared.js";
-
-type WorktreePruneCandidate = {
-  branch: string;
-  path: string;
-  mainState: string;
-};
-
-const PRUNE_ELIGIBLE_MAIN_STATES = new Set(["integrated", "empty"]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function getTrimmedRecordString(
-  record: Record<string, unknown>,
-  key: string,
-): string | null {
-  const value = record[key];
-  return typeof value === "string" ? trimToNull(value) : null;
-}
-
-function parsePruneCandidatesFromWtList(
-  stdout: string,
-): WorktreePruneCandidate[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout) as unknown;
-  } catch {
-    return [];
-  }
-
-  if (!Array.isArray(parsed)) {
-    return [];
-  }
-
-  const candidates: WorktreePruneCandidate[] = [];
-  for (const item of parsed) {
-    if (!isRecord(item)) continue;
-
-    const branch = getTrimmedRecordString(item, "branch");
-    const path = getTrimmedRecordString(item, "path");
-    const mainState = getTrimmedRecordString(item, "main_state");
-    const isMain = item.is_main === true;
-
-    if (!branch || !path || !mainState || isMain) {
-      continue;
-    }
-
-    if (!PRUNE_ELIGIBLE_MAIN_STATES.has(mainState)) {
-      continue;
-    }
-
-    candidates.push({
-      branch,
-      path,
-      mainState,
-    });
-  }
-
-  return candidates;
-}
 
 function buildPruneCandidatePreview(
   candidates: WorktreePruneCandidate[],
@@ -128,7 +71,7 @@ export async function runFeaturePruneMergedCommand(
     return;
   }
 
-  const candidates = parsePruneCandidatesFromWtList(listResult.stdout);
+  const candidates = listPruneCandidatesFromWtList(listResult.stdout);
   if (candidates.length === 0) {
     ctx.ui.notify("No merged worktrees to prune", "info");
     return;

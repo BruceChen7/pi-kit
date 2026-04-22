@@ -2,11 +2,17 @@ import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 
 export type ReviewTargetKind = "plan" | "spec";
 
+export type ExtraReviewTarget = {
+  dir: string;
+  pattern: RegExp;
+};
+
 export type PlanFileConfig = {
   planFile: string;
   resolvedPlanPath: string;
   resolvedPlanPaths: string[];
   resolvedSpecPaths: string[];
+  extraReviewTargets: ExtraReviewTarget[];
 };
 
 export type PendingPlanReview = {

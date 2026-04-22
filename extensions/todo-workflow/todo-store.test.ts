@@ -9,6 +9,7 @@ import {
   listTodos,
   loadTodoStore,
   markTodoDone,
+  syncTodoDone,
   updateTodoActivation,
   updateTodoStart,
 } from "./todo-store.js";
@@ -133,5 +134,37 @@ describe("todo-store", () => {
     const loaded = loadTodoStore(repoRoot);
     expect(loaded.todos[0]?.status).toBe("doing");
     expect(loaded.todos[0]?.completedAt).toBeUndefined();
+  });
+
+  it("syncs a stale doing todo to done and preserves the first completion time", () => {
+    const repoRoot = createTempRepo();
+    const todo = createTodo(repoRoot, "Reconcile merged todo");
+
+    updateTodoStart(repoRoot, {
+      id: todo.id,
+      sourceBranch: "main",
+      workBranch: "reconcile-merged-todo",
+      worktreePath: "/tmp/reconcile-merged-todo",
+      now: "2026-04-22T10:00:00.000Z",
+    });
+
+    const first = syncTodoDone(repoRoot, {
+      id: todo.id,
+      now: "2026-04-22T10:30:00.000Z",
+    });
+    const second = syncTodoDone(repoRoot, {
+      id: todo.id,
+      now: "2026-04-22T10:45:00.000Z",
+    });
+
+    expect(first).toMatchObject({
+      status: "done",
+      completedAt: "2026-04-22T10:30:00.000Z",
+    });
+    expect(second).toMatchObject({
+      status: "done",
+      completedAt: "2026-04-22T10:30:00.000Z",
+      updatedAt: "2026-04-22T10:45:00.000Z",
+    });
   });
 });

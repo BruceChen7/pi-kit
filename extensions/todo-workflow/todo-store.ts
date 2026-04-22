@@ -261,7 +261,7 @@ export function updateTodoActivation(
   return updated;
 }
 
-export function markTodoDone(
+export function syncTodoDone(
   repoRoot: string,
   input: { id: string; now?: string },
 ): TodoItem {
@@ -270,9 +270,16 @@ export function markTodoDone(
     ...todo,
     status: "done",
     updatedAt: timestamp,
-    completedAt: timestamp,
+    completedAt: todo.completedAt ?? timestamp,
     activeSessionKey: undefined,
   }));
+}
+
+export function markTodoDone(
+  repoRoot: string,
+  input: { id: string; now?: string },
+): TodoItem {
+  return syncTodoDone(repoRoot, input);
 }
 
 export function listTodos(

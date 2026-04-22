@@ -339,8 +339,8 @@ describe("PlanReviewCoordinator key workflow effects", () => {
     }
   });
 
-  it("waits for the review result on a busy plan-file write before notifying and aborting", async () => {
-    const { coordinator, ctx, startPlanReview, state, emitReviewResult, pi } =
+  it("queues a busy plan-file write without auto-starting review", async () => {
+    const { coordinator, ctx, startPlanReview, state, pi } =
       await setupCoordinator({
         isIdle: false,
       });
@@ -359,47 +359,21 @@ describe("PlanReviewCoordinator key workflow effects", () => {
     };
 
     try {
-      let settled = false;
-      const reviewPromise = Promise.resolve(
-        coordinator.queuePendingPlanReview(runtimeCtx as never, {
-          kind: "plan",
-          planFile: planFileRelative,
-          resolvedPlanPath: planFileAbsolute,
-          updatedAt: Date.now(),
-        }),
-      ).then(() => {
-        settled = true;
+      await coordinator.queuePendingPlanReview(runtimeCtx as never, {
+        kind: "plan",
+        planFile: planFileRelative,
+        resolvedPlanPath: planFileAbsolute,
+        updatedAt: Date.now(),
       });
 
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
-      expect(settled).toBe(false);
+      expect(startPlanReview).not.toHaveBeenCalled();
       expect(runtimeCtx.abort).not.toHaveBeenCalled();
-      expect(state.activePlanReviewByCwd.size).toBe(1);
-
-      state.activePlanReviewByCwd.forEach((_active, activeCwd) => {
-        expect(activeCwd).toBe(runtimeCtx.cwd);
-      });
-
-      const [activeReview] = state.activePlanReviewByCwd.values();
-      expect(activeReview?.reviewId).toBe("review-1");
-
-      emitReviewResult({
-        reviewId: "review-1",
-        approved: false,
-        feedback: "Please split implementation and verification.",
-      });
-
-      await reviewPromise;
-      expect(runtimeCtx.abort).toHaveBeenCalledTimes(1);
-      expect(runtimeCtx.ui.notify).toHaveBeenCalledWith(
-        "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
-        "info",
-      );
+      expect(runtimeCtx.ui.notify).not.toHaveBeenCalled();
       expect(pi.sendUserMessage).not.toHaveBeenCalled();
       expect(state.activePlanReviewByCwd.size).toBe(0);
+      expect(state.pendingPlanReviewByCwd.get(runtimeCtx.cwd)?.planFile).toBe(
+        planFileRelative,
+      );
     } finally {
       await fs.rm(repoRoot, { recursive: true, force: true });
     }

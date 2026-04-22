@@ -110,6 +110,16 @@ async function emitToolWrite(
   );
 }
 
+function attachWidgetSpy(ctx: ReturnType<typeof createTestContext>) {
+  const setWidget = vi.fn();
+  (
+    ctx.ui as typeof ctx.ui & {
+      setWidget?: ReturnType<typeof vi.fn>;
+    }
+  ).setWidget = setWidget;
+  return setWidget;
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -206,6 +216,68 @@ describe("submit review tool", () => {
       await submitPromise;
 
       expect(ctx.abort).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("shows the review widget once manual review submission creates an active review", async () => {
+    vi.resetModules();
+
+    let resolveReviewResult:
+      | ((value: {
+          status: "completed";
+          reviewId: string;
+          approved: true;
+        }) => void)
+      | undefined;
+    mockSubmitReviewApi({
+      waitForReviewResult: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveReviewResult = resolve as typeof resolveReviewResult;
+          }),
+      ),
+    });
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-widget-active-");
+    const repoName = repoRoot.split("/").pop() ?? "repo";
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
+    const ctx = createTestContext(repoRoot);
+    const setWidget = attachWidgetSpy(ctx);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+      setWidget.mockClear();
+
+      const submitPromise = Promise.resolve(
+        runTool(
+          "plannotator_auto_submit_review",
+          { path: planFileRelative },
+          ctx,
+        ),
+      );
+      await flushMicrotasks();
+
+      expect(setWidget).toHaveBeenCalledWith(
+        "plannotator-auto-review",
+        ["Plan/Spec review is active"],
+        { placement: "belowEditor" },
+      );
+
+      resolveReviewResult?.({
+        status: "completed",
+        reviewId: "review-submit-plan",
+        approved: true,
+      });
+      await submitPromise;
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

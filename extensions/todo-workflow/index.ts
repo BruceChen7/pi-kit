@@ -1,5 +1,3 @@
-import fs from "node:fs";
-
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -16,13 +14,16 @@ import {
 import { maybeSwitchToWorktreeSession } from "../feature-workflow/commands/shared.js";
 import { startFeatureWorkflow } from "../feature-workflow/start-feature.js";
 import type { FeatureRecord } from "../feature-workflow/storage.js";
-import { ensureFeatureWorktree } from "../feature-workflow/worktree-gateway.js";
+import {
+  ensureTodoWorktreeReady,
+  getCurrentBranch,
+  getEndTodoArgumentCompletions,
+  handleEndTodoCommand,
+} from "./end-todo.js";
 import {
   createTodo,
   findTodoById,
-  getDoingTodos,
   listTodos,
-  markTodoDone,
   type TodoItem,
   updateTodoActivation,
   updateTodoStart,
@@ -120,10 +121,7 @@ async function showTodoPicker(ctx: ExtensionContext): Promise<string | null> {
   });
 }
 
-function activateTodoForSession(
-  ctx: ExtensionContext,
-  todo: TodoItem,
-): TodoItem {
+function activateTodoForSession(ctx: ExtensionContext, todo: TodoItem): void {
   const activated = updateTodoActivation(ctx.cwd, {
     id: todo.id,
     sessionKey: getSessionKey(ctx),
@@ -131,69 +129,6 @@ function activateTodoForSession(
   });
   updateStatus(ctx, activated);
   ctx.ui.notify(`doing: ${activated.title}`, "info");
-  return activated;
-}
-
-async function getCurrentBranch(
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-): Promise<string | null> {
-  const result = await pi.exec("git", [
-    "-C",
-    ctx.cwd,
-    "branch",
-    "--show-current",
-  ]);
-  const branch = result.stdout?.trim();
-  return branch || null;
-}
-
-async function ensureTodoWorktreeReady(
-  pi: ExtensionAPI,
-  ctx: ExtensionCommandContext,
-  todo: TodoItem,
-): Promise<{ ok: true; worktreePath: string } | { ok: false }> {
-  if (!todo.workBranch) {
-    ctx.ui.notify(`TODO "${todo.title}" is missing its work branch.`, "error");
-    return { ok: false };
-  }
-
-  const hasWorktree = todo.worktreePath
-    ? fs.existsSync(todo.worktreePath)
-    : false;
-  if (!hasWorktree && todo.worktreePath) {
-    const shouldRebuild = await ctx.ui.confirm(
-      `Rebuild missing worktree for "${todo.title}"?`,
-      `Expected worktree path: ${todo.worktreePath}`,
-    );
-    if (!shouldRebuild) {
-      ctx.ui.notify("Cancelled", "info");
-      return { ok: false };
-    }
-  }
-
-  const runWt = async (args: string[]) => {
-    const result = await pi.exec("wt", ["-C", ctx.cwd, ...args]);
-    return {
-      code: result.code ?? 1,
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-    };
-  };
-
-  const ensured = await ensureFeatureWorktree(runWt, {
-    branch: todo.workBranch,
-    fallbackWorktreePath: todo.worktreePath ?? "",
-  });
-  if (!ensured.ok) {
-    ctx.ui.notify(ensured.message, "error");
-    return { ok: false };
-  }
-
-  return {
-    ok: true,
-    worktreePath: ensured.worktreePath,
-  };
 }
 
 function buildTodoFeatureRecord(
@@ -319,119 +254,17 @@ async function handleTodoCommand(
     return;
   }
 
-  if (todo.status === "doing") {
-    await resumeTodo(pi, ctx, todo);
-    return;
-  }
-
-  if (todo.status === "done") {
-    ctx.ui.notify("Done TODOs are view-only for now.", "info");
-    return;
-  }
-
-  await startTodo(pi, ctx, todo);
-}
-
-async function handleEndTodo(
-  pi: ExtensionAPI,
-  ctx: ExtensionCommandContext,
-): Promise<void> {
-  const doingTodos = getDoingTodos(ctx.cwd);
-  if (doingTodos.length === 0) {
-    ctx.ui.notify("No doing TODOs found", "info");
-    updateStatus(ctx, null);
-    return;
-  }
-
-  let target = doingTodos[0] as TodoItem;
-  if (doingTodos.length > 1) {
-    const choice = await ctx.ui.select(
-      "Finish TODO:",
-      doingTodos.map((todo) => todo.title),
-    );
-    if (!choice) {
-      ctx.ui.notify("Cancelled", "info");
+  switch (todo.status) {
+    case "doing":
+      await resumeTodo(pi, ctx, todo);
       return;
-    }
-    target = doingTodos.find((todo) => todo.title === choice) ?? target;
-  }
-
-  if (!target.workBranch || !target.sourceBranch) {
-    ctx.ui.notify(`TODO "${target.title}" is missing git metadata.`, "error");
-    return;
-  }
-
-  const currentBranch = await getCurrentBranch(pi, ctx);
-  if (currentBranch !== target.workBranch) {
-    const shouldSwitch = await ctx.ui.confirm(
-      `Switch to ${target.workBranch} before finishing?`,
-      `Current branch: ${currentBranch || "unknown"}`,
-    );
-    if (!shouldSwitch) {
-      ctx.ui.notify("Cancelled", "info");
+    case "done":
+      ctx.ui.notify("Done TODOs are view-only for now.", "info");
       return;
-    }
-
-    const switched = await ensureTodoWorktreeReady(pi, ctx, target);
-    if (!switched.ok) {
+    case "todo":
+      await startTodo(pi, ctx, todo);
       return;
-    }
   }
-
-  const checkoutSource = await pi.exec("git", [
-    "-C",
-    ctx.cwd,
-    "checkout",
-    target.sourceBranch,
-  ]);
-  if ((checkoutSource.code ?? 1) !== 0) {
-    ctx.ui.notify(
-      checkoutSource.stderr ?? "Failed to checkout source branch",
-      "error",
-    );
-    return;
-  }
-
-  const mergeResult = await pi.exec("git", [
-    "-C",
-    ctx.cwd,
-    "merge",
-    "--no-ff",
-    target.workBranch,
-  ]);
-  if ((mergeResult.code ?? 1) !== 0) {
-    ctx.ui.notify(mergeResult.stderr ?? "Failed to merge TODO branch", "error");
-    return;
-  }
-
-  const checkoutBack = await pi.exec("git", [
-    "-C",
-    ctx.cwd,
-    "checkout",
-    target.sourceBranch,
-  ]);
-  if ((checkoutBack.code ?? 1) !== 0) {
-    ctx.ui.notify(
-      checkoutBack.stderr ?? "Failed to return to source branch",
-      "error",
-    );
-    return;
-  }
-
-  const completed = markTodoDone(ctx.cwd, { id: target.id });
-  const cleanup = await ctx.ui.confirm(
-    `Clean up worktree/branch for "${target.title}"?`,
-    `${target.workBranch}${target.worktreePath ? ` • ${target.worktreePath}` : ""}`,
-  );
-  if (cleanup) {
-    ctx.ui.notify(
-      "Cleanup flow not implemented yet; leaving branch/worktree intact.",
-      "info",
-    );
-  }
-
-  updateStatus(ctx, getCurrentSessionActiveTodo(ctx));
-  ctx.ui.notify(`Completed TODO: ${completed.title}`, "info");
 }
 
 export default function todoWorkflowExtension(pi: ExtensionAPI): void {
@@ -441,8 +274,10 @@ export default function todoWorkflowExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("end_todo", {
-    description: "Finish a doing TODO by merging it back to its source branch",
-    handler: async (_args, ctx) => handleEndTodo(pi, ctx),
+    description: "Finish or clean up project TODOs",
+    getArgumentCompletions: (argumentPrefix) =>
+      getEndTodoArgumentCompletions(pi, argumentPrefix),
+    handler: async (args, ctx) => handleEndTodoCommand(pi, args, ctx),
   });
 
   pi.on("session_start", async (_event, ctx) => {

@@ -70,6 +70,99 @@ describe("todo-workflow extension", () => {
     expect(commands.sort()).toEqual(["end_todo", "todo"]);
   });
 
+  it("offers end_todo argument completions for finish and cleanup flows", async () => {
+    const initialCwd = process.cwd();
+    const repoRoot = createTempRepo();
+
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "cleanup-merged-task",
+              title: "Cleanup merged task",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "cleanup-merged-task",
+              worktreePath: "/tmp/cleanup-merged-task",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      {
+        handler: (args: string, ctx: unknown) => Promise<void>;
+        getArgumentCompletions?: (
+          prefix: string,
+        ) =>
+          | Promise<Array<{ value: string }> | null>
+          | Array<{ value: string }>
+          | null;
+      }
+    >();
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args.includes("rev-parse")) {
+        return { code: 0, stdout: "sha\n", stderr: "" };
+      }
+      if (args.includes("merge-base")) {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`Unexpected exec args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: {
+          handler: (args: string, ctx: unknown) => Promise<void>;
+          getArgumentCompletions?: (
+            prefix: string,
+          ) =>
+            | Promise<Array<{ value: string }> | null>
+            | Array<{ value: string }>
+            | null;
+        },
+      ) {
+        commands.set(name, definition);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("end_todo");
+    expect(handler?.getArgumentCompletions).toBeTypeOf("function");
+    if (!handler?.getArgumentCompletions) return;
+
+    try {
+      process.chdir(repoRoot);
+
+      const rootCompletions = await handler.getArgumentCompletions("");
+      expect(rootCompletions?.map((item) => item.value)).toEqual(
+        expect.arrayContaining(["finish", "cleanup"]),
+      );
+
+      const cleanupCompletions =
+        await handler.getArgumentCompletions("cleanup ");
+      expect(cleanupCompletions?.map((item) => item.value)).toEqual(
+        expect.arrayContaining(["--all", "cleanup-merged-task"]),
+      );
+    } finally {
+      process.chdir(initialCwd);
+    }
+  });
+
   it("creates a todo from /todo add", async () => {
     const repoRoot = createTempRepo();
     const commands = new Map<
@@ -450,6 +543,355 @@ describe("todo-workflow extension", () => {
     }
   });
 
+  it("finishes a specific todo id and skips target selection", async () => {
+    const repoRoot = createTempRepo();
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Finish explicit todo",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "finish-explicit-todo",
+              worktreePath: "/tmp/finish-explicit-todo",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const select = vi.fn(async () => "should-not-run");
+    const confirm = vi.fn(async () => false);
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "branch" && args[3] === "--show-current") {
+        return { code: 0, stdout: "finish-explicit-todo\n", stderr: "" };
+      }
+      if (args[2] === "checkout") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (args[2] === "merge") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`Unexpected git args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("end_todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("finish todo-1", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        select,
+        confirm,
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+        setStatus: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+      switchSession: vi.fn(async () => ({ cancelled: false })),
+    });
+
+    const store = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as { todos: Array<{ status: string; completedAt?: string }> };
+
+    expect(select).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(store.todos[0]?.status).toBe("done");
+    expect(store.todos[0]?.completedAt).toBeTruthy();
+    expect(notifications).toContainEqual({
+      message: "Completed TODO: Finish explicit todo",
+      level: "info",
+    });
+  });
+
+  it("cleans up one merged todo and reconciles it to done", async () => {
+    const repoRoot = createTempRepo();
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Cleanup merged todo",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "cleanup-merged-todo",
+              worktreePath: "/tmp/cleanup-merged-todo",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const select = vi.fn(async () => "Local worktree + local branch");
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args.includes("rev-parse")) {
+        return { code: 0, stdout: "sha\n", stderr: "" };
+      }
+      if (args.includes("merge-base")) {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "-C" && args[2] === "remove") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (args[2] === "branch" && args[3] === "-d") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`Unexpected exec args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("end_todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("cleanup todo-1", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        select,
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+        setStatus: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+      switchSession: vi.fn(async () => ({ cancelled: false })),
+    });
+
+    const store = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as {
+      todos: Array<{
+        status: string;
+        completedAt?: string;
+        activeSessionKey?: string;
+      }>;
+    };
+
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledWith("wt", [
+      "-C",
+      repoRoot,
+      "remove",
+      "cleanup-merged-todo",
+      "--yes",
+      "--foreground",
+    ]);
+    expect(exec).toHaveBeenCalledWith("git", [
+      "-C",
+      repoRoot,
+      "branch",
+      "-d",
+      "cleanup-merged-todo",
+    ]);
+    expect(store.todos[0]).toMatchObject({
+      status: "done",
+      completedAt: expect.any(String),
+    });
+    expect(
+      notifications.some((item) =>
+        item.message.includes("Cleanup merged todo"),
+      ),
+    ).toBe(true);
+  });
+
+  it("cleans up all merged todos and skips the rest", async () => {
+    const repoRoot = createTempRepo();
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "merged-todo",
+              title: "Merged todo",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "merged-todo",
+              worktreePath: "/tmp/merged-todo",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+            {
+              id: "not-merged-todo",
+              title: "Not merged todo",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "not-merged-todo",
+              worktreePath: "/tmp/not-merged-todo",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+            {
+              id: "missing-meta",
+              title: "Missing metadata",
+              status: "todo",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const confirm = vi.fn(async () => true);
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      const branch = args[args.length - 2];
+      if (args.includes("rev-parse")) {
+        return { code: 0, stdout: "sha\n", stderr: "" };
+      }
+      if (args.includes("merge-base")) {
+        return branch === "merged-todo"
+          ? { code: 0, stdout: "", stderr: "" }
+          : { code: 1, stdout: "", stderr: "" };
+      }
+      if (args[0] === "-C" && args[2] === "remove") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (args[2] === "branch" && args[3] === "-d") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`Unexpected exec args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("end_todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("cleanup --all", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        confirm,
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+        setStatus: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+      switchSession: vi.fn(async () => ({ cancelled: false })),
+    });
+
+    const store = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as { todos: Array<{ id: string; status: string; completedAt?: string }> };
+
+    const mergedTodo = store.todos.find((todo) => todo.id === "merged-todo");
+    const notMergedTodo = store.todos.find(
+      (todo) => todo.id === "not-merged-todo",
+    );
+    const missingMetaTodo = store.todos.find(
+      (todo) => todo.id === "missing-meta",
+    );
+
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(mergedTodo).toMatchObject({
+      status: "done",
+      completedAt: expect.any(String),
+    });
+    expect(notMergedTodo?.status).toBe("doing");
+    expect(missingMetaTodo?.status).toBe("todo");
+    expect(
+      notifications.some(
+        (item) =>
+          item.message.includes("cleaned 1") &&
+          item.message.includes("skipped not merged 1") &&
+          item.message.includes("skipped invalid 1"),
+      ),
+    ).toBe(true);
+  });
+
   it("keeps todo doing when end_todo merge fails", async () => {
     const repoRoot = createTempRepo();
     fs.writeFileSync(
@@ -531,11 +973,16 @@ describe("todo-workflow extension", () => {
     expect(handler).toBeTypeOf("function");
     if (!handler) return;
 
+    const select = vi
+      .fn<() => Promise<string | undefined>>()
+      .mockResolvedValueOnce("Finish a todo")
+      .mockResolvedValueOnce("Finish merge flow");
+
     await handler("", {
       cwd: repoRoot,
       hasUI: true,
       ui: {
-        select: async () => "Finish merge flow",
+        select,
         confirm: async () => true,
         notify(message: string, level: string) {
           notifications.push({ message, level });

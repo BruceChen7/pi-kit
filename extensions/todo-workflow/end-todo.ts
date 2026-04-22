@@ -8,6 +8,7 @@ import type {
 import type { AutocompleteItem } from "@mariozechner/pi-tui";
 
 import { ensureFeatureWorktree } from "../feature-workflow/worktree-gateway.js";
+import { runWithWorkingLoader } from "../shared/ui-working.js";
 import {
   findTodoById,
   getDoingTodos,
@@ -348,6 +349,30 @@ export async function getCurrentBranch(
   return trimToNull(result.stdout) ?? null;
 }
 
+function isMissingTodoWorktree(todo: TodoItem): boolean {
+  return Boolean(todo.worktreePath && !fs.existsSync(todo.worktreePath));
+}
+
+export async function confirmTodoWorktreeReady(
+  ctx: ExtensionCommandContext,
+  todo: TodoItem,
+): Promise<boolean> {
+  if (!isMissingTodoWorktree(todo)) {
+    return true;
+  }
+
+  const shouldRebuild = await ctx.ui.confirm(
+    `Rebuild missing worktree for "${todo.title}"?`,
+    `Expected worktree path: ${todo.worktreePath}`,
+  );
+  if (!shouldRebuild) {
+    ctx.ui.notify("Cancelled", "info");
+    return false;
+  }
+
+  return true;
+}
+
 export async function ensureTodoWorktreeReady(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
@@ -356,20 +381,6 @@ export async function ensureTodoWorktreeReady(
   if (!todo.workBranch) {
     ctx.ui.notify(`TODO "${todo.title}" is missing its work branch.`, "error");
     return { ok: false };
-  }
-
-  const hasWorktree = todo.worktreePath
-    ? fs.existsSync(todo.worktreePath)
-    : false;
-  if (!hasWorktree && todo.worktreePath) {
-    const shouldRebuild = await ctx.ui.confirm(
-      `Rebuild missing worktree for "${todo.title}"?`,
-      `Expected worktree path: ${todo.worktreePath}`,
-    );
-    if (!shouldRebuild) {
-      ctx.ui.notify("Cancelled", "info");
-      return { ok: false };
-    }
   }
 
   const ensured = await ensureFeatureWorktree(
@@ -569,46 +580,67 @@ async function runFinishFlow(
       return;
     }
 
-    const switched = await ensureTodoWorktreeReady(pi, ctx, target);
-    if (!switched.ok) {
+    const confirmed = await confirmTodoWorktreeReady(ctx, target);
+    if (!confirmed) {
       return;
     }
   }
 
-  const checkoutSource = await runGit(pi, ctx.cwd, [
-    "checkout",
-    target.sourceBranch,
-  ]);
-  if (checkoutSource.code !== 0) {
-    ctx.ui.notify(
-      formatCommandError(checkoutSource, "Failed to checkout source branch"),
-      "error",
-    );
-    return;
-  }
+  const finished = await runWithWorkingLoader(
+    ctx,
+    async () => {
+      if (currentBranch !== target.workBranch) {
+        const switched = await ensureTodoWorktreeReady(pi, ctx, target);
+        if (!switched.ok) {
+          return false;
+        }
+      }
 
-  const mergeResult = await runGit(pi, ctx.cwd, [
-    "merge",
-    "--no-ff",
-    target.workBranch,
-  ]);
-  if (mergeResult.code !== 0) {
-    ctx.ui.notify(
-      formatCommandError(mergeResult, "Failed to merge TODO branch"),
-      "error",
-    );
-    return;
-  }
+      const checkoutSource = await runGit(pi, ctx.cwd, [
+        "checkout",
+        target.sourceBranch,
+      ]);
+      if (checkoutSource.code !== 0) {
+        ctx.ui.notify(
+          formatCommandError(
+            checkoutSource,
+            "Failed to checkout source branch",
+          ),
+          "error",
+        );
+        return false;
+      }
 
-  const checkoutBack = await runGit(pi, ctx.cwd, [
-    "checkout",
-    target.sourceBranch,
-  ]);
-  if (checkoutBack.code !== 0) {
-    ctx.ui.notify(
-      formatCommandError(checkoutBack, "Failed to return to source branch"),
-      "error",
-    );
+      const mergeResult = await runGit(pi, ctx.cwd, [
+        "merge",
+        "--no-ff",
+        target.workBranch,
+      ]);
+      if (mergeResult.code !== 0) {
+        ctx.ui.notify(
+          formatCommandError(mergeResult, "Failed to merge TODO branch"),
+          "error",
+        );
+        return false;
+      }
+
+      const checkoutBack = await runGit(pi, ctx.cwd, [
+        "checkout",
+        target.sourceBranch,
+      ]);
+      if (checkoutBack.code !== 0) {
+        ctx.ui.notify(
+          formatCommandError(checkoutBack, "Failed to return to source branch"),
+          "error",
+        );
+        return false;
+      }
+
+      return true;
+    },
+    { message: "Merging..." },
+  );
+  if (!finished) {
     return;
   }
 
@@ -652,7 +684,11 @@ async function runCleanupOneFlow(
     return;
   }
 
-  const failures = await cleanupTodoResources(pi, ctx.cwd, target, scope);
+  const failures = await runWithWorkingLoader(
+    ctx,
+    () => cleanupTodoResources(pi, ctx.cwd, target, scope),
+    { message: "Cleaning..." },
+  );
   syncTodoDone(ctx.cwd, { id: target.id });
 
   if (failures.length === 0) {
@@ -726,19 +762,25 @@ async function runCleanupAllFlow(
   let partial = 0;
   const failures: string[] = [];
 
-  for (const todo of summary.merged) {
-    const cleanupFailures = await cleanupTodoResources(
-      pi,
-      ctx.cwd,
-      todo,
-      "local",
-    );
-    syncTodoDone(ctx.cwd, { id: todo.id });
-    if (cleanupFailures.length > 0) {
-      partial += 1;
-      failures.push(`${todo.id}: ${cleanupFailures.join(" | ")}`);
-    }
-  }
+  await runWithWorkingLoader(
+    ctx,
+    async () => {
+      for (const todo of summary.merged) {
+        const cleanupFailures = await cleanupTodoResources(
+          pi,
+          ctx.cwd,
+          todo,
+          "local",
+        );
+        syncTodoDone(ctx.cwd, { id: todo.id });
+        if (cleanupFailures.length > 0) {
+          partial += 1;
+          failures.push(`${todo.id}: ${cleanupFailures.join(" | ")}`);
+        }
+      }
+    },
+    { message: "Cleaning..." },
+  );
 
   const resultSummary = [
     `cleaned ${summary.merged.length}`,

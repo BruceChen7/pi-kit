@@ -13,17 +13,23 @@ type WorkingLoaderResult<T> =
       error: unknown;
     };
 
+type WorkingLoaderOptions = {
+  message?: string;
+};
+
 export async function runWithWorkingLoader<T>(
   ctx: ExtensionCommandContext,
   workflow: () => Promise<T>,
+  options: WorkingLoaderOptions = {},
 ): Promise<T> {
   if (!ctx.hasUI || typeof ctx.ui.custom !== "function") {
     return workflow();
   }
 
+  const { message = "Working..." } = options;
   const result = await ctx.ui.custom<WorkingLoaderResult<T>>(
     (tui, theme, _kb, done) => {
-      const loader = new BorderedLoader(tui, theme, "Working...", {
+      const loader = new BorderedLoader(tui, theme, message, {
         cancellable: false,
       });
 

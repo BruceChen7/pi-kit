@@ -3,12 +3,12 @@ import type {
   ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 
+import { runWithWorkingLoader } from "../../shared/ui-working.js";
 import { buildBaseBranchCandidates } from "../base-branches.js";
 import {
   preflightFeatureStart,
   startPreparedFeatureWorkflow,
 } from "../start-feature.js";
-import { runWithWorkingLoader } from "../ui-working.js";
 import {
   commandLog,
   resolveInferredBaseBranch,

@@ -12,9 +12,14 @@ import {
 } from "@mariozechner/pi-tui";
 
 import { maybeSwitchToWorktreeSession } from "../feature-workflow/commands/shared.js";
-import { startFeatureWorkflow } from "../feature-workflow/start-feature.js";
-import type { FeatureRecord } from "../feature-workflow/storage.js";
 import {
+  preflightFeatureStart,
+  startPreparedFeatureWorkflow,
+} from "../feature-workflow/start-feature.js";
+import type { FeatureRecord } from "../feature-workflow/storage.js";
+import { runWithWorkingLoader } from "../shared/ui-working.js";
+import {
+  confirmTodoWorktreeReady,
   ensureTodoWorktreeReady,
   getCurrentBranch,
   getEndTodoArgumentCompletions,
@@ -182,12 +187,19 @@ async function startTodo(
     return;
   }
 
-  const startResult = await startFeatureWorkflow({
-    pi,
-    ctx,
-    slug: todo.id,
-    base: sourceBranch,
-  });
+  const prepared = preflightFeatureStart({ pi, ctx });
+  if (!prepared) {
+    return;
+  }
+
+  const startResult = await runWithWorkingLoader(ctx, () =>
+    startPreparedFeatureWorkflow({
+      ctx,
+      runtime: prepared.runtime,
+      slug: todo.id,
+      base: sourceBranch,
+    }),
+  );
   if (!startResult.ok) {
     return;
   }
@@ -206,16 +218,19 @@ async function resumeTodo(
   ctx: ExtensionCommandContext,
   todo: TodoItem,
 ): Promise<void> {
-  const ensured = await ensureTodoWorktreeReady(pi, ctx, todo);
-  if (!ensured.ok) {
+  const confirmed = await confirmTodoWorktreeReady(ctx, todo);
+  if (!confirmed) {
     return;
   }
 
-  const switched = await switchToTodoWorktreeSession(
-    ctx,
-    todo,
-    ensured.worktreePath,
-  );
+  const switched = await runWithWorkingLoader(ctx, async () => {
+    const ensured = await ensureTodoWorktreeReady(pi, ctx, todo);
+    if (!ensured.ok) {
+      return false;
+    }
+
+    return switchToTodoWorktreeSession(ctx, todo, ensured.worktreePath);
+  });
   if (!switched) {
     return;
   }

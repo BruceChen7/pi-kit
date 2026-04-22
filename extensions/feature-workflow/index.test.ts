@@ -18,6 +18,18 @@ import {
 
 const tempDirs: string[] = [];
 
+type LoaderComponent = {
+  render: (width: number) => string[];
+  dispose?: () => void;
+};
+
+type LoaderFactory = (
+  tui: { requestRender(): void },
+  theme: { fg(color: string, text: string): string },
+  keybindings: unknown,
+  done: (value: unknown) => void,
+) => LoaderComponent;
+
 const runGit = (cwd: string, args: string[]) =>
   spawnSync("git", args, {
     cwd,
@@ -339,6 +351,135 @@ describe("feature-workflow extension", () => {
     ]);
   });
 
+  it("shows a blocking working loader during /feature-start in UI mode", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            guards: {
+              requireCleanWorkspace: false,
+              requireFreshBase: false,
+            },
+            defaults: {
+              autoSwitchToWorktreeSession: false,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const worktreePath = path.join(repoRoot, ".wt", "fix-loader-start");
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const loaderRenders: string[] = [];
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args.includes("switch") && args.includes("--create")) {
+        fs.mkdirSync(worktreePath, { recursive: true });
+        return {
+          code: 0,
+          stdout: JSON.stringify({ action: "created", path: worktreePath }),
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-start");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        async input(prompt: string) {
+          if (prompt === "Branch slug:") {
+            return "fix-loader-start";
+          }
+          throw new Error(`Unexpected input prompt: ${prompt}`);
+        },
+        async select(prompt: string) {
+          if (prompt === "Base branch:") {
+            return "main";
+          }
+          throw new Error(`Unexpected select prompt: ${prompt}`);
+        },
+        async custom(factory: LoaderFactory) {
+          let component: LoaderComponent | undefined;
+
+          const result = await new Promise<unknown>((resolve) => {
+            component = factory(
+              { requestRender() {} },
+              {
+                fg(_color: string, text: string) {
+                  return text;
+                },
+              },
+              {},
+              (value: unknown) => resolve(value),
+            );
+
+            loaderRenders.push(component.render(80).join("\n"));
+          });
+
+          component?.dispose?.();
+          return result;
+        },
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+      sessionManager: {
+        getSessionFile() {
+          return null;
+        },
+      },
+      async switchSession() {
+        return { cancelled: false };
+      },
+    });
+
+    expect(loaderRenders).toHaveLength(1);
+    expect(loaderRenders[0]).toContain("Working...");
+    expect(
+      notifications.some((item) =>
+        item.message.includes("Creating worktree for"),
+      ),
+    ).toBe(false);
+    expect(notifications).toContainEqual({
+      message: "Feature worktree created: fix-loader-start",
+      level: "info",
+    });
+  });
+
   it("creates a slug-only feature branch from the selected slug without local registry persistence", async () => {
     const repoRoot = createTempRepoWithMainBranch();
     fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
@@ -468,10 +609,6 @@ describe("feature-workflow extension", () => {
       "master--fix-annotate-auto-last",
     );
     expect(notifications).toEqual([
-      {
-        message: "Creating worktree for fix-annotate-auto-last…",
-        level: "info",
-      },
       {
         message: "Feature worktree created: fix-annotate-auto-last",
         level: "info",
@@ -762,6 +899,135 @@ describe("feature-workflow extension", () => {
     ).resolves.toBeUndefined();
 
     expect(exec).toHaveBeenCalledTimes(2);
+    expect(notifications).toEqual([
+      {
+        message: expect.stringContaining(`Worktree ready: ${featureBranch}`),
+        level: "info",
+      },
+    ]);
+  });
+
+  it("shows a blocking working loader during /feature-switch in UI mode", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const featureBranch = "fix-loader-switch";
+    const worktreePath = path.join(repoRoot, ".wt", featureBranch);
+
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            defaults: {
+              autoSwitchToWorktreeSession: false,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const loaderRenders: string[] = [];
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              branch: featureBranch,
+              path: worktreePath,
+              commit: { timestamp: 1 },
+            },
+          ]),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "switch") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            action: "switched",
+            path: worktreePath,
+          }),
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-switch");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await expect(
+      handler(featureBranch, {
+        cwd: repoRoot,
+        hasUI: true,
+        ui: {
+          async custom(factory: LoaderFactory) {
+            let component: LoaderComponent | undefined;
+
+            const result = await new Promise<unknown>((resolve) => {
+              component = factory(
+                { requestRender() {} },
+                {
+                  fg(_color: string, text: string) {
+                    return text;
+                  },
+                },
+                {},
+                (value: unknown) => resolve(value),
+              );
+
+              loaderRenders.push(component.render(80).join("\n"));
+            });
+
+            component?.dispose?.();
+            return result;
+          },
+          notify(message: string, level: string) {
+            notifications.push({ message, level });
+          },
+        },
+        sessionManager: {
+          getSessionFile() {
+            return null;
+          },
+        },
+        async switchSession() {
+          return { cancelled: false };
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(loaderRenders).toHaveLength(1);
+    expect(loaderRenders[0]).toContain("Working...");
     expect(notifications).toEqual([
       {
         message: expect.stringContaining(`Worktree ready: ${featureBranch}`),

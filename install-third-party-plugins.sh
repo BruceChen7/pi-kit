@@ -98,6 +98,7 @@ PLUGINS=(
     # "https://github.com/owner/repo@v1.2.3"
     "npm:@plannotator/pi-extension"
     "https://github.com/davebcn87/pi-autoresearch@v1.0.1"
+    "npm:pi-context"
 )
 
 # Install each plugin

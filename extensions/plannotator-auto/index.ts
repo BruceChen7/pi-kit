@@ -17,6 +17,7 @@ import {
   type PlanReviewCoordinator,
 } from "./plan-review/coordinator.ts";
 import type {
+  ExtraReviewTarget,
   PlanFileConfig,
   PlanReviewSessionState,
   ReviewTargetKind,
@@ -33,13 +34,20 @@ import {
   requestReviewStatus,
 } from "./plannotator-api.ts";
 
+type ExtraReviewTargetConfig = {
+  dir: string;
+  filePattern: string;
+};
+
 type PlannotatorAutoConfig = {
   planFile?: string | null;
+  extraReviewTargets?: ExtraReviewTargetConfig[];
   codeReviewAutoTrigger?: boolean;
 };
 
 type PlannotatorAutoSettings = {
   planFile?: unknown;
+  extraReviewTargets?: unknown;
   codeReviewAutoTrigger?: unknown;
 };
 
@@ -161,6 +169,31 @@ const setReviewWidgetBySessionKey = (sessionKey: string): void => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
+const sanitizeExtraReviewTargets = (
+  value: unknown,
+): ExtraReviewTargetConfig[] | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const next = value.flatMap((entry) => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+
+    const dir = typeof entry.dir === "string" ? entry.dir.trim() : "";
+    const filePattern =
+      typeof entry.filePattern === "string" ? entry.filePattern.trim() : "";
+    if (dir.length === 0 || filePattern.length === 0) {
+      return [];
+    }
+
+    return [{ dir, filePattern }];
+  });
+
+  return next.length > 0 ? next : undefined;
+};
+
 const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
   if (!isRecord(value)) {
     return {};
@@ -176,6 +209,11 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
     if (trimmed.length > 0) {
       next.planFile = trimmed;
     }
+  }
+
+  const extraReviewTargets = sanitizeExtraReviewTargets(raw.extraReviewTargets);
+  if (extraReviewTargets) {
+    next.extraReviewTargets = extraReviewTargets;
   }
 
   if (typeof raw.codeReviewAutoTrigger === "boolean") {
@@ -249,6 +287,7 @@ const loadConfig = (
   log?.debug("plannotator-auto config loaded", {
     cwd,
     planFile: config.planFile,
+    extraReviewTargetCount: config.extraReviewTargets?.length ?? 0,
     codeReviewAutoTrigger: config.codeReviewAutoTrigger ?? false,
   });
   return config;
@@ -291,6 +330,23 @@ const getDefaultSpecDirs = (cwd: string): string[] =>
     path.join(root, DEFAULT_SPECS_SUBDIR),
   );
 
+const resolveExtraReviewTargets = (
+  cwd: string,
+  extraReviewTargets: ExtraReviewTargetConfig[] | undefined,
+): ExtraReviewTarget[] =>
+  (extraReviewTargets ?? []).flatMap((target) => {
+    try {
+      return [
+        {
+          dir: path.resolve(cwd, target.dir),
+          pattern: new RegExp(target.filePattern),
+        },
+      ];
+    } catch {
+      return [];
+    }
+  });
+
 const isConfiguredPlanDirectory = (
   planFile: string,
   resolvedPlanPath: string,
@@ -323,27 +379,42 @@ const toRepoRelativePath = (
   return targetPath;
 };
 
-const isPlanFileMatch = (planDir: string, targetPath: string): boolean => {
-  if (path.dirname(targetPath) !== planDir) {
+const isDirectChildFileMatch = (
+  dir: string,
+  pattern: RegExp,
+  targetPath: string,
+): boolean => {
+  if (path.dirname(targetPath) !== dir) {
     return false;
   }
 
-  return PLAN_FILE_PATTERN.test(path.basename(targetPath));
+  return pattern.test(path.basename(targetPath));
 };
+
+const isPlanFileMatch = (planDir: string, targetPath: string): boolean =>
+  isDirectChildFileMatch(planDir, PLAN_FILE_PATTERN, targetPath);
 
 const isPlanFileMatchAny = (planDirs: string[], targetPath: string): boolean =>
   planDirs.some((planDir) => isPlanFileMatch(planDir, targetPath));
 
-const isSpecFileMatch = (specDir: string, targetPath: string): boolean => {
-  if (path.dirname(targetPath) !== specDir) {
-    return false;
-  }
+const isSpecFileMatch = (specDir: string, targetPath: string): boolean =>
+  isDirectChildFileMatch(specDir, SPEC_FILE_PATTERN, targetPath);
 
-  return SPEC_FILE_PATTERN.test(path.basename(targetPath));
-};
+const isExtraReviewTargetMatch = (
+  target: ExtraReviewTarget,
+  targetPath: string,
+): boolean => isDirectChildFileMatch(target.dir, target.pattern, targetPath);
 
 const isSpecFileMatchAny = (specDirs: string[], targetPath: string): boolean =>
   specDirs.some((specDir) => isSpecFileMatch(specDir, targetPath));
+
+const isExtraReviewTargetMatchAny = (
+  targets: ExtraReviewTarget[] | undefined,
+  targetPath: string,
+): boolean =>
+  (targets ?? []).some((target) =>
+    isExtraReviewTargetMatch(target, targetPath),
+  );
 
 const resolvePlanPath = (cwd: string, planFile: string): string =>
   path.resolve(cwd, planFile);
@@ -369,6 +440,10 @@ const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
   const resolvedPlanPath = resolvePlanPath(ctx.cwd, planFile);
   const resolvedPlanPaths = resolvePlanPaths(ctx.cwd, planFiles);
   const resolvedSpecPaths = resolvePlanPaths(ctx.cwd, specFiles);
+  const extraReviewTargets = resolveExtraReviewTargets(
+    ctx.cwd,
+    config.extraReviewTargets,
+  );
 
   if (!isConfiguredPlanDirectory(planFile, resolvedPlanPath)) {
     log?.debug(
@@ -387,6 +462,7 @@ const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
     resolvedPlanPath,
     resolvedPlanPaths,
     resolvedSpecPaths,
+    extraReviewTargets,
   });
 
   return {
@@ -394,6 +470,7 @@ const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
     resolvedPlanPath,
     resolvedPlanPaths,
     resolvedSpecPaths,
+    extraReviewTargets,
   };
 };
 
@@ -456,6 +533,13 @@ const resolveReviewTargetMatch = (
     };
   }
 
+  if (isExtraReviewTargetMatchAny(planConfig.extraReviewTargets, targetPath)) {
+    return {
+      kind: "plan",
+      reviewFile: toRepoRelativePath(ctx, targetPath),
+    };
+  }
+
   return null;
 };
 
@@ -476,7 +560,8 @@ export const shouldQueueReviewForToolPath = (
 
   return (
     !isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath) &&
-    !isSpecFileMatchAny(planConfig.resolvedSpecPaths, targetPath)
+    !isSpecFileMatchAny(planConfig.resolvedSpecPaths, targetPath) &&
+    !isExtraReviewTargetMatchAny(planConfig.extraReviewTargets, targetPath)
   );
 };
 
@@ -502,6 +587,10 @@ export const findLatestPlanFileForAnnotation = (
       dirs: planConfig.resolvedSpecPaths,
       pattern: SPEC_FILE_PATTERN,
     },
+    ...(planConfig.extraReviewTargets ?? []).map((target) => ({
+      dirs: [target.dir],
+      pattern: target.pattern,
+    })),
   ];
 
   for (const candidateSet of candidateSets) {
@@ -569,7 +658,11 @@ const annotateLatestPlanFile = async (
   const latestPlan = findLatestPlanFileForAnnotation(ctx, planConfig);
   if (!latestPlan) {
     ctx.ui.notify(
-      `No plan files found in ${planConfig.resolvedPlanPaths
+      `No plan files found in ${[
+        ...planConfig.resolvedPlanPaths,
+        ...planConfig.resolvedSpecPaths,
+        ...(planConfig.extraReviewTargets ?? []).map((target) => target.dir),
+      ]
         .map((planDir) => toRepoRelativePath(ctx, planDir))
         .join(", ")}.`,
       "warning",
@@ -581,7 +674,7 @@ const annotateLatestPlanFile = async (
     timeoutMs: SYNC_ANNOTATE_TIMEOUT_MS,
   });
 
-  log?.info("plannotator-auto annotating latest plan file", {
+  log?.info("plannotator-auto annotating latest review target", {
     cwd: ctx.cwd,
     planFile: latestPlan.repoRelativePath,
     sessionKey: getSessionKey(ctx),
@@ -1158,6 +1251,7 @@ const handlePlanFileWrite = async (
       targetPath,
       configuredPlanPath: planConfig.resolvedPlanPath,
       configuredSpecPaths: planConfig.resolvedSpecPaths,
+      configuredExtraReviewTargets: planConfig.extraReviewTargets,
       sessionKey: getSessionKey(ctx),
     });
     return;
@@ -1201,7 +1295,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
   });
 
   pi.registerShortcut(ANNOTATE_LATEST_PLAN_SHORTCUT, {
-    description: "Annotate latest plan file (Ctrl+Alt+L)",
+    description: "Annotate latest review target (Ctrl+Alt+L)",
     handler: async (ctx) => {
       await annotateLatestPlanFile(pi, ctx);
     },

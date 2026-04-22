@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import {
+  type ExtensionAPI,
+  SessionManager,
+} from "@mariozechner/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import extension from "./index.js";
@@ -318,6 +321,136 @@ describe("todo-workflow extension", () => {
       message: "Cancelled",
       level: "info",
     });
+  });
+
+  it("switches to the worktree session when resuming a doing todo", async () => {
+    const initialCwd = process.cwd();
+    const repoRoot = createTempRepo();
+    const worktreePath = createTempRepo();
+
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Resume worktree session",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "resume-worktree-session",
+              worktreePath,
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const setStatus = vi.fn();
+    const sourceSession = SessionManager.create(repoRoot);
+    sourceSession.appendCustomEntry("test", { ready: true });
+
+    let activeSessionFile = sourceSession.getSessionFile() as string;
+    const sessionManager = {
+      getSessionFile() {
+        return activeSessionFile;
+      },
+      getHeader() {
+        return sourceSession.getHeader();
+      },
+      getEntries() {
+        return sourceSession.getEntries();
+      },
+    };
+    const switchSession = vi.fn(async (sessionPath: string) => {
+      activeSessionFile = sessionPath;
+      return { cancelled: false };
+    });
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "switch") {
+        return {
+          code: 0,
+          stdout: JSON.stringify({ path: worktreePath }),
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected exec args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    try {
+      await handler("", {
+        cwd: repoRoot,
+        hasUI: true,
+        ui: {
+          custom: async () => "todo-1",
+          notify(message: string, level: string) {
+            notifications.push({ message, level });
+          },
+          setStatus,
+        },
+        sessionManager,
+        switchSession,
+      });
+
+      const store = JSON.parse(
+        fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+      ) as { todos: Array<{ activeSessionKey?: string; status: string }> };
+
+      expect(exec).toHaveBeenCalledWith("wt", [
+        "-C",
+        repoRoot,
+        "switch",
+        "resume-worktree-session",
+        "--no-cd",
+        "--yes",
+      ]);
+      expect(switchSession).toHaveBeenCalledTimes(1);
+      expect(store.todos[0]).toMatchObject({
+        status: "doing",
+        activeSessionKey: activeSessionFile,
+      });
+      expect(setStatus).toHaveBeenCalledWith(
+        "todo-workflow",
+        "doing: Resume worktree session",
+      );
+      expect(notifications).toContainEqual({
+        message: "doing: Resume worktree session",
+        level: "info",
+      });
+      expect(fs.realpathSync(process.cwd())).toBe(
+        fs.realpathSync(worktreePath),
+      );
+    } finally {
+      process.chdir(initialCwd);
+    }
   });
 
   it("keeps todo doing when end_todo merge fails", async () => {

@@ -1462,6 +1462,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
         planFile: pendingPlanReview.planFile,
         resolvedPlanPath: pendingPlanReview.resolvedPlanPath,
         startedAt: Date.now(),
+        origin: "manual-submit",
       });
       setReviewWidget(ctx);
 
@@ -1518,8 +1519,10 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
         }
       })();
 
+      state.processedPlanReviewIds.add(response.result.reviewId);
       state.activePlanReviewByCwd.delete(ctx.cwd);
       if (result.approved) {
+        state.settledPlanReviewPaths.add(pendingPlanReview.resolvedPlanPath);
         pendingPlanReviews.delete(pendingPlanReview.resolvedPlanPath);
         syncPrimaryPendingPlanReview(state, ctx.cwd);
         setReviewWidget(ctx);

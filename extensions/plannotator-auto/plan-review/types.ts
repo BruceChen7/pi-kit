@@ -28,6 +28,7 @@ export type ActivePlanReview = {
   planFile: string;
   resolvedPlanPath: string;
   startedAt: number;
+  origin?: "coordinator" | "manual-submit";
 };
 
 export type PlanReviewSessionState = {

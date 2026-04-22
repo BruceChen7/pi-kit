@@ -437,10 +437,7 @@ describe("todo-workflow extension", () => {
         status: "doing",
         activeSessionKey: activeSessionFile,
       });
-      expect(setStatus).toHaveBeenCalledWith(
-        "todo-workflow",
-        "doing: Resume worktree session",
-      );
+      expect(setStatus).not.toHaveBeenCalled();
       expect(notifications).toContainEqual({
         message: "doing: Resume worktree session",
         level: "info",

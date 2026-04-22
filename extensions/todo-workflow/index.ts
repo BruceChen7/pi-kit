@@ -28,8 +28,6 @@ import {
   updateTodoStart,
 } from "./todo-store.js";
 
-const STATUS_KEY = "todo-workflow";
-
 function getSessionKey(ctx: ExtensionContext): string {
   const sessionFile = ctx.sessionManager.getSessionFile();
   return typeof sessionFile === "string" && sessionFile.trim()
@@ -37,14 +35,7 @@ function getSessionKey(ctx: ExtensionContext): string {
     : `cwd:${ctx.cwd}`;
 }
 
-function updateStatus(ctx: ExtensionContext, todo: TodoItem | null): void {
-  if (!ctx.hasUI) return;
-  if (!todo) {
-    ctx.ui.setStatus(STATUS_KEY, undefined);
-    return;
-  }
-  ctx.ui.setStatus(STATUS_KEY, `doing: ${todo.title}`);
-}
+function updateStatus(_ctx: ExtensionContext, _todo: TodoItem | null): void {}
 
 function listOpenTodos(ctx: ExtensionContext): TodoItem[] {
   return listTodos(ctx.cwd, {

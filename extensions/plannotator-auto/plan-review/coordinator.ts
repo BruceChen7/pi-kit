@@ -228,8 +228,17 @@ export const createPlanReviewCoordinator = (
       return;
     }
 
-    const shouldAbort = Boolean(runtimeCtx && !runtimeCtx.isIdle());
-    runtimeCtx?.ui.notify(getReviewDraftReadyMessage(active.kind), "info");
+    if (result.approved) {
+      state.settledPlanReviewPaths.add(active.resolvedPlanPath);
+    }
+
+    const shouldInterruptAgent = active.origin !== "manual-submit";
+    const shouldAbort = Boolean(
+      runtimeCtx && shouldInterruptAgent && !runtimeCtx.isIdle(),
+    );
+    if (shouldInterruptAgent) {
+      runtimeCtx?.ui.notify(getReviewDraftReadyMessage(active.kind), "info");
+    }
     if (shouldAbort) {
       runtimeCtx.abort();
     }
@@ -702,6 +711,7 @@ export const createPlanReviewCoordinator = (
       planFile: pending.planFile,
       resolvedPlanPath: pending.resolvedPlanPath,
       startedAt: Date.now(),
+      origin: "coordinator",
     });
     emitStateChanged(sessionKey, ctx.cwd, state);
 
@@ -899,6 +909,17 @@ export const createPlanReviewCoordinator = (
 
     const active = matched.state.activePlanReviewByCwd.get(matched.cwd);
     if (!active) {
+      return;
+    }
+
+    if (active.origin === "manual-submit") {
+      log?.debug(
+        "plannotator-auto ignored manual-submit plan review result in coordinator",
+        {
+          cwd: matched.cwd,
+          reviewId: result.reviewId,
+        },
+      );
       return;
     }
 

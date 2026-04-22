@@ -2726,6 +2726,278 @@ describe("submit review tool", () => {
       };
       expect(result.details?.status).toBe("approved");
       expect(result.content?.[0]?.text ?? "").toContain("approved");
+      expect(ctx.abort).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not re-gate an approved plan after the same session edits it again", async () => {
+    vi.resetModules();
+    const reviewResultListeners: Array<(result: unknown) => void> = [];
+    const startPlanReview = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "pending" as const,
+        reviewId: "review-submit-plan",
+      },
+    }));
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn((listener: (result: unknown) => void) => {
+          reviewResultListeners.push(listener);
+          return () => {
+            const index = reviewResultListeners.indexOf(listener);
+            if (index >= 0) {
+              reviewResultListeners.splice(index, 1);
+            }
+          };
+        }),
+        getStatus: vi.fn(() => ({ status: "missing" as const })),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+      waitForReviewResult: vi.fn(
+        (_store, reviewId: string) =>
+          new Promise((resolve) => {
+            reviewResultListeners.push((result) => {
+              const completed = result as {
+                reviewId?: string;
+                approved?: boolean;
+                feedback?: string;
+              };
+              if (completed.reviewId === reviewId) {
+                resolve({ status: "completed", ...completed });
+              }
+            });
+          }),
+      ),
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, runTool } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-settled-plan-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] test\n", "utf8");
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      const submitPromise = Promise.resolve(
+        runTool(
+          "plannotator_auto_submit_review",
+          { path: planFileRelative },
+          ctx,
+        ),
+      );
+
+      await flushMicrotasks();
+      for (const listener of reviewResultListeners) {
+        listener({
+          reviewId: "review-submit-plan",
+          approved: true,
+        });
+      }
+      await submitPromise;
+
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "edit",
+          toolCallId: "call-2",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "edit",
+          toolCallId: "call-2",
+          isError: false,
+        },
+        ctx,
+      );
+      await emit("agent_end", {}, ctx);
+
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("does not abort while waiting for a manually submitted review result", async () => {
+    vi.resetModules();
+    const reviewResultListeners: Array<(result: unknown) => void> = [];
+    const startPlanReview = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "pending" as const,
+        reviewId: "review-submit-busy",
+      },
+    }));
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn((listener: (result: unknown) => void) => {
+          reviewResultListeners.push(listener);
+          return () => {
+            const index = reviewResultListeners.indexOf(listener);
+            if (index >= 0) {
+              reviewResultListeners.splice(index, 1);
+            }
+          };
+        }),
+        getStatus: vi.fn(() => ({ status: "missing" as const })),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+      waitForReviewResult: vi.fn(
+        (_store, reviewId: string) =>
+          new Promise((resolve) => {
+            reviewResultListeners.push((result) => {
+              const completed = result as {
+                reviewId?: string;
+                approved?: boolean;
+                feedback?: string;
+              };
+              if (completed.reviewId === reviewId) {
+                resolve({ status: "completed", ...completed });
+              }
+            });
+          }),
+      ),
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, runTool } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-submit-busy-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] test\n", "utf8");
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => false,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      const submitPromise = Promise.resolve(
+        runTool(
+          "plannotator_auto_submit_review",
+          { path: planFileRelative },
+          ctx,
+        ),
+      );
+
+      await flushMicrotasks();
+      for (const listener of reviewResultListeners) {
+        listener({
+          reviewId: "review-submit-busy",
+          approved: true,
+        });
+      }
+      await submitPromise;
+
+      expect(ctx.abort).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });

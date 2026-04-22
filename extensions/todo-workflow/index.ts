@@ -13,7 +13,9 @@ import {
   Text,
 } from "@mariozechner/pi-tui";
 
+import { maybeSwitchToWorktreeSession } from "../feature-workflow/commands/shared.js";
 import { startFeatureWorkflow } from "../feature-workflow/start-feature.js";
+import type { FeatureRecord } from "../feature-workflow/storage.js";
 import { ensureFeatureWorktree } from "../feature-workflow/worktree-gateway.js";
 import {
   createTodo,
@@ -157,9 +159,9 @@ async function getCurrentBranch(
 
 async function ensureTodoWorktreeReady(
   pi: ExtensionAPI,
-  ctx: ExtensionContext,
+  ctx: ExtensionCommandContext,
   todo: TodoItem,
-): Promise<{ ok: true } | { ok: false }> {
+): Promise<{ ok: true; worktreePath: string } | { ok: false }> {
   if (!todo.workBranch) {
     ctx.ui.notify(`TODO "${todo.title}" is missing its work branch.`, "error");
     return { ok: false };
@@ -197,12 +199,55 @@ async function ensureTodoWorktreeReady(
     return { ok: false };
   }
 
-  return { ok: true };
+  return {
+    ok: true,
+    worktreePath: ensured.worktreePath,
+  };
+}
+
+function buildTodoFeatureRecord(
+  todo: TodoItem,
+  worktreePath: string,
+): FeatureRecord {
+  return {
+    slug: todo.id,
+    branch: todo.workBranch ?? todo.id,
+    worktreePath,
+    status: "active",
+    createdAt: todo.startedAt ?? todo.createdAt,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function switchToTodoWorktreeSession(
+  ctx: ExtensionCommandContext,
+  todo: TodoItem,
+  worktreePath: string,
+): Promise<boolean> {
+  const switchResult = await maybeSwitchToWorktreeSession({
+    ctx,
+    record: buildTodoFeatureRecord(todo, worktreePath),
+    worktreePath,
+    enabled: true,
+  });
+
+  if (
+    switchResult.switched ||
+    switchResult.skipReason === "ephemeral-session"
+  ) {
+    return true;
+  }
+
+  if (switchResult.skipReason === "cancelled") {
+    ctx.ui.notify("Cancelled", "info");
+  }
+
+  return false;
 }
 
 async function startTodo(
   pi: ExtensionAPI,
-  ctx: ExtensionContext,
+  ctx: ExtensionCommandContext,
   todo: TodoItem,
 ): Promise<void> {
   const sourceBranch = await getCurrentBranch(pi, ctx);
@@ -213,7 +258,7 @@ async function startTodo(
 
   const startResult = await startFeatureWorkflow({
     pi,
-    ctx: ctx as ExtensionCommandContext,
+    ctx,
     slug: todo.id,
     base: sourceBranch,
   });
@@ -232,11 +277,20 @@ async function startTodo(
 
 async function resumeTodo(
   pi: ExtensionAPI,
-  ctx: ExtensionContext,
+  ctx: ExtensionCommandContext,
   todo: TodoItem,
 ): Promise<void> {
-  const switched = await ensureTodoWorktreeReady(pi, ctx, todo);
-  if (!switched.ok) {
+  const ensured = await ensureTodoWorktreeReady(pi, ctx, todo);
+  if (!ensured.ok) {
+    return;
+  }
+
+  const switched = await switchToTodoWorktreeSession(
+    ctx,
+    todo,
+    ensured.worktreePath,
+  );
+  if (!switched) {
     return;
   }
 
@@ -246,7 +300,7 @@ async function resumeTodo(
 async function handleTodoCommand(
   pi: ExtensionAPI,
   rawArgs: string,
-  ctx: ExtensionContext,
+  ctx: ExtensionCommandContext,
 ): Promise<void> {
   const trimmed = rawArgs.trim();
   if (trimmed.startsWith("add ")) {
@@ -289,7 +343,7 @@ async function handleTodoCommand(
 
 async function handleEndTodo(
   pi: ExtensionAPI,
-  ctx: ExtensionContext,
+  ctx: ExtensionCommandContext,
 ): Promise<void> {
   const doingTodos = getDoingTodos(ctx.cwd);
   if (doingTodos.length === 0) {

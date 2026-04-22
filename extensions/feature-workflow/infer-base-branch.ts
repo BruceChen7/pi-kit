@@ -1,5 +1,7 @@
 import type { GitRunner } from "../shared/git.js";
 
+import { trimToNull } from "./utils.js";
+
 export type InferredBaseBranchResult =
   | {
       kind: "resolved";
@@ -25,12 +27,6 @@ type CandidateEvidence = {
   candidateDistance: number;
   featureDistance: number;
   tieBreakPriority: number;
-};
-
-const trimToNull = (value: string | null | undefined): string | null => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
 };
 
 const dedupe = (branches: string[]): string[] => {

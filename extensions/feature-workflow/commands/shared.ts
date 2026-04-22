@@ -16,6 +16,7 @@ import {
 } from "../infer-base-branch.js";
 import { forkSessionForWorktree } from "../session-fork.js";
 import type { FeatureRecord } from "../storage.js";
+import { trimToNull } from "../utils.js";
 import {
   listFeatureRecordsFromWorktree,
   type WtRunner,
@@ -42,11 +43,7 @@ export const commandLog = createLogger("feature-workflow", {
   stderr: null,
 });
 
-export function trimToNull(value: string | null | undefined): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
+export { trimToNull };
 
 function syncProcessCwd(input: {
   ctx: ExtensionCommandContext;

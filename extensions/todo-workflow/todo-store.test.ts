@@ -1,0 +1,137 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  createTodo,
+  listTodos,
+  loadTodoStore,
+  markTodoDone,
+  updateTodoActivation,
+  updateTodoStart,
+} from "./todo-store.js";
+
+const tempDirs: string[] = [];
+
+const createTempRepo = (): string => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-kit-todo-store-"));
+  tempDirs.push(dir);
+  return dir;
+};
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+describe("todo-store", () => {
+  it("creates and persists a todo in .pi/todos.json", () => {
+    const repoRoot = createTempRepo();
+
+    const created = createTodo(repoRoot, "Fix merge handling");
+    const loaded = loadTodoStore(repoRoot);
+
+    expect(created.title).toBe("Fix merge handling");
+    expect(created.status).toBe("todo");
+    expect(loaded.todos).toHaveLength(1);
+    expect(loaded.todos[0]).toMatchObject({
+      id: created.id,
+      title: "Fix merge handling",
+      status: "todo",
+    });
+    expect(fs.existsSync(path.join(repoRoot, ".pi", "todos.json"))).toBe(true);
+  });
+
+  it("keeps doing todos before todo items and sorts active doing first", () => {
+    const repoRoot = createTempRepo();
+    const alpha = createTodo(repoRoot, "Alpha task");
+    const beta = createTodo(repoRoot, "Beta task");
+    const gamma = createTodo(repoRoot, "Gamma task");
+
+    updateTodoStart(repoRoot, {
+      id: alpha.id,
+      sourceBranch: "main",
+      workBranch: "alpha-task",
+      worktreePath: "/tmp/alpha",
+      now: "2026-04-22T10:00:00.000Z",
+    });
+    updateTodoActivation(repoRoot, {
+      id: alpha.id,
+      now: "2026-04-22T10:10:00.000Z",
+      sessionKey: "session-a",
+      activeInSession: false,
+    });
+
+    updateTodoStart(repoRoot, {
+      id: beta.id,
+      sourceBranch: "main",
+      workBranch: "beta-task",
+      worktreePath: "/tmp/beta",
+      now: "2026-04-22T10:01:00.000Z",
+    });
+    updateTodoActivation(repoRoot, {
+      id: beta.id,
+      now: "2026-04-22T10:20:00.000Z",
+      sessionKey: "session-a",
+      activeInSession: true,
+    });
+
+    markTodoDone(repoRoot, {
+      id: gamma.id,
+      now: "2026-04-22T10:30:00.000Z",
+    });
+
+    const listed = listTodos(repoRoot, {
+      includeDone: false,
+      sessionKey: "session-a",
+    });
+
+    expect(listed.map((todo) => todo.id)).toEqual([beta.id, alpha.id]);
+  });
+
+  it("fails fast when a persisted todo record is invalid", () => {
+    const repoRoot = createTempRepo();
+
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "broken",
+              status: "todo",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    expect(() => loadTodoStore(repoRoot)).toThrow(/invalid todo record/);
+  });
+
+  it("preserves doing status when end flow fails upstream", () => {
+    const repoRoot = createTempRepo();
+    const todo = createTodo(repoRoot, "Handle merge conflict");
+
+    updateTodoStart(repoRoot, {
+      id: todo.id,
+      sourceBranch: "main",
+      workBranch: "handle-merge-conflict",
+      worktreePath: "/tmp/merge",
+      now: "2026-04-22T10:00:00.000Z",
+    });
+
+    const loaded = loadTodoStore(repoRoot);
+    expect(loaded.todos[0]?.status).toBe("doing");
+    expect(loaded.todos[0]?.completedAt).toBeUndefined();
+  });
+});

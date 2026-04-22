@@ -1,0 +1,240 @@
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+} from "@mariozechner/pi-coding-agent";
+
+import { checkRepoDirty, listDirtyPaths } from "../shared/git.js";
+import {
+  commandLog,
+  maybeSwitchToWorktreeSession,
+  notifyAndLogWtError,
+  runIgnoredSyncForCommand,
+} from "./commands/shared.js";
+import { evaluateFeatureStartWorkspace } from "./feature-start-workspace-guard.js";
+import { checkBaseBranchFreshness } from "./guards.js";
+import { buildFeatureBranchName, isFeatureSlug } from "./naming.js";
+import {
+  type FeatureCommandRuntime,
+  resolveFeatureCommandRuntime,
+} from "./runtime.js";
+import { getFeatureWorkflowSetupMissingFiles } from "./setup.js";
+import type { FeatureRecord } from "./storage.js";
+import { createFeatureWorktree } from "./worktree-gateway.js";
+
+export type StartFeatureWorkflowResult =
+  | {
+      ok: true;
+      record: FeatureRecord;
+      switched: boolean;
+    }
+  | {
+      ok: false;
+    };
+
+export type PreparedFeatureStart = {
+  runtime: FeatureCommandRuntime;
+};
+
+export function preflightFeatureStart(input: {
+  pi: ExtensionAPI;
+  ctx: ExtensionCommandContext;
+}): PreparedFeatureStart | null {
+  const runtime = resolveFeatureCommandRuntime({
+    pi: input.pi,
+    ctx: input.ctx,
+  });
+  if (!runtime) {
+    return null;
+  }
+
+  const { config, timeoutMs, repoRoot } = runtime;
+  const missingSetupFiles = getFeatureWorkflowSetupMissingFiles(repoRoot);
+  if (missingSetupFiles.length > 0) {
+    input.ctx.ui.notify(
+      `feature-start requires local setup-managed files that are missing: ${missingSetupFiles.join(", ")}. Run /feature-setup first.`,
+      "warning",
+    );
+    return null;
+  }
+
+  if (config.guards.requireCleanWorkspace) {
+    const dirty = checkRepoDirty(repoRoot, timeoutMs);
+    if (!dirty) {
+      input.ctx.ui.notify("Failed to check git status", "warning");
+      return null;
+    }
+
+    if (dirty.summary.dirty) {
+      const dirtyPaths = listDirtyPaths(dirty.porcelain);
+      const workspaceGuard = evaluateFeatureStartWorkspace({
+        summary: dirty.summary,
+        dirtyPaths,
+      });
+
+      if (
+        workspaceGuard.notifyMessage &&
+        typeof workspaceGuard.notifyLevel === "string"
+      ) {
+        input.ctx.ui.notify(
+          workspaceGuard.notifyMessage,
+          workspaceGuard.notifyLevel,
+        );
+      }
+
+      if (!workspaceGuard.allow) {
+        return null;
+      }
+    }
+  }
+
+  return { runtime };
+}
+
+export async function startPreparedFeatureWorkflow(input: {
+  ctx: ExtensionCommandContext;
+  runtime: FeatureCommandRuntime;
+  slug: string;
+  base: string;
+}): Promise<StartFeatureWorkflowResult> {
+  commandLog.debug("feature-start workflow invoked", {
+    cwd: input.ctx.cwd,
+    slug: input.slug,
+    base: input.base,
+  });
+
+  const { config, repoRoot, runGit, runWt } = input.runtime;
+
+  if (!isFeatureSlug(input.slug)) {
+    input.ctx.ui.notify("Invalid branch slug", "error");
+    return { ok: false };
+  }
+
+  const branch = buildFeatureBranchName({ slug: input.slug });
+  if (config.guards.enforceBranchNaming && branch !== input.slug) {
+    input.ctx.ui.notify(`Invalid branch name: ${branch}`, "error");
+    return { ok: false };
+  }
+
+  if (config.guards.requireFreshBase) {
+    const freshness = checkBaseBranchFreshness({
+      runGit,
+      baseBranch: input.base,
+    });
+    if (!freshness.ok) {
+      if (freshness.behind !== null) {
+        input.ctx.ui.notify(
+          `Base branch '${input.base}' is behind '${freshness.upstream}' by ${freshness.behind} commits. Update base branch first.`,
+          "error",
+        );
+      } else {
+        input.ctx.ui.notify(
+          `Failed to verify freshness for base branch '${input.base}'.`,
+          "error",
+        );
+      }
+      return { ok: false };
+    }
+  }
+
+  const createResult = await createFeatureWorktree(runWt, {
+    branch,
+    base: input.base,
+  });
+  if (createResult.ok === false) {
+    notifyAndLogWtError({
+      ctx: input.ctx,
+      message: createResult.message,
+      scope: "wt switch --create failed",
+      meta: {
+        branch,
+        base: input.base,
+        repoRoot,
+      },
+    });
+    return { ok: false };
+  }
+
+  const worktreePath = createResult.worktreePath;
+  commandLog.debug("feature-start worktree ready", {
+    branch,
+    base: input.base,
+    worktreePath,
+    setupDrivenLifecycle: true,
+  });
+
+  const now = new Date().toISOString();
+  const record: FeatureRecord = {
+    slug: input.slug,
+    branch,
+    worktreePath,
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const beforeSyncResult = await runIgnoredSyncForCommand({
+    command: "feature-start",
+    phase: "before-session-switch",
+    config: config.ignoredSync,
+    repoRoot,
+    worktreePath,
+    branch,
+    runWt,
+    notify: input.ctx.ui.notify.bind(input.ctx.ui),
+  });
+  if (beforeSyncResult.blocked) {
+    return { ok: false };
+  }
+
+  const switchResult = await maybeSwitchToWorktreeSession({
+    ctx: input.ctx,
+    record,
+    worktreePath,
+    enabled: config.defaults.autoSwitchToWorktreeSession,
+  });
+
+  commandLog.debug("feature-start session switch result", {
+    branch,
+    switched: switchResult.switched,
+    worktreePath: switchResult.record.worktreePath,
+  });
+
+  await runIgnoredSyncForCommand({
+    command: "feature-start",
+    phase: "after-session-switch",
+    config: config.ignoredSync,
+    repoRoot,
+    worktreePath: switchResult.record.worktreePath,
+    branch: switchResult.record.branch,
+    runWt,
+    notify: input.ctx.ui.notify.bind(input.ctx.ui),
+  });
+
+  return {
+    ok: true,
+    record: switchResult.record,
+    switched: switchResult.switched,
+  };
+}
+
+export async function startFeatureWorkflow(input: {
+  pi: ExtensionAPI;
+  ctx: ExtensionCommandContext;
+  slug: string;
+  base: string;
+}): Promise<StartFeatureWorkflowResult> {
+  const prepared = preflightFeatureStart({
+    pi: input.pi,
+    ctx: input.ctx,
+  });
+  if (!prepared) {
+    return { ok: false };
+  }
+
+  return startPreparedFeatureWorkflow({
+    ctx: input.ctx,
+    runtime: prepared.runtime,
+    slug: input.slug,
+    base: input.base,
+  });
+}

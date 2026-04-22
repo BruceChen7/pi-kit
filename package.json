@@ -20,6 +20,7 @@
       "./extensions/dirty-git-status",
       "./extensions/codex-plan-limits",
       "./extensions/feature-workflow",
+      "./extensions/todo-workflow",
       "./extensions/diffx-review",
       "./extensions/session-path-copy"
     ]

@@ -1484,11 +1484,12 @@ describe("plan review trigger timing", () => {
       }
 
       await reviewPromise;
-      expect(api.sendUserMessage).toHaveBeenCalledTimes(1);
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        "Plan review rejected.",
-        { deliverAs: "steer" },
+      expect(abort).toHaveBeenCalledTimes(1);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
+        "info",
       );
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -1600,12 +1601,12 @@ describe("plan review trigger timing", () => {
       }
 
       await reviewPromise;
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        "Plan review approved.",
-        {
-          deliverAs: "steer",
-        },
+      expect(ctx.abort).toHaveBeenCalledTimes(1);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
+        "info",
       );
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -1717,12 +1718,12 @@ describe("plan review trigger timing", () => {
       }
 
       await reviewPromise;
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        "Plan review approved.",
-        {
-          deliverAs: "steer",
-        },
+      expect(ctx.abort).toHaveBeenCalledTimes(1);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
+        "info",
       );
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -1829,12 +1830,12 @@ describe("plan review trigger timing", () => {
       }
 
       await reviewPromise;
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        "# Spec Review\n\nSpec approved. Proceed with implementation.",
-        {
-          deliverAs: "steer",
-        },
+      expect(ctx.abort).toHaveBeenCalledTimes(1);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        "Plannotator spec review draft is ready. Submit it manually in Plannotator to continue.",
+        "info",
       );
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -2142,14 +2143,15 @@ describe("plan review trigger timing", () => {
     }
   });
 
-  it("does not re-trigger directory-mode plan review after the same plan was approved", async () => {
+  it("re-triggers directory-mode plan review when the same plan is rewritten after a draft review completes", async () => {
     vi.resetModules();
     const reviewResultListeners: Array<(result: unknown) => void> = [];
+    let reviewCount = 0;
     const startPlanReview = vi.fn(async () => ({
       status: "handled" as const,
       result: {
         status: "pending" as const,
-        reviewId: "review-1",
+        reviewId: `review-${++reviewCount}`,
       },
     }));
 
@@ -2271,7 +2273,7 @@ describe("plan review trigger timing", () => {
         },
         ctx,
       );
-      await emit(
+      const secondReviewPromise = emit(
         "tool_execution_end",
         {
           toolName: "write",
@@ -2281,8 +2283,24 @@ describe("plan review trigger timing", () => {
         ctx,
       );
 
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
-      expect(api.sendUserMessage).toHaveBeenCalledTimes(1);
+      await flushMicrotasks();
+      expect(startPlanReview).toHaveBeenCalledTimes(2);
+
+      for (const listener of reviewResultListeners) {
+        listener({
+          reviewId: "review-2",
+          approved: true,
+        });
+      }
+      await secondReviewPromise;
+
+      expect(startPlanReview).toHaveBeenCalledTimes(2);
+      expect(ctx.abort).toHaveBeenCalledTimes(2);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
+        "info",
+      );
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });

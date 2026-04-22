@@ -1,35 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-
-type EventHandler = (data: unknown) => void;
-
-type FakeEvents = {
-  on: (channel: string, handler: EventHandler) => void;
-  emit: (channel: string, data: unknown) => void;
-};
-
-const createFakeEvents = () => {
-  const handlers = new Map<string, EventHandler[]>();
-
-  const events: FakeEvents = {
-    on(channel, handler) {
-      const list = handlers.get(channel) ?? [];
-      list.push(handler);
-      handlers.set(channel, list);
-    },
-    emit(channel, data) {
-      for (const handler of handlers.get(channel) ?? []) {
-        handler(data);
-      }
-    },
-  };
-
-  return { events, handlers };
-};
+import { createFakeEventBus } from "./test-helpers.js";
 
 describe("requestPlannotator", () => {
   it("resolves handled responses from the shared event channel", async () => {
     const { createRequestPlannotator } = await import("./plannotator-api.js");
-    const { events } = createFakeEvents();
+    const events = createFakeEventBus();
 
     events.on("plannotator:request", (data) => {
       const request = data as {
@@ -65,7 +40,7 @@ describe("requestPlannotator", () => {
 
   it("returns unavailable when no Plannotator listener responds before timeout", async () => {
     const { createRequestPlannotator } = await import("./plannotator-api.js");
-    const { events } = createFakeEvents();
+    const events = createFakeEventBus();
     const requestPlannotator = createRequestPlannotator(events, {
       timeoutMs: 10,
     });
@@ -82,7 +57,7 @@ describe("requestPlannotator", () => {
 describe("createReviewResultStore", () => {
   it("tracks pending and completed plan review results", async () => {
     const { createReviewResultStore } = await import("./plannotator-api.js");
-    const { events } = createFakeEvents();
+    const events = createFakeEventBus();
     const store = createReviewResultStore(events);
 
     store.markPending("review-1");
@@ -104,7 +79,7 @@ describe("createReviewResultStore", () => {
 
   it("preserves annotations from async review-result events", async () => {
     const { createReviewResultStore } = await import("./plannotator-api.js");
-    const { events } = createFakeEvents();
+    const events = createFakeEventBus();
     const store = createReviewResultStore(events);
     const annotations = [{ file: "src/app.ts", line: 12, text: "Add a test." }];
 
@@ -128,7 +103,7 @@ describe("createReviewResultStore", () => {
       createReviewResultStore,
       startPlanReview,
     } = await import("./plannotator-api.js");
-    const { events } = createFakeEvents();
+    const events = createFakeEventBus();
     const store = createReviewResultStore(events);
     const requestPlannotator = createRequestPlannotator(events, {
       timeoutMs: 50,
@@ -169,7 +144,7 @@ describe("createReviewResultStore", () => {
       createReviewResultStore,
       startCodeReview,
     } = await import("./plannotator-api.js");
-    const { events } = createFakeEvents();
+    const events = createFakeEventBus();
     const store = createReviewResultStore(events);
     const requestPlannotator = createRequestPlannotator(events, {
       timeoutMs: 50,
@@ -206,7 +181,7 @@ describe("createReviewResultStore", () => {
 
   it("notifies subscribers when a review result arrives", async () => {
     const { createReviewResultStore } = await import("./plannotator-api.js");
-    const { events } = createFakeEvents();
+    const events = createFakeEventBus();
     const store = createReviewResultStore(events);
     const listener = vi.fn();
 
@@ -226,7 +201,7 @@ describe("createReviewResultStore", () => {
 
   it("notifies subscribers with annotations from review results", async () => {
     const { createReviewResultStore } = await import("./plannotator-api.js");
-    const { events } = createFakeEvents();
+    const events = createFakeEventBus();
     const store = createReviewResultStore(events);
     const listener = vi.fn();
     const annotations = [{ file: "src/app.ts", line: 12, text: "Add a test." }];
@@ -249,7 +224,7 @@ describe("createReviewResultStore", () => {
     const { createReviewResultStore, waitForReviewResult } = await import(
       "./plannotator-api.js"
     );
-    const { events } = createFakeEvents();
+    const events = createFakeEventBus();
     const store = createReviewResultStore(events);
 
     const waitPromise = waitForReviewResult(store, "review-9");
@@ -279,7 +254,7 @@ describe("review status requests", () => {
     const { createRequestPlannotator, requestReviewStatus } = await import(
       "./plannotator-api.js"
     );
-    const { events } = createFakeEvents();
+    const events = createFakeEventBus();
 
     events.on("plannotator:request", (data) => {
       const request = data as {

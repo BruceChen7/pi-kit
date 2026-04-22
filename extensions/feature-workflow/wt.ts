@@ -1,5 +1,4 @@
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+import { isRecord } from "./utils.js";
 
 export function buildWtSwitchCreateArgs(input: {
   branch: string;

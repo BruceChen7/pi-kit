@@ -7,6 +7,8 @@ import {
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
 
+import { trimToNull } from "./utils.js";
+
 type SessionSnapshotSource = {
   getHeader(): SessionHeader | null;
   getEntries(): SessionEntry[];
@@ -16,12 +18,6 @@ type ForkSessionForWorktreeInput = {
   currentSessionFile: string;
   worktreePath: string;
   sessionManager: SessionSnapshotSource;
-};
-
-const trimToNull = (value: string | null | undefined): string | null => {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
 };
 
 export function forkSessionForWorktree(

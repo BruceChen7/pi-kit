@@ -26,7 +26,7 @@ You MUST create a task for each of these items and complete them in order:
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
-6. **Write design doc** — save to `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md` and commit
+6. **Write design doc** — save to `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md`
 7. **Spec review loop (self-check)** — main agent reviews the spec using the spec-document-reviewer checklist (no subagents/MCP tools); fix issues and re-review until approved (max 3 iterations, then surface to human)
 8. **User reviews written spec** — ask user to review the spec file before proceeding
 9. **Transition to implementation** — write `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` to enter plan mode (plannotator-auto auto-triggers `/plannotator-set-file`, `/plannotator`, `/plannotator-annotate`; run manually if skipped)
@@ -112,9 +112,6 @@ digraph brainstorming {
 **Documentation:**
 
 - Write the validated design (spec) to `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md`
-  - (User preferences for spec location override this default)
-- Use elements-of-style:writing-clearly-and-concisely skill if available
-- Commit the design document to git
 
 **Spec Review Loop (self-check):**
 After writing the spec document:
@@ -126,14 +123,12 @@ After writing the spec document:
 **User Review Gate:**
 After the self-review loop passes, ask the user to review the written spec before proceeding:
 
-> "Spec written and committed to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
+> Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
 
 Wait for the user's response. If they request changes, make them and re-run the self-review loop. Only proceed once the user approves.
 
 **Implementation:**
 
-- Enter plan mode by writing `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` (plannotator-auto auto-triggers `/plannotator-set-file`, `/plannotator`, `/plannotator-annotate`).
-- If the auto-trigger is skipped (no UI or the editor has pending input), run `/plannotator-set-file <planFile>`, `/plannotator <planFile>`, `/plannotator-annotate` manually (use repo-relative paths).
 - Do not invoke any other skills until the plan is written.
 
 ## Key Principles

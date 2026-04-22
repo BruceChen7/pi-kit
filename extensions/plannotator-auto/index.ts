@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { Type } from "@mariozechner/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -18,6 +19,7 @@ import {
 } from "./plan-review/coordinator.ts";
 import type {
   ExtraReviewTarget,
+  PendingPlanReview,
   PlanFileConfig,
   PlanReviewSessionState,
   ReviewTargetKind,
@@ -32,6 +34,8 @@ import {
   requestAnnotation,
   requestCodeReview,
   requestReviewStatus,
+  startPlanReview,
+  waitForReviewResult,
 } from "./plannotator-api.ts";
 
 type ExtraReviewTargetConfig = {
@@ -58,6 +62,7 @@ type ActiveCodeReview = {
 };
 
 type SessionRuntimeState = PlanReviewSessionState & {
+  pendingPlanReviewTargetsByCwd: Map<string, Map<string, PendingPlanReview>>;
   toolArgsByCallId: Map<string, unknown>;
   pendingReviewByCwd: Set<string>;
   activeCodeReviewByCwd: Map<string, ActiveCodeReview>;
@@ -77,8 +82,47 @@ const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
 const SPEC_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
 const ANNOTATE_LATEST_PLAN_SHORTCUT = "ctrl+alt+l";
+const PLAN_REVIEW_SUBMIT_TOOL = "plannotator_auto_submit_review";
+const PLAN_REVIEW_STATUS_POLL_MS = 250;
 const sessionRuntimeState = new Map<string, SessionRuntimeState>();
 const sessionContextByKey = new Map<string, ExtensionContext>();
+
+const getPendingPlanReviewTargets = (
+  state: SessionRuntimeState,
+  cwd: string,
+): Map<string, PendingPlanReview> => {
+  const existing = state.pendingPlanReviewTargetsByCwd.get(cwd);
+  if (existing) {
+    return existing;
+  }
+
+  const next = new Map<string, PendingPlanReview>();
+  state.pendingPlanReviewTargetsByCwd.set(cwd, next);
+  return next;
+};
+
+const listPendingPlanReviews = (
+  state: SessionRuntimeState,
+  cwd: string,
+): PendingPlanReview[] =>
+  Array.from(getPendingPlanReviewTargets(state, cwd).values());
+
+const syncPrimaryPendingPlanReview = (
+  state: SessionRuntimeState,
+  cwd: string,
+): void => {
+  const pending = listPendingPlanReviews(state, cwd).sort(
+    (a, b) => b.updatedAt - a.updatedAt,
+  );
+  const primary = pending[0];
+  if (primary) {
+    state.pendingPlanReviewByCwd.set(cwd, primary);
+    return;
+  }
+
+  state.pendingPlanReviewByCwd.delete(cwd);
+  state.pendingPlanReviewTargetsByCwd.delete(cwd);
+};
 
 const getReviewWidgetMessage = (
   state: SessionRuntimeState,
@@ -86,7 +130,7 @@ const getReviewWidgetMessage = (
 ): string | null => {
   const planReviewActive =
     state.planReviewInFlight ||
-    state.pendingPlanReviewByCwd.has(cwd) ||
+    listPendingPlanReviews(state, cwd).length > 0 ||
     state.activePlanReviewByCwd.has(cwd);
   const codeReviewActive =
     state.reviewInFlight || state.activeCodeReviewByCwd.has(cwd);
@@ -166,6 +210,12 @@ const setReviewWidgetBySessionKey = (sessionKey: string): void => {
   setReviewWidget(ctx);
 };
 
+const formatPendingPlanReviewGateMessage = (planFiles: string[]): string =>
+  `You still have pending Plannotator review drafts:\n- ${planFiles.join("\n- ")}\n\nCall ${PLAN_REVIEW_SUBMIT_TOOL} with one of these paths before continuing.`;
+
+const formatPendingPlanReviewPrompt = (planFiles: string[]): string =>
+  `[PLANNOTATOR AUTO - PENDING REVIEW]\nPending review targets:\n- ${planFiles.join("\n- ")}\n\nYour next required action is calling ${PLAN_REVIEW_SUBMIT_TOOL} with one pending path. If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`;
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -226,6 +276,7 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
 let log: ReturnType<typeof createLogger> | null = null;
 
 const createSessionRuntimeState = (): SessionRuntimeState => ({
+  pendingPlanReviewTargetsByCwd: new Map(),
   toolArgsByCallId: new Map<string, unknown>(),
   pendingPlanReviewByCwd: new Map(),
   activePlanReviewByCwd: new Map(),
@@ -1266,12 +1317,19 @@ const handlePlanFileWrite = async (
     sessionKey: getSessionKey(ctx),
   });
 
-  await planReviewCoordinator.queuePendingPlanReview(ctx, {
+  const pendingPlanReview = {
     kind: reviewTarget.kind,
     planFile: reviewTarget.reviewFile,
     resolvedPlanPath: targetPath,
     updatedAt: Date.now(),
-  });
+  };
+  getPendingPlanReviewTargets(state, ctx.cwd).set(
+    pendingPlanReview.resolvedPlanPath,
+    pendingPlanReview,
+  );
+  syncPrimaryPendingPlanReview(state, ctx.cwd);
+
+  await planReviewCoordinator.queuePendingPlanReview(ctx, pendingPlanReview);
 };
 
 export default function plannotatorAuto(pi: ExtensionAPI) {
@@ -1293,6 +1351,201 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       setReviewWidgetBySessionKey(sessionKey);
     },
     log,
+  });
+
+  pi.registerTool({
+    name: PLAN_REVIEW_SUBMIT_TOOL,
+    label: "Submit Plannotator Auto Review",
+    description:
+      "Submit a pending plan/spec/extra review target to Plannotator and wait for approval or feedback.",
+    parameters: Type.Object({
+      path: Type.String({ description: "Pending review target path" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const state = getSessionState(ctx);
+      const pendingPlanReviews = getPendingPlanReviewTargets(state, ctx.cwd);
+      if (pendingPlanReviews.size === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Error: there is no pending Plannotator review draft in this session.",
+            },
+          ],
+          details: { status: "error" },
+        };
+      }
+
+      const requestedPath =
+        typeof params.path === "string"
+          ? path.resolve(ctx.cwd, params.path)
+          : null;
+      const pendingPlanReview = requestedPath
+        ? pendingPlanReviews.get(requestedPath)
+        : undefined;
+      if (!pendingPlanReview) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: ${String(params.path ?? "") || "<missing path>"} is not a pending Plannotator review target. Pending paths:\n- ${Array.from(
+                pendingPlanReviews.values(),
+              )
+                .map((pending) => pending.planFile)
+                .join("\n- ")}`,
+            },
+          ],
+          details: { status: "error" },
+        };
+      }
+
+      if (state.activePlanReviewByCwd.has(ctx.cwd)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: a Plannotator review is already active for ${pendingPlanReview.planFile}.`,
+            },
+          ],
+          details: { status: "error" },
+        };
+      }
+
+      let planContent = "";
+      try {
+        planContent = fs.readFileSync(
+          pendingPlanReview.resolvedPlanPath,
+          "utf-8",
+        );
+      } catch {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error: could not read ${pendingPlanReview.planFile} before submitting review.`,
+            },
+          ],
+          details: { status: "error" },
+        };
+      }
+
+      const requestPlannotator = createRequestPlannotator(pi.events, {
+        timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+      });
+      const response = await startPlanReview(
+        requestPlannotator,
+        reviewResults,
+        {
+          planContent,
+          planFilePath: pendingPlanReview.planFile,
+          origin: "plannotator-auto",
+        },
+      );
+
+      if (response.status !== "handled") {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                response.error ||
+                "Error: Plannotator review could not be started right now.",
+            },
+          ],
+          details: { status: "error" },
+        };
+      }
+
+      state.activePlanReviewByCwd.set(ctx.cwd, {
+        reviewId: response.result.reviewId,
+        kind: pendingPlanReview.kind,
+        planFile: pendingPlanReview.planFile,
+        resolvedPlanPath: pendingPlanReview.resolvedPlanPath,
+        startedAt: Date.now(),
+      });
+      setReviewWidget(ctx);
+
+      const eventResultPromise = waitForReviewResult(
+        reviewResults,
+        response.result.reviewId,
+      );
+      const result = await (async () => {
+        while (true) {
+          const outcome = await Promise.race([
+            eventResultPromise.then((completed) => ({
+              type: "completed" as const,
+              result: completed,
+            })),
+            (async () => {
+              await new Promise((resolve) =>
+                setTimeout(resolve, PLAN_REVIEW_STATUS_POLL_MS),
+              );
+              const statusResponse = await requestReviewStatus(
+                requestPlannotator,
+                {
+                  reviewId: response.result.reviewId,
+                },
+              );
+              if (statusResponse.status === "handled") {
+                const status = statusResponse.result;
+                if (status.status === "completed") {
+                  reviewResults.markCompleted({
+                    reviewId: status.reviewId,
+                    approved: status.approved,
+                    feedback: status.feedback,
+                    savedPath: status.savedPath,
+                    agentSwitch: status.agentSwitch,
+                    permissionMode: status.permissionMode,
+                  });
+                  return {
+                    type: "completed" as const,
+                    result: {
+                      status: "completed" as const,
+                      reviewId: status.reviewId,
+                      approved: status.approved,
+                      feedback: status.feedback,
+                    },
+                  };
+                }
+              }
+              return { type: "pending" as const };
+            })(),
+          ]);
+
+          if (outcome.type === "completed") {
+            return outcome.result;
+          }
+        }
+      })();
+
+      state.activePlanReviewByCwd.delete(ctx.cwd);
+      if (result.approved) {
+        pendingPlanReviews.delete(pendingPlanReview.resolvedPlanPath);
+        syncPrimaryPendingPlanReview(state, ctx.cwd);
+        setReviewWidget(ctx);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Review approved for ${pendingPlanReview.planFile}.`,
+            },
+          ],
+          details: { status: "approved" },
+        };
+      }
+
+      syncPrimaryPendingPlanReview(state, ctx.cwd);
+      setReviewWidget(ctx);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `YOUR REVIEW WAS NOT APPROVED. Revise ${pendingPlanReview.planFile} and call ${PLAN_REVIEW_SUBMIT_TOOL} again after addressing this feedback.\n\n${result.feedback || "Review changes requested."}`,
+          },
+        ],
+        details: { status: "denied" },
+      };
+    },
   });
 
   pi.registerShortcut(ANNOTATE_LATEST_PLAN_SHORTCUT, {
@@ -1350,6 +1603,26 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     clearReviewWidget(ctx);
     sessionContextByKey.delete(sessionKey);
     clearSessionState(sessionKey);
+  });
+
+  pi.on("before_agent_start", async (_event, ctx) => {
+    const pendingPlanReviews = listPendingPlanReviews(
+      getSessionState(ctx),
+      ctx.cwd,
+    );
+    if (pendingPlanReviews.length === 0) {
+      return;
+    }
+
+    return {
+      message: {
+        customType: "plannotator-auto-pending-review",
+        content: formatPendingPlanReviewPrompt(
+          pendingPlanReviews.map((pending) => pending.planFile),
+        ),
+        display: false,
+      },
+    };
   });
 
   pi.on("tool_execution_start", (event, ctx) => {
@@ -1460,6 +1733,21 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       cwd: ctx.cwd,
       sessionKey: getSessionKey(ctx),
     });
+
+    const state = getSessionState(ctx);
+    const pendingPlanReviews = listPendingPlanReviews(state, ctx.cwd);
+    const activePlanReview = state.activePlanReviewByCwd.get(ctx.cwd);
+    if (pendingPlanReviews.length > 0 && !activePlanReview) {
+      pi.sendUserMessage(
+        formatPendingPlanReviewGateMessage(
+          pendingPlanReviews.map((pending) => pending.planFile),
+        ),
+        { deliverAs: "followUp" },
+      );
+      setReviewWidget(ctx);
+      return;
+    }
+
     await planReviewCoordinator.runPlanReview(ctx, "agent_end");
     await maybeStartCodeReview(
       pi,

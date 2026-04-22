@@ -936,8 +936,6 @@ export const createPlanReviewCoordinator = (
       replacedPlanFile: replaced?.planFile ?? null,
       sessionKey,
     });
-
-    await runPlanReview(ctx, "plan-file-write");
   };
 
   return {

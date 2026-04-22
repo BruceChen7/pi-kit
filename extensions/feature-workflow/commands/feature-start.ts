@@ -3,22 +3,15 @@ import type {
   ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 
-import { checkRepoDirty, listDirtyPaths } from "../../shared/git.js";
-
 import { buildBaseBranchCandidates } from "../base-branches.js";
-import { evaluateFeatureStartWorkspace } from "../feature-start-workspace-guard.js";
-import { checkBaseBranchFreshness } from "../guards.js";
-import { buildFeatureBranchName, isFeatureSlug } from "../naming.js";
-import { resolveFeatureCommandRuntime } from "../runtime.js";
-import { getFeatureWorkflowSetupMissingFiles } from "../setup.js";
-import type { FeatureRecord } from "../storage.js";
-import { createFeatureWorktree } from "../worktree-gateway.js";
+import { buildFeatureBranchName } from "../naming.js";
+import {
+  preflightFeatureStart,
+  startPreparedFeatureWorkflow,
+} from "../start-feature.js";
 import {
   commandLog,
-  maybeSwitchToWorktreeSession,
-  notifyAndLogWtError,
   resolveInferredBaseBranch,
-  runIgnoredSyncForCommand,
   selectBaseBranch,
   selectBranchSlug,
 } from "./shared.js";
@@ -29,48 +22,12 @@ export async function runFeatureStartCommand(
 ): Promise<void> {
   commandLog.debug("feature-start invoked", { cwd: ctx.cwd, hasUI: ctx.hasUI });
 
-  const runtime = resolveFeatureCommandRuntime({ pi, ctx });
-  if (!runtime) {
+  const prepared = preflightFeatureStart({ pi, ctx });
+  if (!prepared) {
     return;
   }
 
-  const { config, timeoutMs, repoRoot, runGit, runWt } = runtime;
-
-  const missingSetupFiles = getFeatureWorkflowSetupMissingFiles(repoRoot);
-  if (missingSetupFiles.length > 0) {
-    ctx.ui.notify(
-      `feature-start requires local setup-managed files that are missing: ${missingSetupFiles.join(", ")}. Run /feature-setup first.`,
-      "warning",
-    );
-    return;
-  }
-
-  if (config.guards.requireCleanWorkspace) {
-    const dirty = checkRepoDirty(repoRoot, timeoutMs);
-    if (!dirty) {
-      ctx.ui.notify("Failed to check git status", "warning");
-      return;
-    }
-
-    if (dirty.summary.dirty) {
-      const dirtyPaths = listDirtyPaths(dirty.porcelain);
-      const workspaceGuard = evaluateFeatureStartWorkspace({
-        summary: dirty.summary,
-        dirtyPaths,
-      });
-
-      if (
-        workspaceGuard.notifyMessage &&
-        typeof workspaceGuard.notifyLevel === "string"
-      ) {
-        ctx.ui.notify(workspaceGuard.notifyMessage, workspaceGuard.notifyLevel);
-      }
-
-      if (!workspaceGuard.allow) {
-        return;
-      }
-    }
-  }
+  const { runGit } = prepared.runtime;
 
   if (!ctx.hasUI) {
     ctx.ui.notify("feature-start requires interactive UI", "error");
@@ -80,11 +37,6 @@ export async function runFeatureStartCommand(
   const slug = await selectBranchSlug(ctx);
   if (!slug) {
     ctx.ui.notify("Cancelled", "info");
-    return;
-  }
-
-  if (!isFeatureSlug(slug)) {
-    ctx.ui.notify("Invalid branch slug", "error");
     return;
   }
 
@@ -106,113 +58,22 @@ export async function runFeatureStartCommand(
   }
 
   const branch = buildFeatureBranchName({ slug });
-
-  if (config.guards.enforceBranchNaming && branch !== slug) {
-    ctx.ui.notify(`Invalid branch name: ${branch}`, "error");
-    return;
-  }
-
-  if (config.guards.requireFreshBase) {
-    const freshness = checkBaseBranchFreshness({ runGit, baseBranch: base });
-    if (!freshness.ok) {
-      if (freshness.behind !== null) {
-        ctx.ui.notify(
-          `Base branch '${base}' is behind '${freshness.upstream}' by ${freshness.behind} commits. Update base branch first.`,
-          "error",
-        );
-      } else {
-        ctx.ui.notify(
-          `Failed to verify freshness for base branch '${base}'.`,
-          "error",
-        );
-      }
-      return;
-    }
-  }
-
   ctx.ui.notify(`Creating worktree for ${branch}…`, "info");
-  commandLog.debug("feature-start creating worktree", {
-    repoRoot,
-    branch,
-    base,
-  });
 
-  const createResult = await createFeatureWorktree(runWt, { branch, base });
-  if (createResult.ok === false) {
-    notifyAndLogWtError({
-      ctx,
-      message: createResult.message,
-      scope: "wt switch --create failed",
-      meta: {
-        branch,
-        base,
-        repoRoot,
-      },
-    });
-    return;
-  }
-
-  const worktreePath = createResult.worktreePath;
-
-  commandLog.debug("feature-start worktree ready", {
-    branch,
-    base,
-    worktreePath,
-    setupDrivenLifecycle: true,
-  });
-
-  const now = new Date().toISOString();
-  const record: FeatureRecord = {
-    slug,
-    branch,
-    worktreePath,
-    status: "active",
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  const beforeSyncResult = await runIgnoredSyncForCommand({
-    command: "feature-start",
-    phase: "before-session-switch",
-    config: config.ignoredSync,
-    repoRoot,
-    worktreePath,
-    branch,
-    runWt,
-    notify: ctx.ui.notify.bind(ctx.ui),
-  });
-  if (beforeSyncResult.blocked) {
-    return;
-  }
-
-  const switchResult = await maybeSwitchToWorktreeSession({
+  const startResult = await startPreparedFeatureWorkflow({
     ctx,
-    record,
-    worktreePath,
-    enabled: config.defaults.autoSwitchToWorktreeSession,
+    runtime: prepared.runtime,
+    slug,
+    base,
   });
-
-  commandLog.debug("feature-start session switch result", {
-    branch,
-    switched: switchResult.switched,
-    worktreePath: switchResult.record.worktreePath,
-  });
+  if (!startResult.ok) {
+    return;
+  }
 
   ctx.ui.notify(
-    switchResult.switched
-      ? `Switched to feature worktree session: ${branch}`
-      : `Feature worktree created: ${branch}`,
+    startResult.switched
+      ? `Switched to feature worktree session: ${startResult.record.branch}`
+      : `Feature worktree created: ${startResult.record.branch}`,
     "info",
   );
-
-  await runIgnoredSyncForCommand({
-    command: "feature-start",
-    phase: "after-session-switch",
-    config: config.ignoredSync,
-    repoRoot,
-    worktreePath: switchResult.record.worktreePath,
-    branch: switchResult.record.branch,
-    runWt,
-    notify: ctx.ui.notify.bind(ctx.ui),
-  });
 }

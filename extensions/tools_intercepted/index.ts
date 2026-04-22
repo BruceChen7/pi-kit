@@ -858,13 +858,8 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(createRgTool());
   pi.registerTool(createFdTool());
 
-  pi.on("session_start", () => {
-    applyInterceptedPath("session_start");
-    applyActiveTools(pi, "session_start");
-  });
-
-  pi.on("session_switch", () => {
-    applyInterceptedPath("session_switch");
-    applyActiveTools(pi, "session_switch");
+  pi.on("session_start", (event) => {
+    applyInterceptedPath(event.reason);
+    applyActiveTools(pi, event.reason);
   });
 }

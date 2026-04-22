@@ -129,9 +129,7 @@ const getReviewWidgetMessage = (
   cwd: string,
 ): string | null => {
   const planReviewActive =
-    state.planReviewInFlight ||
-    listPendingPlanReviews(state, cwd).length > 0 ||
-    state.activePlanReviewByCwd.has(cwd);
+    state.planReviewInFlight || state.activePlanReviewByCwd.has(cwd);
   const codeReviewActive =
     state.reviewInFlight || state.activeCodeReviewByCwd.has(cwd);
 

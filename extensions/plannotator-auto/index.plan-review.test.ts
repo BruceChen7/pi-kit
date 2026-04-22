@@ -14,15 +14,18 @@ async function importPlannotatorAuto() {
 
 function mockPlanReviewApi(
   options: {
+    createRequestPlannotator?: ReturnType<typeof vi.fn>;
     startPlanReview?: ReturnType<typeof vi.fn>;
     waitForReviewResult?: ReturnType<typeof vi.fn>;
     getStatus?: ReturnType<typeof vi.fn>;
+    requestReviewStatus?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
   const startPlanReview = options.startPlanReview ?? vi.fn();
 
   vi.doMock("./plannotator-api.ts", () => ({
-    createRequestPlannotator: vi.fn(() => vi.fn()),
+    createRequestPlannotator:
+      options.createRequestPlannotator ?? vi.fn(() => vi.fn()),
     createReviewResultStore: vi.fn(() => ({
       onResult: vi.fn(() => vi.fn()),
       getStatus: options.getStatus ?? vi.fn(() => null),
@@ -34,7 +37,7 @@ function mockPlanReviewApi(
     formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
     requestAnnotation: vi.fn(),
     requestCodeReview: vi.fn(),
-    requestReviewStatus: vi.fn(),
+    requestReviewStatus: options.requestReviewStatus ?? vi.fn(),
     startCodeReview: vi.fn(),
     startPlanReview,
     waitForReviewResult: options.waitForReviewResult ?? vi.fn(),
@@ -67,6 +70,16 @@ async function emitToolWrite(
     },
     ctx,
   );
+}
+
+function attachWidgetSpy(ctx: ReturnType<typeof createTestContext>) {
+  const setWidget = vi.fn();
+  (
+    ctx.ui as typeof ctx.ui & {
+      setWidget?: ReturnType<typeof vi.fn>;
+    }
+  ).setWidget = setWidget;
+  return setWidget;
 }
 
 afterEach(() => {
@@ -108,6 +121,41 @@ describe("plan review trigger timing", () => {
       expect(ctx.abort).not.toHaveBeenCalled();
       expect(ctx.ui.notify).not.toHaveBeenCalled();
       expect(api.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("does not show the review widget for pending-only plan review state", async () => {
+    vi.resetModules();
+    mockPlanReviewApi();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-pending-widget-");
+    const repoName = repoRoot.split("/").pop() ?? "repo";
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
+
+    const ctx = createTestContext(repoRoot);
+    const setWidget = attachWidgetSpy(ctx);
+
+    try {
+      await emit("session_start", {}, ctx);
+      setWidget.mockClear();
+
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      expect(setWidget).toHaveBeenCalled();
+      expect(
+        setWidget.mock.calls.every(
+          ([key, content]) =>
+            key === "plannotator-auto-review" && content === undefined,
+        ),
+      ).toBe(true);
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

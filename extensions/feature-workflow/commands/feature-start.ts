@@ -4,11 +4,11 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 
 import { buildBaseBranchCandidates } from "../base-branches.js";
-import { buildFeatureBranchName } from "../naming.js";
 import {
   preflightFeatureStart,
   startPreparedFeatureWorkflow,
 } from "../start-feature.js";
+import { runWithWorkingLoader } from "../ui-working.js";
 import {
   commandLog,
   resolveInferredBaseBranch,
@@ -57,15 +57,14 @@ export async function runFeatureStartCommand(
     return;
   }
 
-  const branch = buildFeatureBranchName({ slug });
-  ctx.ui.notify(`Creating worktree for ${branch}…`, "info");
-
-  const startResult = await startPreparedFeatureWorkflow({
-    ctx,
-    runtime: prepared.runtime,
-    slug,
-    base,
-  });
+  const startResult = await runWithWorkingLoader(ctx, async () =>
+    startPreparedFeatureWorkflow({
+      ctx,
+      runtime: prepared.runtime,
+      slug,
+      base,
+    }),
+  );
   if (!startResult.ok) {
     return;
   }

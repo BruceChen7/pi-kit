@@ -36,7 +36,6 @@
 3. **Track Progress**: Mark items complete as you go
 4. **Explain Changes**: High-level summary at each step
 5. **Document Results**: Add review section to the plan file you created
-6. **Capture Lessons**: Update `.pi/lessons.md` after corrections
 
 ## Core Principles
 

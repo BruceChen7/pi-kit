@@ -13,6 +13,49 @@ import extension from "./index.js";
 
 const tempDirs: string[] = [];
 
+type LoaderComponent = {
+  render: (width: number) => string[];
+  dispose?: () => void;
+};
+
+type LoaderFactory = (
+  tui: { requestRender(): void },
+  theme: { fg(color: string, text: string): string },
+  keybindings: unknown,
+  done: (value: unknown) => void,
+) => LoaderComponent;
+
+function createUiCustomMock(...initialResults: unknown[]) {
+  const queuedResults = [...initialResults];
+  const renders: string[] = [];
+  const custom = vi.fn(async (factory: LoaderFactory) => {
+    if (queuedResults.length > 0) {
+      return queuedResults.shift();
+    }
+
+    let component: LoaderComponent | undefined;
+    const result = await new Promise<unknown>((resolve) => {
+      component = factory(
+        { requestRender() {} },
+        {
+          fg(_color: string, text: string) {
+            return text;
+          },
+        },
+        {},
+        (value: unknown) => resolve(value),
+      );
+
+      renders.push(component.render(80).join("\n"));
+    });
+
+    component?.dispose?.();
+    return result;
+  });
+
+  return { custom, renders };
+}
+
 const createTempRepo = (): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-kit-todo-extension-"));
   tempDirs.push(dir);
@@ -216,6 +259,138 @@ describe("todo-workflow extension", () => {
     });
     expect(notifications).toContainEqual({
       message: 'Added TODO: "Fix status banner"',
+      level: "info",
+    });
+  });
+
+  it("shows a working loader when starting a todo worktree", async () => {
+    const repoRoot = createTempRepo();
+    initGitRepo(repoRoot);
+    const worktreePath = path.join(repoRoot, ".wt", "todo-1");
+
+    fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Start worktree todo",
+              status: "todo",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            guards: {
+              requireCleanWorkspace: false,
+              requireFreshBase: false,
+            },
+            defaults: {
+              autoSwitchToWorktreeSession: false,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const { custom, renders } = createUiCustomMock("todo-1");
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (
+        args[0] === "-C" &&
+        args[2] === "branch" &&
+        args[3] === "--show-current"
+      ) {
+        return { code: 0, stdout: "main\n", stderr: "" };
+      }
+      if (args.includes("switch") && args.includes("--create")) {
+        fs.mkdirSync(worktreePath, { recursive: true });
+        return {
+          code: 0,
+          stdout: JSON.stringify({ action: "created", path: worktreePath }),
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected exec args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        custom,
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+        setStatus: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+      switchSession: vi.fn(async () => ({ cancelled: false })),
+    });
+
+    const store = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as {
+      todos: Array<{
+        status: string;
+        workBranch?: string;
+        sourceBranch?: string;
+      }>;
+    };
+
+    expect(renders).toHaveLength(1);
+    expect(renders[0]).toContain("Working...");
+    expect(store.todos[0]).toMatchObject({
+      status: "doing",
+      workBranch: "todo-1",
+      sourceBranch: "main",
+    });
+    expect(notifications).toContainEqual({
+      message: "doing: Start worktree todo",
       level: "info",
     });
   });
@@ -450,6 +625,7 @@ describe("todo-workflow extension", () => {
       (args: string, ctx: unknown) => Promise<void>
     >();
     const notifications: Array<{ message: string; level: string }> = [];
+    const { custom, renders } = createUiCustomMock("todo-1");
     const setStatus = vi.fn();
     const sourceSession = SessionManager.create(repoRoot);
     sourceSession.appendCustomEntry("test", { ready: true });
@@ -503,7 +679,7 @@ describe("todo-workflow extension", () => {
         cwd: repoRoot,
         hasUI: true,
         ui: {
-          custom: async () => "todo-1",
+          custom,
           notify(message: string, level: string) {
             notifications.push({ message, level });
           },
@@ -517,6 +693,8 @@ describe("todo-workflow extension", () => {
         fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
       ) as { todos: Array<{ activeSessionKey?: string; status: string }> };
 
+      expect(renders).toHaveLength(1);
+      expect(renders[0]).toContain("Working...");
       expect(exec).toHaveBeenCalledWith("wt", [
         "-C",
         repoRoot,
@@ -574,6 +752,7 @@ describe("todo-workflow extension", () => {
       (args: string, ctx: unknown) => Promise<void>
     >();
     const notifications: Array<{ message: string; level: string }> = [];
+    const { custom, renders } = createUiCustomMock();
     const select = vi.fn(async () => "should-not-run");
     const confirm = vi.fn(async () => false);
     const exec = vi.fn(async (_command: string, args: string[]) => {
@@ -610,6 +789,7 @@ describe("todo-workflow extension", () => {
       cwd: repoRoot,
       hasUI: true,
       ui: {
+        custom,
         select,
         confirm,
         notify(message: string, level: string) {
@@ -629,6 +809,8 @@ describe("todo-workflow extension", () => {
       fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
     ) as { todos: Array<{ status: string; completedAt?: string }> };
 
+    expect(renders).toHaveLength(1);
+    expect(renders[0]).toContain("Merging...");
     expect(select).not.toHaveBeenCalled();
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(store.todos[0]?.status).toBe("done");
@@ -670,6 +852,7 @@ describe("todo-workflow extension", () => {
       (args: string, ctx: unknown) => Promise<void>
     >();
     const notifications: Array<{ message: string; level: string }> = [];
+    const { custom, renders } = createUiCustomMock();
     const select = vi.fn(async () => "Local worktree + local branch");
     const exec = vi.fn(async (_command: string, args: string[]) => {
       if (args.includes("rev-parse")) {
@@ -708,6 +891,7 @@ describe("todo-workflow extension", () => {
       cwd: repoRoot,
       hasUI: true,
       ui: {
+        custom,
         select,
         notify(message: string, level: string) {
           notifications.push({ message, level });
@@ -732,6 +916,8 @@ describe("todo-workflow extension", () => {
       }>;
     };
 
+    expect(renders).toHaveLength(1);
+    expect(renders[0]).toContain("Cleaning...");
     expect(select).toHaveBeenCalledTimes(1);
     expect(exec).toHaveBeenCalledWith("wt", [
       "-C",
@@ -808,6 +994,7 @@ describe("todo-workflow extension", () => {
       (args: string, ctx: unknown) => Promise<void>
     >();
     const notifications: Array<{ message: string; level: string }> = [];
+    const { custom, renders } = createUiCustomMock();
     const confirm = vi.fn(async () => true);
     const exec = vi.fn(async (_command: string, args: string[]) => {
       const branch = args[args.length - 2];
@@ -849,6 +1036,7 @@ describe("todo-workflow extension", () => {
       cwd: repoRoot,
       hasUI: true,
       ui: {
+        custom,
         confirm,
         notify(message: string, level: string) {
           notifications.push({ message, level });
@@ -875,6 +1063,8 @@ describe("todo-workflow extension", () => {
       (todo) => todo.id === "missing-meta",
     );
 
+    expect(renders).toHaveLength(1);
+    expect(renders[0]).toContain("Cleaning...");
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(mergedTodo).toMatchObject({
       status: "done",

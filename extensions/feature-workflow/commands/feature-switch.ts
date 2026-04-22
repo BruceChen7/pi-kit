@@ -4,6 +4,7 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 
 import { listRemoteBranches } from "../../shared/git.js";
+import { runWithWorkingLoader } from "../../shared/ui-working.js";
 import {
   buildFeatureSwitchCandidates,
   type FeatureSwitchCandidate,
@@ -11,7 +12,6 @@ import {
 } from "../feature-query.js";
 import { resolveFeatureCommandRuntime } from "../runtime.js";
 import type { FeatureRecord } from "../storage.js";
-import { runWithWorkingLoader } from "../ui-working.js";
 import {
   ensureFeatureWorktree,
   listSwitchableFeatureRecordsFromWorktree,

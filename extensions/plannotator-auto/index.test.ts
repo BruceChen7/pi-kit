@@ -11,6 +11,10 @@ type ImportedModule = {
       resolvedPlanPath: string;
       resolvedPlanPaths: string[];
       resolvedSpecPaths?: string[];
+      extraReviewTargets?: Array<{
+        dir: string;
+        pattern: RegExp;
+      }>;
     },
     targetPath: string,
   ) => string | null;
@@ -20,6 +24,10 @@ type ImportedModule = {
       resolvedPlanPath: string;
       resolvedPlanPaths: string[];
       resolvedSpecPaths?: string[];
+      extraReviewTargets?: Array<{
+        dir: string;
+        pattern: RegExp;
+      }>;
     } | null,
     targetPath: string,
   ) => boolean;
@@ -30,6 +38,10 @@ type ImportedModule = {
       resolvedPlanPath: string;
       resolvedPlanPaths: string[];
       resolvedSpecPaths?: string[];
+      extraReviewTargets?: Array<{
+        dir: string;
+        pattern: RegExp;
+      }>;
     },
   ) => {
     absolutePath: string;
@@ -117,6 +129,31 @@ describe("resolvePlanFileForReview", () => {
         "/repo/.pi/plans/pi-kit.feat-branch/plan/2026-04-15-auth-flow.md",
       ),
     ).toBe(".pi/plans/pi-kit.feat-branch/plan/2026-04-15-auth-flow.md");
+  });
+
+  it("matches configured extra review targets using basename regex", async () => {
+    const { resolvePlanFileForReview } = await importPlannotatorAuto();
+
+    expect(
+      resolvePlanFileForReview?.(
+        { cwd: "/repo" },
+        {
+          planFile: ".pi/plans/repo/plan",
+          resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+          resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
+          resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
+          extraReviewTargets: [
+            {
+              dir: "/repo/.pi/plans/repo/office-hours",
+              pattern: /^[^/]+-office-hours-\d{8}-\d{6}\.md$/,
+            },
+          ],
+        },
+        "/repo/.pi/plans/repo/office-hours/ming-main-office-hours-20260422-123456.md",
+      ),
+    ).toBe(
+      ".pi/plans/repo/office-hours/ming-main-office-hours-20260422-123456.md",
+    );
   });
 });
 
@@ -222,6 +259,50 @@ describe("shouldQueueReviewForToolPath", () => {
         "/repo/.pi/plans/pi-kit.feat-branch/plan/2026-04-15-auth-flow.md",
       ),
     ).toBe(false);
+  });
+
+  it("skips code review for files matching configured extra review targets", async () => {
+    const { shouldQueueReviewForToolPath } = await importPlannotatorAuto();
+
+    expect(
+      shouldQueueReviewForToolPath?.(
+        {
+          planFile: ".pi/plans/repo/plan",
+          resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+          resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
+          resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
+          extraReviewTargets: [
+            {
+              dir: "/repo/.pi/plans/repo/office-hours",
+              pattern: /^[^/]+-office-hours-\d{8}-\d{6}\.md$/,
+            },
+          ],
+        },
+        "/repo/.pi/plans/repo/office-hours/ming-main-office-hours-20260422-123456.md",
+      ),
+    ).toBe(false);
+  });
+
+  it("still queues code review for non-matching files inside configured extra review target directories", async () => {
+    const { shouldQueueReviewForToolPath } = await importPlannotatorAuto();
+
+    expect(
+      shouldQueueReviewForToolPath?.(
+        {
+          planFile: ".pi/plans/repo/plan",
+          resolvedPlanPath: "/repo/.pi/plans/repo/plan",
+          resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
+          resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
+          extraReviewTargets: [
+            {
+              dir: "/repo/.pi/plans/repo/office-hours",
+              pattern: /^[^/]+-office-hours-\d{8}-\d{6}\.md$/,
+            },
+          ],
+        },
+        "/repo/.pi/plans/repo/office-hours/notes.md",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -379,6 +460,71 @@ describe("findLatestPlanFileForAnnotation", () => {
           repoName,
           "specs",
           "2026-04-20-agent-design.md",
+        ),
+      });
+    } finally {
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the newest configured extra review target when it is newer than built-in targets", async () => {
+    const { findLatestPlanFileForAnnotation } = await importPlannotatorAuto();
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-latest-extra-review-target-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planDir = path.join(repoRoot, ".pi", "plans", repoName, "plan");
+    const officeHoursDir = path.join(
+      repoRoot,
+      ".pi",
+      "plans",
+      repoName,
+      "office-hours",
+    );
+    const latestPlan = path.join(planDir, "2026-04-18-latest.md");
+    const latestOfficeHours = path.join(
+      officeHoursDir,
+      "ming-main-office-hours-20260422-123456.md",
+    );
+
+    await fs.mkdir(planDir, { recursive: true });
+    await fs.mkdir(officeHoursDir, { recursive: true });
+    await fs.writeFile(latestPlan, "# Latest plan\n", "utf8");
+    await fs.writeFile(latestOfficeHours, "# Latest office hours\n", "utf8");
+
+    const planDate = new Date("2026-04-18T00:00:00.000Z");
+    const officeHoursDate = new Date("2026-04-22T12:34:56.000Z");
+    await fs.utimes(latestPlan, planDate, planDate);
+    await fs.utimes(latestOfficeHours, officeHoursDate, officeHoursDate);
+
+    try {
+      expect(
+        findLatestPlanFileForAnnotation?.(
+          { cwd: repoRoot },
+          {
+            planFile: path.join(".pi", "plans", repoName, "plan"),
+            resolvedPlanPath: planDir,
+            resolvedPlanPaths: [planDir],
+            resolvedSpecPaths: [
+              path.join(repoRoot, ".pi", "plans", repoName, "specs"),
+            ],
+            extraReviewTargets: [
+              {
+                dir: officeHoursDir,
+                pattern: /^[^/]+-office-hours-\d{8}-\d{6}\.md$/,
+              },
+            ],
+          },
+        ),
+      ).toEqual({
+        absolutePath: latestOfficeHours,
+        repoRelativePath: path.join(
+          ".pi",
+          "plans",
+          repoName,
+          "office-hours",
+          "ming-main-office-hours-20260422-123456.md",
         ),
       });
     } finally {
@@ -1110,6 +1256,126 @@ describe("annotate latest plan shortcut", () => {
       await fs.rm(repoRoot, { recursive: true, force: true });
     }
   });
+
+  it("includes configured extra review targets in latest-target annotation", async () => {
+    vi.resetModules();
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, events, runShortcut } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-shortcut-extra-target-"),
+    );
+    const configuredPlanDir = path.join(
+      repoRoot,
+      ".pi",
+      "plans",
+      "custom",
+      "plan",
+    );
+    const extraTargetDir = path.join(
+      repoRoot,
+      ".pi",
+      "plans",
+      "pi-kit",
+      "office-hours",
+    );
+    const configuredPlanPath = path.join(
+      configuredPlanDir,
+      "2026-04-17-configured.md",
+    );
+    const extraTargetPath = path.join(
+      extraTargetDir,
+      "ming-main-office-hours-20260422-123456.md",
+    );
+
+    await fs.mkdir(configuredPlanDir, { recursive: true });
+    await fs.mkdir(extraTargetDir, { recursive: true });
+    await fs.writeFile(configuredPlanPath, "# Configured\n", "utf8");
+    await fs.writeFile(extraTargetPath, "# Office hours\n", "utf8");
+
+    const configuredDate = new Date("2026-04-17T00:00:00.000Z");
+    const extraTargetDate = new Date("2026-04-22T12:34:56.000Z");
+    await fs.utimes(configuredPlanPath, configuredDate, configuredDate);
+    await fs.utimes(extraTargetPath, extraTargetDate, extraTargetDate);
+
+    await fs.writeFile(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      `${JSON.stringify(
+        {
+          plannotatorAuto: {
+            planFile: ".pi/plans/custom/plan",
+            extraReviewTargets: [
+              {
+                dir: ".pi/plans/pi-kit/office-hours",
+                filePattern: "^[^/]+-office-hours-\\d{8}-\\d{6}\\.md$",
+              },
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const annotateRequests: Array<{
+      action: string;
+      payload: unknown;
+    }> = [];
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        action: string;
+        payload: { filePath?: string; mode?: string };
+        respond: (response: unknown) => void;
+      };
+
+      annotateRequests.push({
+        action: request.action,
+        payload: request.payload,
+      });
+
+      request.respond({
+        status: "handled",
+        result: {
+          feedback: "Extra target selected.",
+        },
+      });
+    });
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await runShortcut("ctrl+alt+l", ctx);
+
+      expect(annotateRequests).toHaveLength(1);
+      expect(annotateRequests[0]).toEqual({
+        action: "annotate",
+        payload: {
+          filePath: extraTargetPath,
+          mode: "annotate",
+        },
+      });
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("plan review trigger timing", () => {
@@ -1675,6 +1941,108 @@ describe("plan review trigger timing", () => {
       );
 
       expect(startPlanReview).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("triggers plan review for files matching configured extra review targets", async () => {
+    vi.resetModules();
+
+    const startPlanReview = vi.fn();
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn(() => vi.fn()),
+        getStatus: vi.fn(() => null),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { emit, api } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-extra-target-review-"),
+    );
+    const extraTargetRelative =
+      ".pi/plans/pi-kit/office-hours/ming-main-office-hours-20260422-123456.md";
+
+    await fs.mkdir(path.dirname(path.join(repoRoot, extraTargetRelative)), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(repoRoot, extraTargetRelative),
+      "# Office Hours\n",
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      `${JSON.stringify(
+        {
+          plannotatorAuto: {
+            extraReviewTargets: [
+              {
+                dir: ".pi/plans/pi-kit/office-hours",
+                filePattern: "^[^/]+-office-hours-\\d{8}-\\d{6}\\.md$",
+              },
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => false,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: extraTargetRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });

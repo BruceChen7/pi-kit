@@ -1,6 +1,6 @@
 # Plannotator Auto
 
-Auto-triggers Plannotator reviews for generated plan/spec files, and can optionally auto-trigger code review for non-plan edits.
+Auto-triggers Plannotator reviews for generated plan/spec files, supports configurable extra review targets, and can optionally auto-trigger code review for non-plan edits.
 
 ## What it watches
 
@@ -16,6 +16,8 @@ When `planFile` is not explicitly configured, worktree sessions accept both alia
 
 `specs/` is always resolved as the sibling directory of the active `plan/` directory.
 
+Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as `{ dir, filePattern }` entries.
+
 ## What it does
 
 - `write` / `edit` to a matching **plan** file → queue and run plan review.
@@ -23,7 +25,7 @@ When `planFile` is not explicitly configured, worktree sessions accept both alia
 - Multiple plan writes before dispatch → keep only the latest pending plan file.
 - `write` / `edit` to **non-plan** files → mark code review pending only if `codeReviewAutoTrigger` is `true`.
 - On `agent_end`, if code review is pending and repo is dirty, request code review.
-- `Ctrl+Alt+L` annotates the latest generated review target (latest mtime across plan/spec targets).
+- `Ctrl+Alt+L` annotates the latest generated review target (latest mtime across plan/spec/configured extra targets).
 
 ## Configuration
 
@@ -37,6 +39,16 @@ Example:
 {
   "plannotatorAuto": {
     "planFile": ".pi/plans/my-repo/plan",
+    "extraReviewTargets": [
+      {
+        "dir": ".pi/plans/my-repo/office-hours",
+        "filePattern": "^[^/]+-office-hours-\\d{8}-\\d{6}\\.md$"
+      },
+      {
+        "dir": ".pi/plans/my-repo/plan-eng-review",
+        "filePattern": "^[^/]+-test-plan-\\d{8}-\\d{6}\\.md$"
+      }
+    ],
     "codeReviewAutoTrigger": false
   }
 }
@@ -45,6 +57,7 @@ Example:
 Notes:
 
 - `planFile` supports **directory path only**.
+- `extraReviewTargets` entries use `{ dir, filePattern }`, where `filePattern` is a basename regex applied to direct child files only.
 - Legacy single-file values like `.pi/PLAN.md` are ignored.
 - Set `planFile: null` to disable plan/spec review auto-trigger.
 - `codeReviewAutoTrigger` is disabled by default.

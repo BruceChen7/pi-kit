@@ -9,7 +9,7 @@ type StatusResponseCase = {
   expectActive: boolean;
   expectProcessed: boolean;
   expectRetryScheduled: boolean;
-  expectUserMessage: boolean;
+  expectAbort: boolean;
   expectNotify: boolean;
 };
 
@@ -64,6 +64,27 @@ const setupCoordinator = async (options: SetupOptions = {}) => {
     startPlanReview,
     requestReviewStatus,
     formatPlanReviewMessage,
+    waitForReviewResult: vi.fn(
+      (
+        _reviewResults: {
+          onResult: (listener: (result: unknown) => void) => () => void;
+        },
+        reviewId: string,
+      ) =>
+        new Promise<{ approved: boolean; feedback?: string }>((resolve) => {
+          const unsubscribe = reviewResults.onResult((result: unknown) => {
+            if (
+              typeof result === "object" &&
+              result !== null &&
+              "reviewId" in result &&
+              result.reviewId === reviewId
+            ) {
+              unsubscribe();
+              resolve(result as { approved: boolean; feedback?: string });
+            }
+          });
+        }),
+    ),
   }));
 
   const { createPlanReviewCoordinator } = await import("./coordinator.js");
@@ -71,16 +92,19 @@ const setupCoordinator = async (options: SetupOptions = {}) => {
   const state = createPlanReviewState();
   const sessionKey = "/repo/.pi/session.json";
   const sessionStates = new Map([[sessionKey, state]]);
-  let reviewResultListener: ((result: unknown) => void) | null = null;
+  const reviewResultListeners: Array<(result: unknown) => void> = [];
 
   const reviewResults = {
     markPending: vi.fn(),
     markCompleted: vi.fn(),
     getStatus: vi.fn(() => ({ status: "missing" as const })),
     onResult: vi.fn((listener: (result: unknown) => void) => {
-      reviewResultListener = listener;
+      reviewResultListeners.push(listener);
       return () => {
-        reviewResultListener = null;
+        const index = reviewResultListeners.indexOf(listener);
+        if (index >= 0) {
+          reviewResultListeners.splice(index, 1);
+        }
       };
     }),
   };
@@ -111,6 +135,8 @@ const setupCoordinator = async (options: SetupOptions = {}) => {
     reviewResults: reviewResults as never,
     getSessionState: () => state,
     getSessionStateByKey: (key) => sessionStates.get(key),
+    getSessionContextByKey: (key) =>
+      key === sessionKey ? (ctx as never) : undefined,
     getSessionKey: (runtimeCtx) =>
       runtimeCtx.sessionManager.getSessionFile() ??
       `${runtimeCtx.cwd}::ephemeral`,
@@ -133,7 +159,9 @@ const setupCoordinator = async (options: SetupOptions = {}) => {
     requestReviewStatus,
     formatPlanReviewMessage,
     emitReviewResult: (result: unknown) => {
-      reviewResultListener?.(result);
+      for (const listener of [...reviewResultListeners]) {
+        listener(result);
+      }
     },
   };
 };
@@ -159,8 +187,8 @@ describe("PlanReviewCoordinator transition table", () => {
       expectActive: false,
       expectProcessed: true,
       expectRetryScheduled: false,
-      expectUserMessage: true,
-      expectNotify: false,
+      expectAbort: false,
+      expectNotify: true,
     },
     {
       name: "active + missing status -> clear active without completion message",
@@ -173,7 +201,7 @@ describe("PlanReviewCoordinator transition table", () => {
       expectActive: false,
       expectProcessed: false,
       expectRetryScheduled: false,
-      expectUserMessage: false,
+      expectAbort: false,
       expectNotify: false,
     },
     {
@@ -185,7 +213,7 @@ describe("PlanReviewCoordinator transition table", () => {
       expectActive: true,
       expectProcessed: false,
       expectRetryScheduled: true,
-      expectUserMessage: false,
+      expectAbort: false,
       expectNotify: true,
     },
     {
@@ -197,7 +225,7 @@ describe("PlanReviewCoordinator transition table", () => {
       expectActive: true,
       expectProcessed: false,
       expectRetryScheduled: true,
-      expectUserMessage: false,
+      expectAbort: false,
       expectNotify: true,
     },
   ])("$name", async (testCase) => {
@@ -228,15 +256,8 @@ describe("PlanReviewCoordinator transition table", () => {
     expect(state.pendingPlanReviewRetry !== null).toBe(
       testCase.expectRetryScheduled,
     );
-    expect(pi.sendUserMessage).toHaveBeenCalledTimes(
-      testCase.expectUserMessage ? 1 : 0,
-    );
-    if (testCase.expectUserMessage) {
-      expect(pi.sendUserMessage).toHaveBeenCalledWith(
-        "formatted-plan-review-message",
-        { deliverAs: "steer" },
-      );
-    }
+    expect(ctx.abort).toHaveBeenCalledTimes(testCase.expectAbort ? 1 : 0);
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
     expect(ctx.ui.notify).toHaveBeenCalledTimes(testCase.expectNotify ? 1 : 0);
   });
 });
@@ -250,8 +271,10 @@ describe("PlanReviewCoordinator key workflow effects", () => {
       pi,
       requestReviewStatus,
       startPlanReview,
-    } = await setupCoordinator({
-      statusResponse: {
+    } = await setupCoordinator();
+
+    requestReviewStatus
+      .mockResolvedValueOnce({
         status: "handled",
         result: {
           status: "completed",
@@ -259,6 +282,18 @@ describe("PlanReviewCoordinator key workflow effects", () => {
           approved: true,
           feedback: "Outdated review result.",
         },
+      })
+      .mockResolvedValueOnce({
+        status: "handled",
+        result: {
+          status: "missing",
+        },
+      });
+    startPlanReview.mockResolvedValueOnce({
+      status: "handled",
+      result: {
+        status: "pending",
+        reviewId: "review-2",
       },
     });
 
@@ -292,11 +327,9 @@ describe("PlanReviewCoordinator key workflow effects", () => {
 
       await coordinator.runPlanReview(runtimeCtx as never, "agent_end");
 
-      expect(requestReviewStatus).toHaveBeenCalledTimes(1);
+      expect(requestReviewStatus).toHaveBeenCalledTimes(2);
       expect(startPlanReview).toHaveBeenCalledTimes(1);
-      expect(state.activePlanReviewByCwd.get(runtimeCtx.cwd)?.reviewId).toBe(
-        "review-1",
-      );
+      expect(state.activePlanReviewByCwd.has(runtimeCtx.cwd)).toBe(false);
       expect(state.pendingPlanReviewByCwd.has(runtimeCtx.cwd)).toBe(false);
       expect(state.processedPlanReviewIds.has("review-1")).toBe(true);
       expect(state.settledPlanReviewPaths.size).toBe(0);
@@ -306,7 +339,7 @@ describe("PlanReviewCoordinator key workflow effects", () => {
     }
   });
 
-  it("waits for the review result on a busy plan-file write instead of aborting", async () => {
+  it("waits for the review result on a busy plan-file write before notifying and aborting", async () => {
     const { coordinator, ctx, startPlanReview, state, emitReviewResult, pi } =
       await setupCoordinator({
         isIdle: false,
@@ -360,11 +393,12 @@ describe("PlanReviewCoordinator key workflow effects", () => {
       });
 
       await reviewPromise;
-      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
-      expect(pi.sendUserMessage).toHaveBeenCalledWith(
-        "formatted-plan-review-message",
-        { deliverAs: "steer" },
+      expect(runtimeCtx.abort).toHaveBeenCalledTimes(1);
+      expect(runtimeCtx.ui.notify).toHaveBeenCalledWith(
+        "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
+        "info",
       );
+      expect(pi.sendUserMessage).not.toHaveBeenCalled();
       expect(state.activePlanReviewByCwd.size).toBe(0);
     } finally {
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -419,10 +453,12 @@ describe("PlanReviewCoordinator key workflow effects", () => {
     await runPromise;
 
     expect(state.activePlanReviewByCwd.size).toBe(0);
-    expect(pi.sendUserMessage).toHaveBeenCalledWith(
-      "formatted-plan-review-message",
-      { deliverAs: "steer" },
+    expect(ctx.abort).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
+      "info",
     );
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
   });
 
   it("waits synchronously after accepted start for non plan-file-write reasons", async () => {
@@ -482,10 +518,12 @@ describe("PlanReviewCoordinator key workflow effects", () => {
 
       expect(state.activePlanReviewByCwd.has(runtimeCtx.cwd)).toBe(false);
       expect(state.pendingPlanReviewByCwd.has(runtimeCtx.cwd)).toBe(false);
-      expect(pi.sendUserMessage).toHaveBeenCalledWith(
-        "formatted-plan-review-message",
-        { deliverAs: "steer" },
+      expect(runtimeCtx.abort).not.toHaveBeenCalled();
+      expect(runtimeCtx.ui.notify).toHaveBeenCalledWith(
+        "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
+        "info",
       );
+      expect(pi.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await fs.rm(repoRoot, { recursive: true, force: true });
     }

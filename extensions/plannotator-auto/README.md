@@ -20,6 +20,7 @@ When `planFile` is not explicitly configured, worktree sessions accept both alia
 
 - `write` / `edit` to a matching **plan** file → queue and run plan review.
 - `write` / `edit` to a matching **spec** file → queue and run spec review.
+- When a plan/spec review draft is ready, notify the user and wait for manual submission instead of auto-steering the agent.
 - Multiple plan writes before dispatch → keep only the latest pending plan file.
 - `write` / `edit` to **non-plan** files → mark code review pending only if `codeReviewAutoTrigger` is `true`.
 - On `agent_end`, if code review is pending and repo is dirty, request code review.

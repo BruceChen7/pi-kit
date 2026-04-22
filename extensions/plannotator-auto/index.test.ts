@@ -590,10 +590,22 @@ type ShortcutRegistration = {
   handler: ShortcutHandler;
 };
 
+type ToolRegistration = {
+  name: string;
+  execute: (
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal: AbortSignal,
+    onUpdate: (update: unknown) => void | Promise<void>,
+    ctx: TestCtx,
+  ) => Promise<unknown>;
+};
+
 const createFakePi = () => {
   const handlers = new Map<string, PiEventHandler[]>();
   const events = createFakeEventBus();
   const shortcuts = new Map<string, ShortcutRegistration>();
+  const tools = new Map<string, ToolRegistration>();
 
   return {
     api: {
@@ -607,15 +619,24 @@ const createFakePi = () => {
           shortcuts.set(String(shortcut), registration);
         },
       ),
+      registerTool: vi.fn((tool: ToolRegistration) => {
+        tools.set(tool.name, tool);
+      }),
       events,
       sendUserMessage: vi.fn(),
       getCommands: () => [],
     },
     events,
-    emit: async (name: string, event: unknown, ctx: TestCtx): Promise<void> => {
+    emit: async (
+      name: string,
+      event: unknown,
+      ctx: TestCtx,
+    ): Promise<unknown> => {
+      let result: unknown;
       for (const handler of handlers.get(name) ?? []) {
-        await handler(event, ctx);
+        result = await handler(event, ctx);
       }
+      return result;
     },
     runShortcut: async (shortcut: string, ctx: TestCtx): Promise<void> => {
       const registration = shortcuts.get(shortcut);
@@ -624,6 +645,24 @@ const createFakePi = () => {
       }
 
       await registration.handler(ctx);
+    },
+    runTool: async (
+      name: string,
+      params: Record<string, unknown>,
+      ctx: TestCtx,
+    ): Promise<unknown> => {
+      const tool = tools.get(name);
+      if (!tool) {
+        throw new Error(`Tool not registered: ${name}`);
+      }
+
+      return tool.execute(
+        "tool-call-1",
+        params,
+        new AbortController().signal,
+        async () => {},
+        ctx,
+      );
     },
   };
 };
@@ -1379,9 +1418,8 @@ describe("annotate latest plan shortcut", () => {
 });
 
 describe("plan review trigger timing", () => {
-  it("waits for the plan review result after a busy plan-file write", async () => {
+  it("marks a plan draft pending after a busy plan-file write without auto-starting review", async () => {
     vi.resetModules();
-    const reviewResultListeners: Array<(result: unknown) => void> = [];
 
     const startPlanReview = vi.fn(async () => ({
       status: "handled" as const,
@@ -1394,15 +1432,7 @@ describe("plan review trigger timing", () => {
     vi.doMock("./plannotator-api.ts", () => ({
       createRequestPlannotator: vi.fn(() => vi.fn()),
       createReviewResultStore: vi.fn(() => ({
-        onResult: vi.fn((listener: (result: unknown) => void) => {
-          reviewResultListeners.push(listener);
-          return () => {
-            const index = reviewResultListeners.indexOf(listener);
-            if (index >= 0) {
-              reviewResultListeners.splice(index, 1);
-            }
-          };
-        }),
+        onResult: vi.fn(() => vi.fn()),
         getStatus: vi.fn(() => null),
         markPending: vi.fn(),
         markCompleted: vi.fn(),
@@ -1471,25 +1501,194 @@ describe("plan review trigger timing", () => {
       });
 
       await flushMicrotasks();
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
-      expect(settled).toBe(false);
-      expect(abort).not.toHaveBeenCalled();
-
-      for (const listener of reviewResultListeners) {
-        listener({
-          reviewId: "review-immediate",
-          approved: false,
-          feedback: "Please revise the rollout steps.",
-        });
-      }
-
       await reviewPromise;
-      expect(abort).toHaveBeenCalledTimes(1);
-      expect(ctx.ui.notify).toHaveBeenCalledWith(
-        "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
-        "info",
-      );
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(settled).toBe(true);
+      expect(abort).not.toHaveBeenCalled();
+      expect(ctx.ui.notify).not.toHaveBeenCalled();
       expect(api.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("sends a strict follow-up gate message at agent_end when a plan draft is still pending", async () => {
+    vi.resetModules();
+
+    const startPlanReview = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "pending" as const,
+        reviewId: "review-immediate",
+      },
+    }));
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn(() => vi.fn()),
+        getStatus: vi.fn(() => null),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review rejected."),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-pending-gate-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] test\n", "utf8");
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      await emit("agent_end", {}, ctx);
+
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("plannotator_auto_submit_review"),
+        { deliverAs: "followUp" },
+      );
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(planFileRelative),
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("injects pending review guidance before the next agent turn", async () => {
+    vi.resetModules();
+
+    const startPlanReview = vi.fn();
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn(() => vi.fn()),
+        getStatus: vi.fn(() => null),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review rejected."),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+      waitForReviewResult: vi.fn(),
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-before-agent-start-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] test\n", "utf8");
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      const result = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+
+      expect(result.message?.content ?? "").toContain(
+        "plannotator_auto_submit_review",
+      );
+      expect(result.message?.content ?? "").toContain(planFileRelative);
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -1591,21 +1790,10 @@ describe("plan review trigger timing", () => {
       );
 
       await flushMicrotasks();
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
-
-      for (const listener of reviewResultListeners) {
-        listener({
-          reviewId: "review-worktree",
-          approved: true,
-        });
-      }
-
       await reviewPromise;
-      expect(ctx.abort).toHaveBeenCalledTimes(1);
-      expect(ctx.ui.notify).toHaveBeenCalledWith(
-        "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
-        "info",
-      );
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(ctx.abort).not.toHaveBeenCalled();
+      expect(ctx.ui.notify).not.toHaveBeenCalled();
       expect(api.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
@@ -1708,21 +1896,10 @@ describe("plan review trigger timing", () => {
       );
 
       await flushMicrotasks();
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
-
-      for (const listener of reviewResultListeners) {
-        listener({
-          reviewId: "review-worktree-alias",
-          approved: true,
-        });
-      }
-
       await reviewPromise;
-      expect(ctx.abort).toHaveBeenCalledTimes(1);
-      expect(ctx.ui.notify).toHaveBeenCalledWith(
-        "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
-        "info",
-      );
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(ctx.abort).not.toHaveBeenCalled();
+      expect(ctx.ui.notify).not.toHaveBeenCalled();
       expect(api.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
@@ -1730,7 +1907,7 @@ describe("plan review trigger timing", () => {
     }
   });
 
-  it("triggers spec review for generated design specs and rewrites the user-facing message", async () => {
+  it("gates generated design specs until the agent submits the review explicitly", async () => {
     vi.resetModules();
     const reviewResultListeners: Array<(result: unknown) => void> = [];
     const startPlanReview = vi.fn(async () => ({
@@ -1809,7 +1986,7 @@ describe("plan review trigger timing", () => {
         ctx,
       );
 
-      const reviewPromise = emit(
+      await emit(
         "tool_execution_end",
         {
           toolName: "write",
@@ -1819,23 +1996,17 @@ describe("plan review trigger timing", () => {
         ctx,
       );
 
-      await flushMicrotasks();
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      await emit("agent_end", {}, ctx);
 
-      for (const listener of reviewResultListeners) {
-        listener({
-          reviewId: "review-spec",
-          approved: true,
-        });
-      }
-
-      await reviewPromise;
-      expect(ctx.abort).toHaveBeenCalledTimes(1);
-      expect(ctx.ui.notify).toHaveBeenCalledWith(
-        "Plannotator spec review draft is ready. Submit it manually in Plannotator to continue.",
-        "info",
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("plannotator_auto_submit_review"),
+        { deliverAs: "followUp" },
       );
-      expect(api.sendUserMessage).not.toHaveBeenCalled();
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(specFileRelative),
+        { deliverAs: "followUp" },
+      );
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -1948,7 +2119,7 @@ describe("plan review trigger timing", () => {
     }
   });
 
-  it("triggers plan review for files matching configured extra review targets", async () => {
+  it("gates files matching configured extra review targets until explicit submission", async () => {
     vi.resetModules();
 
     const startPlanReview = vi.fn();
@@ -2043,7 +2214,17 @@ describe("plan review trigger timing", () => {
         ctx,
       );
 
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      await emit("agent_end", {}, ctx);
+
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("plannotator_auto_submit_review"),
+        { deliverAs: "followUp" },
+      );
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(extraTargetRelative),
+        { deliverAs: "followUp" },
+      );
     } finally {
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -2143,7 +2324,129 @@ describe("plan review trigger timing", () => {
     }
   });
 
-  it("re-triggers directory-mode plan review when the same plan is rewritten after a draft review completes", async () => {
+  it("lists every pending review target in the strict gate message", async () => {
+    vi.resetModules();
+
+    const startPlanReview = vi.fn();
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn(() => vi.fn()),
+        getStatus: vi.fn(() => null),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+      waitForReviewResult: vi.fn(),
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-multi-pending-gate-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-flow.md`;
+    const specFileRelative = `.pi/plans/${repoName}/specs/2026-04-16-flow-design.md`;
+
+    await fs.mkdir(path.dirname(path.join(repoRoot, planFileRelative)), {
+      recursive: true,
+    });
+    await fs.mkdir(path.dirname(path.join(repoRoot, specFileRelative)), {
+      recursive: true,
+    });
+    await fs.writeFile(
+      path.join(repoRoot, planFileRelative),
+      "# Plan\n",
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(repoRoot, specFileRelative),
+      "# Spec\n",
+      "utf8",
+    );
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-2",
+          args: { path: specFileRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-2",
+          isError: false,
+        },
+        ctx,
+      );
+
+      await emit("agent_end", {}, ctx);
+
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(planFileRelative),
+        { deliverAs: "followUp" },
+      );
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(specFileRelative),
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a rewritten directory-mode plan pending without auto-starting review", async () => {
     vi.resetModules();
     const reviewResultListeners: Array<(result: unknown) => void> = [];
     let reviewCount = 0;
@@ -2238,7 +2541,7 @@ describe("plan review trigger timing", () => {
         ctx,
       );
 
-      const firstReviewPromise = emit(
+      await emit(
         "tool_execution_end",
         {
           toolName: "write",
@@ -2249,15 +2552,7 @@ describe("plan review trigger timing", () => {
       );
 
       await flushMicrotasks();
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
-
-      for (const listener of reviewResultListeners) {
-        listener({
-          reviewId: "review-1",
-          approved: true,
-        });
-      }
-      await firstReviewPromise;
+      expect(startPlanReview).not.toHaveBeenCalled();
 
       await fs.writeFile(
         planFileAbsolute,
@@ -2273,7 +2568,7 @@ describe("plan review trigger timing", () => {
         },
         ctx,
       );
-      const secondReviewPromise = emit(
+      await emit(
         "tool_execution_end",
         {
           toolName: "write",
@@ -2283,25 +2578,267 @@ describe("plan review trigger timing", () => {
         ctx,
       );
 
+      await emit("agent_end", {}, ctx);
+
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(ctx.abort).not.toHaveBeenCalled();
+      expect(ctx.ui.notify).not.toHaveBeenCalled();
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(planFileRelative),
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("submit review tool", () => {
+  it("submits a pending plan draft and waits for approval", async () => {
+    vi.resetModules();
+    const reviewResultListeners: Array<(result: unknown) => void> = [];
+
+    const startPlanReview = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "pending" as const,
+        reviewId: "review-submit-plan",
+      },
+    }));
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn((listener: (result: unknown) => void) => {
+          reviewResultListeners.push(listener);
+          return () => {
+            const index = reviewResultListeners.indexOf(listener);
+            if (index >= 0) {
+              reviewResultListeners.splice(index, 1);
+            }
+          };
+        }),
+        getStatus: vi.fn(() => null),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus: vi.fn(),
+      startCodeReview: vi.fn(),
+      startPlanReview,
+      waitForReviewResult: vi.fn(
+        (_store, reviewId: string) =>
+          new Promise((resolve) => {
+            reviewResultListeners.push((result) => {
+              const completed = result as {
+                reviewId?: string;
+                approved?: boolean;
+                feedback?: string;
+              };
+              if (completed.reviewId === reviewId) {
+                resolve({ status: "completed", ...completed });
+              }
+            });
+          }),
+      ),
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, runTool } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-submit-tool-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] test\n", "utf8");
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      let settled = false;
+      const submitPromise = Promise.resolve(
+        runTool(
+          "plannotator_auto_submit_review",
+          { path: planFileRelative },
+          ctx,
+        ),
+      ).then((result) => {
+        settled = true;
+        return result;
+      });
+
       await flushMicrotasks();
-      expect(startPlanReview).toHaveBeenCalledTimes(2);
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      expect(settled).toBe(false);
 
       for (const listener of reviewResultListeners) {
         listener({
-          reviewId: "review-2",
+          reviewId: "review-submit-plan",
           approved: true,
         });
       }
-      await secondReviewPromise;
 
-      expect(startPlanReview).toHaveBeenCalledTimes(2);
-      expect(ctx.abort).toHaveBeenCalledTimes(2);
-      expect(ctx.ui.notify).toHaveBeenCalledWith(
-        "Plannotator plan review draft is ready. Submit it manually in Plannotator to continue.",
-        "info",
-      );
-      expect(api.sendUserMessage).not.toHaveBeenCalled();
+      const result = (await submitPromise) as {
+        content?: Array<{ type?: string; text?: string }>;
+        details?: { status?: string };
+      };
+      expect(result.details?.status).toBe("approved");
+      expect(result.content?.[0]?.text ?? "").toContain("approved");
     } finally {
+      await emit("session_shutdown", {}, ctx);
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to review-status when the async review result event is missed", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const requestReviewStatus = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "completed" as const,
+        reviewId: "review-submit-fallback",
+        approved: true,
+      },
+    }));
+
+    const startPlanReview = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "pending" as const,
+        reviewId: "review-submit-fallback",
+      },
+    }));
+
+    vi.doMock("./plannotator-api.ts", () => ({
+      createRequestPlannotator: vi.fn(() => vi.fn()),
+      createReviewResultStore: vi.fn(() => ({
+        onResult: vi.fn(() => vi.fn()),
+        getStatus: vi.fn(() => ({ status: "missing" as const })),
+        markPending: vi.fn(),
+        markCompleted: vi.fn(),
+      })),
+      formatAnnotationMessage: vi.fn(() => ""),
+      formatCodeReviewMessage: vi.fn(() => ""),
+      formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
+      requestAnnotation: vi.fn(),
+      requestCodeReview: vi.fn(),
+      requestReviewStatus,
+      startCodeReview: vi.fn(),
+      startPlanReview,
+      waitForReviewResult: vi.fn(() => new Promise(() => {})),
+    }));
+
+    const { default: plannotatorAuto } = await import("./index.js");
+    const { api, emit, runTool } = createFakePi();
+
+    plannotatorAuto(api as never);
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-auto-submit-fallback-"),
+    );
+    const repoName = path.basename(repoRoot);
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] test\n", "utf8");
+
+    const ctx: TestCtx = {
+      cwd: repoRoot,
+      hasUI: true,
+      isIdle: () => true,
+      abort: vi.fn(),
+      ui: {
+        notify: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile: () => path.join(repoRoot, ".pi", "session.json"),
+      },
+    };
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: planFileRelative },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
+
+      let settled = false;
+      const submitPromise = Promise.resolve(
+        runTool(
+          "plannotator_auto_submit_review",
+          { path: planFileRelative },
+          ctx,
+        ),
+      ).then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await flushMicrotasks();
+
+      expect(requestReviewStatus).toHaveBeenCalled();
+      expect(settled).toBe(true);
+      await submitPromise;
+    } finally {
+      vi.useRealTimers();
       await emit("session_shutdown", {}, ctx);
       await fs.rm(repoRoot, { recursive: true, force: true });
     }

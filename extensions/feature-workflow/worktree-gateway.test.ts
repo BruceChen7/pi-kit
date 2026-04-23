@@ -79,6 +79,44 @@ describe("worktree-gateway", () => {
     expect(runWt).toHaveBeenNthCalledWith(2, ["list", "--format", "json"]);
   });
 
+  it("switches to an existing branch when wt create reports it already exists", async () => {
+    const runWt: WtRunner = vi
+      .fn()
+      .mockResolvedValueOnce(
+        failResult(
+          "✗ Branch checkout-v2 already exists\n ↳ To switch to the existing branch, run without --create: wt switch checkout-v2",
+        ),
+      )
+      .mockResolvedValueOnce(
+        okResult('{"action":"switched","path":"/repo/.wt/checkout-v2"}'),
+      );
+
+    const result = await createFeatureWorktree(runWt, {
+      branch: "checkout-v2",
+      base: "main",
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      worktreePath: "/repo/.wt/checkout-v2",
+    });
+    expect(runWt).toHaveBeenNthCalledWith(1, [
+      "switch",
+      "--create",
+      "checkout-v2",
+      "--base",
+      "main",
+      "--no-cd",
+      "--yes",
+    ]);
+    expect(runWt).toHaveBeenNthCalledWith(2, [
+      "switch",
+      "checkout-v2",
+      "--no-cd",
+      "--yes",
+    ]);
+  });
+
   it("returns mapped error message when wt create fails", async () => {
     const runWt: WtRunner = vi
       .fn()

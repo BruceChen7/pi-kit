@@ -473,6 +473,171 @@ describe("todo-workflow extension", () => {
     });
   });
 
+  it("switches to an existing todo branch instead of failing to recreate it", async () => {
+    const repoRoot = createTempRepo();
+    initGitRepo(repoRoot);
+    const worktreePath = path.join(repoRoot, ".wt", "improve-todo-view");
+
+    fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "improve-todo-view",
+              title: "Improve todo view",
+              status: "todo",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            guards: {
+              requireCleanWorkspace: false,
+              requireFreshBase: false,
+            },
+            defaults: {
+              autoSwitchToWorktreeSession: false,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const { custom, renders } = createUiCustomMock("improve-todo-view");
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (
+        args[0] === "-C" &&
+        args[2] === "branch" &&
+        args[3] === "--show-current"
+      ) {
+        return { code: 0, stdout: "main\n", stderr: "" };
+      }
+      if (args.includes("switch") && args.includes("--create")) {
+        return {
+          code: 1,
+          stdout: "",
+          stderr:
+            "✗ Branch improve-todo-view already exists\n ↳ To switch to the existing branch, run without --create: wt switch improve-todo-view",
+        };
+      }
+      if (
+        args[0] === "-C" &&
+        args[2] === "switch" &&
+        !args.includes("--create")
+      ) {
+        fs.mkdirSync(worktreePath, { recursive: true });
+        return {
+          code: 0,
+          stdout: JSON.stringify({ action: "switched", path: worktreePath }),
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected exec args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        custom,
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+        setStatus: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+      switchSession: vi.fn(async () => ({ cancelled: false })),
+    });
+
+    const store = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as {
+      todos: Array<{
+        status: string;
+        workBranch?: string;
+        sourceBranch?: string;
+      }>;
+    };
+
+    expect(renders).toHaveLength(1);
+    expect(renders[0]).toContain("Working...");
+    expect(exec.mock.calls).toContainEqual([
+      "wt",
+      expect.arrayContaining([
+        "switch",
+        "--create",
+        "improve-todo-view",
+        "--base",
+        "main",
+        "--no-cd",
+        "--yes",
+      ]),
+    ]);
+    expect(exec.mock.calls).toContainEqual([
+      "wt",
+      expect.arrayContaining([
+        "switch",
+        "improve-todo-view",
+        "--no-cd",
+        "--yes",
+      ]),
+    ]);
+    expect(store.todos[0]).toMatchObject({
+      status: "doing",
+      workBranch: "improve-todo-view",
+      sourceBranch: "main",
+    });
+    expect(notifications).toContainEqual({
+      message: "doing: Improve todo view",
+      level: "info",
+    });
+  });
+
   it("does not mark todo as doing when feature start preconditions fail", async () => {
     const repoRoot = createTempRepo();
     initGitRepo(repoRoot);

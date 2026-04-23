@@ -143,6 +143,7 @@ export async function maybeSwitchToWorktreeSession(input: {
   record: FeatureRecord;
   worktreePath: string;
   enabled: boolean;
+  beforeSwitch?: () => void | Promise<void>;
   onSwitched?: (ctx: ReplacedSessionContext) => Promise<void>;
 }): Promise<WorktreeSessionSwitchResult> {
   const currentNotify = input.ctx.ui.notify.bind(input.ctx.ui);
@@ -241,6 +242,7 @@ export async function maybeSwitchToWorktreeSession(input: {
 
     let notify = currentNotify;
     let replacementCtx: ReplacedSessionContext | null = null;
+    await input.beforeSwitch?.();
     const result = await input.ctx.switchSession(sessionPath, {
       withSession: async (nextCtx) => {
         replacementCtx = nextCtx;

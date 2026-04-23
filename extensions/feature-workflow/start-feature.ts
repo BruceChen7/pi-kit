@@ -98,6 +98,7 @@ export async function startPreparedFeatureWorkflow(input: {
   runtime: FeatureCommandRuntime;
   slug: string;
   base: string;
+  beforeSessionSwitch?: () => void | Promise<void>;
 }): Promise<StartFeatureWorkflowResult> {
   commandLog.debug("feature-start workflow invoked", {
     cwd: input.ctx.cwd,
@@ -194,6 +195,7 @@ export async function startPreparedFeatureWorkflow(input: {
     record,
     worktreePath,
     enabled: config.defaults.autoSwitchToWorktreeSession,
+    beforeSwitch: input.beforeSessionSwitch,
   });
 
   commandLog.debug("feature-start session switch result", {

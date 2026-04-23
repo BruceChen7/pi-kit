@@ -57,12 +57,13 @@ export async function runFeatureStartCommand(
     return;
   }
 
-  const startResult = await runWithWorkingLoader(ctx, async () =>
+  const startResult = await runWithWorkingLoader(ctx, ({ dismiss }) =>
     startPreparedFeatureWorkflow({
       ctx,
       runtime: prepared.runtime,
       slug,
       base,
+      beforeSessionSwitch: dismiss,
     }),
   );
   if (!startResult.ok) {

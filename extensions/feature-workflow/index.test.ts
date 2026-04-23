@@ -1036,6 +1036,174 @@ describe("feature-workflow extension", () => {
     ]);
   });
 
+  it("closes the working loader before /feature-switch replaces the session", async () => {
+    const initialCwd = process.cwd();
+    const repoRoot = createTempRepoWithMainBranch();
+    const featureBranch = "fix-loader-switch-replacement";
+    const worktreePath = path.join(repoRoot, ".wt", featureBranch);
+    const sessionManager = SessionManager.create(repoRoot);
+
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            defaults: {
+              autoSwitchToWorktreeSession: true,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const loaderRenders: string[] = [];
+    const replacementNotifications: Array<{
+      message: string;
+      level: string;
+    }> = [];
+    let stale = false;
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              branch: featureBranch,
+              path: worktreePath,
+              commit: { timestamp: 1 },
+            },
+          ]),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "switch") {
+        fs.mkdirSync(worktreePath, { recursive: true });
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            action: "switched",
+            path: worktreePath,
+          }),
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+    const switchSession = vi.fn(
+      async (
+        _sessionPath: string,
+        options?: { withSession?: (ctx: unknown) => Promise<void> },
+      ) => {
+        stale = true;
+        await options?.withSession?.({
+          hasUI: false,
+          ui: {
+            notify(message: string, level: string) {
+              replacementNotifications.push({ message, level });
+            },
+          },
+        });
+        return { cancelled: false };
+      },
+    );
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-switch");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    try {
+      await expect(
+        handler(featureBranch, {
+          cwd: repoRoot,
+          hasUI: true,
+          ui: {
+            async custom(factory: LoaderFactory) {
+              let component: LoaderComponent | undefined;
+
+              const result = await new Promise<unknown>((resolve, reject) => {
+                component = factory(
+                  { requestRender() {} },
+                  {
+                    fg(_color: string, text: string) {
+                      return text;
+                    },
+                  },
+                  {},
+                  (value: unknown) => {
+                    if (stale) {
+                      reject(
+                        new Error(
+                          "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+                        ),
+                      );
+                      return;
+                    }
+                    resolve(value);
+                  },
+                );
+
+                loaderRenders.push(component.render(80).join("\n"));
+              });
+
+              component?.dispose?.();
+              return result;
+            },
+            notify() {
+              if (stale) {
+                throw new Error(
+                  "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+                );
+              }
+            },
+          },
+          sessionManager,
+          switchSession,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(loaderRenders).toHaveLength(1);
+      expect(loaderRenders[0]).toContain("Working...");
+      expect(switchSession).toHaveBeenCalledTimes(1);
+      expect(replacementNotifications).toEqual([
+        {
+          message: expect.stringContaining(
+            `Switched to feature worktree session: ${featureBranch}`,
+          ),
+          level: "info",
+        },
+      ]);
+    } finally {
+      process.chdir(initialCwd);
+    }
+  });
+
   it("switches a remote-only origin branch by bare query", async () => {
     const repoRoot = createTempRepoWithMainBranch();
     const resolvedRepoRoot = runGit(repoRoot, [

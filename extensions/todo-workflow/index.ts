@@ -162,12 +162,14 @@ async function switchToTodoWorktreeSession(
   ctx: ExtensionCommandContext,
   todo: TodoItem,
   worktreePath: string,
+  beforeSwitch?: () => void | Promise<void>,
 ): Promise<boolean> {
   const switchResult = await maybeSwitchToWorktreeSession({
     ctx,
     record: buildTodoFeatureRecord(todo, worktreePath),
     worktreePath,
     enabled: true,
+    beforeSwitch,
     onSwitched: async (replacementCtx) => {
       activateTodoForSession(replacementCtx, todo);
     },
@@ -203,12 +205,13 @@ async function startTodo(
     return;
   }
 
-  const startResult = await runWithWorkingLoader(ctx, () =>
+  const startResult = await runWithWorkingLoader(ctx, ({ dismiss }) =>
     startPreparedFeatureWorkflow({
       ctx,
       runtime: prepared.runtime,
       slug: todo.id,
       base: sourceBranch,
+      beforeSessionSwitch: dismiss,
     }),
   );
   if (!startResult.ok) {
@@ -234,13 +237,18 @@ async function resumeTodo(
     return;
   }
 
-  const switched = await runWithWorkingLoader(ctx, async () => {
+  const switched = await runWithWorkingLoader(ctx, async ({ dismiss }) => {
     const ensured = await ensureTodoWorktreeReady(pi, ctx, todo);
     if (!ensured.ok) {
       return false;
     }
 
-    return switchToTodoWorktreeSession(ctx, todo, ensured.worktreePath);
+    return switchToTodoWorktreeSession(
+      ctx,
+      todo,
+      ensured.worktreePath,
+      dismiss,
+    );
   });
   if (!switched) {
     return;

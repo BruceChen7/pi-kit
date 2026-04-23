@@ -92,6 +92,50 @@ describe("runWithWorkingLoader", () => {
     );
   });
 
+  it("lets callers dismiss the loader before the original custom view becomes stale", async () => {
+    let stale = false;
+    const custom = vi.fn(async (factory: LoaderFactory) => {
+      return new Promise<unknown>((resolve, reject) => {
+        factory(
+          { requestRender() {} },
+          {
+            fg(_color: string, text: string) {
+              return text;
+            },
+          },
+          {},
+          (value: unknown) => {
+            if (stale) {
+              reject(
+                new Error(
+                  "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+                ),
+              );
+              return;
+            }
+            resolve(value);
+          },
+        );
+      });
+    });
+    const ctx = {
+      hasUI: true,
+      ui: {
+        custom,
+      },
+    } as unknown as ExtensionCommandContext;
+    const workflow = vi.fn(async (controls: { dismiss: () => void }) => {
+      controls.dismiss();
+      stale = true;
+      return "done";
+    });
+
+    await expect(runWithWorkingLoader(ctx, workflow)).resolves.toBe("done");
+
+    expect(workflow).toHaveBeenCalledTimes(1);
+    expect(custom).toHaveBeenCalledTimes(1);
+  });
+
   it("uses a caller-provided loader message when supplied", async () => {
     const workflow = vi.fn(async () => "done");
     const { custom } = createUiCustomStub();

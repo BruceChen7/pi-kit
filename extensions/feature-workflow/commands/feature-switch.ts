@@ -108,104 +108,108 @@ export async function runFeatureSwitchCommand(
     remoteRef: selectedCandidate.remoteRef,
   });
 
-  const completedSwitch = await runWithWorkingLoader(ctx, async () => {
-    commandLog.debug("feature-switch preparing worktree", {
-      repoRoot,
-      branch,
-      source: selectedCandidate.kind,
-    });
-
-    const switchWorktreeResult = await ensureFeatureWorktree(runWt, {
-      branch,
-      fallbackWorktreePath: selectedCandidate.fallbackWorktreePath,
-    });
-    if (switchWorktreeResult.ok === false) {
-      notifyAndLogWtError({
-        ctx,
-        message: switchWorktreeResult.message,
-        scope: "wt switch failed",
-        meta: {
-          branch,
-          repoRoot,
-        },
+  const completedSwitch = await runWithWorkingLoader(
+    ctx,
+    async ({ dismiss }) => {
+      commandLog.debug("feature-switch preparing worktree", {
+        repoRoot,
+        branch,
+        source: selectedCandidate.kind,
       });
-      return null;
-    }
 
-    const worktreePath = switchWorktreeResult.worktreePath;
+      const switchWorktreeResult = await ensureFeatureWorktree(runWt, {
+        branch,
+        fallbackWorktreePath: selectedCandidate.fallbackWorktreePath,
+      });
+      if (switchWorktreeResult.ok === false) {
+        notifyAndLogWtError({
+          ctx,
+          message: switchWorktreeResult.message,
+          scope: "wt switch failed",
+          meta: {
+            branch,
+            repoRoot,
+          },
+        });
+        return null;
+      }
 
-    commandLog.debug("feature-switch worktree ready", {
-      branch,
-      worktreePath,
-      setupDrivenLifecycle: true,
-      source: selectedCandidate.kind,
-    });
+      const worktreePath = switchWorktreeResult.worktreePath;
 
-    const now = new Date().toISOString();
-    const updatedRecord: FeatureRecord = selectedCandidate.record
-      ? {
-          ...selectedCandidate.record,
-          worktreePath: worktreePath || selectedCandidate.record.worktreePath,
-          updatedAt: now,
-        }
-      : {
-          slug: branch,
-          branch,
-          worktreePath,
-          status: "active",
-          createdAt: now,
-          updatedAt: now,
-        };
+      commandLog.debug("feature-switch worktree ready", {
+        branch,
+        worktreePath,
+        setupDrivenLifecycle: true,
+        source: selectedCandidate.kind,
+      });
 
-    const beforeSyncResult = await runIgnoredSyncForCommand({
-      command: "feature-switch",
-      phase: "before-session-switch",
-      config: config.ignoredSync,
-      repoRoot,
-      worktreePath: updatedRecord.worktreePath,
-      branch: updatedRecord.branch,
-      runWt,
-      notify: ctx.ui.notify.bind(ctx.ui),
-    });
-    if (beforeSyncResult.blocked) {
-      return null;
-    }
+      const now = new Date().toISOString();
+      const updatedRecord: FeatureRecord = selectedCandidate.record
+        ? {
+            ...selectedCandidate.record,
+            worktreePath: worktreePath || selectedCandidate.record.worktreePath,
+            updatedAt: now,
+          }
+        : {
+            slug: branch,
+            branch,
+            worktreePath,
+            status: "active",
+            createdAt: now,
+            updatedAt: now,
+          };
 
-    const switchResult = await maybeSwitchToWorktreeSession({
-      ctx,
-      record: updatedRecord,
-      worktreePath: updatedRecord.worktreePath,
-      enabled: config.defaults.autoSwitchToWorktreeSession,
-    });
+      const beforeSyncResult = await runIgnoredSyncForCommand({
+        command: "feature-switch",
+        phase: "before-session-switch",
+        config: config.ignoredSync,
+        repoRoot,
+        worktreePath: updatedRecord.worktreePath,
+        branch: updatedRecord.branch,
+        runWt,
+        notify: ctx.ui.notify.bind(ctx.ui),
+      });
+      if (beforeSyncResult.blocked) {
+        return null;
+      }
 
-    commandLog.debug("feature-switch session result", {
-      branch: switchResult.record.branch,
-      switched: switchResult.switched,
-      skipReason: switchResult.skipReason,
-      worktreePath: switchResult.record.worktreePath,
-    });
+      const switchResult = await maybeSwitchToWorktreeSession({
+        ctx,
+        record: updatedRecord,
+        worktreePath: updatedRecord.worktreePath,
+        enabled: config.defaults.autoSwitchToWorktreeSession,
+        beforeSwitch: dismiss,
+      });
 
-    const inferredBase = resolveInferredBaseBranch({
-      runGit,
-      branch: switchResult.record.branch,
-    }).inference;
+      commandLog.debug("feature-switch session result", {
+        branch: switchResult.record.branch,
+        switched: switchResult.switched,
+        skipReason: switchResult.skipReason,
+        worktreePath: switchResult.record.worktreePath,
+      });
 
-    await runIgnoredSyncForCommand({
-      command: "feature-switch",
-      phase: "after-session-switch",
-      config: config.ignoredSync,
-      repoRoot,
-      worktreePath: switchResult.record.worktreePath,
-      branch: switchResult.record.branch,
-      runWt,
-      notify: switchResult.notify,
-    });
+      const inferredBase = resolveInferredBaseBranch({
+        runGit,
+        branch: switchResult.record.branch,
+      }).inference;
 
-    return {
-      switchResult,
-      inferredBase,
-    };
-  });
+      await runIgnoredSyncForCommand({
+        command: "feature-switch",
+        phase: "after-session-switch",
+        config: config.ignoredSync,
+        repoRoot,
+        worktreePath: switchResult.record.worktreePath,
+        branch: switchResult.record.branch,
+        runWt,
+        notify: switchResult.notify,
+      });
+
+      return {
+        switchResult,
+        inferredBase,
+      };
+    },
+  );
   if (!completedSwitch) {
     return;
   }

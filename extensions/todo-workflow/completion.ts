@@ -10,6 +10,11 @@ import type { AutocompleteItem } from "@mariozechner/pi-tui";
 import { ensureFeatureWorktree } from "../feature-workflow/worktree-gateway.js";
 import { runWithWorkingLoader } from "../shared/ui-working.js";
 import {
+  formatTodoLabel,
+  formatTodoSelectionLabel,
+  formatTodoStatus,
+} from "./display.js";
+import {
   findTodoById,
   getDoingTodos,
   loadTodoStore,
@@ -18,7 +23,7 @@ import {
   type TodoItem,
 } from "./todo-store.js";
 
-type ParsedEndTodoAction =
+type ParsedTodoCompletionAction =
   | { kind: "menu" }
   | { kind: "finish"; id?: string }
   | { kind: "cleanup-one"; id?: string }
@@ -38,10 +43,10 @@ type CommandResult = {
   stderr: string;
 };
 
-const END_TODO_USAGE =
-  "Usage: /end_todo [finish [<todo-id>] | cleanup [<todo-id>|--all]]";
+const TODO_COMPLETION_USAGE =
+  "Usage: /todo [finish [<todo-id>] | cleanup [<todo-id>|--all]]";
 
-const END_TODO_MENU_OPTIONS = [
+const TODO_COMPLETION_MENU_OPTIONS = [
   "Finish a todo",
   "Cleanup one merged todo",
   "Cleanup all merged todos",
@@ -53,7 +58,7 @@ const CLEANUP_SCOPE_OPTIONS = [
   "Local worktree + local branch + remote branch",
 ] as const;
 
-type EndTodoMenuOption = (typeof END_TODO_MENU_OPTIONS)[number];
+type TodoCompletionMenuOption = (typeof TODO_COMPLETION_MENU_OPTIONS)[number];
 type CleanupScopeOption = (typeof CLEANUP_SCOPE_OPTIONS)[number];
 
 type CompletionParseResult = {
@@ -104,14 +109,14 @@ function matchesMissingResource(message: string): boolean {
   );
 }
 
-function invalidEndTodoUsage(): ParsedEndTodoAction {
+function invalidTodoCompletionUsage(): ParsedTodoCompletionAction {
   return {
     kind: "error",
-    message: END_TODO_USAGE,
+    message: TODO_COMPLETION_USAGE,
   };
 }
 
-function parseEndTodoArgs(rawArgs: string): ParsedEndTodoAction {
+function parseTodoCompletionArgs(rawArgs: string): ParsedTodoCompletionAction {
   const tokens = rawArgs.trim().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) {
     return { kind: "menu" };
@@ -119,7 +124,7 @@ function parseEndTodoArgs(rawArgs: string): ParsedEndTodoAction {
 
   const [command, value, extra] = tokens;
   if (extra) {
-    return invalidEndTodoUsage();
+    return invalidTodoCompletionUsage();
   }
 
   if (command === "finish") {
@@ -133,7 +138,7 @@ function parseEndTodoArgs(rawArgs: string): ParsedEndTodoAction {
     return { kind: "cleanup-one", id: value };
   }
 
-  return invalidEndTodoUsage();
+  return invalidTodoCompletionUsage();
 }
 
 function parseCompletionPrefix(argumentPrefix: string): CompletionParseResult {
@@ -171,8 +176,8 @@ function filterCompletionItems(
 function toTodoCompletionItem(todo: TodoItem): AutocompleteItem {
   return {
     value: todo.id,
-    label: `${todo.id}    ${todo.description}`,
-    description: todo.status,
+    label: formatTodoLabel(todo),
+    description: formatTodoStatus(todo),
   };
 }
 
@@ -288,20 +293,23 @@ async function selectTodoFromList(
     return todos[0] ?? null;
   }
   if (!ctx.hasUI) {
-    ctx.ui.notify("This /end_todo flow requires interactive mode", "warning");
+    ctx.ui.notify(
+      "This /todo finish/cleanup flow requires interactive mode",
+      "warning",
+    );
     return null;
   }
 
-  const choice = await ctx.ui.select(
-    prompt,
-    todos.map((todo) => todo.description),
-  );
+  const options = todos.map((todo) => formatTodoSelectionLabel(todo));
+  const choice = await ctx.ui.select(prompt, options);
   if (!choice) {
     ctx.ui.notify("Cancelled", "info");
     return null;
   }
 
-  return todos.find((todo) => todo.description === choice) ?? null;
+  return (
+    todos.find((todo) => formatTodoSelectionLabel(todo) === choice) ?? null
+  );
 }
 
 async function selectFinishTarget(
@@ -404,9 +412,9 @@ export async function ensureTodoWorktreeReady(
   };
 }
 
-function parseEndTodoMenuChoice(
-  choice: EndTodoMenuOption,
-): ParsedEndTodoAction {
+function parseTodoCompletionMenuChoice(
+  choice: TodoCompletionMenuOption,
+): ParsedTodoCompletionAction {
   switch (choice) {
     case "Finish a todo":
       return { kind: "finish" };
@@ -417,21 +425,23 @@ function parseEndTodoMenuChoice(
   }
 }
 
-async function chooseEndTodoMenuAction(
+async function chooseTodoCompletionMenuAction(
   ctx: ExtensionCommandContext,
-): Promise<ParsedEndTodoAction | null> {
+): Promise<ParsedTodoCompletionAction | null> {
   if (!ctx.hasUI) {
-    ctx.ui.notify("/end_todo requires interactive mode", "warning");
+    ctx.ui.notify("/todo finish/cleanup requires interactive mode", "warning");
     return null;
   }
 
-  const choice = await ctx.ui.select("/end_todo", [...END_TODO_MENU_OPTIONS]);
+  const choice = await ctx.ui.select("/todo finish / cleanup", [
+    ...TODO_COMPLETION_MENU_OPTIONS,
+  ]);
   if (!choice) {
     ctx.ui.notify("Cancelled", "info");
     return null;
   }
 
-  return parseEndTodoMenuChoice(choice as EndTodoMenuOption);
+  return parseTodoCompletionMenuChoice(choice as TodoCompletionMenuOption);
 }
 
 function parseCleanupScopeChoice(choice: CleanupScopeOption): CleanupScope {
@@ -795,7 +805,7 @@ async function buildCleanupCompletionItems(
   ];
 }
 
-export async function getEndTodoArgumentCompletions(
+export async function getTodoCompletionArgumentCompletions(
   pi: ExtensionAPI,
   argumentPrefix: string,
 ): Promise<AutocompleteItem[] | null> {
@@ -819,19 +829,19 @@ export async function getEndTodoArgumentCompletions(
   return null;
 }
 
-export async function handleEndTodoCommand(
+export async function handleTodoCompletionCommand(
   pi: ExtensionAPI,
   rawArgs: string,
   ctx: ExtensionCommandContext,
 ): Promise<void> {
-  let action = parseEndTodoArgs(rawArgs);
+  let action = parseTodoCompletionArgs(rawArgs);
   if (action.kind === "error") {
     ctx.ui.notify(action.message, "error");
     return;
   }
 
   if (action.kind === "menu") {
-    const selected = await chooseEndTodoMenuAction(ctx);
+    const selected = await chooseTodoCompletionMenuAction(ctx);
     if (!selected) {
       return;
     }

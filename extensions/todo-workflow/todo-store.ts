@@ -344,6 +344,22 @@ export function markTodoDone(
   return syncTodoDone(repoRoot, input);
 }
 
+export function removeTodo(repoRoot: string, input: { id: string }): TodoItem {
+  const store = readStore(repoRoot);
+  const index = store.todos.findIndex((todo) => todo.id === input.id);
+  if (index === -1) {
+    throw new Error(`Unknown TODO: ${input.id}`);
+  }
+
+  const [removed] = store.todos.splice(index, 1);
+  if (!removed) {
+    throw new Error(`Unknown TODO: ${input.id}`);
+  }
+
+  writeStore(repoRoot, store);
+  return removed;
+}
+
 export function listTodos(
   repoRoot: string,
   input: { includeDone: boolean; sessionKey?: string },

@@ -1702,15 +1702,249 @@ describe("feature-workflow extension", () => {
     ]);
   });
 
+  it("does not use stale extension exec for quick ignored-sync after /feature-switch", async () => {
+    const repoRoot = createTempRepoWithMainBranch();
+    const featureBranch = "fix-switch-stale-exec";
+    const worktreePath = path.join(repoRoot, ".wt", featureBranch);
+    const sessionFile = path.join(repoRoot, ".pi", "source-session.jsonl");
+    const forkedSessionFile = path.join(
+      repoRoot,
+      ".pi",
+      "forked-session.jsonl",
+    );
+    const fakeBinDir = path.join(repoRoot, ".test-bin");
+    const fakeWtPath = path.join(fakeBinDir, "wt");
+
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.mkdirSync(fakeBinDir, { recursive: true });
+    fs.writeFileSync(sessionFile, '{"type":"session"}\n', "utf-8");
+    fs.writeFileSync(
+      fakeWtPath,
+      [
+        "#!/bin/sh",
+        'if [ "$3" = "step" ] && [ "$4" = "copy-ignored" ]; then',
+        "  exit 0",
+        "fi",
+        'echo "Unexpected wt args: $@" >&2',
+        "exit 1",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.chmodSync(fakeWtPath, 0o755);
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            defaults: {
+              autoSwitchToWorktreeSession: true,
+            },
+            ignoredSync: {
+              enabled: true,
+              mode: "quick",
+              ensureOn: ["feature-start", "feature-switch"],
+              rules: [
+                {
+                  path: "node_modules",
+                  strategy: "copy",
+                  required: false,
+                  onMissing: {
+                    action: "copy-ignored",
+                    hook: null,
+                  },
+                },
+              ],
+              lockfile: {
+                enabled: false,
+                path: "package-lock.json",
+                compareWithPrimary: true,
+                onDrift: "warn",
+              },
+              fallback: {
+                copyIgnoredTimeoutMs: 15000,
+                onFailure: "warn",
+              },
+              notifications: {
+                enabled: true,
+                verbose: false,
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    vi.spyOn(SessionManager, "forkFrom").mockReturnValue({
+      getSessionFile() {
+        return forkedSessionFile;
+      },
+    } as unknown as SessionManager);
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const replacementNotifications: Array<{
+      message: string;
+      level: string;
+    }> = [];
+    let stale = false;
+
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (stale) {
+        throw new Error(
+          "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+        );
+      }
+
+      if (args[2] === "list") {
+        return {
+          code: 0,
+          stdout: JSON.stringify([
+            {
+              branch: featureBranch,
+              path: worktreePath,
+              commit: { timestamp: 1 },
+            },
+          ]),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "switch") {
+        fs.mkdirSync(worktreePath, { recursive: true });
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            action: "switched",
+            path: worktreePath,
+          }),
+          stderr: "",
+        };
+      }
+
+      if (args[2] === "step" && args[3] === "copy-ignored") {
+        return {
+          code: 0,
+          stdout: "",
+          stderr: "",
+        };
+      }
+
+      throw new Error(`Unexpected wt args: ${args.join(" ")}`);
+    });
+    const switchSession = vi.fn(
+      async (
+        _sessionPath: string,
+        options?: { withSession?: (ctx: unknown) => Promise<void> },
+      ) => {
+        stale = true;
+        await options?.withSession?.({
+          hasUI: false,
+          ui: {
+            notify(message: string, level: string) {
+              replacementNotifications.push({ message, level });
+            },
+          },
+        });
+        return { cancelled: false };
+      },
+    );
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      exec,
+      on() {
+        // no-op
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("feature-switch");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${fakeBinDir}${path.delimiter}${previousPath ?? ""}`;
+
+    try {
+      await expect(
+        handler(featureBranch, {
+          cwd: repoRoot,
+          hasUI: false,
+          ui: {
+            notify() {
+              if (stale) {
+                throw new Error(
+                  "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+                );
+              }
+            },
+          },
+          sessionManager: {
+            getSessionFile() {
+              return sessionFile;
+            },
+          },
+          switchSession,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(switchSession).toHaveBeenCalledTimes(1);
+      expect(replacementNotifications).toEqual([
+        {
+          message:
+            "Ignored sync: triggered 1 fallback action(s): wt step copy-ignored.",
+          level: "info",
+        },
+        {
+          message: "Ignored sync unresolved path(s): node_modules (missing)",
+          level: "info",
+        },
+        {
+          message: expect.stringContaining(
+            `Switched to feature worktree session: ${featureBranch}`,
+          ),
+          level: "info",
+        },
+      ]);
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  });
+
   it("uses the replacement session context for post-switch /feature-start work", async () => {
     const repoRoot = createTempRepoWithMainBranch();
     const featureBranch = "fix-start-replacement-notify";
     const worktreePath = path.join(repoRoot, ".wt", featureBranch);
     const sessionManager = SessionManager.create(repoRoot);
+    const fakeBinDir = path.join(repoRoot, ".test-bin");
+    const fakeWtPath = path.join(fakeBinDir, "wt");
 
     fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
     fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
     fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.mkdirSync(fakeBinDir, { recursive: true });
+    fs.writeFileSync(
+      fakeWtPath,
+      [
+        "#!/bin/sh",
+        'if [ "$3" = "step" ] && [ "$4" = "copy-ignored" ]; then',
+        "  exit 0",
+        "fi",
+        'echo "Unexpected wt args: $@" >&2',
+        "exit 1",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+    fs.chmodSync(fakeWtPath, 0o755);
     fs.writeFileSync(
       path.join(repoRoot, ".pi", "third_extension_settings.json"),
       JSON.stringify(
@@ -1825,53 +2059,59 @@ describe("feature-workflow extension", () => {
     const handler = commands.get("feature-start");
     expect(handler).toBeTypeOf("function");
     if (!handler) return;
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${fakeBinDir}${path.delimiter}${previousPath ?? ""}`;
 
-    await expect(
-      handler("", {
-        cwd: repoRoot,
-        hasUI: true,
-        ui: {
-          async input(prompt: string) {
-            if (prompt === "Branch slug:") {
-              return featureBranch;
-            }
-            throw new Error(`Unexpected input prompt: ${prompt}`);
+    try {
+      await expect(
+        handler("", {
+          cwd: repoRoot,
+          hasUI: true,
+          ui: {
+            async input(prompt: string) {
+              if (prompt === "Branch slug:") {
+                return featureBranch;
+              }
+              throw new Error(`Unexpected input prompt: ${prompt}`);
+            },
+            async select(prompt: string) {
+              if (prompt === "Base branch:") {
+                return "main";
+              }
+              throw new Error(`Unexpected select prompt: ${prompt}`);
+            },
+            notify() {
+              if (stale) {
+                throw new Error(
+                  "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+                );
+              }
+            },
           },
-          async select(prompt: string) {
-            if (prompt === "Base branch:") {
-              return "main";
-            }
-            throw new Error(`Unexpected select prompt: ${prompt}`);
-          },
-          notify() {
-            if (stale) {
-              throw new Error(
-                "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
-              );
-            }
-          },
+          sessionManager,
+          switchSession,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(switchSession).toHaveBeenCalledTimes(1);
+      expect(replacementNotifications).toEqual([
+        {
+          message:
+            "Ignored sync: triggered 1 fallback action(s): wt step copy-ignored.",
+          level: "info",
         },
-        sessionManager,
-        switchSession,
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(switchSession).toHaveBeenCalledTimes(1);
-    expect(replacementNotifications).toEqual([
-      {
-        message:
-          "Ignored sync: triggered 1 fallback action(s): wt step copy-ignored.",
-        level: "info",
-      },
-      {
-        message: "Ignored sync unresolved path(s): node_modules (missing)",
-        level: "info",
-      },
-      {
-        message: `Switched to feature worktree session: ${featureBranch}`,
-        level: "info",
-      },
-    ]);
+        {
+          message: "Ignored sync unresolved path(s): node_modules (missing)",
+          level: "info",
+        },
+        {
+          message: `Switched to feature worktree session: ${featureBranch}`,
+          level: "info",
+        },
+      ]);
+    } finally {
+      process.env.PATH = previousPath;
+    }
   });
 
   it("blocks /feature-start session switch in strict ignored-sync mode", async () => {

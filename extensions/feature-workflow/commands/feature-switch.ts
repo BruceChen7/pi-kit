@@ -13,6 +13,7 @@ import {
 import { resolveFeatureCommandRuntime } from "../runtime.js";
 import type { FeatureRecord } from "../storage.js";
 import {
+  createProcessWtRunner,
   ensureFeatureWorktree,
   listSwitchableFeatureRecordsFromWorktree,
 } from "../worktree-gateway.js";
@@ -193,6 +194,10 @@ export async function runFeatureSwitchCommand(
         branch: switchResult.record.branch,
       }).inference;
 
+      const postSwitchRunWt = switchResult.switched
+        ? createProcessWtRunner(repoRoot)
+        : runWt;
+
       await runIgnoredSyncForCommand({
         command: "feature-switch",
         phase: "after-session-switch",
@@ -200,7 +205,7 @@ export async function runFeatureSwitchCommand(
         repoRoot,
         worktreePath: switchResult.record.worktreePath,
         branch: switchResult.record.branch,
-        runWt,
+        runWt: postSwitchRunWt,
         notify: switchResult.notify,
       });
 

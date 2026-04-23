@@ -619,7 +619,14 @@ describe("todo-workflow extension", () => {
     try {
       await expect(
         handler("", {
-          cwd: repoRoot,
+          get cwd() {
+            if (stale) {
+              throw new Error(
+                "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+              );
+            }
+            return repoRoot;
+          },
           hasUI: true,
           ui: {
             custom,

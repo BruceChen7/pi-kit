@@ -22,7 +22,8 @@
       "./extensions/feature-workflow",
       "./extensions/todo-workflow",
       "./extensions/diffx-review",
-      "./extensions/session-path-copy"
+      "./extensions/session-path-copy",
+      "./extensions/remote-approval"
     ]
   },
   "scripts": {

@@ -1345,7 +1345,22 @@ describe("feature-workflow extension", () => {
 
       throw new Error(`Unexpected wt args: ${args.join(" ")}`);
     });
-    const switchSession = vi.fn(async () => ({ cancelled: false }));
+    const switchSession = vi.fn(
+      async (
+        _sessionPath: string,
+        options?: { withSession?: (ctx: unknown) => Promise<void> },
+      ) => {
+        await options?.withSession?.({
+          hasUI: false,
+          ui: {
+            notify() {
+              // no-op
+            },
+          },
+        });
+        return { cancelled: false };
+      },
+    );
 
     extension({
       registerCommand(

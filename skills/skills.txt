@@ -21,6 +21,7 @@ plan-eng-review|local|skills/planning-suite/plan-eng-review
 office-hours|local|skills/planning-suite/office-hours
 branch-commit-push|local|skills/branch-commit-push
 receiving-code-review|https://github.com/obra/superpowers.git|skills/receiving-code-review
+slidev|https://github.com/slidevjs/slidev.git|skills/slidev
 brainstorming|local|skills/brainstorming
 writing-skills|https://github.com/obra/superpowers.git|skills/writing-skills
 x-tweet-fetcher|https://github.com/ythx-101/x-tweet-fetcher.git|

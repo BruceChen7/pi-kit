@@ -9,6 +9,7 @@ import {
   listTodos,
   loadTodoStore,
   markTodoDone,
+  removeTodo,
   syncTodoDone,
   updateTodoActivation,
   updateTodoStart,
@@ -177,6 +178,22 @@ describe("todo-store", () => {
         status: "todo",
       },
     ]);
+  });
+
+  it("removes a todo by id", () => {
+    const repoRoot = createTempRepo();
+    const first = createTodo(repoRoot, "First todo");
+    createTodo(repoRoot, "Second todo");
+
+    const removed = removeTodo(repoRoot, { id: first.id });
+    const loaded = loadTodoStore(repoRoot);
+
+    expect(removed).toMatchObject({
+      id: first.id,
+      description: "First todo",
+    });
+    expect(loaded.todos).toHaveLength(1);
+    expect(loaded.todos[0]?.description).toBe("Second todo");
   });
 
   it("fails fast when a persisted todo record is invalid", () => {

@@ -32,7 +32,11 @@ const WORKTREE_INCLUDE_HEADER = [
   "# Files to copy between worktrees (must also be gitignored)",
   "# Used by: wt step copy-ignored",
 ];
-const GITIGNORE_REQUIRED_ENTRIES = [".pi/", ".config/wt.toml"] as const;
+const GITIGNORE_REQUIRED_ENTRIES = [
+  ".pi/",
+  ".config/wt.toml",
+  ".worktreeinclude",
+] as const;
 const WT_TOML_MANAGED_BLOCK_START =
   "# >>> pi-kit feature-workflow setup (managed) >>>";
 const WT_TOML_MANAGED_BLOCK_END =
@@ -339,7 +343,7 @@ export function applyFeatureWorkflowSetupProfile(
       message:
         merged.addedEntries.length > 0
           ? `Added entries: ${merged.addedEntries.join(", ")}`
-          : "Required entries already present (.pi/, .config/wt.toml)",
+          : "Required entries already present (.pi/, .config/wt.toml, .worktreeinclude)",
     });
   }
 

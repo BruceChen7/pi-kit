@@ -9,6 +9,7 @@ build/
 package-lock.json
 /.pi
 .config/wt.toml
+.worktreeinclude
 .worktrees/
 docs/
 .alma-snapshots

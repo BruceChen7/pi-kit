@@ -172,6 +172,7 @@ describe("applyFeatureWorkflowSetupProfile", () => {
     const gitignore = fs.readFileSync(gitignorePath, "utf-8");
     expect(gitignore).toContain(".pi/");
     expect(gitignore).toContain(".config/wt.toml");
+    expect(gitignore).toContain(".worktreeinclude");
 
     const worktreeIncludePath = path.join(repoRoot, ".worktreeinclude");
     const worktreeInclude = fs.readFileSync(worktreeIncludePath, "utf-8");
@@ -197,7 +198,10 @@ describe("applyFeatureWorkflowSetupProfile", () => {
     if (!profile) return;
 
     const gitignorePath = path.join(repoRoot, ".gitignore");
-    fs.writeFileSync(gitignorePath, [".pi", "/.config/wt.toml", ""].join("\n"));
+    fs.writeFileSync(
+      gitignorePath,
+      [".pi", "/.config/wt.toml", ".worktreeinclude", ""].join("\n"),
+    );
 
     const result = applyFeatureWorkflowSetupProfile({
       cwd: repoRoot,
@@ -208,7 +212,7 @@ describe("applyFeatureWorkflowSetupProfile", () => {
 
     expect(result.changedCount).toBe(0);
     expect(fs.readFileSync(gitignorePath, "utf-8")).toBe(
-      [".pi", "/.config/wt.toml", ""].join("\n"),
+      [".pi", "/.config/wt.toml", ".worktreeinclude", ""].join("\n"),
     );
   });
 
@@ -221,7 +225,7 @@ describe("applyFeatureWorkflowSetupProfile", () => {
 
     fs.writeFileSync(
       path.join(repoRoot, ".gitignore"),
-      [".pi/", ".config/wt.toml", ""].join("\n"),
+      [".pi/", ".config/wt.toml", ".worktreeinclude", ""].join("\n"),
     );
 
     const result = applyFeatureWorkflowSetupProfile({
@@ -240,7 +244,7 @@ describe("applyFeatureWorkflowSetupProfile", () => {
       result.changes.find((change) => change.target === "wt-toml")?.changed,
     ).toBe(true);
     expect(fs.readFileSync(path.join(repoRoot, ".gitignore"), "utf-8")).toBe(
-      [".pi/", ".config/wt.toml", ""].join("\n"),
+      [".pi/", ".config/wt.toml", ".worktreeinclude", ""].join("\n"),
     );
 
     const wtToml = fs.readFileSync(

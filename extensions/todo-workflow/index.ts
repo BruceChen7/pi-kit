@@ -163,6 +163,9 @@ async function switchToTodoWorktreeSession(
     record: buildTodoFeatureRecord(todo, worktreePath),
     worktreePath,
     enabled: true,
+    onSwitched: async (replacementCtx) => {
+      activateTodoForSession(replacementCtx, todo);
+    },
   });
 
   if (
@@ -237,8 +240,6 @@ async function resumeTodo(
   if (!switched) {
     return;
   }
-
-  activateTodoForSession(ctx, todo);
 }
 
 async function createTodoFromDescription(

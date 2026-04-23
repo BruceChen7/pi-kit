@@ -800,17 +800,18 @@ describe("todo-workflow extension", () => {
     const { custom, renders } = createUiCustomMock();
     const select = vi.fn(async () => "should-not-run");
     const confirm = vi.fn(async () => false);
-    const exec = vi.fn(async (_command: string, args: string[]) => {
-      if (args[2] === "branch" && args[3] === "--show-current") {
+    const exec = vi.fn(async (command: string, args: string[]) => {
+      if (
+        command === "git" &&
+        args[2] === "branch" &&
+        args[3] === "--show-current"
+      ) {
         return { code: 0, stdout: "finish-explicit-todo\n", stderr: "" };
       }
-      if (args[2] === "checkout") {
+      if (command === "wt" && args[2] === "merge") {
         return { code: 0, stdout: "", stderr: "" };
       }
-      if (args[2] === "merge") {
-        return { code: 0, stdout: "", stderr: "" };
-      }
-      throw new Error(`Unexpected git args: ${args.join(" ")}`);
+      throw new Error(`Unexpected ${command} args: ${args.join(" ")}`);
     });
 
     extension({
@@ -858,6 +859,13 @@ describe("todo-workflow extension", () => {
     expect(renders[0]).toContain("Merging...");
     expect(select).not.toHaveBeenCalled();
     expect(confirm).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledWith("wt", [
+      "-C",
+      "/tmp/finish-explicit-todo",
+      "merge",
+      "--no-remove",
+      "main",
+    ]);
     expect(store.todos[0]?.status).toBe("done");
     expect(store.todos[0]?.completedAt).toBeTruthy();
     expect(notifications).toContainEqual({
@@ -1158,11 +1166,15 @@ describe("todo-workflow extension", () => {
       (args: string, ctx: unknown) => Promise<void>
     >();
     const notifications: Array<{ message: string; level: string }> = [];
-    const exec = vi.fn(async (_command: string, args: string[]) => {
-      if (args[2] === "branch" && args[3] === "--show-current") {
+    const exec = vi.fn(async (command: string, args: string[]) => {
+      if (
+        command === "git" &&
+        args[2] === "branch" &&
+        args[3] === "--show-current"
+      ) {
         return { code: 0, stdout: "other-branch\n", stderr: "" };
       }
-      if (args[2] === "list") {
+      if (command === "wt" && args[2] === "list") {
         return {
           code: 0,
           stdout: JSON.stringify([
@@ -1175,20 +1187,17 @@ describe("todo-workflow extension", () => {
           stderr: "",
         };
       }
-      if (args[2] === "switch") {
+      if (command === "wt" && args[2] === "switch") {
         return {
           code: 0,
           stdout: JSON.stringify({ path: "/tmp/finish-merge-flow" }),
           stderr: "",
         };
       }
-      if (args[2] === "checkout") {
-        return { code: 0, stdout: "", stderr: "" };
-      }
-      if (args[2] === "merge") {
+      if (command === "wt" && args[2] === "merge") {
         return { code: 1, stdout: "", stderr: "conflict" };
       }
-      throw new Error(`Unexpected git args: ${args.join(" ")}`);
+      throw new Error(`Unexpected ${command} args: ${args.join(" ")}`);
     });
 
     extension({
@@ -1236,6 +1245,13 @@ describe("todo-workflow extension", () => {
       fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
     ) as { todos: Array<{ status: string; completedAt?: string }> };
 
+    expect(exec).toHaveBeenCalledWith("wt", [
+      "-C",
+      "/tmp/finish-merge-flow",
+      "merge",
+      "--no-remove",
+      "main",
+    ]);
     expect(store.todos[0]?.status).toBe("doing");
     expect(store.todos[0]?.completedAt).toBeUndefined();
     expect(notifications.some((item) => item.level === "error")).toBe(true);

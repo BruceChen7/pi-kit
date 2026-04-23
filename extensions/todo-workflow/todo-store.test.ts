@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createTodo,
@@ -131,6 +131,52 @@ describe("todo-store", () => {
       description: "Legacy title field",
     });
     expect(persisted.todos[0]?.title).toBeUndefined();
+  });
+
+  it("recovers from an empty todos file by rewriting an empty store", () => {
+    const repoRoot = createTempRepo();
+    const storePath = path.join(repoRoot, ".pi", "todos.json");
+
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(storePath, "", "utf-8");
+
+    expect(loadTodoStore(repoRoot)).toEqual({ todos: [] });
+    expect(fs.readFileSync(storePath, "utf-8")).toBe('{\n  "todos": []\n}\n');
+  });
+
+  it("preserves the last valid store when a write fails", () => {
+    const repoRoot = createTempRepo();
+    const storePath = path.join(repoRoot, ".pi", "todos.json");
+    const first = createTodo(repoRoot, "Keep existing todo");
+    const originalWriteFileSync = fs.writeFileSync.bind(fs);
+
+    const writeSpy = vi
+      .spyOn(fs, "writeFileSync")
+      .mockImplementation((filePath, data, options) => {
+        const targetPath = String(filePath);
+        if (targetPath === storePath) {
+          originalWriteFileSync(filePath, "", options);
+          throw new Error("simulated write failure");
+        }
+        if (targetPath.includes("todos.json.tmp")) {
+          throw new Error("simulated write failure");
+        }
+        return originalWriteFileSync(filePath, data, options);
+      });
+
+    expect(() => createTodo(repoRoot, "This write should fail")).toThrow(
+      /simulated write failure/,
+    );
+
+    writeSpy.mockRestore();
+
+    expect(loadTodoStore(repoRoot).todos).toMatchObject([
+      {
+        id: first.id,
+        description: "Keep existing todo",
+        status: "todo",
+      },
+    ]);
   });
 
   it("fails fast when a persisted todo record is invalid", () => {

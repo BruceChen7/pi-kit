@@ -122,9 +122,16 @@ function readStore(repoRoot: string): TodoStore {
     return { todos: [] };
   }
 
+  const raw = fs.readFileSync(storePath, "utf-8");
+  if (!raw.trim()) {
+    const emptyStore = { todos: [] };
+    writeStore(repoRoot, emptyStore);
+    return emptyStore;
+  }
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(fs.readFileSync(storePath, "utf-8")) as unknown;
+    parsed = JSON.parse(raw) as unknown;
   } catch (error) {
     throw new Error(
       `Failed to read ${STORE_RELATIVE_PATH}: ${error instanceof Error ? error.message : String(error)}`,
@@ -158,11 +165,18 @@ function readStore(repoRoot: string): TodoStore {
 
 function writeStore(repoRoot: string, store: TodoStore): void {
   ensureStoreDir(repoRoot);
-  fs.writeFileSync(
-    getStorePath(repoRoot),
-    `${JSON.stringify(store, null, 2)}\n`,
-    "utf-8",
-  );
+
+  const storePath = getStorePath(repoRoot);
+  const tempPath = `${storePath}.tmp-${process.pid}-${Date.now()}`;
+  const content = `${JSON.stringify(store, null, 2)}\n`;
+
+  try {
+    fs.writeFileSync(tempPath, content, "utf-8");
+    fs.renameSync(tempPath, storePath);
+  } catch (error) {
+    fs.rmSync(tempPath, { force: true });
+    throw error;
+  }
 }
 
 function updateTodo(

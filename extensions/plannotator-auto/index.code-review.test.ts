@@ -13,15 +13,18 @@ function mockCodeReviewApi(
   options: {
     formatCodeReviewMessage?: ReturnType<typeof vi.fn>;
     requestCodeReview?: ReturnType<typeof vi.fn>;
+    requestReviewStatus?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
   const reviewResultListeners: Array<(result: unknown) => void> = [];
-  const requestReviewStatus = vi.fn(async () => ({
-    status: "handled" as const,
-    result: {
-      status: "missing" as const,
-    },
-  }));
+  const requestReviewStatus =
+    options.requestReviewStatus ??
+    vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "missing" as const,
+      },
+    }));
   const requestCodeReview =
     options.requestCodeReview ??
     vi.fn(async () => ({
@@ -234,6 +237,67 @@ describe("code review trigger timing", () => {
       );
     } finally {
       await emit("session_shutdown", {}, ctx);
+    }
+  });
+
+  it("uses the replacement session context for delayed code-review retries", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+
+    const requestReviewStatus = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: "handled" as const,
+        result: {
+          status: "missing" as const,
+        },
+      })
+      .mockResolvedValueOnce({
+        status: "error" as const,
+        error: "review-status failed",
+      });
+
+    mockCodeReviewApi({ requestReviewStatus });
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit } = createFakePi();
+    plannotatorAuto(api as never);
+    const ctx = createTestContext("/repo", {
+      sessionFile: "/repo/.pi/session.json",
+    });
+    const replacementCtx = createTestContext("/repo", {
+      sessionFile: "/repo/.pi/session.json",
+    });
+    let stale = false;
+
+    ctx.ui.notify.mockImplementation(() => {
+      if (stale) {
+        throw new Error(
+          "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+        );
+      }
+    });
+
+    try {
+      await emit("session_start", {}, ctx);
+      await triggerCodeReview(emit, ctx);
+      await emit("agent_end", {}, ctx);
+
+      expect(requestReviewStatus).toHaveBeenCalledTimes(1);
+
+      await emit("session_start", {}, replacementCtx);
+      stale = true;
+
+      await vi.advanceTimersByTimeAsync(1_200);
+      await flushMicrotasks();
+
+      expect(requestReviewStatus).toHaveBeenCalledTimes(2);
+      expect(replacementCtx.ui.notify).toHaveBeenCalledWith(
+        "review-status failed",
+        "warning",
+      );
+    } finally {
+      await emit("session_shutdown", {}, replacementCtx);
     }
   });
 

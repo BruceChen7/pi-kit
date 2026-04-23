@@ -1,6 +1,7 @@
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
+  ReplacedSessionContext,
 } from "@mariozechner/pi-coding-agent";
 
 import { checkRepoDirty, listDirtyPaths } from "../shared/git.js";
@@ -27,6 +28,7 @@ export type StartFeatureWorkflowResult =
       record: FeatureRecord;
       switched: boolean;
       notify: ExtensionCommandContext["ui"]["notify"];
+      replacementCtx: ReplacedSessionContext | null;
     }
   | {
       ok: false;
@@ -216,6 +218,7 @@ export async function startPreparedFeatureWorkflow(input: {
     record: switchResult.record,
     switched: switchResult.switched,
     notify: switchResult.notify,
+    replacementCtx: switchResult.replacementCtx,
   };
 }
 

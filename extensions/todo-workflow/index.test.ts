@@ -473,6 +473,213 @@ describe("todo-workflow extension", () => {
     });
   });
 
+  it("uses the replacement session context after auto-switching a started todo", async () => {
+    const initialCwd = process.cwd();
+    const repoRoot = createTempRepo();
+    initGitRepo(repoRoot);
+    const worktreePath = path.join(repoRoot, ".wt", "todo-1");
+
+    fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, ".config", "wt.toml"), "", "utf-8");
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Start worktree todo",
+              status: "todo",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "third_extension_settings.json"),
+      JSON.stringify(
+        {
+          featureWorkflow: {
+            guards: {
+              requireCleanWorkspace: false,
+              requireFreshBase: false,
+            },
+            defaults: {
+              autoSwitchToWorktreeSession: true,
+            },
+            ignoredSync: {
+              enabled: false,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const { custom, renders } = createUiCustomMock("todo-1");
+    const setStatus = vi.fn();
+    const replacementNotifications: Array<{ message: string; level: string }> =
+      [];
+    const replacementSetStatus = vi.fn();
+    const sourceSession = SessionManager.create(repoRoot);
+    sourceSession.appendCustomEntry("test", { ready: true });
+
+    let activeSessionFile = sourceSession.getSessionFile() as string;
+    const sessionManager = {
+      getSessionFile() {
+        return activeSessionFile;
+      },
+      getHeader() {
+        return sourceSession.getHeader();
+      },
+      getEntries() {
+        return sourceSession.getEntries();
+      },
+    };
+    let stale = false;
+    const switchSession = vi.fn(
+      async (
+        sessionPath: string,
+        options?: {
+          withSession?: (ctx: {
+            cwd: string;
+            hasUI: true;
+            ui: {
+              notify: (message: string, level: string) => void;
+              setStatus: ReturnType<typeof vi.fn>;
+            };
+            sessionManager: typeof sessionManager;
+          }) => Promise<void>;
+        },
+      ) => {
+        activeSessionFile = sessionPath;
+        stale = true;
+        await options?.withSession?.({
+          cwd: repoRoot,
+          hasUI: true,
+          ui: {
+            notify(message: string, level: string) {
+              replacementNotifications.push({ message, level });
+            },
+            setStatus: replacementSetStatus,
+          },
+          sessionManager,
+        });
+        return { cancelled: false };
+      },
+    );
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (
+        args[0] === "-C" &&
+        args[2] === "branch" &&
+        args[3] === "--show-current"
+      ) {
+        return { code: 0, stdout: "main\n", stderr: "" };
+      }
+      if (args.includes("switch") && args.includes("--create")) {
+        fs.mkdirSync(worktreePath, { recursive: true });
+        return {
+          code: 0,
+          stdout: JSON.stringify({ action: "created", path: worktreePath }),
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected exec args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    try {
+      await expect(
+        handler("", {
+          cwd: repoRoot,
+          hasUI: true,
+          ui: {
+            custom,
+            notify(message: string, level: string) {
+              if (stale) {
+                throw new Error(
+                  "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+                );
+              }
+              notifications.push({ message, level });
+            },
+            setStatus(...args: Parameters<typeof setStatus>) {
+              if (stale) {
+                throw new Error(
+                  "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+                );
+              }
+              return setStatus(...args);
+            },
+          },
+          sessionManager,
+          switchSession,
+        }),
+      ).resolves.toBeUndefined();
+
+      const store = JSON.parse(
+        fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+      ) as {
+        todos: Array<{
+          status: string;
+          workBranch?: string;
+          sourceBranch?: string;
+          activeSessionKey?: string;
+        }>;
+      };
+
+      expect(renders).toHaveLength(1);
+      expect(renders[0]).toContain("Working...");
+      expect(switchSession).toHaveBeenCalledTimes(1);
+      expect(store.todos[0]).toMatchObject({
+        status: "doing",
+        workBranch: "todo-1",
+        sourceBranch: "main",
+        activeSessionKey: activeSessionFile,
+      });
+      expect(setStatus).not.toHaveBeenCalled();
+      expect(replacementSetStatus).not.toHaveBeenCalled();
+      expect(notifications).toEqual([]);
+      expect(replacementNotifications).toContainEqual({
+        message: "doing: Start worktree todo",
+        level: "info",
+      });
+      expect(fs.realpathSync(process.cwd())).toBe(
+        fs.realpathSync(worktreePath),
+      );
+    } finally {
+      process.chdir(initialCwd);
+    }
+  });
+
   it("switches to an existing todo branch instead of failing to recreate it", async () => {
     const repoRoot = createTempRepo();
     initGitRepo(repoRoot);

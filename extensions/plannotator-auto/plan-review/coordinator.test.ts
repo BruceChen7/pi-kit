@@ -18,6 +18,7 @@ type SetupOptions = {
   startResponse?: unknown;
   statusResponse?: unknown;
   formatMessage?: string;
+  getSessionContextByKey?: (key: string) => unknown;
 };
 
 const createPlanReviewState = () => ({
@@ -136,7 +137,8 @@ const setupCoordinator = async (options: SetupOptions = {}) => {
     getSessionState: () => state,
     getSessionStateByKey: (key) => sessionStates.get(key),
     getSessionContextByKey: (key) =>
-      key === sessionKey ? (ctx as never) : undefined,
+      options.getSessionContextByKey?.(key) ??
+      (key === sessionKey ? (ctx as never) : undefined),
     getSessionKey: (runtimeCtx) =>
       runtimeCtx.sessionManager.getSessionFile() ??
       `${runtimeCtx.cwd}::ephemeral`,
@@ -501,6 +503,78 @@ describe("PlanReviewCoordinator key workflow effects", () => {
     } finally {
       await fs.rm(repoRoot, { recursive: true, force: true });
     }
+  });
+
+  it("uses the replacement session context for delayed plan-review retries", async () => {
+    vi.useFakeTimers();
+
+    const staleMessage =
+      "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.";
+    let stale = false;
+    let replacementNotify: ReturnType<typeof vi.fn> | null = null;
+
+    const { coordinator, state, ctx, requestReviewStatus } =
+      await setupCoordinator({
+        statusResponse: {
+          status: "unavailable",
+          error: "Plannotator request timed out.",
+        },
+        getSessionContextByKey: (key) => {
+          if (key !== "/repo/.pi/session.json") {
+            return undefined;
+          }
+
+          if (!stale) {
+            return ctx as never;
+          }
+
+          replacementNotify ??= vi.fn();
+          return {
+            ...ctx,
+            ui: {
+              notify: replacementNotify,
+            },
+          } as never;
+        },
+      });
+
+    requestReviewStatus.mockResolvedValueOnce({
+      status: "unavailable",
+      error: "Plannotator request timed out.",
+    });
+    requestReviewStatus.mockResolvedValueOnce({
+      status: "error",
+      error: "review-status failed",
+    });
+
+    ctx.ui.notify.mockImplementation(() => {
+      if (stale) {
+        throw new Error(staleMessage);
+      }
+    });
+
+    state.activePlanReviewByCwd.set(ctx.cwd, {
+      reviewId: "review-1",
+      kind: "plan",
+      planFile: ".pi/plans/repo/plan/2026-04-16-flow.md",
+      resolvedPlanPath: "/repo/.pi/plans/repo/plan/2026-04-16-flow.md",
+      startedAt: Date.now(),
+    });
+
+    await coordinator.runPlanReview(ctx as never, "agent_end");
+
+    expect(requestReviewStatus).toHaveBeenCalledTimes(1);
+    stale = true;
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(requestReviewStatus).toHaveBeenCalledTimes(2);
+    expect(replacementNotify).toHaveBeenCalledWith(
+      "review-status failed",
+      "warning",
+    );
   });
 
   it("stops retrying after retry-attempt cap is exceeded", async () => {

@@ -2,6 +2,9 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import codexPlanLimitsExtension from "./index.js";
 
+const STALE_MESSAGE =
+  "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.";
+
 type Handler = (event: unknown, ctx: unknown) => Promise<void> | void;
 
 const buildPiHarness = () => {
@@ -152,6 +155,59 @@ describe("codex-plan-limits extension", () => {
     );
 
     await emit("session_shutdown", ctx);
+  });
+
+  it("does not touch stale UI when an in-flight refresh completes after shutdown", async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    globalThis.fetch = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    ) as typeof fetch;
+
+    const { api, emit } = buildPiHarness();
+    const ctx = buildCtx();
+    let stale = false;
+
+    ctx.ui.theme.fg = vi.fn((color: string, text: string) => {
+      if (stale) {
+        throw new Error(STALE_MESSAGE);
+      }
+      return `<${color}>${text}</${color}>`;
+    });
+    ctx.ui.setWidget = vi.fn(() => {
+      if (stale) {
+        throw new Error(STALE_MESSAGE);
+      }
+    });
+    ctx.ui.notify = vi.fn(() => {
+      if (stale) {
+        throw new Error(STALE_MESSAGE);
+      }
+    });
+
+    codexPlanLimitsExtension(api as ExtensionAPI);
+
+    await emit("session_start", ctx);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    await emit("session_shutdown", ctx);
+
+    const widgetCallsBeforeResolve = ctx.ui.setWidget.mock.calls.length;
+    stale = true;
+    resolveFetch?.(
+      new Response(JSON.stringify(usageResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(ctx.ui.setWidget).toHaveBeenCalledTimes(widgetCallsBeforeResolve);
+    expect(ctx.ui.notify).not.toHaveBeenCalled();
   });
 
   it("clears widget when model is not eligible", async () => {

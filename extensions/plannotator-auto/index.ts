@@ -842,11 +842,16 @@ const scheduleReviewRetry = (
     }
 
     currentState.pendingReviewRetry = null;
+    const currentCtx = sessionContextByKey.get(sessionKey);
+    if (!currentCtx) {
+      return;
+    }
+
     void maybeStartCodeReview(
       pi,
       reviewResults,
       planReviewCoordinator,
-      ctx,
+      currentCtx,
       reason,
     );
   }, delay);

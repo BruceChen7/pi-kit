@@ -2,6 +2,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
+  ReplacedSessionContext,
 } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder } from "@mariozechner/pi-coding-agent";
 import {
@@ -37,14 +38,18 @@ import {
   updateTodoStart,
 } from "./todo-store.js";
 
-function getSessionKey(ctx: ExtensionContext): string {
+type TodoSessionContext =
+  | Pick<ExtensionContext, "cwd" | "ui" | "sessionManager">
+  | Pick<ReplacedSessionContext, "cwd" | "ui" | "sessionManager">;
+
+function getSessionKey(ctx: TodoSessionContext): string {
   const sessionFile = ctx.sessionManager.getSessionFile();
   return typeof sessionFile === "string" && sessionFile.trim()
     ? sessionFile.trim()
     : `cwd:${ctx.cwd}`;
 }
 
-function updateStatus(_ctx: ExtensionContext, _todo: TodoItem | null): void {}
+function updateStatus(_ctx: TodoSessionContext, _todo: TodoItem | null): void {}
 
 function listOpenTodos(ctx: ExtensionContext): TodoItem[] {
   return listTodos(ctx.cwd, {
@@ -129,7 +134,7 @@ async function showTodoPicker(ctx: ExtensionContext): Promise<string | null> {
   });
 }
 
-function activateTodoForSession(ctx: ExtensionContext, todo: TodoItem): void {
+function activateTodoForSession(ctx: TodoSessionContext, todo: TodoItem): void {
   const activated = updateTodoActivation(ctx.cwd, {
     id: todo.id,
     sessionKey: getSessionKey(ctx),
@@ -216,7 +221,7 @@ async function startTodo(
     workBranch: startResult.record.branch,
     worktreePath: startResult.record.worktreePath,
   });
-  activateTodoForSession(ctx, started);
+  activateTodoForSession(startResult.replacementCtx ?? ctx, started);
 }
 
 async function resumeTodo(

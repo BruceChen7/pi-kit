@@ -35,12 +35,12 @@ describe("todo-store", () => {
     const created = createTodo(repoRoot, "Fix merge handling");
     const loaded = loadTodoStore(repoRoot);
 
-    expect(created.title).toBe("Fix merge handling");
+    expect(created.description).toBe("Fix merge handling");
     expect(created.status).toBe("todo");
     expect(loaded.todos).toHaveLength(1);
     expect(loaded.todos[0]).toMatchObject({
       id: created.id,
-      title: "Fix merge handling",
+      description: "Fix merge handling",
       status: "todo",
     });
     expect(fs.existsSync(path.join(repoRoot, ".pi", "todos.json"))).toBe(true);
@@ -91,6 +91,46 @@ describe("todo-store", () => {
     });
 
     expect(listed.map((todo) => todo.id)).toEqual([beta.id, alpha.id]);
+  });
+
+  it("reads legacy title data as description and migrates it on disk", () => {
+    const repoRoot = createTempRepo();
+
+    fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "legacy",
+              title: "Legacy title field",
+              status: "todo",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    expect(loadTodoStore(repoRoot).todos[0]).toMatchObject({
+      id: "legacy",
+      description: "Legacy title field",
+      status: "todo",
+    });
+
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as { todos: Array<{ description?: string; title?: string }> };
+
+    expect(persisted.todos[0]).toMatchObject({
+      description: "Legacy title field",
+    });
+    expect(persisted.todos[0]?.title).toBeUndefined();
   });
 
   it("fails fast when a persisted todo record is invalid", () => {

@@ -9,6 +9,11 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@mariozechner/pi-ai", () => ({
+  complete: vi.fn(),
+}));
+
+import { complete } from "@mariozechner/pi-ai";
 import extension from "./index.js";
 
 const tempDirs: string[] = [];
@@ -89,6 +94,7 @@ const initGitRepo = (repoRoot: string): void => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.mocked(complete).mockReset();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -206,13 +212,91 @@ describe("todo-workflow extension", () => {
     }
   });
 
-  it("creates a todo from /todo add", async () => {
+  it("creates a todo from /todo add using an AI-generated id from the description", async () => {
     const repoRoot = createTempRepo();
     const commands = new Map<
       string,
       (args: string, ctx: unknown) => Promise<void>
     >();
     const notifications: Array<{ message: string; level: string }> = [];
+
+    vi.mocked(complete).mockResolvedValue({
+      stopReason: "stop",
+      content: [{ type: "text", text: "status-banner-fix" }],
+    } as never);
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec() {
+        throw new Error("exec should not run during todo add");
+      },
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    const model = {
+      id: "test-model",
+      provider: "openai",
+      api: "openai-responses",
+      reasoning: true,
+    };
+
+    await handler("add Fix status banner", {
+      cwd: repoRoot,
+      hasUI: true,
+      model,
+      modelRegistry: {
+        getApiKeyAndHeaders: vi.fn(async () => ({
+          ok: true,
+          apiKey: "test-key",
+          headers: { "x-test": "1" },
+        })),
+      },
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+    });
+
+    const store = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as { todos: Array<{ id: string; description: string; status: string }> };
+
+    expect(complete).toHaveBeenCalled();
+    expect(store.todos).toHaveLength(1);
+    expect(store.todos[0]).toMatchObject({
+      id: "status-banner-fix",
+      description: "Fix status banner",
+      status: "todo",
+    });
+    expect(notifications).toContainEqual({
+      message: 'Added TODO: "Fix status banner"',
+      level: "info",
+    });
+  });
+
+  it("falls back to the local slug id when AI id generation is unavailable", async () => {
+    const repoRoot = createTempRepo();
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
 
     extension({
       registerCommand(
@@ -237,9 +321,7 @@ describe("todo-workflow extension", () => {
       cwd: repoRoot,
       hasUI: true,
       ui: {
-        notify(message: string, level: string) {
-          notifications.push({ message, level });
-        },
+        notify() {},
       },
       sessionManager: {
         getSessionFile() {
@@ -250,16 +332,12 @@ describe("todo-workflow extension", () => {
 
     const store = JSON.parse(
       fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
-    ) as { todos: Array<{ title: string; status: string }> };
+    ) as { todos: Array<{ id: string; description: string; status: string }> };
 
-    expect(store.todos).toHaveLength(1);
     expect(store.todos[0]).toMatchObject({
-      title: "Fix status banner",
+      id: "fix-status-banner",
+      description: "Fix status banner",
       status: "todo",
-    });
-    expect(notifications).toContainEqual({
-      message: 'Added TODO: "Fix status banner"',
-      level: "info",
     });
   });
 

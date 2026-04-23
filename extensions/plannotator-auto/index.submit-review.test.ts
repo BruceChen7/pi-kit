@@ -197,6 +197,7 @@ describe("submit review tool", () => {
     try {
       await emit("session_start", {}, ctx);
       await emitToolWrite(emit, ctx, planFileRelative);
+      ctx.abort.mockClear();
 
       const submitPromise = Promise.resolve(
         runTool(

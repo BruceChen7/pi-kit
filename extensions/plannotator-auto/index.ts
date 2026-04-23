@@ -1255,7 +1255,7 @@ const handlePlanFileWrite = async (
   ctx: ExtensionContext,
   args: unknown,
   planConfig: PlanFileConfig | null,
-): Promise<void> => {
+): Promise<boolean> => {
   if (!planConfig) {
     log?.debug(
       "plannotator-auto skipped plan-file write handling (plan review disabled)",
@@ -1264,7 +1264,7 @@ const handlePlanFileWrite = async (
         sessionKey: getSessionKey(ctx),
       },
     );
-    return;
+    return false;
   }
 
   const toolPath = resolveToolPath(args);
@@ -1277,7 +1277,7 @@ const handlePlanFileWrite = async (
         sessionKey: getSessionKey(ctx),
       },
     );
-    return;
+    return false;
   }
 
   const state = getSessionState(ctx);
@@ -1289,7 +1289,7 @@ const handlePlanFileWrite = async (
       targetPath,
       sessionKey: getSessionKey(ctx),
     });
-    return;
+    return false;
   }
 
   const reviewTarget = resolveReviewTargetMatch(ctx, planConfig, targetPath);
@@ -1303,7 +1303,7 @@ const handlePlanFileWrite = async (
       configuredExtraReviewTargets: planConfig.extraReviewTargets,
       sessionKey: getSessionKey(ctx),
     });
-    return;
+    return false;
   }
 
   log?.info("plannotator-auto detected review-target update", {
@@ -1328,6 +1328,7 @@ const handlePlanFileWrite = async (
   syncPrimaryPendingPlanReview(state, ctx.cwd);
 
   await planReviewCoordinator.queuePendingPlanReview(ctx, pendingPlanReview);
+  return true;
 };
 
 export default function plannotatorAuto(pi: ExtensionAPI) {
@@ -1723,7 +1724,31 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       });
     }
 
-    await handlePlanFileWrite(planReviewCoordinator, ctx, args, planConfig);
+    const queuedPlanReview = await handlePlanFileWrite(
+      planReviewCoordinator,
+      ctx,
+      args,
+      planConfig,
+    );
+
+    const pendingPlanReviews = listPendingPlanReviews(state, ctx.cwd);
+    const activePlanReview = state.activePlanReviewByCwd.get(ctx.cwd);
+    if (
+      queuedPlanReview &&
+      pendingPlanReviews.length > 0 &&
+      !activePlanReview
+    ) {
+      pi.sendUserMessage(
+        formatPendingPlanReviewGateMessage(
+          pendingPlanReviews.map((pending) => pending.planFile),
+        ),
+        { deliverAs: ctx.isIdle() ? "followUp" : "steer" },
+      );
+      if (!ctx.isIdle()) {
+        ctx.abort();
+      }
+    }
+
     setReviewWidget(ctx);
   });
 

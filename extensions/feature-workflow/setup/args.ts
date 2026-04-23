@@ -40,11 +40,11 @@ const SETUP_TARGET_METADATA: Record<
   gitignore: {
     label: ".gitignore",
     description:
-      "Ensure .pi/ and .config/wt.toml are ignored for setup-managed artifacts.",
+      "Ensure .pi/, .config/wt.toml, and .worktreeinclude are ignored for setup-managed artifacts.",
   },
   worktreeinclude: {
     label: ".worktreeinclude",
-    description: "Add recommended copy-managed ignored entries.",
+    description: "Create/update the local copy-managed whitelist file.",
   },
   "hook-script": {
     label: "$HOME/.pi/pi-feature-workflow-links.sh",

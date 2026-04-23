@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -41,6 +44,21 @@ export type PreparedFeatureStart = {
   runtime: FeatureCommandRuntime;
 };
 
+function shouldWarnOnMissingWorktreeInclude(repoRoot: string): boolean {
+  const worktreeIncludePath = path.join(repoRoot, ".worktreeinclude");
+  if (fs.existsSync(worktreeIncludePath)) {
+    return false;
+  }
+
+  const wtTomlPath = path.join(repoRoot, ".config", "wt.toml");
+  if (!fs.existsSync(wtTomlPath)) {
+    return false;
+  }
+
+  const wtToml = fs.readFileSync(wtTomlPath, "utf-8");
+  return wtToml.includes("wt step copy-ignored");
+}
+
 export function preflightFeatureStart(input: {
   pi: ExtensionAPI;
   ctx: ExtensionCommandContext;
@@ -61,6 +79,13 @@ export function preflightFeatureStart(input: {
       "warning",
     );
     return null;
+  }
+
+  if (shouldWarnOnMissingWorktreeInclude(repoRoot)) {
+    input.ctx.ui.notify(
+      "feature-start: .worktreeinclude is missing, so 'wt step copy-ignored' will copy all gitignored files. Run /feature-setup --only=worktreeinclude to recreate the local whitelist.",
+      "warning",
+    );
   }
 
   if (config.guards.requireCleanWorkspace) {

@@ -10,8 +10,8 @@ Sets up repo/global artifacts used by feature-workflow.
 Targets:
 
 - `settings` → `.pi/third_extension_settings.json`
-- `gitignore` → ensure `.pi/` and `.config/wt.toml` in `.gitignore`
-- `worktreeinclude` → `.worktreeinclude`
+- `gitignore` → ensure `.pi/`, `.config/wt.toml`, and `.worktreeinclude` in `.gitignore`
+- `worktreeinclude` → local `.worktreeinclude` whitelist for `wt step copy-ignored`
 - `hook-script` → `$HOME/.pi/pi-feature-workflow-links.sh`
 - `wt-toml` → managed hook block in `.config/wt.toml`
 - `wt-user-config` → `~/.config/worktrunk/config.toml` `worktree-path`
@@ -25,6 +25,8 @@ Prompts:
 2. `Base branch`
 
 Runs `wt switch --create`, then auto-switches pi session to the new worktree when enabled.
+
+If `.worktreeinclude` is missing while `.config/wt.toml` still runs `wt step copy-ignored`, `/feature-start` warns because Worktrunk will otherwise copy all gitignored files.
 
 ### `/feature-list`
 Lists active feature worktrees from `wt list --format json`.

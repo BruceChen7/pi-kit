@@ -4,6 +4,7 @@
 * Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions), unless it qualifies for the "Skill-only exception" below.
 * If something goes sideways, STOP and re-plan immediately - don't keep pushing
 * Use plan mode for verification steps, not just building. Write detailed specs upfront to reduce ambiguity
+* Use Chinese to write the plan
 
 ### Skill Integration (Plan Mode + Skills)
 

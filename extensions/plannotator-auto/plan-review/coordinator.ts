@@ -317,7 +317,13 @@ export const createPlanReviewCoordinator = (
         sessionKey,
         state: getPlanReviewStateSnapshot(currentState, ctx.cwd),
       });
-      void runPlanReview(ctx, reason);
+
+      const currentCtx = getSessionContextByKey(sessionKey);
+      if (!currentCtx) {
+        return;
+      }
+
+      void runPlanReview(currentCtx, reason);
     }, retry.delayMs);
   };
 

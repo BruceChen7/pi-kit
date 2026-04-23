@@ -55,6 +55,10 @@ export default function codexPlanLimitsExtension(pi: ExtensionAPI) {
   let activeCtx: ExtensionContext | undefined;
   let lastRefreshStartedAt = 0;
 
+  function isActiveContext(ctx: ExtensionContext): boolean {
+    return activeCtx === ctx;
+  }
+
   async function refresh(
     ctx: ExtensionContext,
     options?: { notify?: boolean; force?: boolean },
@@ -77,6 +81,9 @@ export default function codexPlanLimitsExtension(pi: ExtensionAPI) {
       try {
         const snapshot = await loadBestSnapshot(ctx, latestSnapshot);
         latestSnapshot = snapshot;
+        if (!isActiveContext(ctx)) {
+          return;
+        }
         render(ctx);
         if (options?.notify && ctx.hasUI) {
           ctx.ui.notify(
@@ -100,6 +107,9 @@ export default function codexPlanLimitsExtension(pi: ExtensionAPI) {
               stale: true,
               error: message,
             };
+        if (!isActiveContext(ctx)) {
+          return;
+        }
         render(ctx);
         if (options?.notify && ctx.hasUI) {
           ctx.ui.notify(`Codex limits unavailable: ${message}`, "warning");
@@ -113,7 +123,6 @@ export default function codexPlanLimitsExtension(pi: ExtensionAPI) {
   }
 
   function render(ctx: ExtensionContext): void {
-    activeCtx = ctx;
     if (!shouldShowForModel(ctx)) {
       clearWidget(ctx);
       return;
@@ -210,10 +219,11 @@ export default function codexPlanLimitsExtension(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", async () => {
     stopPolling();
-    if (activeCtx?.hasUI) {
-      activeCtx.ui.setWidget(STATUS_KEY, undefined);
-    }
+    const closingCtx = activeCtx;
     activeCtx = undefined;
+    if (closingCtx?.hasUI) {
+      closingCtx.ui.setWidget(STATUS_KEY, undefined);
+    }
   });
 }
 

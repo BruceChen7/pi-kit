@@ -40,6 +40,7 @@ type WorktreeSessionSwitchResult = {
   record: FeatureRecord;
   skipReason: WorktreeSessionSwitchSkipReason | null;
   notify: ExtensionCommandContext["ui"]["notify"];
+  replacementCtx: ReplacedSessionContext | null;
 };
 
 export const commandLog = createLogger("feature-workflow", {
@@ -162,6 +163,7 @@ export async function maybeSwitchToWorktreeSession(input: {
       record: input.record,
       skipReason: "disabled",
       notify: currentNotify,
+      replacementCtx: null,
     };
   }
 
@@ -176,6 +178,7 @@ export async function maybeSwitchToWorktreeSession(input: {
       record: input.record,
       skipReason: "missing-worktree-path",
       notify: currentNotify,
+      replacementCtx: null,
     };
   }
 
@@ -196,6 +199,7 @@ export async function maybeSwitchToWorktreeSession(input: {
       record: input.record,
       skipReason: "ephemeral-session",
       notify: currentNotify,
+      replacementCtx: null,
     };
   }
 
@@ -225,6 +229,7 @@ export async function maybeSwitchToWorktreeSession(input: {
         record: input.record,
         skipReason: "session-fork-failed",
         notify: currentNotify,
+        replacementCtx: null,
       };
     }
 
@@ -235,15 +240,17 @@ export async function maybeSwitchToWorktreeSession(input: {
     };
 
     let notify = currentNotify;
+    let replacementCtx: ReplacedSessionContext | null = null;
     const result = await input.ctx.switchSession(sessionPath, {
-      withSession: async (replacementCtx) => {
-        notify = replacementCtx.ui.notify.bind(replacementCtx.ui);
+      withSession: async (nextCtx) => {
+        replacementCtx = nextCtx;
+        notify = nextCtx.ui.notify.bind(nextCtx.ui);
         syncProcessCwd({
-          ctx: replacementCtx,
+          ctx: nextCtx,
           branch: input.record.branch,
           worktreePath,
         });
-        await input.onSwitched?.(replacementCtx);
+        await input.onSwitched?.(nextCtx);
       },
     });
     const switched = !result.cancelled;
@@ -257,6 +264,7 @@ export async function maybeSwitchToWorktreeSession(input: {
       record: updated,
       skipReason: switched ? null : "cancelled",
       notify,
+      replacementCtx,
     };
   } catch (error) {
     input.ctx.ui.notify(
@@ -273,6 +281,7 @@ export async function maybeSwitchToWorktreeSession(input: {
       record: input.record,
       skipReason: "session-switch-failed",
       notify: currentNotify,
+      replacementCtx: null,
     };
   }
 }

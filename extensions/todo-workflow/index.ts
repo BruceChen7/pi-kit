@@ -218,13 +218,14 @@ async function startTodo(
     return;
   }
 
-  const started = updateTodoStart(ctx.cwd, {
+  const sessionCtx = startResult.replacementCtx ?? ctx;
+  const started = updateTodoStart(sessionCtx.cwd, {
     id: todo.id,
     sourceBranch,
     workBranch: startResult.record.branch,
     worktreePath: startResult.record.worktreePath,
   });
-  activateTodoForSession(startResult.replacementCtx ?? ctx, started);
+  activateTodoForSession(sessionCtx, started);
 }
 
 async function resumeTodo(

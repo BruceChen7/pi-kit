@@ -26,6 +26,7 @@ export type StartFeatureWorkflowResult =
       ok: true;
       record: FeatureRecord;
       switched: boolean;
+      notify: ExtensionCommandContext["ui"]["notify"];
     }
   | {
       ok: false;
@@ -207,13 +208,14 @@ export async function startPreparedFeatureWorkflow(input: {
     worktreePath: switchResult.record.worktreePath,
     branch: switchResult.record.branch,
     runWt,
-    notify: input.ctx.ui.notify.bind(input.ctx.ui),
+    notify: switchResult.notify,
   });
 
   return {
     ok: true,
     record: switchResult.record,
     switched: switchResult.switched,
+    notify: switchResult.notify,
   };
 }
 

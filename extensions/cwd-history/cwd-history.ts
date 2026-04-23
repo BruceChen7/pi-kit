@@ -4,6 +4,7 @@ import path from "node:path";
 import type {
   ExtensionAPI,
   ExtensionContext,
+  Theme,
 } from "@mariozechner/pi-coding-agent";
 import { CustomEditor } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
@@ -425,22 +426,42 @@ function historiesMatch(a: PromptEntry[], b: PromptEntry[]): boolean {
   return true;
 }
 
+function createBorderColor(
+  editor: HistoryEditor,
+  theme: Theme,
+  getThinkingLevel: () => ReturnType<ExtensionAPI["getThinkingLevel"]>,
+): (text: string) => string {
+  const bashBorderColor = theme.getBashModeBorderColor();
+  let thinkingBorderColor = theme.getThinkingBorderColor(getThinkingLevel());
+
+  return (text: string) => {
+    if (editor.getText().trimStart().startsWith("!")) {
+      return bashBorderColor(text);
+    }
+
+    try {
+      thinkingBorderColor = theme.getThinkingBorderColor(getThinkingLevel());
+    } catch {
+      // Keep using the last known thinking border color when the old session
+      // runtime has been invalidated during reload or session replacement.
+    }
+
+    return thinkingBorderColor(text);
+  };
+}
+
 function setEditorHistory(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   history: PromptEntry[],
 ) {
+  const uiTheme = ctx.ui.theme;
+
   ctx.ui.setEditorComponent((tui, theme, keybindings) => {
     const editor = new HistoryEditor(tui, theme, keybindings);
-    const borderColor = (text: string) => {
-      const isBashMode = editor.getText().trimStart().startsWith("!");
-      const colorFn = isBashMode
-        ? ctx.ui.theme.getBashModeBorderColor()
-        : ctx.ui.theme.getThinkingBorderColor(pi.getThinkingLevel());
-      return colorFn(text);
-    };
-
-    editor.borderColor = borderColor;
+    editor.borderColor = createBorderColor(editor, uiTheme, () =>
+      pi.getThinkingLevel(),
+    );
     editor.lockBorderColor();
     for (const prompt of history) {
       editor.addToHistory?.(prompt.text);
@@ -482,5 +503,9 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_switch", (_event, ctx) => {
     applyEditorWithHistory(pi, ctx);
+  });
+
+  pi.on("session_shutdown", () => {
+    loadCounter += 1;
   });
 }

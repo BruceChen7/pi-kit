@@ -88,7 +88,7 @@ afterEach(() => {
 });
 
 describe("plan review trigger timing", () => {
-  it("marks a plan draft pending after a busy plan-file write without auto-starting review", async () => {
+  it("immediately steers manual review submission after a busy plan-file write", async () => {
     vi.resetModules();
     const { startPlanReview } = mockPlanReviewApi({
       startPlanReview: vi.fn(async () => ({
@@ -118,9 +118,16 @@ describe("plan review trigger timing", () => {
       await flushMicrotasks();
       await reviewPromise;
       expect(startPlanReview).not.toHaveBeenCalled();
-      expect(ctx.abort).not.toHaveBeenCalled();
+      expect(ctx.abort).toHaveBeenCalledTimes(1);
       expect(ctx.ui.notify).not.toHaveBeenCalled();
-      expect(api.sendUserMessage).not.toHaveBeenCalled();
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("plannotator_auto_submit_review"),
+        { deliverAs: "steer" },
+      );
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(planFileRelative),
+        { deliverAs: "steer" },
+      );
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

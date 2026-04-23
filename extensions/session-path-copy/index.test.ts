@@ -114,6 +114,7 @@ const createFakePi = () => {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -297,5 +298,43 @@ describe("session-path-copy", () => {
       "Failed to persist session snapshot",
       "warning",
     );
+  });
+
+  it("does not touch stale UI when clearing copied status after session replacement", async () => {
+    vi.useFakeTimers();
+
+    const cwd = createTempDir("session-path-copy-stale-status-cwd-");
+    const sessionDir = createTempDir("session-path-copy-stale-status-dir-");
+    const sessionManager = SessionManager.create(cwd, sessionDir);
+    const copied: string[] = [];
+    const ctx = createCtx(sessionManager, cwd);
+    ctx.hasUI = true;
+
+    let stale = false;
+    ctx.ui.setStatus.mockImplementation(() => {
+      if (stale) {
+        throw new Error(
+          "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+        );
+      }
+    });
+
+    const result = await copyCurrentSessionPath(ctx as never, {
+      copy: (text) => copied.push(text),
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      path: sessionManager.getSessionFile(),
+      persistedNow: false,
+    });
+    expect(copied).toEqual([sessionManager.getSessionFile()]);
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith(
+      "session-path-copy",
+      "Copied session path to clipboard",
+    );
+
+    stale = true;
+    expect(() => vi.advanceTimersByTime(2_000)).not.toThrow();
   });
 });

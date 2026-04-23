@@ -11,6 +11,8 @@ import type {
 import { copyToClipboard } from "@mariozechner/pi-coding-agent";
 import { Key } from "@mariozechner/pi-tui";
 
+import { isStaleSessionContextError } from "../shared/stale-context.js";
+
 const STATUS_KEY = "prompt-copy";
 const STATUS_DURATION_MS = 2000;
 
@@ -26,8 +28,15 @@ function showStatus(
       clearTimeout(clearTimerRef.value);
     }
     clearTimerRef.value = setTimeout(() => {
-      ctx.ui.setStatus(STATUS_KEY, undefined);
-      clearTimerRef.value = null;
+      try {
+        ctx.ui.setStatus(STATUS_KEY, undefined);
+      } catch (error) {
+        if (!isStaleSessionContextError(error)) {
+          throw error;
+        }
+      } finally {
+        clearTimerRef.value = null;
+      }
     }, STATUS_DURATION_MS);
     return;
   }

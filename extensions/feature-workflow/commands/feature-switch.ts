@@ -198,7 +198,7 @@ export async function runFeatureSwitchCommand(
       worktreePath: switchResult.record.worktreePath,
       branch: switchResult.record.branch,
       runWt,
-      notify: ctx.ui.notify.bind(ctx.ui),
+      notify: switchResult.notify,
     });
 
     return {
@@ -210,7 +210,7 @@ export async function runFeatureSwitchCommand(
     return;
   }
 
-  ctx.ui.notify(
+  completedSwitch.switchResult.notify(
     buildFeatureSwitchNotifyMessage({
       result: completedSwitch.switchResult,
       inferredBase: completedSwitch.inferredBase,

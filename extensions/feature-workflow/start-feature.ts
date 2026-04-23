@@ -20,7 +20,10 @@ import {
 } from "./runtime.js";
 import { getFeatureWorkflowSetupMissingFiles } from "./setup.js";
 import type { FeatureRecord } from "./storage.js";
-import { createFeatureWorktree } from "./worktree-gateway.js";
+import {
+  createFeatureWorktree,
+  createProcessWtRunner,
+} from "./worktree-gateway.js";
 
 export type StartFeatureWorkflowResult =
   | {
@@ -204,6 +207,10 @@ export async function startPreparedFeatureWorkflow(input: {
     worktreePath: switchResult.record.worktreePath,
   });
 
+  const postSwitchRunWt = switchResult.switched
+    ? createProcessWtRunner(repoRoot)
+    : runWt;
+
   await runIgnoredSyncForCommand({
     command: "feature-start",
     phase: "after-session-switch",
@@ -211,7 +218,7 @@ export async function startPreparedFeatureWorkflow(input: {
     repoRoot,
     worktreePath: switchResult.record.worktreePath,
     branch: switchResult.record.branch,
-    runWt,
+    runWt: postSwitchRunWt,
     notify: switchResult.notify,
   });
 

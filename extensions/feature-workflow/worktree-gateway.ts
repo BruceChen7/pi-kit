@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 import type { FeatureRecord } from "./storage.js";
@@ -89,6 +91,56 @@ export function createWtRunner(pi: ExtensionAPI, repoRoot: string): WtRunner {
       stdout: result.stdout ?? "",
       stderr: result.stderr ?? "",
     };
+  };
+}
+
+export function createProcessWtRunner(repoRoot: string): WtRunner {
+  return async (
+    args: string[],
+    options: WtRunOptions = {},
+  ): Promise<WtExecutionResult> => {
+    const timeout =
+      typeof options.timeoutMs === "number" &&
+      Number.isFinite(options.timeoutMs) &&
+      options.timeoutMs > 0
+        ? options.timeoutMs
+        : undefined;
+
+    return new Promise((resolve) => {
+      execFile(
+        "wt",
+        ["-C", repoRoot, ...args],
+        {
+          encoding: "utf-8",
+          timeout,
+        },
+        (error, stdout, stderr) => {
+          const normalizedStdout = stdout ?? "";
+          const normalizedStderr = stderr ?? "";
+          if (!error) {
+            resolve({
+              code: 0,
+              stdout: normalizedStdout,
+              stderr: normalizedStderr,
+            });
+            return;
+          }
+
+          const maybeCode =
+            typeof error === "object" && error && "code" in error
+              ? error.code
+              : undefined;
+
+          resolve({
+            code: typeof maybeCode === "number" ? maybeCode : 1,
+            stdout: normalizedStdout,
+            stderr:
+              normalizedStderr ||
+              (error instanceof Error ? error.message : String(error)),
+          });
+        },
+      );
+    });
   };
 }
 

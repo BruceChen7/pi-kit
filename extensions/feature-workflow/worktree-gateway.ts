@@ -32,6 +32,10 @@ export type WtRunner = (
 const toErrorMessage = (result: WtExecutionResult, fallback: string): string =>
   trimToNull(result.stderr) ?? trimToNull(result.stdout) ?? fallback;
 
+const isExistingBranchSwitchHint = (message: string): boolean =>
+  /branch\s+.+\s+already exists/i.test(message) &&
+  /without\s+--create/i.test(message);
+
 const getWorktreePath = (
   result: WtExecutionResult,
   fallbackPath: string = "",
@@ -132,7 +136,7 @@ export async function createFeatureWorktree(
 ): Promise<
   { ok: true; worktreePath: string } | { ok: false; message: string }
 > {
-  const result = await runWt(
+  let result = await runWt(
     buildWtSwitchCreateArgs({
       branch: input.branch,
       base: input.base,
@@ -140,10 +144,25 @@ export async function createFeatureWorktree(
   );
 
   if (result.code !== 0) {
-    return {
-      ok: false,
-      message: toErrorMessage(result, "wt switch failed"),
-    };
+    const message = toErrorMessage(result, "wt switch failed");
+    if (!isExistingBranchSwitchHint(message)) {
+      return {
+        ok: false,
+        message,
+      };
+    }
+
+    result = await runWt(
+      buildWtSwitchArgs({
+        branch: input.branch,
+      }),
+    );
+    if (result.code !== 0) {
+      return {
+        ok: false,
+        message: toErrorMessage(result, message),
+      };
+    }
   }
 
   const switchPath = getWorktreePath(result);

@@ -23,7 +23,8 @@
       "./extensions/todo-workflow",
       "./extensions/diffx-review",
       "./extensions/session-path-copy",
-      "./extensions/remote-approval"
+      "./extensions/remote-approval",
+      "./extensions/agent-end-code-simplifier"
     ]
   },
   "scripts": {

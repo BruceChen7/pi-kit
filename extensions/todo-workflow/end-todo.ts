@@ -171,7 +171,7 @@ function filterCompletionItems(
 function toTodoCompletionItem(todo: TodoItem): AutocompleteItem {
   return {
     value: todo.id,
-    label: `${todo.id}    ${todo.title}`,
+    label: `${todo.id}    ${todo.description}`,
     description: todo.status,
   };
 }
@@ -212,21 +212,21 @@ async function inspectTodoMergeState(
   ) {
     return {
       state: "unknown",
-      reason: `TODO "${todo.title}" is missing valid git metadata.`,
+      reason: `TODO "${todo.description}" is missing valid git metadata.`,
     };
   }
 
   if (!(await doesGitRefExist(pi, repoRoot, todo.sourceBranch))) {
     return {
       state: "unknown",
-      reason: `TODO "${todo.title}" is missing source branch ${todo.sourceBranch}.`,
+      reason: `TODO "${todo.description}" is missing source branch ${todo.sourceBranch}.`,
     };
   }
 
   if (!(await doesGitRefExist(pi, repoRoot, todo.workBranch))) {
     return {
       state: "unknown",
-      reason: `TODO "${todo.title}" is missing work branch ${todo.workBranch}.`,
+      reason: `TODO "${todo.description}" is missing work branch ${todo.workBranch}.`,
     };
   }
 
@@ -278,7 +278,7 @@ async function resolveTodoById(
 
 async function selectTodoFromList(
   ctx: ExtensionCommandContext,
-  title: string,
+  prompt: string,
   todos: TodoItem[],
 ): Promise<TodoItem | null> {
   if (todos.length === 0) {
@@ -293,15 +293,15 @@ async function selectTodoFromList(
   }
 
   const choice = await ctx.ui.select(
-    title,
-    todos.map((todo) => todo.title),
+    prompt,
+    todos.map((todo) => todo.description),
   );
   if (!choice) {
     ctx.ui.notify("Cancelled", "info");
     return null;
   }
 
-  return todos.find((todo) => todo.title === choice) ?? null;
+  return todos.find((todo) => todo.description === choice) ?? null;
 }
 
 async function selectFinishTarget(
@@ -362,7 +362,7 @@ export async function confirmTodoWorktreeReady(
   }
 
   const shouldRebuild = await ctx.ui.confirm(
-    `Rebuild missing worktree for "${todo.title}"?`,
+    `Rebuild missing worktree for "${todo.description}"?`,
     `Expected worktree path: ${todo.worktreePath}`,
   );
   if (!shouldRebuild) {
@@ -379,7 +379,10 @@ export async function ensureTodoWorktreeReady(
   todo: TodoItem,
 ): Promise<{ ok: true; worktreePath: string } | { ok: false }> {
   if (!todo.workBranch) {
-    ctx.ui.notify(`TODO "${todo.title}" is missing its work branch.`, "error");
+    ctx.ui.notify(
+      `TODO "${todo.description}" is missing its work branch.`,
+      "error",
+    );
     return { ok: false };
   }
 
@@ -450,9 +453,10 @@ async function chooseCleanupScope(
     return "local";
   }
 
-  const choice = await ctx.ui.select(`Cleanup scope for "${todo.title}":`, [
-    ...CLEANUP_SCOPE_OPTIONS,
-  ]);
+  const choice = await ctx.ui.select(
+    `Cleanup scope for "${todo.description}":`,
+    [...CLEANUP_SCOPE_OPTIONS],
+  );
   if (!choice) {
     ctx.ui.notify("Cancelled", "info");
     return null;
@@ -565,7 +569,10 @@ async function runFinishFlow(
   }
 
   if (!target.workBranch || !target.sourceBranch) {
-    ctx.ui.notify(`TODO "${target.title}" is missing git metadata.`, "error");
+    ctx.ui.notify(
+      `TODO "${target.description}" is missing git metadata.`,
+      "error",
+    );
     return;
   }
 
@@ -646,14 +653,14 @@ async function runFinishFlow(
 
   const completed = markTodoDone(ctx.cwd, { id: target.id });
   const cleanupNow = await ctx.ui.confirm(
-    `Clean up worktree/branch for "${target.title}"?`,
+    `Clean up worktree/branch for "${target.description}"?`,
     `${target.workBranch}${target.worktreePath ? ` • ${target.worktreePath}` : ""}`,
   );
   if (cleanupNow) {
     await runCleanupOneFlow(pi, ctx, target.id);
   }
 
-  ctx.ui.notify(`Completed TODO: ${completed.title}`, "info");
+  ctx.ui.notify(`Completed TODO: ${completed.description}`, "info");
 }
 
 async function runCleanupOneFlow(
@@ -669,7 +676,7 @@ async function runCleanupOneFlow(
   const inspection = await inspectTodoMergeState(pi, ctx.cwd, target);
   if (inspection.state === "not-merged") {
     ctx.ui.notify(
-      `TODO "${target.title}" is not merged into ${target.sourceBranch} yet.`,
+      `TODO "${target.description}" is not merged into ${target.sourceBranch} yet.`,
       "warning",
     );
     return;
@@ -692,12 +699,12 @@ async function runCleanupOneFlow(
   syncTodoDone(ctx.cwd, { id: target.id });
 
   if (failures.length === 0) {
-    ctx.ui.notify(`Cleaned TODO: ${target.title}`, "info");
+    ctx.ui.notify(`Cleaned TODO: ${target.description}`, "info");
     return;
   }
 
   ctx.ui.notify(
-    `Partially cleaned TODO: ${target.title} (${failures.join(" | ")})`,
+    `Partially cleaned TODO: ${target.description} (${failures.join(" | ")})`,
     "warning",
   );
 }

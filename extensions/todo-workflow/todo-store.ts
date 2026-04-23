@@ -5,7 +5,7 @@ export type TodoStatus = "todo" | "doing" | "done";
 
 export type TodoItem = {
   id: string;
-  title: string;
+  description: string;
   status: TodoStatus;
   createdAt: string;
   updatedAt: string;
@@ -39,10 +39,20 @@ function isTodoStatus(value: unknown): value is TodoStatus {
 
 function readOptionalString(
   item: Record<string, unknown>,
-  key: keyof TodoItem,
+  key: Exclude<keyof TodoItem, "description">,
 ): string | undefined {
   const value = item[key];
   return typeof value === "string" ? value : undefined;
+}
+
+function readDescription(item: Record<string, unknown>): string | undefined {
+  if (typeof item.description === "string" && item.description.trim()) {
+    return item.description;
+  }
+  if (typeof item.title === "string" && item.title.trim()) {
+    return item.title;
+  }
+  return undefined;
 }
 
 function toTodoItem(value: unknown, index: number): TodoItem {
@@ -58,7 +68,8 @@ function toTodoItem(value: unknown, index: number): TodoItem {
       `Failed to read ${STORE_RELATIVE_PATH}: invalid todo record at index ${index}`,
     );
   }
-  if (typeof item.title !== "string" || !item.title.trim()) {
+  const description = readDescription(item);
+  if (!description) {
     throw new Error(
       `Failed to read ${STORE_RELATIVE_PATH}: invalid todo record at index ${index}`,
     );
@@ -79,7 +90,7 @@ function toTodoItem(value: unknown, index: number): TodoItem {
 
   return {
     id: item.id,
-    title: item.title,
+    description,
     status: item.status,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
@@ -92,6 +103,17 @@ function toTodoItem(value: unknown, index: number): TodoItem {
     activeSessionKey: readOptionalString(item, "activeSessionKey"),
     lastSessionActiveAt: readOptionalString(item, "lastSessionActiveAt"),
   };
+}
+
+function hasLegacyTodoRecords(todos: unknown[]): boolean {
+  return todos.some(
+    (todo) =>
+      todo &&
+      typeof todo === "object" &&
+      !Array.isArray(todo) &&
+      typeof (todo as { title?: unknown }).title === "string" &&
+      typeof (todo as { description?: unknown }).description !== "string",
+  );
 }
 
 function readStore(repoRoot: string): TodoStore {
@@ -125,9 +147,13 @@ function readStore(repoRoot: string): TodoStore {
     );
   }
 
-  return {
+  const store = {
     todos: todosValue.map((item, index) => toTodoItem(item, index)),
   };
+  if (hasLegacyTodoRecords(todosValue)) {
+    writeStore(repoRoot, store);
+  }
+  return store;
 }
 
 function writeStore(repoRoot: string, store: TodoStore): void {
@@ -156,13 +182,30 @@ function updateTodo(
   return updated;
 }
 
-function createId(title: string, existing: TodoItem[]): string {
-  const slug =
-    title
+function slugifyId(value: string): string {
+  return (
+    value
       .toLowerCase()
       .trim()
       .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "todo";
+      .replace(/^-+|-+$/g, "") || "todo"
+  );
+}
+
+function createId(description: string, existing: TodoItem[]): string {
+  const slug = slugifyId(description);
+  let candidate = slug;
+  let counter = 2;
+  const existingIds = new Set(existing.map((todo) => todo.id));
+  while (existingIds.has(candidate)) {
+    candidate = `${slug}-${counter}`;
+    counter += 1;
+  }
+  return candidate;
+}
+
+export function createUniqueTodoId(base: string, existing: TodoItem[]): string {
+  const slug = slugifyId(base);
   let candidate = slug;
   let counter = 2;
   const existingIds = new Set(existing.map((todo) => todo.id));
@@ -179,14 +222,19 @@ export function loadTodoStore(repoRoot: string): TodoStore {
 
 export function createTodo(
   repoRoot: string,
-  title: string,
-  now?: string,
+  description: string,
+  input?: {
+    id?: string;
+    now?: string;
+  },
 ): TodoItem {
   const store = readStore(repoRoot);
-  const timestamp = now ?? new Date().toISOString();
+  const timestamp = input?.now ?? new Date().toISOString();
   const todo: TodoItem = {
-    id: createId(title, store.todos),
-    title: title.trim(),
+    id: input?.id
+      ? createUniqueTodoId(input.id, store.todos)
+      : createId(description, store.todos),
+    description: description.trim(),
     status: "todo",
     createdAt: timestamp,
     updatedAt: timestamp,

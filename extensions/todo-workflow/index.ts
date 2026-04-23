@@ -17,6 +17,7 @@ import {
   startPreparedFeatureWorkflow,
 } from "../feature-workflow/start-feature.js";
 import type { FeatureRecord } from "../feature-workflow/storage.js";
+import { generateKebabCaseIdFromDescription } from "../shared/ai.js";
 import { runWithWorkingLoader } from "../shared/ui-working.js";
 import {
   confirmTodoWorktreeReady,
@@ -27,8 +28,10 @@ import {
 } from "./end-todo.js";
 import {
   createTodo,
+  createUniqueTodoId,
   findTodoById,
   listTodos,
+  loadTodoStore,
   type TodoItem,
   updateTodoActivation,
   updateTodoStart,
@@ -69,7 +72,7 @@ async function showTodoPicker(ctx: ExtensionContext): Promise<string | null> {
 
   if (todos.length === 0) {
     ctx.ui.notify(
-      "No TODOs found. Use /todo add <title> to create one.",
+      "No TODOs found. Use /todo add <description> to create one.",
       "info",
     );
     return null;
@@ -77,7 +80,7 @@ async function showTodoPicker(ctx: ExtensionContext): Promise<string | null> {
 
   const items: SelectItem[] = todos.map((todo) => ({
     value: todo.id,
-    label: todo.title,
+    label: todo.description,
     description: buildTodoDescription(todo),
   }));
 
@@ -133,7 +136,7 @@ function activateTodoForSession(ctx: ExtensionContext, todo: TodoItem): void {
     activeInSession: true,
   });
   updateStatus(ctx, activated);
-  ctx.ui.notify(`doing: ${activated.title}`, "info");
+  ctx.ui.notify(`doing: ${activated.description}`, "info");
 }
 
 function buildTodoFeatureRecord(
@@ -238,6 +241,17 @@ async function resumeTodo(
   activateTodoForSession(ctx, todo);
 }
 
+async function createTodoFromDescription(
+  ctx: ExtensionCommandContext,
+  description: string,
+): Promise<TodoItem> {
+  const aiId = await generateKebabCaseIdFromDescription(ctx, description);
+  const todoId = aiId
+    ? createUniqueTodoId(aiId, loadTodoStore(ctx.cwd).todos)
+    : undefined;
+  return createTodo(ctx.cwd, description, { id: todoId });
+}
+
 async function handleTodoCommand(
   pi: ExtensionAPI,
   rawArgs: string,
@@ -245,13 +259,13 @@ async function handleTodoCommand(
 ): Promise<void> {
   const trimmed = rawArgs.trim();
   if (trimmed.startsWith("add ")) {
-    const title = trimmed.slice(4).trim();
-    if (!title) {
-      ctx.ui.notify("Usage: /todo add <title>", "warning");
+    const description = trimmed.slice(4).trim();
+    if (!description) {
+      ctx.ui.notify("Usage: /todo add <description>", "warning");
       return;
     }
-    const todo = createTodo(ctx.cwd, title);
-    ctx.ui.notify(`Added TODO: "${todo.title}"`, "info");
+    const todo = await createTodoFromDescription(ctx, description);
+    ctx.ui.notify(`Added TODO: "${todo.description}"`, "info");
     return;
   }
 

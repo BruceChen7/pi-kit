@@ -7,6 +7,7 @@ import {
   type ExtensionAPI,
   SessionManager,
 } from "@mariozechner/pi-coding-agent";
+import { CombinedAutocompleteProvider } from "@mariozechner/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@mariozechner/pi-ai", () => ({
@@ -91,6 +92,44 @@ const initGitRepo = (repoRoot: string): void => {
     encoding: "utf-8",
   });
 };
+
+async function applyArgumentCompletion(
+  command: {
+    name: string;
+    getArgumentCompletions?: (
+      prefix: string,
+    ) =>
+      | Promise<Array<{ value: string; label: string }> | null>
+      | Array<{ value: string; label: string }>
+      | null;
+  },
+  line: string,
+  pick: (item: { value: string; label: string }) => boolean,
+): Promise<string> {
+  const provider = new CombinedAutocompleteProvider([command], process.cwd());
+  const suggestions = await provider.getSuggestions([line], 0, line.length, {
+    signal: new AbortController().signal,
+  });
+
+  expect(suggestions).not.toBeNull();
+  if (!suggestions) {
+    throw new Error(`Expected suggestions for: ${line}`);
+  }
+
+  const item = suggestions.items.find(pick);
+  expect(item).toBeDefined();
+  if (!item) {
+    throw new Error(`Expected completion item for: ${line}`);
+  }
+
+  return provider.applyCompletion(
+    [line],
+    0,
+    line.length,
+    item,
+    suggestions.prefix,
+  ).lines[0] as string;
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -200,8 +239,177 @@ describe("todo-workflow extension", () => {
       const cleanupCompletions =
         await handler.getArgumentCompletions("cleanup ");
       expect(cleanupCompletions?.map((item) => item.value)).toEqual(
-        expect.arrayContaining(["--all", "cleanup-merged-task"]),
+        expect.arrayContaining([
+          "cleanup --all",
+          "cleanup cleanup-merged-task",
+        ]),
       );
+    } finally {
+      process.chdir(initialCwd);
+    }
+  });
+
+  it("preserves nested todo subcommands when applying argument completions", async () => {
+    const initialCwd = process.cwd();
+    const repoRoot = createTempRepo();
+
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "queued-task",
+              description: "Queued task",
+              status: "todo",
+              createdAt: "2026-04-23T08:00:00.000Z",
+              updatedAt: "2026-04-23T08:00:00.000Z",
+            },
+            {
+              id: "active-task",
+              description: "Active task",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "active-task",
+              worktreePath: "/tmp/active-task",
+              createdAt: "2026-04-23T08:10:00.000Z",
+              updatedAt: "2026-04-23T08:10:00.000Z",
+              startedAt: "2026-04-23T08:11:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      {
+        handler: (args: string, ctx: unknown) => Promise<void>;
+        getArgumentCompletions?: (
+          prefix: string,
+        ) =>
+          | Promise<Array<{ value: string; label: string }> | null>
+          | Array<{ value: string; label: string }>
+          | null;
+      }
+    >();
+    const exec = vi.fn(async (_command: string, args: string[]) => {
+      if (args.includes("rev-parse")) {
+        return { code: 0, stdout: "sha\n", stderr: "" };
+      }
+      if (args.includes("merge-base")) {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`Unexpected exec args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: {
+          handler: (args: string, ctx: unknown) => Promise<void>;
+          getArgumentCompletions?: (
+            prefix: string,
+          ) =>
+            | Promise<Array<{ value: string; label: string }> | null>
+            | Array<{ value: string; label: string }>
+            | null;
+        },
+      ) {
+        commands.set(name, definition);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const command = commands.get("todo");
+    expect(command?.getArgumentCompletions).toBeTypeOf("function");
+    if (!command?.getArgumentCompletions) return;
+
+    try {
+      process.chdir(repoRoot);
+
+      await expect(
+        applyArgumentCompletion(
+          {
+            name: "todo",
+            getArgumentCompletions: command.getArgumentCompletions,
+          },
+          "/todo start ",
+          (item) => item.label.includes("queued-task"),
+        ),
+      ).resolves.toBe("/todo start queued-task");
+
+      await expect(
+        applyArgumentCompletion(
+          {
+            name: "todo",
+            getArgumentCompletions: command.getArgumentCompletions,
+          },
+          "/todo resume ",
+          (item) => item.label.includes("active-task"),
+        ),
+      ).resolves.toBe("/todo resume active-task");
+
+      await expect(
+        applyArgumentCompletion(
+          {
+            name: "todo",
+            getArgumentCompletions: command.getArgumentCompletions,
+          },
+          "/todo show ",
+          (item) => item.label.includes("queued-task"),
+        ),
+      ).resolves.toBe("/todo show queued-task");
+
+      await expect(
+        applyArgumentCompletion(
+          {
+            name: "todo",
+            getArgumentCompletions: command.getArgumentCompletions,
+          },
+          "/todo remove ",
+          (item) => item.label.includes("queued-task"),
+        ),
+      ).resolves.toBe("/todo remove queued-task");
+
+      await expect(
+        applyArgumentCompletion(
+          {
+            name: "todo",
+            getArgumentCompletions: command.getArgumentCompletions,
+          },
+          "/todo finish ",
+          (item) => item.label.includes("active-task"),
+        ),
+      ).resolves.toBe("/todo finish active-task");
+
+      await expect(
+        applyArgumentCompletion(
+          {
+            name: "todo",
+            getArgumentCompletions: command.getArgumentCompletions,
+          },
+          "/todo cleanup ",
+          (item) => item.label.includes("active-task"),
+        ),
+      ).resolves.toBe("/todo cleanup active-task");
+
+      await expect(
+        applyArgumentCompletion(
+          {
+            name: "todo",
+            getArgumentCompletions: command.getArgumentCompletions,
+          },
+          "/todo cleanup ",
+          (item) => item.label === "--all",
+        ),
+      ).resolves.toBe("/todo cleanup --all");
     } finally {
       process.chdir(initialCwd);
     }

@@ -4,6 +4,18 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import type { AutocompleteItem } from "@mariozechner/pi-tui";
 import {
+  buildTodoArgumentCompletionItem,
+  filterCompletionItems,
+  filterTodosForCommand,
+  parseCompletionPrefix,
+} from "./autocomplete.js";
+import {
+  getTopLevelTodoCommandItems,
+  isTodoCompletionActionCommand,
+  isTodoIdArgumentCommand,
+  TODO_DIRECT_ID_COMMAND_SPECS,
+} from "./commands.js";
+import {
   getTodoCompletionArgumentCompletions,
   handleTodoCompletionCommand,
 } from "./completion.js";
@@ -93,17 +105,12 @@ export function parseTodoCommand(rawArgs: string): TodoCommand {
   if (trimmed === "list") {
     return { kind: "list" };
   }
-  if (trimmed.startsWith("show ")) {
-    return { kind: "show", id: trimmed.slice(5).trim() };
-  }
-  if (trimmed.startsWith("remove ")) {
-    return { kind: "remove", id: trimmed.slice(7).trim() };
-  }
-  if (trimmed.startsWith("start ")) {
-    return { kind: "start", id: trimmed.slice(6).trim() };
-  }
-  if (trimmed.startsWith("resume ")) {
-    return { kind: "resume", id: trimmed.slice(7).trim() };
+
+  for (const spec of TODO_DIRECT_ID_COMMAND_SPECS) {
+    const prefix = `${spec.command} `;
+    if (trimmed.startsWith(prefix)) {
+      return { kind: spec.kind, id: trimmed.slice(prefix.length).trim() };
+    }
   }
 
   const tokens = trimmed.split(/\s+/).filter(Boolean);
@@ -127,102 +134,8 @@ export function parseTodoCommand(rawArgs: string): TodoCommand {
   return { kind: "unknown" };
 }
 
-function parseCompletionPrefix(argumentPrefix: string): {
-  tokens: string[];
-  current: string;
-} {
-  const hasTrailingSpace = /\s$/.test(argumentPrefix);
-  const trimmed = argumentPrefix.trim();
-  if (!trimmed) {
-    return { tokens: [], current: "" };
-  }
-
-  const parts = trimmed.split(/\s+/);
-  if (hasTrailingSpace) {
-    return { tokens: parts, current: "" };
-  }
-
-  const current = parts.pop() ?? "";
-  return { tokens: parts, current };
-}
-
-function filterCompletionItems(
-  items: AutocompleteItem[],
-  current: string,
-): AutocompleteItem[] {
-  if (!current) {
-    return items;
-  }
-
-  const lower = current.toLowerCase();
-  return items.filter(
-    (item) =>
-      item.value.toLowerCase().startsWith(lower) ||
-      item.label.toLowerCase().includes(lower),
-  );
-}
-
 export function getStaticTodoCommandCompletionItems(): AutocompleteItem[] {
-  return [
-    {
-      value: "add",
-      label: "add",
-      description: "create a new todo",
-    },
-    {
-      value: "start",
-      label: "start",
-      description: "start a queued todo",
-    },
-    {
-      value: "resume",
-      label: "resume",
-      description: "resume a doing todo",
-    },
-    {
-      value: "finish",
-      label: "finish",
-      description: "finish a doing todo",
-    },
-    {
-      value: "cleanup",
-      label: "cleanup",
-      description: "cleanup merged todo resources",
-    },
-    {
-      value: "remove",
-      label: "remove",
-      description: "remove a todo",
-    },
-    {
-      value: "list",
-      label: "list",
-      description: "list todos",
-    },
-    {
-      value: "show",
-      label: "show",
-      description: "show todo details",
-    },
-  ];
-}
-
-function toTodoCompletionItem(todo: {
-  id: string;
-  description: string;
-  status: string;
-  workBranch?: string;
-}): AutocompleteItem {
-  return {
-    value: todo.id,
-    label: `${todo.description} [${todo.id}]`,
-    description:
-      todo.status === "doing"
-        ? todo.workBranch
-          ? `doing • ${todo.workBranch}`
-          : "doing"
-        : todo.status,
-  };
+  return getTopLevelTodoCommandItems();
 }
 
 export async function getTodoArgumentCompletions(
@@ -238,19 +151,17 @@ export async function getTodoArgumentCompletions(
   }
 
   const [command] = tokens;
-  if (command === "finish" || command === "cleanup") {
+  if (isTodoCompletionActionCommand(command)) {
     return getTodoCompletionArgumentCompletions(pi, argumentPrefix);
   }
 
-  if (
-    (command === "start" ||
-      command === "resume" ||
-      command === "show" ||
-      command === "remove") &&
-    tokens.length === 1
-  ) {
-    const todos = loadTodoStore(process.cwd()).todos;
-    return filterCompletionItems(todos.map(toTodoCompletionItem), current);
+  if (isTodoIdArgumentCommand(command) && tokens.length === 1) {
+    return filterCompletionItems(
+      filterTodosForCommand(command, loadTodoStore(process.cwd()).todos).map(
+        (todo) => buildTodoArgumentCompletionItem(command, todo),
+      ),
+      current,
+    );
   }
 
   return null;

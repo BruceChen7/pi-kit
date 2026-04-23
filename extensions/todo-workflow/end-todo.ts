@@ -589,48 +589,24 @@ async function runFinishFlow(
   const finished = await runWithWorkingLoader(
     ctx,
     async () => {
+      let mergeCwd = target.worktreePath ?? ctx.cwd;
+
       if (currentBranch !== target.workBranch) {
         const switched = await ensureTodoWorktreeReady(pi, ctx, target);
         if (!switched.ok) {
           return false;
         }
+        mergeCwd = switched.worktreePath;
       }
 
-      const checkoutSource = await runGit(pi, ctx.cwd, [
-        "checkout",
-        target.sourceBranch,
-      ]);
-      if (checkoutSource.code !== 0) {
-        ctx.ui.notify(
-          formatCommandError(
-            checkoutSource,
-            "Failed to checkout source branch",
-          ),
-          "error",
-        );
-        return false;
-      }
-
-      const mergeResult = await runGit(pi, ctx.cwd, [
+      const mergeResult = await runWt(pi, mergeCwd, [
         "merge",
-        "--no-ff",
-        target.workBranch,
+        "--no-remove",
+        target.sourceBranch,
       ]);
       if (mergeResult.code !== 0) {
         ctx.ui.notify(
           formatCommandError(mergeResult, "Failed to merge TODO branch"),
-          "error",
-        );
-        return false;
-      }
-
-      const checkoutBack = await runGit(pi, ctx.cwd, [
-        "checkout",
-        target.sourceBranch,
-      ]);
-      if (checkoutBack.code !== 0) {
-        ctx.ui.notify(
-          formatCommandError(checkoutBack, "Failed to return to source branch"),
           "error",
         );
         return false;

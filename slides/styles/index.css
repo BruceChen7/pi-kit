@@ -140,7 +140,14 @@
   border-radius: 8px;
   background: #232832;
   color: #d8dee9;
-  font-family: Fira Code, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family:
+    Fira Code,
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    monospace;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 

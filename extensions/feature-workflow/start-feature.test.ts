@@ -28,9 +28,7 @@ const runGit = (cwd: string, args: string[]) =>
   });
 
 const createTempRepoWithMainBranch = (): string => {
-  const dir = fs.mkdtempSync(
-    path.join(os.tmpdir(), "pi-kit-feature-start-"),
-  );
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-kit-feature-start-"));
   tempDirs.push(dir);
   runGit(dir, ["init"]);
   fs.writeFileSync(path.join(dir, "README.md"), "test\n", "utf-8");
@@ -53,7 +51,7 @@ it("warns but continues when .worktreeinclude is missing for copy-ignored setup"
   fs.mkdirSync(path.join(repoRoot, ".config"), { recursive: true });
   fs.writeFileSync(
     path.join(repoRoot, ".config", "wt.toml"),
-    ['[post-start]', 'copy = "wt step copy-ignored"', ""].join("\n"),
+    ["[post-start]", 'copy = "wt step copy-ignored"', ""].join("\n"),
     "utf-8",
   );
   fs.mkdirSync(path.join(repoRoot, ".pi"), { recursive: true });

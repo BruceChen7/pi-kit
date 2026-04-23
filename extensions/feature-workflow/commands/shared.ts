@@ -1,6 +1,9 @@
 import fs from "node:fs";
 
-import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type {
+  ExtensionCommandContext,
+  ReplacedSessionContext,
+} from "@mariozechner/pi-coding-agent";
 
 import {
   type GitRunner,
@@ -138,6 +141,7 @@ export async function maybeSwitchToWorktreeSession(input: {
   record: FeatureRecord;
   worktreePath: string;
   enabled: boolean;
+  onSwitched?: (ctx: ReplacedSessionContext) => Promise<void>;
 }): Promise<WorktreeSessionSwitchResult> {
   commandLog.debug("worktree session switch requested", {
     branch: input.record.branch,
@@ -223,15 +227,17 @@ export async function maybeSwitchToWorktreeSession(input: {
       updatedAt: new Date().toISOString(),
     };
 
-    const result = await input.ctx.switchSession(sessionPath);
+    const result = await input.ctx.switchSession(sessionPath, {
+      withSession: async (replacementCtx) => {
+        syncProcessCwd({
+          ctx: replacementCtx,
+          branch: input.record.branch,
+          worktreePath,
+        });
+        await input.onSwitched?.(replacementCtx);
+      },
+    });
     const switched = !result.cancelled;
-    if (switched) {
-      syncProcessCwd({
-        ctx: input.ctx,
-        branch: input.record.branch,
-        worktreePath,
-      });
-    }
     commandLog.debug("worktree session switch finished", {
       branch: input.record.branch,
       switched,

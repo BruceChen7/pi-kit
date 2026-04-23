@@ -30,8 +30,27 @@ describe("maybeSwitchToWorktreeSession", () => {
     const sessionManager = SessionManager.create(sourceCwd);
     sessionManager.appendCustomEntry("test", { ready: true });
 
-    const switchSession = vi.fn(async () => ({ cancelled: false }));
-    const notify = vi.fn();
+    let stale = false;
+    const notify = vi.fn(() => {
+      if (stale) {
+        throw new Error(
+          "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.",
+        );
+      }
+    });
+    const replacementNotify = vi.fn();
+    const switchSession = vi.fn(
+      async (
+        _sessionPath: string,
+        options?: { withSession?: (ctx: unknown) => Promise<void> },
+      ) => {
+        stale = true;
+        await options?.withSession?.({
+          ui: { notify: replacementNotify },
+        });
+        return { cancelled: false };
+      },
+    );
 
     process.chdir(sourceCwd);
 
@@ -53,6 +72,7 @@ describe("maybeSwitchToWorktreeSession", () => {
       );
       expect(switchSession).toHaveBeenCalledTimes(1);
       expect(notify).not.toHaveBeenCalled();
+      expect(replacementNotify).not.toHaveBeenCalled();
     } finally {
       process.chdir(initialCwd);
     }

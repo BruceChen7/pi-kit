@@ -10,10 +10,17 @@ import type { AutocompleteItem } from "@mariozechner/pi-tui";
 import { ensureFeatureWorktree } from "../feature-workflow/worktree-gateway.js";
 import { runWithWorkingLoader } from "../shared/ui-working.js";
 import {
-  formatTodoLabel,
-  formatTodoSelectionLabel,
-  formatTodoStatus,
-} from "./display.js";
+  buildLiteralArgumentCompletionItem,
+  buildTodoArgumentCompletionItem,
+  filterCompletionItems,
+  filterTodosForCommand,
+  parseCompletionPrefix,
+} from "./autocomplete.js";
+import {
+  getTodoCompletionActionItems,
+  isTodoCompletionActionCommand,
+} from "./commands.js";
+import { formatTodoSelectionLabel } from "./display.js";
 import {
   findTodoById,
   getDoingTodos,
@@ -60,11 +67,6 @@ const CLEANUP_SCOPE_OPTIONS = [
 
 type TodoCompletionMenuOption = (typeof TODO_COMPLETION_MENU_OPTIONS)[number];
 type CleanupScopeOption = (typeof CLEANUP_SCOPE_OPTIONS)[number];
-
-type CompletionParseResult = {
-  tokens: string[];
-  current: string;
-};
 
 function normalizeResult(result: {
   code?: number;
@@ -123,7 +125,7 @@ function parseTodoCompletionArgs(rawArgs: string): ParsedTodoCompletionAction {
   }
 
   const [command, value, extra] = tokens;
-  if (extra) {
+  if (extra || !isTodoCompletionActionCommand(command)) {
     return invalidTodoCompletionUsage();
   }
 
@@ -131,69 +133,14 @@ function parseTodoCompletionArgs(rawArgs: string): ParsedTodoCompletionAction {
     return { kind: "finish", id: value };
   }
 
-  if (command === "cleanup") {
-    if (value === "--all") {
-      return { kind: "cleanup-all" };
-    }
-    return { kind: "cleanup-one", id: value };
+  if (value === "--all") {
+    return { kind: "cleanup-all" };
   }
-
-  return invalidTodoCompletionUsage();
-}
-
-function parseCompletionPrefix(argumentPrefix: string): CompletionParseResult {
-  const hasTrailingSpace = /\s$/.test(argumentPrefix);
-  const trimmed = argumentPrefix.trim();
-  if (!trimmed) {
-    return { tokens: [], current: "" };
-  }
-
-  const parts = trimmed.split(/\s+/);
-  if (hasTrailingSpace) {
-    return { tokens: parts, current: "" };
-  }
-
-  const current = parts.pop() ?? "";
-  return { tokens: parts, current };
-}
-
-function filterCompletionItems(
-  items: AutocompleteItem[],
-  current: string,
-): AutocompleteItem[] {
-  if (!current) {
-    return items;
-  }
-
-  const lower = current.toLowerCase();
-  return items.filter(
-    (item) =>
-      item.value.toLowerCase().startsWith(lower) ||
-      item.label.toLowerCase().includes(lower),
-  );
-}
-
-function toTodoCompletionItem(todo: TodoItem): AutocompleteItem {
-  return {
-    value: todo.id,
-    label: formatTodoLabel(todo),
-    description: formatTodoStatus(todo),
-  };
+  return { kind: "cleanup-one", id: value };
 }
 
 function buildActionCompletionItems(): AutocompleteItem[] {
-  return [
-    {
-      value: "finish",
-      label: "finish",
-      description: "finish current or selected todo",
-    },
-    {
-      value: "cleanup",
-      label: "cleanup",
-      description: "cleanup merged todo resources",
-    },
-  ];
+  return getTodoCompletionActionItems();
 }
 
 async function doesGitRefExist(
@@ -796,12 +743,14 @@ async function buildCleanupCompletionItems(
 ): Promise<AutocompleteItem[]> {
   const candidates = await listMergedCleanupCandidates(pi, repoRoot);
   return [
-    {
-      value: "--all",
-      label: "--all",
-      description: "cleanup all merged todos",
-    },
-    ...candidates.map(toTodoCompletionItem),
+    buildLiteralArgumentCompletionItem(
+      "cleanup",
+      "--all",
+      "cleanup all merged todos",
+    ),
+    ...candidates.map((todo) =>
+      buildTodoArgumentCompletionItem("cleanup", todo),
+    ),
   ];
 }
 
@@ -817,8 +766,12 @@ export async function getTodoCompletionArgumentCompletions(
   const repoRoot = process.cwd();
   const [command] = tokens;
   if (command === "finish" && tokens.length === 1) {
-    const todos = getDoingTodos(repoRoot);
-    return filterCompletionItems(todos.map(toTodoCompletionItem), current);
+    return filterCompletionItems(
+      filterTodosForCommand("finish", getDoingTodos(repoRoot)).map((todo) =>
+        buildTodoArgumentCompletionItem("finish", todo),
+      ),
+      current,
+    );
   }
 
   if (command === "cleanup" && tokens.length === 1) {

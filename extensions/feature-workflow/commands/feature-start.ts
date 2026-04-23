@@ -69,7 +69,7 @@ export async function runFeatureStartCommand(
     return;
   }
 
-  ctx.ui.notify(
+  startResult.notify(
     startResult.switched
       ? `Switched to feature worktree session: ${startResult.record.branch}`
       : `Feature worktree created: ${startResult.record.branch}`,

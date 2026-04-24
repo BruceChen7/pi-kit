@@ -59,6 +59,7 @@ const writeGlobalRemoteConfig = (
     JSON.stringify({ remoteApproval }, null, 2),
     "utf-8",
   );
+  clearSettingsCache();
 };
 
 const writeProjectRemoteConfig = (
@@ -72,6 +73,7 @@ const writeProjectRemoteConfig = (
     JSON.stringify({ remoteApproval }, null, 2),
     "utf-8",
   );
+  clearSettingsCache();
 };
 
 const buildPiHarness = () => {
@@ -294,11 +296,15 @@ describe("remote-approval extension", () => {
     const remoteApprovalExtension = await loadExtension();
     writeGlobalRemoteConfig(cwd, {
       enabled: true,
+      strictRemote: false,
       interceptTools: ["bash", "write", "edit"],
     });
     const harness = buildPiHarness();
     remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd, { selectResult: "Deny" });
+    const ctx = createContext(cwd, {
+      selectResult: "Deny",
+      sessionFile: path.join(cwd, ".pi", "sessions", "local-deny.jsonl"),
+    });
 
     await harness.emit("session_start", {}, ctx);
     const result = await harness.emit(
@@ -319,11 +325,15 @@ describe("remote-approval extension", () => {
     const remoteApprovalExtension = await loadExtension();
     writeGlobalRemoteConfig(cwd, {
       enabled: true,
+      strictRemote: false,
       interceptTools: ["bash", "write", "edit"],
     });
     const harness = buildPiHarness();
     remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd, { selectResult: "Always" });
+    const ctx = createContext(cwd, {
+      selectResult: "Always",
+      sessionFile: path.join(cwd, ".pi", "sessions", "local-always.jsonl"),
+    });
 
     await harness.emit("session_start", {}, ctx);
     const first = await harness.emit(
@@ -351,11 +361,10 @@ describe("remote-approval extension", () => {
     );
   });
 
-  it("blocks in strict mode when remote approval is required but no local UI is available", async () => {
+  it("blocks by default when telegram config is missing even if local UI is available", async () => {
     const cwd = createTempDir("pi-kit-remote-approval-repo-");
     writeGlobalRemoteConfig(cwd, {
       enabled: true,
-      strictRemote: true,
       interceptTools: ["bash", "write", "edit"],
     });
     vi.doMock("./channel/index.ts", () => ({
@@ -367,7 +376,7 @@ describe("remote-approval extension", () => {
     const remoteApprovalExtension = await loadExtension();
     const harness = buildPiHarness();
     remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd, { hasUI: false });
+    const ctx = createContext(cwd, { hasUI: true });
 
     await harness.emit("session_start", {}, ctx);
     const result = await harness.emit(
@@ -380,6 +389,7 @@ describe("remote-approval extension", () => {
       block: true,
       reason: "Remote approval required but unavailable",
     });
+    expect(ctx.ui.select).not.toHaveBeenCalled();
   });
 
   it("project settings can extend the intercept tool list", async () => {
@@ -387,6 +397,7 @@ describe("remote-approval extension", () => {
     const remoteApprovalExtension = await loadExtension();
     writeGlobalRemoteConfig(cwd, {
       enabled: true,
+      strictRemote: false,
       interceptTools: ["bash", "write", "edit"],
     });
     writeProjectRemoteConfig(cwd, {
@@ -394,7 +405,9 @@ describe("remote-approval extension", () => {
     });
     const harness = buildPiHarness();
     remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd);
+    const ctx = createContext(cwd, {
+      sessionFile: path.join(cwd, ".pi", "sessions", "extra-tool.jsonl"),
+    });
 
     await harness.emit("session_start", {}, ctx);
     await harness.emit(

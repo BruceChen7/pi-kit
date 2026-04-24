@@ -10,6 +10,8 @@ import {
 describe("remote-approval config", () => {
   it("uses defaults when settings are missing", () => {
     expect(normalizeRemoteApprovalConfig(undefined)).toEqual(DEFAULT_CONFIG);
+    expect(DEFAULT_CONFIG.strictRemote).toBe(true);
+    expect(DEFAULT_CONFIG.interceptTools).toEqual([]);
   });
 
   it("keeps credentials global-only while allowing project behavior overrides", () => {

@@ -38,6 +38,12 @@
 4. **Explain Changes**: High-level summary at each step
 5. **Document Results**: Add review section to the plan file you created
 
+## Response Structure
+
+- Lead with what the user explicitly asked for: answer their expectation first before adding secondary details.
+- When changes involve configuration, clearly state what to configure, where to configure it, and the expected value or format.
+- End with a concise **Change Summary** that lists what was modified in this turn.
+
 ## Core Principles
 
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.

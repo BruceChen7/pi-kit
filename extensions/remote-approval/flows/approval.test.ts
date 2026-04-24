@@ -124,9 +124,11 @@ describe("remote-approval flow", () => {
     expect(store.get("apr_2")?.resolutionSource).toBe("remote");
   });
 
-  it("requests remote approval from telegram and resolves on callback", async () => {
+  it("requests remote approval from telegram and updates the message after a decision callback", async () => {
+    const editMessage = vi.fn(async () => undefined);
     const channel = {
       sendMessage: async () => 42,
+      editMessage,
       sendReply: async () => 100,
       poll: async (acceptedMessageIds: Iterable<number>) => {
         expect([...acceptedMessageIds]).toEqual([42]);
@@ -145,16 +147,25 @@ describe("remote-approval flow", () => {
       decision: "always",
       messageId: 42,
     });
+    expect(editMessage).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        text: expect.stringContaining("✅ Always approved"),
+        buttons: [],
+      }),
+    );
   });
 
   it("expands full context in reply thread before waiting for the final approval callback", async () => {
     const sendReply = vi.fn(async () => 100);
+    const editMessage = vi.fn(async () => undefined);
     const poll = vi
       .fn()
       .mockResolvedValueOnce({ type: "callback", data: "more" })
       .mockResolvedValueOnce({ type: "callback", data: "allow" });
     const channel = {
       sendMessage: async () => 42,
+      editMessage,
       sendReply,
       poll,
     };
@@ -178,5 +189,12 @@ describe("remote-approval flow", () => {
       "assistant: detailed step 1",
     );
     expect(sendReply).toHaveBeenNthCalledWith(2, 42, "user: detailed step 2");
+    expect(editMessage).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        text: expect.stringContaining("✅ Approved"),
+        buttons: [],
+      }),
+    );
   });
 });

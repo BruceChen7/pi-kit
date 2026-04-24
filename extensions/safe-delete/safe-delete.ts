@@ -646,6 +646,38 @@ function formatThreats({ threats }: { threats: Threat[] }): string {
   return lines.join("\n");
 }
 
+// --- Approval ---
+
+type ApprovalRaceInput = {
+  localDecision: Promise<boolean>;
+  remoteDecisions: Array<Promise<boolean>>;
+  localAbortController: AbortController;
+};
+
+async function waitForApprovalDecision({
+  localDecision,
+  remoteDecisions,
+  localAbortController,
+}: ApprovalRaceInput): Promise<boolean> {
+  if (remoteDecisions.length === 0) {
+    return await localDecision;
+  }
+
+  const result = await Promise.race([
+    localDecision.then((decision) => ({ decision, source: "local" as const })),
+    Promise.race(remoteDecisions).then((decision) => ({
+      decision,
+      source: "remote" as const,
+    })),
+  ]);
+
+  if (result.source === "remote") {
+    localAbortController.abort();
+  }
+
+  return result.decision;
+}
+
 // --- Extension ---
 
 export default function (pi: ExtensionAPI) {
@@ -679,8 +711,11 @@ export default function (pi: ExtensionAPI) {
       command: event.input.command,
       threatCount: threats.length,
     });
+    const localAbortController = new AbortController();
+    const localDecision = ctx.ui.confirm(title, body, {
+      signal: localAbortController.signal,
+    });
     const remoteDecisions: Array<Promise<boolean>> = [];
-    const localDecision = ctx.ui.confirm(title, body);
     pi.events.emit(SAFE_DELETE_APPROVAL_CHANNEL, {
       type: "safe-delete.approval",
       requestId: `safe_delete_${Date.now()}`,
@@ -697,9 +732,11 @@ export default function (pi: ExtensionAPI) {
       ctx,
     } satisfies PiKitSafeDeleteApprovalEvent);
 
-    const isConfirmed = await (remoteDecisions.length > 0
-      ? Promise.race([localDecision, ...remoteDecisions])
-      : localDecision);
+    const isConfirmed = await waitForApprovalDecision({
+      localDecision,
+      remoteDecisions,
+      localAbortController,
+    });
 
     if (!isConfirmed) {
       log?.warn("destructive command blocked", {

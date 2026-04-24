@@ -1,3 +1,4 @@
+import type { RemoteChannel } from "../channel/types.ts";
 import type { createRequestStore } from "../runtime/request-store.ts";
 import type { SessionAllowRule } from "../runtime/session-state.ts";
 
@@ -92,24 +93,27 @@ const toResolvedStatus = (
   }
 };
 
+type ApprovalChannel = Pick<
+  RemoteChannel,
+  "sendMessage" | "editMessage" | "sendReply" | "poll"
+>;
+
+const buildResolvedApprovalText = (
+  text: string,
+  decision: ApprovalDecision,
+): string => {
+  switch (decision) {
+    case "allow":
+      return `${text}\n\n✅ Approved`;
+    case "always":
+      return `${text}\n\n✅ Always approved`;
+    case "deny":
+      return `${text}\n\n❌ Denied`;
+  }
+};
+
 export const requestRemoteApproval = async (input: {
-  channel: {
-    sendMessage: (message: {
-      text: string;
-      buttons?: Array<Array<{ text: string; callback_data: string }>>;
-      parseMode?: string;
-    }) => Promise<number>;
-    sendReply: (
-      messageId: number,
-      text: string,
-      parseMode?: string,
-    ) => Promise<number>;
-    poll: (
-      acceptedMessageIds: Iterable<number>,
-    ) => Promise<
-      { type: "callback"; data: string } | { type: "text"; text: string } | null
-    >;
-  };
+  channel: ApprovalChannel;
   text: string;
   includeAlways: boolean;
   fullContextLines?: string[];
@@ -152,6 +156,10 @@ export const requestRemoteApproval = async (input: {
       update.data === "always" ||
       update.data === "deny"
     ) {
+      await input.channel.editMessage(messageId, {
+        text: buildResolvedApprovalText(input.text, update.data),
+        buttons: [],
+      });
       return {
         decision: update.data,
         messageId,

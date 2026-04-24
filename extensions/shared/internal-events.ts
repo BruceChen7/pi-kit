@@ -42,7 +42,7 @@ export type PiKitSafeDeleteApprovalEvent = {
   body: string;
   contextPreview: string[];
   fullContextLines: string[];
-  localDecision: Promise<boolean>;
+  localDecision?: Promise<boolean>;
   attachRemoteDecision: (decision: Promise<boolean>) => void;
   ctx: unknown;
 };
@@ -56,7 +56,7 @@ export type PiKitAgentEndCodeSimplifierApprovalEvent = {
   filePaths: string[];
   contextPreview: string[];
   fullContextLines: string[];
-  localDecision: Promise<boolean>;
+  localDecision?: Promise<boolean>;
   attachRemoteDecision: (decision: Promise<boolean>) => void;
   ctx: unknown;
 };

@@ -4,6 +4,13 @@ import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  createHandledState,
+  NOTIFY_IDLE_CHANNEL,
+  type PiKitNotifyIdleEvent,
+  type PiKitSafeDeleteApprovalEvent,
+  SAFE_DELETE_APPROVAL_CHANNEL,
+} from "../shared/internal-events.ts";
 import { clearSettingsCache, getSettingsPaths } from "../shared/settings.ts";
 
 type Handler = (event: unknown, ctx: TestContext) => Promise<unknown> | unknown;
@@ -62,22 +69,9 @@ const writeGlobalRemoteConfig = (
   clearSettingsCache();
 };
 
-const writeProjectRemoteConfig = (
-  cwd: string,
-  remoteApproval: Record<string, unknown>,
-): void => {
-  const { projectPath } = getSettingsPaths(cwd);
-  fs.mkdirSync(path.dirname(projectPath), { recursive: true });
-  fs.writeFileSync(
-    projectPath,
-    JSON.stringify({ remoteApproval }, null, 2),
-    "utf-8",
-  );
-  clearSettingsCache();
-};
-
 const buildPiHarness = () => {
   const handlers = new Map<string, Handler[]>();
+  const eventHandlers = new Map<string, Array<(payload: unknown) => void>>();
   const appendEntry = vi.fn();
   const sendUserMessage = vi.fn();
 
@@ -90,10 +84,30 @@ const buildPiHarness = () => {
       },
       appendEntry,
       sendUserMessage,
+      events: {
+        on(channel: string, handler: (payload: unknown) => void) {
+          const list = eventHandlers.get(channel) ?? [];
+          list.push(handler);
+          eventHandlers.set(channel, list);
+          return () => {
+            const current = eventHandlers.get(channel) ?? [];
+            eventHandlers.set(
+              channel,
+              current.filter((candidate) => candidate !== handler),
+            );
+          };
+        },
+        emit(channel: string, payload: unknown) {
+          for (const handler of eventHandlers.get(channel) ?? []) {
+            handler(payload);
+          }
+        },
+      },
     },
     appendEntry,
     sendUserMessage,
     handlers,
+    eventHandlers,
     async emit(event: string, payload: unknown, ctx: TestContext) {
       let result: unknown;
       for (const handler of handlers.get(event) ?? []) {
@@ -159,21 +173,120 @@ describe("remote-approval extension", () => {
     remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
 
     expect(Array.from(harness.handlers.keys()).sort()).toEqual([
-      "agent_end",
       "session_shutdown",
       "session_start",
-      "tool_call",
     ]);
+    expect(harness.eventHandlers.has(NOTIFY_IDLE_CHANNEL)).toBe(true);
+    expect(harness.eventHandlers.has(SAFE_DELETE_APPROVAL_CHANNEL)).toBe(true);
   });
 
-  it("logs session lifecycle and remote approval decisions", async () => {
+  it("sends Telegram idle messages from notify idle events after the timeout", async () => {
+    vi.useFakeTimers();
     const cwd = createTempDir("pi-kit-remote-approval-repo-");
     writeGlobalRemoteConfig(cwd, {
       enabled: true,
       botToken: "123:abc",
       chatId: "1001",
-      interceptTools: ["bash", "write", "edit"],
+      approvalTimeoutMs: 50,
     });
+
+    const channel = {
+      sendMessage: vi.fn(async () => 42),
+      editMessage: vi.fn(async () => undefined),
+      sendReplyPrompt: vi.fn(async () => 99),
+      poll: vi.fn(async () => null),
+    };
+
+    vi.doMock("./channel/index.ts", () => ({
+      createRemoteChannel: () => ({ channel, error: null }),
+    }));
+
+    const remoteApprovalExtension = await loadExtension();
+    const harness = buildPiHarness();
+    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
+    const ctx = createContext(cwd);
+
+    await harness.emit("session_start", {}, ctx);
+    const event: PiKitNotifyIdleEvent = {
+      type: "notify.idle",
+      requestId: "notify_1",
+      createdAt: Date.now(),
+      title: "π",
+      body: "Finished the work.",
+      contextPreview: ["assistant: Finished the work."],
+      fullContextLines: ["assistant: Finished the work."],
+      continueEnabled: true,
+      handled: createHandledState(),
+      ctx,
+    };
+
+    harness.api.events.emit(NOTIFY_IDLE_CHANNEL, event);
+    await vi.advanceTimersByTimeAsync(49);
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
+
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Finished the work."),
+      }),
+    );
+    vi.useRealTimers();
+  });
+
+  it("does not send Telegram idle messages when the notify event is handled before the timeout", async () => {
+    vi.useFakeTimers();
+    const cwd = createTempDir("pi-kit-remote-approval-repo-");
+    writeGlobalRemoteConfig(cwd, {
+      enabled: true,
+      botToken: "123:abc",
+      chatId: "1001",
+      approvalTimeoutMs: 50,
+    });
+
+    const channel = {
+      sendMessage: vi.fn(async () => 42),
+      editMessage: vi.fn(async () => undefined),
+      sendReplyPrompt: vi.fn(async () => 99),
+      poll: vi.fn(async () => null),
+    };
+
+    vi.doMock("./channel/index.ts", () => ({
+      createRemoteChannel: () => ({ channel, error: null }),
+    }));
+
+    const remoteApprovalExtension = await loadExtension();
+    const harness = buildPiHarness();
+    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
+    const ctx = createContext(cwd);
+    await harness.emit("session_start", {}, ctx);
+
+    const handled = createHandledState();
+    harness.api.events.emit(NOTIFY_IDLE_CHANNEL, {
+      type: "notify.idle",
+      requestId: "notify_2",
+      createdAt: Date.now(),
+      title: "π",
+      body: "Already handled.",
+      contextPreview: [],
+      fullContextLines: [],
+      continueEnabled: true,
+      handled,
+      ctx,
+    } satisfies PiKitNotifyIdleEvent);
+    handled.markHandled();
+
+    await vi.advanceTimersByTimeAsync(50);
+    await Promise.resolve();
+
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("logs session lifecycle without handling tool_call commands", async () => {
+    const cwd = createTempDir("pi-kit-remote-approval-repo-");
+    writeGlobalRemoteConfig(cwd, { enabled: true });
 
     const logger = {
       debug: vi.fn(),
@@ -185,18 +298,6 @@ describe("remote-approval extension", () => {
     vi.doMock("../shared/logger.ts", () => ({
       createLogger: () => logger,
     }));
-    vi.doMock("./channel/index.ts", () => ({
-      createRemoteChannel: () => ({
-        channel: {
-          sendMessage: vi.fn(async () => 42),
-          sendReply: vi.fn(async () => 77),
-          sendReplyPrompt: vi.fn(async () => 99),
-          editMessage: vi.fn(async () => undefined),
-          poll: vi.fn(async () => ({ type: "callback", data: "deny" })),
-        },
-        error: null,
-      }),
-    }));
 
     const remoteApprovalExtension = await loadExtension();
     const harness = buildPiHarness();
@@ -204,13 +305,14 @@ describe("remote-approval extension", () => {
     const ctx = createContext(cwd, { hasUI: false });
 
     await harness.emit("session_start", {}, ctx);
-    await harness.emit(
+    const result = await harness.emit(
       "tool_call",
       { toolName: "bash", input: { command: "npm test" } },
       ctx,
     );
     await harness.emit("session_shutdown", {}, ctx);
 
+    expect(result).toBeUndefined();
     expect(logger.info).toHaveBeenCalledWith(
       "session_start",
       expect.objectContaining({
@@ -219,315 +321,74 @@ describe("remote-approval extension", () => {
       }),
     );
     expect(logger.info).toHaveBeenCalledWith(
-      "approval_resolved",
-      expect.objectContaining({
-        decision: "deny",
-        resolvedBy: "remote",
-        toolName: "bash",
-      }),
-    );
-    expect(logger.info).toHaveBeenCalledWith(
       "session_shutdown",
       expect.objectContaining({
         sessionId: "abc123",
       }),
     );
+    expect(logger.info).not.toHaveBeenCalledWith(
+      "approval_resolved",
+      expect.anything(),
+    );
   });
 
-  it("skips tools outside the configured intercept list", async () => {
+  it("attaches a remote decision to safe-delete events after the timeout", async () => {
+    vi.useFakeTimers();
     const cwd = createTempDir("pi-kit-remote-approval-repo-");
-    const remoteApprovalExtension = await loadExtension();
     writeGlobalRemoteConfig(cwd, {
       enabled: true,
-      interceptTools: ["bash", "write", "edit"],
+      botToken: "123:abc",
+      chatId: "1001",
+      approvalTimeoutMs: 50,
     });
+
+    const channel = {
+      sendMessage: vi.fn(async () => 42),
+      sendReply: vi.fn(async () => 77),
+      sendReplyPrompt: vi.fn(async () => 99),
+      editMessage: vi.fn(async () => undefined),
+      poll: vi.fn(async () => ({ type: "callback" as const, data: "allow" })),
+    };
+
+    vi.doMock("./channel/index.ts", () => ({
+      createRemoteChannel: () => ({ channel, error: null }),
+    }));
+
+    const remoteApprovalExtension = await loadExtension();
     const harness = buildPiHarness();
     remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
     const ctx = createContext(cwd);
-
     await harness.emit("session_start", {}, ctx);
-    const result = await harness.emit(
-      "tool_call",
-      { toolName: "read", input: { path: "README.md" } },
-      ctx,
-    );
 
-    expect(result).toBeUndefined();
-    expect(ctx.ui.select).not.toHaveBeenCalled();
-  });
-
-  it("skips approval when a restored session allow rule matches", async () => {
-    const cwd = createTempDir("pi-kit-remote-approval-repo-");
-    const remoteApprovalExtension = await loadExtension();
-    writeGlobalRemoteConfig(cwd, {
-      enabled: true,
-      interceptTools: ["bash", "write", "edit"],
-    });
-    const harness = buildPiHarness();
-    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd, {
-      entries: [
-        {
-          type: "custom",
-          customType: "remote-approval-allow-rule",
-          data: {
-            toolName: "bash",
-            scope: "exact-command",
-            value: "npm test",
-            createdAt: 1,
-          },
-        },
-      ],
-    });
-
-    await harness.emit("session_start", {}, ctx);
-    const result = await harness.emit(
-      "tool_call",
-      { toolName: "bash", input: { command: "npm test" } },
-      ctx,
-    );
-
-    expect(result).toBeUndefined();
-    expect(ctx.ui.select).not.toHaveBeenCalled();
-  });
-
-  it("blocks when the local user selects Deny", async () => {
-    const cwd = createTempDir("pi-kit-remote-approval-repo-");
-    const remoteApprovalExtension = await loadExtension();
-    writeGlobalRemoteConfig(cwd, {
-      enabled: true,
-      strictRemote: false,
-      interceptTools: ["bash", "write", "edit"],
-    });
-    const harness = buildPiHarness();
-    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd, {
-      selectResult: "Deny",
-      sessionFile: path.join(cwd, ".pi", "sessions", "local-deny.jsonl"),
-    });
-
-    await harness.emit("session_start", {}, ctx);
-    const result = await harness.emit(
-      "tool_call",
-      { toolName: "bash", input: { command: "npm test" } },
-      ctx,
-    );
-
-    expect(ctx.ui.select).toHaveBeenCalled();
-    expect(result).toEqual({
-      block: true,
-      reason: "Blocked by user via local approval",
-    });
-  });
-
-  it("persists a session allow rule when the local user selects Always", async () => {
-    const cwd = createTempDir("pi-kit-remote-approval-repo-");
-    const remoteApprovalExtension = await loadExtension();
-    writeGlobalRemoteConfig(cwd, {
-      enabled: true,
-      strictRemote: false,
-      interceptTools: ["bash", "write", "edit"],
-    });
-    const harness = buildPiHarness();
-    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd, {
-      selectResult: "Always",
-      sessionFile: path.join(cwd, ".pi", "sessions", "local-always.jsonl"),
-    });
-
-    await harness.emit("session_start", {}, ctx);
-    const first = await harness.emit(
-      "tool_call",
-      { toolName: "bash", input: { command: "npm test" } },
-      ctx,
-    );
-    const second = await harness.emit(
-      "tool_call",
-      { toolName: "bash", input: { command: "npm test" } },
-      ctx,
-    );
-
-    expect(first).toBeUndefined();
-    expect(second).toBeUndefined();
-    expect(ctx.ui.select).toHaveBeenCalledTimes(1);
-    expect(harness.appendEntry).toHaveBeenCalledWith(
-      "remote-approval-allow-rule",
-      {
-        toolName: "bash",
-        scope: "exact-command",
-        value: "npm test",
-        createdAt: expect.any(Number),
+    let attached: Promise<boolean> | null = null;
+    const localDecision = new Promise<boolean>(() => undefined);
+    harness.api.events.emit(SAFE_DELETE_APPROVAL_CHANNEL, {
+      type: "safe-delete.approval",
+      requestId: "safe_delete_1",
+      createdAt: Date.now(),
+      command: "rm -rf /tmp/demo",
+      title: "Destructive command detected",
+      body: "Allow rm -rf /tmp/demo?",
+      contextPreview: [],
+      fullContextLines: [],
+      localDecision,
+      attachRemoteDecision: (decision) => {
+        attached = decision;
       },
-    );
-  });
-
-  it("blocks by default when telegram config is missing even if local UI is available", async () => {
-    const cwd = createTempDir("pi-kit-remote-approval-repo-");
-    writeGlobalRemoteConfig(cwd, {
-      enabled: true,
-      interceptTools: ["bash", "write", "edit"],
-    });
-    vi.doMock("./channel/index.ts", () => ({
-      createRemoteChannel: () => ({
-        channel: null,
-        error: { reason: "missing" },
-      }),
-    }));
-    const remoteApprovalExtension = await loadExtension();
-    const harness = buildPiHarness();
-    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd, { hasUI: true });
-
-    await harness.emit("session_start", {}, ctx);
-    const result = await harness.emit(
-      "tool_call",
-      { toolName: "bash", input: { command: "npm test" } },
       ctx,
-    );
+    } satisfies PiKitSafeDeleteApprovalEvent);
 
-    expect(result).toEqual({
-      block: true,
-      reason: "Remote approval required but unavailable",
-    });
-    expect(ctx.ui.select).not.toHaveBeenCalled();
-  });
+    expect(attached).toBeInstanceOf(Promise);
+    await vi.advanceTimersByTimeAsync(49);
+    expect(channel.sendMessage).not.toHaveBeenCalled();
 
-  it("project settings can extend the intercept tool list", async () => {
-    const cwd = createTempDir("pi-kit-remote-approval-repo-");
-    const remoteApprovalExtension = await loadExtension();
-    writeGlobalRemoteConfig(cwd, {
-      enabled: true,
-      strictRemote: false,
-      interceptTools: ["bash", "write", "edit"],
-    });
-    writeProjectRemoteConfig(cwd, {
-      extraInterceptTools: ["deploy"],
-    });
-    const harness = buildPiHarness();
-    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd, {
-      sessionFile: path.join(cwd, ".pi", "sessions", "extra-tool.jsonl"),
-    });
-
-    await harness.emit("session_start", {}, ctx);
-    await harness.emit(
-      "tool_call",
-      { toolName: "deploy", input: { environment: "prod" } },
-      ctx,
-    );
-
-    expect(ctx.ui.select).toHaveBeenCalled();
-  });
-
-  it("blocks when remote approval denies before the local approval resolves", async () => {
-    const cwd = createTempDir("pi-kit-remote-approval-repo-");
-    writeGlobalRemoteConfig(cwd, {
-      enabled: true,
-      botToken: "123:abc",
-      chatId: "1001",
-      interceptTools: ["bash", "write", "edit"],
-    });
-
-    const channel = {
-      sendMessage: vi.fn(async () => 42),
-      editMessage: vi.fn(async () => undefined),
-      sendReplyPrompt: vi.fn(async () => 99),
-      poll: vi.fn(async () => ({ type: "callback", data: "deny" })),
-    };
-
-    vi.doMock("./channel/index.ts", () => ({
-      createRemoteChannel: () => ({ channel, error: null }),
-    }));
-
-    const remoteApprovalExtension = await loadExtension();
-    const harness = buildPiHarness();
-    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd, {
-      ui: {
-        select: vi.fn(async () => await new Promise<string>(() => undefined)),
-        notify: vi.fn(),
-      },
-    });
-
-    await harness.emit("session_start", {}, ctx);
-    const result = await harness.emit(
-      "tool_call",
-      { toolName: "bash", input: { command: "npm test" } },
-      ctx,
-    );
-
-    expect(result).toEqual({
-      block: true,
-      reason: "Blocked by user via remote approval",
-    });
-    expect(channel.sendMessage).toHaveBeenCalled();
-    expect(channel.poll).toHaveBeenCalledWith([42]);
-  });
-
-  it("starts the idle continue flow on agent_end when idle notifications are enabled", async () => {
-    const cwd = createTempDir("pi-kit-remote-approval-repo-");
-    writeGlobalRemoteConfig(cwd, {
-      enabled: true,
-      botToken: "123:abc",
-      chatId: "1001",
-      idleEnabled: true,
-    });
-
-    const runIdleContinueFlow = vi.fn(async () => undefined);
-    const channel = {
-      sendMessage: vi.fn(async () => 42),
-      editMessage: vi.fn(async () => undefined),
-      sendReplyPrompt: vi.fn(async () => 99),
-      poll: vi.fn(async () => null),
-    };
-
-    vi.doMock("./flows/idle.ts", () => ({
-      runIdleContinueFlow,
-    }));
-    vi.doMock("./channel/index.ts", () => ({
-      createRemoteChannel: () => ({ channel, error: null }),
-    }));
-
-    const remoteApprovalExtension = await loadExtension();
-    const harness = buildPiHarness();
-    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd, {
-      entries: [
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            stopReason: "stop",
-            content: [{ type: "text", text: "Finished the work." }],
-          },
-        },
-      ],
-    });
-
-    await harness.emit("session_start", {}, ctx);
-    await harness.emit("agent_end", { messages: [] }, ctx);
-    await Promise.resolve();
-
-    expect(runIdleContinueFlow).toHaveBeenCalledWith(
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(attached).resolves.toBe(true);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        channel,
-        pi: expect.objectContaining({
-          sendUserMessage: harness.sendUserMessage,
-        }),
-        executionContext: expect.objectContaining({
-          isIdle: ctx.isIdle,
-        }),
-        request: expect.objectContaining({
-          requestId: expect.stringMatching(/^idle_abc123_/),
-          sessionId: "abc123",
-          sessionLabel: `${path.basename(cwd)} · abc123`,
-          assistantSummary: "Finished the work.",
-          contextPreview: ["assistant: Finished the work."],
-          fullContextLines: ["assistant: Finished the work."],
-          continueEnabled: true,
-          fullContextAvailable: true,
-        }),
+        text: expect.stringContaining("Allow rm -rf /tmp/demo?"),
       }),
     );
+    vi.useRealTimers();
   });
 });

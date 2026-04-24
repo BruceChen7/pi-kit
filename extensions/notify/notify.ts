@@ -11,6 +11,11 @@
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
+import {
+  createHandledState,
+  NOTIFY_IDLE_CHANNEL,
+  type PiKitNotifyIdleEvent,
+} from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
 
 export interface NotifyConfig {
@@ -189,6 +194,23 @@ const formatNotification = (
   return { title: "π", body };
 };
 
+const createNotifyIdleEvent = (input: {
+  title: string;
+  body: string;
+  ctx: unknown;
+}): PiKitNotifyIdleEvent => ({
+  type: "notify.idle",
+  requestId: `notify_${Date.now()}`,
+  createdAt: Date.now(),
+  title: input.title,
+  body: input.body,
+  contextPreview: input.body ? [`assistant: ${input.body}`] : [],
+  fullContextLines: input.body ? [`assistant: ${input.body}`] : [],
+  continueEnabled: true,
+  handled: createHandledState(),
+  ctx: input.ctx,
+});
+
 export default async function (pi: ExtensionAPI) {
   await initLogger(process.cwd());
 
@@ -199,7 +221,7 @@ export default async function (pi: ExtensionAPI) {
     tty: Boolean(process.stdout.isTTY),
   });
 
-  pi.on("agent_end", async (event) => {
+  pi.on("agent_end", async (event, ctx) => {
     const messages = event.messages ?? [];
     const last = messages.at(-1);
     const lastContentType =
@@ -231,5 +253,9 @@ export default async function (pi: ExtensionAPI) {
     });
 
     notify(resolvedTitle, body);
+    pi.events.emit(
+      NOTIFY_IDLE_CHANNEL,
+      createNotifyIdleEvent({ title: resolvedTitle, body, ctx }),
+    );
   });
 }

@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
 
 export type AgentEndCodeSimplifierConfig = {
@@ -44,6 +45,10 @@ export const DEFAULT_PROMPT_TEMPLATE = [
 
 const SETTINGS_KEY = "agentEndCodeSimplifier";
 const EXTENSION_SOURCE_TAG = "agent-end-code-simplifier";
+const log = createLogger(EXTENSION_SOURCE_TAG, {
+  minLevel: "debug",
+  stderr: null,
+});
 
 const normalizeBoolean = (value: unknown, fallback: boolean): boolean =>
   typeof value === "boolean" ? value : fallback;
@@ -189,49 +194,111 @@ export default function agentEndCodeSimplifierExtension(
 
   const refreshConfig = (cwd: string) => {
     config = normalizeConfig(loadSettings(cwd, { forceReload: true }).merged);
+    log.debug("config_refreshed", {
+      cwd,
+      enabled: config.enabled,
+      extensions: config.extensions,
+      promptTemplateLength: config.promptTemplate.length,
+    });
   };
+
+  const diagnostics = (ctx: { cwd?: string; hasUI?: boolean }) => ({
+    cwd: ctx.cwd,
+    hasUI: ctx.hasUI,
+    enabled: config.enabled,
+    modifiedPaths: [...modifiedPaths].sort(),
+  });
 
   pi.on("session_start", async (_event, ctx) => {
     refreshConfig(ctx.cwd);
     modifiedPaths = new Set();
+    log.debug("session_start_reset", diagnostics(ctx));
   });
 
   pi.on("agent_start", async (_event, ctx) => {
     refreshConfig(ctx.cwd);
     modifiedPaths = new Set();
+    log.debug("agent_start_reset", diagnostics(ctx));
   });
 
   pi.on("tool_result", async (event) => {
-    if (event.isError) return;
+    if (event.isError) {
+      log.debug("tool_result_skipped_error", {
+        toolName: event.toolName,
+      });
+      return;
+    }
     const filePath = extractToolPath(event.toolName, event.input);
-    if (!filePath) return;
+    if (!filePath) {
+      log.debug("tool_result_skipped_no_supported_input_path", {
+        toolName: event.toolName,
+      });
+      return;
+    }
     modifiedPaths.add(filePath);
+    log.debug("tool_result_tracked_path", {
+      toolName: event.toolName,
+      filePath,
+      modifiedPaths: [...modifiedPaths].sort(),
+    });
   });
 
   pi.on("agent_end", async (event, ctx) => {
-    if (!config.enabled || !ctx.hasUI) return;
+    log.debug("agent_end_received", diagnostics(ctx));
+    if (!config.enabled) {
+      log.debug("agent_end_skipped_disabled", diagnostics(ctx));
+      return;
+    }
+    if (!ctx.hasUI) {
+      log.debug("agent_end_skipped_no_ui", diagnostics(ctx));
+      return;
+    }
 
     if (suppressNextPrompt) {
       suppressNextPrompt = false;
+      log.debug("agent_end_skipped_suppressed_next_prompt", diagnostics(ctx));
       return;
     }
 
     if (lastUserMessageLooksAutoTriggered(event.messages ?? [])) {
+      log.debug("agent_end_skipped_auto_triggered_message", diagnostics(ctx));
       return;
     }
 
     const supportedPaths = collectSupportedPaths(modifiedPaths, config);
-    if (supportedPaths.length === 0) return;
+    if (supportedPaths.length === 0) {
+      log.debug("agent_end_skipped_no_supported_paths", diagnostics(ctx));
+      return;
+    }
 
+    log.debug("agent_end_confirm_requested", {
+      ...diagnostics(ctx),
+      supportedPaths,
+    });
     const ok = await ctx.ui.confirm(
       "Run code-simplifier?",
       `本轮检测到以下代码文件被修改：\n${supportedPaths
         .map((filePath) => `- ${filePath}`)
         .join("\n")}\n\n是否触发 code-simplifier 做一次行为不变的简化？`,
     );
-    if (!ok) return;
+    log.debug("agent_end_confirm_resolved", {
+      ...diagnostics(ctx),
+      supportedPaths,
+      ok,
+    });
+    if (!ok) {
+      log.debug("agent_end_skipped_confirm_denied", {
+        ...diagnostics(ctx),
+        supportedPaths,
+      });
+      return;
+    }
 
     suppressNextPrompt = true;
+    log.info("agent_end_sending_code_simplifier_prompt", {
+      ...diagnostics(ctx),
+      supportedPaths,
+    });
     pi.sendUserMessage(
       `${buildCodeSimplifierPrompt(supportedPaths, config.promptTemplate)}\n\n[${EXTENSION_SOURCE_TAG}]`,
     );

@@ -8,12 +8,11 @@ It sends Telegram approval and idle-continuation messages so you can keep a Pi s
 
 v1 supports:
 
-- remote approval for explicitly configured tool names
-- project-configurable extra intercepted tool names
-- local approval UI + Telegram approval running in parallel
-- session-scoped `Always`
-- idle notifications on every `agent_end`
-- `Continue / Dismiss`
+- remote fallback for approval events emitted by internal extensions
+- delayed Telegram delivery when local handling has not completed within `approvalTimeoutMs`
+- idle notifications emitted by `extensions/notify/`
+- destructive-command approval events emitted by `extensions/safe-delete/`
+- `Continue / Dismiss` for idle events
 - reply-anchored continuation instructions via `pi.sendUserMessage()`
 - multi-session routing within one Telegram bot/chat
 - short context preview + `Full context` reply-thread expansion
@@ -62,38 +61,41 @@ Recommended setup:
 - `channelType`: currently only `telegram`
 - `botToken`: Telegram bot token (global)
 - `chatId`: Telegram chat id (global)
-- `strictRemote`: if `true` (default), block intercepted tool calls when Telegram is not configured or unavailable; set to `false` to allow local-only fallback
-- `interceptTools`: tool names to intercept; defaults to an empty list
-- `extraInterceptTools`: additional custom tool names to intercept
-- `idleEnabled`: send idle messages on `agent_end`
+- `strictRemote`: if `true` (default), remote approval events that cannot reach Telegram resolve as denied; set to `false` to wait for the local decision instead
+- `interceptTools`: deprecated; kept for settings compatibility and no longer used by `remote-approval`
+- `extraInterceptTools`: deprecated; kept for settings compatibility and no longer used by `remote-approval`
+- `idleEnabled`: send remote idle messages for idle events emitted by `notify`
 - `continueEnabled`: include `Continue` in idle messages
 - `contextTurns`: number of turns in preview/full-context extraction
 - `contextMaxChars`: preview truncation limit per turn
-- `approvalTimeoutMs`: reserved for future timeout policy; `0` means no timeout behavior in v1
+- `approvalTimeoutMs`: delay before escalating unhandled internal events to Telegram; `0` escalates immediately
 - `requestTtlSeconds`: pending Telegram update TTL for shared polling state
 
 ## Behavior
 
 ### Approval flow
 
-When an intercepted tool is called:
+`remote-approval` does not subscribe to `tool_call` or intercept commands directly.
+Internal extensions emit approval events on the shared Pi event bus instead.
 
-1. If Telegram is unavailable and `strictRemote` is enabled, the intercepted tool call is blocked.
-2. Pi shows the native local approval selector.
-3. The extension sends a Telegram approval message.
-4. Either side can resolve first.
-5. `Always` stores a session-scoped allow rule using Pi custom entries.
+For `safe-delete` events:
+
+1. `safe-delete` detects a destructive command and starts the native local confirmation.
+2. It emits a `safe-delete.approval` event with the local decision promise.
+3. `remote-approval` waits `approvalTimeoutMs`.
+4. If the local decision is still pending, it sends a Telegram approval message.
+5. The first local or remote decision resolves the `safe-delete` confirmation.
 
 Telegram approval buttons:
 
 - `✅ Allow`
-- `✅ Always`
 - `❌ Deny`
 - `📖 Full context` (when context is available)
 
 ### Idle / continue flow
 
-On every `agent_end` the extension sends:
+`notify` emits an idle event after it sends the local desktop notification.
+If the event has not been marked handled after `approvalTimeoutMs`, `remote-approval` sends:
 
 - `✏️ Continue`
 - `❌ Dismiss`
@@ -119,11 +121,9 @@ The extension uses `extensions/shared/logger.ts` under the `remote-approval` log
 Useful events currently logged:
 
 - `session_start`
-- `approval_skipped_allow_rule`
-- `approval_unavailable`
-- `approval_resolved`
-- `allow_rule_persisted`
-- `idle_request_created`
+- `notify_idle_remote_request_created`
+- `notify_idle_remote_skipped_handled`
+- `safe_delete_remote_skipped_local_resolved`
 - `session_shutdown`
 
 Logging respects the shared third-extension log settings in `~/.pi/agent/third_extension_settings.json`.

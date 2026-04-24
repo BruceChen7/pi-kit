@@ -159,12 +159,9 @@ export default function remoteApprovalExtension(pi: ExtensionAPI) {
       maxTurns: session.config.contextTurns,
     });
     const promptTitle = buildPromptTitle(toolName, toolInput);
-    const hasLocalUi =
-      ctx.hasUI &&
-      (typeof ctx.ui.custom === "function" ||
-        typeof ctx.ui.select === "function");
+    const hasLocalUi = ctx.hasUI && typeof ctx.ui.select === "function";
 
-    if (!hasLocalUi && !remoteChannel.channel) {
+    if (!remoteChannel.channel) {
       log.warn("approval_unavailable", {
         sessionId: session.identity.sessionId,
         toolName,
@@ -176,7 +173,9 @@ export default function remoteApprovalExtension(pi: ExtensionAPI) {
           reason: "Remote approval required but unavailable",
         };
       }
-      return undefined;
+      if (!hasLocalUi) {
+        return undefined;
+      }
     }
 
     let decision: "allow" | "always" | "deny";

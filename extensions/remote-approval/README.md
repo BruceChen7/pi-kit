@@ -8,7 +8,7 @@ It sends Telegram approval and idle-continuation messages so you can keep a Pi s
 
 v1 supports:
 
-- remote approval for `bash`, `write`, and `edit` by default
+- remote approval for explicitly configured tool names
 - project-configurable extra intercepted tool names
 - local approval UI + Telegram approval running in parallel
 - session-scoped `Always`
@@ -43,8 +43,8 @@ Recommended setup:
     "channelType": "telegram",
     "botToken": "123456:ABC...",
     "chatId": "123456789",
-    "strictRemote": false,
-    "interceptTools": ["bash", "write", "edit"],
+    "strictRemote": true,
+    "interceptTools": [],
     "extraInterceptTools": [],
     "idleEnabled": true,
     "continueEnabled": true,
@@ -62,8 +62,8 @@ Recommended setup:
 - `channelType`: currently only `telegram`
 - `botToken`: Telegram bot token (global)
 - `chatId`: Telegram chat id (global)
-- `strictRemote`: if `true`, block approval when remote approval is required but unavailable
-- `interceptTools`: default intercepted built-in tools
+- `strictRemote`: if `true` (default), block intercepted tool calls when Telegram is not configured or unavailable; set to `false` to allow local-only fallback
+- `interceptTools`: tool names to intercept; defaults to an empty list
 - `extraInterceptTools`: additional custom tool names to intercept
 - `idleEnabled`: send idle messages on `agent_end`
 - `continueEnabled`: include `Continue` in idle messages
@@ -78,10 +78,11 @@ Recommended setup:
 
 When an intercepted tool is called:
 
-1. Pi shows a local approval UI.
-2. The extension sends a Telegram approval message.
-3. Either side can resolve first.
-4. `Always` stores a session-scoped allow rule using Pi custom entries.
+1. If Telegram is unavailable and `strictRemote` is enabled, the intercepted tool call is blocked.
+2. Pi shows the native local approval selector.
+3. The extension sends a Telegram approval message.
+4. Either side can resolve first.
+5. `Always` stores a session-scoped allow rule using Pi custom entries.
 
 Telegram approval buttons:
 

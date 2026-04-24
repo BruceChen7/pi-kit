@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PLANNOTATOR_PENDING_REVIEW_CHANNEL } from "../shared/internal-events.ts";
 import {
   createFakePi,
   createTempRepo,
@@ -261,6 +262,41 @@ describe("plan review trigger timing", () => {
         expect.stringContaining(planFileRelative),
         { deliverAs: "followUp" },
       );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("emits a remote pending-review event when a plan draft is gated", async () => {
+    vi.resetModules();
+    mockPlanReviewApi();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit, events } = createFakePi();
+    const emitted: unknown[] = [];
+    events.on(PLANNOTATOR_PENDING_REVIEW_CHANNEL, (event) => {
+      emitted.push(event);
+    });
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-pending-event-");
+    const repoName = repoRoot.split("/").pop() ?? "repo";
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
+    const ctx = createTestContext(repoRoot, { isIdle: false });
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      expect(emitted).toEqual([
+        expect.objectContaining({
+          type: "plannotator-auto.pending-review",
+          planFiles: [planFileRelative],
+          body: expect.stringContaining("plannotator_auto_submit_review"),
+        }),
+      ]);
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

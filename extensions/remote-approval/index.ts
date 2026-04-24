@@ -1,9 +1,13 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 import {
+  AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL,
   NOTIFY_IDLE_CHANNEL,
+  type PiKitAgentEndCodeSimplifierApprovalEvent,
   type PiKitNotifyIdleEvent,
+  type PiKitPlannotatorPendingReviewEvent,
   type PiKitSafeDeleteApprovalEvent,
+  PLANNOTATOR_PENDING_REVIEW_CHANNEL,
   SAFE_DELETE_APPROVAL_CHANNEL,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
@@ -65,9 +69,21 @@ const ensureSession = (ctx: SessionContext) => {
   });
 };
 
+type RemoteIdleEvent = Pick<
+  PiKitNotifyIdleEvent,
+  | "requestId"
+  | "title"
+  | "body"
+  | "contextPreview"
+  | "fullContextLines"
+  | "continueEnabled"
+  | "handled"
+  | "ctx"
+>;
+
 const handleNotifyIdleEvent = async (
   pi: ExtensionAPI,
-  event: PiKitNotifyIdleEvent,
+  event: RemoteIdleEvent,
 ) => {
   const ctx = event.ctx as SessionContext;
   const session = ensureSession(ctx);
@@ -111,7 +127,20 @@ const handleNotifyIdleEvent = async (
   });
 };
 
-const handleSafeDeleteApprovalEvent = (event: PiKitSafeDeleteApprovalEvent) => {
+type BooleanRemoteApprovalEvent = Pick<
+  PiKitSafeDeleteApprovalEvent,
+  | "requestId"
+  | "body"
+  | "fullContextLines"
+  | "localDecision"
+  | "attachRemoteDecision"
+  | "ctx"
+>;
+
+const handleBooleanApprovalEvent = (
+  event: BooleanRemoteApprovalEvent,
+  options: { textPrefix: string; logPrefix: string },
+) => {
   const ctx = event.ctx as SessionContext;
   const session = ensureSession(ctx);
   if (!session.config.enabled) {
@@ -126,7 +155,7 @@ const handleSafeDeleteApprovalEvent = (event: PiKitSafeDeleteApprovalEvent) => {
 
     await sleep(session.config.approvalTimeoutMs);
     if (localResolved) {
-      log.debug("safe_delete_remote_skipped_local_resolved", {
+      log.debug(`${options.logPrefix}_remote_skipped_local_resolved`, {
         sessionId: session.identity.sessionId,
         requestId: event.requestId,
       });
@@ -141,9 +170,13 @@ const handleSafeDeleteApprovalEvent = (event: PiKitSafeDeleteApprovalEvent) => {
       return await event.localDecision;
     }
 
+    log.debug(`${options.logPrefix}_remote_request_created`, {
+      sessionId: session.identity.sessionId,
+      requestId: event.requestId,
+    });
     const result = await requestRemoteApproval({
       channel: remoteChannel.channel,
-      text: `🔐 Safe delete approval\n\n${event.body}`,
+      text: `${options.textPrefix}\n\n${event.body}`,
       includeAlways: false,
       fullContextLines: event.fullContextLines,
     });
@@ -153,12 +186,36 @@ const handleSafeDeleteApprovalEvent = (event: PiKitSafeDeleteApprovalEvent) => {
   event.attachRemoteDecision(remoteDecision);
 };
 
+const handleSafeDeleteApprovalEvent = (event: PiKitSafeDeleteApprovalEvent) => {
+  handleBooleanApprovalEvent(event, {
+    textPrefix: "🔐 Safe delete approval",
+    logPrefix: "safe_delete",
+  });
+};
+
+const handleAgentEndCodeSimplifierApprovalEvent = (
+  event: PiKitAgentEndCodeSimplifierApprovalEvent,
+) => {
+  handleBooleanApprovalEvent(event, {
+    textPrefix: "🧹 Code simplifier approval",
+    logPrefix: "agent_end_code_simplifier",
+  });
+};
+
 export default function remoteApprovalExtension(pi: ExtensionAPI) {
   pi.events.on(NOTIFY_IDLE_CHANNEL, (event) => {
     void handleNotifyIdleEvent(pi, event as PiKitNotifyIdleEvent);
   });
   pi.events.on(SAFE_DELETE_APPROVAL_CHANNEL, (event) => {
     handleSafeDeleteApprovalEvent(event as PiKitSafeDeleteApprovalEvent);
+  });
+  pi.events.on(AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL, (event) => {
+    handleAgentEndCodeSimplifierApprovalEvent(
+      event as PiKitAgentEndCodeSimplifierApprovalEvent,
+    );
+  });
+  pi.events.on(PLANNOTATOR_PENDING_REVIEW_CHANNEL, (event) => {
+    void handleNotifyIdleEvent(pi, event as PiKitPlannotatorPendingReviewEvent);
   });
 
   pi.on("session_start", async (_event, ctx) => {

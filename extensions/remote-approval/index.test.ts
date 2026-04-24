@@ -5,10 +5,14 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL,
   createHandledState,
   NOTIFY_IDLE_CHANNEL,
+  type PiKitAgentEndCodeSimplifierApprovalEvent,
   type PiKitNotifyIdleEvent,
+  type PiKitPlannotatorPendingReviewEvent,
   type PiKitSafeDeleteApprovalEvent,
+  PLANNOTATOR_PENDING_REVIEW_CHANNEL,
   SAFE_DELETE_APPROVAL_CHANNEL,
 } from "../shared/internal-events.ts";
 import { clearSettingsCache, getSettingsPaths } from "../shared/settings.ts";
@@ -178,6 +182,12 @@ describe("remote-approval extension", () => {
     ]);
     expect(harness.eventHandlers.has(NOTIFY_IDLE_CHANNEL)).toBe(true);
     expect(harness.eventHandlers.has(SAFE_DELETE_APPROVAL_CHANNEL)).toBe(true);
+    expect(
+      harness.eventHandlers.has(AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL),
+    ).toBe(true);
+    expect(harness.eventHandlers.has(PLANNOTATOR_PENDING_REVIEW_CHANNEL)).toBe(
+      true,
+    );
   });
 
   it("sends Telegram idle messages from notify idle events after the timeout", async () => {
@@ -387,6 +397,112 @@ describe("remote-approval extension", () => {
     expect(channel.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining("Allow rm -rf /tmp/demo?"),
+      }),
+    );
+    vi.useRealTimers();
+  });
+
+  it("attaches a remote decision to code-simplifier approval events", async () => {
+    vi.useFakeTimers();
+    const cwd = createTempDir("pi-kit-remote-approval-repo-");
+    writeGlobalRemoteConfig(cwd, {
+      enabled: true,
+      botToken: "123:abc",
+      chatId: "1001",
+      approvalTimeoutMs: 0,
+    });
+
+    const channel = {
+      sendMessage: vi.fn(async () => 42),
+      sendReply: vi.fn(async () => 77),
+      sendReplyPrompt: vi.fn(async () => 99),
+      editMessage: vi.fn(async () => undefined),
+      poll: vi.fn(async () => ({ type: "callback" as const, data: "allow" })),
+    };
+
+    vi.doMock("./channel/index.ts", () => ({
+      createRemoteChannel: () => ({ channel, error: null }),
+    }));
+
+    const remoteApprovalExtension = await loadExtension();
+    const harness = buildPiHarness();
+    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
+    const ctx = createContext(cwd);
+    await harness.emit("session_start", {}, ctx);
+
+    let attached: Promise<boolean> | null = null;
+    harness.api.events.emit(AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL, {
+      type: "agent-end-code-simplifier.approval",
+      requestId: "code_simplifier_1",
+      createdAt: Date.now(),
+      title: "Run code-simplifier?",
+      body: "Run code-simplifier for src/demo.ts?",
+      filePaths: ["src/demo.ts"],
+      contextPreview: [],
+      fullContextLines: [],
+      localDecision: new Promise<boolean>(() => undefined),
+      attachRemoteDecision: (decision) => {
+        attached = decision;
+      },
+      ctx,
+    } satisfies PiKitAgentEndCodeSimplifierApprovalEvent);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(attached).resolves.toBe(true);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Code simplifier approval"),
+      }),
+    );
+    vi.useRealTimers();
+  });
+
+  it("sends Telegram continue messages from plannotator pending review events", async () => {
+    vi.useFakeTimers();
+    const cwd = createTempDir("pi-kit-remote-approval-repo-");
+    writeGlobalRemoteConfig(cwd, {
+      enabled: true,
+      botToken: "123:abc",
+      chatId: "1001",
+      approvalTimeoutMs: 0,
+    });
+
+    const channel = {
+      sendMessage: vi.fn(async () => 42),
+      editMessage: vi.fn(async () => undefined),
+      sendReplyPrompt: vi.fn(async () => 99),
+      poll: vi.fn(async () => null),
+    };
+
+    vi.doMock("./channel/index.ts", () => ({
+      createRemoteChannel: () => ({ channel, error: null }),
+    }));
+
+    const remoteApprovalExtension = await loadExtension();
+    const harness = buildPiHarness();
+    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
+    const ctx = createContext(cwd);
+    await harness.emit("session_start", {}, ctx);
+
+    harness.api.events.emit(PLANNOTATOR_PENDING_REVIEW_CHANNEL, {
+      type: "plannotator-auto.pending-review",
+      requestId: "plannotator_pending_1",
+      createdAt: Date.now(),
+      title: "Plannotator review pending",
+      body: "Call plannotator_auto_submit_review for plan.md",
+      planFiles: ["plan.md"],
+      contextPreview: [],
+      fullContextLines: [],
+      continueEnabled: true,
+      handled: createHandledState(),
+      ctx,
+    } satisfies PiKitPlannotatorPendingReviewEvent);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.resolve();
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("plannotator_auto_submit_review"),
       }),
     );
     vi.useRealTimers();

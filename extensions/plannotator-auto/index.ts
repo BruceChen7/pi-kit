@@ -11,6 +11,11 @@ import {
   getGitCommonDir,
   getRepoRoot,
 } from "../shared/git.ts";
+import {
+  createHandledState,
+  type PiKitPlannotatorPendingReviewEvent,
+  PLANNOTATOR_PENDING_REVIEW_CHANNEL,
+} from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
 import {
@@ -213,6 +218,27 @@ const formatPendingPlanReviewGateMessage = (planFiles: string[]): string =>
 
 const formatPendingPlanReviewPrompt = (planFiles: string[]): string =>
   `[PLANNOTATOR AUTO - PENDING REVIEW]\nPending review targets:\n- ${planFiles.join("\n- ")}\n\nYour next required action is calling ${PLAN_REVIEW_SUBMIT_TOOL} with one pending path. If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`;
+
+const emitPendingPlanReviewEvent = (
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  planFiles: string[],
+): void => {
+  const body = formatPendingPlanReviewGateMessage(planFiles);
+  pi.events.emit(PLANNOTATOR_PENDING_REVIEW_CHANNEL, {
+    type: "plannotator-auto.pending-review",
+    requestId: `plannotator_pending_review_${Date.now()}`,
+    createdAt: Date.now(),
+    title: "Plannotator review pending",
+    body,
+    planFiles,
+    contextPreview: [body],
+    fullContextLines: [body],
+    continueEnabled: true,
+    handled: createHandledState(),
+    ctx,
+  } satisfies PiKitPlannotatorPendingReviewEvent);
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -1814,12 +1840,11 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       pendingPlanReviews.length > 0 &&
       !activePlanReview
     ) {
-      pi.sendUserMessage(
-        formatPendingPlanReviewGateMessage(
-          pendingPlanReviews.map((pending) => pending.planFile),
-        ),
-        { deliverAs: ctx.isIdle() ? "followUp" : "steer" },
-      );
+      const planFiles = pendingPlanReviews.map((pending) => pending.planFile);
+      pi.sendUserMessage(formatPendingPlanReviewGateMessage(planFiles), {
+        deliverAs: ctx.isIdle() ? "followUp" : "steer",
+      });
+      emitPendingPlanReviewEvent(pi, ctx, planFiles);
       if (!ctx.isIdle()) {
         ctx.abort();
       }
@@ -1840,12 +1865,11 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     const pendingPlanReviews = listPendingPlanReviews(state, ctx.cwd);
     const activePlanReview = state.activePlanReviewByCwd.get(ctx.cwd);
     if (pendingPlanReviews.length > 0 && !activePlanReview) {
-      pi.sendUserMessage(
-        formatPendingPlanReviewGateMessage(
-          pendingPlanReviews.map((pending) => pending.planFile),
-        ),
-        { deliverAs: "followUp" },
-      );
+      const planFiles = pendingPlanReviews.map((pending) => pending.planFile);
+      pi.sendUserMessage(formatPendingPlanReviewGateMessage(planFiles), {
+        deliverAs: "followUp",
+      });
+      emitPendingPlanReviewEvent(pi, ctx, planFiles);
       setReviewWidget(ctx);
       return;
     }

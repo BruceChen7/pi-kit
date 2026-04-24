@@ -1,5 +1,9 @@
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import {
+  AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL,
+  type PiKitAgentEndCodeSimplifierApprovalEvent,
+} from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
 
@@ -32,19 +36,23 @@ export const DEFAULT_SUPPORTED_EXTENSIONS = [
 ] as const;
 
 export const DEFAULT_PROMPT_TEMPLATE = [
-  "/skill:code-simplifier 请只针对本轮刚修改的文件做一次行为不变的简化。",
-  "",
-  "修改文件：",
+  "/skill:code-simplifier",
+  "<code_simplifier_request>",
+  "  <scope>只针对本轮刚修改的文件做一次行为不变的简化</scope>",
+  "  <modified_files>",
   "{{files}}",
-  "",
-  "要求：",
-  "- 仅处理上面列出的文件",
-  "- 保持行为、接口、错误语义和副作用不变",
-  "- 如果没有必要的简化空间，直接说明无需修改",
+  "  </modified_files>",
+  "  <requirements>",
+  "    <requirement>仅处理 modified_files 中列出的文件</requirement>",
+  "    <requirement>保持行为、接口、错误语义和副作用不变</requirement>",
+  "    <requirement>如果没有必要的简化空间，直接说明无需修改</requirement>",
+  "  </requirements>",
+  "</code_simplifier_request>",
 ].join("\n");
 
 const SETTINGS_KEY = "agentEndCodeSimplifier";
 const EXTENSION_SOURCE_TAG = "agent-end-code-simplifier";
+const MANUAL_TRIGGER_SHORTCUT = "ctrl+alt+y";
 const log = createLogger(EXTENSION_SOURCE_TAG, {
   minLevel: "debug",
   stderr: null,
@@ -126,11 +134,19 @@ export const collectSupportedPaths = (
     ),
   ).sort();
 
+const escapeXmlText = (value: string): string =>
+  value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+
 export const buildCodeSimplifierPrompt = (
   filePaths: string[],
   promptTemplate = DEFAULT_PROMPT_TEMPLATE,
 ): string => {
-  const files = filePaths.map((filePath) => `- ${filePath}`).join("\n");
+  const files = filePaths
+    .map((filePath) => `  <file>${escapeXmlText(filePath)}</file>`)
+    .join("\n");
   return promptTemplate.replace("{{files}}", files);
 };
 
@@ -209,6 +225,36 @@ export default function agentEndCodeSimplifierExtension(
     modifiedPaths: [...modifiedPaths].sort(),
   });
 
+  const sendCodeSimplifierPrompt = (supportedPaths: string[]) => {
+    suppressNextPrompt = true;
+    pi.sendUserMessage(
+      `${buildCodeSimplifierPrompt(supportedPaths, config.promptTemplate)}\n\n[${EXTENSION_SOURCE_TAG}]`,
+      { deliverAs: "followUp" },
+    );
+  };
+
+  pi.registerShortcut(MANUAL_TRIGGER_SHORTCUT, {
+    description: "Manually trigger code-simplifier for files changed this turn",
+    handler: async (ctx) => {
+      refreshConfig(ctx.cwd);
+      const supportedPaths = collectSupportedPaths(modifiedPaths, config);
+      if (!config.enabled) {
+        ctx.ui.notify("agent-end-code-simplifier is disabled.", "warning");
+        return;
+      }
+      if (supportedPaths.length === 0) {
+        ctx.ui.notify("No supported modified files to simplify.", "info");
+        return;
+      }
+
+      log.info("manual_shortcut_sending_code_simplifier_prompt", {
+        ...diagnostics(ctx),
+        supportedPaths,
+      });
+      sendCodeSimplifierPrompt(supportedPaths);
+    },
+  });
+
   pi.on("session_start", async (_event, ctx) => {
     refreshConfig(ctx.cwd);
     modifiedPaths = new Set();
@@ -275,12 +321,31 @@ export default function agentEndCodeSimplifierExtension(
       ...diagnostics(ctx),
       supportedPaths,
     });
-    const ok = await ctx.ui.confirm(
-      "Run code-simplifier?",
-      `本轮检测到以下代码文件被修改：\n${supportedPaths
-        .map((filePath) => `- ${filePath}`)
-        .join("\n")}\n\n是否触发 code-simplifier 做一次行为不变的简化？`,
-    );
+    const title = "Run code-simplifier?";
+    const body = `本轮检测到以下代码文件被修改：\n${supportedPaths
+      .map((filePath) => `- ${filePath}`)
+      .join("\n")}\n\n是否触发 code-simplifier 做一次行为不变的简化？`;
+    const remoteDecisions: Array<Promise<boolean>> = [];
+    const localDecision = ctx.ui.confirm(title, body);
+    pi.events.emit(AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL, {
+      type: "agent-end-code-simplifier.approval",
+      requestId: `agent_end_code_simplifier_${Date.now()}`,
+      createdAt: Date.now(),
+      title,
+      body,
+      filePaths: supportedPaths,
+      contextPreview: [`${title}\n${body}`],
+      fullContextLines: [`${title}\n${body}`],
+      localDecision,
+      attachRemoteDecision: (decision: Promise<boolean>) => {
+        remoteDecisions.push(decision);
+      },
+      ctx,
+    } satisfies PiKitAgentEndCodeSimplifierApprovalEvent);
+
+    const ok = await (remoteDecisions.length > 0
+      ? Promise.race([localDecision, ...remoteDecisions])
+      : localDecision);
     log.debug("agent_end_confirm_resolved", {
       ...diagnostics(ctx),
       supportedPaths,
@@ -294,13 +359,10 @@ export default function agentEndCodeSimplifierExtension(
       return;
     }
 
-    suppressNextPrompt = true;
     log.info("agent_end_sending_code_simplifier_prompt", {
       ...diagnostics(ctx),
       supportedPaths,
     });
-    pi.sendUserMessage(
-      `${buildCodeSimplifierPrompt(supportedPaths, config.promptTemplate)}\n\n[${EXTENSION_SOURCE_TAG}]`,
-    );
+    sendCodeSimplifierPrompt(supportedPaths);
   });
 }

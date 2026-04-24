@@ -67,10 +67,6 @@ const CLEANUP_SCOPE_OPTIONS = [
   "Local worktree + local branch + remote branch",
 ] as const;
 
-// Matches cleanup command output for missing git refs/worktrees.
-const MISSING_RESOURCE_ERROR_PATTERN =
-  /not found|does not exist|no such|already removed|unknown worktree/i;
-
 type TodoCompletionMenuOption = (typeof TODO_COMPLETION_MENU_OPTIONS)[number];
 type CleanupScopeOption = (typeof CLEANUP_SCOPE_OPTIONS)[number];
 
@@ -131,10 +127,6 @@ function formatCommandError(result: CommandResult, fallback: string): string {
   return trimToNull(result.stderr) ?? trimToNull(result.stdout) ?? fallback;
 }
 
-function matchesMissingResource(message: string): boolean {
-  return MISSING_RESOURCE_ERROR_PATTERN.test(message);
-}
-
 function invalidTodoCompletionUsage(): ParsedTodoCompletionAction {
   return {
     kind: "error",
@@ -192,10 +184,6 @@ function parseTodoCompletionArgs(rawArgs: string): ParsedTodoCompletionAction {
   return { kind: "cleanup-one", id: value };
 }
 
-function buildActionCompletionItems(): AutocompleteItem[] {
-  return getTodoCompletionActionItems();
-}
-
 async function doesGitRefExist(
   pi: ExtensionAPI,
   repoRoot: string,
@@ -203,6 +191,14 @@ async function doesGitRefExist(
 ): Promise<boolean> {
   const result = await runGit(pi, repoRoot, ["rev-parse", "--verify", ref]);
   return result.code === 0;
+}
+
+async function doesLocalBranchExist(
+  pi: ExtensionAPI,
+  repoRoot: string,
+  branch: string,
+): Promise<boolean> {
+  return doesGitRefExist(pi, repoRoot, `refs/heads/${branch}`);
 }
 
 async function inspectTodoMergeState(
@@ -484,6 +480,10 @@ async function removeWorktree(
     return "missing work branch";
   }
 
+  if (isMissingTodoWorktree(todo)) {
+    return null;
+  }
+
   const result = await runWt(pi, repoRoot, [
     "remove",
     todo.workBranch,
@@ -494,8 +494,11 @@ async function removeWorktree(
     return null;
   }
 
-  const message = formatCommandError(result, "wt remove failed");
-  return matchesMissingResource(message) ? null : `worktree: ${message}`;
+  if (isMissingTodoWorktree(todo)) {
+    return null;
+  }
+
+  return `worktree: ${formatCommandError(result, "wt remove failed")}`;
 }
 
 async function removeLocalBranch(
@@ -507,13 +510,20 @@ async function removeLocalBranch(
     return "missing work branch";
   }
 
+  if (!(await doesLocalBranchExist(pi, repoRoot, todo.workBranch))) {
+    return null;
+  }
+
   const result = await runGit(pi, repoRoot, ["branch", "-d", todo.workBranch]);
   if (result.code === 0) {
     return null;
   }
 
-  const message = formatCommandError(result, "git branch -d failed");
-  return matchesMissingResource(message) ? null : `local branch: ${message}`;
+  if (!(await doesLocalBranchExist(pi, repoRoot, todo.workBranch))) {
+    return null;
+  }
+
+  return `local branch: ${formatCommandError(result, "git branch -d failed")}`;
 }
 
 async function removeRemoteBranch(
@@ -966,7 +976,7 @@ export async function getTodoCompletionArgumentCompletions(
 ): Promise<AutocompleteItem[] | null> {
   const { tokens, current } = parseCompletionPrefix(argumentPrefix);
   if (tokens.length === 0) {
-    return filterCompletionItems(buildActionCompletionItems(), current);
+    return filterCompletionItems(getTodoCompletionActionItems(), current);
   }
 
   const repoRoot = process.cwd();

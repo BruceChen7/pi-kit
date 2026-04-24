@@ -2686,6 +2686,8 @@ describe("todo-workflow extension", () => {
 
   it("cleans up one merged todo and reconciles it to done", async () => {
     const repoRoot = createTempRepo();
+    const worktreePath = path.join(repoRoot, ".wt", "cleanup-merged-todo");
+    fs.mkdirSync(worktreePath, { recursive: true });
     fs.writeFileSync(
       path.join(repoRoot, ".pi", "todos.json"),
       JSON.stringify(
@@ -2697,7 +2699,7 @@ describe("todo-workflow extension", () => {
               status: "doing",
               sourceBranch: "main",
               workBranch: "cleanup-merged-todo",
-              worktreePath: "/tmp/cleanup-merged-todo",
+              worktreePath,
               createdAt: "2026-04-22T10:00:00.000Z",
               updatedAt: "2026-04-22T10:00:00.000Z",
               startedAt: "2026-04-22T10:01:00.000Z",
@@ -2806,6 +2808,136 @@ describe("todo-workflow extension", () => {
         item.message.includes("Cleanup merged todo"),
       ),
     ).toBe(true);
+  });
+
+  it("treats already missing cleanup resources as success without parsing command errors", async () => {
+    const repoRoot = createTempRepo();
+    const missingWorktreePath = path.join(
+      repoRoot,
+      ".wt",
+      "cleanup-disappeared",
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Cleanup disappeared resources",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "cleanup-disappeared",
+              worktreePath: missingWorktreePath,
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const { custom } = createUiCustomMock();
+    const select = vi.fn(async () => "Local worktree + local branch");
+    const exec = vi.fn(async (command: string, args: string[]) => {
+      if (command === "wt" && args[2] === "remove") {
+        return {
+          code: 1,
+          stdout: "",
+          stderr: "opaque worktree cleanup failure",
+        };
+      }
+      if (command === "git" && args[2] === "rev-parse") {
+        const ref = args.at(-1);
+        return ref === "refs/heads/cleanup-disappeared"
+          ? { code: 1, stdout: "", stderr: "opaque branch lookup failure" }
+          : { code: 0, stdout: "sha\n", stderr: "" };
+      }
+      if (command === "git" && args[2] === "merge-base") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "branch" && args[3] === "-d") {
+        return {
+          code: 1,
+          stdout: "",
+          stderr: "opaque branch cleanup failure",
+        };
+      }
+      throw new Error(`Unexpected ${command} args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("cleanup todo-1", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        custom,
+        select,
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+        setStatus: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+      switchSession: vi.fn(async () => ({ cancelled: false })),
+    });
+
+    const store = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as { todos: Array<{ status: string; completedAt?: string }> };
+
+    expect(store.todos[0]).toMatchObject({
+      status: "done",
+      completedAt: expect.any(String),
+    });
+    expect(notifications).toContainEqual({
+      message: "Cleaned TODO: Cleanup disappeared resources",
+      level: "info",
+    });
+    expect(exec).not.toHaveBeenCalledWith("wt", [
+      "-C",
+      repoRoot,
+      "remove",
+      "cleanup-disappeared",
+      "--yes",
+      "--foreground",
+    ]);
+    expect(exec).not.toHaveBeenCalledWith("git", [
+      "-C",
+      repoRoot,
+      "branch",
+      "-d",
+      "cleanup-disappeared",
+    ]);
   });
 
   it("cleans up all merged todos and skips the rest", async () => {

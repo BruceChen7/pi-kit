@@ -333,17 +333,17 @@ export const createTelegramClient = (input: {
         ttlMs: 10 * 60 * 1000,
         requestUpdates: async (offset) => {
           try {
-            const result = await requestTelegram<Array<Record<string, unknown>>>(
-              {
-                botToken: input.botToken,
-                method: "getUpdates",
-                body: {
-                  offset,
-                  timeout: 0,
-                  allowed_updates: ["callback_query", "message"],
-                },
+            const result = await requestTelegram<
+              Array<Record<string, unknown>>
+            >({
+              botToken: input.botToken,
+              method: "getUpdates",
+              body: {
+                offset,
+                timeout: 0,
+                allowed_updates: ["callback_query", "message"],
               },
-            );
+            });
             return result;
           } catch (error) {
             if (

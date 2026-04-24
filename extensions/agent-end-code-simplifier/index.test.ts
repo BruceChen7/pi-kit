@@ -102,13 +102,16 @@ describe("buildCodeSimplifierPrompt", () => {
     );
   });
 
-  it("tells automatic code-simplifier follow-ups to follow skill rules without creating plans", () => {
+  it("tells automatic code-simplifier follow-ups to inspect full file context", () => {
     const prompt = buildCodeSimplifierPrompt(["a.ts"]);
 
     expect(prompt).toContain(
       "先遵循 code-simplifier skill 中定义的规则，再遵循以下附加约束",
     );
     expect(prompt).toContain("这是自动后处理任务，不要创建 plan");
+    expect(prompt).toContain("读取 modified_files 中每个文件的完整内容");
+    expect(prompt).toContain("不要只看 diff 或刚改动的片段");
+    expect(prompt).toContain("浅封装/pass-through helper");
   });
 });
 

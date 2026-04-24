@@ -4,7 +4,37 @@
 * Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions), unless it qualifies for the "Skill-only exception" below.
 * If something goes sideways, STOP and re-plan immediately - don't keep pushing
 * Use plan mode for verification steps, not just building. Write detailed specs upfront to reduce ambiguity
-* Use Chinese to write the plan
+* Plan output must follow the fixed structure below so progress, verification, and review results are easy to scan.
+* Write plan content in English unless the user explicitly requests another language.
+
+### Plan Output Format
+
+When creating a plan file, use this structure exactly unless a skill requires a more specific format:
+
+```markdown
+## Context
+- Briefly describe the user's goal, expected outcome, current constraints, and affected files or modules.
+
+## Steps
+- [ ] A specific, verifiable implementation step
+- [ ] Another specific, verifiable implementation step
+- [ ] Update the Review section with final results
+
+## Verification
+- List the commands, checks, or reason verification is not needed.
+- Each check should prove the change satisfies the user's goal.
+
+## Review
+- Record the final outcome, verification status, remaining work, or known risks.
+
+```
+
+Plan formatting requirements:
+- Use `##` headings only for the top-level plan sections: `Context`, `Steps`, `Verification`, and `Review`.
+- Use checkboxes (`- [ ]` / `- [x]`) for all actionable steps.
+- Keep every step outcome-oriented and verifiable; avoid vague steps like "modify files" without naming the target.
+- Update checkbox status as work progresses.
+- Fill in `Review` before finishing the task, including commands run and any skipped verification with reasons.
 
 ### Skill Integration (Plan Mode + Skills)
 

@@ -2259,6 +2259,123 @@ describe("todo-workflow extension", () => {
     });
   });
 
+  it("marks todo done with a warning when finish worktree directory is missing", async () => {
+    const repoRoot = createTempRepo();
+    const missingWorktreePath = path.join(repoRoot, ".wt", "missing-worktree");
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Finish missing worktree",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "missing-worktree",
+              worktreePath: missingWorktreePath,
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const { custom } = createUiCustomMock();
+    const exec = vi.fn(async (command: string, args: string[]) => {
+      if (
+        command === "git" &&
+        args[1] === repoRoot &&
+        args[2] === "branch" &&
+        args[3] === "--show-current"
+      ) {
+        return { code: 0, stdout: "main\n", stderr: "" };
+      }
+      if (command === "git" && args[1] === repoRoot && args[2] === "status") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (
+        command === "git" &&
+        args[1] === missingWorktreePath &&
+        args[2] === "status"
+      ) {
+        return {
+          code: 128,
+          stdout: "",
+          stderr: "git status failed before reading the worktree",
+        };
+      }
+      throw new Error(`Unexpected ${command} args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("finish todo-1 --message fix: finish missing worktree", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        custom,
+        select: vi.fn(),
+        input: vi.fn(),
+        confirm: vi.fn(),
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+        setStatus: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+      switchSession: vi.fn(async () => ({ cancelled: false })),
+    });
+
+    const store = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as { todos: Array<{ status: string; completedAt?: string }> };
+
+    expect(store.todos[0]?.status).toBe("done");
+    expect(store.todos[0]?.completedAt).toBeTruthy();
+    expect(notifications).toContainEqual({
+      message: `Worktree path is missing; marked TODO done without merge: ${missingWorktreePath}`,
+      level: "warning",
+    });
+    expect(exec).not.toHaveBeenCalledWith("wt", expect.any(Array));
+    expect(exec).not.toHaveBeenCalledWith("git", [
+      "-C",
+      repoRoot,
+      "commit",
+      "-m",
+      "fix: finish missing worktree",
+    ]);
+  });
+
   it("cancels finish when recent commit merge confirmation is denied", async () => {
     const repoRoot = createTempRepo();
     fs.writeFileSync(

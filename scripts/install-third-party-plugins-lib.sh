@@ -133,29 +133,30 @@ settings_contains_package() {
 
     [ -f "$settings_file" ] || return 1
 
-    python3 - "$settings_file" "$@" <<'PY'
-import json
-import sys
+    node - "$settings_file" "$@" <<'JS'
+const fs = require("node:fs");
 
-settings_file = sys.argv[1]
-candidates = set(sys.argv[2:])
+const [, , settingsFile, ...candidates] = process.argv;
+const candidateSet = new Set(candidates);
 
-try:
-    with open(settings_file, encoding="utf-8") as handle:
-        settings = json.load(handle)
-except Exception:
-    raise SystemExit(1)
+let settings;
+try {
+  settings = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+} catch {
+  process.exit(1);
+}
 
-packages = settings.get("packages")
-if not isinstance(packages, list):
-    raise SystemExit(1)
+if (!Array.isArray(settings.packages)) process.exit(1);
 
-for package in packages:
-    if isinstance(package, str) and package in candidates:
-        raise SystemExit(0)
-
-raise SystemExit(1)
-PY
+process.exit(
+  settings.packages.some(
+    (packageSource) =>
+      typeof packageSource === "string" && candidateSet.has(packageSource),
+  )
+    ? 0
+    : 1,
+);
+JS
 }
 
 is_installed() {

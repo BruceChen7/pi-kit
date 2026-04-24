@@ -60,6 +60,7 @@ const GLOBAL_EXTENSION_DIR = path.join(
   "agent",
   "extensions",
 );
+const GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES = new Set(["plugin-toggle", "shared"]);
 const PROJECT_EXTENSION_DIR = path.join(".pi", "extensions");
 
 const normalizeName = (name: string): string => name.trim().toLowerCase();
@@ -126,6 +127,14 @@ function updateManagedPlugin(
   writeManagedPlugins(cwd, managed);
 }
 
+function statTargetOrNull(filePath: string): fs.Stats | null {
+  try {
+    return fs.statSync(filePath);
+  } catch {
+    return null;
+  }
+}
+
 function isPluginDir(dir: string): boolean {
   return fs.existsSync(path.join(dir, "index.ts"));
 }
@@ -147,7 +156,8 @@ export function discoverPlugins(
   for (const entryName of fs.readdirSync(libraryDir).sort()) {
     if (entryName.startsWith(".")) continue;
     const sourcePath = path.join(libraryDir, entryName);
-    const stat = fs.lstatSync(sourcePath);
+    const stat = statTargetOrNull(sourcePath);
+    if (!stat) continue;
 
     if (stat.isDirectory() && isPluginDir(sourcePath)) {
       plugins.push({
@@ -270,6 +280,45 @@ export function formatEnabledPluginsMessage(pluginNames: string[]): string {
   return `Enabled managed plugins (${sorted.length}): ${sorted.join(", ")}`;
 }
 
+function isProjectInstalledPlugin(
+  entryName: string,
+  entryPath: string,
+): boolean {
+  if (
+    entryName.startsWith(".") ||
+    entryName.endsWith(".log") ||
+    entryName === "shared"
+  ) {
+    return false;
+  }
+
+  const stat = statTargetOrNull(entryPath);
+  if (!stat) return false;
+  if (stat.isDirectory()) return isPluginDir(entryPath);
+  return stat.isFile() && isPluginFile(entryName);
+}
+
+export function getInstalledProjectPlugins(cwd: string): string[] {
+  const extensionDir = projectExtensionsDir(cwd);
+  if (!fs.existsSync(extensionDir)) return [];
+
+  return fs
+    .readdirSync(extensionDir)
+    .filter((entryName) =>
+      isProjectInstalledPlugin(entryName, path.join(extensionDir, entryName)),
+    )
+    .map((entryName) => path.basename(entryName, ".ts"))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+export function formatInstalledPluginsMessage(pluginNames: string[]): string {
+  if (pluginNames.length === 0) return "No installed plugins";
+  const sorted = [...pluginNames].sort((left, right) =>
+    left.localeCompare(right),
+  );
+  return `Installed plugins (${sorted.length}): ${sorted.join(", ")}`;
+}
+
 function globalPluginEntries(globalDir: string): PluginEntry[] {
   if (!fs.existsSync(globalDir)) return [];
   const plugins: PluginEntry[] = [];
@@ -350,6 +399,14 @@ function filterPlugins(plugins: PluginEntry[], query: string): PluginEntry[] {
   if (!normalized) return plugins;
   return plugins.filter((plugin) =>
     plugin.name.toLowerCase().includes(normalized),
+  );
+}
+
+function isGlobalAutoloadPlugin(entry: string): boolean {
+  return (
+    !entry.startsWith(".") &&
+    !entry.endsWith(".log") &&
+    !GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES.has(entry)
   );
 }
 
@@ -548,6 +605,14 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
     },
   });
 
+  pi.registerCommand("installed-plugins", {
+    description: "Show installed project-local plugins from .pi/extensions",
+    handler: async (_args: string, ctx: ExtensionContext) => {
+      const installed = getInstalledProjectPlugins(ctx.cwd);
+      ctx.ui.notify(formatInstalledPluginsMessage(installed), "info");
+    },
+  });
+
   pi.registerCommand("migrate-global-plugins", {
     description:
       "Move global symlink plugins to ~/.agents/pi-plugins for project opt-in",
@@ -574,7 +639,7 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
     if (fs.existsSync(GLOBAL_EXTENSION_DIR)) {
       const globals = fs
         .readdirSync(GLOBAL_EXTENSION_DIR)
-        .filter((entry) => !entry.startsWith("."));
+        .filter(isGlobalAutoloadPlugin);
       if (globals.length > 0 && ctx.hasUI) {
         ctx.ui.notify(
           "Global plugins still auto-load in every project. Use /migrate-global-plugins to opt in per project.",

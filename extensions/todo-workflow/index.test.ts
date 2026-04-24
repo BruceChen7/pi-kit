@@ -2965,6 +2965,117 @@ describe("todo-workflow extension", () => {
     });
   });
 
+  it("keeps todo doing when /todo finish commit command throws", async () => {
+    const repoRoot = createTempRepo();
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Finish commit hook output",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "finish-commit-hook-output",
+              worktreePath: "/tmp/finish-commit-hook-output",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const exec = vi.fn(async (command: string, args: string[]) => {
+      if (
+        command === "git" &&
+        args[2] === "branch" &&
+        args[3] === "--show-current"
+      ) {
+        return { code: 0, stdout: "main\n", stderr: "" };
+      }
+      if (command === "git" && args[2] === "status") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "log") {
+        return { code: 0, stdout: "abc1234 fix: merge flow", stderr: "" };
+      }
+      if (command === "wt" && args[2] === "merge") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "commit") {
+        throw new Error("Formatted 200 files in 55ms. No fixes applied.");
+      }
+      throw new Error(`Unexpected ${command} args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    const select = vi
+      .fn<() => Promise<string | undefined>>()
+      .mockResolvedValueOnce(
+        "Finish commit hook output [todo-1] • doing • finish-commit-hook-output",
+      );
+
+    await expect(
+      handler("finish", {
+        cwd: repoRoot,
+        hasUI: true,
+        ui: {
+          select,
+          input: async () => "fix: finish merge flow",
+          confirm: async () => true,
+          notify(message: string, level: string) {
+            notifications.push({ message, level });
+          },
+          setStatus: vi.fn(),
+        },
+        sessionManager: {
+          getSessionFile() {
+            return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+          },
+        },
+        switchSession: vi.fn(async () => ({ cancelled: false })),
+      }),
+    ).resolves.toBeUndefined();
+
+    const store = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as { todos: Array<{ status: string; completedAt?: string }> };
+
+    expect(store.todos[0]?.status).toBe("doing");
+    expect(store.todos[0]?.completedAt).toBeUndefined();
+    expect(notifications).toContainEqual({
+      message: "Formatted 200 files in 55ms. No fixes applied.",
+      level: "error",
+    });
+  });
+
   it("keeps todo doing when /todo finish merge fails", async () => {
     const repoRoot = createTempRepo();
     fs.writeFileSync(

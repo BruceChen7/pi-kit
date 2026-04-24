@@ -402,6 +402,39 @@ describe("remote-approval extension", () => {
     vi.useRealTimers();
   });
 
+  it("does not attach a denying remote decision when code-simplifier remote channel is unavailable", async () => {
+    const cwd = createTempDir("pi-kit-remote-approval-repo-");
+    writeGlobalRemoteConfig(cwd, {
+      enabled: true,
+      approvalTimeoutMs: 0,
+    });
+
+    const remoteApprovalExtension = await loadExtension();
+    const harness = buildPiHarness();
+    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
+    const ctx = createContext(cwd);
+    await harness.emit("session_start", {}, ctx);
+
+    let attached: Promise<boolean> | null = null;
+    harness.api.events.emit(AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL, {
+      type: "agent-end-code-simplifier.approval",
+      requestId: "code_simplifier_no_channel",
+      createdAt: Date.now(),
+      title: "Run code-simplifier?",
+      body: "Run code-simplifier for src/demo.ts?",
+      filePaths: ["src/demo.ts"],
+      contextPreview: [],
+      fullContextLines: [],
+      localDecision: Promise.resolve(true),
+      attachRemoteDecision: (decision) => {
+        attached = decision;
+      },
+      ctx,
+    } satisfies PiKitAgentEndCodeSimplifierApprovalEvent);
+
+    expect(attached).toBeNull();
+  });
+
   it("attaches a remote decision to code-simplifier approval events", async () => {
     vi.useFakeTimers();
     const cwd = createTempDir("pi-kit-remote-approval-repo-");

@@ -147,6 +147,15 @@ const handleBooleanApprovalEvent = (
     return;
   }
 
+  const remoteChannel = createRemoteChannel(session.config);
+  if (!remoteChannel.channel) {
+    log.debug(`${options.logPrefix}_remote_skipped_no_channel`, {
+      sessionId: session.identity.sessionId,
+      requestId: event.requestId,
+    });
+    return;
+  }
+
   const remoteDecision = (async (): Promise<boolean> => {
     let localResolved = false;
     void event.localDecision.finally(() => {
@@ -159,14 +168,6 @@ const handleBooleanApprovalEvent = (
         sessionId: session.identity.sessionId,
         requestId: event.requestId,
       });
-      return await event.localDecision;
-    }
-
-    const remoteChannel = createRemoteChannel(session.config);
-    if (!remoteChannel.channel) {
-      if (session.config.strictRemote) {
-        return false;
-      }
       return await event.localDecision;
     }
 

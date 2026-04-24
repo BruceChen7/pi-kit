@@ -527,6 +527,23 @@ function detectTruncationThreats({
   return threats;
 }
 
+function getCommandName({ command }: { command: string }): string {
+  const firstToken = command.match(/^\s*(\S+)/)?.[1] ?? "";
+  return path.basename(firstToken);
+}
+
+function isFilesystemFormatCommand({ command }: { command: string }): boolean {
+  const commandName = getCommandName({ command });
+
+  return (
+    commandName === "format" ||
+    commandName === "mkfs" ||
+    commandName.startsWith("mkfs.") ||
+    commandName === "newfs" ||
+    commandName.startsWith("newfs_")
+  );
+}
+
 function detectDeviceThreats({ command }: { command: string }): Threat[] {
   const threats: Threat[] = [];
 
@@ -540,8 +557,8 @@ function detectDeviceThreats({ command }: { command: string }): Threat[] {
     });
   }
 
-  // mkfs / format
-  if (/\b(mkfs|newfs|format)\b/.test(command)) {
+  // mkfs / newfs / format as the invoked executable, not language formatter subcommands.
+  if (isFilesystemFormatCommand({ command })) {
     log?.warn("filesystem format command detected", { command });
     threats.push({
       description: "Filesystem format command detected",

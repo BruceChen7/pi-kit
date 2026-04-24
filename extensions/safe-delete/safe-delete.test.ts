@@ -5,6 +5,93 @@ import { SAFE_DELETE_APPROVAL_CHANNEL } from "../shared/internal-events.ts";
 
 const loadSafeDelete = async () => (await import("./safe-delete.ts")).default;
 
+describe("safe-delete command analysis", () => {
+  it.each([
+    "npm format",
+    "npm run format",
+    "pnpm format",
+    "biome format --write .",
+  ])("does not intercept language formatter command: %s", async (command) => {
+    const handlers = new Map<
+      string,
+      (event: unknown, ctx: unknown) => unknown
+    >();
+    const events = {
+      emit: vi.fn(),
+      on: vi.fn(),
+    };
+    const safeDelete = await loadSafeDelete();
+    safeDelete({
+      on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+        handlers.set(name, handler);
+      },
+      events,
+    } as unknown as ExtensionAPI);
+
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: {
+        confirm: vi.fn(async () => true),
+      },
+      sessionManager: {
+        getEntries: () => [],
+      },
+    };
+
+    const result = await handlers.get("tool_call")?.(
+      { toolName: "bash", input: { command } },
+      ctx,
+    );
+
+    expect(result).toBeUndefined();
+    expect(ctx.ui.confirm).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it("still intercepts direct filesystem format commands", async () => {
+    const handlers = new Map<
+      string,
+      (event: unknown, ctx: unknown) => unknown
+    >();
+    const events = {
+      emit: vi.fn(),
+      on: vi.fn(),
+    };
+    const safeDelete = await loadSafeDelete();
+    safeDelete({
+      on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+        handlers.set(name, handler);
+      },
+      events,
+    } as unknown as ExtensionAPI);
+
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: {
+        confirm: vi.fn(async () => true),
+      },
+      sessionManager: {
+        getEntries: () => [],
+      },
+    };
+
+    const result = await handlers.get("tool_call")?.(
+      { toolName: "bash", input: { command: "format /dev/disk2" } },
+      ctx,
+    );
+
+    expect(result).toBeUndefined();
+    expect(ctx.ui.confirm).toHaveBeenCalledWith(
+      "CRITICAL: Destructive command detected",
+      expect.stringContaining("Filesystem format command detected"),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(events.emit).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("safe-delete remote approval events", () => {
   it("closes local confirmation when an attached remote decision wins", async () => {
     const handlers = new Map<

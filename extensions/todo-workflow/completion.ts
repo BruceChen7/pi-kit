@@ -67,6 +67,10 @@ const CLEANUP_SCOPE_OPTIONS = [
   "Local worktree + local branch + remote branch",
 ] as const;
 
+// Matches cleanup command output for missing git refs/worktrees.
+const MISSING_RESOURCE_ERROR_PATTERN =
+  /not found|does not exist|no such|already removed|unknown worktree/i;
+
 type TodoCompletionMenuOption = (typeof TODO_COMPLETION_MENU_OPTIONS)[number];
 type CleanupScopeOption = (typeof CLEANUP_SCOPE_OPTIONS)[number];
 
@@ -128,9 +132,7 @@ function formatCommandError(result: CommandResult, fallback: string): string {
 }
 
 function matchesMissingResource(message: string): boolean {
-  return /not found|does not exist|no such|already removed|unknown worktree/i.test(
-    message,
-  );
+  return MISSING_RESOURCE_ERROR_PATTERN.test(message);
 }
 
 function invalidTodoCompletionUsage(): ParsedTodoCompletionAction {
@@ -706,6 +708,7 @@ async function runFinishFlow(
     return;
   }
 
+  let skippedMergeForMissingWorktree = false;
   const finished = await runWithWorkingLoader(
     ctx,
     async () => {
@@ -724,6 +727,11 @@ async function runFinishFlow(
 
       const workClean = await isGitWorktreeClean(pi, target.worktreePath);
       if (workClean.ok === false) {
+        if (!fs.existsSync(target.worktreePath)) {
+          skippedMergeForMissingWorktree = true;
+          return true;
+        }
+
         ctx.ui.notify(workClean.message, "error");
         return false;
       }
@@ -774,6 +782,15 @@ async function runFinishFlow(
   }
 
   const completed = markTodoDone(ctx.cwd, { id: target.id });
+  if (skippedMergeForMissingWorktree) {
+    ctx.ui.notify(
+      `Worktree path is missing; marked TODO done without merge: ${target.worktreePath}`,
+      "warning",
+    );
+    ctx.ui.notify(`Completed TODO: ${completed.description}`, "info");
+    return;
+  }
+
   const cleanupNow = await ctx.ui.confirm(
     `Clean up worktree/branch for "${target.description}"?`,
     `${target.workBranch}${target.worktreePath ? ` • ${target.worktreePath}` : ""}`,

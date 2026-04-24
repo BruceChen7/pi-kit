@@ -101,6 +101,15 @@ describe("buildCodeSimplifierPrompt", () => {
       "  <file>a.ts</file>",
     );
   });
+
+  it("tells automatic code-simplifier follow-ups to follow skill rules without creating plans", () => {
+    const prompt = buildCodeSimplifierPrompt(["a.ts"]);
+
+    expect(prompt).toContain(
+      "先遵循 code-simplifier skill 中定义的规则，再遵循以下附加约束",
+    );
+    expect(prompt).toContain("这是自动后处理任务，不要创建 plan");
+  });
 });
 
 describe("extension diagnostics", () => {

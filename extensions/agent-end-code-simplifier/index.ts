@@ -43,6 +43,8 @@ export const DEFAULT_PROMPT_TEMPLATE = [
   "{{files}}",
   "  </modified_files>",
   "  <requirements>",
+  "    <requirement>先遵循 code-simplifier skill 中定义的规则，再遵循以下附加约束</requirement>",
+  "    <requirement>这是自动后处理任务，不要创建 plan</requirement>",
   "    <requirement>仅处理 modified_files 中列出的文件</requirement>",
   "    <requirement>保持行为、接口、错误语义和副作用不变</requirement>",
   "    <requirement>如果没有必要的简化空间，直接说明无需修改</requirement>",

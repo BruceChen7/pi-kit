@@ -13,6 +13,7 @@
     "extensions": [
       "./extensions/copyx",
       "./extensions/skill-toggle",
+      "./extensions/plugin-toggle",
       "./extensions/bash-hook",
       "./extensions/env-guard",
       "./extensions/rtk-rewrite",

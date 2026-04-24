@@ -2,9 +2,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 import {
   AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL,
-  NOTIFY_IDLE_CHANNEL,
   type PiKitAgentEndCodeSimplifierApprovalEvent,
-  type PiKitNotifyIdleEvent,
   type PiKitPlannotatorPendingReviewEvent,
   type PiKitSafeDeleteApprovalEvent,
   PLANNOTATOR_PENDING_REVIEW_CHANNEL,
@@ -69,8 +67,8 @@ const ensureSession = (ctx: SessionContext) => {
   });
 };
 
-type RemoteIdleEvent = Pick<
-  PiKitNotifyIdleEvent,
+type RemoteContinueEvent = Pick<
+  PiKitPlannotatorPendingReviewEvent,
   | "requestId"
   | "title"
   | "body"
@@ -81,9 +79,9 @@ type RemoteIdleEvent = Pick<
   | "ctx"
 >;
 
-const handleNotifyIdleEvent = async (
+const handleRemoteContinueEvent = async (
   pi: ExtensionAPI,
-  event: RemoteIdleEvent,
+  event: RemoteContinueEvent,
 ) => {
   const ctx = event.ctx as SessionContext;
   const session = ensureSession(ctx);
@@ -207,9 +205,6 @@ const handleAgentEndCodeSimplifierApprovalEvent = (
 };
 
 export default function remoteApprovalExtension(pi: ExtensionAPI) {
-  pi.events.on(NOTIFY_IDLE_CHANNEL, (event) => {
-    void handleNotifyIdleEvent(pi, event as PiKitNotifyIdleEvent);
-  });
   pi.events.on(SAFE_DELETE_APPROVAL_CHANNEL, (event) => {
     handleSafeDeleteApprovalEvent(event as PiKitSafeDeleteApprovalEvent);
   });
@@ -219,7 +214,10 @@ export default function remoteApprovalExtension(pi: ExtensionAPI) {
     );
   });
   pi.events.on(PLANNOTATOR_PENDING_REVIEW_CHANNEL, (event) => {
-    void handleNotifyIdleEvent(pi, event as PiKitPlannotatorPendingReviewEvent);
+    void handleRemoteContinueEvent(
+      pi,
+      event as PiKitPlannotatorPendingReviewEvent,
+    );
   });
 
   pi.on("session_start", async (_event, ctx) => {

@@ -180,7 +180,7 @@ describe("remote-approval extension", () => {
       "session_shutdown",
       "session_start",
     ]);
-    expect(harness.eventHandlers.has(NOTIFY_IDLE_CHANNEL)).toBe(true);
+    expect(harness.eventHandlers.has(NOTIFY_IDLE_CHANNEL)).toBe(false);
     expect(harness.eventHandlers.has(SAFE_DELETE_APPROVAL_CHANNEL)).toBe(true);
     expect(
       harness.eventHandlers.has(AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL),
@@ -190,14 +190,13 @@ describe("remote-approval extension", () => {
     );
   });
 
-  it("sends Telegram idle messages from notify idle events after the timeout", async () => {
-    vi.useFakeTimers();
+  it("does not register Telegram idle handling for notify idle events", async () => {
     const cwd = createTempDir("pi-kit-remote-approval-repo-");
     writeGlobalRemoteConfig(cwd, {
       enabled: true,
       botToken: "123:abc",
       chatId: "1001",
-      approvalTimeoutMs: 50,
+      approvalTimeoutMs: 0,
     });
 
     const channel = {
@@ -217,7 +216,7 @@ describe("remote-approval extension", () => {
     const ctx = createContext(cwd);
 
     await harness.emit("session_start", {}, ctx);
-    const event: PiKitNotifyIdleEvent = {
+    harness.api.events.emit(NOTIFY_IDLE_CHANNEL, {
       type: "notify.idle",
       requestId: "notify_1",
       createdAt: Date.now(),
@@ -228,70 +227,11 @@ describe("remote-approval extension", () => {
       continueEnabled: true,
       handled: createHandledState(),
       ctx,
-    };
-
-    harness.api.events.emit(NOTIFY_IDLE_CHANNEL, event);
-    await vi.advanceTimersByTimeAsync(49);
-    expect(channel.sendMessage).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(1);
-    await Promise.resolve();
-
-    expect(channel.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining("Finished the work."),
-      }),
-    );
-    vi.useRealTimers();
-  });
-
-  it("does not send Telegram idle messages when the notify event is handled before the timeout", async () => {
-    vi.useFakeTimers();
-    const cwd = createTempDir("pi-kit-remote-approval-repo-");
-    writeGlobalRemoteConfig(cwd, {
-      enabled: true,
-      botToken: "123:abc",
-      chatId: "1001",
-      approvalTimeoutMs: 50,
-    });
-
-    const channel = {
-      sendMessage: vi.fn(async () => 42),
-      editMessage: vi.fn(async () => undefined),
-      sendReplyPrompt: vi.fn(async () => 99),
-      poll: vi.fn(async () => null),
-    };
-
-    vi.doMock("./channel/index.ts", () => ({
-      createRemoteChannel: () => ({ channel, error: null }),
-    }));
-
-    const remoteApprovalExtension = await loadExtension();
-    const harness = buildPiHarness();
-    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
-    const ctx = createContext(cwd);
-    await harness.emit("session_start", {}, ctx);
-
-    const handled = createHandledState();
-    harness.api.events.emit(NOTIFY_IDLE_CHANNEL, {
-      type: "notify.idle",
-      requestId: "notify_2",
-      createdAt: Date.now(),
-      title: "π",
-      body: "Already handled.",
-      contextPreview: [],
-      fullContextLines: [],
-      continueEnabled: true,
-      handled,
-      ctx,
     } satisfies PiKitNotifyIdleEvent);
-    handled.markHandled();
 
-    await vi.advanceTimersByTimeAsync(50);
     await Promise.resolve();
 
     expect(channel.sendMessage).not.toHaveBeenCalled();
-    vi.useRealTimers();
   });
 
   it("logs session lifecycle without handling tool_call commands", async () => {

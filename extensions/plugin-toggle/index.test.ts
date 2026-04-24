@@ -76,6 +76,25 @@ describe("plugin discovery", () => {
     });
     expect(plugins[1]).toMatchObject({ kind: "file", enabledName: "beta.ts" });
   });
+
+  it("discovers symlinked directory and single-file plugins from the library", async () => {
+    createTempHome();
+    const source = createTempDir("pi-kit-plugin-toggle-source-");
+    const library = createTempDir("pi-kit-plugin-toggle-library-");
+    const alphaDir = createPluginDir(source, "alpha");
+    const betaFile = path.join(source, "beta.ts");
+    fs.writeFileSync(betaFile, "export default function() {}\n");
+    fs.symlinkSync(alphaDir, path.join(library, "alpha"));
+    fs.symlinkSync(betaFile, path.join(library, "beta.ts"));
+    fs.symlinkSync(path.join(source, "missing"), path.join(library, "missing"));
+
+    const { discoverPlugins } = await importPluginToggle();
+    const plugins = discoverPlugins(library);
+
+    expect(plugins.map((plugin) => plugin.name)).toEqual(["alpha", "beta"]);
+    expect(plugins[0]).toMatchObject({ kind: "directory" });
+    expect(plugins[1]).toMatchObject({ kind: "file" });
+  });
 });
 
 describe("project symlink management", () => {
@@ -147,13 +166,41 @@ describe("project symlink management", () => {
   });
 });
 
+describe("project plugin inspection", () => {
+  it("lists installed project plugins from .pi/extensions", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const source = createTempDir("pi-kit-plugin-toggle-source-");
+    const extensionsDir = path.join(cwd, ".pi", "extensions");
+    fs.mkdirSync(extensionsDir, { recursive: true });
+
+    fs.symlinkSync(
+      createPluginDir(source, "alpha"),
+      path.join(extensionsDir, "alpha"),
+    );
+    fs.writeFileSync(path.join(extensionsDir, "beta.ts"), "");
+    createPluginDir(extensionsDir, "shared");
+    fs.mkdirSync(path.join(extensionsDir, "invalid"));
+    fs.writeFileSync(path.join(extensionsDir, "plugin.log"), "");
+
+    const { getInstalledProjectPlugins } = await importPluginToggle();
+
+    expect(getInstalledProjectPlugins(cwd)).toEqual(["alpha", "beta"]);
+  });
+});
+
 describe("messages and migration", () => {
-  it("formats enabled plugin messages", async () => {
-    const { formatEnabledPluginsMessage } = await importPluginToggle();
+  it("formats enabled and installed plugin messages", async () => {
+    const { formatEnabledPluginsMessage, formatInstalledPluginsMessage } =
+      await importPluginToggle();
 
     expect(formatEnabledPluginsMessage([])).toBe("No enabled managed plugins");
     expect(formatEnabledPluginsMessage(["beta", "alpha"])).toBe(
       "Enabled managed plugins (2): alpha, beta",
+    );
+    expect(formatInstalledPluginsMessage([])).toBe("No installed plugins");
+    expect(formatInstalledPluginsMessage(["beta", "alpha"])).toBe(
+      "Installed plugins (2): alpha, beta",
     );
   });
 

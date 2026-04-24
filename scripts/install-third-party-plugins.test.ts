@@ -10,6 +10,7 @@ const libPath = path.join(
   "scripts",
   "install-third-party-plugins-lib.sh",
 );
+const installerPath = path.join(repoRoot, "install-third-party-plugins.sh");
 
 const tempDirs: string[] = [];
 
@@ -40,6 +41,19 @@ const writeSettings = (filePath: string, packages: string[]): void => {
     `${JSON.stringify({ packages }, null, 2)}\n`,
     "utf8",
   );
+};
+
+const createFakePi = (binDir: string, logPath: string): void => {
+  fs.mkdirSync(binDir, { recursive: true });
+  const fakePi = path.join(binDir, "pi");
+  fs.writeFileSync(
+    fakePi,
+    `#!/usr/bin/env ${process.execPath}\n` +
+      `const fs = require("node:fs");\n` +
+      `fs.appendFileSync(${JSON.stringify(logPath)}, process.argv.slice(2).join(" ") + "\\n");\n`,
+    "utf8",
+  );
+  fs.chmodSync(fakePi, 0o755);
 };
 
 afterEach(() => {
@@ -107,6 +121,38 @@ describe("is_installed", () => {
     expect(result).toBe("yes");
   });
 
+  it("does not invoke PATH-shadowed python3 while reading settings", () => {
+    const tempDir = createTempDir();
+    const binDir = path.join(tempDir, "bin");
+    const settingsPath = path.join(tempDir, "settings.json");
+    fs.mkdirSync(binDir);
+    fs.writeFileSync(
+      path.join(binDir, "python3"),
+      "#!/bin/sh\necho python3 should not run >&2\nexit 99\n",
+      "utf8",
+    );
+    fs.chmodSync(path.join(binDir, "python3"), 0o755);
+    writeSettings(settingsPath, ["npm:@plannotator/pi-extension"]);
+
+    const result = execFileSync(
+      "bash",
+      [
+        "-c",
+        `source ${bashString(libPath)}; if is_installed ${bashString("npm:@plannotator/pi-extension")} ${bashString(settingsPath)}; then echo yes; else echo no; fi`,
+      ],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        },
+        encoding: "utf8",
+      },
+    ).trim();
+
+    expect(result).toBe("yes");
+  });
+
   it("matches equivalent GitHub repo forms in settings.json", () => {
     const tempDir = createTempDir();
     const settingsPath = path.join(tempDir, "settings.json");
@@ -129,6 +175,60 @@ describe("is_installed", () => {
     );
 
     expect(result).toBe("no");
+  });
+});
+
+describe("install-third-party-plugins.sh", () => {
+  it("installs common third-party plugins globally and pi-autoresearch locally", () => {
+    const home = createTempDir();
+    const project = createTempDir();
+    const binDir = path.join(createTempDir(), "bin");
+    const logPath = path.join(createTempDir(), "pi.log");
+    createFakePi(binDir, logPath);
+
+    execFileSync("bash", [installerPath], {
+      cwd: project,
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      },
+      encoding: "utf8",
+    });
+
+    const commands = fs.readFileSync(logPath, "utf8").trim().split("\n");
+    expect(commands).toContain("install npm:@plannotator/pi-extension");
+    expect(commands).toContain("install npm:pi-context");
+    expect(commands).toContain(
+      "install https://github.com/davebcn87/pi-autoresearch@v1.0.1 -l",
+    );
+  });
+
+  it("removes pi-autoresearch from global settings after project install", () => {
+    const home = createTempDir();
+    const project = createTempDir();
+    const binDir = path.join(createTempDir(), "bin");
+    const logPath = path.join(createTempDir(), "pi.log");
+    const globalSettings = path.join(home, ".pi", "agent", "settings.json");
+    createFakePi(binDir, logPath);
+    writeSettings(globalSettings, [
+      "https://github.com/davebcn87/pi-autoresearch@v1.0.1",
+    ]);
+
+    execFileSync("bash", [installerPath], {
+      cwd: project,
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      },
+      encoding: "utf8",
+    });
+
+    const commands = fs.readFileSync(logPath, "utf8").trim().split("\n");
+    expect(commands).toContain(
+      "remove https://github.com/davebcn87/pi-autoresearch@v1.0.1",
+    );
   });
 });
 

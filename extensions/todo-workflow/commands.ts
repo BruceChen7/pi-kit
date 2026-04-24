@@ -63,11 +63,11 @@ export const TODO_DIRECT_ID_COMMAND_SPECS = [
   { command: "resume", kind: "resume" },
 ] as const;
 
-export const TODO_ID_ARGUMENT_COMMANDS = new Set(
+export const TODO_ID_ARGUMENT_COMMANDS: ReadonlySet<string> = new Set(
   TODO_DIRECT_ID_COMMAND_SPECS.map((spec) => spec.command),
 );
 
-export const TODO_COMPLETION_ACTION_COMMANDS = new Set(
+export const TODO_COMPLETION_ACTION_COMMANDS: ReadonlySet<string> = new Set(
   TODO_COMPLETION_ACTION_SPECS.map((spec) => spec.value),
 );
 

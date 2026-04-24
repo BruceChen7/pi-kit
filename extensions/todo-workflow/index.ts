@@ -14,8 +14,4 @@ export default function todoWorkflowExtension(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     restoreTodoStatus(ctx);
   });
-
-  pi.on("session_switch", async (_event, ctx) => {
-    restoreTodoStatus(ctx);
-  });
 }

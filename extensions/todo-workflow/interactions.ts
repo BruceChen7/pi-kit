@@ -1,7 +1,6 @@
 import type {
   ExtensionCommandContext,
   ExtensionContext,
-  ReplacedSessionContext,
 } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder } from "@mariozechner/pi-coding-agent";
 import {
@@ -19,9 +18,10 @@ import {
 } from "./display.js";
 import { listTodos, type TodoItem } from "./todo-store.js";
 
-export type TodoSessionContext =
-  | Pick<ExtensionContext, "cwd" | "ui" | "sessionManager">
-  | Pick<ReplacedSessionContext, "cwd" | "ui" | "sessionManager">;
+export type TodoSessionContext = Pick<
+  ExtensionContext,
+  "cwd" | "ui" | "sessionManager"
+>;
 
 export type TodoAction = "resume-current" | "start-queued" | "add-new";
 

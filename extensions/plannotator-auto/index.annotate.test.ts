@@ -17,8 +17,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("annotate latest plan shortcut", () => {
-  it("annotates the latest spec when it is newer than the latest plan", async () => {
+const recordSessionMarkdownWrite = async (
+  emit: ReturnType<typeof createFakePi>["emit"],
+  ctx: ReturnType<typeof createTestContext>,
+  repoRelativePath: string,
+): Promise<void> => {
+  const event = {
+    toolCallId: `tool-call-${repoRelativePath}`,
+    toolName: "write",
+    args: { path: repoRelativePath },
+  };
+
+  await emit("tool_execution_start", event, ctx);
+  await emit("tool_execution_end", { ...event, isError: false }, ctx);
+};
+
+describe("annotate latest Markdown shortcut", () => {
+  it("annotates the latest Markdown file modified in the current session", async () => {
     vi.resetModules();
 
     const plannotatorAuto = await importPlannotatorAuto();
@@ -26,19 +41,18 @@ describe("annotate latest plan shortcut", () => {
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo(
-      "plannotator-auto-shortcut-latest-spec-",
+      "plannotator-auto-shortcut-session-md-",
     );
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const latestPlanPath = await writeTestFile(
+    await writeTestFile(
       repoRoot,
-      `.pi/plans/${repoName}/plan/2026-04-18-latest.md`,
-      "# Latest plan\n",
+      "notes/freeform.md",
+      "# Older session Markdown\n",
       new Date("2026-04-18T00:00:00.000Z"),
     );
-    const latestSpecPath = await writeTestFile(
+    const latestPath = await writeTestFile(
       repoRoot,
-      `.pi/plans/${repoName}/specs/2026-04-20-agent-design.md`,
-      "# Latest spec\n",
+      "drafts/anything-goes.md",
+      "# Latest session Markdown\n",
       new Date("2026-04-20T00:00:00.000Z"),
     );
     const annotateRequests: Array<{ action: string; payload: unknown }> = [];
@@ -57,7 +71,7 @@ describe("annotate latest plan shortcut", () => {
       request.respond({
         status: "handled",
         result: {
-          feedback: "Please refine the design edge cases.",
+          feedback: "Please refine the session Markdown.",
         },
       });
     });
@@ -66,20 +80,21 @@ describe("annotate latest plan shortcut", () => {
 
     try {
       await emit("session_start", {}, ctx);
+      await recordSessionMarkdownWrite(emit, ctx, "notes/freeform.md");
+      await recordSessionMarkdownWrite(emit, ctx, "drafts/anything-goes.md");
       await runShortcut("ctrl+alt+l", ctx);
 
       expect(annotateRequests).toEqual([
         {
           action: "annotate",
           payload: {
-            filePath: latestSpecPath,
+            filePath: latestPath,
             mode: "annotate",
           },
         },
       ]);
-      expect(latestPlanPath).toContain("2026-04-18-latest.md");
       expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining("Please refine the design edge cases."),
+        expect.stringContaining("Please refine the session Markdown."),
         { deliverAs: "followUp" },
       );
     } finally {
@@ -97,12 +112,7 @@ describe("annotate latest plan shortcut", () => {
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo("plannotator-auto-shortcut-sync-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    await writeTestFile(
-      repoRoot,
-      `.pi/plans/${repoName}/plan/2026-04-20-latest.md`,
-      "# Latest\n",
-    );
+    await writeTestFile(repoRoot, "notes/latest.md", "# Latest\n");
 
     events.on("plannotator:request", (data) => {
       const request = data as { respond: (response: unknown) => void };
@@ -121,6 +131,7 @@ describe("annotate latest plan shortcut", () => {
 
     try {
       await emit("session_start", {}, ctx);
+      await recordSessionMarkdownWrite(emit, ctx, "notes/latest.md");
 
       let settled = false;
       const shortcutPromise = runShortcut("ctrl+alt+l", ctx).then(() => {
@@ -161,12 +172,7 @@ describe("annotate latest plan shortcut", () => {
     const repoRoot = await createTempRepo(
       "plannotator-auto-shortcut-inline-comments-",
     );
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    await writeTestFile(
-      repoRoot,
-      `.pi/plans/${repoName}/plan/2026-04-20-latest.md`,
-      "# Latest\n",
-    );
+    await writeTestFile(repoRoot, "notes/latest.md", "# Latest\n");
 
     events.on("plannotator:request", (data) => {
       const request = data as { respond: (response: unknown) => void };
@@ -183,6 +189,7 @@ describe("annotate latest plan shortcut", () => {
 
     try {
       await emit("session_start", {}, ctx);
+      await recordSessionMarkdownWrite(emit, ctx, "notes/latest.md");
       await runShortcut("ctrl+alt+l", ctx);
 
       expect(api.sendUserMessage).toHaveBeenCalledWith(
@@ -211,12 +218,7 @@ describe("annotate latest plan shortcut", () => {
     const repoRoot = await createTempRepo(
       "plannotator-auto-shortcut-unavailable-",
     );
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    await writeTestFile(
-      repoRoot,
-      `.pi/plans/${repoName}/plan/2026-04-19-latest.md`,
-      "# Latest\n",
-    );
+    await writeTestFile(repoRoot, "notes/latest.md", "# Latest\n");
 
     events.on("plannotator:request", (data) => {
       const request = data as { respond: (response: unknown) => void };
@@ -230,6 +232,7 @@ describe("annotate latest plan shortcut", () => {
 
     try {
       await emit("session_start", {}, ctx);
+      await recordSessionMarkdownWrite(emit, ctx, "notes/latest.md");
       await runShortcut("ctrl+alt+l", ctx);
 
       expect(ctx.ui.notify).toHaveBeenCalledWith(
@@ -237,90 +240,6 @@ describe("annotate latest plan shortcut", () => {
         "warning",
       );
       expect(api.sendUserMessage).not.toHaveBeenCalled();
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
-  });
-
-  it("includes configured extra review targets in latest-target annotation", async () => {
-    vi.resetModules();
-
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit, events, runShortcut } = createFakePi();
-    plannotatorAuto(api as never);
-
-    const repoRoot = await createTempRepo(
-      "plannotator-auto-shortcut-extra-target-",
-    );
-    const configuredPlanPath = await writeTestFile(
-      repoRoot,
-      ".pi/plans/custom/plan/2026-04-17-configured.md",
-      "# Configured\n",
-      new Date("2026-04-17T00:00:00.000Z"),
-    );
-    const extraTargetPath = await writeTestFile(
-      repoRoot,
-      ".pi/plans/pi-kit/office-hours/ming-main-office-hours-20260422-123456.md",
-      "# Office hours\n",
-      new Date("2026-04-22T12:34:56.000Z"),
-    );
-    await writeTestFile(
-      repoRoot,
-      ".pi/third_extension_settings.json",
-      `${JSON.stringify(
-        {
-          plannotatorAuto: {
-            planFile: ".pi/plans/custom/plan",
-            extraReviewTargets: [
-              {
-                dir: ".pi/plans/pi-kit/office-hours",
-                filePattern: "^[^/]+-office-hours-\\d{8}-\\d{6}\\.md$",
-              },
-            ],
-          },
-        },
-        null,
-        2,
-      )}\n`,
-    );
-
-    const annotateRequests: Array<{ action: string; payload: unknown }> = [];
-    events.on("plannotator:request", (data) => {
-      const request = data as {
-        action: string;
-        payload: { filePath?: string; mode?: string };
-        respond: (response: unknown) => void;
-      };
-
-      annotateRequests.push({
-        action: request.action,
-        payload: request.payload,
-      });
-      request.respond({
-        status: "handled",
-        result: {
-          feedback: "Extra target selected.",
-        },
-      });
-    });
-
-    const ctx = createTestContext(repoRoot);
-
-    try {
-      await emit("session_start", {}, ctx);
-      await runShortcut("ctrl+alt+l", ctx);
-
-      expect(configuredPlanPath).toContain("2026-04-17-configured.md");
-      expect(annotateRequests).toEqual([
-        {
-          action: "annotate",
-          payload: {
-            filePath: extraTargetPath,
-            mode: "annotate",
-          },
-        },
-      ]);
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

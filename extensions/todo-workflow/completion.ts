@@ -22,6 +22,10 @@ import {
 } from "./commands.js";
 import { formatTodoSelectionLabel } from "./display.js";
 import {
+  getCurrentSessionActiveTodo,
+  updateTodoStatus,
+} from "./interactions.js";
+import {
   findTodoById,
   getDoingTodos,
   loadTodoStore,
@@ -43,6 +47,10 @@ type MergeInspection =
   | { state: "unknown"; reason: string };
 
 type CleanupScope = "worktree" | "local" | "remote";
+
+function refreshTodoStatus(ctx: ExtensionCommandContext): void {
+  updateTodoStatus(ctx, getCurrentSessionActiveTodo(ctx));
+}
 
 type CommandResult = {
   code: number;
@@ -792,6 +800,7 @@ async function runFinishFlow(
   }
 
   const completed = markTodoDone(ctx.cwd, { id: target.id });
+  refreshTodoStatus(ctx);
   if (skippedMergeForMissingWorktree) {
     ctx.ui.notify(
       `Worktree path is missing; marked TODO done without merge: ${target.worktreePath}`,
@@ -846,6 +855,7 @@ async function runCleanupOneFlow(
     { message: "Cleaning..." },
   );
   syncTodoDone(ctx.cwd, { id: target.id });
+  refreshTodoStatus(ctx);
 
   if (failures.length === 0) {
     ctx.ui.notify(`Cleaned TODO: ${target.description}`, "info");
@@ -937,6 +947,7 @@ async function runCleanupAllFlow(
     },
     { message: "Cleaning..." },
   );
+  refreshTodoStatus(ctx);
 
   const resultSummary = [
     `cleaned ${summary.merged.length}`,

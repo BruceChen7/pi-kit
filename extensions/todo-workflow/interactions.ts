@@ -38,17 +38,15 @@ export function getSessionKey(ctx: TodoSessionContext): string {
     : `cwd:${ctx.cwd}`;
 }
 
+function isActiveInSession(todo: TodoItem, sessionKey: string): boolean {
+  return todo.status === "doing" && todo.activeSessionKey === sessionKey;
+}
+
 export function pickCurrentSessionTodo(
   todos: TodoItem[],
   sessionKey: string,
 ): TodoItem | null {
-  return (
-    todos.find(
-      (todo) => todo.status === "doing" && todo.activeSessionKey === sessionKey,
-    ) ??
-    todos.find((todo) => todo.status === "doing") ??
-    null
-  );
+  return todos.find((todo) => isActiveInSession(todo, sessionKey)) ?? null;
 }
 
 export function listOpenTodos(ctx: TodoSessionContext): TodoItem[] {

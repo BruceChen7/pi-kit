@@ -12,9 +12,23 @@ export type TelegramInlineButton = {
 export type TelegramClient = ReturnType<typeof createTelegramClient>;
 
 export class TelegramClientError extends Error {
-  constructor(message: string) {
+  readonly method?: string;
+  readonly status?: number;
+  readonly description?: string;
+
+  constructor(
+    message: string,
+    details?: {
+      method?: string;
+      status?: number;
+      description?: string;
+    },
+  ) {
     super(message);
     this.name = "TelegramClientError";
+    this.method = details?.method;
+    this.status = details?.status;
+    this.description = details?.description;
   }
 }
 
@@ -163,6 +177,11 @@ export const requestTelegram = async <T>({
     });
     throw new TelegramClientError(
       `${method} failed: ${response.status} ${response.statusText}`,
+      {
+        method,
+        status: response.status,
+        description: response.statusText,
+      },
     );
   }
 
@@ -173,13 +192,15 @@ export const requestTelegram = async <T>({
   };
 
   if (!payload.ok || payload.result === undefined) {
+    const description = payload.description ?? "Unknown Telegram error";
     log.warn("telegram_api_request_rejected", {
       ...logData,
-      description: payload.description ?? "Unknown Telegram error",
+      description,
     });
-    throw new TelegramClientError(
-      `${method} failed: ${payload.description ?? "Unknown Telegram error"}`,
-    );
+    throw new TelegramClientError(`${method} failed: ${description}`, {
+      method,
+      description,
+    });
   }
 
   log.debug("telegram_api_request_succeeded", {
@@ -311,16 +332,35 @@ export const createTelegramClient = (input: {
         acceptedChatId: input.chatId,
         ttlMs: 10 * 60 * 1000,
         requestUpdates: async (offset) => {
-          const result = await requestTelegram<Array<Record<string, unknown>>>({
-            botToken: input.botToken,
-            method: "getUpdates",
-            body: {
-              offset,
-              timeout: 0,
-              allowed_updates: ["callback_query", "message"],
-            },
-          });
-          return result;
+          try {
+            const result = await requestTelegram<Array<Record<string, unknown>>>(
+              {
+                botToken: input.botToken,
+                method: "getUpdates",
+                body: {
+                  offset,
+                  timeout: 0,
+                  allowed_updates: ["callback_query", "message"],
+                },
+              },
+            );
+            return result;
+          } catch (error) {
+            if (
+              error instanceof TelegramClientError &&
+              error.method === "getUpdates" &&
+              error.status === 409
+            ) {
+              log.warn("telegram_client_poll_conflict", {
+                offset,
+                acceptedMessageCount: acceptedIds.length,
+                status: error.status,
+                description: error.description,
+              });
+              return [];
+            }
+            throw error;
+          }
         },
       });
     },

@@ -379,7 +379,7 @@ export async function ensureTodoWorktreeReady(
       fallbackWorktreePath: todo.worktreePath ?? "",
     },
   );
-  if (!ensured.ok) {
+  if (ensured.ok === false) {
     ctx.ui.notify(ensured.message, "error");
     return { ok: false };
   }
@@ -546,31 +546,23 @@ async function cleanupTodoResources(
   return failures;
 }
 
-async function runCustomFinishCommit(
+async function isGitWorktreeClean(
   pi: ExtensionAPI,
-  worktreePath: string,
-  targetBranch: string,
-  commitMessage: string,
-): Promise<CommandResult> {
-  const resetResult = await runGit(pi, worktreePath, [
-    "reset",
-    "--soft",
-    targetBranch,
-  ]);
-  if (resetResult.code !== 0) {
-    return resetResult;
+  repoRoot: string,
+): Promise<{ ok: true; clean: boolean } | { ok: false; message: string }> {
+  const result = await runGit(pi, repoRoot, ["status", "--porcelain"]);
+  if (result.code !== 0) {
+    return {
+      ok: false,
+      message: formatCommandError(result, "Failed to inspect git status"),
+    };
   }
 
-  const addResult = await runGit(pi, worktreePath, ["add", "-A"]);
-  if (addResult.code !== 0) {
-    return addResult;
-  }
-
-  return runGit(pi, worktreePath, ["commit", "-m", commitMessage]);
+  return { ok: true, clean: result.stdout.trim() === "" };
 }
 
-function buildFinishMergeArgs(sourceBranch: string): string[] {
-  return ["merge", "--no-commit", "--no-remove", sourceBranch];
+function buildFinishMergeArgs(workBranch: string): string[] {
+  return ["merge", "--no-commit", "--no-remove", workBranch];
 }
 
 async function resolveFinishCommitMessage(
@@ -624,57 +616,72 @@ async function runFinishFlow(
   }
 
   const currentBranch = await getCurrentBranch(pi, ctx);
-  if (currentBranch !== target.workBranch) {
-    const shouldSwitch = await ctx.ui.confirm(
-      `Switch to ${target.workBranch} before finishing?`,
-      `Current branch: ${currentBranch || "unknown"}`,
+  if (currentBranch !== target.sourceBranch) {
+    ctx.ui.notify(
+      `Finish must be run from source branch ${target.sourceBranch}. Current branch: ${currentBranch || "unknown"}. Please switch back to ${target.sourceBranch} and retry.`,
+      "warning",
     );
-    if (!shouldSwitch) {
-      ctx.ui.notify("Cancelled", "info");
-      return;
-    }
+    return;
+  }
 
-    const confirmed = await confirmTodoWorktreeReady(ctx, target);
-    if (!confirmed) {
-      return;
-    }
+  if (!target.worktreePath) {
+    ctx.ui.notify(
+      `TODO "${target.description}" is missing its worktree path.`,
+      "error",
+    );
+    return;
   }
 
   const finished = await runWithWorkingLoader(
     ctx,
     async () => {
-      let mergeCwd = target.worktreePath ?? ctx.cwd;
-
-      if (currentBranch !== target.workBranch) {
-        const switched = await ensureTodoWorktreeReady(pi, ctx, target);
-        if (!switched.ok) {
-          return false;
-        }
-        mergeCwd = switched.worktreePath;
+      const sourceClean = await isGitWorktreeClean(pi, ctx.cwd);
+      if (sourceClean.ok === false) {
+        ctx.ui.notify(sourceClean.message, "error");
+        return false;
+      }
+      if (!sourceClean.clean) {
+        ctx.ui.notify(
+          `Source branch ${target.sourceBranch} has uncommitted changes. Please commit or stash them before finishing.`,
+          "warning",
+        );
+        return false;
       }
 
-      const commitResult = await runCustomFinishCommit(
-        pi,
-        mergeCwd,
-        target.sourceBranch,
-        finishCommitMessage,
-      );
-      if (commitResult.code !== 0) {
+      const workClean = await isGitWorktreeClean(pi, target.worktreePath);
+      if (workClean.ok === false) {
+        ctx.ui.notify(workClean.message, "error");
+        return false;
+      }
+      if (!workClean.clean) {
         ctx.ui.notify(
-          formatCommandError(commitResult, "Failed to commit TODO branch"),
-          "error",
+          `Work branch ${target.workBranch} has uncommitted changes. Please commit or stash them before finishing.`,
+          "warning",
         );
         return false;
       }
 
       const mergeResult = await runWt(
         pi,
-        mergeCwd,
-        buildFinishMergeArgs(target.sourceBranch),
+        ctx.cwd,
+        buildFinishMergeArgs(target.workBranch),
       );
       if (mergeResult.code !== 0) {
         ctx.ui.notify(
           formatCommandError(mergeResult, "Failed to merge TODO branch"),
+          "error",
+        );
+        return false;
+      }
+
+      const commitResult = await runGit(pi, ctx.cwd, [
+        "commit",
+        "-m",
+        finishCommitMessage,
+      ]);
+      if (commitResult.code !== 0) {
+        ctx.ui.notify(
+          formatCommandError(commitResult, "Failed to commit TODO merge"),
           "error",
         );
         return false;

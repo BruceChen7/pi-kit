@@ -25,6 +25,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
+import {
+  type PiKitSafeDeleteApprovalEvent,
+  SAFE_DELETE_APPROVAL_CHANNEL,
+} from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
 
 // --- Configuration ---
@@ -675,7 +679,27 @@ export default function (pi: ExtensionAPI) {
       command: event.input.command,
       threatCount: threats.length,
     });
-    const isConfirmed = await ctx.ui.confirm(title, body);
+    const remoteDecisions: Array<Promise<boolean>> = [];
+    const localDecision = ctx.ui.confirm(title, body);
+    pi.events.emit(SAFE_DELETE_APPROVAL_CHANNEL, {
+      type: "safe-delete.approval",
+      requestId: `safe_delete_${Date.now()}`,
+      createdAt: Date.now(),
+      command: event.input.command,
+      title,
+      body,
+      contextPreview: [],
+      fullContextLines: [],
+      localDecision,
+      attachRemoteDecision: (decision: Promise<boolean>) => {
+        remoteDecisions.push(decision);
+      },
+      ctx,
+    } satisfies PiKitSafeDeleteApprovalEvent);
+
+    const isConfirmed = await (remoteDecisions.length > 0
+      ? Promise.race([localDecision, ...remoteDecisions])
+      : localDecision);
 
     if (!isConfirmed) {
       log?.warn("destructive command blocked", {

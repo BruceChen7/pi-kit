@@ -94,23 +94,25 @@ describe("buildCodeSimplifierPrompt", () => {
   });
 
   it("uses an XML default prompt payload", () => {
-    expect(buildCodeSimplifierPrompt(["a.ts"])).toContain(
-      "<code_simplifier_request>",
-    );
-    expect(buildCodeSimplifierPrompt(["a.ts"])).toContain(
-      "  <file>a.ts</file>",
-    );
+    const prompt = buildCodeSimplifierPrompt(["a.ts"]);
+
+    expect(prompt).toContain("<code_simplifier_request>");
+    expect(prompt).toContain("  <file>a.ts</file>");
   });
 
   it("tells automatic code-simplifier follow-ups to inspect full file context", () => {
     const prompt = buildCodeSimplifierPrompt(["a.ts"]);
 
     expect(prompt).toContain(
-      "先遵循 code-simplifier skill 中定义的规则，再遵循以下附加约束",
+      "先遵循 code-simplifier 与 software-design-philosophy skills 中定义的规则",
     );
     expect(prompt).toContain("这是自动后处理任务，不要创建 plan");
     expect(prompt).toContain("读取 modified_files 中每个文件的完整内容");
     expect(prompt).toContain("不要只看 diff 或刚改动的片段");
+    expect(prompt).toContain("change amplification");
+    expect(prompt).toContain("deep module");
+    expect(prompt).toContain("information leakage");
+    expect(prompt).toContain("temporal decomposition");
     expect(prompt).toContain("浅封装/pass-through helper");
   });
 });

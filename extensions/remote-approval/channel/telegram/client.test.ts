@@ -238,4 +238,28 @@ describe("remote-approval telegram client", () => {
       }),
     );
   });
+
+  it("treats getUpdates 409 conflicts as empty polls", async () => {
+    globalThis.fetch = vi.fn(
+      async () => new Response("conflict", { status: 409, statusText: "Conflict" }),
+    ) as typeof fetch;
+
+    const client = createTelegramClient({
+      botToken: "123:abc",
+      chatId: "1001",
+    });
+
+    await expect(client.poll([42])).resolves.toBeNull();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [url, request] = vi.mocked(globalThis.fetch).mock.calls[0] ?? [];
+    expect(url).toBe("https://api.telegram.org/bot123:abc/getUpdates");
+    expect(request).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      timeout: 0,
+      allowed_updates: ["callback_query", "message"],
+    });
+  });
 });

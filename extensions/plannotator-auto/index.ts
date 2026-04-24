@@ -66,9 +66,16 @@ type ActiveCodeReview = {
   startedAt: number;
 };
 
+type SessionMarkdownFile = {
+  absolutePath: string;
+  mtimeMs: number;
+  updatedAt: number;
+};
+
 type SessionRuntimeState = PlanReviewSessionState & {
   pendingPlanReviewTargetsByCwd: Map<string, Map<string, PendingPlanReview>>;
   toolArgsByCallId: Map<string, unknown>;
+  markdownFilesByCwd: Map<string, Map<string, SessionMarkdownFile>>;
   pendingReviewByCwd: Set<string>;
   activeCodeReviewByCwd: Map<string, ActiveCodeReview>;
   processedCodeReviewIds: Set<string>;
@@ -86,7 +93,7 @@ const SYNC_ANNOTATE_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
 const SPEC_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
-const ANNOTATE_LATEST_PLAN_SHORTCUT = "ctrl+alt+l";
+const ANNOTATE_LATEST_MARKDOWN_SHORTCUT = "ctrl+alt+l";
 const PLAN_REVIEW_SUBMIT_TOOL = "plannotator_auto_submit_review";
 const PLAN_REVIEW_STATUS_POLL_MS = 250;
 const sessionRuntimeState = new Map<string, SessionRuntimeState>();
@@ -302,6 +309,7 @@ let log: ReturnType<typeof createLogger> | null = null;
 const createSessionRuntimeState = (): SessionRuntimeState => ({
   pendingPlanReviewTargetsByCwd: new Map(),
   toolArgsByCallId: new Map<string, unknown>(),
+  markdownFilesByCwd: new Map(),
   pendingPlanReviewByCwd: new Map(),
   activePlanReviewByCwd: new Map(),
   processedPlanReviewIds: new Set(),
@@ -710,106 +718,149 @@ export const shouldQueueReviewForToolPath = (
   );
 };
 
-export const findLatestPlanFileForAnnotation = (
+const isMarkdownPath = (targetPath: string): boolean =>
+  path.extname(targetPath).toLowerCase() === ".md";
+
+const isPathWithinCwd = (
   ctx: Pick<ExtensionContext, "cwd">,
-  planConfig: PlanFileConfig,
+  targetPath: string,
+): boolean => {
+  const relative = path.relative(ctx.cwd, targetPath);
+  return (
+    relative.length === 0 ||
+    (!relative.startsWith("..") && !path.isAbsolute(relative))
+  );
+};
+
+const getSessionMarkdownFiles = (
+  state: SessionRuntimeState,
+  cwd: string,
+): Map<string, SessionMarkdownFile> => {
+  const existing = state.markdownFilesByCwd.get(cwd);
+  if (existing) {
+    return existing;
+  }
+
+  const next = new Map<string, SessionMarkdownFile>();
+  state.markdownFilesByCwd.set(cwd, next);
+  return next;
+};
+
+const recordSessionMarkdownPath = (
+  ctx: ExtensionContext,
+  toolPath: string,
+): void => {
+  const absolutePath = path.resolve(ctx.cwd, toolPath);
+  if (!isMarkdownPath(absolutePath) || !isPathWithinCwd(ctx, absolutePath)) {
+    return;
+  }
+
+  let stats: fs.Stats;
+  try {
+    stats = fs.statSync(absolutePath);
+  } catch {
+    return;
+  }
+
+  if (!stats.isFile()) {
+    return;
+  }
+
+  getSessionMarkdownFiles(getSessionState(ctx), ctx.cwd).set(absolutePath, {
+    absolutePath,
+    mtimeMs: stats.mtimeMs,
+    updatedAt: Date.now(),
+  });
+};
+
+const recordSessionMarkdownWrites = (
+  ctx: ExtensionContext,
+  toolName: string,
+  args: unknown,
+): void => {
+  if (toolName === "bash") {
+    for (const toolPath of extractBashPathCandidates(args)) {
+      recordSessionMarkdownPath(ctx, toolPath);
+    }
+    return;
+  }
+
+  const toolPath = resolveToolPath(args);
+  if (toolPath) {
+    recordSessionMarkdownPath(ctx, toolPath);
+  }
+};
+
+const findLatestSessionMarkdownFile = (
+  ctx: ExtensionContext,
 ): {
   absolutePath: string;
   repoRelativePath: string;
 } | null => {
-  let latestPath: string | null = null;
-  let latestMtimeMs = Number.NEGATIVE_INFINITY;
+  const markdownFiles = getSessionState(ctx).markdownFilesByCwd.get(ctx.cwd);
+  if (!markdownFiles || markdownFiles.size === 0) {
+    return null;
+  }
 
-  const candidateSets: Array<{
-    dirs: string[];
-    pattern: RegExp;
-  }> = [
-    {
-      dirs: planConfig.resolvedPlanPaths,
-      pattern: PLAN_FILE_PATTERN,
-    },
-    {
-      dirs: planConfig.resolvedSpecPaths,
-      pattern: SPEC_FILE_PATTERN,
-    },
-    ...(planConfig.extraReviewTargets ?? []).map((target) => ({
-      dirs: [target.dir],
-      pattern: target.pattern,
-    })),
-  ];
+  let latest: SessionMarkdownFile | null = null;
+  for (const [absolutePath, candidate] of markdownFiles) {
+    if (!isMarkdownPath(absolutePath) || !isPathWithinCwd(ctx, absolutePath)) {
+      markdownFiles.delete(absolutePath);
+      continue;
+    }
 
-  for (const candidateSet of candidateSets) {
-    for (const planDir of candidateSet.dirs) {
-      let entries: string[];
-      try {
-        entries = fs.readdirSync(planDir).sort();
-      } catch {
-        continue;
-      }
+    let stats: fs.Stats;
+    try {
+      stats = fs.statSync(absolutePath);
+    } catch {
+      markdownFiles.delete(absolutePath);
+      continue;
+    }
 
-      for (const entry of entries) {
-        if (!candidateSet.pattern.test(entry)) {
-          continue;
-        }
+    if (!stats.isFile()) {
+      markdownFiles.delete(absolutePath);
+      continue;
+    }
 
-        const candidatePath = path.join(planDir, entry);
-        let stats: fs.Stats;
-        try {
-          stats = fs.statSync(candidatePath);
-        } catch {
-          continue;
-        }
+    const refreshed = {
+      ...candidate,
+      mtimeMs: stats.mtimeMs,
+    };
+    markdownFiles.set(absolutePath, refreshed);
 
-        if (!stats.isFile()) {
-          continue;
-        }
-
-        if (stats.mtimeMs >= latestMtimeMs) {
-          latestPath = candidatePath;
-          latestMtimeMs = stats.mtimeMs;
-        }
-      }
+    if (
+      !latest ||
+      refreshed.mtimeMs > latest.mtimeMs ||
+      (refreshed.mtimeMs === latest.mtimeMs &&
+        refreshed.updatedAt >= latest.updatedAt)
+    ) {
+      latest = refreshed;
     }
   }
 
-  if (!latestPath) {
+  if (!latest) {
     return null;
   }
 
   return {
-    absolutePath: latestPath,
-    repoRelativePath: toRepoRelativePath(ctx, latestPath),
+    absolutePath: latest.absolutePath,
+    repoRelativePath: toRepoRelativePath(ctx, latest.absolutePath),
   };
 };
 
-const annotateLatestPlanFile = async (
+const annotateLatestMarkdownFile = async (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> => {
   if (!ctx.hasUI) {
-    ctx.ui.notify("Latest plan annotation requires UI mode.", "warning");
+    ctx.ui.notify("Latest Markdown annotation requires UI mode.", "warning");
     return;
   }
 
-  const planConfig = getPlanFileConfig(ctx);
-  if (!planConfig) {
+  const latestMarkdown = findLatestSessionMarkdownFile(ctx);
+  if (!latestMarkdown) {
     ctx.ui.notify(
-      "Plan annotation is disabled because plannotatorAuto.planFile is not set to a plan directory.",
-      "warning",
-    );
-    return;
-  }
-
-  const latestPlan = findLatestPlanFileForAnnotation(ctx, planConfig);
-  if (!latestPlan) {
-    ctx.ui.notify(
-      `No plan files found in ${[
-        ...planConfig.resolvedPlanPaths,
-        ...planConfig.resolvedSpecPaths,
-        ...(planConfig.extraReviewTargets ?? []).map((target) => target.dir),
-      ]
-        .map((planDir) => toRepoRelativePath(ctx, planDir))
-        .join(", ")}.`,
+      "No Markdown files have been modified in this session.",
       "warning",
     );
     return;
@@ -819,22 +870,22 @@ const annotateLatestPlanFile = async (
     timeoutMs: SYNC_ANNOTATE_TIMEOUT_MS,
   });
 
-  log?.info("plannotator-auto annotating latest review target", {
+  log?.info("plannotator-auto annotating latest session Markdown", {
     cwd: ctx.cwd,
-    planFile: latestPlan.repoRelativePath,
+    markdownFile: latestMarkdown.repoRelativePath,
     sessionKey: getSessionKey(ctx),
-    shortcut: ANNOTATE_LATEST_PLAN_SHORTCUT,
+    shortcut: ANNOTATE_LATEST_MARKDOWN_SHORTCUT,
   });
 
   try {
     const response = await requestAnnotation(requestPlannotator, {
-      filePath: latestPlan.absolutePath,
+      filePath: latestMarkdown.absolutePath,
       mode: "annotate",
     });
 
     if (response.status === "handled") {
       const message = formatAnnotationMessage({
-        filePath: latestPlan.repoRelativePath,
+        filePath: latestMarkdown.repoRelativePath,
         feedback: response.result.feedback,
         annotations: response.result.annotations,
       });
@@ -842,7 +893,7 @@ const annotateLatestPlanFile = async (
       if (message) {
         pi.sendUserMessage(message, { deliverAs: "followUp" });
       } else {
-        ctx.ui.notify("Plan annotation closed (no feedback).", "info");
+        ctx.ui.notify("Markdown annotation closed (no feedback).", "info");
       }
       return;
     }
@@ -850,7 +901,7 @@ const annotateLatestPlanFile = async (
     if (response.status === "unavailable") {
       ctx.ui.notify(
         response.error ??
-          "Plannotator is not loaded. Install/enable the Plannotator extension to annotate plans.",
+          "Plannotator is not loaded. Install/enable the Plannotator extension to annotate Markdown.",
         "warning",
       );
       return;
@@ -1695,10 +1746,10 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerShortcut(ANNOTATE_LATEST_PLAN_SHORTCUT, {
-    description: "Annotate latest review target (Ctrl+Alt+L)",
+  pi.registerShortcut(ANNOTATE_LATEST_MARKDOWN_SHORTCUT, {
+    description: "Annotate latest session Markdown (Ctrl+Alt+L)",
     handler: async (ctx) => {
-      await annotateLatestPlanFile(pi, ctx);
+      await annotateLatestMarkdownFile(pi, ctx);
     },
   });
 
@@ -1824,6 +1875,8 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       );
       return;
     }
+
+    recordSessionMarkdownWrites(ctx, event.toolName, args);
 
     const toolPath = resolveToolPath(args);
     const planConfig = getPlanFileConfig(ctx);

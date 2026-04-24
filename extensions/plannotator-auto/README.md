@@ -26,7 +26,7 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 - Multiple plan writes before dispatch → keep only the latest pending plan file.
 - `write` / `edit` to **non-plan** files → mark code review pending only if `codeReviewAutoTrigger` is `true`.
 - On `agent_end`, if code review is pending and repo is dirty, request code review.
-- `Ctrl+Alt+L` annotates the latest generated review target (latest mtime across plan/spec/configured extra targets).
+- `Ctrl+Alt+L` annotates the latest Markdown file modified in the current session.
 
 ## Configuration
 

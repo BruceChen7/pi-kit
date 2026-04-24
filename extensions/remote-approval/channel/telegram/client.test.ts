@@ -241,7 +241,8 @@ describe("remote-approval telegram client", () => {
 
   it("treats getUpdates 409 conflicts as empty polls", async () => {
     globalThis.fetch = vi.fn(
-      async () => new Response("conflict", { status: 409, statusText: "Conflict" }),
+      async () =>
+        new Response("conflict", { status: 409, statusText: "Conflict" }),
     ) as typeof fetch;
 
     const client = createTelegramClient({

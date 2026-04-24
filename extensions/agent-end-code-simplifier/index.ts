@@ -43,11 +43,14 @@ export const DEFAULT_PROMPT_TEMPLATE = [
   "{{files}}",
   "  </modified_files>",
   "  <requirements>",
-  "    <requirement>先遵循 code-simplifier skill 中定义的规则，再遵循以下附加约束</requirement>",
+  "    <requirement>先遵循 code-simplifier 与 software-design-philosophy skills 中定义的规则，再遵循以下附加约束</requirement>",
   "    <requirement>这是自动后处理任务，不要创建 plan</requirement>",
   "    <requirement>仅处理 modified_files 中列出的文件</requirement>",
   "    <requirement>先读取 modified_files 中每个文件的完整内容；不要只看 diff 或刚改动的片段</requirement>",
-  "    <requirement>检查整个文件内的浅封装/pass-through helper、无意义转发函数和可直接内联的局部抽象</requirement>",
+  "    <requirement>用 software-design-philosophy 的复杂度视角审查：降低 change amplification、cognitive load 和 unknown unknowns</requirement>",
+  "    <requirement>优先保留或形成 deep module、information hiding 和不同层级的不同抽象</requirement>",
+  "    <requirement>检查整个文件内的 shallow module、information leakage、temporal decomposition、浅封装/pass-through helper、无意义转发函数和可直接内联的局部抽象</requirement>",
+  "    <requirement>将不可避免的复杂度向模块内部下沉；不要把特殊情况或错误处理负担推给调用方</requirement>",
   "    <requirement>保持行为、接口、错误语义和副作用不变</requirement>",
   "    <requirement>如果没有必要的简化空间，直接说明无需修改</requirement>",
   "  </requirements>",
@@ -163,6 +166,10 @@ const extractToolPath = (toolName: string, input: unknown): string | null => {
     : null;
 };
 
+const containsAutoTriggerMarker = (text: string): boolean =>
+  text.includes("/skill:code-simplifier") ||
+  text.includes(EXTENSION_SOURCE_TAG);
+
 const lastUserMessageLooksAutoTriggered = (
   messages: Array<{ role?: string; content?: unknown }>,
 ): boolean => {
@@ -172,10 +179,7 @@ const lastUserMessageLooksAutoTriggered = (
 
     const content = message.content;
     if (typeof content === "string") {
-      return (
-        content.includes(`/skill:code-simplifier`) ||
-        content.includes(EXTENSION_SOURCE_TAG)
-      );
+      return containsAutoTriggerMarker(content);
     }
 
     if (Array.isArray(content)) {
@@ -191,10 +195,7 @@ const lastUserMessageLooksAutoTriggered = (
         )
         .map((part) => part.text)
         .join("\n");
-      return (
-        text.includes(`/skill:code-simplifier`) ||
-        text.includes(EXTENSION_SOURCE_TAG)
-      );
+      return containsAutoTriggerMarker(text);
     }
 
     return false;

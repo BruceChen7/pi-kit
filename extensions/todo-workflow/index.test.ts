@@ -62,6 +62,53 @@ function createUiCustomMock(...initialResults: unknown[]) {
   return { custom, renders };
 }
 
+type WidgetComponent = { render(width: number): string[] };
+type WidgetFactory = (
+  tui: unknown,
+  theme: {
+    fg(color: string, text: string): string;
+    bg(color: string, text: string): string;
+  },
+) => WidgetComponent;
+type WidgetSetSpy = ReturnType<typeof vi.fn>;
+
+function expectTodoWidgetSet(setWidget: WidgetSetSpy): WidgetFactory {
+  expect(setWidget).toHaveBeenCalledWith(
+    "todo-workflow",
+    expect.any(Function),
+    { placement: "aboveEditor" },
+  );
+
+  const widgetCall = setWidget.mock.calls.find(
+    ([key, content, options]) =>
+      key === "todo-workflow" &&
+      typeof content === "function" &&
+      options?.placement === "aboveEditor",
+  );
+  expect(widgetCall).toBeDefined();
+  return widgetCall?.[1] as WidgetFactory;
+}
+
+function renderTodoWidget(setWidget: WidgetSetSpy, width = 200): string[] {
+  const widgetFactory = expectTodoWidgetSet(setWidget);
+  const widget = widgetFactory(
+    {},
+    {
+      fg(color: string, text: string) {
+        return `<${color}>${text}</${color}>`;
+      },
+      bg(color: string, text: string) {
+        return `<${color}>${text}</${color}>`;
+      },
+    },
+  );
+  return widget.render(width);
+}
+
+function expectTodoWidgetCleared(setWidget: WidgetSetSpy): void {
+  expect(setWidget).toHaveBeenLastCalledWith("todo-workflow", undefined);
+}
+
 const createTempRepo = (): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-kit-todo-extension-"));
   tempDirs.push(dir);
@@ -1110,13 +1157,14 @@ describe("todo-workflow extension", () => {
     });
   });
 
-  it("restores the current todo in the status bar on session start", async () => {
+  it("restores the current todo in an above-editor widget on session start", async () => {
     const repoRoot = createTempRepo();
     const lifecycleHandlers = new Map<
       string,
       (event: unknown, ctx: unknown) => Promise<void>
     >();
     const setStatus = vi.fn();
+    const setWidget = vi.fn();
     const sessionFile = path.join(repoRoot, ".pi", "sessions", "current.jsonl");
 
     fs.writeFileSync(
@@ -1171,6 +1219,7 @@ describe("todo-workflow extension", () => {
         ui: {
           notify() {},
           setStatus,
+          setWidget,
         },
         sessionManager: {
           getSessionFile() {
@@ -1180,10 +1229,13 @@ describe("todo-workflow extension", () => {
       },
     );
 
-    expect(setStatus).toHaveBeenCalledWith(
-      "todo-workflow",
-      "TODO: Resume worktree session • resume-worktree-session",
-    );
+    expect(setStatus).toHaveBeenCalledWith("todo-workflow", undefined);
+    const lines = renderTodoWidget(setWidget);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("<toolPendingBg>");
+    expect(lines[0]).toContain("<accent>▌ TODO</accent>");
+    expect(lines[0]).toContain("Resume worktree session");
+    expect(lines[0]).toContain("resume-worktree-session");
   });
 
   it("shows a working loader when starting a todo worktree", async () => {
@@ -1243,6 +1295,7 @@ describe("todo-workflow extension", () => {
     const { custom, renders } = createUiCustomMock();
     const select = vi.fn(async () => "Start a queued TODO");
     const setStatus = vi.fn();
+    const setWidget = vi.fn();
     const exec = vi.fn(async (_command: string, args: string[]) => {
       if (
         args[0] === "-C" &&
@@ -1289,6 +1342,7 @@ describe("todo-workflow extension", () => {
           notifications.push({ message, level });
         },
         setStatus,
+        setWidget,
       },
       sessionManager: {
         getSessionFile() {
@@ -1320,10 +1374,8 @@ describe("todo-workflow extension", () => {
       message: "doing: Start worktree todo",
       level: "info",
     });
-    expect(setStatus).toHaveBeenCalledWith(
-      "todo-workflow",
-      "TODO: Start worktree todo • todo-1",
-    );
+    expect(setStatus).toHaveBeenCalledWith("todo-workflow", undefined);
+    expectTodoWidgetSet(setWidget);
   });
 
   it("uses the replacement session context after auto-switching a started todo", async () => {
@@ -1387,6 +1439,7 @@ describe("todo-workflow extension", () => {
     const replacementNotifications: Array<{ message: string; level: string }> =
       [];
     const replacementSetStatus = vi.fn();
+    const replacementSetWidget = vi.fn();
     const sourceSession = SessionManager.create(repoRoot);
     sourceSession.appendCustomEntry("test", { ready: true });
 
@@ -1413,6 +1466,7 @@ describe("todo-workflow extension", () => {
             ui: {
               notify: (message: string, level: string) => void;
               setStatus: ReturnType<typeof vi.fn>;
+              setWidget: ReturnType<typeof vi.fn>;
             };
             sessionManager: typeof sessionManager;
           }) => Promise<void>;
@@ -1428,6 +1482,7 @@ describe("todo-workflow extension", () => {
               replacementNotifications.push({ message, level });
             },
             setStatus: replacementSetStatus,
+            setWidget: replacementSetWidget,
           },
           sessionManager,
         });
@@ -1531,8 +1586,9 @@ describe("todo-workflow extension", () => {
       expect(setStatus).not.toHaveBeenCalled();
       expect(replacementSetStatus).toHaveBeenCalledWith(
         "todo-workflow",
-        "TODO: Start worktree todo • todo-1",
+        undefined,
       );
+      expectTodoWidgetSet(replacementSetWidget);
       expect(notifications).toEqual([]);
       expect(replacementNotifications).toContainEqual({
         message: "doing: Start worktree todo",
@@ -1966,6 +2022,7 @@ describe("todo-workflow extension", () => {
     const replacementNotifications: Array<{ message: string; level: string }> =
       [];
     const replacementSetStatus = vi.fn();
+    const replacementSetWidget = vi.fn();
     const switchSession = vi.fn(
       async (
         sessionPath: string,
@@ -1976,6 +2033,7 @@ describe("todo-workflow extension", () => {
             ui: {
               notify: (message: string, level: string) => void;
               setStatus: ReturnType<typeof vi.fn>;
+              setWidget: ReturnType<typeof vi.fn>;
             };
             sessionManager: typeof sessionManager;
           }) => Promise<void>;
@@ -1991,6 +2049,7 @@ describe("todo-workflow extension", () => {
               replacementNotifications.push({ message, level });
             },
             setStatus: replacementSetStatus,
+            setWidget: replacementSetWidget,
           },
           sessionManager,
         });
@@ -2076,8 +2135,9 @@ describe("todo-workflow extension", () => {
       expect(setStatus).not.toHaveBeenCalled();
       expect(replacementSetStatus).toHaveBeenCalledWith(
         "todo-workflow",
-        "TODO: Resume worktree session • resume-worktree-session",
+        undefined,
       );
+      expectTodoWidgetSet(replacementSetWidget);
       expect(notifications).toEqual([]);
       expect(replacementNotifications).toContainEqual({
         message: "doing: Resume worktree session",
@@ -2129,6 +2189,7 @@ describe("todo-workflow extension", () => {
       .fn<() => Promise<boolean>>()
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false);
+    const setWidget = vi.fn();
     const exec = vi.fn(async (command: string, args: string[]) => {
       if (
         command === "git" &&
@@ -2191,6 +2252,7 @@ describe("todo-workflow extension", () => {
           notifications.push({ message, level });
         },
         setStatus: vi.fn(),
+        setWidget,
       },
       sessionManager: {
         getSessionFile() {
@@ -2253,6 +2315,7 @@ describe("todo-workflow extension", () => {
     ]);
     expect(store.todos[0]?.status).toBe("done");
     expect(store.todos[0]?.completedAt).toBeTruthy();
+    expectTodoWidgetCleared(setWidget);
     expect(notifications).toContainEqual({
       message: "Completed TODO: Finish explicit todo",
       level: "info",

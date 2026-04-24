@@ -4,10 +4,12 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import { DynamicBorder } from "@mariozechner/pi-coding-agent";
 import {
+  type Component,
   Container,
   type SelectItem,
   SelectList,
   Text,
+  truncateToWidth,
 } from "@mariozechner/pi-tui";
 
 import { isStaleSessionContextError } from "../shared/stale-context.js";
@@ -26,6 +28,8 @@ export type TodoSessionContext = Pick<
 export type TodoAction = "resume-current" | "start-queued" | "add-new";
 
 const STATUS_KEY = "todo-workflow";
+const WIDGET_KEY = STATUS_KEY;
+const TODO_WIDGET_OPTIONS = { placement: "aboveEditor" as const };
 
 export function getSessionKey(ctx: TodoSessionContext): string {
   const sessionFile = ctx.sessionManager.getSessionFile();
@@ -60,19 +64,55 @@ export function getCurrentSessionActiveTodo(
   return pickCurrentSessionTodo(listOpenTodos(ctx), getSessionKey(ctx));
 }
 
-function buildTodoStatusMessage(todo: TodoItem | null): string | undefined {
-  if (!todo) {
-    return undefined;
-  }
-  return `TODO: ${todo.description} • ${todo.workBranch ?? todo.id}`;
+type TodoWidgetTheme = {
+  fg(color: string, text: string): string;
+  bg?: (color: string, text: string) => string;
+};
+
+type TodoWidgetFactory = (tui: unknown, theme: TodoWidgetTheme) => Component;
+
+function buildTodoWidget(todo: TodoItem): TodoWidgetFactory {
+  return (_tui, theme) => ({
+    render(width: number): string[] {
+      const marker = theme.fg("accent", "▌ TODO");
+      const details = theme.fg(
+        "muted",
+        `  ${todo.description}  •  ${todo.workBranch ?? todo.id}`,
+      );
+      const line = truncateToWidth(`${marker}${details}`, width);
+      return [theme.bg ? theme.bg("toolPendingBg", line) : line];
+    },
+    invalidate(): void {
+      // Stateless; theme is applied during render.
+    },
+  });
 }
+
+type TodoUiWithOptionalWidget = TodoSessionContext["ui"] & {
+  setWidget?: (
+    key: string,
+    content?: TodoWidgetFactory,
+    options?: { placement?: "aboveEditor" | "belowEditor" },
+  ) => void;
+};
 
 export function updateTodoStatus(
   ctx: TodoSessionContext,
   todo: TodoItem | null,
 ): void {
   try {
-    ctx.ui.setStatus(STATUS_KEY, buildTodoStatusMessage(todo));
+    ctx.ui.setStatus(STATUS_KEY, undefined);
+    const ui = ctx.ui as TodoUiWithOptionalWidget;
+    if (typeof ui.setWidget !== "function") {
+      return;
+    }
+
+    if (!todo) {
+      ui.setWidget(WIDGET_KEY, undefined);
+      return;
+    }
+
+    ui.setWidget(WIDGET_KEY, buildTodoWidget(todo), TODO_WIDGET_OPTIONS);
   } catch (error) {
     if (!isStaleSessionContextError(error)) {
       throw error;

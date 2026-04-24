@@ -41,6 +41,24 @@ describe("todo interactions", () => {
     ).toEqual(currentSession);
   });
 
+  it("returns null when no doing todo is active in the current session", () => {
+    const otherSession = createDoingTodo({
+      id: "other-session",
+      description: "Other session todo",
+      updatedAt: "2026-04-23T10:02:00.000Z",
+      activeSessionKey: "session-b",
+    });
+    const unscopedDoing = createDoingTodo({
+      id: "unscoped",
+      description: "Unscoped doing todo",
+      updatedAt: "2026-04-23T10:01:00.000Z",
+    });
+
+    expect(
+      pickCurrentSessionTodo([otherSession, unscopedDoing], "session-a"),
+    ).toBeNull();
+  });
+
   it("builds the default action panel in the intended priority order", () => {
     expect(
       buildTodoActionOptions({

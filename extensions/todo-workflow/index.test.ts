@@ -1979,6 +1979,7 @@ describe("todo-workflow extension", () => {
 
   it("asks for confirmation before rebuilding a missing worktree during resume", async () => {
     const repoRoot = createTempRepo();
+    const sessionFile = path.join(repoRoot, ".pi", "sessions", "current.jsonl");
     fs.writeFileSync(
       path.join(repoRoot, ".pi", "todos.json"),
       JSON.stringify(
@@ -1995,6 +1996,7 @@ describe("todo-workflow extension", () => {
                 ".worktrees",
                 "resume-missing-worktree",
               ),
+              activeSessionKey: sessionFile,
               createdAt: "2026-04-22T10:00:00.000Z",
               updatedAt: "2026-04-22T10:00:00.000Z",
               startedAt: "2026-04-22T10:01:00.000Z",
@@ -2047,7 +2049,7 @@ describe("todo-workflow extension", () => {
       },
       sessionManager: {
         getSessionFile() {
-          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+          return sessionFile;
         },
       },
       switchSession: vi.fn(),
@@ -2068,6 +2070,8 @@ describe("todo-workflow extension", () => {
     const initialCwd = process.cwd();
     const repoRoot = createTempRepo();
     const worktreePath = createTempRepo();
+    const sourceSession = SessionManager.create(repoRoot);
+    const initialSessionFile = sourceSession.getSessionFile() as string;
 
     fs.writeFileSync(
       path.join(repoRoot, ".pi", "todos.json"),
@@ -2081,6 +2085,7 @@ describe("todo-workflow extension", () => {
               sourceBranch: "main",
               workBranch: "resume-worktree-session",
               worktreePath,
+              activeSessionKey: initialSessionFile,
               createdAt: "2026-04-22T10:00:00.000Z",
               updatedAt: "2026-04-22T10:00:00.000Z",
               startedAt: "2026-04-22T10:01:00.000Z",
@@ -2101,10 +2106,9 @@ describe("todo-workflow extension", () => {
     const { custom, renders } = createUiCustomMock();
     const select = vi.fn(async () => "Resume current TODO");
     const setStatus = vi.fn();
-    const sourceSession = SessionManager.create(repoRoot);
     sourceSession.appendCustomEntry("test", { ready: true });
 
-    let activeSessionFile = sourceSession.getSessionFile() as string;
+    let activeSessionFile = initialSessionFile;
     const sessionManager = {
       getSessionFile() {
         return activeSessionFile;

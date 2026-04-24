@@ -335,6 +335,66 @@ describe("plan review trigger timing", () => {
     }
   });
 
+  it("gates generated plans from any worktree slug until explicit submission", async () => {
+    vi.resetModules();
+    const { startPlanReview } = mockPlanReviewApi();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-wildcard-plan-");
+    const planFileRelative =
+      ".pi/plans/other-worktree/plan/2026-04-16-wildcard.md";
+    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
+    const ctx = createTestContext(repoRoot, { isIdle: false });
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+      await emit("agent_end", {}, ctx);
+
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(planFileRelative),
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("gates generated specs from any worktree slug until explicit submission", async () => {
+    vi.resetModules();
+    const { startPlanReview } = mockPlanReviewApi();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-wildcard-spec-");
+    const specFileRelative =
+      ".pi/plans/other-worktree/specs/2026-04-20-agent-design.md";
+    await writeTestFile(repoRoot, specFileRelative, "# Spec\n\n- draft\n");
+    const ctx = createTestContext(repoRoot, { isIdle: false });
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, specFileRelative);
+      await emit("agent_end", {}, ctx);
+
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(specFileRelative),
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
   it("gates generated design specs until the agent submits the review explicitly", async () => {
     vi.resetModules();
     const { startPlanReview } = mockPlanReviewApi();

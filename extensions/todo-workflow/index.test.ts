@@ -931,7 +931,10 @@ describe("todo-workflow extension", () => {
       .fn<() => Promise<string | undefined>>()
       .mockResolvedValueOnce("Same task [todo-2] • doing • branch-2");
     const input = vi.fn(async () => "fix: finish selected todo");
-    const confirm = vi.fn(async () => false);
+    const confirm = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
     const exec = vi.fn(async (command: string, args: string[]) => {
       if (
         command === "git" &&
@@ -942,6 +945,9 @@ describe("todo-workflow extension", () => {
       }
       if (command === "git" && args[2] === "status") {
         return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "log") {
+        return { code: 0, stdout: "abc1234 feat: selected todo", stderr: "" };
       }
       if (command === "git" && args[2] === "commit") {
         return { code: 0, stdout: "", stderr: "" };
@@ -2119,7 +2125,10 @@ describe("todo-workflow extension", () => {
     const { custom, renders } = createUiCustomMock();
     const select = vi.fn(async () => "should-not-run");
     const input = vi.fn(async () => "fix: finish explicit todo");
-    const confirm = vi.fn(async () => false);
+    const confirm = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
     const exec = vi.fn(async (command: string, args: string[]) => {
       if (
         command === "git" &&
@@ -2130,6 +2139,19 @@ describe("todo-workflow extension", () => {
       }
       if (command === "git" && args[2] === "status") {
         return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "log") {
+        return {
+          code: 0,
+          stdout: [
+            "abc1234 feat: finish explicit todo",
+            "def5678 test: cover explicit todo",
+            "901abcd docs: update todo notes",
+            "234efgh refactor: simplify todo finish",
+            "567ijkl fix: handle todo edge case",
+          ].join("\n"),
+          stderr: "",
+        };
       }
       if (command === "git" && args[2] === "commit") {
         return { code: 0, stdout: "", stderr: "" };
@@ -2184,9 +2206,36 @@ describe("todo-workflow extension", () => {
 
     expect(renders).toHaveLength(1);
     expect(renders[0]).toContain("Merging...");
+    expect(confirm).toHaveBeenNthCalledWith(
+      1,
+      "Merge recent commits from finish-explicit-todo?",
+      [
+        "abc1234 feat: finish explicit todo",
+        "def5678 test: cover explicit todo",
+        "901abcd docs: update todo notes",
+        "234efgh refactor: simplify todo finish",
+        "567ijkl fix: handle todo edge case",
+      ].join("\n"),
+    );
+    expect(notifications).not.toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining("Latest commit on"),
+      }),
+    );
+    const logCall = exec.mock.calls.findIndex(
+      ([command, args]) => command === "git" && args[2] === "log",
+    );
+    const mergeCall = exec.mock.calls.findIndex(
+      ([command, args]) => command === "wt" && args[2] === "merge",
+    );
+    expect(logCall).toBeGreaterThanOrEqual(0);
+    expect(mergeCall).toBeGreaterThanOrEqual(0);
+    expect(exec.mock.invocationCallOrder[logCall]).toBeLessThan(
+      exec.mock.invocationCallOrder[mergeCall] ?? 0,
+    );
     expect(select).not.toHaveBeenCalled();
     expect(input).toHaveBeenCalledWith("Commit message:", "");
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveBeenCalledTimes(2);
     expect(exec).toHaveBeenCalledWith("wt", [
       "-C",
       repoRoot,
@@ -2206,6 +2255,117 @@ describe("todo-workflow extension", () => {
     expect(store.todos[0]?.completedAt).toBeTruthy();
     expect(notifications).toContainEqual({
       message: "Completed TODO: Finish explicit todo",
+      level: "info",
+    });
+  });
+
+  it("cancels finish when recent commit merge confirmation is denied", async () => {
+    const repoRoot = createTempRepo();
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Cancel merge confirmation",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "cancel-merge-confirmation",
+              worktreePath: "/tmp/cancel-merge-confirmation",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const { custom } = createUiCustomMock();
+    const confirm = vi.fn(async () => false);
+    const exec = vi.fn(async (command: string, args: string[]) => {
+      if (
+        command === "git" &&
+        args[2] === "branch" &&
+        args[3] === "--show-current"
+      ) {
+        return { code: 0, stdout: "main\n", stderr: "" };
+      }
+      if (command === "git" && args[2] === "status") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "log") {
+        return {
+          code: 0,
+          stdout: "abc1234 feat: cancel merge confirmation",
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected ${command} args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("finish todo-1 --message fix: cancel merge", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        custom,
+        input: vi.fn(),
+        confirm,
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+        setStatus: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+      switchSession: vi.fn(async () => ({ cancelled: false })),
+    });
+
+    const store = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as { todos: Array<{ status: string; completedAt?: string }> };
+
+    expect(confirm).toHaveBeenCalledWith(
+      "Merge recent commits from cancel-merge-confirmation?",
+      "abc1234 feat: cancel merge confirmation",
+    );
+    expect(exec).not.toHaveBeenCalledWith(
+      "wt",
+      expect.arrayContaining(["merge"]),
+    );
+    expect(store.todos[0]?.status).toBe("doing");
+    expect(store.todos[0]?.completedAt).toBeUndefined();
+    expect(notifications).toContainEqual({
+      message: "Cancelled",
       level: "info",
     });
   });
@@ -2241,7 +2401,10 @@ describe("todo-workflow extension", () => {
       (args: string, ctx: unknown) => Promise<void>
     >();
     const notifications: Array<{ message: string; level: string }> = [];
-    const confirm = vi.fn(async () => false);
+    const confirm = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
     const exec = vi.fn(async (command: string, args: string[]) => {
       if (
         command === "git" &&
@@ -2252,6 +2415,9 @@ describe("todo-workflow extension", () => {
       }
       if (command === "git" && args[2] === "status") {
         return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "log") {
+        return { code: 0, stdout: "abc1234 feat: custom message", stderr: "" };
       }
       if (command === "git" && args[2] === "commit") {
         return { code: 0, stdout: "", stderr: "" };
@@ -2320,7 +2486,7 @@ describe("todo-workflow extension", () => {
       "git",
       expect.arrayContaining(["add"]),
     );
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm).toHaveBeenCalledTimes(2);
     expect(notifications).toContainEqual({
       message: "Completed TODO: Finish with custom message",
       level: "info",
@@ -2840,6 +3006,9 @@ describe("todo-workflow extension", () => {
       }
       if (command === "git" && args[2] === "status") {
         return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "log") {
+        return { code: 0, stdout: "abc1234 fix: merge flow", stderr: "" };
       }
       if (command === "git" && args[2] === "commit") {
         return { code: 0, stdout: "", stderr: "" };

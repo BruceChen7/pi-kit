@@ -88,6 +88,20 @@ describe("index path helpers", () => {
         expected: ".pi/plans/pi-kit.feat-branch/plan/2026-04-15-auth-flow.md",
       },
       {
+        name: "matches wildcard plan roots",
+        config: createPlanConfig(),
+        targetPath:
+          "/repo/.pi/plans/other-worktree/plan/2026-04-15-auth-flow.md",
+        expected: ".pi/plans/other-worktree/plan/2026-04-15-auth-flow.md",
+      },
+      {
+        name: "matches wildcard spec roots",
+        config: createPlanConfig(),
+        targetPath:
+          "/repo/.pi/plans/other-worktree/specs/2026-04-20-auth-design.md",
+        expected: ".pi/plans/other-worktree/specs/2026-04-20-auth-design.md",
+      },
+      {
         name: "matches configured extra review targets",
         config: createPlanConfig({
           extraReviewTargets: [
@@ -129,6 +143,20 @@ describe("index path helpers", () => {
         name: "skips generated design specs",
         config: createPlanConfig(),
         targetPath: "/repo/.pi/plans/repo/specs/2026-04-20-auth-design.md",
+        expected: false,
+      },
+      {
+        name: "skips wildcard generated plan files",
+        config: createPlanConfig(),
+        targetPath:
+          "/repo/.pi/plans/other-worktree/plan/2026-04-15-auth-flow.md",
+        expected: false,
+      },
+      {
+        name: "skips wildcard generated design specs",
+        config: createPlanConfig(),
+        targetPath:
+          "/repo/.pi/plans/other-worktree/specs/2026-04-20-auth-design.md",
         expected: false,
       },
       {

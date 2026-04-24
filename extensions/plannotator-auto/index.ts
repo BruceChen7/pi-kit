@@ -483,6 +483,45 @@ const isExtraReviewTargetMatch = (
 const isSpecFileMatchAny = (specDirs: string[], targetPath: string): boolean =>
   specDirs.some((specDir) => isSpecFileMatch(specDir, targetPath));
 
+const getWildcardReviewTargetKind = (
+  plansRoot: string,
+  targetPath: string,
+): ReviewTargetKind | null => {
+  const relative = path.relative(plansRoot, targetPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return null;
+  }
+
+  const [slug, targetDir, fileName, extra] = relative.split(path.sep);
+  if (!slug || !targetDir || !fileName || extra) {
+    return null;
+  }
+
+  if (targetDir === DEFAULT_PLAN_SUBDIR && PLAN_FILE_PATTERN.test(fileName)) {
+    return "plan";
+  }
+
+  if (targetDir === DEFAULT_SPECS_SUBDIR && SPEC_FILE_PATTERN.test(fileName)) {
+    return "spec";
+  }
+
+  return null;
+};
+
+const getWildcardPlansRootFromConfig = (planConfig: PlanFileConfig): string =>
+  path.dirname(path.dirname(planConfig.resolvedPlanPath));
+
+const isWildcardReviewTargetMatch = (
+  planConfig: PlanFileConfig,
+  targetPath: string,
+): boolean =>
+  Boolean(
+    getWildcardReviewTargetKind(
+      getWildcardPlansRootFromConfig(planConfig),
+      targetPath,
+    ),
+  );
+
 const isExtraReviewTargetMatchAny = (
   targets: ExtraReviewTarget[] | undefined,
   targetPath: string,
@@ -627,6 +666,17 @@ const resolveReviewTargetMatch = (
     };
   }
 
+  const wildcardKind = getWildcardReviewTargetKind(
+    path.resolve(ctx.cwd, ".pi", "plans"),
+    targetPath,
+  );
+  if (wildcardKind) {
+    return {
+      kind: wildcardKind,
+      reviewFile: toRepoRelativePath(ctx, targetPath),
+    };
+  }
+
   if (isExtraReviewTargetMatchAny(planConfig.extraReviewTargets, targetPath)) {
     return {
       kind: "plan",
@@ -655,6 +705,7 @@ export const shouldQueueReviewForToolPath = (
   return (
     !isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath) &&
     !isSpecFileMatchAny(planConfig.resolvedSpecPaths, targetPath) &&
+    !isWildcardReviewTargetMatch(planConfig, targetPath) &&
     !isExtraReviewTargetMatchAny(planConfig.extraReviewTargets, targetPath)
   );
 };

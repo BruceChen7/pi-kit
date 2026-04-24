@@ -565,6 +565,60 @@ function buildFinishMergeArgs(workBranch: string): string[] {
   return ["merge", "--no-commit", "--no-remove", workBranch];
 }
 
+function parseRecentCommitLines(output: string): string[] {
+  return output
+    .trim()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+async function confirmRecentCommitsBeforeMerge(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  todo: TodoItem,
+): Promise<boolean> {
+  if (!ctx.hasUI) {
+    ctx.ui.notify(
+      "/todo finish merge confirmation requires interactive mode",
+      "warning",
+    );
+    return false;
+  }
+
+  const result = await runGit(pi, todo.worktreePath ?? ctx.cwd, [
+    "log",
+    "-5",
+    "--format=%h %s",
+  ]).catch((error: unknown) => ({
+    code: 1,
+    stdout: "",
+    stderr: error instanceof Error ? error.message : String(error),
+  }));
+  if (result.code !== 0) {
+    ctx.ui.notify(
+      formatCommandError(result, "Failed to inspect recent TODO commits"),
+      "warning",
+    );
+    return false;
+  }
+
+  const commitLines = parseRecentCommitLines(result.stdout);
+  if (commitLines.length === 0) {
+    ctx.ui.notify("No recent TODO commits found to merge.", "warning");
+    return false;
+  }
+
+  const confirmed = await ctx.ui.confirm(
+    `Merge recent commits from ${todo.workBranch ?? "unknown"}?`,
+    commitLines.join("\n"),
+  );
+  if (!confirmed) {
+    ctx.ui.notify("Cancelled", "info");
+  }
+  return confirmed;
+}
+
 async function resolveFinishCommitMessage(
   ctx: ExtensionCommandContext,
   commitMessage?: string,
@@ -658,6 +712,10 @@ async function runFinishFlow(
           `Work branch ${target.workBranch} has uncommitted changes. Please commit or stash them before finishing.`,
           "warning",
         );
+        return false;
+      }
+
+      if (!(await confirmRecentCommitsBeforeMerge(pi, ctx, target))) {
         return false;
       }
 

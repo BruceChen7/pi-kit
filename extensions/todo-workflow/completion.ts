@@ -82,12 +82,32 @@ function normalizeResult(result: {
   };
 }
 
+function normalizeCommandError(error: unknown): CommandResult {
+  return {
+    code: 1,
+    stdout: "",
+    stderr: error instanceof Error ? error.message : String(error),
+  };
+}
+
+async function runCommand(
+  pi: ExtensionAPI,
+  command: string,
+  args: string[],
+): Promise<CommandResult> {
+  try {
+    return normalizeResult(await pi.exec(command, args));
+  } catch (error: unknown) {
+    return normalizeCommandError(error);
+  }
+}
+
 async function runGit(
   pi: ExtensionAPI,
   repoRoot: string,
   args: string[],
 ): Promise<CommandResult> {
-  return normalizeResult(await pi.exec("git", ["-C", repoRoot, ...args]));
+  return runCommand(pi, "git", ["-C", repoRoot, ...args]);
 }
 
 async function runWt(
@@ -95,7 +115,7 @@ async function runWt(
   repoRoot: string,
   args: string[],
 ): Promise<CommandResult> {
-  return normalizeResult(await pi.exec("wt", ["-C", repoRoot, ...args]));
+  return runCommand(pi, "wt", ["-C", repoRoot, ...args]);
 }
 
 function trimToNull(value: string | undefined): string | null {

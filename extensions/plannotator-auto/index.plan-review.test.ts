@@ -72,6 +72,32 @@ async function emitToolWrite(
   );
 }
 
+async function emitBashCommand(
+  emit: (name: string, event: unknown, ctx: unknown) => Promise<unknown>,
+  ctx: unknown,
+  command: string,
+  toolCallId = "bash-call-1",
+): Promise<void> {
+  await emit(
+    "tool_execution_start",
+    {
+      toolName: "bash",
+      toolCallId,
+      args: { command },
+    },
+    ctx,
+  );
+  await emit(
+    "tool_execution_end",
+    {
+      toolName: "bash",
+      toolCallId,
+      isError: false,
+    },
+    ctx,
+  );
+}
+
 function attachWidgetSpy(ctx: ReturnType<typeof createTestContext>) {
   const setWidget = vi.fn();
   (
@@ -88,6 +114,44 @@ afterEach(() => {
 });
 
 describe("plan review trigger timing", () => {
+  it("queues review submission after a bash heredoc creates a plan file", async () => {
+    vi.resetModules();
+    const { startPlanReview } = mockPlanReviewApi();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-bash-plan-");
+    const repoName = repoRoot.split("/").pop() ?? "repo";
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
+    const ctx = createTestContext(repoRoot, { isIdle: false });
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitBashCommand(
+        emit,
+        ctx,
+        `cat > ${planFileRelative} <<'EOF'\n# Plan\n\n- [ ] test\nEOF`,
+      );
+
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(ctx.abort).toHaveBeenCalledTimes(1);
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("plannotator_auto_submit_review"),
+        { deliverAs: "steer" },
+      );
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(planFileRelative),
+        { deliverAs: "steer" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
   it("immediately steers manual review submission after a busy plan-file write", async () => {
     vi.resetModules();
     const { startPlanReview } = mockPlanReviewApi({

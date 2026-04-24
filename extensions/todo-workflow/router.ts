@@ -38,7 +38,7 @@ import {
   resumeTodo,
   startTodo,
 } from "./lifecycle.js";
-import { findTodoById, loadTodoStore } from "./todo-store.js";
+import { findTodoById, loadTodoStore, type TodoItem } from "./todo-store.js";
 
 export type TodoCommand =
   | { kind: "menu" }
@@ -167,6 +167,49 @@ export async function getTodoArgumentCompletions(
   return null;
 }
 
+async function startCreatedTodo(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  todo: TodoItem,
+): Promise<void> {
+  const started = await startTodo(pi, ctx, todo);
+  if (started) {
+    started.sessionCtx.ui.notify(buildTodoStartedMessage(started.todo), "info");
+  }
+}
+
+type TodoUiWithOptionalConfirm = ExtensionCommandContext["ui"] & {
+  confirm?: ExtensionCommandContext["ui"]["confirm"];
+};
+
+async function confirmStartCreatedTodo(
+  ctx: ExtensionCommandContext,
+  todo: TodoItem,
+): Promise<boolean> {
+  const { confirm } = ctx.ui as TodoUiWithOptionalConfirm;
+  if (!ctx.hasUI || !confirm) {
+    return false;
+  }
+
+  return confirm(`Start TODO "${todo.description}" now?`, `id: ${todo.id}`);
+}
+
+async function createTodoAndMaybeStart(input: {
+  pi: ExtensionAPI;
+  ctx: ExtensionCommandContext;
+  description: string;
+  startNow: boolean;
+}): Promise<void> {
+  const todo = await createTodoFromDescription(input.ctx, input.description);
+  input.ctx.ui.notify(buildTodoCreatedMessage(todo), "info");
+
+  if (!input.startNow && !(await confirmStartCreatedTodo(input.ctx, todo))) {
+    return;
+  }
+
+  await startCreatedTodo(input.pi, input.ctx, todo);
+}
+
 async function promptForNewTodo(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
@@ -176,21 +219,12 @@ async function promptForNewTodo(
     return;
   }
 
-  const todo = await createTodoFromDescription(ctx, description);
-  ctx.ui.notify(buildTodoCreatedMessage(todo), "info");
-
-  const shouldStart = await ctx.ui.confirm(
-    `Start TODO "${todo.description}" now?`,
-    `id: ${todo.id}`,
-  );
-  if (!shouldStart) {
-    return;
-  }
-
-  const started = await startTodo(pi, ctx, todo);
-  if (started) {
-    started.sessionCtx.ui.notify(buildTodoStartedMessage(started.todo), "info");
-  }
+  await createTodoAndMaybeStart({
+    pi,
+    ctx,
+    description,
+    startNow: false,
+  });
 }
 
 async function handleTodoMenu(
@@ -260,23 +294,14 @@ export async function handleTodoCommand(
   const command = parseTodoCommand(rawArgs);
 
   switch (command.kind) {
-    case "add": {
-      const todo = await createTodoFromDescription(ctx, command.description);
-      ctx.ui.notify(buildTodoCreatedMessage(todo), "info");
-
-      if (!command.startNow) {
-        return;
-      }
-
-      const started = await startTodo(pi, ctx, todo);
-      if (started) {
-        started.sessionCtx.ui.notify(
-          buildTodoStartedMessage(started.todo),
-          "info",
-        );
-      }
+    case "add":
+      await createTodoAndMaybeStart({
+        pi,
+        ctx,
+        description: command.description,
+        startNow: command.startNow,
+      });
       return;
-    }
     case "list":
       await handleListTodos(ctx);
       return;

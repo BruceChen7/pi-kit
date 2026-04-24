@@ -415,13 +415,14 @@ describe("todo-workflow extension", () => {
     }
   });
 
-  it("creates a todo from /todo add using an AI-generated id from the description", async () => {
+  it("creates a todo from /todo add and asks whether to start/switch now", async () => {
     const repoRoot = createTempRepo();
     const commands = new Map<
       string,
       (args: string, ctx: unknown) => Promise<void>
     >();
     const notifications: Array<{ message: string; level: string }> = [];
+    const confirm = vi.fn(async () => false);
 
     vi.mocked(complete).mockResolvedValue({
       stopReason: "stop",
@@ -439,7 +440,7 @@ describe("todo-workflow extension", () => {
         // no-op
       },
       exec() {
-        throw new Error("exec should not run during todo add");
+        throw new Error("exec should not run when start is declined");
       },
     } as unknown as ExtensionAPI);
 
@@ -466,6 +467,7 @@ describe("todo-workflow extension", () => {
         })),
       },
       ui: {
+        confirm,
         notify(message: string, level: string) {
           notifications.push({ message, level });
         },
@@ -492,6 +494,10 @@ describe("todo-workflow extension", () => {
       message: 'Added TODO: "Fix status banner" [status-banner-fix]',
       level: "info",
     });
+    expect(confirm).toHaveBeenCalledWith(
+      'Start TODO "Fix status banner" now?',
+      expect.stringContaining("status-banner-fix"),
+    );
   });
 
   it("starts a newly added todo when using /todo add --start", async () => {

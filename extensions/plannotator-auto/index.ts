@@ -532,6 +532,25 @@ const resolveToolPath = (args: unknown): string | null => {
   return typeof value === "string" ? value : null;
 };
 
+const BASH_OUTPUT_PATH_PATTERN =
+  /(?:>>|>|tee\s+(?:-[a-zA-Z]+\s+)*)\s*([^\s;&|]+)/g;
+
+const stripShellQuotes = (value: string): string =>
+  value.replace(/^(["'])(.*)\1$/, "$2");
+
+const extractBashPathCandidates = (args: unknown): string[] => {
+  if (!isRecord(args) || typeof args.command !== "string") {
+    return [];
+  }
+
+  const paths = Array.from(args.command.matchAll(BASH_OUTPUT_PATH_PATTERN))
+    .map((match) => match[1])
+    .filter((value): value is string => Boolean(value))
+    .map(stripShellQuotes);
+
+  return Array.from(new Set(paths));
+};
+
 const summarizeToolArgs = (
   args: unknown,
 ): {
@@ -1255,36 +1274,12 @@ const maybeStartCodeReview = async (
   }
 };
 
-const handlePlanFileWrite = async (
+const queuePlanReviewForToolPath = async (
   planReviewCoordinator: PlanReviewCoordinator,
   ctx: ExtensionContext,
-  args: unknown,
-  planConfig: PlanFileConfig | null,
+  planConfig: PlanFileConfig,
+  toolPath: string,
 ): Promise<boolean> => {
-  if (!planConfig) {
-    log?.debug(
-      "plannotator-auto skipped plan-file write handling (plan review disabled)",
-      {
-        cwd: ctx.cwd,
-        sessionKey: getSessionKey(ctx),
-      },
-    );
-    return false;
-  }
-
-  const toolPath = resolveToolPath(args);
-  if (!toolPath) {
-    log?.debug(
-      "plannotator-auto skipped plan-file write handling (missing path arg)",
-      {
-        cwd: ctx.cwd,
-        ...summarizeToolArgs(args),
-        sessionKey: getSessionKey(ctx),
-      },
-    );
-    return false;
-  }
-
   const state = getSessionState(ctx);
   const targetPath = path.resolve(ctx.cwd, toolPath);
   if (state.settledPlanReviewPaths.has(targetPath)) {
@@ -1335,6 +1330,74 @@ const handlePlanFileWrite = async (
   await planReviewCoordinator.queuePendingPlanReview(ctx, pendingPlanReview);
   return true;
 };
+
+const handlePlanFileWrite = async (
+  planReviewCoordinator: PlanReviewCoordinator,
+  ctx: ExtensionContext,
+  args: unknown,
+  planConfig: PlanFileConfig | null,
+): Promise<boolean> => {
+  if (!planConfig) {
+    log?.debug(
+      "plannotator-auto skipped plan-file write handling (plan review disabled)",
+      {
+        cwd: ctx.cwd,
+        sessionKey: getSessionKey(ctx),
+      },
+    );
+    return false;
+  }
+
+  const toolPath = resolveToolPath(args);
+  if (!toolPath) {
+    log?.debug(
+      "plannotator-auto skipped plan-file write handling (missing path arg)",
+      {
+        cwd: ctx.cwd,
+        ...summarizeToolArgs(args),
+        sessionKey: getSessionKey(ctx),
+      },
+    );
+    return false;
+  }
+
+  return queuePlanReviewForToolPath(
+    planReviewCoordinator,
+    ctx,
+    planConfig,
+    toolPath,
+  );
+};
+
+const handleBashPlanFileWrites = async (
+  planReviewCoordinator: PlanReviewCoordinator,
+  ctx: ExtensionContext,
+  args: unknown,
+  planConfig: PlanFileConfig | null,
+): Promise<boolean> => {
+  if (!planConfig) {
+    return false;
+  }
+
+  let queued = false;
+  for (const toolPath of extractBashPathCandidates(args)) {
+    if (
+      await queuePlanReviewForToolPath(
+        planReviewCoordinator,
+        ctx,
+        planConfig,
+        toolPath,
+      )
+    ) {
+      queued = true;
+    }
+  }
+
+  return queued;
+};
+
+const isReviewTrackedToolName = (toolName: string): boolean =>
+  toolName === "write" || toolName === "edit" || toolName === "bash";
 
 export default function plannotatorAuto(pi: ExtensionAPI) {
   log = createLogger("plannotator-auto", { stderr: null });
@@ -1635,7 +1698,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
   pi.on("tool_execution_start", (event, ctx) => {
     sessionContextByKey.set(getSessionKey(ctx), ctx);
 
-    if (event.toolName !== "write" && event.toolName !== "edit") {
+    if (!isReviewTrackedToolName(event.toolName)) {
       return;
     }
 
@@ -1652,7 +1715,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
   pi.on("tool_execution_end", async (event, ctx) => {
     sessionContextByKey.set(getSessionKey(ctx), ctx);
 
-    if (event.toolName !== "write" && event.toolName !== "edit") {
+    if (!isReviewTrackedToolName(event.toolName)) {
       return;
     }
 
@@ -1720,7 +1783,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
           );
         }
       }
-    } else {
+    } else if (event.toolName !== "bash") {
       log?.debug("plannotator-auto tool args missing path for review queue", {
         cwd: ctx.cwd,
         toolName: event.toolName,
@@ -1729,12 +1792,20 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       });
     }
 
-    const queuedPlanReview = await handlePlanFileWrite(
-      planReviewCoordinator,
-      ctx,
-      args,
-      planConfig,
-    );
+    const queuedPlanReview =
+      event.toolName === "bash"
+        ? await handleBashPlanFileWrites(
+            planReviewCoordinator,
+            ctx,
+            args,
+            planConfig,
+          )
+        : await handlePlanFileWrite(
+            planReviewCoordinator,
+            ctx,
+            args,
+            planConfig,
+          );
 
     const pendingPlanReviews = listPendingPlanReviews(state, ctx.cwd);
     const activePlanReview = state.activePlanReviewByCwd.get(ctx.cwd);

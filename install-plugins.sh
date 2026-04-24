@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Install pi-agent extensions by creating symlinks to ~/.pi/agent/extensions/
-# Usage: ./install-plugins.sh
+# Install pi-agent extensions by creating symlinks.
+# Usage: ./install-plugins.sh [--global | --project]
 #
 # Supported patterns:
 #   extensions/foo.ts          -> creates foo.ts symlink
@@ -11,7 +11,40 @@
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXTENSIONS_DIR="$SCRIPT_DIR/extensions"
-TARGET_DIR="$HOME/.pi/agent/extensions"
+SCOPE="global"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --global|-g)
+            SCOPE="global"
+            shift
+            ;;
+        --project|-p)
+            SCOPE="project"
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--global | --project]"
+            echo ""
+            echo "Options:"
+            echo "  --global, -g    Install to ~/.pi/agent/extensions (default; auto-loads in all projects)"
+            echo "  --project, -p   Install to .pi/extensions in the current project only"
+            echo "  --help, -h      Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+if [ "$SCOPE" = "project" ]; then
+    TARGET_DIR="$PWD/.pi/extensions"
+else
+    TARGET_DIR="$HOME/.pi/agent/extensions"
+fi
 
 # Colors for output
 RED='\033[0;31m'
@@ -54,6 +87,9 @@ print_summary_section() {
 echo "=========================================="
 echo "  Pi Agent Extensions Installer"
 echo "=========================================="
+echo ""
+echo "Scope: $([ "$SCOPE" = "project" ] && echo "Project (.pi/extensions)" || echo "Global (~/.pi/agent/extensions; auto-loads in all projects)")"
+echo "Target: $TARGET_DIR"
 echo ""
 
 # Check if extensions directory exists
@@ -128,7 +164,11 @@ install_shared_symlink() {
 
 SHARED_SOURCE_DIR="$EXTENSIONS_DIR/shared"
 if [ -d "$SHARED_SOURCE_DIR" ]; then
-    install_shared_symlink "$HOME/.pi/agent/shared"
+    if [ "$SCOPE" = "project" ]; then
+        install_shared_symlink "$PWD/.pi/shared"
+    else
+        install_shared_symlink "$HOME/.pi/agent/shared"
+    fi
     install_shared_symlink "$TARGET_DIR/shared"
 fi
 
@@ -193,6 +233,11 @@ echo "  Installation Complete"
 echo "=========================================="
 echo ""
 echo "Extensions installed to: $TARGET_DIR"
+if [ "$SCOPE" = "global" ]; then
+    echo "Note: global extensions auto-load in every project. Use --project for project opt-in installs."
+else
+    echo "Note: project extensions load only when pi runs in this project."
+fi
 echo ""
 print_summary_section "Overwritten items:" "${overwritten_items[@]}"
 echo ""

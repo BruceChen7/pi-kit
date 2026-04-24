@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # Install third-party Pi plugins from npm or GitHub
-# Usage: ./install-third-party-plugins.sh [--global | --local]
+# Usage: ./install-third-party-plugins.sh [--global | --project | --local]
 #
 # Default: --global (install to ~/.pi/agent/settings.json)
-# --local: install to .pi/settings.json (project scope)
+# --project/--local: install to .pi/settings.json in the current project scope
 #
 # Supported plugin sources in PLUGINS:
 #   - npm:@scope/package
@@ -28,26 +28,30 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Default scope is global (empty = global, -l = local)
+# Default scope is global (empty = global, -l = project/local)
 SCOPE=""
+SCOPE_LABEL="Global (~/.pi/agent/settings.json; auto-loads in all projects)"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --global)
+        --global|-g)
             SCOPE=""  # Default is global, no flag needed
+            SCOPE_LABEL="Global (~/.pi/agent/settings.json; auto-loads in all projects)"
             shift
             ;;
-        --local|-l)
+        --project|-p|--local|-l)
             SCOPE="-l"
+            SCOPE_LABEL="Project (.pi/settings.json in current project)"
             shift
             ;;
         --help|-h)
-            echo "Usage: $0 [--global | --local]"
+            echo "Usage: $0 [--global | --project | --local]"
             echo ""
             echo "Options:"
-            echo "  --global, -g   Install to global settings (default, ~/.pi/agent/settings.json)"
-            echo "  --local, -l    Install to project settings (.pi/settings.json)"
+            echo "  --global, -g    Install to global settings (default, ~/.pi/agent/settings.json)"
+            echo "  --project, -p   Install to project settings (.pi/settings.json in current project)"
+            echo "  --local, -l     Alias for --project"
             echo "  --help, -h     Show this help message"
             echo ""
             echo "Supported plugin source formats:"
@@ -70,13 +74,17 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-SETTINGS_FILE="$(get_settings_file "$SCOPE" "$SCRIPT_DIR")"
+SETTINGS_BASE_DIR="$SCRIPT_DIR"
+if [ "$SCOPE" = "-l" ]; then
+    SETTINGS_BASE_DIR="$PWD"
+fi
+SETTINGS_FILE="$(get_settings_file "$SCOPE" "$SETTINGS_BASE_DIR")"
 
 echo "=========================================="
 echo "  Pi Agent Third-Party Plugins Installer"
 echo "=========================================="
 echo ""
-echo "Scope: $([ "$SCOPE" = "-l" ] && echo "Local (.pi/settings.json)" || echo "Global (~/.pi/agent/settings.json)")"
+echo "Scope: $SCOPE_LABEL"
 echo "Settings file: $SETTINGS_FILE"
 echo ""
 
@@ -134,6 +142,12 @@ done
 echo ""
 echo "To verify, run:"
 echo "  pi list"
+echo ""
+if [ "$SCOPE" = "" ]; then
+    echo "Note: global third-party plugins auto-load in every project. Use --project for project opt-in installs."
+else
+    echo "Note: project third-party plugins load only when pi runs in this project."
+fi
 echo ""
 echo "To reload pi with new plugins, run:"
 echo "  pi /reload"

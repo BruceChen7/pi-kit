@@ -74,11 +74,15 @@ NC='\033[0m'
 newly_installed_items=()
 overwritten_items=()
 removed_items=()
+migrated_items=()
+manual_review_items=()
 failed_items=()
 
 mark_new_item() { newly_installed_items+=("$1"); }
 mark_overwritten_item() { overwritten_items+=("$1"); }
 mark_removed_item() { removed_items+=("$1"); }
+mark_migrated_item() { migrated_items+=("$1"); }
+mark_manual_review_item() { manual_review_items+=("$1"); }
 mark_failed_item() { failed_items+=("$1"); }
 
 print_summary_section() {
@@ -138,7 +142,45 @@ install_shared_symlink() {
     fi
 }
 
-remove_old_global_symlinks() {
+is_bootstrap_global_entry() {
+    local name="$1"
+    [ "$name" = "plugin-toggle" ] || [ "$name" = "shared" ]
+}
+
+is_plugin_like_entry() {
+    local entry="$1"
+    local name
+    name="$(basename "$entry")"
+
+    if [[ "$name" == .* ]] || [[ "$name" == *.log ]]; then
+        return 1
+    fi
+
+    if [ -d "$entry" ] && [ -f "$entry/index.ts" ]; then
+        return 0
+    fi
+
+    if [ -f "$entry" ] && [[ "$name" == *.ts ]] && [ "$name" != "index.ts" ]; then
+        return 0
+    fi
+
+    return 1
+}
+
+resolve_symlink_target() {
+    local symlink_path="$1"
+    local link_target
+    link_target="$(readlink "$symlink_path")"
+
+    if [[ "$link_target" = /* ]]; then
+        echo "$link_target"
+        return 0
+    fi
+
+    echo "$(cd "$(dirname "$symlink_path")" && pwd)/$link_target"
+}
+
+migrate_old_global_autoload() {
     [ -d "$GLOBAL_EXTENSION_DIR" ] || return 0
 
     local entry=""
@@ -146,17 +188,49 @@ remove_old_global_symlinks() {
         [ -e "$entry" ] || [ -L "$entry" ] || continue
         local name
         name="$(basename "$entry")"
-        if [ "$name" = "plugin-toggle" ] || [ "$name" = "shared" ]; then
+        if is_bootstrap_global_entry "$name"; then
             continue
         fi
+
         if [ -L "$entry" ]; then
-            local real_path
-            real_path="$(realpath "$entry" 2>/dev/null || true)"
-            if [[ "$real_path" == "$EXTENSIONS_DIR"/* ]]; then
-                rm -rf "$entry"
-                mark_removed_item "$name"
-                echo -e "${YELLOW}−${NC} Removed old global autoload symlink: $name"
+            if ! is_plugin_like_entry "$entry"; then
+                continue
             fi
+
+            local target_path="$LIBRARY_DIR/$name"
+            if [ -e "$target_path" ] || [ -L "$target_path" ]; then
+                local entry_real_path
+                local target_real_path
+                entry_real_path="$(realpath "$entry" 2>/dev/null || true)"
+                target_real_path="$(realpath "$target_path" 2>/dev/null || true)"
+                if [ -z "$entry_real_path" ] || [ "$entry_real_path" != "$target_real_path" ]; then
+                    mark_manual_review_item "$name"
+                    echo -e "${YELLOW}!${NC} Global plugin name conflict needs manual review: $name"
+                    continue
+                fi
+            else
+                mkdir -p "$LIBRARY_DIR"
+                local link_target
+                link_target="$(resolve_symlink_target "$entry")"
+                if ln -s "$link_target" "$target_path"; then
+                    mark_migrated_item "$name => $LIBRARY_DIR"
+                    echo -e "${GREEN}✓${NC} Migrated old global autoload symlink: $name"
+                else
+                    mark_failed_item "$name => $LIBRARY_DIR"
+                    echo -e "${RED}✗${NC} Failed to migrate old global autoload symlink: $name"
+                    continue
+                fi
+            fi
+
+            rm -rf "$entry"
+            mark_removed_item "$name"
+            echo -e "${YELLOW}−${NC} Removed old global autoload symlink: $name"
+            continue
+        fi
+
+        if is_plugin_like_entry "$entry"; then
+            mark_manual_review_item "$name"
+            echo -e "${YELLOW}!${NC} Real global plugin needs manual review: $name"
         fi
     done
 }
@@ -228,7 +302,7 @@ if [ "$SCOPE" = "library" ]; then
     install_symlink "$EXTENSIONS_DIR/plugin-toggle" "plugin-toggle" "$GLOBAL_EXTENSION_DIR"
     install_shared_symlink "$HOME/.pi/agent"
     install_shared_symlink "$GLOBAL_EXTENSION_DIR"
-    remove_old_global_symlinks
+    migrate_old_global_autoload
 elif [ "$SCOPE" = "project" ]; then
     install_plugin_sources "$TARGET_DIR"
     install_shared_symlink "$PWD/.pi"
@@ -261,7 +335,11 @@ print_summary_section "Overwritten items:" "${overwritten_items[@]}"
 echo ""
 print_summary_section "Newly installed items:" "${newly_installed_items[@]}"
 echo ""
+print_summary_section "Migrated old global autoload symlinks:" "${migrated_items[@]}"
+echo ""
 print_summary_section "Removed old global autoload symlinks:" "${removed_items[@]}"
+echo ""
+print_summary_section "Real global plugins needing manual review:" "${manual_review_items[@]}"
 
 if [ "${#failed_items[@]}" -gt 0 ]; then
     echo ""

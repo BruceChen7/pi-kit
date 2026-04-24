@@ -924,6 +924,7 @@ describe("todo-workflow extension", () => {
     const select = vi
       .fn<() => Promise<string | undefined>>()
       .mockResolvedValueOnce("Same task [todo-2] • doing • branch-2");
+    const input = vi.fn(async () => "fix: finish selected todo");
     const confirm = vi.fn(async () => false);
     const exec = vi.fn(async (command: string, args: string[]) => {
       if (
@@ -932,6 +933,15 @@ describe("todo-workflow extension", () => {
         args[3] === "--show-current"
       ) {
         return { code: 0, stdout: "branch-2\n", stderr: "" };
+      }
+      if (command === "git" && args[2] === "reset") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "add") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "commit") {
+        return { code: 0, stdout: "", stderr: "" };
       }
       if (command === "wt" && args[2] === "merge") {
         return { code: 0, stdout: "", stderr: "" };
@@ -996,6 +1006,7 @@ describe("todo-workflow extension", () => {
       hasUI: true,
       ui: {
         select,
+        input,
         confirm,
         notify(message: string, level: string) {
           notifications.push({ message, level });
@@ -1014,10 +1025,19 @@ describe("todo-workflow extension", () => {
       "Same task [todo-1] • doing • branch-1",
       "Same task [todo-2] • doing • branch-2",
     ]);
+    expect(input).toHaveBeenCalledWith("Commit message:", "");
+    expect(exec).toHaveBeenCalledWith("git", [
+      "-C",
+      "/tmp/branch-2",
+      "commit",
+      "-m",
+      "fix: finish selected todo",
+    ]);
     expect(exec).toHaveBeenCalledWith("wt", [
       "-C",
       "/tmp/branch-2",
       "merge",
+      "--no-commit",
       "--no-remove",
       "main",
     ]);
@@ -2091,6 +2111,7 @@ describe("todo-workflow extension", () => {
     const notifications: Array<{ message: string; level: string }> = [];
     const { custom, renders } = createUiCustomMock();
     const select = vi.fn(async () => "should-not-run");
+    const input = vi.fn(async () => "fix: finish explicit todo");
     const confirm = vi.fn(async () => false);
     const exec = vi.fn(async (command: string, args: string[]) => {
       if (
@@ -2099,6 +2120,15 @@ describe("todo-workflow extension", () => {
         args[3] === "--show-current"
       ) {
         return { code: 0, stdout: "finish-explicit-todo\n", stderr: "" };
+      }
+      if (command === "git" && args[2] === "reset") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "add") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "commit") {
+        return { code: 0, stdout: "", stderr: "" };
       }
       if (command === "wt" && args[2] === "merge") {
         return { code: 0, stdout: "", stderr: "" };
@@ -2129,6 +2159,7 @@ describe("todo-workflow extension", () => {
       ui: {
         custom,
         select,
+        input,
         confirm,
         notify(message: string, level: string) {
           notifications.push({ message, level });
@@ -2150,11 +2181,20 @@ describe("todo-workflow extension", () => {
     expect(renders).toHaveLength(1);
     expect(renders[0]).toContain("Merging...");
     expect(select).not.toHaveBeenCalled();
+    expect(input).toHaveBeenCalledWith("Commit message:", "");
     expect(confirm).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledWith("git", [
+      "-C",
+      "/tmp/finish-explicit-todo",
+      "commit",
+      "-m",
+      "fix: finish explicit todo",
+    ]);
     expect(exec).toHaveBeenCalledWith("wt", [
       "-C",
       "/tmp/finish-explicit-todo",
       "merge",
+      "--no-commit",
       "--no-remove",
       "main",
     ]);
@@ -2163,6 +2203,205 @@ describe("todo-workflow extension", () => {
     expect(notifications).toContainEqual({
       message: "Completed TODO: Finish explicit todo",
       level: "info",
+    });
+  });
+
+  it("uses a custom commit message when finishing an explicit todo", async () => {
+    const repoRoot = createTempRepo();
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Finish with custom message",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "finish-custom-message",
+              worktreePath: "/tmp/finish-custom-message",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const confirm = vi.fn(async () => false);
+    const exec = vi.fn(async (command: string, args: string[]) => {
+      if (
+        command === "git" &&
+        args[2] === "branch" &&
+        args[3] === "--show-current"
+      ) {
+        return { code: 0, stdout: "finish-custom-message\n", stderr: "" };
+      }
+      if (command === "git" && args[2] === "reset") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "add") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "commit") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "wt" && args[2] === "merge") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`Unexpected ${command} args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("finish todo-1 --message feat: finish custom todo", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        confirm,
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+        setStatus: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+      switchSession: vi.fn(async () => ({ cancelled: false })),
+    });
+
+    expect(exec).toHaveBeenCalledWith("git", [
+      "-C",
+      "/tmp/finish-custom-message",
+      "reset",
+      "--soft",
+      "main",
+    ]);
+    expect(exec).toHaveBeenCalledWith("git", [
+      "-C",
+      "/tmp/finish-custom-message",
+      "add",
+      "-A",
+    ]);
+    expect(exec).toHaveBeenCalledWith("git", [
+      "-C",
+      "/tmp/finish-custom-message",
+      "commit",
+      "-m",
+      "feat: finish custom todo",
+    ]);
+    expect(exec).toHaveBeenCalledWith("wt", [
+      "-C",
+      "/tmp/finish-custom-message",
+      "merge",
+      "--no-commit",
+      "--no-remove",
+      "main",
+    ]);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(notifications).toContainEqual({
+      message: "Completed TODO: Finish with custom message",
+      level: "info",
+    });
+  });
+
+  it("requires a custom commit message before finishing without UI", async () => {
+    const repoRoot = createTempRepo();
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Finish without UI",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "finish-without-ui",
+              worktreePath: "/tmp/finish-without-ui",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const exec = vi.fn(async () => {
+      throw new Error("finish should not run without a custom commit message");
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("finish todo-1", {
+      cwd: repoRoot,
+      hasUI: false,
+      ui: {
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+    });
+
+    expect(exec).not.toHaveBeenCalled();
+    expect(notifications).toContainEqual({
+      message: "Usage: /todo finish [<todo-id>] --message <commit-message>",
+      level: "warning",
     });
   });
 
@@ -2470,7 +2709,8 @@ describe("todo-workflow extension", () => {
     });
 
     expect(notifications).toContainEqual({
-      message: "Usage: /todo [finish [<todo-id>] | cleanup [<todo-id>|--all]]",
+      message:
+        "Usage: /todo [finish [<todo-id>] [--message <commit-message>] | cleanup [<todo-id>|--all]]",
       level: "error",
     });
   });
@@ -2534,6 +2774,15 @@ describe("todo-workflow extension", () => {
           stderr: "",
         };
       }
+      if (command === "git" && args[2] === "reset") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "add") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "commit") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
       if (command === "wt" && args[2] === "merge") {
         return { code: 1, stdout: "", stderr: "conflict" };
       }
@@ -2568,6 +2817,7 @@ describe("todo-workflow extension", () => {
       hasUI: true,
       ui: {
         select,
+        input: async () => "fix: finish merge flow",
         confirm: async () => true,
         notify(message: string, level: string) {
           notifications.push({ message, level });
@@ -2590,6 +2840,7 @@ describe("todo-workflow extension", () => {
       "-C",
       "/tmp/finish-merge-flow",
       "merge",
+      "--no-commit",
       "--no-remove",
       "main",
     ]);

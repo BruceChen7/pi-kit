@@ -32,7 +32,7 @@ import {
 
 type ParsedTodoCompletionAction =
   | { kind: "menu" }
-  | { kind: "finish"; id?: string }
+  | { kind: "finish"; id?: string; commitMessage?: string }
   | { kind: "cleanup-one"; id?: string }
   | { kind: "cleanup-all" }
   | { kind: "error"; message: string };
@@ -51,7 +51,9 @@ type CommandResult = {
 };
 
 const TODO_COMPLETION_USAGE =
-  "Usage: /todo [finish [<todo-id>] | cleanup [<todo-id>|--all]]";
+  "Usage: /todo [finish [<todo-id>] [--message <commit-message>] | cleanup [<todo-id>|--all]]";
+const TODO_FINISH_MESSAGE_USAGE =
+  "Usage: /todo finish [<todo-id>] --message <commit-message>";
 
 const TODO_COMPLETION_MENU_OPTIONS = [
   "Finish a todo",
@@ -118,19 +120,48 @@ function invalidTodoCompletionUsage(): ParsedTodoCompletionAction {
   };
 }
 
-function parseTodoCompletionArgs(rawArgs: string): ParsedTodoCompletionAction {
-  const tokens = rawArgs.trim().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) {
-    return { kind: "menu" };
+function unquoteMessage(message: string): string {
+  if (
+    (message.startsWith('"') && message.endsWith('"')) ||
+    (message.startsWith("'") && message.endsWith("'"))
+  ) {
+    return message.slice(1, -1).trim();
   }
+  return message;
+}
 
-  const [command, value, extra] = tokens;
-  if (extra || !isTodoCompletionActionCommand(command)) {
+function parseFinishArgs(args: string): ParsedTodoCompletionAction {
+  const messageMatch = /(?:^|\s)(--message|-m)\s+(.+)$/s.exec(args);
+  const beforeMessage = messageMatch
+    ? args.slice(0, messageMatch.index).trim()
+    : args.trim();
+  const commitMessage = messageMatch
+    ? unquoteMessage(messageMatch[2]?.trim() ?? "")
+    : undefined;
+  const tokens = beforeMessage.split(/\s+/).filter(Boolean);
+  const [command, id, extra] = tokens;
+
+  if (command !== "finish" || extra || commitMessage === "") {
     return invalidTodoCompletionUsage();
   }
 
-  if (command === "finish") {
-    return { kind: "finish", id: value };
+  return { kind: "finish", id, commitMessage };
+}
+
+function parseTodoCompletionArgs(rawArgs: string): ParsedTodoCompletionAction {
+  const trimmed = rawArgs.trim();
+  if (!trimmed) {
+    return { kind: "menu" };
+  }
+
+  if (trimmed === "finish" || trimmed.startsWith("finish ")) {
+    return parseFinishArgs(trimmed);
+  }
+
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  const [command, value, extra] = tokens;
+  if (extra || !isTodoCompletionActionCommand(command)) {
+    return invalidTodoCompletionUsage();
   }
 
   if (value === "--all") {
@@ -515,10 +546,61 @@ async function cleanupTodoResources(
   return failures;
 }
 
+async function runCustomFinishCommit(
+  pi: ExtensionAPI,
+  worktreePath: string,
+  targetBranch: string,
+  commitMessage: string,
+): Promise<CommandResult> {
+  const resetResult = await runGit(pi, worktreePath, [
+    "reset",
+    "--soft",
+    targetBranch,
+  ]);
+  if (resetResult.code !== 0) {
+    return resetResult;
+  }
+
+  const addResult = await runGit(pi, worktreePath, ["add", "-A"]);
+  if (addResult.code !== 0) {
+    return addResult;
+  }
+
+  return runGit(pi, worktreePath, ["commit", "-m", commitMessage]);
+}
+
+function buildFinishMergeArgs(sourceBranch: string): string[] {
+  return ["merge", "--no-commit", "--no-remove", sourceBranch];
+}
+
+async function resolveFinishCommitMessage(
+  ctx: ExtensionCommandContext,
+  commitMessage?: string,
+): Promise<string | null> {
+  const providedMessage = trimToNull(commitMessage);
+  if (providedMessage) {
+    return providedMessage;
+  }
+
+  if (!ctx.hasUI) {
+    ctx.ui.notify(TODO_FINISH_MESSAGE_USAGE, "warning");
+    return null;
+  }
+
+  const inputMessage = trimToNull(await ctx.ui.input("Commit message:", ""));
+  if (!inputMessage) {
+    ctx.ui.notify("Cancelled", "info");
+    return null;
+  }
+
+  return inputMessage;
+}
+
 async function runFinishFlow(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   id?: string,
+  commitMessage?: string,
 ): Promise<void> {
   const target = await selectFinishTarget(ctx.cwd, ctx, id);
   if (!target) {
@@ -530,6 +612,14 @@ async function runFinishFlow(
       `TODO "${target.description}" is missing git metadata.`,
       "error",
     );
+    return;
+  }
+
+  const finishCommitMessage = await resolveFinishCommitMessage(
+    ctx,
+    commitMessage,
+  );
+  if (!finishCommitMessage) {
     return;
   }
 
@@ -563,11 +653,25 @@ async function runFinishFlow(
         mergeCwd = switched.worktreePath;
       }
 
-      const mergeResult = await runWt(pi, mergeCwd, [
-        "merge",
-        "--no-remove",
+      const commitResult = await runCustomFinishCommit(
+        pi,
+        mergeCwd,
         target.sourceBranch,
-      ]);
+        finishCommitMessage,
+      );
+      if (commitResult.code !== 0) {
+        ctx.ui.notify(
+          formatCommandError(commitResult, "Failed to commit TODO branch"),
+          "error",
+        );
+        return false;
+      }
+
+      const mergeResult = await runWt(
+        pi,
+        mergeCwd,
+        buildFinishMergeArgs(target.sourceBranch),
+      );
       if (mergeResult.code !== 0) {
         ctx.ui.notify(
           formatCommandError(mergeResult, "Failed to merge TODO branch"),
@@ -803,7 +907,7 @@ export async function handleTodoCompletionCommand(
 
   switch (action.kind) {
     case "finish":
-      await runFinishFlow(pi, ctx, action.id);
+      await runFinishFlow(pi, ctx, action.id, action.commitMessage);
       return;
     case "cleanup-one":
       await runCleanupOneFlow(pi, ctx, action.id);

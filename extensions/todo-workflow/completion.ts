@@ -701,11 +701,8 @@ async function runFinishFlow(
     return;
   }
 
-  const finishCommitMessage = await resolveFinishCommitMessage(
-    ctx,
-    commitMessage,
-  );
-  if (!finishCommitMessage) {
+  if (!ctx.hasUI && !trimToNull(commitMessage)) {
+    ctx.ui.notify(TODO_FINISH_MESSAGE_USAGE, "warning");
     return;
   }
 
@@ -723,6 +720,27 @@ async function runFinishFlow(
       `TODO "${target.description}" is missing its worktree path.`,
       "error",
     );
+    return;
+  }
+
+  const sourceClean = await isGitWorktreeClean(pi, ctx.cwd);
+  if (sourceClean.ok === false) {
+    ctx.ui.notify(sourceClean.message, "error");
+    return;
+  }
+  if (!sourceClean.clean) {
+    ctx.ui.notify(
+      `Source branch ${target.sourceBranch} has uncommitted changes. Please commit or stash them before finishing.`,
+      "warning",
+    );
+    return;
+  }
+
+  const finishCommitMessage = await resolveFinishCommitMessage(
+    ctx,
+    commitMessage,
+  );
+  if (!finishCommitMessage) {
     return;
   }
 

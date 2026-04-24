@@ -967,6 +967,104 @@ describe("todo-workflow extension", () => {
     });
   });
 
+  it("warns about a dirty source branch before asking for the finish commit message", async () => {
+    const repoRoot = createTempRepo();
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const input = vi.fn(async () => "fix: should not be requested");
+    const exec = vi.fn(async (command: string, args: string[]) => {
+      if (
+        command === "git" &&
+        args[2] === "branch" &&
+        args[3] === "--show-current"
+      ) {
+        return { code: 0, stdout: "main\n", stderr: "" };
+      }
+      if (command === "git" && args[2] === "status") {
+        return { code: 0, stdout: " M README.md\n", stderr: "" };
+      }
+      throw new Error(`Unexpected ${command} args: ${args.join(" ")}`);
+    });
+
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Dirty source branch",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "dirty-source-branch",
+              worktreePath: "/tmp/dirty-source-branch",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("finish todo-1", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        input,
+        confirm: vi.fn(),
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+        setStatus: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+      switchSession: vi.fn(async () => ({ cancelled: false })),
+    });
+
+    expect(input).not.toHaveBeenCalled();
+    expect(notifications).toContainEqual({
+      message:
+        "Source branch main has uncommitted changes. Please commit or stash them before finishing.",
+      level: "warning",
+    });
+    expect(exec).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["log"]),
+    );
+    expect(exec).not.toHaveBeenCalledWith(
+      "wt",
+      expect.arrayContaining(["merge"]),
+    );
+  });
+
   it("disambiguates finish selection when multiple todos share the same description", async () => {
     const repoRoot = createTempRepo();
     const commands = new Map<

@@ -146,4 +146,46 @@ describe("remote-approval telegram poll", () => {
     ]);
     expect(fs.readFileSync(paths.offsetPath, "utf-8").trim()).toBe("3");
   });
+
+  it("recovers when a stale poll lock was left behind", async () => {
+    const dir = createTempDir("pi-kit-remote-approval-poll-");
+    const paths = createTelegramPollPaths(dir);
+    fs.mkdirSync(path.dirname(paths.lockPath), { recursive: true });
+    fs.writeFileSync(paths.lockPath, "", "utf-8");
+    fs.utimesSync(paths.lockPath, new Date(0), new Date(0));
+
+    const matchPromise = pollTelegramUpdates({
+      paths,
+      acceptedMessageIds: [77],
+      acceptedChatId: "1234",
+      ttlMs: 60_000,
+      requestUpdates: async () => [
+        {
+          update_id: 1,
+          callback_query: {
+            id: "cb-1",
+            data: "idle:dismiss",
+            message: { message_id: 77 },
+          },
+        },
+      ],
+      sleep: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      },
+      now: () => 60_000,
+    });
+
+    const match = await Promise.race([
+      matchPromise,
+      new Promise<"timed-out">((resolve) =>
+        setTimeout(() => resolve("timed-out"), 50),
+      ),
+    ]);
+
+    expect(match).toMatchObject({
+      type: "callback",
+      data: "idle:dismiss",
+    });
+    expect(fs.existsSync(paths.lockPath)).toBe(false);
+  });
 });

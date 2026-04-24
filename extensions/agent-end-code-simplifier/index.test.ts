@@ -208,7 +208,7 @@ describe("extension diagnostics", () => {
     );
   });
 
-  it("emits a remote approval event and accepts attached remote allow decisions", async () => {
+  it("closes local confirmation when an attached remote allow decision wins", async () => {
     mockExtensionDependencies();
 
     const extension = (await import("./index.ts")).default;
@@ -236,11 +236,24 @@ describe("extension diagnostics", () => {
       sendUserMessage,
     } as never);
 
-    const localConfirm = new Promise<boolean>(() => undefined);
+    let abortSignal: AbortSignal | undefined;
     const ctx = {
       cwd: process.cwd(),
       hasUI: true,
-      ui: { confirm: vi.fn(() => localConfirm) },
+      ui: {
+        confirm: vi.fn(
+          async (
+            _title: string,
+            _body: string,
+            options?: { signal?: AbortSignal },
+          ) => {
+            abortSignal = options?.signal;
+            return await new Promise<boolean>((resolve) => {
+              options?.signal?.addEventListener("abort", () => resolve(false));
+            });
+          },
+        ),
+      },
     };
 
     await handlers.get("session_start")?.({}, ctx);
@@ -261,6 +274,12 @@ describe("extension diagnostics", () => {
         filePaths: ["src/demo.ts"],
       }),
     );
+    expect(ctx.ui.confirm).toHaveBeenCalledWith(
+      "Run code-simplifier?",
+      expect.stringContaining("src/demo.ts"),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(abortSignal?.aborted).toBe(true);
     expect(sendUserMessage).toHaveBeenCalledWith(
       expect.stringContaining("src/demo.ts"),
       { deliverAs: "followUp" },

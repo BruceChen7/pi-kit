@@ -204,6 +204,36 @@ const lastUserMessageLooksAutoTriggered = (
   return false;
 };
 
+type ApprovalRaceInput = {
+  localDecision: Promise<boolean>;
+  remoteDecisions: Array<Promise<boolean>>;
+  localAbortController: AbortController;
+};
+
+const waitForApprovalDecision = async ({
+  localDecision,
+  remoteDecisions,
+  localAbortController,
+}: ApprovalRaceInput): Promise<boolean> => {
+  if (remoteDecisions.length === 0) {
+    return await localDecision;
+  }
+
+  const result = await Promise.race([
+    localDecision.then((decision) => ({ decision, source: "local" as const })),
+    Promise.race(remoteDecisions).then((decision) => ({
+      decision,
+      source: "remote" as const,
+    })),
+  ]);
+
+  if (result.source === "remote") {
+    localAbortController.abort();
+  }
+
+  return result.decision;
+};
+
 export default function agentEndCodeSimplifierExtension(
   pi: ExtensionAPI,
 ): void {
@@ -330,8 +360,11 @@ export default function agentEndCodeSimplifierExtension(
     const body = `本轮检测到以下代码文件被修改：\n${supportedPaths
       .map((filePath) => `- ${filePath}`)
       .join("\n")}\n\n是否触发 code-simplifier 做一次行为不变的简化？`;
+    const localAbortController = new AbortController();
+    const localDecision = ctx.ui.confirm(title, body, {
+      signal: localAbortController.signal,
+    });
     const remoteDecisions: Array<Promise<boolean>> = [];
-    const localDecision = ctx.ui.confirm(title, body);
     pi.events.emit(AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL, {
       type: "agent-end-code-simplifier.approval",
       requestId: `agent_end_code_simplifier_${Date.now()}`,
@@ -348,9 +381,11 @@ export default function agentEndCodeSimplifierExtension(
       ctx,
     } satisfies PiKitAgentEndCodeSimplifierApprovalEvent);
 
-    const ok = await (remoteDecisions.length > 0
-      ? Promise.race([localDecision, ...remoteDecisions])
-      : localDecision);
+    const ok = await waitForApprovalDecision({
+      localDecision,
+      remoteDecisions,
+      localAbortController,
+    });
     log.debug("agent_end_confirm_resolved", {
       ...diagnostics(ctx),
       supportedPaths,

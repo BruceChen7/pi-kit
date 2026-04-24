@@ -195,9 +195,31 @@ const delay = async (ms: number): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, ms));
 };
 
+const DEFAULT_LOCK_STALE_MS = 30_000;
+
+const removeStaleLock = (
+  lockPath: string,
+  now: () => number,
+  staleMs: number,
+): void => {
+  try {
+    const stats = fs.statSync(lockPath);
+    if (now() - stats.mtimeMs >= staleMs) {
+      fs.unlinkSync(lockPath);
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") {
+      throw error;
+    }
+  }
+};
+
 const acquireLock = async (
   lockPath: string,
   sleep: (ms: number) => Promise<void>,
+  now: () => number,
+  staleMs = DEFAULT_LOCK_STALE_MS,
 ): Promise<number> => {
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   while (true) {
@@ -208,6 +230,7 @@ const acquireLock = async (
       if (code !== "EEXIST") {
         throw error;
       }
+      removeStaleLock(lockPath, now, staleMs);
       await sleep(10);
     }
   }
@@ -249,10 +272,16 @@ export const pollTelegramUpdates = async (input: {
   requestUpdates: (offset: number) => Promise<Array<Record<string, unknown>>>;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  lockStaleMs?: number;
 }): Promise<TelegramMatch | null> => {
   const sleep = input.sleep ?? delay;
   const now = input.now ?? Date.now;
-  const fd = await acquireLock(input.paths.lockPath, sleep);
+  const fd = await acquireLock(
+    input.paths.lockPath,
+    sleep,
+    now,
+    input.lockStaleMs,
+  );
 
   try {
     const currentTime = now();

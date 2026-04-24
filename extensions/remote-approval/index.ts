@@ -157,18 +157,21 @@ const handleBooleanApprovalEvent = (
   }
 
   const remoteDecision = (async (): Promise<boolean> => {
+    const localDecision = event.localDecision;
     let localResolved = false;
-    void event.localDecision.finally(() => {
-      localResolved = true;
-    });
+    if (localDecision) {
+      void localDecision.finally(() => {
+        localResolved = true;
+      });
+    }
 
     await sleep(session.config.approvalTimeoutMs);
-    if (localResolved) {
+    if (localDecision && localResolved) {
       log.debug(`${options.logPrefix}_remote_skipped_local_resolved`, {
         sessionId: session.identity.sessionId,
         requestId: event.requestId,
       });
-      return await event.localDecision;
+      return await localDecision;
     }
 
     log.debug(`${options.logPrefix}_remote_request_created`, {

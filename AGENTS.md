@@ -5,7 +5,7 @@
 * If something goes sideways, STOP and re-plan immediately - don't keep pushing
 * Use plan mode for verification steps, not just building. Write detailed specs upfront to reduce ambiguity
 * Plan output must follow the fixed structure below so progress, verification, and review results are easy to scan.
-* Write plan content in English unless the user explicitly requests another language.
+* Write plan content in chinese unless the user explicitly requests another language.
 
 ### Plan Output Format
 

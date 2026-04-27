@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearSettingsCache,
@@ -114,6 +115,11 @@ describe("project symlink management", () => {
     expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(target)).toBe(fs.realpathSync(plugin.sourcePath));
 
+    const sharedTarget = path.join(cwd, ".pi", "extensions", "shared");
+    const expectedShared = fileURLToPath(new URL("../shared", import.meta.url));
+    expect(fs.lstatSync(sharedTarget).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(sharedTarget)).toBe(fs.realpathSync(expectedShared));
+
     const { globalPath } = getSettingsPaths(cwd);
     const settings = readSettingsFile(globalPath);
     const entry = (
@@ -160,6 +166,9 @@ describe("project symlink management", () => {
     const [plugin] = discoverPlugins(library);
 
     expect(enablePlugin(cwd, plugin).status).toBe("conflict");
+    expect(fs.existsSync(path.join(cwd, ".pi", "extensions", "shared"))).toBe(
+      false,
+    );
     expect(fs.readFileSync(path.join(projectPlugin, "index.ts"), "utf-8")).toBe(
       "// user plugin\n",
     );

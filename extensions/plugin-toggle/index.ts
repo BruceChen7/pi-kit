@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -62,6 +63,10 @@ const GLOBAL_EXTENSION_DIR = path.join(
 );
 const GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES = new Set(["plugin-toggle", "shared"]);
 const PROJECT_EXTENSION_DIR = path.join(".pi", "extensions");
+const SHARED_EXTENSION_NAME = "shared";
+const PLUGIN_TOGGLE_EXTENSION_DIR = path.dirname(
+  fileURLToPath(import.meta.url),
+);
 
 const normalizeName = (name: string): string => name.trim().toLowerCase();
 const projectExtensionsDir = (cwd: string): string =>
@@ -135,6 +140,10 @@ function statTargetOrNull(filePath: string): fs.Stats | null {
   }
 }
 
+function isDirectoryTarget(filePath: string): boolean {
+  return statTargetOrNull(filePath)?.isDirectory() ?? false;
+}
+
 function isPluginDir(dir: string): boolean {
   return fs.existsSync(path.join(dir, "index.ts"));
 }
@@ -202,6 +211,54 @@ function symlinkPointsToPlugin(
   );
 }
 
+function findSharedSourcePath(plugin: PluginEntry): string | null {
+  const pluginRealPath = realPathOrNull(plugin.sourcePath);
+  const candidates = [
+    path.join(PLUGIN_TOGGLE_EXTENSION_DIR, "..", SHARED_EXTENSION_NAME),
+    path.join(GLOBAL_EXTENSION_DIR, SHARED_EXTENSION_NAME),
+    path.join(os.homedir(), ".pi", "agent", SHARED_EXTENSION_NAME),
+    pluginRealPath
+      ? path.join(path.dirname(pluginRealPath), SHARED_EXTENSION_NAME)
+      : null,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && isDirectoryTarget(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+function ensureSharedDependency(
+  cwd: string,
+  plugin: PluginEntry,
+): ToggleResult | null {
+  const targetPath = path.join(
+    projectExtensionsDir(cwd),
+    SHARED_EXTENSION_NAME,
+  );
+
+  try {
+    const stat = fs.lstatSync(targetPath);
+    if (
+      stat.isDirectory() ||
+      (stat.isSymbolicLink() && isDirectoryTarget(targetPath))
+    ) {
+      return null;
+    }
+    return { status: "conflict", path: targetPath };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") throw error;
+  }
+
+  const sourcePath = findSharedSourcePath(plugin);
+  if (!sourcePath) return { status: "conflict", path: targetPath };
+
+  fs.symlinkSync(sourcePath, targetPath);
+  return null;
+}
+
 export function isPluginEnabled(cwd: string, plugin: PluginEntry): boolean {
   const targetPath = pluginTargetPath(cwd, plugin);
   return fs.existsSync(targetPath) && symlinkPointsToPlugin(targetPath, plugin);
@@ -214,6 +271,9 @@ export function enablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
   try {
     const stat = fs.lstatSync(targetPath);
     if (stat.isSymbolicLink() && symlinkPointsToPlugin(targetPath, plugin)) {
+      const sharedConflict = ensureSharedDependency(cwd, plugin);
+      if (sharedConflict) return sharedConflict;
+
       updateManagedPlugin(cwd, plugin.name, (managed, name) =>
         managed.add(name),
       );
@@ -224,6 +284,9 @@ export function enablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") throw error;
   }
+
+  const sharedConflict = ensureSharedDependency(cwd, plugin);
+  if (sharedConflict) return sharedConflict;
 
   fs.symlinkSync(plugin.sourcePath, targetPath);
   updateManagedPlugin(cwd, plugin.name, (managed, name) => managed.add(name));

@@ -250,28 +250,48 @@ describe("messages and migration", () => {
 });
 
 describe("picker navigation", () => {
-  it("supports j/k and arrow keys", async () => {
+  const createPicker = async (pluginNames = ["alpha", "beta"]) => {
     const { PluginTogglePicker } = await importPluginToggle();
-    const picker = new PluginTogglePicker(
-      [
-        {
-          name: "alpha",
-          enabledName: "alpha",
-          sourcePath: "/tmp/alpha",
-          kind: "directory",
-        },
-        {
-          name: "beta",
-          enabledName: "beta",
-          sourcePath: "/tmp/beta",
-          kind: "directory",
-        },
-      ],
+    return new PluginTogglePicker(
+      pluginNames.map((name) => ({
+        name,
+        enabledName: name,
+        sourcePath: `/tmp/${name}`,
+        kind: "directory" as const,
+      })),
       new Set(),
       () => undefined,
       () => undefined,
       () => undefined,
     );
+  };
+
+  it("highlights the selected row", async () => {
+    const picker = await createPicker();
+
+    expect(picker.render(70).join("\n")).toContain("\u001b[7m");
+    picker.dispose();
+  });
+
+  it("keeps the selected plugin visible after moving past the first page", async () => {
+    const pluginNames = Array.from(
+      { length: 10 },
+      (_, index) => `plugin-${index + 1}`,
+    );
+    const picker = await createPicker(pluginNames);
+
+    for (let i = 0; i < 8; i++) {
+      picker.handleInput("j");
+    }
+
+    const rendered = picker.render(70).join("\n");
+    expect(picker.getSelectedName()).toBe("plugin-9");
+    expect(rendered).toContain("plugin-9");
+    picker.dispose();
+  });
+
+  it("supports j/k and arrow keys", async () => {
+    const picker = await createPicker();
 
     expect(picker.getSelectedName()).toBe("alpha");
     picker.handleInput("j");

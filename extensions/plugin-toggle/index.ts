@@ -63,6 +63,7 @@ const GLOBAL_EXTENSION_DIR = path.join(
 );
 const GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES = new Set(["plugin-toggle", "shared"]);
 const PROJECT_EXTENSION_DIR = path.join(".pi", "extensions");
+const PICKER_PAGE_SIZE = 8;
 const SHARED_EXTENSION_NAME = "shared";
 const PLUGIN_TOGGLE_EXTENSION_DIR = path.dirname(
   fileURLToPath(import.meta.url),
@@ -537,10 +538,20 @@ export class PluginTogglePicker {
     const border = (text: string) => `\x1b[2m${text}\x1b[0m`;
     const active = (text: string) => `\x1b[36m${text}\x1b[0m`;
     const muted = (text: string) => `\x1b[2m${text}\x1b[0m`;
-    const row = (content: string) =>
-      border("│") +
-      truncateToWidth(` ${content}`, innerW, "…", true) +
-      border("│");
+    const reverse = (text: string) => `\x1b[7m${text}\x1b[0m`;
+    const row = (content: string, isSelected = false) => {
+      const body = truncateToWidth(` ${content}`, innerW, "…", true);
+      return border("│") + (isSelected ? reverse(body) : body) + border("│");
+    };
+    const pluginRowContent = (plugin: PluginEntry, isSelected: boolean) => {
+      const marker = isSelected ? "▸" : "·";
+      const isEnabled = this.enabled.has(normalizeName(plugin.name));
+      const enabledMark = isEnabled ? "✓" : " ";
+      if (isSelected || !isEnabled) {
+        return `${marker} ${enabledMark} ${plugin.name}`;
+      }
+      return `${marker} ${active(enabledMark)} ${plugin.name}`;
+    };
     const title = " Plugin Picker ";
     const borderLen = Math.max(0, innerW - visibleWidth(title));
     const left = Math.floor(borderLen / 2);
@@ -552,15 +563,17 @@ export class PluginTogglePicker {
     ];
     lines.push(row(`Search: ${this.query || muted("type to filter...")}`));
     lines.push(border(`├${"─".repeat(innerW)}┤`));
-    for (let i = 0; i < Math.min(8, this.filtered.length); i++) {
-      const plugin = this.filtered[i];
-      const selected = i === this.selected;
-      const enabled = this.enabled.has(normalizeName(plugin.name));
-      lines.push(
-        row(
-          `${selected ? active("▸") : "·"} ${enabled ? active("✓") : " "} ${plugin.name}`,
-        ),
-      );
+    const pageStart =
+      Math.floor(this.selected / PICKER_PAGE_SIZE) * PICKER_PAGE_SIZE;
+    const visiblePlugins = this.filtered.slice(
+      pageStart,
+      pageStart + PICKER_PAGE_SIZE,
+    );
+    for (let i = 0; i < visiblePlugins.length; i++) {
+      const plugin = visiblePlugins[i];
+      const pluginIndex = pageStart + i;
+      const isSelected = pluginIndex === this.selected;
+      lines.push(row(pluginRowContent(plugin, isSelected), isSelected));
     }
     if (this.filtered.length === 0)
       lines.push(row(muted("No matching plugins")));

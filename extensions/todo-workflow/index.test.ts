@@ -2541,6 +2541,136 @@ describe("todo-workflow extension", () => {
     ]);
   });
 
+  it("marks todo done without committing when finish merge has no staged changes", async () => {
+    const repoRoot = createTempRepo();
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "todos.json"),
+      JSON.stringify(
+        {
+          todos: [
+            {
+              id: "todo-1",
+              title: "Already merged todo",
+              status: "doing",
+              sourceBranch: "main",
+              workBranch: "already-merged-todo",
+              worktreePath: "/tmp/already-merged-todo",
+              createdAt: "2026-04-22T10:00:00.000Z",
+              updatedAt: "2026-04-22T10:00:00.000Z",
+              startedAt: "2026-04-22T10:01:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const commands = new Map<
+      string,
+      (args: string, ctx: unknown) => Promise<void>
+    >();
+    const notifications: Array<{ message: string; level: string }> = [];
+    const { custom } = createUiCustomMock();
+    const confirm = vi
+      .fn<() => Promise<boolean>>()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const exec = vi.fn(async (command: string, args: string[]) => {
+      if (
+        command === "git" &&
+        args[1] === repoRoot &&
+        args[2] === "branch" &&
+        args[3] === "--show-current"
+      ) {
+        return { code: 0, stdout: "main\n", stderr: "" };
+      }
+      if (command === "git" && args[2] === "status") {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "log") {
+        return { code: 0, stdout: "abc1234 feat: already merged", stderr: "" };
+      }
+      if (command === "wt" && args[2] === "merge") {
+        return { code: 0, stdout: "Already up to date.", stderr: "" };
+      }
+      if (
+        command === "git" &&
+        args[1] === repoRoot &&
+        args[2] === "diff" &&
+        args[3] === "--cached" &&
+        args[4] === "--quiet"
+      ) {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command === "git" && args[2] === "commit") {
+        return {
+          code: 1,
+          stdout: "Formatted 201 files in 46ms. No fixes applied.\n",
+          stderr: "",
+        };
+      }
+      throw new Error(`Unexpected ${command} args: ${args.join(" ")}`);
+    });
+
+    extension({
+      registerCommand(
+        name: string,
+        definition: { handler: (args: string, ctx: unknown) => Promise<void> },
+      ) {
+        commands.set(name, definition.handler);
+      },
+      on() {
+        // no-op
+      },
+      exec,
+    } as unknown as ExtensionAPI);
+
+    const handler = commands.get("todo");
+    expect(handler).toBeTypeOf("function");
+    if (!handler) return;
+
+    await handler("finish todo-1 --message fix: finish already merged", {
+      cwd: repoRoot,
+      hasUI: true,
+      ui: {
+        custom,
+        input: vi.fn(),
+        confirm,
+        notify(message: string, level: string) {
+          notifications.push({ message, level });
+        },
+        setStatus: vi.fn(),
+      },
+      sessionManager: {
+        getSessionFile() {
+          return path.join(repoRoot, ".pi", "sessions", "current.jsonl");
+        },
+      },
+      switchSession: vi.fn(async () => ({ cancelled: false })),
+    });
+
+    const store = JSON.parse(
+      fs.readFileSync(path.join(repoRoot, ".pi", "todos.json"), "utf-8"),
+    ) as { todos: Array<{ status: string; completedAt?: string }> };
+
+    expect(store.todos[0]?.status).toBe("done");
+    expect(store.todos[0]?.completedAt).toBeTruthy();
+    expect(exec).not.toHaveBeenCalledWith(
+      "git",
+      expect.arrayContaining(["commit"]),
+    );
+    expect(notifications).not.toContainEqual({
+      message: "Formatted 201 files in 46ms. No fixes applied.",
+      level: "error",
+    });
+    expect(notifications).toContainEqual({
+      message: "Completed TODO: Already merged todo",
+      level: "info",
+    });
+  });
+
   it("cancels finish when recent commit merge confirmation is denied", async () => {
     const repoRoot = createTempRepo();
     fs.writeFileSync(

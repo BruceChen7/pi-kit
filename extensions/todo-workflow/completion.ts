@@ -601,6 +601,24 @@ async function isGitWorktreeClean(
   return { ok: true, clean: result.stdout.trim() === "" };
 }
 
+async function hasStagedChanges(
+  pi: ExtensionAPI,
+  repoRoot: string,
+): Promise<{ ok: true; hasChanges: boolean } | { ok: false; message: string }> {
+  const result = await runGit(pi, repoRoot, ["diff", "--cached", "--quiet"]);
+  if (result.code === 0) {
+    return { ok: true, hasChanges: false };
+  }
+  if (result.code === 1) {
+    return { ok: true, hasChanges: true };
+  }
+
+  return {
+    ok: false,
+    message: formatCommandError(result, "Failed to inspect staged changes"),
+  };
+}
+
 function buildFinishMergeArgs(workBranch: string): string[] {
   return ["merge", "--no-commit", "--no-remove", workBranch];
 }
@@ -794,6 +812,15 @@ async function runFinishFlow(
           "error",
         );
         return false;
+      }
+
+      const stagedChanges = await hasStagedChanges(pi, ctx.cwd);
+      if (stagedChanges.ok === false) {
+        ctx.ui.notify(stagedChanges.message, "error");
+        return false;
+      }
+      if (!stagedChanges.hasChanges) {
+        return true;
       }
 
       const commitResult = await runGit(pi, ctx.cwd, [

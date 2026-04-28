@@ -34,17 +34,20 @@ export interface Skill {
 
 interface SkillToggleSettingsEntry {
   disabledSkills?: string[];
+  disabledSkillPaths?: string[];
   managedOverrides?: string[];
 }
 
 interface SkillToggleSettings {
   disabledSkills?: string[];
+  disabledSkillPaths?: string[];
   managedOverrides?: string[];
   byCwd?: Record<string, SkillToggleSettingsEntry>;
 }
 
 interface ToggleState {
   disabledSkills: Set<string>;
+  disabledSkillPaths: Set<string>;
   writePath: string;
   writeScope: "global";
   cwdKey: string;
@@ -79,13 +82,25 @@ const DEFAULT_THEME: PaletteTheme = {
 const SKILL_TAG_REGEX =
   /<skill\b[^>]*>[\s]*<name\b[^>]*>([^<]*)<\/name\b[^>]*>[\s\S]*?<\/skill>/gi;
 
-const SKILL_DIRS: {
+const DEFAULT_SKILL_DIRS: {
   dir: (cwd: string) => string;
   format: "recursive" | "claude";
+  scope: Skill["scope"];
 }[] = [
+  {
+    dir: () => path.join(os.homedir(), ".pi", "agent", "skills"),
+    format: "recursive",
+    scope: "user",
+  },
   {
     dir: () => path.join(os.homedir(), ".agents", "skills"),
     format: "recursive",
+    scope: "user",
+  },
+  {
+    dir: (cwd) => path.join(cwd, ".pi", "skills"),
+    format: "recursive",
+    scope: "project",
   },
 ];
 
@@ -93,6 +108,69 @@ const paletteTheme = loadTheme();
 
 function normalizeSkillName(name: string): string {
   return name.trim().toLowerCase();
+}
+
+function getSkillBasePath(skill: Skill): string {
+  const basePath =
+    path.basename(skill.filePath) === "SKILL.md"
+      ? path.dirname(skill.filePath)
+      : skill.filePath;
+  return normalizeSkillBasePath(basePath);
+}
+
+function normalizeSkillBasePath(value: string): string {
+  const withoutPrefix = value.startsWith("-") ? value.slice(1) : value;
+  const resolved = path.resolve(expandConfigPath(withoutPrefix));
+  return path.basename(resolved) === "SKILL.md"
+    ? path.dirname(resolved)
+    : resolved;
+}
+
+function isSkillPathDisabled(
+  skill: Skill,
+  disabledPaths: Set<string>,
+): boolean {
+  return disabledPaths.has(getSkillBasePath(skill));
+}
+
+function getPathDisabledSkillNames(
+  skills: Skill[],
+  disabledPaths: Set<string>,
+): Set<string> {
+  const names = new Set<string>();
+  for (const skill of skills) {
+    if (isSkillPathDisabled(skill, disabledPaths)) {
+      names.add(normalizeSkillName(skill.name));
+    }
+  }
+  return names;
+}
+
+function getNameDisabledSkills(
+  disabledNames: Set<string>,
+  skills: Skill[],
+  disabledPaths: Set<string>,
+): Set<string> {
+  const pathDisabledNames = getPathDisabledSkillNames(skills, disabledPaths);
+  return new Set(
+    Array.from(disabledNames).filter((name) => !pathDisabledNames.has(name)),
+  );
+}
+
+export function isSkillDisabledForList(
+  skill: Skill,
+  skills: Skill[],
+  disabledNames: Set<string>,
+  disabledPaths: Set<string>,
+): boolean {
+  if (isSkillPathDisabled(skill, disabledPaths)) return true;
+  const name = normalizeSkillName(skill.name);
+  return getNameDisabledSkills(disabledNames, skills, disabledPaths).has(name);
+}
+
+export function formatSkillDisplayDetails(skill: Skill): string {
+  const scope = skill.scope ?? "temporary";
+  return `[${scope}] ${toPortablePath(getSkillBasePath(skill))}`;
 }
 
 const HOME_DIR = os.homedir();
@@ -207,27 +285,67 @@ function loadTheme(): PaletteTheme {
   return DEFAULT_THEME;
 }
 
-function loadSkills(cwd: string): Skill[] {
-  const skillsByName = new Map<string, Skill>();
+function getProjectAgentsSkillDirs(cwd: string): string[] {
+  const repoRoot = getRepoRoot(cwd);
+  const stopDir = repoRoot ? path.resolve(repoRoot) : path.parse(cwd).root;
+  const dirs: string[] = [];
+  let current = path.resolve(cwd);
 
-  for (const { dir, format } of SKILL_DIRS) {
-    scanSkillDir(dir(cwd), format, skillsByName);
+  while (true) {
+    dirs.push(path.join(current, ".agents", "skills"));
+    if (current === stopDir) break;
+
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
   }
 
-  return Array.from(skillsByName.values()).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
+  return dirs;
+}
+
+function compareSkills(left: Skill, right: Skill): number {
+  const byName = left.name.localeCompare(right.name);
+  if (byName !== 0) return byName;
+  return getSkillBasePath(left).localeCompare(getSkillBasePath(right));
+}
+
+function sortSkills(skills: Iterable<Skill>): Skill[] {
+  return Array.from(skills).sort(compareSkills);
+}
+
+export function loadSkills(cwd: string): Skill[] {
+  const skillsByPath = new Map<string, Skill>();
+
+  for (const { dir, format, scope } of DEFAULT_SKILL_DIRS) {
+    scanSkillDir(dir(cwd), format, skillsByPath, undefined, scope);
+  }
+
+  for (const dir of getProjectAgentsSkillDirs(cwd)) {
+    scanSkillDir(dir, "recursive", skillsByPath, undefined, "project");
+  }
+
+  return sortSkills(skillsByPath.values());
+}
+
+function addAvailableSkill(
+  skillsByPath: Map<string, Skill>,
+  skill: Skill,
+): void {
+  const key = getSkillBasePath(skill);
+  if (!skillsByPath.has(key)) {
+    skillsByPath.set(key, skill);
+  }
 }
 
 function loadAvailableSkills(pi: ExtensionAPI, cwd: string): Skill[] {
   const commands = pi.getCommands();
-  const skillsByName = new Map<string, Skill>();
+  const skillsByPath = new Map<string, Skill>();
 
   for (const command of commands) {
     if (command.source !== "skill") continue;
     const name = command.name.replace(/^skill:/, "");
-    if (!name || skillsByName.has(name)) continue;
-    skillsByName.set(name, {
+    if (!name) continue;
+    addAvailableSkill(skillsByPath, {
       name,
       description: command.description ?? "",
       filePath: command.sourceInfo.path,
@@ -236,27 +354,22 @@ function loadAvailableSkills(pi: ExtensionAPI, cwd: string): Skill[] {
   }
 
   for (const skill of loadSkills(cwd)) {
-    if (!skillsByName.has(skill.name)) {
-      skillsByName.set(skill.name, { ...skill, scope: "user" });
-    }
+    addAvailableSkill(skillsByPath, skill);
   }
 
   for (const entry of getManagedOverrideEntries(cwd)) {
-    if (!skillsByName.has(entry.name)) {
-      skillsByName.set(entry.name, entry);
-    }
+    addAvailableSkill(skillsByPath, entry);
   }
 
-  return Array.from(skillsByName.values()).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
+  return sortSkills(skillsByPath.values());
 }
 
 function scanSkillDir(
   dir: string,
   format: "recursive" | "claude",
-  skillsByName: Map<string, Skill>,
+  skillsByPath: Map<string, Skill>,
   visitedDirs?: Set<string>,
+  scope?: Skill["scope"],
 ): void {
   if (!fs.existsSync(dir)) return;
 
@@ -292,15 +405,15 @@ function scanSkillDir(
 
       if (format === "recursive") {
         if (isDirectory) {
-          scanSkillDir(entryPath, format, skillsByName, visited);
+          scanSkillDir(entryPath, format, skillsByPath, visited, scope);
         } else if (isFile && entry.name === "SKILL.md") {
-          loadSkillFromFile(entryPath, skillsByName);
+          loadSkillFromFile(entryPath, skillsByPath, scope);
         }
       } else if (format === "claude") {
         if (!isDirectory) continue;
         const skillFile = path.join(entryPath, "SKILL.md");
         if (!fs.existsSync(skillFile)) continue;
-        loadSkillFromFile(skillFile, skillsByName);
+        loadSkillFromFile(skillFile, skillsByPath, scope);
       }
     }
   } catch {
@@ -310,7 +423,8 @@ function scanSkillDir(
 
 function loadSkillFromFile(
   filePath: string,
-  skillsByName: Map<string, Skill>,
+  skillsByPath: Map<string, Skill>,
+  scope?: Skill["scope"],
 ): void {
   try {
     const content = fs.readFileSync(filePath, "utf-8");
@@ -318,8 +432,10 @@ function loadSkillFromFile(
     const parentDirName = path.basename(skillDir);
     const { name, description } = parseFrontmatter(content, parentDirName);
 
-    if (description && !skillsByName.has(name)) {
-      skillsByName.set(name, { name, description, filePath });
+    const skill = { name, description, filePath, scope };
+    const key = getSkillBasePath(skill);
+    if (description && !skillsByPath.has(key)) {
+      skillsByPath.set(key, skill);
     }
   } catch {
     // Ignore invalid skill files
@@ -469,12 +585,11 @@ function toSkillList(value: unknown): string[] | null {
 }
 
 function buildOverridePattern(skill: Skill): string {
-  const basePath =
-    path.basename(skill.filePath) === "SKILL.md"
-      ? path.dirname(skill.filePath)
-      : skill.filePath;
-  const resolved = path.resolve(expandConfigPath(basePath));
-  return `-${toPortablePath(resolved)}`;
+  return buildOverridePatternFromBasePath(getSkillBasePath(skill));
+}
+
+function buildOverridePatternFromBasePath(basePath: string): string {
+  return `-${toPortablePath(normalizeSkillBasePath(basePath))}`;
 }
 
 function normalizeOverrideName(override: string): string {
@@ -482,25 +597,50 @@ function normalizeOverrideName(override: string): string {
   return normalizeSkillName(path.basename(trimmed));
 }
 
+function addOverride(
+  overrides: string[],
+  seen: Set<string>,
+  override: string | undefined,
+): void {
+  if (!override || seen.has(override)) return;
+  seen.add(override);
+  overrides.push(override);
+}
+
 function buildSkillOverrides(
   disabled: Iterable<string>,
   skills: Skill[],
   managedOverrides: Map<string, string>,
+  disabledPaths: Iterable<string> = [],
 ): string[] {
   const overrides: string[] = [];
   const seen = new Set<string>();
+  const namesCoveredByPaths = new Set<string>();
+
+  for (const skillPath of disabledPaths) {
+    const basePath = normalizeSkillBasePath(skillPath);
+    const skill = skills.find((entry) => getSkillBasePath(entry) === basePath);
+    if (skill) {
+      namesCoveredByPaths.add(normalizeSkillName(skill.name));
+    }
+    addOverride(
+      overrides,
+      seen,
+      skill
+        ? buildOverridePattern(skill)
+        : buildOverridePatternFromBasePath(basePath),
+    );
+  }
 
   for (const name of disabled) {
+    if (namesCoveredByPaths.has(name)) continue;
     const skill = skills.find(
       (entry) => normalizeSkillName(entry.name) === name,
     );
     const override = skill
       ? buildOverridePattern(skill)
       : managedOverrides.get(name);
-    if (!override) continue;
-    if (seen.has(override)) continue;
-    seen.add(override);
-    overrides.push(override);
+    addOverride(overrides, seen, override);
   }
 
   return overrides.sort();
@@ -552,6 +692,7 @@ function getManagedOverrideEntries(cwd: string): Skill[] {
     : {};
   const overrides = getManagedOverrides(skillToggle, {
     disabledSkills: new Set(),
+    disabledSkillPaths: new Set(),
     writePath: globalPath,
     writeScope: "global",
     cwdKey,
@@ -602,14 +743,20 @@ export function loadToggleState(cwd: string): ToggleState {
     ? (globalEntryRaw as SkillToggleSettingsEntry)
     : null;
   const globalDisabled = toSkillList(globalEntry?.disabledSkills);
+  const globalDisabledPaths = toSkillList(globalEntry?.disabledSkillPaths);
 
   const disabledSkills = globalDisabled ?? [];
+  const disabledSkillPaths = globalDisabledPaths ?? [];
   const cwdKey = matchedKey ?? toPortablePath(settingsCwd);
 
-  // Normalize all disabled skill names for consistent matching
+  // Normalize all disabled skill names and paths for consistent matching
   const normalizedDisabled = disabledSkills.map(normalizeSkillName);
+  const normalizedDisabledPaths = disabledSkillPaths.map(
+    normalizeSkillBasePath,
+  );
   return {
     disabledSkills: new Set(normalizedDisabled),
+    disabledSkillPaths: new Set(normalizedDisabledPaths),
     writePath: globalPath,
     writeScope: "global",
     cwdKey,
@@ -625,10 +772,19 @@ export function saveToggleState(state: ToggleState): void {
   const entryRaw = isRecord(byCwd[state.cwdKey])
     ? (byCwd[state.cwdKey] as SkillToggleSettingsEntry)
     : {};
-  byCwd[state.cwdKey] = {
+  const disabledSkillPaths = Array.from(state.disabledSkillPaths)
+    .map((entry) => toPortablePath(normalizeSkillBasePath(entry)))
+    .sort();
+  const nextEntry: SkillToggleSettingsEntry = {
     ...entryRaw,
     disabledSkills: Array.from(state.disabledSkills).sort(),
+    disabledSkillPaths:
+      disabledSkillPaths.length > 0 ? disabledSkillPaths : undefined,
   };
+  if (!nextEntry.disabledSkillPaths) {
+    delete nextEntry.disabledSkillPaths;
+  }
+  byCwd[state.cwdKey] = nextEntry;
   settings.skillToggle = {
     ...skillToggle,
     byCwd,
@@ -654,6 +810,7 @@ function syncSkillOverridesForState(state: ToggleState, skills: Skill[]): void {
     state.disabledSkills,
     skills,
     managedOverrideMap,
+    state.disabledSkillPaths,
   );
 
   const cleanedSkills = currentSkills.filter(
@@ -695,6 +852,7 @@ export function syncSkillOverrides(
   const { globalPath } = getSettingsPaths(cwd);
   const globalState: ToggleState = {
     disabledSkills: state.disabledSkills,
+    disabledSkillPaths: state.disabledSkillPaths,
     writePath: globalPath,
     writeScope: "global",
     cwdKey: getGlobalCwdKey(cwd),
@@ -706,13 +864,14 @@ function getInstalledSkillNames(skills: Skill[]): Set<string> {
   return new Set(skills.map((skill) => normalizeSkillName(skill.name)));
 }
 
-function getInstalledDisabled(
-  disabled: Set<string>,
+function getDisabledSkills(
   skills: Skill[],
-): string[] {
-  if (disabled.size === 0) return [];
-  const installed = getInstalledSkillNames(skills);
-  return Array.from(disabled).filter((name) => installed.has(name));
+  disabled: Set<string>,
+  disabledPaths: Set<string>,
+): Skill[] {
+  return skills.filter((skill) =>
+    isSkillDisabledForList(skill, skills, disabled, disabledPaths),
+  );
 }
 
 function pruneDisabledList(
@@ -769,31 +928,37 @@ function pruneSettingsFiles(cwd: string, skills: Skill[]): void {
 function getDisabledSkillDisplayNames(
   disabled: Set<string>,
   skills: Skill[],
+  disabledPaths: Set<string> = new Set(),
 ): string[] {
-  const installedDisabled = new Set(getInstalledDisabled(disabled, skills));
-  if (installedDisabled.size === 0) return [];
-
-  return skills
-    .filter((skill) => installedDisabled.has(normalizeSkillName(skill.name)))
-    .map((skill) => skill.name)
-    .sort((left, right) => left.localeCompare(right));
+  const displayNames = getDisabledSkills(skills, disabled, disabledPaths).map(
+    (skill) => skill.name,
+  );
+  return Array.from(new Set(displayNames)).sort((left, right) =>
+    left.localeCompare(right),
+  );
 }
 
 export function formatDisabledSkillsMessage(
   disabled: Set<string>,
   skills: Skill[],
+  disabledPaths: Set<string> = new Set(),
 ): string {
-  const displayNames = getDisabledSkillDisplayNames(disabled, skills);
+  const displayNames = getDisabledSkillDisplayNames(
+    disabled,
+    skills,
+    disabledPaths,
+  );
   if (displayNames.length === 0) return "No disabled skills";
   return `Disabled skills (${displayNames.length}): ${displayNames.join(", ")}`;
 }
 
 function formatDisabledList(
-  disabled: string[],
+  disabled: Set<string>,
+  disabledPaths: Set<string>,
   skills: Skill[],
   maxWidth: number,
 ): string {
-  const message = formatDisabledSkillsMessage(new Set(disabled), skills);
+  const message = formatDisabledSkillsMessage(disabled, skills, disabledPaths);
   const label =
     message === "No disabled skills"
       ? "Disabled: none"
@@ -803,14 +968,15 @@ function formatDisabledList(
 
 function updateStatus(
   ctx: ExtensionContext,
-  disabled: Set<string>,
+  state: ToggleState,
   skills?: Skill[],
 ): void {
   if (!ctx.hasUI) return;
 
   const visibleCount = skills
-    ? getInstalledDisabled(disabled, skills).length
-    : disabled.size;
+    ? getDisabledSkills(skills, state.disabledSkills, state.disabledSkillPaths)
+        .length
+    : state.disabledSkills.size + state.disabledSkillPaths.size;
 
   if (visibleCount === 0) {
     ctx.ui.setStatus("skill-toggle", undefined);
@@ -850,6 +1016,7 @@ class SkillTogglePicker {
   constructor(
     private skills: Skill[],
     private disabled: Set<string>,
+    private disabledPaths: Set<string>,
     private onToggle: (skill: Skill) => void,
     private onClose: () => void,
     private onUpdate: () => void,
@@ -999,7 +1166,12 @@ class SkillTogglePicker {
       for (let i = startIndex; i < endIndex; i++) {
         const skill = this.filtered[i];
         const isSelected = i === this.selected;
-        const isDisabled = this.disabled.has(normalizeSkillName(skill.name));
+        const isDisabled = isSkillDisabledForList(
+          skill,
+          this.skills,
+          this.disabled,
+          this.disabledPaths,
+        );
 
         const prefix = isSelected ? selected("▸") : border("·");
         const disabledBadge = isDisabled ? ` ${disabled("⨯")}` : "";
@@ -1009,9 +1181,12 @@ class SkillTogglePicker {
             ? disabled(skill.name)
             : skill.name;
         const maxDescLen = Math.max(0, innerW - visibleWidth(skill.name) - 12);
+        const detailText = [formatSkillDisplayDetails(skill), skill.description]
+          .filter((value) => value.length > 0)
+          .join(" — ");
         const descStr =
           maxDescLen > 3
-            ? description(truncateToWidth(skill.description, maxDescLen, "…"))
+            ? description(truncateToWidth(detailText, maxDescLen, "…"))
             : "";
         const separator = descStr ? `  ${border("—")}  ` : "";
         const skillLine = `${prefix} ${nameStr}${disabledBadge}${separator}${descStr}`;
@@ -1024,7 +1199,8 @@ class SkillTogglePicker {
     lines.push(emptyRow());
 
     const disabledList = formatDisabledList(
-      getInstalledDisabled(this.disabled, this.skills).sort(),
+      this.disabled,
+      this.disabledPaths,
       this.skills,
       innerW - 1,
     );
@@ -1078,13 +1254,21 @@ class SkillTogglePicker {
 export default function skillToggleExtension(pi: ExtensionAPI): void {
   let state: ToggleState = loadToggleState(process.cwd());
 
-  const isDisabledSkillCommand = (text: string): string | null => {
+  const getDisabledSkillCommand = (
+    text: string,
+    skills: Skill[],
+  ): string | null => {
     if (!text.startsWith("/skill:")) return null;
     const remainder = text.slice("/skill:".length).trim();
     if (!remainder) return null;
     const name = normalizeSkillName(remainder.split(/\s+/)[0] ?? "");
     if (!name) return null;
-    return state.disabledSkills.has(name) ? name : null;
+    const disabledNames = getNameDisabledSkills(
+      state.disabledSkills,
+      skills,
+      state.disabledSkillPaths,
+    );
+    return disabledNames.has(name) ? name : null;
   };
 
   const loggerReady = createLoggerReady(process.cwd());
@@ -1097,7 +1281,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
     if (skills) {
       syncSkillOverrides(state, skills, ctx.cwd);
     }
-    updateStatus(ctx, state.disabledSkills, skills);
+    updateStatus(ctx, state, skills);
   };
 
   pi.registerCommand("toggle-skill", {
@@ -1122,16 +1306,26 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
           const picker = new SkillTogglePicker(
             skills,
             state.disabledSkills,
+            state.disabledSkillPaths,
             (skill) => {
               const normalizedName = normalizeSkillName(skill.name);
-              if (state.disabledSkills.has(normalizedName)) {
-                state.disabledSkills.delete(normalizedName);
+              const basePath = getSkillBasePath(skill);
+              state.disabledSkills.delete(normalizedName);
+              if (
+                isSkillDisabledForList(
+                  skill,
+                  skills,
+                  state.disabledSkills,
+                  state.disabledSkillPaths,
+                )
+              ) {
+                state.disabledSkillPaths.delete(basePath);
               } else {
-                state.disabledSkills.add(normalizedName);
+                state.disabledSkillPaths.add(basePath);
               }
               saveToggleState(state);
               syncSkillOverrides(state, skills, ctx.cwd);
-              updateStatus(ctx, state.disabledSkills, skills);
+              updateStatus(ctx, state, skills);
               didToggle = true;
               tui.requestRender();
             },
@@ -1169,9 +1363,13 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
     handler: async (_args: string, ctx: ExtensionContext) => {
       const skills = loadAvailableSkills(pi, ctx.cwd);
       state = loadToggleState(ctx.cwd);
-      updateStatus(ctx, state.disabledSkills, skills);
+      updateStatus(ctx, state, skills);
       ctx.ui.notify(
-        formatDisabledSkillsMessage(state.disabledSkills, skills),
+        formatDisabledSkillsMessage(
+          state.disabledSkills,
+          skills,
+          state.disabledSkillPaths,
+        ),
         "info",
       );
     },
@@ -1179,7 +1377,10 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
 
   pi.on("input", async (event, ctx) => {
     if (event.source === "extension") return { action: "continue" };
-    const disabledName = isDisabledSkillCommand(event.text);
+    const disabledName = getDisabledSkillCommand(
+      event.text,
+      loadAvailableSkills(pi, ctx.cwd),
+    );
     if (!disabledName) return { action: "continue" };
     if (ctx.hasUI) {
       ctx.ui.notify(
@@ -1204,8 +1405,13 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
     await loggerReady;
     log?.debug("before_agent_start");
     log?.debug("disabled skills", { disabled: state.disabledSkills });
-    if (state.disabledSkills.size === 0) return {};
-    const prompt = filterSystemPrompt(event.systemPrompt, state.disabledSkills);
+    const disabledNames = getNameDisabledSkills(
+      state.disabledSkills,
+      event.systemPromptOptions.skills ?? [],
+      state.disabledSkillPaths,
+    );
+    if (disabledNames.size === 0) return {};
+    const prompt = filterSystemPrompt(event.systemPrompt, disabledNames);
     log?.debug("filtered prompt", { prompt });
     return {
       systemPrompt: prompt,

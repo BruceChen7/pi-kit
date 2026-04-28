@@ -507,6 +507,196 @@ describe("skill override sync", () => {
     expect(saved.skills).toEqual(["custom"]);
     expect(entry.managedOverrides).toBeUndefined();
   });
+
+  it("prefers disabled project skill paths over same-name global skills", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const { globalPath } = getSettingsPaths(cwd);
+    const projectSkillPath = path.join(
+      cwd,
+      ".agents",
+      "skills",
+      "code-simplifier",
+      "SKILL.md",
+    );
+    const globalSkillPath = path.join(
+      os.homedir(),
+      ".agents",
+      "skills",
+      "code-simplifier",
+      "SKILL.md",
+    );
+    const overridePath = `-${path.join(
+      cwd,
+      ".agents",
+      "skills",
+      "code-simplifier",
+    )}`;
+
+    fs.mkdirSync(path.dirname(globalPath), { recursive: true });
+    fs.writeFileSync(
+      globalPath,
+      JSON.stringify(
+        {
+          skillToggle: {
+            byCwd: {
+              [cwd]: {
+                disabledSkills: ["code-simplifier"],
+                disabledSkillPaths: [path.dirname(projectSkillPath)],
+              },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const { loadToggleState, syncSkillOverrides } = await importSkillToggle();
+    const state = loadToggleState(cwd);
+
+    syncSkillOverrides(
+      state,
+      [
+        {
+          name: "code-simplifier",
+          description: "Global skill",
+          filePath: globalSkillPath,
+          scope: "user",
+        },
+        {
+          name: "code-simplifier",
+          description: "Project skill",
+          filePath: projectSkillPath,
+          scope: "project",
+        },
+      ],
+      cwd,
+    );
+
+    const saved = readSettingsFile(globalPath);
+    const byCwd = (saved.skillToggle as { byCwd: Record<string, unknown> })
+      .byCwd;
+    const entry = byCwd[cwd] as { managedOverrides?: string[] };
+    expect(saved.skills).toEqual([overridePath]);
+    expect(entry.managedOverrides).toEqual([overridePath]);
+  });
+});
+
+describe("project .agents skill discovery", () => {
+  it("formats same-name skills with source and path details", async () => {
+    createTempHome();
+    const { formatSkillDisplayDetails } = await importSkillToggle();
+
+    expect(
+      formatSkillDisplayDetails({
+        name: "code-simplifier",
+        description: "Project skill",
+        filePath:
+          "/Users/ming.chen/work/video/retrieve/.agents/skills/code-simplifier/SKILL.md",
+        scope: "project",
+      }),
+    ).toBe(
+      "[project] /Users/ming.chen/work/video/retrieve/.agents/skills/code-simplifier",
+    );
+    expect(
+      formatSkillDisplayDetails({
+        name: "code-simplifier",
+        description: "Global skill",
+        filePath: path.join(
+          os.homedir(),
+          ".agents",
+          "skills",
+          "code-simplifier",
+          "SKILL.md",
+        ),
+        scope: "user",
+      }),
+    ).toBe("[user] $HOME/.agents/skills/code-simplifier");
+  });
+
+  it("treats a path-disabled skill as disabled without disabling same-name skills", async () => {
+    createTempHome();
+    const { isSkillDisabledForList } = await importSkillToggle();
+    const projectSkill: Skill = {
+      name: "code-simplifier",
+      description: "Project skill",
+      filePath: "/repo/.agents/skills/code-simplifier/SKILL.md",
+      scope: "project",
+    };
+    const globalSkill: Skill = {
+      name: "code-simplifier",
+      description: "Global skill",
+      filePath: path.join(
+        os.homedir(),
+        ".agents",
+        "skills",
+        "code-simplifier",
+        "SKILL.md",
+      ),
+      scope: "user",
+    };
+
+    expect(
+      isSkillDisabledForList(
+        projectSkill,
+        [globalSkill, projectSkill],
+        new Set(["code-simplifier"]),
+        new Set(["/repo/.agents/skills/code-simplifier"]),
+      ),
+    ).toBe(true);
+    expect(
+      isSkillDisabledForList(
+        globalSkill,
+        [globalSkill, projectSkill],
+        new Set(["code-simplifier"]),
+        new Set(["/repo/.agents/skills/code-simplifier"]),
+      ),
+    ).toBe(false);
+  });
+
+  it("discovers .agents skills from cwd ancestors up to the git root", async () => {
+    createTempHome();
+    const repoRoot = createTempDir("pi-kit-skill-toggle-repo-");
+    const nestedCwd = path.join(repoRoot, "packages", "app");
+    const skillDir = path.join(repoRoot, ".agents", "skills", "project-only");
+    fs.mkdirSync(nestedCwd, { recursive: true });
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: project-only",
+        "description: Project skill from .agents",
+        "---",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const { runGit } = await import("../shared/git.js");
+    runGit(repoRoot, ["init"]);
+
+    const skillToggle = await importSkillToggle();
+    const loadSkills = (
+      skillToggle as {
+        loadSkills?: (cwd: string) => Skill[];
+      }
+    ).loadSkills;
+
+    expect(loadSkills).toBeDefined();
+    expect(loadSkills?.(nestedCwd)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "project-only",
+          description: "Project skill from .agents",
+          filePath: path.join(skillDir, "SKILL.md"),
+          scope: "project",
+        }),
+      ]),
+    );
+  });
 });
 
 describe("formatDisabledSkillsMessage", () => {

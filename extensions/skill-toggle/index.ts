@@ -1,7 +1,7 @@
 /**
  * /toggle-skill
  *
- * Toggle skills in the system prompt at runtime.
+ * Toggle symlinked skills by adding/removing their skill directory links.
  */
 
 import * as fs from "node:fs";
@@ -32,18 +32,34 @@ export interface Skill {
   scope?: "project" | "user" | "temporary";
 }
 
+interface ManagedSkillLink {
+  name: string;
+  description?: string;
+  path: string;
+  target: string;
+}
+
 interface SkillToggleSettingsEntry {
   disabledSkills?: string[];
   disabledSkillPaths?: string[];
   managedOverrides?: string[];
+  managedSkillLinks?: ManagedSkillLink[];
 }
 
 interface SkillToggleSettings {
   disabledSkills?: string[];
   disabledSkillPaths?: string[];
   managedOverrides?: string[];
+  managedSkillLinks?: ManagedSkillLink[];
   byCwd?: Record<string, SkillToggleSettingsEntry>;
 }
+
+export type SkillLinkToggleResult =
+  | { status: "enabled" | "disabled" | "already-disabled" }
+  | {
+      status: "not-symlink" | "missing-link-record" | "conflict";
+      path: string;
+    };
 
 interface ToggleState {
   disabledSkills: Set<string>;
@@ -76,11 +92,6 @@ const DEFAULT_THEME: PaletteTheme = {
   description: "2",
   hint: "2",
 };
-
-// Matches <skill>...</skill> blocks with nested <name>...</name>
-// Case-insensitive, tolerant of whitespace/newlines between tags
-const SKILL_TAG_REGEX =
-  /<skill\b[^>]*>[\s]*<name\b[^>]*>([^<]*)<\/name\b[^>]*>[\s\S]*?<\/skill>/gi;
 
 const DEFAULT_SKILL_DIRS: {
   dir: (cwd: string) => string;
@@ -244,10 +255,8 @@ function resolveSettingsCwd(cwd: string): string {
   return normalizedRepoRoot !== primaryRepoRoot ? primaryRepoRoot : cwd;
 }
 
-let log: ReturnType<typeof createLogger> | null = null;
-
 async function initLogger(_cwd: string): Promise<void> {
-  log = createLogger("skill-toggle", {
+  createLogger("skill-toggle", {
     stderr: null,
   });
 }
@@ -584,6 +593,28 @@ function toSkillList(value: unknown): string[] | null {
   return items.length ? items : [];
 }
 
+function normalizeManagedSkillLink(value: unknown): ManagedSkillLink | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.name !== "string") return null;
+  if (typeof value.path !== "string") return null;
+  if (typeof value.target !== "string") return null;
+  return {
+    name: value.name,
+    description:
+      typeof value.description === "string" ? value.description : undefined,
+    path: normalizeSkillBasePath(value.path),
+    target: path.resolve(expandConfigPath(value.target)),
+  };
+}
+
+function toManagedSkillLinks(value: unknown): ManagedSkillLink[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const link = normalizeManagedSkillLink(item);
+    return link ? [link] : [];
+  });
+}
+
 function buildOverridePattern(skill: Skill): string {
   return buildOverridePatternFromBasePath(getSkillBasePath(skill));
 }
@@ -660,6 +691,53 @@ function getManagedOverrides(
   return [];
 }
 
+function getManagedSkillLinks(
+  skillToggle: SkillToggleSettings,
+  state: ToggleState,
+): ManagedSkillLink[] {
+  const byCwd = isRecord(skillToggle.byCwd)
+    ? (skillToggle.byCwd as Record<string, unknown>)
+    : undefined;
+  const entryRaw = byCwd ? byCwd[state.cwdKey] : undefined;
+  if (isRecord(entryRaw)) {
+    return toManagedSkillLinks(entryRaw.managedSkillLinks);
+  }
+  return [];
+}
+
+function updateManagedSkillLinks(
+  skillToggle: SkillToggleSettings,
+  state: ToggleState,
+  links: ManagedSkillLink[],
+): SkillToggleSettings {
+  const byCwd = isRecord(skillToggle.byCwd) ? { ...skillToggle.byCwd } : {};
+  const entryRaw = isRecord(byCwd[state.cwdKey])
+    ? (byCwd[state.cwdKey] as SkillToggleSettingsEntry)
+    : {};
+  const nextEntry: SkillToggleSettingsEntry = {
+    ...entryRaw,
+    managedSkillLinks: links.length > 0 ? links : undefined,
+  };
+  if (!nextEntry.managedSkillLinks) {
+    delete nextEntry.managedSkillLinks;
+  }
+  byCwd[state.cwdKey] = nextEntry;
+  return { ...skillToggle, byCwd };
+}
+
+function saveManagedSkillLinks(
+  state: ToggleState,
+  update: (links: ManagedSkillLink[]) => ManagedSkillLink[],
+): void {
+  const settings = readSettingsFile(state.writePath);
+  const skillToggle = isRecord(settings.skillToggle)
+    ? (settings.skillToggle as SkillToggleSettings)
+    : {};
+  const links = update(getManagedSkillLinks(skillToggle, state));
+  settings.skillToggle = updateManagedSkillLinks(skillToggle, state, links);
+  writeSettingsFile(state.writePath, settings);
+}
+
 function getManagedOverrideMap(overrides: string[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const override of overrides) {
@@ -690,19 +768,28 @@ function getManagedOverrideEntries(cwd: string): Skill[] {
   const skillToggle = isRecord(settings.skillToggle)
     ? (settings.skillToggle as SkillToggleSettings)
     : {};
-  const overrides = getManagedOverrides(skillToggle, {
-    disabledSkills: new Set(),
-    disabledSkillPaths: new Set(),
+  const state = {
+    disabledSkills: new Set<string>(),
+    disabledSkillPaths: new Set<string>(),
     writePath: globalPath,
-    writeScope: "global",
+    writeScope: "global" as const,
     cwdKey,
-  });
+  };
+  const overrides = getManagedOverrides(skillToggle, state);
   const entries: Skill[] = [];
   for (const override of overrides) {
     const basePath = override.startsWith("-") ? override.slice(1) : override;
     const name = normalizeSkillName(path.basename(basePath));
     if (!name) continue;
     entries.push({ name, description: "", filePath: basePath, scope: "user" });
+  }
+  for (const link of getManagedSkillLinks(skillToggle, state)) {
+    entries.push({
+      name: link.name,
+      description: link.description ?? "",
+      filePath: path.join(link.path, "SKILL.md"),
+      scope: "user",
+    });
   }
   return entries;
 }
@@ -791,6 +878,98 @@ export function saveToggleState(state: ToggleState): void {
   };
 
   writeSettingsFile(state.writePath, settings);
+}
+
+function linkTargetToAbsolute(linkPath: string, target: string): string {
+  return path.resolve(path.dirname(linkPath), target);
+}
+
+function findManagedSkillLink(
+  state: ToggleState,
+  skillPath: string,
+): ManagedSkillLink | null {
+  const settings = readSettingsFile(state.writePath);
+  const skillToggle = isRecord(settings.skillToggle)
+    ? (settings.skillToggle as SkillToggleSettings)
+    : {};
+  const normalizedPath = normalizeSkillBasePath(skillPath);
+  return (
+    getManagedSkillLinks(skillToggle, state).find(
+      (link) => normalizeSkillBasePath(link.path) === normalizedPath,
+    ) ?? null
+  );
+}
+
+function isManagedSkillLinkForPath(
+  link: ManagedSkillLink,
+  skillPath: string,
+): boolean {
+  return (
+    normalizeSkillBasePath(link.path) === normalizeSkillBasePath(skillPath)
+  );
+}
+
+function removeManagedSkillLink(state: ToggleState, skillPath: string): void {
+  saveManagedSkillLinks(state, (links) =>
+    links.filter((link) => !isManagedSkillLinkForPath(link, skillPath)),
+  );
+}
+
+function upsertManagedSkillLink(
+  state: ToggleState,
+  link: ManagedSkillLink,
+): void {
+  saveManagedSkillLinks(state, (links) => [
+    ...links.filter((entry) => !isManagedSkillLinkForPath(entry, link.path)),
+    link,
+  ]);
+}
+
+export function toggleSkillLink(
+  state: ToggleState,
+  skill: Skill,
+): SkillLinkToggleResult {
+  const skillPath = getSkillBasePath(skill);
+  const normalizedName = normalizeSkillName(skill.name);
+
+  if (state.disabledSkillPaths.has(skillPath)) {
+    const link = findManagedSkillLink(state, skillPath);
+    if (!link) return { status: "missing-link-record", path: skillPath };
+    if (fs.existsSync(link.path))
+      return { status: "conflict", path: link.path };
+
+    fs.mkdirSync(path.dirname(link.path), { recursive: true });
+    fs.symlinkSync(link.target, link.path);
+    state.disabledSkillPaths.delete(skillPath);
+    state.disabledSkills.delete(normalizedName);
+    saveToggleState(state);
+    removeManagedSkillLink(state, skillPath);
+    return { status: "enabled" };
+  }
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(skillPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { status: "already-disabled" };
+    throw error;
+  }
+
+  if (!stat.isSymbolicLink()) return { status: "not-symlink", path: skillPath };
+
+  const target = linkTargetToAbsolute(skillPath, fs.readlinkSync(skillPath));
+  fs.unlinkSync(skillPath);
+  state.disabledSkills.delete(normalizedName);
+  state.disabledSkillPaths.add(skillPath);
+  saveToggleState(state);
+  upsertManagedSkillLink(state, {
+    name: skill.name,
+    description: skill.description,
+    path: skillPath,
+    target,
+  });
+  return { status: "disabled" };
 }
 
 function arraysEqual(left: string[], right: string[]): boolean {
@@ -985,22 +1164,40 @@ function updateStatus(
   ctx.ui.setStatus("skill-toggle", `Skill toggle: ${visibleCount} disabled`);
 }
 
-function filterSystemPrompt(prompt: string, disabled: Set<string>): string {
-  if (disabled.size === 0) return prompt;
+function isAppliedSkillLinkToggle(result: SkillLinkToggleResult): boolean {
+  return result.status === "enabled" || result.status === "disabled";
+}
 
-  log?.info("SKILL_TAG_REGEX", { regex: String(SKILL_TAG_REGEX) });
-
-  return prompt.replace(SKILL_TAG_REGEX, (match, name) => {
-    if (!name) {
-      // Fail-soft: keep block if name cannot be extracted
-      log?.debug("skill name extraction failed, keeping block");
-      return match;
-    }
-    const normalizedName = normalizeSkillName(name);
-    log?.info("skill name resolved", { name, normalizedName });
-    if (disabled.has(normalizedName)) return "";
-    return match;
-  });
+function notifySkillLinkResult(
+  ctx: ExtensionContext,
+  skill: Skill,
+  result: SkillLinkToggleResult,
+): void {
+  switch (result.status) {
+    case "not-symlink":
+      ctx.ui.notify(
+        `Skill "${skill.name}" is not a symlink, so it was left untouched.`,
+        "warning",
+      );
+      return;
+    case "conflict":
+      ctx.ui.notify(
+        `Skill "${skill.name}" conflicts with existing path: ${result.path}`,
+        "warning",
+      );
+      return;
+    case "missing-link-record":
+      ctx.ui.notify(
+        `Skill "${skill.name}" cannot be restored because its symlink target is unknown.`,
+        "warning",
+      );
+      return;
+    default:
+      ctx.ui.notify(
+        `Skill "${skill.name}": ${result.status}. Run /reload to apply discovery changes.`,
+        "info",
+      );
+  }
 }
 
 class SkillTogglePicker {
@@ -1271,21 +1468,18 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
     return disabledNames.has(name) ? name : null;
   };
 
-  const loggerReady = createLoggerReady(process.cwd());
+  void createLoggerReady(process.cwd());
 
   const refreshState = (ctx: ExtensionContext, skills?: Skill[]) => {
     if (skills) {
       pruneSettingsFiles(ctx.cwd, skills);
     }
     state = loadToggleState(ctx.cwd);
-    if (skills) {
-      syncSkillOverrides(state, skills, ctx.cwd);
-    }
     updateStatus(ctx, state, skills);
   };
 
   pi.registerCommand("toggle-skill", {
-    description: "Toggle skills in the system prompt",
+    description: "Toggle symlinked skills by adding/removing skill links",
     handler: async (_args: string, ctx: ExtensionContext) => {
       if (!ctx.hasUI) {
         ctx.ui.notify("toggle-skill requires interactive mode", "warning");
@@ -1308,25 +1502,10 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
             state.disabledSkills,
             state.disabledSkillPaths,
             (skill) => {
-              const normalizedName = normalizeSkillName(skill.name);
-              const basePath = getSkillBasePath(skill);
-              state.disabledSkills.delete(normalizedName);
-              if (
-                isSkillDisabledForList(
-                  skill,
-                  skills,
-                  state.disabledSkills,
-                  state.disabledSkillPaths,
-                )
-              ) {
-                state.disabledSkillPaths.delete(basePath);
-              } else {
-                state.disabledSkillPaths.add(basePath);
-              }
-              saveToggleState(state);
-              syncSkillOverrides(state, skills, ctx.cwd);
+              const result = toggleSkillLink(state, skill);
               updateStatus(ctx, state, skills);
-              didToggle = true;
+              notifySkillLinkResult(ctx, skill, result);
+              didToggle = didToggle || isAppliedSkillLinkToggle(result);
               tui.requestRender();
             },
             () => done(),
@@ -1399,22 +1578,5 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
   pi.on("session_switch", async (_event, ctx) => {
     const skills = loadAvailableSkills(pi, ctx.cwd);
     refreshState(ctx, skills);
-  });
-
-  pi.on("before_agent_start", async (event, _ctx) => {
-    await loggerReady;
-    log?.debug("before_agent_start");
-    log?.debug("disabled skills", { disabled: state.disabledSkills });
-    const disabledNames = getNameDisabledSkills(
-      state.disabledSkills,
-      event.systemPromptOptions.skills ?? [],
-      state.disabledSkillPaths,
-    );
-    if (disabledNames.size === 0) return {};
-    const prompt = filterSystemPrompt(event.systemPrompt, disabledNames);
-    log?.debug("filtered prompt", { prompt });
-    return {
-      systemPrompt: prompt,
-    };
   });
 }

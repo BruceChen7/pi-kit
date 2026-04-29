@@ -6,6 +6,7 @@ import {
   createTestContext,
   flushMicrotasks,
   removeTempRepo,
+  type TestCtx,
   writeTestFile,
 } from "./test-helpers.js";
 
@@ -13,15 +14,19 @@ async function importPlannotatorAuto() {
   return (await import("./index.js")).default;
 }
 
-function mockPlanReviewApi(
-  options: {
-    createRequestPlannotator?: ReturnType<typeof vi.fn>;
-    startPlanReview?: ReturnType<typeof vi.fn>;
-    waitForReviewResult?: ReturnType<typeof vi.fn>;
-    getStatus?: ReturnType<typeof vi.fn>;
-    requestReviewStatus?: ReturnType<typeof vi.fn>;
-  } = {},
-) {
+type FakePi = ReturnType<typeof createFakePi>;
+type Emit = FakePi["emit"];
+type TestApi = FakePi["api"];
+type ReviewPromptDelivery = "steer" | "followUp";
+type PlanReviewApiMockOptions = {
+  createRequestPlannotator?: ReturnType<typeof vi.fn>;
+  startPlanReview?: ReturnType<typeof vi.fn>;
+  waitForReviewResult?: ReturnType<typeof vi.fn>;
+  getStatus?: ReturnType<typeof vi.fn>;
+  requestReviewStatus?: ReturnType<typeof vi.fn>;
+};
+
+function mockPlanReviewApi(options: PlanReviewApiMockOptions = {}) {
   const startPlanReview = options.startPlanReview ?? vi.fn();
 
   vi.doMock("./plannotator-api.ts", () => ({
@@ -48,8 +53,8 @@ function mockPlanReviewApi(
 }
 
 async function emitToolWrite(
-  emit: (name: string, event: unknown, ctx: unknown) => Promise<unknown>,
-  ctx: unknown,
+  emit: Emit,
+  ctx: TestCtx,
   relativePath: string,
   toolCallId = "call-1",
 ): Promise<void> {
@@ -74,8 +79,8 @@ async function emitToolWrite(
 }
 
 async function emitBashCommand(
-  emit: (name: string, event: unknown, ctx: unknown) => Promise<unknown>,
-  ctx: unknown,
+  emit: Emit,
+  ctx: TestCtx,
   command: string,
   toolCallId = "bash-call-1",
 ): Promise<void> {
@@ -109,6 +114,92 @@ function attachWidgetSpy(ctx: ReturnType<typeof createTestContext>) {
   return setWidget;
 }
 
+async function writePlanDraft(
+  repoRoot: string,
+  repoName: string,
+): Promise<string> {
+  const relativePath = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+  await writeTestFile(repoRoot, relativePath, "# Plan\n\n- [ ] test\n");
+  return relativePath;
+}
+
+async function writeSpecDraft(
+  repoRoot: string,
+  repoName: string,
+): Promise<string> {
+  const relativePath = `.pi/plans/${repoName}/specs/2026-04-20-agent-design.md`;
+  await writeTestFile(repoRoot, relativePath, "# Spec\n\n- draft\n");
+  return relativePath;
+}
+
+function expectReviewPromptSent(
+  sendUserMessage: TestApi["sendUserMessage"],
+  options: {
+    path: string;
+    deliverAs: ReviewPromptDelivery;
+    shouldContainToolName?: boolean;
+  },
+): void {
+  const matchingCall = (
+    sendUserMessage.mock.calls as Array<[unknown, unknown]>
+  ).find(([body, delivery]) => {
+    const message = String(body);
+    const deliverAs = (delivery as { deliverAs?: unknown } | undefined)
+      ?.deliverAs;
+    const hasExpectedDelivery = deliverAs === options.deliverAs;
+    const hasExpectedPath = message.includes(options.path);
+    const hasExpectedToolName =
+      options.shouldContainToolName === false ||
+      message.includes("plannotator_auto_submit_review");
+
+    return hasExpectedDelivery && hasExpectedPath && hasExpectedToolName;
+  });
+
+  expect(matchingCall).toBeDefined();
+}
+
+type PlannotatorAutoTestHarness = FakePi &
+  ReturnType<typeof mockPlanReviewApi> & {
+    repoRoot: string;
+    repoName: string;
+    createCtx: (options?: Parameters<typeof createTestContext>[1]) => TestCtx;
+  };
+
+async function withPlannotatorAutoTest(
+  repoPrefix: string,
+  runTest: (harness: PlannotatorAutoTestHarness) => Promise<void>,
+  apiMockOptions?: PlanReviewApiMockOptions,
+): Promise<void> {
+  vi.resetModules();
+  const apiMocks = mockPlanReviewApi(apiMockOptions);
+
+  const plannotatorAuto = await importPlannotatorAuto();
+  const pi = createFakePi();
+  plannotatorAuto(pi.api as never);
+
+  const repoRoot = await createTempRepo(repoPrefix);
+  const repoName = repoRoot.split("/").pop() ?? "repo";
+  let ctx: TestCtx | undefined;
+
+  try {
+    await runTest({
+      ...pi,
+      ...apiMocks,
+      repoRoot,
+      repoName,
+      createCtx: (options) => {
+        ctx = createTestContext(repoRoot, options);
+        return ctx;
+      },
+    });
+  } finally {
+    if (ctx) {
+      await pi.emit("session_shutdown", {}, ctx);
+    }
+    await removeTempRepo(repoRoot);
+  }
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -116,405 +207,289 @@ afterEach(() => {
 
 describe("plan review trigger timing", () => {
   it("queues review submission after a bash heredoc creates a plan file", async () => {
-    vi.resetModules();
-    const { startPlanReview } = mockPlanReviewApi();
+    await withPlannotatorAutoTest(
+      "plannotator-auto-bash-plan-",
+      async ({ api, emit, repoRoot, repoName, startPlanReview, createCtx }) => {
+        const planFileRelative = await writePlanDraft(repoRoot, repoName);
+        const ctx = createCtx({ isIdle: false });
 
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit } = createFakePi();
-    plannotatorAuto(api as never);
+        await emit("session_start", {}, ctx);
+        await emitBashCommand(
+          emit,
+          ctx,
+          `cat > ${planFileRelative} <<'EOF'\n# Plan\n\n- [ ] test\nEOF`,
+        );
 
-    const repoRoot = await createTempRepo("plannotator-auto-bash-plan-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
-    const ctx = createTestContext(repoRoot, { isIdle: false });
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitBashCommand(
-        emit,
-        ctx,
-        `cat > ${planFileRelative} <<'EOF'\n# Plan\n\n- [ ] test\nEOF`,
-      );
-
-      expect(startPlanReview).not.toHaveBeenCalled();
-      expect(ctx.abort).toHaveBeenCalledTimes(1);
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining("plannotator_auto_submit_review"),
-        { deliverAs: "steer" },
-      );
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(planFileRelative),
-        { deliverAs: "steer" },
-      );
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
+        expect(startPlanReview).not.toHaveBeenCalled();
+        expect(ctx.abort).toHaveBeenCalledTimes(1);
+        expectReviewPromptSent(api.sendUserMessage, {
+          path: planFileRelative,
+          deliverAs: "steer",
+        });
+      },
+    );
   });
 
   it("immediately steers manual review submission after a busy plan-file write", async () => {
-    vi.resetModules();
-    const { startPlanReview } = mockPlanReviewApi({
-      startPlanReview: vi.fn(async () => ({
-        status: "handled" as const,
-        result: {
-          status: "pending" as const,
-          reviewId: "review-immediate",
-        },
-      })),
-    });
+    await withPlannotatorAutoTest(
+      "plannotator-auto-plan-review-",
+      async ({ api, emit, repoRoot, repoName, startPlanReview, createCtx }) => {
+        const planFileRelative = await writePlanDraft(repoRoot, repoName);
+        const ctx = createCtx({ isIdle: false });
 
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit } = createFakePi();
-    plannotatorAuto(api as never);
+        await emit("session_start", {}, ctx);
+        const reviewPromise = emitToolWrite(emit, ctx, planFileRelative);
 
-    const repoRoot = await createTempRepo("plannotator-auto-plan-review-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
+        await flushMicrotasks();
+        await reviewPromise;
 
-    const ctx = createTestContext(repoRoot, { isIdle: false });
-
-    try {
-      await emit("session_start", {}, ctx);
-      const reviewPromise = emitToolWrite(emit, ctx, planFileRelative);
-
-      await flushMicrotasks();
-      await reviewPromise;
-      expect(startPlanReview).not.toHaveBeenCalled();
-      expect(ctx.abort).toHaveBeenCalledTimes(1);
-      expect(ctx.ui.notify).not.toHaveBeenCalled();
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining("plannotator_auto_submit_review"),
-        { deliverAs: "steer" },
-      );
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(planFileRelative),
-        { deliverAs: "steer" },
-      );
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
+        expect(startPlanReview).not.toHaveBeenCalled();
+        expect(ctx.abort).toHaveBeenCalledTimes(1);
+        expect(ctx.ui.notify).not.toHaveBeenCalled();
+        expectReviewPromptSent(api.sendUserMessage, {
+          path: planFileRelative,
+          deliverAs: "steer",
+        });
+      },
+    );
   });
 
   it("does not show the review widget for pending-only plan review state", async () => {
-    vi.resetModules();
-    mockPlanReviewApi();
+    await withPlannotatorAutoTest(
+      "plannotator-auto-pending-widget-",
+      async ({ emit, repoRoot, repoName, createCtx }) => {
+        const planFileRelative = await writePlanDraft(repoRoot, repoName);
 
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit } = createFakePi();
-    plannotatorAuto(api as never);
+        const ctx = createCtx();
+        const setWidget = attachWidgetSpy(ctx);
 
-    const repoRoot = await createTempRepo("plannotator-auto-pending-widget-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
+        await emit("session_start", {}, ctx);
+        setWidget.mockClear();
 
-    const ctx = createTestContext(repoRoot);
-    const setWidget = attachWidgetSpy(ctx);
+        await emitToolWrite(emit, ctx, planFileRelative);
 
-    try {
-      await emit("session_start", {}, ctx);
-      setWidget.mockClear();
-
-      await emitToolWrite(emit, ctx, planFileRelative);
-
-      expect(setWidget).toHaveBeenCalled();
-      expect(
-        setWidget.mock.calls.every(
-          ([key, content]) =>
-            key === "plannotator-auto-review" && content === undefined,
-        ),
-      ).toBe(true);
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
+        expect(setWidget).toHaveBeenCalled();
+        expect(
+          setWidget.mock.calls.every(
+            ([key, content]) =>
+              key === "plannotator-auto-review" && content === undefined,
+          ),
+        ).toBe(true);
+      },
+    );
   });
 
   it("sends a strict follow-up gate message at agent_end when a plan draft is still pending", async () => {
-    vi.resetModules();
-    const { startPlanReview } = mockPlanReviewApi();
+    await withPlannotatorAutoTest(
+      "plannotator-auto-pending-gate-",
+      async ({ api, emit, repoRoot, repoName, startPlanReview, createCtx }) => {
+        const planFileRelative = await writePlanDraft(repoRoot, repoName);
+        const ctx = createCtx();
 
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit } = createFakePi();
-    plannotatorAuto(api as never);
+        await emit("session_start", {}, ctx);
+        await emitToolWrite(emit, ctx, planFileRelative);
+        await emit("agent_end", {}, ctx);
 
-    const repoRoot = await createTempRepo("plannotator-auto-pending-gate-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
-    const ctx = createTestContext(repoRoot);
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, planFileRelative);
-      await emit("agent_end", {}, ctx);
-
-      expect(startPlanReview).not.toHaveBeenCalled();
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining("plannotator_auto_submit_review"),
-        { deliverAs: "followUp" },
-      );
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(planFileRelative),
-        { deliverAs: "followUp" },
-      );
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
+        expect(startPlanReview).not.toHaveBeenCalled();
+        expectReviewPromptSent(api.sendUserMessage, {
+          path: planFileRelative,
+          deliverAs: "followUp",
+        });
+      },
+    );
   });
 
   it("emits a remote pending-review event when a plan draft is gated", async () => {
-    vi.resetModules();
-    mockPlanReviewApi();
+    await withPlannotatorAutoTest(
+      "plannotator-pending-event-",
+      async ({ emit, events, repoRoot, repoName, createCtx }) => {
+        const emitted: unknown[] = [];
+        events.on(PLANNOTATOR_PENDING_REVIEW_CHANNEL, (event) => {
+          emitted.push(event);
+        });
 
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit, events } = createFakePi();
-    const emitted: unknown[] = [];
-    events.on(PLANNOTATOR_PENDING_REVIEW_CHANNEL, (event) => {
-      emitted.push(event);
-    });
-    plannotatorAuto(api as never);
+        const planFileRelative = await writePlanDraft(repoRoot, repoName);
+        const ctx = createCtx({ isIdle: false });
 
-    const repoRoot = await createTempRepo("plannotator-pending-event-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
-    const ctx = createTestContext(repoRoot, { isIdle: false });
+        await emit("session_start", {}, ctx);
+        await emitToolWrite(emit, ctx, planFileRelative);
 
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, planFileRelative);
-
-      expect(emitted).toEqual([
-        expect.objectContaining({
-          type: "plannotator-auto.pending-review",
-          planFiles: [planFileRelative],
-          body: expect.stringContaining("plannotator_auto_submit_review"),
-        }),
-      ]);
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
+        expect(emitted).toEqual([
+          expect.objectContaining({
+            type: "plannotator-auto.pending-review",
+            planFiles: [planFileRelative],
+            body: expect.stringContaining("plannotator_auto_submit_review"),
+          }),
+        ]);
+      },
+    );
   });
 
   it("injects pending review guidance before the next agent turn", async () => {
-    vi.resetModules();
-    mockPlanReviewApi();
+    await withPlannotatorAutoTest(
+      "plannotator-before-agent-start-",
+      async ({ emit, repoRoot, repoName, createCtx }) => {
+        const planFileRelative = await writePlanDraft(repoRoot, repoName);
+        const ctx = createCtx();
 
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { emit, api } = createFakePi();
-    plannotatorAuto(api as never);
+        await emit("session_start", {}, ctx);
+        await emitToolWrite(emit, ctx, planFileRelative);
 
-    const repoRoot = await createTempRepo("plannotator-before-agent-start-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
-    const ctx = createTestContext(repoRoot);
+        const result = (await emit("before_agent_start", {}, ctx)) as {
+          message?: { content?: string };
+        };
 
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, planFileRelative);
-
-      const result = (await emit("before_agent_start", {}, ctx)) as {
-        message?: { content?: string };
-      };
-
-      expect(result.message?.content ?? "").toContain(
-        "plannotator_auto_submit_review",
-      );
-      expect(result.message?.content ?? "").toContain(planFileRelative);
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
+        expect(result.message?.content ?? "").toContain(
+          "plannotator_auto_submit_review",
+        );
+        expect(result.message?.content ?? "").toContain(planFileRelative);
+      },
+    );
   });
 
   it("gates generated plans from any worktree slug until explicit submission", async () => {
-    vi.resetModules();
-    const { startPlanReview } = mockPlanReviewApi();
+    await withPlannotatorAutoTest(
+      "plannotator-wildcard-plan-",
+      async ({ api, emit, repoRoot, startPlanReview, createCtx }) => {
+        const planFileRelative =
+          ".pi/plans/other-worktree/plan/2026-04-16-wildcard.md";
+        await writeTestFile(
+          repoRoot,
+          planFileRelative,
+          "# Plan\n\n- [ ] test\n",
+        );
+        const ctx = createCtx({ isIdle: false });
 
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit } = createFakePi();
-    plannotatorAuto(api as never);
+        await emit("session_start", {}, ctx);
+        await emitToolWrite(emit, ctx, planFileRelative);
+        await emit("agent_end", {}, ctx);
 
-    const repoRoot = await createTempRepo("plannotator-wildcard-plan-");
-    const planFileRelative =
-      ".pi/plans/other-worktree/plan/2026-04-16-wildcard.md";
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
-    const ctx = createTestContext(repoRoot, { isIdle: false });
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, planFileRelative);
-      await emit("agent_end", {}, ctx);
-
-      expect(startPlanReview).not.toHaveBeenCalled();
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(planFileRelative),
-        { deliverAs: "followUp" },
-      );
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
+        expect(startPlanReview).not.toHaveBeenCalled();
+        expectReviewPromptSent(api.sendUserMessage, {
+          path: planFileRelative,
+          deliverAs: "followUp",
+          shouldContainToolName: false,
+        });
+      },
+    );
   });
 
   it("gates generated specs from any worktree slug until explicit submission", async () => {
-    vi.resetModules();
-    const { startPlanReview } = mockPlanReviewApi();
+    await withPlannotatorAutoTest(
+      "plannotator-wildcard-spec-",
+      async ({ api, emit, repoRoot, startPlanReview, createCtx }) => {
+        const specFileRelative =
+          ".pi/plans/other-worktree/specs/2026-04-20-agent-design.md";
+        await writeTestFile(repoRoot, specFileRelative, "# Spec\n\n- draft\n");
+        const ctx = createCtx({ isIdle: false });
 
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit } = createFakePi();
-    plannotatorAuto(api as never);
+        await emit("session_start", {}, ctx);
+        await emitToolWrite(emit, ctx, specFileRelative);
+        await emit("agent_end", {}, ctx);
 
-    const repoRoot = await createTempRepo("plannotator-wildcard-spec-");
-    const specFileRelative =
-      ".pi/plans/other-worktree/specs/2026-04-20-agent-design.md";
-    await writeTestFile(repoRoot, specFileRelative, "# Spec\n\n- draft\n");
-    const ctx = createTestContext(repoRoot, { isIdle: false });
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, specFileRelative);
-      await emit("agent_end", {}, ctx);
-
-      expect(startPlanReview).not.toHaveBeenCalled();
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(specFileRelative),
-        { deliverAs: "followUp" },
-      );
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
+        expect(startPlanReview).not.toHaveBeenCalled();
+        expectReviewPromptSent(api.sendUserMessage, {
+          path: specFileRelative,
+          deliverAs: "followUp",
+          shouldContainToolName: false,
+        });
+      },
+    );
   });
 
   it("gates generated design specs until the agent submits the review explicitly", async () => {
-    vi.resetModules();
-    const { startPlanReview } = mockPlanReviewApi();
+    await withPlannotatorAutoTest(
+      "plannotator-spec-review-",
+      async ({ api, emit, repoRoot, repoName, startPlanReview, createCtx }) => {
+        const specFileRelative = await writeSpecDraft(repoRoot, repoName);
+        const ctx = createCtx({ isIdle: false });
 
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit } = createFakePi();
-    plannotatorAuto(api as never);
+        await emit("session_start", {}, ctx);
+        await emitToolWrite(emit, ctx, specFileRelative);
+        await emit("agent_end", {}, ctx);
 
-    const repoRoot = await createTempRepo("plannotator-spec-review-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const specFileRelative = `.pi/plans/${repoName}/specs/2026-04-20-agent-design.md`;
-    await writeTestFile(repoRoot, specFileRelative, "# Spec\n\n- draft\n");
-    const ctx = createTestContext(repoRoot, { isIdle: false });
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, specFileRelative);
-      await emit("agent_end", {}, ctx);
-
-      expect(startPlanReview).not.toHaveBeenCalled();
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining("plannotator_auto_submit_review"),
-        { deliverAs: "followUp" },
-      );
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(specFileRelative),
-        { deliverAs: "followUp" },
-      );
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
+        expect(startPlanReview).not.toHaveBeenCalled();
+        expectReviewPromptSent(api.sendUserMessage, {
+          path: specFileRelative,
+          deliverAs: "followUp",
+        });
+      },
+    );
   });
 
   it("gates files matching configured extra review targets until explicit submission", async () => {
-    vi.resetModules();
-    const { startPlanReview } = mockPlanReviewApi();
-
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit } = createFakePi();
-    plannotatorAuto(api as never);
-
-    const repoRoot = await createTempRepo(
+    await withPlannotatorAutoTest(
       "plannotator-auto-extra-target-review-",
-    );
-    const extraTargetRelative =
-      ".pi/plans/pi-kit/office-hours/ming-main-office-hours-20260422-123456.md";
-    await writeTestFile(repoRoot, extraTargetRelative, "# Office Hours\n");
-    await writeTestFile(
-      repoRoot,
-      ".pi/third_extension_settings.json",
-      `${JSON.stringify(
-        {
-          plannotatorAuto: {
-            extraReviewTargets: [
-              {
-                dir: ".pi/plans/pi-kit/office-hours",
-                filePattern: "^[^/]+-office-hours-\\d{8}-\\d{6}\\.md$",
+      async ({ api, emit, repoRoot, startPlanReview, createCtx }) => {
+        const extraTargetRelative =
+          ".pi/plans/pi-kit/office-hours/ming-main-office-hours-20260422-123456.md";
+        await writeTestFile(repoRoot, extraTargetRelative, "# Office Hours\n");
+        await writeTestFile(
+          repoRoot,
+          ".pi/third_extension_settings.json",
+          `${JSON.stringify(
+            {
+              plannotatorAuto: {
+                extraReviewTargets: [
+                  {
+                    dir: ".pi/plans/pi-kit/office-hours",
+                    filePattern: "^[^/]+-office-hours-\\d{8}-\\d{6}\\.md$",
+                  },
+                ],
               },
-            ],
-          },
-        },
-        null,
-        2,
-      )}\n`,
+            },
+            null,
+            2,
+          )}\n`,
+        );
+        const ctx = createCtx({ isIdle: false });
+
+        await emit("session_start", {}, ctx);
+        await emitToolWrite(emit, ctx, extraTargetRelative);
+        await emit("agent_end", {}, ctx);
+
+        expect(startPlanReview).not.toHaveBeenCalled();
+        expectReviewPromptSent(api.sendUserMessage, {
+          path: extraTargetRelative,
+          deliverAs: "followUp",
+          shouldContainToolName: false,
+        });
+      },
     );
-    const ctx = createTestContext(repoRoot, { isIdle: false });
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, extraTargetRelative);
-      await emit("agent_end", {}, ctx);
-
-      expect(startPlanReview).not.toHaveBeenCalled();
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(extraTargetRelative),
-        { deliverAs: "followUp" },
-      );
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
   });
 
   it("does not trigger plan review for legacy single-file configuration", async () => {
-    vi.resetModules();
-    const { startPlanReview } = mockPlanReviewApi();
+    await withPlannotatorAutoTest(
+      "plannotator-auto-legacy-plan-",
+      async ({ api, emit, repoRoot, startPlanReview, createCtx }) => {
+        const planFileRelative = ".pi/PLAN.md";
+        await writeTestFile(
+          repoRoot,
+          planFileRelative,
+          "# Plan\n\n- [ ] first\n",
+        );
+        await writeTestFile(
+          repoRoot,
+          ".pi/third_extension_settings.json",
+          `${JSON.stringify(
+            {
+              plannotatorAuto: {
+                planFile: planFileRelative,
+              },
+            },
+            null,
+            2,
+          )}\n`,
+        );
+        const ctx = createCtx({ isIdle: false });
 
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit } = createFakePi();
-    plannotatorAuto(api as never);
+        await emit("session_start", {}, ctx);
+        await emitToolWrite(emit, ctx, planFileRelative);
+        await flushMicrotasks();
 
-    const repoRoot = await createTempRepo("plannotator-auto-legacy-plan-");
-    const planFileRelative = ".pi/PLAN.md";
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] first\n");
-    await writeTestFile(
-      repoRoot,
-      ".pi/third_extension_settings.json",
-      `${JSON.stringify(
-        {
-          plannotatorAuto: {
-            planFile: planFileRelative,
-          },
-        },
-        null,
-        2,
-      )}\n`,
+        expect(startPlanReview).not.toHaveBeenCalled();
+        expect(api.sendUserMessage).not.toHaveBeenCalled();
+      },
     );
-    const ctx = createTestContext(repoRoot, { isIdle: false });
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, planFileRelative);
-      await flushMicrotasks();
-
-      expect(startPlanReview).not.toHaveBeenCalled();
-      expect(api.sendUserMessage).not.toHaveBeenCalled();
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
   });
 });

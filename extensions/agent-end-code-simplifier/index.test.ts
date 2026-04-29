@@ -102,18 +102,24 @@ describe("buildCodeSimplifierPrompt", () => {
 
   it("tells automatic code-simplifier follow-ups to inspect full file context", () => {
     const prompt = buildCodeSimplifierPrompt(["a.ts"]);
+    const expectedFragments = [
+      "先遵循 code-simplifier、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则",
+      "这是自动后处理任务，不要创建 plan",
+      "读取 modified_files 中每个文件的完整内容",
+      "不要只看 diff 或刚改动的片段",
+      "change amplification",
+      "deep module",
+      "information leakage",
+      "temporal decomposition",
+      "浅封装/pass-through helper",
+      "push ifs up and fors down",
+      "集中分支决策",
+      "批量处理",
+    ];
 
-    expect(prompt).toContain(
-      "先遵循 code-simplifier 与 software-design-philosophy skills 中定义的规则",
-    );
-    expect(prompt).toContain("这是自动后处理任务，不要创建 plan");
-    expect(prompt).toContain("读取 modified_files 中每个文件的完整内容");
-    expect(prompt).toContain("不要只看 diff 或刚改动的片段");
-    expect(prompt).toContain("change amplification");
-    expect(prompt).toContain("deep module");
-    expect(prompt).toContain("information leakage");
-    expect(prompt).toContain("temporal decomposition");
-    expect(prompt).toContain("浅封装/pass-through helper");
+    for (const fragment of expectedFragments) {
+      expect(prompt).toContain(fragment);
+    }
   });
 });
 

@@ -42,7 +42,12 @@ const importSkillToggle = async () => {
 
 interface SkillToggleTestEntry {
   disabledSkillPaths?: string[];
+  managedOverrides?: string[];
   managedSkillLinks?: unknown[];
+}
+
+function getProjectSettingsPath(cwd: string): string {
+  return path.join(cwd, ".pi", "settings.json");
 }
 
 function writeSkillFile(skillDir: string): void {
@@ -357,6 +362,33 @@ describe("skill symlink toggle", () => {
     ]);
   });
 
+  it("syncs disabled symlink skills to pi core skill overrides", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const sourceSkillDir = path.join(
+      createTempDir("pi-kit-skill-toggle-source-"),
+      "alpha",
+    );
+    const linkedSkillDir = path.join(cwd, ".agents", "skills", "alpha");
+    const projectSettingsPath = getProjectSettingsPath(cwd);
+
+    writeSkillFile(sourceSkillDir);
+    fs.mkdirSync(path.dirname(linkedSkillDir), { recursive: true });
+    fs.symlinkSync(sourceSkillDir, linkedSkillDir);
+
+    const { loadToggleState, syncSkillOverrides, toggleSkillLink } =
+      await importSkillToggle();
+    const state = loadToggleState(cwd);
+    const skill = alphaSkill(path.join(linkedSkillDir, "SKILL.md"));
+    const result = toggleSkillLink(state, skill);
+    syncSkillOverrides(state, [skill], cwd);
+
+    expect(result.status).toBe("disabled");
+    expect(readSettingsFile(projectSettingsPath).skills).toEqual([
+      `-${linkedSkillDir}`,
+    ]);
+  });
+
   it("re-enables a managed skill by recreating its symlink", async () => {
     createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
@@ -366,6 +398,7 @@ describe("skill symlink toggle", () => {
     );
     const linkedSkillDir = path.join(cwd, ".agents", "skills", "alpha");
     const { globalPath } = getSettingsPaths(cwd);
+    const projectSettingsPath = getProjectSettingsPath(cwd);
 
     writeSkillFile(sourceSkillDir);
     fs.mkdirSync(path.dirname(globalPath), { recursive: true });
@@ -377,6 +410,7 @@ describe("skill symlink toggle", () => {
             byCwd: {
               [cwd]: {
                 disabledSkillPaths: [linkedSkillDir],
+                managedOverrides: [`-${linkedSkillDir}`],
                 managedSkillLinks: [
                   {
                     name: "Alpha",
@@ -394,13 +428,19 @@ describe("skill symlink toggle", () => {
       ),
       "utf-8",
     );
-
-    const { loadToggleState, toggleSkillLink } = await importSkillToggle();
-    const state = loadToggleState(cwd);
-    const result = toggleSkillLink(
-      state,
-      alphaSkill(path.join(linkedSkillDir, "SKILL.md")),
+    fs.mkdirSync(path.dirname(projectSettingsPath), { recursive: true });
+    fs.writeFileSync(
+      projectSettingsPath,
+      JSON.stringify({ skills: [`-${linkedSkillDir}`] }, null, 2),
+      "utf-8",
     );
+
+    const { loadToggleState, syncSkillOverrides, toggleSkillLink } =
+      await importSkillToggle();
+    const state = loadToggleState(cwd);
+    const skill = alphaSkill(path.join(linkedSkillDir, "SKILL.md"));
+    const result = toggleSkillLink(state, skill);
+    syncSkillOverrides(state, [skill], cwd);
 
     expect(result.status).toBe("enabled");
     expect(fs.lstatSync(linkedSkillDir).isSymbolicLink()).toBe(true);
@@ -408,10 +448,10 @@ describe("skill symlink toggle", () => {
       fs.realpathSync(sourceSkillDir),
     );
 
-    const saved = readSettingsFile(globalPath);
     const entry = readSkillToggleEntry(globalPath, cwd);
-    expect(saved.skills).toBeUndefined();
+    expect(readSettingsFile(projectSettingsPath).skills).toBeUndefined();
     expect(entry.disabledSkillPaths).toBeUndefined();
+    expect(entry.managedOverrides).toBeUndefined();
     expect(entry.managedSkillLinks).toBeUndefined();
   });
 

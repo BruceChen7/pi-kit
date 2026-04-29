@@ -117,6 +117,10 @@ const DEFAULT_SKILL_DIRS: {
 
 const paletteTheme = loadTheme();
 
+function getProjectSettingsPath(cwd: string): string {
+  return path.join(cwd, ".pi", "settings.json");
+}
+
 function normalizeSkillName(name: string): string {
   return name.trim().toLowerCase();
 }
@@ -977,12 +981,17 @@ function arraysEqual(left: string[], right: string[]): boolean {
   return left.every((value, index) => value === right[index]);
 }
 
-function syncSkillOverridesForState(state: ToggleState, skills: Skill[]): void {
-  const settings = readSettingsFile(state.writePath);
-  const skillToggle = isRecord(settings.skillToggle)
-    ? (settings.skillToggle as SkillToggleSettings)
+function syncSkillOverridesForState(
+  state: ToggleState,
+  skills: Skill[],
+  projectSettingsPath: string,
+): void {
+  const toggleSettings = readSettingsFile(state.writePath);
+  const skillToggle = isRecord(toggleSettings.skillToggle)
+    ? (toggleSettings.skillToggle as SkillToggleSettings)
     : {};
-  const currentSkills = toSkillList(settings.skills) ?? [];
+  const projectSettings = readSettingsFile(projectSettingsPath);
+  const currentSkills = toSkillList(projectSettings.skills) ?? [];
   const managedOverrides = getManagedOverrides(skillToggle, state);
   const managedOverrideMap = getManagedOverrideMap(managedOverrides);
   const nextOverrides = buildSkillOverrides(
@@ -1009,18 +1018,23 @@ function syncSkillOverridesForState(state: ToggleState, skills: Skill[]): void {
     return;
   }
 
-  if (nextSkills.length > 0) {
-    settings.skills = nextSkills;
-  } else {
-    delete settings.skills;
+  if (skillsChanged) {
+    if (nextSkills.length > 0) {
+      projectSettings.skills = nextSkills;
+    } else {
+      delete projectSettings.skills;
+    }
+    writeSettingsFile(projectSettingsPath, projectSettings);
   }
 
-  settings.skillToggle = updateManagedOverrides(
-    skillToggle,
-    state,
-    nextOverrides,
-  );
-  writeSettingsFile(state.writePath, settings);
+  if (overridesChanged) {
+    toggleSettings.skillToggle = updateManagedOverrides(
+      skillToggle,
+      state,
+      nextOverrides,
+    );
+    writeSettingsFile(state.writePath, toggleSettings);
+  }
 }
 
 export function syncSkillOverrides(
@@ -1036,7 +1050,7 @@ export function syncSkillOverrides(
     writeScope: "global",
     cwdKey: getGlobalCwdKey(cwd),
   };
-  syncSkillOverridesForState(globalState, skills);
+  syncSkillOverridesForState(globalState, skills, getProjectSettingsPath(cwd));
 }
 
 function getInstalledSkillNames(skills: Skill[]): Set<string> {
@@ -1503,6 +1517,9 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
             state.disabledSkillPaths,
             (skill) => {
               const result = toggleSkillLink(state, skill);
+              if (isAppliedSkillLinkToggle(result)) {
+                syncSkillOverrides(state, skills, ctx.cwd);
+              }
               updateStatus(ctx, state, skills);
               notifySkillLinkResult(ctx, skill, result);
               didToggle = didToggle || isAppliedSkillLinkToggle(result);

@@ -31,6 +31,8 @@ import type {
   SessionKeyContext,
 } from "./plan-review/types.ts";
 import {
+  type CodeReviewDecision,
+  type CodeReviewStartResult,
   createRequestPlannotator,
   createReviewResultStore,
   formatAnnotationMessage,
@@ -1004,6 +1006,11 @@ const scheduleReviewRetry = (
   }, delay);
 };
 
+const isCodeReviewStartResult = (
+  result: CodeReviewDecision | CodeReviewStartResult,
+): result is CodeReviewStartResult =>
+  "status" in result && result.status === "pending";
+
 const handleCodeReviewCompletion = (
   pi: ExtensionAPI,
   ctx: Pick<ExtensionContext, "cwd"> & {
@@ -1011,11 +1018,7 @@ const handleCodeReviewCompletion = (
   },
   state: SessionRuntimeState,
   active: ActiveCodeReview,
-  result: {
-    approved: boolean;
-    feedback?: string;
-    annotations?: unknown[];
-  },
+  result: CodeReviewDecision,
   source: "event" | "status" | "direct",
   onStateChanged?: () => void,
 ): void => {
@@ -1333,11 +1336,12 @@ const maybeStartCodeReview = async (
       currentState.plannotatorUnavailableNotified = false;
       clearReviewPending(ctx);
 
-      if ("status" in response.result && response.result.status === "pending") {
-        reviewResults.markPending(response.result.reviewId);
+      const result = response.result;
+      if (isCodeReviewStartResult(result)) {
+        reviewResults.markPending(result.reviewId);
         currentState.activeCodeReviewByCwd.set(ctx.cwd, {
           requestKey: syncActive.requestKey,
-          reviewId: response.result.reviewId,
+          reviewId: result.reviewId,
           startedAt: Date.now(),
         });
         setReviewWidget(ctx);
@@ -1357,7 +1361,7 @@ const maybeStartCodeReview = async (
         ctx,
         currentState,
         syncActive,
-        response.result,
+        result,
         "direct",
         () => setReviewWidget(ctx),
       );

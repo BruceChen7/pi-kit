@@ -44,6 +44,16 @@ interface ExtractionResult {
   questions: ExtractedQuestion[];
 }
 
+type RequestAuth =
+  | { ok: true; apiKey?: string; headers?: Record<string, string> }
+  | { ok: false; error: string };
+
+const hasRequestAuth = (auth: RequestAuth): boolean =>
+  auth.ok && Boolean(auth.apiKey || auth.headers);
+
+const getAuthError = (auth: RequestAuth): string | undefined =>
+  "error" in auth ? auth.error : undefined;
+
 const SYSTEM_PROMPT = `You are a question extractor. Given text from a conversation, extract any questions that need answering.
 
 Output a JSON object with this structure:
@@ -96,12 +106,7 @@ export async function selectExtractionModel(
   currentModel: Model<Api>,
   modelRegistry: {
     find: (provider: string, modelId: string) => Model<Api> | undefined;
-    getApiKeyAndHeaders: (
-      model: Model<Api>,
-    ) => Promise<
-      | { ok: true; apiKey?: string; headers?: Record<string, string> }
-      | { ok: false; error: string }
-    >;
+    getApiKeyAndHeaders: (model: Model<Api>) => Promise<RequestAuth>;
     isUsingOAuth?: (model: Model<Api>) => boolean;
   },
 ): Promise<Model<Api>> {
@@ -123,11 +128,11 @@ export async function selectExtractionModel(
     );
     if (!codexModelUsesOAuth) {
       const auth = await modelRegistry.getApiKeyAndHeaders(codexModel);
-      const hasAuth = auth.ok && Boolean(auth.apiKey || auth.headers);
+      const hasAuth = hasRequestAuth(auth);
       log?.debug("codex model check", {
         modelId: codexModel.id,
         hasAuth,
-        authError: auth.ok ? undefined : auth.error,
+        authError: getAuthError(auth),
       });
       if (hasAuth) {
         log?.info("using codex model for extraction", {
@@ -158,11 +163,11 @@ export async function selectExtractionModel(
   }
 
   const auth = await modelRegistry.getApiKeyAndHeaders(haikuModel);
-  const hasAuth = auth.ok && Boolean(auth.apiKey || auth.headers);
+  const hasAuth = hasRequestAuth(auth);
   log?.debug("haiku model check", {
     modelId: haikuModel.id,
     hasAuth,
-    authError: auth.ok ? undefined : auth.error,
+    authError: getAuthError(auth),
   });
   if (!hasAuth) {
     log?.info("haiku model missing auth, using current model", {
@@ -239,9 +244,11 @@ class QnAComponent implements Component {
     const editorTheme: EditorTheme = {
       borderColor: this.dim,
       selectList: {
-        selectedBg: (s: string) => `\x1b[44m${s}\x1b[0m`,
-        matchHighlight: this.cyan,
-        itemSecondary: this.gray,
+        selectedPrefix: this.cyan,
+        selectedText: (s: string) => `\x1b[44m${s}\x1b[0m`,
+        description: this.gray,
+        scrollInfo: this.gray,
+        noMatch: this.yellow,
       },
     };
 
@@ -583,7 +590,9 @@ export default function (pi: ExtensionAPI) {
           const auth =
             await ctx.modelRegistry.getApiKeyAndHeaders(extractionModel);
           if (!auth.ok) {
-            throw new Error(auth.error);
+            throw new Error(
+              getAuthError(auth) ?? "Missing extraction model auth",
+            );
           }
           const apiKey = auth.apiKey;
           const headers = auth.headers;

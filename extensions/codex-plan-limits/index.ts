@@ -257,7 +257,7 @@ async function fetchLiveSnapshotFromPiAuth(
   }
 
   const authResult = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
-  if (!authResult.ok) {
+  if (authResult.ok === false) {
     throw new Error(authResult.error);
   }
 

@@ -229,8 +229,4 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => {
     applyEnvGuard(ctx);
   });
-
-  pi.on("session_switch", (_event, ctx) => {
-    applyEnvGuard(ctx);
-  });
 }

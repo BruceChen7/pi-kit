@@ -501,10 +501,6 @@ export default function (pi: ExtensionAPI) {
     applyEditorWithHistory(pi, ctx);
   });
 
-  pi.on("session_switch", (_event, ctx) => {
-    applyEditorWithHistory(pi, ctx);
-  });
-
   pi.on("session_shutdown", () => {
     loadCounter += 1;
   });

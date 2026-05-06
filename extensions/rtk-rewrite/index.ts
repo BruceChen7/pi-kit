@@ -698,8 +698,4 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", () => {
     loadConfig();
   });
-
-  pi.on("session_switch", () => {
-    loadConfig();
-  });
 }

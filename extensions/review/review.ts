@@ -55,6 +55,20 @@ const REVIEW_SETTINGS_TYPE = "review-settings";
 const REVIEW_LOOP_MAX_ITERATIONS = 10;
 const REVIEW_LOOP_START_TIMEOUT_MS = 15000;
 const REVIEW_LOOP_START_POLL_MS = 50;
+const SELECT_LIST_MAX_VISIBLE = 10;
+const SELECT_LIST_HINT = "Enter to select • esc to cancel";
+
+function buildSelectListTheme(theme: {
+  fg: (token: string, text: string) => string;
+}) {
+  return {
+    selectedPrefix: (text: string) => theme.fg("accent", text),
+    selectedText: (text: string) => theme.fg("accent", text),
+    description: (text: string) => theme.fg("muted", text),
+    scrollInfo: (text: string) => theme.fg("dim", text),
+    noMatch: (text: string) => theme.fg("warning", text),
+  };
+}
 
 type ReviewSessionState = {
   active: boolean;
@@ -950,10 +964,6 @@ export default function reviewExtension(pi: ExtensionAPI) {
     applyAllReviewState(ctx);
   });
 
-  pi.on("session_switch", (_event, ctx) => {
-    applyAllReviewState(ctx);
-  });
-
   pi.on("session_tree", (_event, ctx) => {
     applyAllReviewState(ctx);
   });
@@ -1023,13 +1033,11 @@ export default function reviewExtension(pi: ExtensionAPI) {
             new Text(theme.fg("accent", theme.bold("Select a review preset"))),
           );
 
-          const selectList = new SelectList(items, Math.min(items.length, 10), {
-            selectedPrefix: (text) => theme.fg("accent", text),
-            selectedText: (text) => theme.fg("accent", text),
-            description: (text) => theme.fg("muted", text),
-            scrollInfo: (text) => theme.fg("dim", text),
-            noMatch: (text) => theme.fg("warning", text),
-          });
+          const selectList = new SelectList(
+            items,
+            Math.min(items.length, SELECT_LIST_MAX_VISIBLE),
+            buildSelectListTheme(theme),
+          );
 
           // Preselect the smart default without reordering the list
           if (smartDefaultIndex >= 0) {
@@ -1170,26 +1178,17 @@ export default function reviewExtension(pi: ExtensionAPI) {
           new Text(theme.fg("accent", theme.bold("Select base branch"))),
         );
 
-        const selectList = new SelectList(items, Math.min(items.length, 10), {
-          selectedPrefix: (text) => theme.fg("accent", text),
-          selectedText: (text) => theme.fg("accent", text),
-          description: (text) => theme.fg("muted", text),
-          scrollInfo: (text) => theme.fg("dim", text),
-          noMatch: (text) => theme.fg("warning", text),
-        });
-
-        // Enable search
-        selectList.searchable = true;
+        const selectList = new SelectList(
+          items,
+          Math.min(items.length, SELECT_LIST_MAX_VISIBLE),
+          buildSelectListTheme(theme),
+        );
 
         selectList.onSelect = (item) => done(item.value);
         selectList.onCancel = () => done(null);
 
         container.addChild(selectList);
-        container.addChild(
-          new Text(
-            theme.fg("dim", "Type to filter • enter to select • esc to cancel"),
-          ),
-        );
+        container.addChild(new Text(theme.fg("dim", SELECT_LIST_HINT)));
         container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
 
         return {
@@ -1238,16 +1237,11 @@ export default function reviewExtension(pi: ExtensionAPI) {
           new Text(theme.fg("accent", theme.bold("Select commit to review"))),
         );
 
-        const selectList = new SelectList(items, Math.min(items.length, 10), {
-          selectedPrefix: (text) => theme.fg("accent", text),
-          selectedText: (text) => theme.fg("accent", text),
-          description: (text) => theme.fg("muted", text),
-          scrollInfo: (text) => theme.fg("dim", text),
-          noMatch: (text) => theme.fg("warning", text),
-        });
-
-        // Enable search
-        selectList.searchable = true;
+        const selectList = new SelectList(
+          items,
+          Math.min(items.length, SELECT_LIST_MAX_VISIBLE),
+          buildSelectListTheme(theme),
+        );
 
         selectList.onSelect = (item) => {
           const commit = commits.find((c) => c.sha === item.value);
@@ -1260,11 +1254,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
         selectList.onCancel = () => done(null);
 
         container.addChild(selectList);
-        container.addChild(
-          new Text(
-            theme.fg("dim", "Type to filter • enter to select • esc to cancel"),
-          ),
-        );
+        container.addChild(new Text(theme.fg("dim", SELECT_LIST_HINT)));
         container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
 
         return {

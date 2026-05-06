@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Type } from "@mariozechner/pi-ai";
+import { type TSchema, Type } from "@mariozechner/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -68,6 +68,10 @@ type ActiveCodeReview = {
   startedAt: number;
 };
 
+type PlanReviewSubmitToolParams = {
+  path?: unknown;
+};
+
 type SessionMarkdownFile = {
   absolutePath: string;
   mtimeMs: number;
@@ -98,6 +102,9 @@ const REVIEW_WIDGET_KEY = "plannotator-auto-review";
 const ANNOTATE_LATEST_MARKDOWN_SHORTCUT = "ctrl+alt+l";
 const PLAN_REVIEW_SUBMIT_TOOL = "plannotator_auto_submit_review";
 const PLAN_REVIEW_STATUS_POLL_MS = 250;
+const planReviewSubmitToolParameters: TSchema = Type.Object({
+  path: Type.String({ description: "Pending review target path" }),
+});
 const sessionRuntimeState = new Map<string, SessionRuntimeState>();
 const sessionContextByKey = new Map<string, ExtensionContext>();
 
@@ -1557,10 +1564,9 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     label: "Submit Plannotator Auto Review",
     description:
       "Submit a pending plan/spec/extra review target to Plannotator and wait for approval or feedback.",
-    parameters: Type.Object({
-      path: Type.String({ description: "Pending review target path" }),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    parameters: planReviewSubmitToolParameters,
+    async execute(_toolCallId, rawParams, _signal, _onUpdate, ctx) {
+      const params = rawParams as PlanReviewSubmitToolParams;
       const state = getSessionState(ctx);
       const pendingPlanReviews = getPendingPlanReviewTargets(state, ctx.cwd);
       if (pendingPlanReviews.size === 0) {
@@ -1575,9 +1581,10 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
         };
       }
 
+      const requestedPathValue = params.path;
       const requestedPath =
-        typeof params.path === "string"
-          ? path.resolve(ctx.cwd, params.path)
+        typeof requestedPathValue === "string"
+          ? path.resolve(ctx.cwd, requestedPathValue)
           : null;
       const pendingPlanReview = requestedPath
         ? pendingPlanReviews.get(requestedPath)
@@ -1587,7 +1594,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
           content: [
             {
               type: "text",
-              text: `Error: ${String(params.path ?? "") || "<missing path>"} is not a pending Plannotator review target. Pending paths:\n- ${Array.from(
+              text: `Error: ${String(requestedPathValue ?? "") || "<missing path>"} is not a pending Plannotator review target. Pending paths:\n- ${Array.from(
                 pendingPlanReviews.values(),
               )
                 .map((pending) => pending.planFile)

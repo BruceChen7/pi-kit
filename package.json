@@ -6,8 +6,8 @@
     "pi-package"
   ],
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.70.6",
-    "@mariozechner/pi-tui": "^0.70.6"
+    "@mariozechner/pi-coding-agent": "^0.73.0",
+    "@mariozechner/pi-tui": "^0.73.0"
   },
   "pi": {
     "extensions": [
@@ -25,7 +25,8 @@
       "./extensions/diffx-review",
       "./extensions/session-path-copy",
       "./extensions/remote-approval",
-      "./extensions/agent-end-code-simplifier"
+      "./extensions/agent-end-code-simplifier",
+      "./extensions/review-feedback"
     ]
   },
   "scripts": {

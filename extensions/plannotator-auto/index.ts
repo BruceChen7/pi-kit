@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { type TSchema, Type } from "@mariozechner/pi-ai";
+import { Type } from "@mariozechner/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -102,7 +102,7 @@ const REVIEW_WIDGET_KEY = "plannotator-auto-review";
 const ANNOTATE_LATEST_MARKDOWN_SHORTCUT = "ctrl+alt+l";
 const PLAN_REVIEW_SUBMIT_TOOL = "plannotator_auto_submit_review";
 const PLAN_REVIEW_STATUS_POLL_MS = 250;
-const planReviewSubmitToolParameters: TSchema = Type.Object({
+const planReviewSubmitToolParameters = Type.Object({
   path: Type.String({ description: "Pending review target path" }),
 });
 const sessionRuntimeState = new Map<string, SessionRuntimeState>();

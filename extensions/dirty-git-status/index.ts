@@ -80,7 +80,7 @@ type CommitPipelineInput = {
   defaultMessage: string;
   requireConfirm: boolean;
   logContext?: {
-    trigger?: "session_start" | "session_switch" | "manual";
+    trigger?: "session_start" | "manual";
     repoRoot?: string;
     repoName?: string;
   };
@@ -107,7 +107,7 @@ type LogLevel = "info" | "warn" | "error";
 
 type LogContext = {
   event: string;
-  trigger?: "session_start" | "session_switch" | "manual";
+  trigger?: "session_start" | "manual";
   repoRoot?: string;
   repoName?: string;
   summary?: DirtySummary;
@@ -146,10 +146,8 @@ type UpdateSettingsFn = typeof updateSettings;
 export const DEFAULT_COMMIT_MESSAGE = DEFAULT_CONFIG.defaultCommitMessage;
 
 const stateBySession = new Map<string, SessionState>();
-const pendingSessionChecks = new Map<
-  string,
-  "session_start" | "session_switch"
->();
+const pendingSessionChecks = new Set<string>();
+const SESSION_START_TRIGGER = "session_start" as const;
 
 let log: ReturnType<typeof createLogger> | null = null;
 
@@ -274,51 +272,45 @@ const getSessionState = (ctx: ExtensionContext): SessionState => {
   return next;
 };
 
-const queueSessionCheck = (
-  ctx: ExtensionContext,
-  trigger: "session_start" | "session_switch",
-): void => {
+const queueSessionCheck = (ctx: ExtensionContext): void => {
   const sessionKey = getSessionKey(ctx);
-  const previousTrigger = pendingSessionChecks.get(sessionKey) ?? null;
-  pendingSessionChecks.set(sessionKey, trigger);
+  const alreadyQueued = pendingSessionChecks.has(sessionKey);
+  pendingSessionChecks.add(sessionKey);
   logInfo({
     event: "session check queued",
-    trigger,
+    trigger: SESSION_START_TRIGGER,
     stage: "queue",
-    result: previousTrigger ? "replaced" : "queued",
+    result: alreadyQueued ? "replaced" : "queued",
     details: {
       sessionKey,
-      previousTrigger,
+      previousTrigger: alreadyQueued ? SESSION_START_TRIGGER : null,
     },
   });
 };
 
 const consumeQueuedSessionCheck = (
   ctx: ExtensionContext,
-): "session_start" | "session_switch" | null => {
+): typeof SESSION_START_TRIGGER | null => {
   const key = getSessionKey(ctx);
-  const queued = pendingSessionChecks.get(key);
-  if (queued) {
-    pendingSessionChecks.delete(key);
+  if (pendingSessionChecks.delete(key)) {
     logInfo({
       event: "session check dequeued",
-      trigger: queued,
+      trigger: SESSION_START_TRIGGER,
       stage: "queue",
       result: "consumed",
       details: {
         sessionKey: key,
       },
     });
-    return queued;
+    return SESSION_START_TRIGGER;
   }
 
-  const fallback = Array.from(pendingSessionChecks.entries()).at(-1);
-  if (!fallback) return null;
-  const [fallbackSessionKey, fallbackTrigger] = fallback;
+  const fallbackSessionKey = Array.from(pendingSessionChecks).at(-1);
+  if (!fallbackSessionKey) return null;
   pendingSessionChecks.delete(fallbackSessionKey);
   logWarn({
     event: "session check dequeued",
-    trigger: fallbackTrigger,
+    trigger: SESSION_START_TRIGGER,
     stage: "queue",
     result: "consumed_fallback",
     details: {
@@ -326,7 +318,7 @@ const consumeQueuedSessionCheck = (
       fallbackSessionKey,
     },
   });
-  return fallbackTrigger;
+  return SESSION_START_TRIGGER;
 };
 
 const repoNameFromRoot = (repoRoot: string): string =>
@@ -960,7 +952,7 @@ function buildDefaultMessageProvider(input: {
 function buildCommitPipelineInput(input: {
   ctx: ExtensionContext;
   config: DirtyGitStatusConfig;
-  trigger: "session_start" | "session_switch" | "manual";
+  trigger: "session_start" | "manual";
   repoRoot: string;
   repoName: string;
   summary: DirtySummary;
@@ -1128,7 +1120,7 @@ export const formatDirtyGitStatusToggleMessage = (
 
 const handleSessionCheck = async (
   ctx: ExtensionContext,
-  trigger: "session_start" | "session_switch",
+  trigger: "session_start",
 ): Promise<void> => {
   logInfo({
     event: "session check start",
@@ -1305,11 +1297,7 @@ export default function dirtyGitStatusExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", (_event, ctx) => {
-    queueSessionCheck(ctx, "session_start");
-  });
-
-  pi.on("session_switch", (_event, ctx) => {
-    queueSessionCheck(ctx, "session_switch");
+    queueSessionCheck(ctx);
   });
 
   pi.on("input", async (event, ctx) => {

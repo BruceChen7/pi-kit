@@ -3,9 +3,8 @@
 Checks git status when Pi starts a session and prompts for commit if there are uncommitted changes.
 
 ## Behavior
-- Checks dirty state on:
-  - `session_start`
-  - `session_switch`
+- Checks dirty state on `session_start`. Pi 0.73 does not expose a `session_switch` event;
+  session starts cover startup, reload, new session, resume, and fork.
 - Dirty detection uses `git status --porcelain`.
 - Prompt frequency is session-scoped: once while dirty; reset after repo becomes clean.
 - If user confirms, extension runs:

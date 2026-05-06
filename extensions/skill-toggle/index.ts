@@ -1587,12 +1587,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
     return { action: "handled" };
   });
 
-  pi.on("session_start", async (_event, ctx) => {
-    const skills = loadAvailableSkills(pi, ctx.cwd);
-    refreshState(ctx, skills);
-  });
-
-  pi.on("session_switch", async (_event, ctx) => {
+  pi.on("session_start", (_event, ctx) => {
     const skills = loadAvailableSkills(pi, ctx.cwd);
     refreshState(ctx, skills);
   });

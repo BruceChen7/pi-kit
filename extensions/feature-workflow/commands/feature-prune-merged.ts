@@ -3,7 +3,9 @@ import type {
   ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 
+import { runWithWorkingLoader } from "../../shared/ui-working.js";
 import { resolveFeatureCommandRuntime } from "../runtime.js";
+import type { WtRunner } from "../worktree-gateway.js";
 import {
   listPruneCandidatesFromWtList,
   type WorktreePruneCandidate,
@@ -29,6 +31,34 @@ function buildWtErrorMessage(
   return trimToNull(stderr) ?? trimToNull(stdout) ?? fallback;
 }
 
+async function pruneCandidates(
+  runWt: WtRunner,
+  candidates: WorktreePruneCandidate[],
+): Promise<{ failures: string[]; removed: number }> {
+  let removed = 0;
+  const failures: string[] = [];
+
+  for (const candidate of candidates) {
+    const removeResult = await runWt([
+      "remove",
+      candidate.branch,
+      "--yes",
+      "--foreground",
+    ]);
+
+    if (removeResult.code === 0) {
+      removed += 1;
+      continue;
+    }
+
+    failures.push(
+      `${candidate.branch}: ${buildWtErrorMessage(removeResult.stderr, removeResult.stdout, "wt remove failed")}`,
+    );
+  }
+
+  return { failures, removed };
+}
+
 export async function runFeaturePruneMergedCommand(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
@@ -43,22 +73,24 @@ export async function runFeaturePruneMergedCommand(
   const skipConfirm = args.includes("--yes") || args.includes("-y");
   const skipFetch = args.includes("--no-fetch");
 
-  if (!skipFetch) {
-    const fetchResult = runGit(["fetch", "--all", "--prune"]);
-    if (fetchResult.exitCode !== 0) {
-      const fetchError = buildWtErrorMessage(
-        fetchResult.stderr,
-        fetchResult.stdout,
-        "git fetch failed",
-      );
-      ctx.ui.notify(
-        `feature-prune-merged: git fetch --all --prune failed (${fetchError}). Continuing with local refs.`,
-        "warning",
-      );
+  const listResult = await runWithWorkingLoader(ctx, async () => {
+    if (!skipFetch) {
+      const fetchResult = runGit(["fetch", "--all", "--prune"]);
+      if (fetchResult.exitCode !== 0) {
+        const fetchError = buildWtErrorMessage(
+          fetchResult.stderr,
+          fetchResult.stdout,
+          "git fetch failed",
+        );
+        ctx.ui.notify(
+          `feature-prune-merged: git fetch --all --prune failed (${fetchError}). Continuing with local refs.`,
+          "warning",
+        );
+      }
     }
-  }
 
-  const listResult = await runWt(["list", "--format", "json"]);
+    return runWt(["list", "--format", "json"]);
+  });
   if (listResult.code !== 0) {
     ctx.ui.notify(
       buildWtErrorMessage(
@@ -102,26 +134,9 @@ export async function runFeaturePruneMergedCommand(
     }
   }
 
-  let removed = 0;
-  const failures: string[] = [];
-
-  for (const candidate of candidates) {
-    const removeResult = await runWt([
-      "remove",
-      candidate.branch,
-      "--yes",
-      "--foreground",
-    ]);
-
-    if (removeResult.code === 0) {
-      removed += 1;
-      continue;
-    }
-
-    failures.push(
-      `${candidate.branch}: ${buildWtErrorMessage(removeResult.stderr, removeResult.stdout, "wt remove failed")}`,
-    );
-  }
+  const { failures, removed } = await runWithWorkingLoader(ctx, () =>
+    pruneCandidates(runWt, candidates),
+  );
 
   if (failures.length === 0) {
     ctx.ui.notify(

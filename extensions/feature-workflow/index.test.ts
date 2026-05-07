@@ -30,6 +30,31 @@ type LoaderFactory = (
   done: (value: unknown) => void,
 ) => LoaderComponent;
 
+async function renderLoader(
+  factory: LoaderFactory,
+  loaderRenders: string[],
+): Promise<unknown> {
+  let component: LoaderComponent | undefined;
+
+  const result = await new Promise<unknown>((resolve) => {
+    component = factory(
+      { requestRender() {} },
+      {
+        fg(_color: string, text: string) {
+          return text;
+        },
+      },
+      {},
+      (value: unknown) => resolve(value),
+    );
+
+    loaderRenders.push(component.render(80).join("\n"));
+  });
+
+  component?.dispose?.();
+  return result;
+}
+
 const runGit = (cwd: string, args: string[]) =>
   spawnSync("git", args, {
     cwd,
@@ -433,25 +458,7 @@ describe("feature-workflow extension", () => {
           throw new Error(`Unexpected select prompt: ${prompt}`);
         },
         async custom(factory: LoaderFactory) {
-          let component: LoaderComponent | undefined;
-
-          const result = await new Promise<unknown>((resolve) => {
-            component = factory(
-              { requestRender() {} },
-              {
-                fg(_color: string, text: string) {
-                  return text;
-                },
-              },
-              {},
-              (value: unknown) => resolve(value),
-            );
-
-            loaderRenders.push(component.render(80).join("\n"));
-          });
-
-          component?.dispose?.();
-          return result;
+          return renderLoader(factory, loaderRenders);
         },
         notify(message: string, level: string) {
           notifications.push({ message, level });
@@ -991,25 +998,7 @@ describe("feature-workflow extension", () => {
         hasUI: true,
         ui: {
           async custom(factory: LoaderFactory) {
-            let component: LoaderComponent | undefined;
-
-            const result = await new Promise<unknown>((resolve) => {
-              component = factory(
-                { requestRender() {} },
-                {
-                  fg(_color: string, text: string) {
-                    return text;
-                  },
-                },
-                {},
-                (value: unknown) => resolve(value),
-              );
-
-              loaderRenders.push(component.render(80).join("\n"));
-            });
-
-            component?.dispose?.();
-            return result;
+            return renderLoader(factory, loaderRenders);
           },
           notify(message: string, level: string) {
             notifications.push({ message, level });
@@ -2620,6 +2609,7 @@ describe("feature-workflow extension", () => {
     >();
     const notifications: Array<{ message: string; level: string }> = [];
     const confirmCalls: Array<{ prompt: string; description: string }> = [];
+    const loaderRenders: string[] = [];
 
     const wtListJson = JSON.stringify([
       {
@@ -2689,6 +2679,9 @@ describe("feature-workflow extension", () => {
           confirmCalls.push({ prompt, description });
           return true;
         },
+        async custom(factory: LoaderFactory) {
+          return renderLoader(factory, loaderRenders);
+        },
         notify(message: string, level: string) {
           notifications.push({ message, level });
         },
@@ -2701,6 +2694,10 @@ describe("feature-workflow extension", () => {
         description: expect.stringContaining("feat/integrated"),
       },
     ]);
+    expect(loaderRenders).toHaveLength(2);
+    expect(loaderRenders.every((render) => render.includes("Working..."))).toBe(
+      true,
+    );
 
     expect(exec).toHaveBeenNthCalledWith(1, "wt", [
       "-C",

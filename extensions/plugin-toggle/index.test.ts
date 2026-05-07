@@ -7,6 +7,7 @@ import {
   clearSettingsCache,
   getSettingsPaths,
   readSettingsFile,
+  writeSettingsFile,
 } from "../shared/settings.js";
 
 const tempDirs: string[] = [];
@@ -30,6 +31,31 @@ const createPluginDir = (baseDir: string, name: string): string => {
   fs.mkdirSync(pluginDir, { recursive: true });
   fs.writeFileSync(path.join(pluginDir, "index.ts"), "");
   return pluginDir;
+};
+
+const pluginLibraryDir = (home: string): string =>
+  path.join(home, ".agents", "pi-plugins");
+
+const createPluginLibrary = (...pluginNames: string[]): string => {
+  const library = pluginLibraryDir(createTempHome());
+  for (const pluginName of pluginNames) {
+    createPluginDir(library, pluginName);
+  }
+  return library;
+};
+
+const projectPluginPath = (cwd: string, name: string): string =>
+  path.join(cwd, ".pi", "extensions", name);
+
+const readManagedPluginNames = (cwd: string): string[] => {
+  const { globalPath } = getSettingsPaths(cwd);
+  const settings = readSettingsFile(globalPath);
+  const entry = (
+    settings.pluginToggle as {
+      byCwd: Record<string, { managedPlugins: string[] }>;
+    }
+  ).byCwd[cwd];
+  return entry.managedPlugins;
 };
 
 const restoreHome = (): void => {
@@ -111,23 +137,16 @@ describe("project symlink management", () => {
     const result = enablePlugin(cwd, plugin);
 
     expect(result.status).toBe("enabled");
-    const target = path.join(cwd, ".pi", "extensions", "alpha");
+    const target = projectPluginPath(cwd, "alpha");
     expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(target)).toBe(fs.realpathSync(plugin.sourcePath));
 
-    const sharedTarget = path.join(cwd, ".pi", "extensions", "shared");
+    const sharedTarget = projectPluginPath(cwd, "shared");
     const expectedShared = fileURLToPath(new URL("../shared", import.meta.url));
     expect(fs.lstatSync(sharedTarget).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(sharedTarget)).toBe(fs.realpathSync(expectedShared));
 
-    const { globalPath } = getSettingsPaths(cwd);
-    const settings = readSettingsFile(globalPath);
-    const entry = (
-      settings.pluginToggle as {
-        byCwd: Record<string, { managedPlugins: string[] }>;
-      }
-    ).byCwd[cwd];
-    expect(entry.managedPlugins).toEqual(["alpha"]);
+    expect(readManagedPluginNames(cwd)).toEqual(["alpha"]);
   });
 
   it("disables only managed symlinks that point into the plugin library", async () => {
@@ -143,14 +162,13 @@ describe("project symlink management", () => {
     const [plugin] = discoverPlugins(library);
     enablePlugin(cwd, plugin);
 
-    const projectExtensions = path.join(cwd, ".pi", "extensions");
-    fs.symlinkSync(otherPlugin, path.join(projectExtensions, "beta"));
+    fs.symlinkSync(otherPlugin, projectPluginPath(cwd, "beta"));
 
     expect(disablePlugin(cwd, plugin).status).toBe("disabled");
-    expect(fs.existsSync(path.join(projectExtensions, "alpha"))).toBe(false);
-    expect(
-      fs.lstatSync(path.join(projectExtensions, "beta")).isSymbolicLink(),
-    ).toBe(true);
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(false);
+    expect(fs.lstatSync(projectPluginPath(cwd, "beta")).isSymbolicLink()).toBe(
+      true,
+    );
   });
 
   it("does not overwrite an existing user plugin when enabling", async () => {
@@ -158,7 +176,7 @@ describe("project symlink management", () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     const library = createTempDir("pi-kit-plugin-toggle-library-");
     createPluginDir(library, "alpha");
-    const projectPlugin = path.join(cwd, ".pi", "extensions", "alpha");
+    const projectPlugin = projectPluginPath(cwd, "alpha");
     fs.mkdirSync(projectPlugin, { recursive: true });
     fs.writeFileSync(path.join(projectPlugin, "index.ts"), "// user plugin\n");
 
@@ -166,9 +184,141 @@ describe("project symlink management", () => {
     const [plugin] = discoverPlugins(library);
 
     expect(enablePlugin(cwd, plugin).status).toBe("conflict");
-    expect(fs.existsSync(path.join(cwd, ".pi", "extensions", "shared"))).toBe(
+    expect(fs.existsSync(projectPluginPath(cwd, "shared"))).toBe(false);
+    expect(fs.readFileSync(path.join(projectPlugin, "index.ts"), "utf-8")).toBe(
+      "// user plugin\n",
+    );
+  });
+});
+
+describe("default project bootstrap", () => {
+  it("enables every library plugin except default-disabled plugins for a new cwd", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary("alpha", "dirty-git-status");
+
+    const { bootstrapDefaultManagedPlugins, discoverPlugins } =
+      await importPluginToggle();
+    const plugins = discoverPlugins(library);
+
+    const result = bootstrapDefaultManagedPlugins(cwd, plugins);
+
+    expect(result.enabled).toEqual(["alpha"]);
+    expect(result.skippedDefaultDisabled).toEqual(["dirty-git-status"]);
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(true);
+    expect(fs.existsSync(projectPluginPath(cwd, "dirty-git-status"))).toBe(
       false,
     );
+  });
+
+  it("leaves default-disabled plugins visible as disabled choices", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary("alpha", "dirty-git-status");
+
+    const {
+      bootstrapDefaultManagedPlugins,
+      discoverPlugins,
+      getEnabledManagedPlugins,
+      PluginTogglePicker,
+    } = await importPluginToggle();
+    const plugins = discoverPlugins(library);
+    bootstrapDefaultManagedPlugins(cwd, plugins);
+    const enabled = new Set(getEnabledManagedPlugins(cwd, plugins));
+
+    const picker = new PluginTogglePicker(
+      plugins,
+      enabled,
+      () => undefined,
+      () => undefined,
+      () => undefined,
+    );
+
+    const rendered = picker.render(70).join("\n");
+    expect(rendered).toContain("✓ alpha");
+    expect(rendered).toContain("  dirty-git-status");
+    picker.dispose();
+  });
+
+  it("records a new cwd even when every plugin is default-disabled", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary("dirty-git-status");
+
+    const { bootstrapDefaultManagedPlugins, discoverPlugins } =
+      await importPluginToggle();
+    bootstrapDefaultManagedPlugins(cwd, discoverPlugins(library));
+
+    expect(readManagedPluginNames(cwd)).toEqual([]);
+  });
+
+  it("uses configured default-disabled plugins instead of the built-in list", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary("alpha", "dirty-git-status");
+    const { globalPath } = getSettingsPaths(cwd);
+    writeSettingsFile(globalPath, {
+      pluginToggle: { defaultDisabledPlugins: ["alpha"] },
+    });
+
+    const { bootstrapDefaultManagedPlugins, discoverPlugins } =
+      await importPluginToggle();
+    const plugins = discoverPlugins(library);
+
+    const result = bootstrapDefaultManagedPlugins(cwd, plugins);
+
+    expect(result.enabled).toEqual(["dirty-git-status"]);
+    expect(result.skippedDefaultDisabled).toEqual(["alpha"]);
+  });
+
+  it("allows an empty configured default-disabled list", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary("dirty-git-status");
+    const { globalPath } = getSettingsPaths(cwd);
+    writeSettingsFile(globalPath, {
+      pluginToggle: { defaultDisabledPlugins: [] },
+    });
+
+    const { bootstrapDefaultManagedPlugins, discoverPlugins } =
+      await importPluginToggle();
+    const plugins = discoverPlugins(library);
+
+    const result = bootstrapDefaultManagedPlugins(cwd, plugins);
+
+    expect(result.enabled).toEqual(["dirty-git-status"]);
+    expect(result.skippedDefaultDisabled).toEqual([]);
+  });
+
+  it("does not bootstrap defaults when the cwd already has an empty managed record", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary("alpha");
+
+    const {
+      bootstrapDefaultManagedPlugins,
+      disablePlugin,
+      discoverPlugins,
+      enablePlugin,
+    } = await importPluginToggle();
+    const [plugin] = discoverPlugins(library);
+    enablePlugin(cwd, plugin);
+    disablePlugin(cwd, plugin);
+
+    const result = bootstrapDefaultManagedPlugins(cwd, [plugin]);
+
+    expect(result.status).toBe("already-configured");
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(false);
+  });
+
+  it("does not overwrite an existing project plugin during bootstrap", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary("alpha");
+    const projectPlugin = projectPluginPath(cwd, "alpha");
+    fs.mkdirSync(projectPlugin, { recursive: true });
+    fs.writeFileSync(path.join(projectPlugin, "index.ts"), "// user plugin\n");
+
+    const { bootstrapDefaultManagedPlugins, discoverPlugins } =
+      await importPluginToggle();
+    const [plugin] = discoverPlugins(library);
+
+    const result = bootstrapDefaultManagedPlugins(cwd, [plugin]);
+
+    expect(result.conflicts).toEqual([projectPlugin]);
     expect(fs.readFileSync(path.join(projectPlugin, "index.ts"), "utf-8")).toBe(
       "// user plugin\n",
     );

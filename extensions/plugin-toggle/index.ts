@@ -36,6 +36,14 @@ interface PluginToggleSettingsEntry {
 
 interface PluginToggleSettings {
   byCwd?: Record<string, PluginToggleSettingsEntry>;
+  defaultDisabledPlugins?: string[];
+}
+
+export interface DefaultBootstrapResult {
+  status: "bootstrapped" | "already-configured";
+  enabled: string[];
+  skippedDefaultDisabled: string[];
+  conflicts: string[];
 }
 
 export type ToggleResult =
@@ -62,6 +70,13 @@ const GLOBAL_EXTENSION_DIR = path.join(
   "extensions",
 );
 const GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES = new Set(["plugin-toggle", "shared"]);
+const DEFAULT_DISABLED_PLUGINS = [
+  "cwd-history",
+  "diffx-review",
+  "dirty-git-status",
+  "remote-approval",
+  "copyx",
+];
 const PROJECT_EXTENSION_DIR = path.join(".pi", "extensions");
 const PICKER_PAGE_SIZE = 8;
 const SHARED_EXTENSION_NAME = "shared";
@@ -103,6 +118,33 @@ function getPluginToggleSettings(filePath: string): {
   return { settings, pluginToggle, byCwd };
 }
 
+function readDefaultDisabledPlugins(cwd: string): Set<string> {
+  const { globalPath } = getSettingsPaths(cwd);
+  const { pluginToggle } = getPluginToggleSettings(globalPath);
+  const disabled = Array.isArray(pluginToggle.defaultDisabledPlugins)
+    ? toStringList(pluginToggle.defaultDisabledPlugins)
+    : DEFAULT_DISABLED_PLUGINS;
+  return new Set(disabled.map(normalizeName));
+}
+
+function hasManagedPluginsEntry(cwd: string): boolean {
+  const { globalPath } = getSettingsPaths(cwd);
+  const { byCwd } = getPluginToggleSettings(globalPath);
+  const entry = byCwd[getCwdKey(cwd)];
+  return isRecord(entry) && Array.isArray(entry.managedPlugins);
+}
+
+function emptyDefaultBootstrapResult(
+  status: DefaultBootstrapResult["status"],
+): DefaultBootstrapResult {
+  return {
+    status,
+    enabled: [],
+    skippedDefaultDisabled: [],
+    conflicts: [],
+  };
+}
+
 function readManagedPlugins(cwd: string): Set<string> {
   const { globalPath } = getSettingsPaths(cwd);
   const { byCwd } = getPluginToggleSettings(globalPath);
@@ -131,6 +173,10 @@ function updateManagedPlugin(
   const managed = readManagedPlugins(cwd);
   update(managed, normalizeName(pluginName));
   writeManagedPlugins(cwd, managed);
+}
+
+function ensureManagedPluginsEntry(cwd: string): void {
+  writeManagedPlugins(cwd, readManagedPlugins(cwd));
 }
 
 function statTargetOrNull(filePath: string): fs.Stats | null {
@@ -320,6 +366,41 @@ export function disablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
     managed.delete(name),
   );
   return { status: "disabled" };
+}
+
+export function bootstrapDefaultManagedPlugins(
+  cwd: string,
+  plugins: PluginEntry[],
+): DefaultBootstrapResult {
+  const result = emptyDefaultBootstrapResult("bootstrapped");
+
+  if (hasManagedPluginsEntry(cwd)) {
+    return emptyDefaultBootstrapResult("already-configured");
+  }
+
+  const disabled = readDefaultDisabledPlugins(cwd);
+  for (const plugin of plugins) {
+    if (disabled.has(normalizeName(plugin.name))) {
+      result.skippedDefaultDisabled.push(plugin.name);
+      continue;
+    }
+
+    const toggleResult = enablePlugin(cwd, plugin);
+    if (toggleResult.status === "conflict") {
+      result.conflicts.push(toggleResult.path);
+      continue;
+    }
+    result.enabled.push(plugin.name);
+  }
+
+  ensureManagedPluginsEntry(cwd);
+
+  result.enabled.sort((left, right) => left.localeCompare(right));
+  result.skippedDefaultDisabled.sort((left, right) =>
+    left.localeCompare(right),
+  );
+  result.conflicts.sort((left, right) => left.localeCompare(right));
+  return result;
 }
 
 export function getEnabledManagedPlugins(
@@ -710,7 +791,15 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    const enabled = getEnabledManagedPlugins(ctx.cwd, discoverPlugins());
+    const plugins = discoverPlugins();
+    const bootstrap = bootstrapDefaultManagedPlugins(ctx.cwd, plugins);
+    if (bootstrap.conflicts.length > 0 && ctx.hasUI) {
+      ctx.ui.notify(
+        `Default plugin bootstrap skipped conflicting paths: ${bootstrap.conflicts.join(", ")}`,
+        "warning",
+      );
+    }
+    const enabled = getEnabledManagedPlugins(ctx.cwd, plugins);
     updateStatus(ctx, enabled.length);
     if (fs.existsSync(GLOBAL_EXTENSION_DIR)) {
       const globals = fs

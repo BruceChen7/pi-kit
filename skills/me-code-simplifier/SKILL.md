@@ -1,5 +1,5 @@
 ---
-name: code-simplifier
+name: me-code-simplifier
 description: >
   Use when code needs behavior-preserving simplification for readability, consistency, or maintainability,
   including requests to clean up, refactor for clarity, reduce complexity, or polish recently changed code

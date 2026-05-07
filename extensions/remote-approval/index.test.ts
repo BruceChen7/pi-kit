@@ -342,7 +342,7 @@ describe("remote-approval extension", () => {
     vi.useRealTimers();
   });
 
-  it("does not attach a denying remote decision when code-simplifier remote channel is unavailable", async () => {
+  it("does not attach a denying remote decision when me-code-simplifier remote channel is unavailable", async () => {
     const cwd = createTempDir("pi-kit-remote-approval-repo-");
     writeGlobalRemoteConfig(cwd, {
       enabled: true,
@@ -360,8 +360,8 @@ describe("remote-approval extension", () => {
       type: "agent-end-code-simplifier.approval",
       requestId: "code_simplifier_no_channel",
       createdAt: Date.now(),
-      title: "Run code-simplifier?",
-      body: "Run code-simplifier for src/demo.ts?",
+      title: "Run me-code-simplifier?",
+      body: "Run me-code-simplifier for src/demo.ts?",
       filePaths: ["src/demo.ts"],
       contextPreview: [],
       fullContextLines: [],
@@ -375,7 +375,7 @@ describe("remote-approval extension", () => {
     expect(attached).toBeNull();
   });
 
-  it("attaches a remote decision to code-simplifier approval events", async () => {
+  it("attaches a remote decision to me-code-simplifier approval events", async () => {
     vi.useFakeTimers();
     const cwd = createTempDir("pi-kit-remote-approval-repo-");
     writeGlobalRemoteConfig(cwd, {
@@ -408,8 +408,8 @@ describe("remote-approval extension", () => {
       type: "agent-end-code-simplifier.approval",
       requestId: "code_simplifier_1",
       createdAt: Date.now(),
-      title: "Run code-simplifier?",
-      body: "Run code-simplifier for src/demo.ts?",
+      title: "Run me-code-simplifier?",
+      body: "Run me-code-simplifier for src/demo.ts?",
       filePaths: ["src/demo.ts"],
       contextPreview: [],
       fullContextLines: [],

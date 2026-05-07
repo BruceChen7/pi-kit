@@ -99,6 +99,7 @@ type SessionRuntimeState = PlanReviewSessionState & {
 
 const DEFAULT_PLAN_SUBDIR = "plan";
 const DEFAULT_SPECS_SUBDIR = "specs";
+const DEFAULT_ISSUES_SUBDIR = "issues";
 const DEFAULT_CODE_REVIEW_PROBE_TIMEOUT_MS = 1_500;
 const DEFAULT_CODE_REVIEW_TIMEOUT_MS = 30_000;
 const SYNC_PLANNOTATOR_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
@@ -106,10 +107,11 @@ const SYNC_CODE_REVIEW_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
 const SYNC_ANNOTATE_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
 const SPEC_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
+// Issue files intentionally allow any Markdown basename under a topic slug.
+const ISSUE_FILE_PATTERN = /^.+\.md$/;
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
 const ANNOTATE_LATEST_MARKDOWN_SHORTCUT = "ctrl+alt+l";
 const PLAN_REVIEW_SUBMIT_TOOL = "plannotator_auto_submit_review";
-const PLAN_REVIEW_STATUS_POLL_MS = 250;
 const planReviewSubmitToolParameters = Type.Object({
   path: Type.String({ description: "Pending review target path" }),
 });
@@ -500,22 +502,6 @@ const resolveExtraReviewTargets = (
     }
   });
 
-const isConfiguredPlanDirectory = (
-  planFile: string,
-  resolvedPlanPath: string,
-): boolean => {
-  if (path.extname(planFile).toLowerCase() === ".md") {
-    return false;
-  }
-
-  try {
-    const stats = fs.statSync(resolvedPlanPath);
-    return stats.isDirectory();
-  } catch {
-    return true;
-  }
-};
-
 const toRepoRelativePath = (
   ctx: Pick<ExtensionContext, "cwd">,
   targetPath: string,
@@ -570,17 +556,34 @@ const getWildcardReviewTargetKind = (
     return null;
   }
 
-  const [slug, targetDir, fileName, extra] = relative.split(path.sep);
-  if (!slug || !targetDir || !fileName || extra) {
+  const parts = relative.split(path.sep);
+  const [repoSlug, targetDir, fileName, issueFileName] = parts;
+  if (!repoSlug || !targetDir) {
     return null;
   }
 
-  if (targetDir === DEFAULT_PLAN_SUBDIR && PLAN_FILE_PATTERN.test(fileName)) {
-    return "plan";
+  if (parts.length === 3) {
+    if (targetDir === DEFAULT_PLAN_SUBDIR && PLAN_FILE_PATTERN.test(fileName)) {
+      return "plan";
+    }
+
+    if (
+      targetDir === DEFAULT_SPECS_SUBDIR &&
+      SPEC_FILE_PATTERN.test(fileName)
+    ) {
+      return "spec";
+    }
   }
 
-  if (targetDir === DEFAULT_SPECS_SUBDIR && SPEC_FILE_PATTERN.test(fileName)) {
-    return "spec";
+  const topicSlug = fileName;
+  if (
+    parts.length === 4 &&
+    targetDir === DEFAULT_ISSUES_SUBDIR &&
+    Boolean(topicSlug) &&
+    ISSUE_FILE_PATTERN.test(issueFileName)
+  ) {
+    // Issue drafts reuse the existing plan-review action.
+    return "plan";
   }
 
   return null;
@@ -588,17 +591,6 @@ const getWildcardReviewTargetKind = (
 
 const getWildcardPlansRootFromConfig = (planConfig: PlanFileConfig): string =>
   path.dirname(path.dirname(planConfig.resolvedPlanPath));
-
-const isWildcardReviewTargetMatch = (
-  planConfig: PlanFileConfig,
-  targetPath: string,
-): boolean =>
-  Boolean(
-    getWildcardReviewTargetKind(
-      getWildcardPlansRootFromConfig(planConfig),
-      targetPath,
-    ),
-  );
 
 const isExtraReviewTargetMatchAny = (
   targets: ExtraReviewTarget[] | undefined,
@@ -636,18 +628,6 @@ const getPlanFileConfig = (ctx: ExtensionContext): PlanFileConfig | null => {
     ctx.cwd,
     config.extraReviewTargets,
   );
-
-  if (!isConfiguredPlanDirectory(planFile, resolvedPlanPath)) {
-    log?.debug(
-      "plannotator-auto ignored legacy single-file plan configuration",
-      {
-        planFile,
-        resolvedPlanPath,
-        sessionKey: getSessionKey(ctx),
-      },
-    );
-    return null;
-  }
 
   log?.debug("plannotator-auto resolved plan directory", {
     planFile,
@@ -725,44 +705,52 @@ type ReviewTargetMatch = {
   reviewFile: string;
 };
 
+const getReviewTargetKind = (
+  planConfig: PlanFileConfig,
+  targetPath: string,
+  wildcardPlansRoot: string,
+): ReviewTargetKind | null => {
+  if (isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath)) {
+    return "plan";
+  }
+
+  if (isSpecFileMatchAny(planConfig.resolvedSpecPaths, targetPath)) {
+    return "spec";
+  }
+
+  const wildcardKind = getWildcardReviewTargetKind(
+    wildcardPlansRoot,
+    targetPath,
+  );
+  if (wildcardKind) {
+    return wildcardKind;
+  }
+
+  if (isExtraReviewTargetMatchAny(planConfig.extraReviewTargets, targetPath)) {
+    return "plan";
+  }
+
+  return null;
+};
+
 const resolveReviewTargetMatch = (
   ctx: Pick<ExtensionContext, "cwd">,
   planConfig: PlanFileConfig,
   targetPath: string,
 ): ReviewTargetMatch | null => {
-  if (isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath)) {
-    return {
-      kind: "plan",
-      reviewFile: toRepoRelativePath(ctx, targetPath),
-    };
-  }
-
-  if (isSpecFileMatchAny(planConfig.resolvedSpecPaths, targetPath)) {
-    return {
-      kind: "spec",
-      reviewFile: toRepoRelativePath(ctx, targetPath),
-    };
-  }
-
-  const wildcardKind = getWildcardReviewTargetKind(
-    path.resolve(ctx.cwd, ".pi", "plans"),
+  const kind = getReviewTargetKind(
+    planConfig,
     targetPath,
+    path.resolve(ctx.cwd, ".pi", "plans"),
   );
-  if (wildcardKind) {
-    return {
-      kind: wildcardKind,
-      reviewFile: toRepoRelativePath(ctx, targetPath),
-    };
+  if (!kind) {
+    return null;
   }
 
-  if (isExtraReviewTargetMatchAny(planConfig.extraReviewTargets, targetPath)) {
-    return {
-      kind: "plan",
-      reviewFile: toRepoRelativePath(ctx, targetPath),
-    };
-  }
-
-  return null;
+  return {
+    kind,
+    reviewFile: toRepoRelativePath(ctx, targetPath),
+  };
 };
 
 export const resolvePlanFileForReview = (
@@ -780,11 +768,10 @@ export const shouldQueueReviewForToolPath = (
     return true;
   }
 
-  return (
-    !isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath) &&
-    !isSpecFileMatchAny(planConfig.resolvedSpecPaths, targetPath) &&
-    !isWildcardReviewTargetMatch(planConfig, targetPath) &&
-    !isExtraReviewTargetMatchAny(planConfig.extraReviewTargets, targetPath)
+  return !getReviewTargetKind(
+    planConfig,
+    targetPath,
+    getWildcardPlansRootFromConfig(planConfig),
   );
 };
 
@@ -1733,58 +1720,10 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       });
       setReviewWidget(ctx);
 
-      const eventResultPromise = waitForReviewResult(
+      const result = await waitForReviewResult(
         reviewResults,
         response.result.reviewId,
       );
-      const result = await (async () => {
-        while (true) {
-          const outcome = await Promise.race([
-            eventResultPromise.then((completed) => ({
-              type: "completed" as const,
-              result: completed,
-            })),
-            (async () => {
-              await new Promise((resolve) =>
-                setTimeout(resolve, PLAN_REVIEW_STATUS_POLL_MS),
-              );
-              const statusResponse = await requestReviewStatus(
-                requestPlannotator,
-                {
-                  reviewId: response.result.reviewId,
-                },
-              );
-              if (statusResponse.status === "handled") {
-                const status = statusResponse.result;
-                if (status.status === "completed") {
-                  reviewResults.markCompleted({
-                    reviewId: status.reviewId,
-                    approved: status.approved,
-                    feedback: status.feedback,
-                    savedPath: status.savedPath,
-                    agentSwitch: status.agentSwitch,
-                    permissionMode: status.permissionMode,
-                  });
-                  return {
-                    type: "completed" as const,
-                    result: {
-                      status: "completed" as const,
-                      reviewId: status.reviewId,
-                      approved: status.approved,
-                      feedback: status.feedback,
-                    },
-                  };
-                }
-              }
-              return { type: "pending" as const };
-            })(),
-          ]);
-
-          if (outcome.type === "completed") {
-            return outcome.result;
-          }
-        }
-      })();
 
       state.processedPlanReviewIds.add(response.result.reviewId);
       state.activePlanReviewByCwd.delete(ctx.cwd);

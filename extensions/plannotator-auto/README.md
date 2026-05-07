@@ -8,6 +8,7 @@ Default targets:
 
 - Plans: `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md`
 - Specs: `.pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md`
+- Issues: `.pi/plans/<repo>/issues/<topic-slug>/*.md`
 
 When `planFile` is not explicitly configured, worktree sessions accept both aliases:
 
@@ -22,7 +23,8 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 
 - `write` / `edit` to a matching **plan** file → queue and run plan review.
 - `write` / `edit` to a matching **spec** file → queue and run spec review.
-- When a plan/spec review draft is ready, notify the user and wait for manual submission instead of auto-steering the agent.
+- `write` / `edit` to a matching **issue** file → queue and run plan review.
+- When a plan/spec/issue review draft is ready, notify the user and wait for manual submission instead of auto-steering the agent.
 - Multiple plan writes before dispatch → keep only the latest pending plan file.
 - `write` / `edit` to **non-plan** files → mark code review pending only if `codeReviewAutoTrigger` is `true`.
 - On `agent_end`, if code review is pending and repo is dirty, request code review.
@@ -59,7 +61,6 @@ Notes:
 
 - `planFile` supports **directory path only**.
 - `extraReviewTargets` entries use `{ dir, filePattern }`, where `filePattern` is a basename regex applied to direct child files only.
-- Legacy single-file values like `.pi/PLAN.md` are ignored.
 - Set `planFile: null` to disable plan/spec review auto-trigger.
 - `codeReviewAutoTrigger` is disabled by default.
 
@@ -68,7 +69,7 @@ Notes:
 - `plan-review`
 - `code-review`
 - `annotate`
-- `review-status` (fallback polling)
+- `review-status`
 
 ## Logging
 

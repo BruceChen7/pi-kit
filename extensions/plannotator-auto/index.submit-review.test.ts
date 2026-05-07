@@ -49,9 +49,7 @@ function mockSubmitReviewApi(
     status: "handled" as const,
     result: {
       status: "pending" as const,
-      reviewId: options.requestReviewStatus
-        ? "review-submit-fallback"
-        : "review-submit-plan",
+      reviewId: "review-submit-plan",
     },
   }));
 
@@ -299,7 +297,7 @@ describe("submit review tool", () => {
     }
   });
 
-  it("falls back to review-status when the async review result event is missed", async () => {
+  it("waits for the submitted review result event without polling review-status", async () => {
     vi.useFakeTimers();
     vi.resetModules();
 
@@ -307,20 +305,32 @@ describe("submit review tool", () => {
       status: "handled" as const,
       result: {
         status: "completed" as const,
-        reviewId: "review-submit-fallback",
+        reviewId: "review-submit-plan",
         approved: true,
       },
     }));
+    let resolveReviewResult:
+      | ((value: {
+          status: "completed";
+          reviewId: string;
+          approved: true;
+        }) => void)
+      | undefined;
     const { startPlanReview } = mockSubmitReviewApi({
       requestReviewStatus,
-      waitForReviewResult: vi.fn(() => new Promise(() => {})),
+      waitForReviewResult: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveReviewResult = resolve as typeof resolveReviewResult;
+          }),
+      ),
     });
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
 
-    const repoRoot = await createTempRepo("plannotator-auto-submit-fallback-");
+    const repoRoot = await createTempRepo("plannotator-auto-submit-event-");
     const repoName = repoRoot.split("/").pop() ?? "repo";
     const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
     await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
@@ -345,9 +355,16 @@ describe("submit review tool", () => {
       await flushMicrotasks();
 
       expect(startPlanReview).toHaveBeenCalledTimes(1);
-      expect(requestReviewStatus).toHaveBeenCalled();
-      expect(settled).toBe(true);
+      expect(requestReviewStatus).not.toHaveBeenCalled();
+      expect(settled).toBe(false);
+
+      resolveReviewResult?.({
+        status: "completed",
+        reviewId: "review-submit-plan",
+        approved: true,
+      });
       await submitPromise;
+      expect(settled).toBe(true);
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

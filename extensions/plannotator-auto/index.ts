@@ -78,7 +78,15 @@ type SessionMarkdownFile = {
   updatedAt: number;
 };
 
+type PendingPlanReviewEventHandle = {
+  markHandled: () => void;
+};
+
 type SessionRuntimeState = PlanReviewSessionState & {
+  pendingPlanReviewEventsByCwd: Map<
+    string,
+    Map<string, PendingPlanReviewEventHandle>
+  >;
   pendingPlanReviewTargetsByCwd: Map<string, Map<string, PendingPlanReview>>;
   toolArgsByCallId: Map<string, unknown>;
   markdownFilesByCwd: Map<string, Map<string, SessionMarkdownFile>>;
@@ -235,12 +243,64 @@ const formatPendingPlanReviewGateMessage = (planFiles: string[]): string =>
 const formatPendingPlanReviewPrompt = (planFiles: string[]): string =>
   `[PLANNOTATOR AUTO - PENDING REVIEW]\nPending review targets:\n- ${planFiles.join("\n- ")}\n\nYour next required action is calling ${PLAN_REVIEW_SUBMIT_TOOL} with one pending path. If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`;
 
+const getPendingPlanReviewEvents = (
+  state: SessionRuntimeState,
+  cwd: string,
+): Map<string, PendingPlanReviewEventHandle> => {
+  const existing = state.pendingPlanReviewEventsByCwd.get(cwd);
+  if (existing) {
+    return existing;
+  }
+
+  const next = new Map<string, PendingPlanReviewEventHandle>();
+  state.pendingPlanReviewEventsByCwd.set(cwd, next);
+  return next;
+};
+
+const markPendingPlanReviewEventsHandled = (
+  state: SessionRuntimeState,
+  cwd: string,
+  resolvedPlanPaths: Iterable<string>,
+): void => {
+  const eventsByPath = state.pendingPlanReviewEventsByCwd.get(cwd);
+  if (!eventsByPath) {
+    return;
+  }
+
+  for (const resolvedPlanPath of resolvedPlanPaths) {
+    eventsByPath.get(resolvedPlanPath)?.markHandled();
+    eventsByPath.delete(resolvedPlanPath);
+  }
+
+  if (eventsByPath.size === 0) {
+    state.pendingPlanReviewEventsByCwd.delete(cwd);
+  }
+};
+
+const trackPendingPlanReviewEvent = (
+  state: SessionRuntimeState,
+  cwd: string,
+  pendingPlanReviews: PendingPlanReview[],
+  handled: PendingPlanReviewEventHandle,
+): void => {
+  const eventsByPath = getPendingPlanReviewEvents(state, cwd);
+  for (const pending of pendingPlanReviews) {
+    eventsByPath.get(pending.resolvedPlanPath)?.markHandled();
+    eventsByPath.set(pending.resolvedPlanPath, handled);
+  }
+};
+
 const emitPendingPlanReviewEvent = (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
-  planFiles: string[],
+  state: SessionRuntimeState,
+  pendingPlanReviews: PendingPlanReview[],
 ): void => {
+  const planFiles = pendingPlanReviews.map((pending) => pending.planFile);
   const body = formatPendingPlanReviewGateMessage(planFiles);
+  const handled = createHandledState();
+  trackPendingPlanReviewEvent(state, ctx.cwd, pendingPlanReviews, handled);
+
   pi.events.emit(PLANNOTATOR_PENDING_REVIEW_CHANNEL, {
     type: "plannotator-auto.pending-review",
     requestId: `plannotator_pending_review_${Date.now()}`,
@@ -251,7 +311,7 @@ const emitPendingPlanReviewEvent = (
     contextPreview: [body],
     fullContextLines: [body],
     continueEnabled: true,
-    handled: createHandledState(),
+    handled,
     ctx,
   } satisfies PiKitPlannotatorPendingReviewEvent);
 };
@@ -316,6 +376,7 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
 let log: ReturnType<typeof createLogger> | null = null;
 
 const createSessionRuntimeState = (): SessionRuntimeState => ({
+  pendingPlanReviewEventsByCwd: new Map(),
   pendingPlanReviewTargetsByCwd: new Map(),
   toolArgsByCallId: new Map<string, unknown>(),
   markdownFilesByCwd: new Map(),
@@ -1730,6 +1791,9 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       if (result.approved) {
         state.settledPlanReviewPaths.add(pendingPlanReview.resolvedPlanPath);
         pendingPlanReviews.delete(pendingPlanReview.resolvedPlanPath);
+        markPendingPlanReviewEventsHandled(state, ctx.cwd, [
+          pendingPlanReview.resolvedPlanPath,
+        ]);
         syncPrimaryPendingPlanReview(state, ctx.cwd);
         setReviewWidget(ctx);
         return {
@@ -1959,7 +2023,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       pi.sendUserMessage(formatPendingPlanReviewGateMessage(planFiles), {
         deliverAs: ctx.isIdle() ? "followUp" : "steer",
       });
-      emitPendingPlanReviewEvent(pi, ctx, planFiles);
+      emitPendingPlanReviewEvent(pi, ctx, state, pendingPlanReviews);
       if (!ctx.isIdle()) {
         ctx.abort();
       }
@@ -1984,7 +2048,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       pi.sendUserMessage(formatPendingPlanReviewGateMessage(planFiles), {
         deliverAs: "followUp",
       });
-      emitPendingPlanReviewEvent(pi, ctx, planFiles);
+      emitPendingPlanReviewEvent(pi, ctx, state, pendingPlanReviews);
       setReviewWidget(ctx);
       return;
     }

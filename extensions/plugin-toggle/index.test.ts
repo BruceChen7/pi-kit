@@ -2,7 +2,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearSettingsCache,
@@ -52,19 +51,40 @@ const createPluginLibrary = (...pluginNames: string[]): string => {
 const projectPluginPath = (cwd: string, name: string): string =>
   path.join(cwd, ".pi", "extensions", name);
 
-const createFakePi = (): ExtensionAPI & {
-  commands: string[];
-  tools: string[];
-} => {
-  const commands: string[] = [];
-  const tools: string[] = [];
-  return {
-    commands,
-    tools,
-    on: vi.fn(),
-    registerCommand: (name: string) => commands.push(name),
-    registerTool: (tool: { name: string }) => tools.push(tool.name),
-  } as unknown as ExtensionAPI & { commands: string[]; tools: string[] };
+const createFakeExtensionRuntime = async () => {
+  const { default: pluginToggleExtension } = await importPluginToggle();
+  const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> =
+    {};
+  const pi = {
+    on: vi.fn(
+      (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+        handlers[event] = handler;
+      },
+    ),
+    registerCommand: vi.fn(),
+  };
+  pluginToggleExtension(pi as never);
+
+  const runSessionStart = async (
+    cwd: string,
+    options: {
+      hasUI?: boolean;
+      reload?: () => Promise<void>;
+      notify?: typeof vi.fn;
+    } = {},
+  ): Promise<void> => {
+    await handlers.session_start?.(
+      { type: "session_start", reason: "startup" },
+      {
+        cwd,
+        hasUI: options.hasUI ?? false,
+        reload: options.reload ?? vi.fn(async () => undefined),
+        ui: { setStatus: vi.fn(), notify: options.notify ?? vi.fn() },
+      },
+    );
+  };
+
+  return { runSessionStart };
 };
 
 const readManagedPluginNames = (cwd: string): string[] => {
@@ -325,80 +345,42 @@ describe("default project bootstrap", () => {
     expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(false);
   });
 
-  it("loads newly bootstrapped plugin factories into the current runtime", async () => {
+  it("reloads after bootstrapping newly enabled plugins so Pi loads them", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = pluginLibraryDir(createTempHome());
-    createPluginDir(
-      library,
-      "alpha",
-      'export default function(pi) { pi.registerCommand("alpha-command", { description: "Alpha", handler: async () => undefined }); }\n',
-    );
-    const pi = createFakePi();
+    createPluginLibrary("alpha");
+    const reload = vi.fn(async () => undefined);
+    const { runSessionStart } = await createFakeExtensionRuntime();
 
-    const { bootstrapAndLoadDefaultManagedPlugins, discoverPlugins } =
-      await importPluginToggle();
+    await runSessionStart(cwd, { reload });
 
-    const result = await bootstrapAndLoadDefaultManagedPlugins(
-      cwd,
-      discoverPlugins(library),
-      pi,
-    );
-
-    expect(result.enabled).toEqual(["alpha"]);
-    expect(result.loaded).toEqual(["alpha"]);
-    expect(pi.commands).toEqual(["alpha-command"]);
+    expect(reload).toHaveBeenCalledOnce();
+    expect(readManagedPluginNames(cwd)).toEqual(["alpha"]);
   });
 
-  it("runs session_start handlers from newly loaded plugin factories immediately", async () => {
+  it("does not reload when the cwd already has a managed record", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = pluginLibraryDir(createTempHome());
-    createPluginDir(
-      library,
-      "alpha",
-      'export default function(pi) { pi.on("session_start", (_event, ctx) => ctx.ui.notify("alpha started", "info")); }\n',
-    );
-    const pi = createFakePi();
-    const notifications: string[] = [];
-
-    const { bootstrapAndLoadDefaultManagedPlugins, discoverPlugins } =
+    const library = createPluginLibrary("alpha");
+    const { bootstrapDefaultManagedPlugins, discoverPlugins } =
       await importPluginToggle();
+    bootstrapDefaultManagedPlugins(cwd, discoverPlugins(library));
+    const reload = vi.fn(async () => undefined);
+    const { runSessionStart } = await createFakeExtensionRuntime();
 
-    await bootstrapAndLoadDefaultManagedPlugins(
-      cwd,
-      discoverPlugins(library),
-      pi,
-      {
-        event: { type: "session_start", reason: "startup" },
-        ctx: {
-          ui: { notify: (message: string) => notifications.push(message) },
-        },
-      },
-    );
+    await runSessionStart(cwd, { reload });
 
-    expect(notifications).toEqual(["alpha started"]);
+    expect(reload).not.toHaveBeenCalled();
   });
 
-  it("does not load default-disabled plugin factories into the current runtime", async () => {
+  it("does not reload when every discovered plugin is default-disabled", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = pluginLibraryDir(createTempHome());
-    createPluginDir(
-      library,
-      "dirty-git-status",
-      'export default function(pi) { pi.registerCommand("dirty-command", { description: "Dirty", handler: async () => undefined }); }\n',
-    );
-    const pi = createFakePi();
+    createPluginLibrary("dirty-git-status");
+    const reload = vi.fn(async () => undefined);
+    const { runSessionStart } = await createFakeExtensionRuntime();
 
-    const { bootstrapAndLoadDefaultManagedPlugins, discoverPlugins } =
-      await importPluginToggle();
+    await runSessionStart(cwd, { reload });
 
-    const result = await bootstrapAndLoadDefaultManagedPlugins(
-      cwd,
-      discoverPlugins(library),
-      pi,
-    );
-
-    expect(result.loaded).toEqual([]);
-    expect(pi.commands).toEqual([]);
+    expect(reload).not.toHaveBeenCalled();
+    expect(readManagedPluginNames(cwd)).toEqual([]);
   });
 
   it("does not default-bootstrap plugin-toggle itself", async () => {
@@ -418,34 +400,24 @@ describe("default project bootstrap", () => {
     expect(fs.existsSync(projectPluginPath(cwd, "plugin-toggle"))).toBe(false);
   });
 
-  it("records plugin factory load errors without blocking other plugins", async () => {
+  it("reloads when at least one plugin is enabled even if another plugin conflicts", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = pluginLibraryDir(createTempHome());
-    createPluginDir(
-      library,
-      "alpha",
-      'export default function(pi) { pi.registerCommand("alpha-command", { description: "Alpha", handler: async () => undefined }); }\n',
+    createPluginLibrary("alpha", "beta");
+    const projectPlugin = projectPluginPath(cwd, "beta");
+    fs.mkdirSync(projectPlugin, { recursive: true });
+    fs.writeFileSync(path.join(projectPlugin, "index.ts"), "// user plugin\n");
+    const reload = vi.fn(async () => undefined);
+    const notify = vi.fn();
+    const { runSessionStart } = await createFakeExtensionRuntime();
+
+    await runSessionStart(cwd, { hasUI: true, reload, notify });
+
+    expect(reload).toHaveBeenCalledOnce();
+    expect(readManagedPluginNames(cwd)).toEqual(["alpha"]);
+    expect(notify).toHaveBeenCalledWith(
+      `Default plugin bootstrap skipped conflicting paths: ${projectPlugin}`,
+      "warning",
     );
-    createPluginDir(library, "broken", "export default 42;\n");
-    const pi = createFakePi();
-
-    const { bootstrapAndLoadDefaultManagedPlugins, discoverPlugins } =
-      await importPluginToggle();
-
-    const result = await bootstrapAndLoadDefaultManagedPlugins(
-      cwd,
-      discoverPlugins(library),
-      pi,
-    );
-
-    expect(result.loaded).toEqual(["alpha"]);
-    expect(result.loadErrors).toEqual([
-      {
-        plugin: "broken",
-        error: "Extension does not export a valid factory function",
-      },
-    ]);
-    expect(pi.commands).toEqual(["alpha-command"]);
   });
 
   it("does not overwrite an existing project plugin during bootstrap", async () => {

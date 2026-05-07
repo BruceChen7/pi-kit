@@ -13,6 +13,9 @@ import {
 const tempDirs: string[] = [];
 const originalHome = process.env.HOME;
 const originalCwd = process.cwd();
+const DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE =
+  "同步插件成功，请重启 Pi 以加载新插件。";
+const RELOAD_FOLLOW_UP = { deliverAs: "followUp" };
 
 const createTempDir = (prefix: string): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -55,6 +58,7 @@ const createFakeExtensionRuntime = async () => {
   const { default: pluginToggleExtension } = await importPluginToggle();
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> =
     {};
+  const sendUserMessage = vi.fn();
   const pi = {
     on: vi.fn(
       (event: string, handler: (event: unknown, ctx: unknown) => unknown) => {
@@ -62,29 +66,25 @@ const createFakeExtensionRuntime = async () => {
       },
     ),
     registerCommand: vi.fn(),
+    sendUserMessage,
   };
   pluginToggleExtension(pi as never);
 
   const runSessionStart = async (
     cwd: string,
-    options: {
-      hasUI?: boolean;
-      reload?: () => Promise<void>;
-      notify?: typeof vi.fn;
-    } = {},
+    options: { hasUI?: boolean; notify?: typeof vi.fn } = {},
   ): Promise<void> => {
     await handlers.session_start?.(
       { type: "session_start", reason: "startup" },
       {
         cwd,
         hasUI: options.hasUI ?? false,
-        reload: options.reload ?? vi.fn(async () => undefined),
         ui: { setStatus: vi.fn(), notify: options.notify ?? vi.fn() },
       },
     );
   };
 
-  return { runSessionStart };
+  return { runSessionStart, sendUserMessage };
 };
 
 const readManagedPluginNames = (cwd: string): string[] => {
@@ -345,41 +345,46 @@ describe("default project bootstrap", () => {
     expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(false);
   });
 
-  it("reloads after bootstrapping newly enabled plugins so Pi loads them", async () => {
+  it("queues reload and notifies after bootstrapping newly enabled plugins", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     createPluginLibrary("alpha");
-    const reload = vi.fn(async () => undefined);
-    const { runSessionStart } = await createFakeExtensionRuntime();
+    const notify = vi.fn();
+    const { runSessionStart, sendUserMessage } =
+      await createFakeExtensionRuntime();
 
-    await runSessionStart(cwd, { reload });
+    await runSessionStart(cwd, { hasUI: true, notify });
 
-    expect(reload).toHaveBeenCalledOnce();
+    expect(sendUserMessage).toHaveBeenCalledWith("/reload", RELOAD_FOLLOW_UP);
+    expect(notify).toHaveBeenCalledWith(
+      DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE,
+      "info",
+    );
     expect(readManagedPluginNames(cwd)).toEqual(["alpha"]);
   });
 
-  it("does not reload when the cwd already has a managed record", async () => {
+  it("does not queue reload when the cwd already has a managed record", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     const library = createPluginLibrary("alpha");
     const { bootstrapDefaultManagedPlugins, discoverPlugins } =
       await importPluginToggle();
     bootstrapDefaultManagedPlugins(cwd, discoverPlugins(library));
-    const reload = vi.fn(async () => undefined);
-    const { runSessionStart } = await createFakeExtensionRuntime();
+    const { runSessionStart, sendUserMessage } =
+      await createFakeExtensionRuntime();
 
-    await runSessionStart(cwd, { reload });
+    await runSessionStart(cwd);
 
-    expect(reload).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
   });
 
-  it("does not reload when every discovered plugin is default-disabled", async () => {
+  it("does not queue reload when every discovered plugin is default-disabled", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     createPluginLibrary("dirty-git-status");
-    const reload = vi.fn(async () => undefined);
-    const { runSessionStart } = await createFakeExtensionRuntime();
+    const { runSessionStart, sendUserMessage } =
+      await createFakeExtensionRuntime();
 
-    await runSessionStart(cwd, { reload });
+    await runSessionStart(cwd);
 
-    expect(reload).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
     expect(readManagedPluginNames(cwd)).toEqual([]);
   });
 
@@ -400,19 +405,19 @@ describe("default project bootstrap", () => {
     expect(fs.existsSync(projectPluginPath(cwd, "plugin-toggle"))).toBe(false);
   });
 
-  it("reloads when at least one plugin is enabled even if another plugin conflicts", async () => {
+  it("queues reload when at least one plugin is enabled even if another plugin conflicts", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     createPluginLibrary("alpha", "beta");
     const projectPlugin = projectPluginPath(cwd, "beta");
     fs.mkdirSync(projectPlugin, { recursive: true });
     fs.writeFileSync(path.join(projectPlugin, "index.ts"), "// user plugin\n");
-    const reload = vi.fn(async () => undefined);
     const notify = vi.fn();
-    const { runSessionStart } = await createFakeExtensionRuntime();
+    const { runSessionStart, sendUserMessage } =
+      await createFakeExtensionRuntime();
 
-    await runSessionStart(cwd, { hasUI: true, reload, notify });
+    await runSessionStart(cwd, { hasUI: true, notify });
 
-    expect(reload).toHaveBeenCalledOnce();
+    expect(sendUserMessage).toHaveBeenCalledWith("/reload", RELOAD_FOLLOW_UP);
     expect(readManagedPluginNames(cwd)).toEqual(["alpha"]);
     expect(notify).toHaveBeenCalledWith(
       `Default plugin bootstrap skipped conflicting paths: ${projectPlugin}`,

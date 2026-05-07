@@ -342,10 +342,11 @@ describe("remote-approval extension", () => {
     vi.useRealTimers();
   });
 
-  it("does not attach a denying remote decision when me-code-simplifier remote channel is unavailable", async () => {
+  it("does not attach a denying remote decision when me-code-simplifier remote channel is unavailable and strictRemote is false", async () => {
     const cwd = createTempDir("pi-kit-remote-approval-repo-");
     writeGlobalRemoteConfig(cwd, {
       enabled: true,
+      strictRemote: false,
       approvalTimeoutMs: 0,
     });
 
@@ -373,6 +374,94 @@ describe("remote-approval extension", () => {
     } satisfies PiKitAgentEndCodeSimplifierApprovalEvent);
 
     expect(attached).toBeNull();
+  });
+
+  it("attaches a denying remote decision when remote channel is unavailable and strictRemote is true", async () => {
+    const cwd = createTempDir("pi-kit-remote-approval-repo-");
+    writeGlobalRemoteConfig(cwd, {
+      enabled: true,
+      strictRemote: true,
+      approvalTimeoutMs: 0,
+    });
+
+    const remoteApprovalExtension = await loadExtension();
+    const harness = buildPiHarness();
+    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
+    const ctx = createContext(cwd);
+    await harness.emit("session_start", {}, ctx);
+
+    let attached: Promise<boolean> | null = null;
+    harness.api.events.emit(AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL, {
+      type: "agent-end-code-simplifier.approval",
+      requestId: "code_simplifier_no_channel_strict",
+      createdAt: Date.now(),
+      title: "Run me-code-simplifier?",
+      body: "Run me-code-simplifier for src/demo.ts?",
+      filePaths: ["src/demo.ts"],
+      contextPreview: [],
+      fullContextLines: [],
+      localDecision: Promise.resolve(true),
+      attachRemoteDecision: (decision) => {
+        attached = decision;
+      },
+      ctx,
+    } satisfies PiKitAgentEndCodeSimplifierApprovalEvent);
+
+    expect(attached).toBeInstanceOf(Promise);
+    await expect(attached).resolves.toBe(false);
+  });
+
+  it("attaches a denying remote decision when Telegram approval fails and strictRemote is true", async () => {
+    vi.useFakeTimers();
+    const cwd = createTempDir("pi-kit-remote-approval-repo-");
+    writeGlobalRemoteConfig(cwd, {
+      enabled: true,
+      botToken: "123:abc",
+      chatId: "1001",
+      strictRemote: true,
+      approvalTimeoutMs: 0,
+    });
+
+    const channel = {
+      sendMessage: vi.fn(async () => {
+        throw new Error("telegram unavailable");
+      }),
+      sendReply: vi.fn(async () => 77),
+      sendReplyPrompt: vi.fn(async () => 99),
+      editMessage: vi.fn(async () => undefined),
+      poll: vi.fn(async () => null),
+    };
+
+    vi.doMock("./channel/index.ts", () => ({
+      createRemoteChannel: () => ({ channel, error: null }),
+    }));
+
+    const remoteApprovalExtension = await loadExtension();
+    const harness = buildPiHarness();
+    remoteApprovalExtension(harness.api as unknown as ExtensionAPI);
+    const ctx = createContext(cwd);
+    await harness.emit("session_start", {}, ctx);
+
+    let attached: Promise<boolean> | null = null;
+    harness.api.events.emit(AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL, {
+      type: "agent-end-code-simplifier.approval",
+      requestId: "code_simplifier_telegram_fail_strict",
+      createdAt: Date.now(),
+      title: "Run me-code-simplifier?",
+      body: "Run me-code-simplifier for src/demo.ts?",
+      filePaths: ["src/demo.ts"],
+      contextPreview: [],
+      fullContextLines: [],
+      localDecision: new Promise<boolean>(() => undefined),
+      attachRemoteDecision: (decision) => {
+        attached = decision;
+      },
+      ctx,
+    } satisfies PiKitAgentEndCodeSimplifierApprovalEvent);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(attached).resolves.toBe(false);
+    vi.useRealTimers();
   });
 
   it("attaches a remote decision to me-code-simplifier approval events", async () => {

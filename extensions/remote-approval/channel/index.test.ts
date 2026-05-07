@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { RemoteApprovalConfig } from "../config.ts";
 import { createRemoteChannel } from "./index.ts";
+import { createTelegramClient } from "./telegram/client.ts";
 
 vi.mock("./telegram/client.ts", () => ({
   createTelegramClient: vi.fn(() => ({
@@ -32,6 +33,19 @@ describe("remote-approval channel factory", () => {
 
     expect(result.error).toBeNull();
     expect(result.channel).not.toBeNull();
+  });
+
+  it("passes configured request TTL to the telegram client", () => {
+    createRemoteChannel({
+      ...baseConfig,
+      requestTtlSeconds: 123,
+    });
+
+    expect(createTelegramClient).toHaveBeenCalledWith({
+      botToken: "token",
+      chatId: "chat",
+      requestTtlMs: 123_000,
+    });
   });
 
   it("returns a typed error when telegram credentials are missing", () => {

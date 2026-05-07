@@ -43,17 +43,20 @@ const writeSettings = (filePath: string, packages: string[]): void => {
   );
 };
 
-const createFakePi = (binDir: string, logPath: string): void => {
+const createFakeInstallTools = (binDir: string): void => {
   fs.mkdirSync(binDir, { recursive: true });
-  const fakePi = path.join(binDir, "pi");
   fs.writeFileSync(
-    fakePi,
-    `#!/usr/bin/env ${process.execPath}\n` +
-      `const fs = require("node:fs");\n` +
-      `fs.appendFileSync(${JSON.stringify(logPath)}, process.argv.slice(2).join(" ") + "\\n");\n`,
+    path.join(binDir, "npm"),
+    `#!/bin/sh\nset -eu\ndest=""\nprev=""\nfor arg in "$@"; do\n  if [ "$prev" = "--pack-destination" ]; then dest="$arg"; fi\n  prev="$arg"\ndone\nmkdir -p "$dest/package"\necho 'export default function() {}' > "$dest/package/index.ts"\ntar -czf "$dest/fake.tgz" -C "$dest" package\n`,
     "utf8",
   );
-  fs.chmodSync(fakePi, 0o755);
+  fs.writeFileSync(
+    path.join(binDir, "git"),
+    `#!/bin/sh\nset -eu\ntarget=""\nfor arg in "$@"; do target="$arg"; done\nmkdir -p "$target"\necho 'export default function() {}' > "$target/index.ts"\n`,
+    "utf8",
+  );
+  fs.chmodSync(path.join(binDir, "npm"), 0o755);
+  fs.chmodSync(path.join(binDir, "git"), 0o755);
 };
 
 afterEach(() => {
@@ -179,12 +182,12 @@ describe("is_installed", () => {
 });
 
 describe("install-third-party-plugins.sh", () => {
-  it("installs common third-party plugins globally and pi-autoresearch locally", () => {
+  it("installs third-party plugins into the shared plugin library manifest", () => {
     const home = createTempDir();
     const project = createTempDir();
     const binDir = path.join(createTempDir(), "bin");
     const logPath = path.join(createTempDir(), "pi.log");
-    createFakePi(binDir, logPath);
+    createFakeInstallTools(binDir);
 
     execFileSync("bash", [installerPath], {
       cwd: project,
@@ -196,26 +199,36 @@ describe("install-third-party-plugins.sh", () => {
       encoding: "utf8",
     });
 
-    const commands = fs.readFileSync(logPath, "utf8").trim().split("\n");
-    expect(commands).toContain("install npm:@plannotator/pi-extension");
-    expect(commands).toContain("install npm:pi-context");
-    expect(commands).toContain(
-      "install https://github.com/davebcn87/pi-autoresearch@v1.0.1 -l",
+    const library = path.join(home, ".agents", "pi-plugins");
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(library, ".manifest.json"), "utf8"),
     );
+    expect(Object.keys(manifest.plugins).sort()).toEqual([
+      "pi-autoresearch",
+      "pi-context",
+      "plannotator-pi-extension",
+    ]);
+    expect(manifest.plugins["plannotator-pi-extension"]).toMatchObject({
+      kind: "npm",
+      source: "npm:@plannotator/pi-extension",
+    });
+    expect(manifest.plugins["pi-autoresearch"]).toMatchObject({
+      kind: "github",
+      source: "https://github.com/davebcn87/pi-autoresearch@v1.0.1",
+    });
+    expect(fs.existsSync(path.join(library, "pi-context", "index.ts"))).toBe(
+      true,
+    );
+    expect(fs.existsSync(logPath)).toBe(false);
   });
 
-  it("removes pi-autoresearch from global settings after project install", () => {
+  it("can enable default third-party plugins by symlinking them into the project", () => {
     const home = createTempDir();
     const project = createTempDir();
     const binDir = path.join(createTempDir(), "bin");
-    const logPath = path.join(createTempDir(), "pi.log");
-    const globalSettings = path.join(home, ".pi", "agent", "settings.json");
-    createFakePi(binDir, logPath);
-    writeSettings(globalSettings, [
-      "https://github.com/davebcn87/pi-autoresearch@v1.0.1",
-    ]);
+    createFakeInstallTools(binDir);
 
-    execFileSync("bash", [installerPath], {
+    execFileSync("bash", [installerPath, "--enable-defaults"], {
       cwd: project,
       env: {
         ...process.env,
@@ -225,9 +238,10 @@ describe("install-third-party-plugins.sh", () => {
       encoding: "utf8",
     });
 
-    const commands = fs.readFileSync(logPath, "utf8").trim().split("\n");
-    expect(commands).toContain(
-      "remove https://github.com/davebcn87/pi-autoresearch@v1.0.1",
+    const target = path.join(project, ".pi", "extensions", "pi-context");
+    expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(target)).toBe(
+      fs.realpathSync(path.join(home, ".agents", "pi-plugins", "pi-context")),
     );
   });
 });

@@ -57,7 +57,11 @@ interface SkillToggleSettings {
 export type SkillLinkToggleResult =
   | { status: "enabled" | "disabled" | "already-disabled" }
   | {
-      status: "not-symlink" | "missing-link-record" | "conflict";
+      status:
+        | "not-symlink"
+        | "missing-link-record"
+        | "missing-target"
+        | "conflict";
       path: string;
     };
 
@@ -328,13 +332,28 @@ function sortSkills(skills: Iterable<Skill>): Skill[] {
 
 export function loadSkills(cwd: string): Skill[] {
   const skillsByPath = new Map<string, Skill>();
+  const visitedSkillFiles = new Set<string>();
 
   for (const { dir, format, scope } of DEFAULT_SKILL_DIRS) {
-    scanSkillDir(dir(cwd), format, skillsByPath, undefined, scope);
+    scanSkillDir(
+      dir(cwd),
+      format,
+      skillsByPath,
+      undefined,
+      scope,
+      visitedSkillFiles,
+    );
   }
 
   for (const dir of getProjectAgentsSkillDirs(cwd)) {
-    scanSkillDir(dir, "recursive", skillsByPath, undefined, "project");
+    scanSkillDir(
+      dir,
+      "recursive",
+      skillsByPath,
+      undefined,
+      "project",
+      visitedSkillFiles,
+    );
   }
 
   return sortSkills(skillsByPath.values());
@@ -383,6 +402,8 @@ function scanSkillDir(
   skillsByPath: Map<string, Skill>,
   visitedDirs?: Set<string>,
   scope?: Skill["scope"],
+  visitedSkillFiles?: Set<string>,
+  isRoot = true,
 ): void {
   if (!fs.existsSync(dir)) return;
 
@@ -398,6 +419,15 @@ function scanSkillDir(
 
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+    if (format === "recursive") {
+      const skillFile = path.join(dir, "SKILL.md");
+      if (fs.existsSync(skillFile)) {
+        loadSkillFromFile(skillFile, skillsByPath, scope, visitedSkillFiles);
+        return;
+      }
+    }
+
     for (const entry of entries) {
       if (entry.name.startsWith(".")) continue;
       if (entry.name === "node_modules") continue;
@@ -418,15 +448,23 @@ function scanSkillDir(
 
       if (format === "recursive") {
         if (isDirectory) {
-          scanSkillDir(entryPath, format, skillsByPath, visited, scope);
-        } else if (isFile && entry.name === "SKILL.md") {
-          loadSkillFromFile(entryPath, skillsByPath, scope);
+          scanSkillDir(
+            entryPath,
+            format,
+            skillsByPath,
+            visited,
+            scope,
+            visitedSkillFiles,
+            false,
+          );
+        } else if (isRoot && isFile && entry.name.endsWith(".md")) {
+          loadSkillFromFile(entryPath, skillsByPath, scope, visitedSkillFiles);
         }
       } else if (format === "claude") {
         if (!isDirectory) continue;
         const skillFile = path.join(entryPath, "SKILL.md");
         if (!fs.existsSync(skillFile)) continue;
-        loadSkillFromFile(skillFile, skillsByPath, scope);
+        loadSkillFromFile(skillFile, skillsByPath, scope, visitedSkillFiles);
       }
     }
   } catch {
@@ -438,17 +476,25 @@ function loadSkillFromFile(
   filePath: string,
   skillsByPath: Map<string, Skill>,
   scope?: Skill["scope"],
+  visitedSkillFiles?: Set<string>,
 ): void {
   try {
+    const realFilePath = fs.realpathSync(filePath);
+    if (visitedSkillFiles?.has(realFilePath)) return;
+
     const content = fs.readFileSync(filePath, "utf-8");
     const skillDir = path.dirname(filePath);
-    const parentDirName = path.basename(skillDir);
-    const { name, description } = parseFrontmatter(content, parentDirName);
+    const fallbackName =
+      path.basename(filePath) === "SKILL.md"
+        ? path.basename(skillDir)
+        : path.basename(filePath, path.extname(filePath));
+    const { name, description } = parseFrontmatter(content, fallbackName);
 
     const skill = { name, description, filePath, scope };
     const key = getSkillBasePath(skill);
     if (description && !skillsByPath.has(key)) {
       skillsByPath.set(key, skill);
+      visitedSkillFiles?.add(realFilePath);
     }
   } catch {
     // Ignore invalid skill files
@@ -888,6 +934,27 @@ function linkTargetToAbsolute(linkPath: string, target: string): string {
   return path.resolve(path.dirname(linkPath), target);
 }
 
+function pathExistsForCreate(filePath: string): boolean {
+  try {
+    fs.lstatSync(filePath);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+function isDirectoryTarget(targetPath: string): boolean {
+  try {
+    return fs.statSync(targetPath).isDirectory();
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 function findManagedSkillLink(
   state: ToggleState,
   skillPath: string,
@@ -939,8 +1006,12 @@ export function toggleSkillLink(
   if (state.disabledSkillPaths.has(skillPath)) {
     const link = findManagedSkillLink(state, skillPath);
     if (!link) return { status: "missing-link-record", path: skillPath };
-    if (fs.existsSync(link.path))
+    if (pathExistsForCreate(link.path)) {
       return { status: "conflict", path: link.path };
+    }
+    if (!isDirectoryTarget(link.target)) {
+      return { status: "missing-target", path: link.target };
+    }
 
     fs.mkdirSync(path.dirname(link.path), { recursive: true });
     fs.symlinkSync(link.target, link.path);
@@ -963,16 +1034,16 @@ export function toggleSkillLink(
   if (!stat.isSymbolicLink()) return { status: "not-symlink", path: skillPath };
 
   const target = linkTargetToAbsolute(skillPath, fs.readlinkSync(skillPath));
-  fs.unlinkSync(skillPath);
-  state.disabledSkills.delete(normalizedName);
-  state.disabledSkillPaths.add(skillPath);
-  saveToggleState(state);
   upsertManagedSkillLink(state, {
     name: skill.name,
     description: skill.description,
     path: skillPath,
     target,
   });
+  state.disabledSkills.delete(normalizedName);
+  state.disabledSkillPaths.add(skillPath);
+  saveToggleState(state);
+  fs.unlinkSync(skillPath);
   return { status: "disabled" };
 }
 
@@ -1067,6 +1138,26 @@ function getDisabledSkills(
   );
 }
 
+export function getDisabledSkillCommandForInput(
+  text: string,
+  skills: Skill[],
+  disabledNames: Set<string>,
+  disabledPaths: Set<string>,
+): string | null {
+  if (!text.startsWith("/skill:")) return null;
+  const remainder = text.slice("/skill:".length).trim();
+  if (!remainder) return null;
+  const name = normalizeSkillName(remainder.split(/\s+/)[0] ?? "");
+  if (!name) return null;
+
+  const isDisabled = skills.some(
+    (skill) =>
+      normalizeSkillName(skill.name) === name &&
+      isSkillDisabledForList(skill, skills, disabledNames, disabledPaths),
+  );
+  return isDisabled ? name : null;
+}
+
 function pruneDisabledList(
   value: unknown,
   installed: Set<string>,
@@ -1079,7 +1170,124 @@ function pruneDisabledList(
   return { list: filtered, changed };
 }
 
-function pruneSettingsFile(filePath: string, installed: Set<string>): void {
+function prunePathList(
+  value: unknown,
+  installedPaths: Set<string>,
+  restorablePaths: Set<string>,
+): { list: string[]; changed: boolean } | null {
+  const items = toSkillList(value);
+  if (items === null) return null;
+  const normalized = items.map(normalizeSkillBasePath);
+  const filtered = normalized.filter(
+    (skillPath) =>
+      installedPaths.has(skillPath) || restorablePaths.has(skillPath),
+  );
+  const changed = filtered.length !== normalized.length;
+  return { list: filtered, changed };
+}
+
+function pruneManagedSkillLinks(
+  value: unknown,
+  installedPaths: Set<string>,
+): {
+  links: ManagedSkillLink[];
+  restorablePaths: Set<string>;
+  changed: boolean;
+} {
+  const links = toManagedSkillLinks(value);
+  const filtered = links.filter((link) => {
+    const skillPath = normalizeSkillBasePath(link.path);
+    return installedPaths.has(skillPath) || isDirectoryTarget(link.target);
+  });
+  const restorablePaths = new Set(
+    filtered.map((link) => normalizeSkillBasePath(link.path)),
+  );
+  return {
+    links: filtered,
+    restorablePaths,
+    changed: filtered.length !== links.length,
+  };
+}
+
+function pruneManagedOverrides(
+  value: unknown,
+  keptDisabledPaths: Set<string>,
+  installedNames: Set<string>,
+): { list: string[]; changed: boolean } | null {
+  const items = toSkillList(value);
+  if (items === null) return null;
+  const filtered = items.filter((override) => {
+    const basePath = normalizeSkillBasePath(override);
+    return (
+      keptDisabledPaths.has(basePath) ||
+      installedNames.has(normalizeOverrideName(override))
+    );
+  });
+  return { list: filtered, changed: filtered.length !== items.length };
+}
+
+function pruneSettingsEntry(
+  entry: SkillToggleSettingsEntry,
+  installedNames: Set<string>,
+  installedPaths: Set<string>,
+): boolean {
+  let changed = false;
+
+  const linkPruned = pruneManagedSkillLinks(
+    entry.managedSkillLinks,
+    installedPaths,
+  );
+  if (linkPruned.changed) {
+    entry.managedSkillLinks =
+      linkPruned.links.length > 0 ? linkPruned.links : undefined;
+    if (!entry.managedSkillLinks) delete entry.managedSkillLinks;
+    changed = true;
+  }
+
+  const disabledPruned = pruneDisabledList(
+    entry.disabledSkills,
+    installedNames,
+  );
+  if (disabledPruned?.changed) {
+    entry.disabledSkills = disabledPruned.list;
+    changed = true;
+  }
+
+  const pathPruned = prunePathList(
+    entry.disabledSkillPaths,
+    installedPaths,
+    linkPruned.restorablePaths,
+  );
+  if (pathPruned?.changed) {
+    entry.disabledSkillPaths =
+      pathPruned.list.length > 0 ? pathPruned.list : undefined;
+    if (!entry.disabledSkillPaths) delete entry.disabledSkillPaths;
+    changed = true;
+  }
+
+  const keptDisabledPaths = new Set(
+    (entry.disabledSkillPaths ?? []).map(normalizeSkillBasePath),
+  );
+  const overridePruned = pruneManagedOverrides(
+    entry.managedOverrides,
+    keptDisabledPaths,
+    installedNames,
+  );
+  if (overridePruned?.changed) {
+    entry.managedOverrides =
+      overridePruned.list.length > 0 ? overridePruned.list : undefined;
+    if (!entry.managedOverrides) delete entry.managedOverrides;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function pruneSettingsFile(
+  filePath: string,
+  installedNames: Set<string>,
+  installedPaths: Set<string>,
+): void {
   if (!fs.existsSync(filePath)) return;
   const settings = readSettingsFile(filePath);
   if (!isRecord(settings.skillToggle)) return;
@@ -1087,7 +1295,10 @@ function pruneSettingsFile(filePath: string, installed: Set<string>): void {
   const skillToggle = settings.skillToggle as SkillToggleSettings;
   let changed = false;
 
-  const topLevel = pruneDisabledList(skillToggle.disabledSkills, installed);
+  const topLevel = pruneDisabledList(
+    skillToggle.disabledSkills,
+    installedNames,
+  );
   if (topLevel?.changed) {
     skillToggle.disabledSkills = topLevel.list;
     changed = true;
@@ -1099,11 +1310,8 @@ function pruneSettingsFile(filePath: string, installed: Set<string>): void {
       const entryRaw = byCwd[key];
       if (!isRecord(entryRaw)) continue;
       const entry = entryRaw as SkillToggleSettingsEntry;
-      const entryPruned = pruneDisabledList(entry.disabledSkills, installed);
-      if (entryPruned?.changed) {
-        entry.disabledSkills = entryPruned.list;
-        changed = true;
-      }
+      changed =
+        pruneSettingsEntry(entry, installedNames, installedPaths) || changed;
     }
   }
 
@@ -1112,10 +1320,11 @@ function pruneSettingsFile(filePath: string, installed: Set<string>): void {
   writeSettingsFile(filePath, settings);
 }
 
-function pruneSettingsFiles(cwd: string, skills: Skill[]): void {
-  const installed = getInstalledSkillNames(skills);
+export function pruneSettingsFiles(cwd: string, skills: Skill[]): void {
+  const installedNames = getInstalledSkillNames(skills);
+  const installedPaths = new Set(skills.map(getSkillBasePath));
   const { globalPath } = getSettingsPaths(cwd);
-  pruneSettingsFile(globalPath, installed);
+  pruneSettingsFile(globalPath, installedNames, installedPaths);
 }
 
 function getDisabledSkillDisplayNames(
@@ -1468,19 +1677,13 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
   const getDisabledSkillCommand = (
     text: string,
     skills: Skill[],
-  ): string | null => {
-    if (!text.startsWith("/skill:")) return null;
-    const remainder = text.slice("/skill:".length).trim();
-    if (!remainder) return null;
-    const name = normalizeSkillName(remainder.split(/\s+/)[0] ?? "");
-    if (!name) return null;
-    const disabledNames = getNameDisabledSkills(
-      state.disabledSkills,
+  ): string | null =>
+    getDisabledSkillCommandForInput(
+      text,
       skills,
+      state.disabledSkills,
       state.disabledSkillPaths,
     );
-    return disabledNames.has(name) ? name : null;
-  };
 
   void createLoggerReady(process.cwd());
 

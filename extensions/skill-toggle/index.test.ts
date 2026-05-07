@@ -41,6 +41,7 @@ const importSkillToggle = async () => {
 };
 
 interface SkillToggleTestEntry {
+  disabledSkills?: string[];
   disabledSkillPaths?: string[];
   managedOverrides?: string[];
   managedSkillLinks?: unknown[];
@@ -51,10 +52,18 @@ function getProjectSettingsPath(cwd: string): string {
 }
 
 function writeSkillFile(skillDir: string): void {
+  writeNamedSkillFile(skillDir, "Alpha", "Alpha skill");
+}
+
+function writeNamedSkillFile(
+  skillDir: string,
+  name: string,
+  description: string,
+): void {
   fs.mkdirSync(skillDir, { recursive: true });
   fs.writeFileSync(
     path.join(skillDir, "SKILL.md"),
-    "---\nname: Alpha\ndescription: Alpha skill\n---\n",
+    `---\nname: ${name}\ndescription: ${description}\n---\n`,
   );
 }
 
@@ -68,6 +77,20 @@ function readSkillToggleEntry(
       byCwd: Record<string, SkillToggleTestEntry>;
     }
   ).byCwd[cwd];
+}
+
+function writeGlobalSkillToggleEntry(
+  cwd: string,
+  entry: SkillToggleTestEntry,
+): string {
+  const { globalPath } = getSettingsPaths(cwd);
+  fs.mkdirSync(path.dirname(globalPath), { recursive: true });
+  fs.writeFileSync(
+    globalPath,
+    JSON.stringify({ skillToggle: { byCwd: { [cwd]: entry } } }, null, 2),
+    "utf-8",
+  );
+  return globalPath;
 }
 
 function alphaSkill(filePath: string): Skill {
@@ -397,37 +420,21 @@ describe("skill symlink toggle", () => {
       "alpha",
     );
     const linkedSkillDir = path.join(cwd, ".agents", "skills", "alpha");
-    const { globalPath } = getSettingsPaths(cwd);
     const projectSettingsPath = getProjectSettingsPath(cwd);
 
     writeSkillFile(sourceSkillDir);
-    fs.mkdirSync(path.dirname(globalPath), { recursive: true });
-    fs.writeFileSync(
-      globalPath,
-      JSON.stringify(
+    const globalPath = writeGlobalSkillToggleEntry(cwd, {
+      disabledSkillPaths: [linkedSkillDir],
+      managedOverrides: [`-${linkedSkillDir}`],
+      managedSkillLinks: [
         {
-          skillToggle: {
-            byCwd: {
-              [cwd]: {
-                disabledSkillPaths: [linkedSkillDir],
-                managedOverrides: [`-${linkedSkillDir}`],
-                managedSkillLinks: [
-                  {
-                    name: "Alpha",
-                    description: "Alpha skill",
-                    path: linkedSkillDir,
-                    target: sourceSkillDir,
-                  },
-                ],
-              },
-            },
-          },
+          name: "Alpha",
+          description: "Alpha skill",
+          path: linkedSkillDir,
+          target: sourceSkillDir,
         },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
+      ],
+    });
     fs.mkdirSync(path.dirname(projectSettingsPath), { recursive: true });
     fs.writeFileSync(
       projectSettingsPath,
@@ -471,9 +478,134 @@ describe("skill symlink toggle", () => {
     expect(result.status).toBe("not-symlink");
     expect(fs.existsSync(skillDir)).toBe(true);
   });
+
+  it("reports a conflict instead of throwing when restoring over a broken symlink", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const sourceSkillDir = path.join(
+      createTempDir("pi-kit-skill-toggle-source-"),
+      "alpha",
+    );
+    const linkedSkillDir = path.join(cwd, ".agents", "skills", "alpha");
+    writeSkillFile(sourceSkillDir);
+    fs.mkdirSync(path.dirname(linkedSkillDir), { recursive: true });
+    fs.symlinkSync(path.join(cwd, "missing-target"), linkedSkillDir);
+    writeGlobalSkillToggleEntry(cwd, {
+      disabledSkillPaths: [linkedSkillDir],
+      managedSkillLinks: [
+        {
+          name: "Alpha",
+          description: "Alpha skill",
+          path: linkedSkillDir,
+          target: sourceSkillDir,
+        },
+      ],
+    });
+
+    const { loadToggleState, toggleSkillLink } = await importSkillToggle();
+    const state = loadToggleState(cwd);
+    const result = toggleSkillLink(
+      state,
+      alphaSkill(path.join(linkedSkillDir, "SKILL.md")),
+    );
+
+    expect(result).toEqual({ status: "conflict", path: linkedSkillDir });
+  });
+
+  it("keeps a skill disabled when its managed symlink target is missing", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const missingTarget = path.join(cwd, "missing-source", "alpha");
+    const linkedSkillDir = path.join(cwd, ".agents", "skills", "alpha");
+    writeGlobalSkillToggleEntry(cwd, {
+      disabledSkillPaths: [linkedSkillDir],
+      managedSkillLinks: [
+        {
+          name: "Alpha",
+          description: "Alpha skill",
+          path: linkedSkillDir,
+          target: missingTarget,
+        },
+      ],
+    });
+
+    const { loadToggleState, toggleSkillLink } = await importSkillToggle();
+    const state = loadToggleState(cwd);
+    const result = toggleSkillLink(
+      state,
+      alphaSkill(path.join(linkedSkillDir, "SKILL.md")),
+    );
+
+    expect(result).toEqual({ status: "missing-target", path: missingTarget });
+    expect(state.disabledSkillPaths.has(linkedSkillDir)).toBe(true);
+    expect(fs.existsSync(linkedSkillDir)).toBe(false);
+  });
 });
 
 describe("project .agents skill discovery", () => {
+  it("discovers direct markdown skill files from Pi skill roots", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const skillFile = path.join(cwd, ".pi", "skills", "direct.md");
+    fs.mkdirSync(path.dirname(skillFile), { recursive: true });
+    fs.writeFileSync(
+      skillFile,
+      "---\nname: direct-skill\ndescription: Direct markdown skill\n---\n",
+      "utf-8",
+    );
+
+    const { loadSkills } = await importSkillToggle();
+
+    expect(loadSkills(cwd)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "direct-skill",
+          description: "Direct markdown skill",
+          filePath: skillFile,
+          scope: "project",
+        }),
+      ]),
+    );
+  });
+
+  it("does not recurse below a discovered SKILL.md skill root", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const rootSkillDir = path.join(cwd, ".agents", "skills", "root-skill");
+    writeNamedSkillFile(rootSkillDir, "root-skill", "Root skill");
+    writeNamedSkillFile(
+      path.join(rootSkillDir, "nested"),
+      "nested-skill",
+      "Nested skill",
+    );
+
+    const { loadSkills } = await importSkillToggle();
+    const names = loadSkills(cwd).map((skill) => skill.name);
+
+    expect(names).toContain("root-skill");
+    expect(names).not.toContain("nested-skill");
+  });
+
+  it("deduplicates skills that resolve to the same real file", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const sourceSkillDir = path.join(
+      createTempDir("pi-kit-skill-toggle-source-"),
+      "shared-skill",
+    );
+    const linkedSkillDir = path.join(cwd, ".agents", "skills", "shared-skill");
+    writeNamedSkillFile(sourceSkillDir, "shared-skill", "Shared skill");
+    fs.mkdirSync(path.dirname(linkedSkillDir), { recursive: true });
+    fs.symlinkSync(sourceSkillDir, linkedSkillDir);
+
+    const { loadSkills } = await importSkillToggle();
+    const matching = loadSkills(cwd).filter(
+      (skill) => skill.name === "shared-skill",
+    );
+
+    expect(matching).toHaveLength(1);
+  });
+
   it("formats same-name skills with source and path details", async () => {
     createTempHome();
     const { formatSkillDisplayDetails } = await importSkillToggle();
@@ -585,6 +717,98 @@ describe("project .agents skill discovery", () => {
         }),
       ]),
     );
+  });
+});
+
+describe("stale settings pruning", () => {
+  it("removes stale path disabled records while preserving restorable managed links", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const restorableTarget = path.join(
+      createTempDir("pi-kit-skill-toggle-source-"),
+      "alpha",
+    );
+    const restorablePath = path.join(cwd, ".agents", "skills", "alpha");
+    const stalePath = path.join(cwd, ".agents", "skills", "stale");
+    const missingTarget = path.join(cwd, "missing-source", "stale");
+    writeSkillFile(restorableTarget);
+    const globalPath = writeGlobalSkillToggleEntry(cwd, {
+      disabledSkills: ["Alpha", "Ghost"],
+      disabledSkillPaths: [restorablePath, stalePath],
+      managedOverrides: [`-${restorablePath}`, `-${stalePath}`],
+      managedSkillLinks: [
+        {
+          name: "Alpha",
+          description: "Alpha skill",
+          path: restorablePath,
+          target: restorableTarget,
+        },
+        {
+          name: "Stale",
+          description: "Stale skill",
+          path: stalePath,
+          target: missingTarget,
+        },
+      ],
+    });
+
+    const skillToggle = await importSkillToggle();
+    const pruneSettingsFiles = (
+      skillToggle as {
+        pruneSettingsFiles?: (cwd: string, skills: Skill[]) => void;
+      }
+    ).pruneSettingsFiles;
+
+    expect(pruneSettingsFiles).toBeDefined();
+    pruneSettingsFiles?.(cwd, [
+      alphaSkill(path.join(restorablePath, "SKILL.md")),
+    ]);
+
+    const entry = readSkillToggleEntry(globalPath, cwd);
+    expect(entry.disabledSkills).toEqual(["alpha"]);
+    expect(entry.disabledSkillPaths).toEqual([restorablePath]);
+    expect(entry.managedOverrides).toEqual([`-${restorablePath}`]);
+    expect(entry.managedSkillLinks).toEqual([
+      {
+        name: "Alpha",
+        description: "Alpha skill",
+        path: restorablePath,
+        target: restorableTarget,
+      },
+    ]);
+  });
+});
+
+describe("input interception", () => {
+  it("blocks path-disabled skill commands before reload", async () => {
+    createTempHome();
+    const skillToggle = await importSkillToggle();
+    const getDisabledSkillCommandForInput = (
+      skillToggle as {
+        getDisabledSkillCommandForInput?: (
+          text: string,
+          skills: Skill[],
+          disabled: Set<string>,
+          disabledPaths: Set<string>,
+        ) => string | null;
+      }
+    ).getDisabledSkillCommandForInput;
+    const skill: Skill = {
+      name: "Alpha",
+      description: "Alpha skill",
+      filePath: "/repo/.agents/skills/alpha/SKILL.md",
+      scope: "project",
+    };
+
+    expect(getDisabledSkillCommandForInput).toBeDefined();
+    expect(
+      getDisabledSkillCommandForInput?.(
+        "/skill:Alpha",
+        [skill],
+        new Set(),
+        new Set(["/repo/.agents/skills/alpha"]),
+      ),
+    ).toBe("alpha");
   });
 });
 

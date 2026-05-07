@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PLANNOTATOR_PENDING_REVIEW_CHANNEL } from "../shared/internal-events.ts";
 import {
   createFakePi,
   createTempRepo,
@@ -11,6 +12,12 @@ import {
 async function importPlannotatorAuto() {
   return (await import("./index.js")).default;
 }
+
+type PendingReviewEvent = {
+  handled?: {
+    isHandled: () => boolean;
+  };
+};
 
 function createReviewStoreMock(
   reviewResultListeners: Array<(result: unknown) => void>,
@@ -141,8 +148,14 @@ describe("submit review tool", () => {
     const ctx = createTestContext(repoRoot);
 
     try {
+      const emitted: PendingReviewEvent[] = [];
+      api.events.on(PLANNOTATOR_PENDING_REVIEW_CHANNEL, (event) => {
+        emitted.push(event as PendingReviewEvent);
+      });
+
       await emit("session_start", {}, ctx);
       await emitToolWrite(emit, ctx, planFileRelative);
+      expect(emitted[0]?.handled?.isHandled()).toBe(false);
 
       let settled = false;
       const submitPromise = Promise.resolve(
@@ -173,6 +186,7 @@ describe("submit review tool", () => {
       };
       expect(result.details?.status).toBe("approved");
       expect(result.content?.[0]?.text ?? "").toContain("approved");
+      expect(emitted[0]?.handled?.isHandled()).toBe(true);
       expect(ctx.abort).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);

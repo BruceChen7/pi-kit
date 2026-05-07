@@ -89,6 +89,42 @@ describe("index path helpers", () => {
         expected: ".pi/plans/other-worktree/specs/2026-04-20-auth-design.md",
       },
       {
+        name: "matches issue markdown files under a topic directory",
+        config: createPlanConfig(),
+        targetPath:
+          "/repo/.pi/plans/repo/issues/session-switch-lifecycle/cleanup-skill-toggle.md",
+        expected:
+          ".pi/plans/repo/issues/session-switch-lifecycle/cleanup-skill-toggle.md",
+      },
+      {
+        name: "matches wildcard issue markdown files",
+        config: createPlanConfig(),
+        targetPath:
+          "/repo/.pi/plans/other-worktree/issues/session-switch-lifecycle/01-cleanup.md",
+        expected:
+          ".pi/plans/other-worktree/issues/session-switch-lifecycle/01-cleanup.md",
+      },
+      {
+        name: "ignores issue markdown files without a topic directory",
+        config: createPlanConfig(),
+        targetPath: "/repo/.pi/plans/repo/issues/01-root-issue.md",
+        expected: null,
+      },
+      {
+        name: "ignores nested issue files below topic directories",
+        config: createPlanConfig(),
+        targetPath:
+          "/repo/.pi/plans/repo/issues/session-switch-lifecycle/nested/01-cleanup.md",
+        expected: null,
+      },
+      {
+        name: "ignores non-markdown issue files",
+        config: createPlanConfig(),
+        targetPath:
+          "/repo/.pi/plans/repo/issues/session-switch-lifecycle/01-cleanup.txt",
+        expected: null,
+      },
+      {
         name: "matches configured extra review targets",
         config: createPlanConfig({
           extraReviewTargets: [
@@ -102,12 +138,6 @@ describe("index path helpers", () => {
           "/repo/.pi/plans/repo/office-hours/ming-main-office-hours-20260422-123456.md",
         expected:
           ".pi/plans/repo/office-hours/ming-main-office-hours-20260422-123456.md",
-      },
-      {
-        name: "ignores legacy single-file paths",
-        config: createPlanConfig(),
-        targetPath: "/repo/.pi/PLAN.md",
-        expected: null,
       },
     ])("$name", async ({ config, targetPath, expected }) => {
       const { resolvePlanFileForReview } = await importPlannotatorAuto();
@@ -147,6 +177,26 @@ describe("index path helpers", () => {
         expected: false,
       },
       {
+        name: "skips issue markdown files under a topic directory",
+        config: createPlanConfig(),
+        targetPath:
+          "/repo/.pi/plans/repo/issues/session-switch-lifecycle/cleanup-skill-toggle.md",
+        expected: false,
+      },
+      {
+        name: "skips wildcard issue markdown files",
+        config: createPlanConfig(),
+        targetPath:
+          "/repo/.pi/plans/other-worktree/issues/session-switch-lifecycle/01-cleanup.md",
+        expected: false,
+      },
+      {
+        name: "keeps queueing issue markdown files without a topic directory",
+        config: createPlanConfig(),
+        targetPath: "/repo/.pi/plans/repo/issues/01-root-issue.md",
+        expected: true,
+      },
+      {
         name: "skips configured extra review targets",
         config: createPlanConfig({
           extraReviewTargets: [
@@ -159,12 +209,6 @@ describe("index path helpers", () => {
         targetPath:
           "/repo/.pi/plans/repo/office-hours/ming-main-office-hours-20260422-123456.md",
         expected: false,
-      },
-      {
-        name: "keeps queueing legacy single-file paths",
-        config: createPlanConfig(),
-        targetPath: "/repo/.pi/PLAN.md",
-        expected: true,
       },
       {
         name: "keeps queueing non-review files",

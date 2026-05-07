@@ -11,7 +11,6 @@ const BASE_RETRY_DELAY_MS: Record<
   "pending-plan-review-status": 1_200,
   "plan-review-status-unavailable": 1_200,
   "plan-review-status-error": 1_200,
-  "await-plan-review-result": 1_200,
 };
 
 export const shouldDeferPlanReviewWhenBusy = (
@@ -44,15 +43,4 @@ export const getPlanReviewRetryDelay = (
     delayMs: exponential + jitter,
     exhausted: false,
   };
-};
-
-export const getPlanReviewWaitDelay = (attempt: number): number => {
-  const base = BASE_RETRY_DELAY_MS["await-plan-review-result"];
-  const exponential = Math.min(
-    MAX_PLAN_REVIEW_RETRY_DELAY_MS,
-    base * 2 ** Math.max(0, attempt - 1),
-  );
-  const jitter = Math.floor(exponential * 0.15 * Math.random());
-
-  return exponential + jitter;
 };

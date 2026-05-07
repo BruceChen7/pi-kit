@@ -457,39 +457,4 @@ describe("plan review trigger timing", () => {
       },
     );
   });
-
-  it("does not trigger plan review for legacy single-file configuration", async () => {
-    await withPlannotatorAutoTest(
-      "plannotator-auto-legacy-plan-",
-      async ({ api, emit, repoRoot, startPlanReview, createCtx }) => {
-        const planFileRelative = ".pi/PLAN.md";
-        await writeTestFile(
-          repoRoot,
-          planFileRelative,
-          "# Plan\n\n- [ ] first\n",
-        );
-        await writeTestFile(
-          repoRoot,
-          ".pi/third_extension_settings.json",
-          `${JSON.stringify(
-            {
-              plannotatorAuto: {
-                planFile: planFileRelative,
-              },
-            },
-            null,
-            2,
-          )}\n`,
-        );
-        const ctx = createCtx({ isIdle: false });
-
-        await emit("session_start", {}, ctx);
-        await emitToolWrite(emit, ctx, planFileRelative);
-        await flushMicrotasks();
-
-        expect(startPlanReview).not.toHaveBeenCalled();
-        expect(api.sendUserMessage).not.toHaveBeenCalled();
-      },
-    );
-  });
 });

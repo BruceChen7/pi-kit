@@ -9,9 +9,7 @@ export type PlannotatorAction =
   | "plan-review"
   | "review-status"
   | "code-review"
-  | "annotate"
-  | "annotate-last"
-  | "archive";
+  | "annotate";
 
 export type PlannotatorHandledResponse<T> = {
   status: "handled";
@@ -79,10 +77,6 @@ export type AnnotationResult = {
   exit?: boolean;
 };
 
-export type ArchiveResult = {
-  opened: boolean;
-};
-
 export type PlannotatorResponseMap = {
   "plan-review": PlannotatorResponse<PlanReviewStartResult>;
   "review-status": PlannotatorResponse<ReviewStatusResult>;
@@ -90,8 +84,6 @@ export type PlannotatorResponseMap = {
     CodeReviewDecision | CodeReviewStartResult
   >;
   annotate: PlannotatorResponse<AnnotationResult>;
-  "annotate-last": PlannotatorResponse<AnnotationResult>;
-  archive: PlannotatorResponse<ArchiveResult>;
 };
 
 export type EventBus = {
@@ -150,18 +142,6 @@ export const createReviewResultStore = (events: EventBus) => {
       return;
     }
 
-    const completed: ReviewStatusResult = {
-      status: "completed",
-      reviewId: result.reviewId,
-      approved: Boolean(result.approved),
-      feedback: result.feedback,
-      annotations: result.annotations,
-      savedPath: result.savedPath,
-      agentSwitch: result.agentSwitch,
-      permissionMode: result.permissionMode,
-    };
-    statuses.set(result.reviewId, completed);
-
     const event: ReviewResultEvent = {
       reviewId: result.reviewId,
       approved: Boolean(result.approved),
@@ -171,6 +151,7 @@ export const createReviewResultStore = (events: EventBus) => {
       agentSwitch: result.agentSwitch,
       permissionMode: result.permissionMode,
     };
+    statuses.set(result.reviewId, { status: "completed", ...event });
     for (const listener of listeners) {
       listener(event);
     }
@@ -288,7 +269,7 @@ export const requestAnnotation = (
   payload: {
     filePath: string;
     markdown?: string;
-    mode?: "annotate" | "annotate-folder" | "annotate-last";
+    mode?: "annotate" | "annotate-folder";
     folderPath?: string;
   },
 ): Promise<PlannotatorResponseMap["annotate"]> =>

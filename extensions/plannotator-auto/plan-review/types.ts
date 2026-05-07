@@ -63,8 +63,7 @@ export type PlanReviewCoordinatorReason =
   | "busy-plan-review"
   | "pending-plan-review-status"
   | "plan-review-status-unavailable"
-  | "plan-review-status-error"
-  | "await-plan-review-result";
+  | "plan-review-status-error";
 
 export type PlanReviewRuntimeContext = Pick<
   ExtensionContext,

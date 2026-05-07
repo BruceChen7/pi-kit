@@ -17,7 +17,6 @@ type SetupOptions = {
   isIdle?: boolean;
   startResponse?: unknown;
   statusResponse?: unknown;
-  formatMessage?: string;
   getSessionContextByKey?: (key: string) => unknown;
 };
 
@@ -56,15 +55,10 @@ const setupCoordinator = async (options: SetupOptions = {}) => {
       },
   );
 
-  const formatPlanReviewMessage = vi.fn(
-    () => options.formatMessage ?? "formatted-plan-review-message",
-  );
-
   vi.doMock("../plannotator-api.ts", () => ({
     createRequestPlannotator: vi.fn(() => vi.fn()),
     startPlanReview,
     requestReviewStatus,
-    formatPlanReviewMessage,
     waitForReviewResult: vi.fn(
       (
         _reviewResults: {
@@ -159,7 +153,6 @@ const setupCoordinator = async (options: SetupOptions = {}) => {
     pi,
     startPlanReview,
     requestReviewStatus,
-    formatPlanReviewMessage,
     emitReviewResult: (result: unknown) => {
       for (const listener of [...reviewResultListeners]) {
         listener(result);
@@ -273,24 +266,18 @@ describe("PlanReviewCoordinator key workflow effects", () => {
       pi,
       requestReviewStatus,
       startPlanReview,
+      emitReviewResult,
     } = await setupCoordinator();
 
-    requestReviewStatus
-      .mockResolvedValueOnce({
-        status: "handled",
-        result: {
-          status: "completed",
-          reviewId: "review-1",
-          approved: true,
-          feedback: "Outdated review result.",
-        },
-      })
-      .mockResolvedValueOnce({
-        status: "handled",
-        result: {
-          status: "missing",
-        },
-      });
+    requestReviewStatus.mockResolvedValueOnce({
+      status: "handled",
+      result: {
+        status: "completed",
+        reviewId: "review-1",
+        approved: true,
+        feedback: "Outdated review result.",
+      },
+    });
     startPlanReview.mockResolvedValueOnce({
       status: "handled",
       result: {
@@ -327,14 +314,29 @@ describe("PlanReviewCoordinator key workflow effects", () => {
         updatedAt: 101,
       });
 
-      await coordinator.runPlanReview(runtimeCtx as never, "agent_end");
+      const runPromise = Promise.resolve(
+        coordinator.runPlanReview(runtimeCtx as never, "agent_end"),
+      );
+      await vi.waitFor(() => {
+        expect(state.activePlanReviewByCwd.get(runtimeCtx.cwd)?.reviewId).toBe(
+          "review-2",
+        );
+      });
 
-      expect(requestReviewStatus).toHaveBeenCalledTimes(2);
+      emitReviewResult({
+        reviewId: "review-2",
+        approved: true,
+        feedback: "Latest review result.",
+      });
+      await runPromise;
+
+      expect(requestReviewStatus).toHaveBeenCalledTimes(1);
       expect(startPlanReview).toHaveBeenCalledTimes(1);
       expect(state.activePlanReviewByCwd.has(runtimeCtx.cwd)).toBe(false);
       expect(state.pendingPlanReviewByCwd.has(runtimeCtx.cwd)).toBe(false);
       expect(state.processedPlanReviewIds.has("review-1")).toBe(true);
-      expect(state.settledPlanReviewPaths.size).toBe(0);
+      expect(state.processedPlanReviewIds.has("review-2")).toBe(true);
+      expect(state.settledPlanReviewPaths.has(planFileAbsolute)).toBe(true);
       expect(pi.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await fs.rm(repoRoot, { recursive: true, force: true });
@@ -500,6 +502,76 @@ describe("PlanReviewCoordinator key workflow effects", () => {
         "info",
       );
       expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("waits for review result events after accepted start without polling review-status", async () => {
+    vi.useFakeTimers();
+
+    const {
+      coordinator,
+      state,
+      ctx,
+      emitReviewResult,
+      requestReviewStatus,
+      startPlanReview,
+    } = await setupCoordinator({
+      statusResponse: {
+        status: "handled",
+        result: {
+          status: "completed",
+          reviewId: "review-1",
+          approved: true,
+        },
+      },
+    });
+
+    const repoRoot = await fs.mkdtemp(
+      path.join(os.tmpdir(), "plannotator-no-status-poll-"),
+    );
+    const planFileRelative = ".pi/plans/repo/plan/2026-04-17-agent-end.md";
+    const planFileAbsolute = path.join(repoRoot, planFileRelative);
+    await fs.mkdir(path.dirname(planFileAbsolute), { recursive: true });
+    await fs.writeFile(planFileAbsolute, "# Plan\n\n- [ ] wait\n", "utf8");
+
+    const runtimeCtx = {
+      ...ctx,
+      cwd: repoRoot,
+    };
+
+    try {
+      state.pendingPlanReviewByCwd.set(runtimeCtx.cwd, {
+        kind: "plan",
+        planFile: planFileRelative,
+        resolvedPlanPath: planFileAbsolute,
+        updatedAt: Date.now(),
+      });
+
+      let settled = false;
+      const runPromise = Promise.resolve(
+        coordinator.runPlanReview(runtimeCtx as never, "agent_end"),
+      ).then(() => {
+        settled = true;
+      });
+
+      await Promise.resolve();
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await Promise.resolve();
+
+      expect(requestReviewStatus).not.toHaveBeenCalled();
+      expect(settled).toBe(false);
+
+      emitReviewResult({
+        reviewId: "review-1",
+        approved: true,
+        feedback: "Looks good.",
+      });
+      await runPromise;
+      expect(settled).toBe(true);
     } finally {
       await fs.rm(repoRoot, { recursive: true, force: true });
     }

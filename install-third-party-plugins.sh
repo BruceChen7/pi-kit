@@ -117,6 +117,7 @@ install_npm_plugin() {
   rm -rf "$target"
   mkdir -p "$(dirname "$target")"
   cp -R "$temp_dir/package" "$target"
+  (cd "$target" && npm install --omit=dev --ignore-scripts >/dev/null)
   rm -rf "$temp_dir"
 }
 

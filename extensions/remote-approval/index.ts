@@ -150,7 +150,12 @@ const handleBooleanApprovalEvent = (
     log.debug(`${options.logPrefix}_remote_skipped_no_channel`, {
       sessionId: session.identity.sessionId,
       requestId: event.requestId,
+      reason: remoteChannel.error?.reason,
+      strictRemote: session.config.strictRemote,
     });
+    if (session.config.strictRemote) {
+      event.attachRemoteDecision(Promise.resolve(false));
+    }
     return;
   }
 
@@ -176,13 +181,26 @@ const handleBooleanApprovalEvent = (
       sessionId: session.identity.sessionId,
       requestId: event.requestId,
     });
-    const result = await requestRemoteApproval({
-      channel: remoteChannel.channel,
-      text: `${options.textPrefix}\n\n${event.body}`,
-      includeAlways: false,
-      fullContextLines: event.fullContextLines,
-    });
-    return result.decision === "allow" || result.decision === "always";
+    try {
+      const result = await requestRemoteApproval({
+        channel: remoteChannel.channel,
+        text: `${options.textPrefix}\n\n${event.body}`,
+        includeAlways: false,
+        fullContextLines: event.fullContextLines,
+      });
+      return result.decision === "allow" || result.decision === "always";
+    } catch (error) {
+      log.warn(`${options.logPrefix}_remote_request_failed`, {
+        sessionId: session.identity.sessionId,
+        requestId: event.requestId,
+        strictRemote: session.config.strictRemote,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (session.config.strictRemote) {
+        return false;
+      }
+      return localDecision ? await localDecision : false;
+    }
   })();
 
   event.attachRemoteDecision(remoteDecision);

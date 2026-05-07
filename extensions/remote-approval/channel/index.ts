@@ -17,10 +17,13 @@ export const createRemoteChannel = (
     };
   }
 
+  const requestTtlMs = config.requestTtlSeconds * 1000;
+
   return {
     channel: createTelegramClient({
       botToken: config.botToken,
       chatId: config.chatId,
+      requestTtlMs,
     }),
     error: null,
   };

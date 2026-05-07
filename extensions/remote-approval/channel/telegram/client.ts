@@ -63,6 +63,8 @@ type TelegramRequestLogData = {
   error?: string;
 };
 
+const DEFAULT_REQUEST_TTL_MS = 10 * 60 * 1000;
+
 const log = createLogger("remote-approval", { stderr: null });
 
 const toOptionalString = (value: unknown): string | undefined =>
@@ -215,6 +217,7 @@ export const requestTelegram = async <T>({
 export const createTelegramClient = (input: {
   botToken: string;
   chatId: string;
+  requestTtlMs?: number;
 }) => {
   const buildReplyMarkup = (buttons?: TelegramInlineButton[][]) =>
     buttons && buttons.length > 0
@@ -330,7 +333,7 @@ export const createTelegramClient = (input: {
         paths: pollPaths,
         acceptedMessageIds: acceptedIds,
         acceptedChatId: input.chatId,
-        ttlMs: 10 * 60 * 1000,
+        ttlMs: input.requestTtlMs ?? DEFAULT_REQUEST_TTL_MS,
         requestUpdates: async (offset) => {
           try {
             const result = await requestTelegram<

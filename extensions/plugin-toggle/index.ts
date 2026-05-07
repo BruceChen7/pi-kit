@@ -4,6 +4,7 @@
  * Manage project-local Pi extension symlinks from a shared plugin library.
  */
 
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +29,30 @@ export interface PluginEntry {
   enabledName: string;
   sourcePath: string;
   kind: "directory" | "file";
+}
+
+export type ThirdPartySourceKind = "npm" | "github";
+
+export interface PluginLibraryManifestEntry {
+  kind: ThirdPartySourceKind;
+  source: string;
+  installedPath: string;
+}
+
+export interface PluginLibraryManifest {
+  plugins: Record<string, PluginLibraryManifestEntry>;
+}
+
+export interface ThirdPartyInstallOptions {
+  libraryDir?: string;
+  npmPackageRoot?: string;
+  githubRepoRoot?: string;
+}
+
+export interface ThirdPartyInstallResult {
+  name: string;
+  sourceKind: ThirdPartySourceKind;
+  installedPath: string;
 }
 
 interface PluginToggleSettingsEntry {
@@ -86,6 +111,7 @@ const DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE =
 const PLUGIN_TOGGLE_EXTENSION_DIR = path.dirname(
   fileURLToPath(import.meta.url),
 );
+const PLUGIN_LIBRARY_MANIFEST = ".manifest.json";
 
 const normalizeName = (name: string): string => name.trim().toLowerCase();
 const projectExtensionsDir = (cwd: string): string =>
@@ -208,6 +234,145 @@ function isPluginFile(file: string): boolean {
 
 export function getDefaultPluginLibraryDir(): string {
   return DEFAULT_LIBRARY_DIR;
+}
+
+function manifestPath(libraryDir: string): string {
+  return path.join(libraryDir, PLUGIN_LIBRARY_MANIFEST);
+}
+
+export function readPluginLibraryManifest(
+  libraryDir = DEFAULT_LIBRARY_DIR,
+): PluginLibraryManifest {
+  try {
+    const content = fs.readFileSync(manifestPath(libraryDir), "utf-8");
+    const parsed = JSON.parse(content) as Partial<PluginLibraryManifest>;
+    if (!isRecord(parsed.plugins)) return { plugins: {} };
+    return {
+      plugins: parsed.plugins as Record<string, PluginLibraryManifestEntry>,
+    };
+  } catch {
+    return { plugins: {} };
+  }
+}
+
+function writePluginLibraryManifest(
+  libraryDir: string,
+  manifest: PluginLibraryManifest,
+): void {
+  fs.mkdirSync(libraryDir, { recursive: true });
+  fs.writeFileSync(
+    manifestPath(libraryDir),
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf-8",
+  );
+}
+
+function npmPluginName(source: string): string {
+  const packageName = source.replace(/^npm:/, "");
+  return packageName.replace(/^@/, "").replaceAll("/", "-");
+}
+
+function githubPluginName(source: string): string {
+  const withoutScheme = source
+    .replace(/^github:/, "")
+    .replace(/^git:github\.com\//, "")
+    .replace(/^https:\/\/github\.com\//, "");
+  const repoPath = withoutScheme.split("@")[0]?.replace(/\.git$/, "") ?? "";
+  return path.basename(repoPath);
+}
+
+function copyPluginSource(sourcePath: string, targetPath: string): void {
+  fs.rmSync(targetPath, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.cpSync(sourcePath, targetPath, { recursive: true });
+}
+
+function installNpmPackageSource(source: string, targetPath: string): void {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-plugin-npm-"));
+  try {
+    childProcess.execFileSync(
+      "npm",
+      ["pack", source.replace(/^npm:/, ""), "--pack-destination", tempDir],
+      {
+        stdio: "ignore",
+      },
+    );
+    const tarball = fs
+      .readdirSync(tempDir)
+      .find((entry) => entry.endsWith(".tgz"));
+    if (!tarball) throw new Error(`npm pack produced no tarball for ${source}`);
+    childProcess.execFileSync(
+      "tar",
+      ["-xzf", path.join(tempDir, tarball), "-C", tempDir],
+      {
+        stdio: "ignore",
+      },
+    );
+    copyPluginSource(path.join(tempDir, "package"), targetPath);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function installGithubSource(source: string, targetPath: string): void {
+  const repo = source
+    .replace(/^github:/, "https://github.com/")
+    .replace(/^git:github\.com\//, "https://github.com/");
+  const [repoUrl, ref] = repo.split("@");
+  fs.rmSync(targetPath, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  const args = ["clone", "--depth", "1"];
+  if (ref) args.push("--branch", ref);
+  args.push(repoUrl.endsWith(".git") ? repoUrl : `${repoUrl}.git`, targetPath);
+  childProcess.execFileSync("git", args, { stdio: "ignore" });
+}
+
+function thirdPartySourceKind(source: string): ThirdPartySourceKind {
+  return source.startsWith("npm:") ? "npm" : "github";
+}
+
+function thirdPartyPluginName(
+  source: string,
+  sourceKind: ThirdPartySourceKind,
+): string {
+  return sourceKind === "npm"
+    ? npmPluginName(source)
+    : githubPluginName(source);
+}
+
+function installThirdPartySource(
+  source: string,
+  sourceKind: ThirdPartySourceKind,
+  installedPath: string,
+  options: ThirdPartyInstallOptions,
+): void {
+  if (sourceKind === "npm") {
+    const packageRoot = options.npmPackageRoot;
+    if (packageRoot) copyPluginSource(packageRoot, installedPath);
+    else installNpmPackageSource(source, installedPath);
+    return;
+  }
+
+  const repoRoot = options.githubRepoRoot;
+  if (repoRoot) copyPluginSource(repoRoot, installedPath);
+  else installGithubSource(source, installedPath);
+}
+
+export function installThirdPartyPluginToLibrary(
+  source: string,
+  options: ThirdPartyInstallOptions = {},
+): ThirdPartyInstallResult {
+  const libraryDir = options.libraryDir ?? DEFAULT_LIBRARY_DIR;
+  const sourceKind = thirdPartySourceKind(source);
+  const name = thirdPartyPluginName(source, sourceKind);
+  const installedPath = path.join(libraryDir, name);
+
+  installThirdPartySource(source, sourceKind, installedPath, options);
+
+  const manifest = readPluginLibraryManifest(libraryDir);
+  manifest.plugins[name] = { kind: sourceKind, source, installedPath };
+  writePluginLibraryManifest(libraryDir, manifest);
+  return { name, sourceKind, installedPath };
 }
 
 export function discoverPlugins(

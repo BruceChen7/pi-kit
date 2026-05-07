@@ -54,6 +54,15 @@ const createPluginLibrary = (...pluginNames: string[]): string => {
 const projectPluginPath = (cwd: string, name: string): string =>
   path.join(cwd, ".pi", "extensions", name);
 
+const createInstallablePluginRoot = (prefix: string): string => {
+  const pluginRoot = createTempDir(prefix);
+  fs.writeFileSync(
+    path.join(pluginRoot, "index.ts"),
+    "export default function() {}\n",
+  );
+  return pluginRoot;
+};
+
 const createFakeExtensionRuntime = async () => {
   const { default: pluginToggleExtension } = await importPluginToggle();
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> =
@@ -161,6 +170,64 @@ describe("plugin discovery", () => {
     expect(plugins.map((plugin) => plugin.name)).toEqual(["alpha", "beta"]);
     expect(plugins[0]).toMatchObject({ kind: "directory" });
     expect(plugins[1]).toMatchObject({ kind: "file" });
+  });
+});
+
+describe("third-party plugin library", () => {
+  it("records npm plugins in the library manifest and discovers the installed plugin", async () => {
+    const home = createTempHome();
+    const library = pluginLibraryDir(home);
+    const packageRoot = createInstallablePluginRoot(
+      "pi-kit-plugin-toggle-npm-package-",
+    );
+
+    const {
+      discoverPlugins,
+      installThirdPartyPluginToLibrary,
+      readPluginLibraryManifest,
+    } = await importPluginToggle();
+    const result = installThirdPartyPluginToLibrary("npm:@scope/pkg", {
+      libraryDir: library,
+      npmPackageRoot: packageRoot,
+    });
+
+    expect(result).toMatchObject({ name: "scope-pkg", sourceKind: "npm" });
+    expect(
+      readPluginLibraryManifest(library).plugins["scope-pkg"],
+    ).toMatchObject({
+      kind: "npm",
+      source: "npm:@scope/pkg",
+    });
+    expect(discoverPlugins(library).map((plugin) => plugin.name)).toContain(
+      "scope-pkg",
+    );
+  });
+
+  it("records github plugins in the library manifest and discovers the installed plugin", async () => {
+    const home = createTempHome();
+    const library = pluginLibraryDir(home);
+    const repoRoot = createInstallablePluginRoot(
+      "pi-kit-plugin-toggle-github-repo-",
+    );
+
+    const {
+      discoverPlugins,
+      installThirdPartyPluginToLibrary,
+      readPluginLibraryManifest,
+    } = await importPluginToggle();
+    const result = installThirdPartyPluginToLibrary("github:owner/repo@v1", {
+      libraryDir: library,
+      githubRepoRoot: repoRoot,
+    });
+
+    expect(result).toMatchObject({ name: "repo", sourceKind: "github" });
+    expect(readPluginLibraryManifest(library).plugins.repo).toMatchObject({
+      kind: "github",
+      source: "github:owner/repo@v1",
+    });
+    expect(discoverPlugins(library).map((plugin) => plugin.name)).toContain(
+      "repo",
+    );
   });
 });
 

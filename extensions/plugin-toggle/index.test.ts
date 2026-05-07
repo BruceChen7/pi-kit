@@ -1,3 +1,4 @@
+import childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -254,6 +255,48 @@ describe("third-party plugin library", () => {
       "repo",
     );
   });
+
+  it("rejects unsupported third-party plugin sources before installing", async () => {
+    const home = createTempHome();
+    const library = pluginLibraryDir(home);
+    const repoRoot = createInstallablePluginRoot(
+      "pi-kit-plugin-toggle-invalid-source-",
+    );
+
+    const { installThirdPartyPluginToLibrary } = await importPluginToggle();
+
+    expect(() =>
+      installThirdPartyPluginToLibrary("not-a-supported-source", {
+        libraryDir: library,
+        githubRepoRoot: repoRoot,
+      }),
+    ).toThrow(/Unsupported plugin source/);
+    expect(fs.existsSync(library)).toBe(false);
+  });
+
+  it("adds source and target context when npm installation fails", async () => {
+    createTempHome();
+    const library = createTempDir("pi-kit-plugin-toggle-library-");
+    const source = "npm:@scope/pkg";
+    const targetPath = path.join(library, "scope-pkg");
+    const execFileSync = vi
+      .spyOn(childProcess, "execFileSync")
+      .mockImplementation(() => {
+        throw new Error("npm failed");
+      });
+
+    const { installThirdPartyPluginToLibrary } = await importPluginToggle();
+
+    try {
+      expect(() =>
+        installThirdPartyPluginToLibrary(source, { libraryDir: library }),
+      ).toThrow(
+        `Failed to install plugin from ${source} during npm pack into ${targetPath}: npm failed`,
+      );
+    } finally {
+      execFileSync.mockRestore();
+    }
+  });
 });
 
 describe("project symlink management", () => {
@@ -301,6 +344,45 @@ describe("project symlink management", () => {
     expect(fs.lstatSync(projectPluginPath(cwd, "beta")).isSymbolicLink()).toBe(
       true,
     );
+  });
+
+  it("removes a managed broken symlink when disabling", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createTempDir("pi-kit-plugin-toggle-library-");
+    createPluginDir(library, "alpha");
+
+    const { discoverPlugins, enablePlugin, disablePlugin } =
+      await importPluginToggle();
+    const [plugin] = discoverPlugins(library);
+    const target = projectPluginPath(cwd, "alpha");
+    enablePlugin(cwd, plugin);
+    fs.rmSync(plugin.sourcePath, { recursive: true, force: true });
+
+    expect(disablePlugin(cwd, plugin).status).toBe("disabled");
+    expect(() => fs.lstatSync(target)).toThrow();
+    expect(readManagedPluginNames(cwd)).toEqual([]);
+  });
+
+  it("does not remove a conflicting symlink when the source plugin is missing", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createTempDir("pi-kit-plugin-toggle-library-");
+    createPluginDir(library, "alpha");
+    const other = createTempDir("pi-kit-plugin-toggle-other-");
+    const otherPlugin = createPluginDir(other, "beta");
+
+    const { discoverPlugins, enablePlugin, disablePlugin } =
+      await importPluginToggle();
+    const [plugin] = discoverPlugins(library);
+    const target = projectPluginPath(cwd, "alpha");
+    enablePlugin(cwd, plugin);
+    fs.unlinkSync(target);
+    fs.symlinkSync(otherPlugin, target);
+    fs.rmSync(plugin.sourcePath, { recursive: true, force: true });
+
+    expect(disablePlugin(cwd, plugin).status).toBe("conflict");
+    expect(fs.realpathSync(target)).toBe(fs.realpathSync(otherPlugin));
   });
 
   it("does not overwrite an existing user plugin when enabling", async () => {

@@ -26,7 +26,7 @@ brainstorming|local|skills/brainstorming
 writing-skills|https://github.com/obra/superpowers.git|skills/writing-skills
 x-tweet-fetcher|https://github.com/ythx-101/x-tweet-fetcher.git|
 pre-landing-review|local|skills/planning-suite/pre-landing-review
-code-simplifier|local|skills/code-simplifier
+me-code-simplifier|local|skills/me-code-simplifier
 push-ifs-up-fors-down|local|skills/push-ifs-up-fors-down
 debug-pi-coding-agent|local|skills/debug-pi-coding-agent
 # https://github.com/mattpocock/skills

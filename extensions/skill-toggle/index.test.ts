@@ -480,48 +480,48 @@ describe("project .agents skill discovery", () => {
 
     expect(
       formatSkillDisplayDetails({
-        name: "code-simplifier",
+        name: "me-code-simplifier",
         description: "Project skill",
         filePath:
-          "/Users/ming.chen/work/video/retrieve/.agents/skills/code-simplifier/SKILL.md",
+          "/Users/ming.chen/work/video/retrieve/.agents/skills/me-code-simplifier/SKILL.md",
         scope: "project",
       }),
     ).toBe(
-      "[project] /Users/ming.chen/work/video/retrieve/.agents/skills/code-simplifier",
+      "[project] /Users/ming.chen/work/video/retrieve/.agents/skills/me-code-simplifier",
     );
     expect(
       formatSkillDisplayDetails({
-        name: "code-simplifier",
+        name: "me-code-simplifier",
         description: "Global skill",
         filePath: path.join(
           os.homedir(),
           ".agents",
           "skills",
-          "code-simplifier",
+          "me-code-simplifier",
           "SKILL.md",
         ),
         scope: "user",
       }),
-    ).toBe("[user] $HOME/.agents/skills/code-simplifier");
+    ).toBe("[user] $HOME/.agents/skills/me-code-simplifier");
   });
 
   it("treats a path-disabled skill as disabled without disabling same-name skills", async () => {
     createTempHome();
     const { isSkillDisabledForList } = await importSkillToggle();
     const projectSkill: Skill = {
-      name: "code-simplifier",
+      name: "me-code-simplifier",
       description: "Project skill",
-      filePath: "/repo/.agents/skills/code-simplifier/SKILL.md",
+      filePath: "/repo/.agents/skills/me-code-simplifier/SKILL.md",
       scope: "project",
     };
     const globalSkill: Skill = {
-      name: "code-simplifier",
+      name: "me-code-simplifier",
       description: "Global skill",
       filePath: path.join(
         os.homedir(),
         ".agents",
         "skills",
-        "code-simplifier",
+        "me-code-simplifier",
         "SKILL.md",
       ),
       scope: "user",
@@ -531,16 +531,16 @@ describe("project .agents skill discovery", () => {
       isSkillDisabledForList(
         projectSkill,
         [globalSkill, projectSkill],
-        new Set(["code-simplifier"]),
-        new Set(["/repo/.agents/skills/code-simplifier"]),
+        new Set(["me-code-simplifier"]),
+        new Set(["/repo/.agents/skills/me-code-simplifier"]),
       ),
     ).toBe(true);
     expect(
       isSkillDisabledForList(
         globalSkill,
         [globalSkill, projectSkill],
-        new Set(["code-simplifier"]),
-        new Set(["/repo/.agents/skills/code-simplifier"]),
+        new Set(["me-code-simplifier"]),
+        new Set(["/repo/.agents/skills/me-code-simplifier"]),
       ),
     ).toBe(false);
   });

@@ -1,6 +1,6 @@
 # Code Simplifier Language Playbooks
 
-Language-specific cleanup reference for `skills/code-simplifier/SKILL.md`.
+Language-specific cleanup reference for `skills/me-code-simplifier/SKILL.md`.
 
 Use only the playbook for the active task language to keep context usage low.
 

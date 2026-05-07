@@ -100,10 +100,10 @@ describe("buildCodeSimplifierPrompt", () => {
     expect(prompt).toContain("  <file>a.ts</file>");
   });
 
-  it("tells automatic code-simplifier follow-ups to inspect full file context", () => {
+  it("tells automatic me-code-simplifier follow-ups to inspect full file context", () => {
     const prompt = buildCodeSimplifierPrompt(["a.ts"]);
     const expectedFragments = [
-      "先遵循 code-simplifier、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则",
+      "先遵循 me-code-simplifier、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则",
       "这是自动后处理任务，不要创建 plan",
       "读取 modified_files 中每个文件的完整内容",
       "不要只看 diff 或刚改动的片段",
@@ -166,7 +166,7 @@ describe("extension diagnostics", () => {
     );
   });
 
-  it("registers Ctrl+Alt+Y to manually trigger code-simplifier", async () => {
+  it("registers Ctrl+Alt+Y to manually trigger me-code-simplifier", async () => {
     mockExtensionDependencies();
 
     const extension = (await import("./index.ts")).default;
@@ -281,7 +281,7 @@ describe("extension diagnostics", () => {
       }),
     );
     expect(ctx.ui.confirm).toHaveBeenCalledWith(
-      "Run code-simplifier?",
+      "Run me-code-simplifier?",
       expect.stringContaining("src/demo.ts"),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );

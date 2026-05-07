@@ -36,14 +36,14 @@ export const DEFAULT_SUPPORTED_EXTENSIONS = [
 ] as const;
 
 export const DEFAULT_PROMPT_TEMPLATE = [
-  "/skill:code-simplifier",
+  "/skill:me-code-simplifier",
   "<code_simplifier_request>",
   "  <scope>只针对本轮刚修改的文件做一次行为不变的简化</scope>",
   "  <modified_files>",
   "{{files}}",
   "  </modified_files>",
   "  <requirements>",
-  "    <requirement>先遵循 code-simplifier、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则，再遵循以下附加约束</requirement>",
+  "    <requirement>先遵循 me-code-simplifier、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则，再遵循以下附加约束</requirement>",
   "    <requirement>这是自动后处理任务，不要创建 plan</requirement>",
   "    <requirement>仅处理 modified_files 中列出的文件</requirement>",
   "    <requirement>先读取 modified_files 中每个文件的完整内容；不要只看 diff 或刚改动的片段</requirement>",
@@ -168,7 +168,7 @@ const extractToolPath = (toolName: string, input: unknown): string | null => {
 };
 
 const containsAutoTriggerMarker = (text: string): boolean =>
-  text.includes("/skill:code-simplifier") ||
+  text.includes("/skill:me-code-simplifier") ||
   text.includes(EXTENSION_SOURCE_TAG);
 
 const lastUserMessageLooksAutoTriggered = (
@@ -270,7 +270,8 @@ export default function agentEndCodeSimplifierExtension(
   };
 
   pi.registerShortcut(MANUAL_TRIGGER_SHORTCUT, {
-    description: "Manually trigger code-simplifier for files changed this turn",
+    description:
+      "Manually trigger me-code-simplifier for files changed this turn",
     handler: async (ctx) => {
       refreshConfig(ctx.cwd);
       const supportedPaths = collectSupportedPaths(modifiedPaths, config);
@@ -357,10 +358,10 @@ export default function agentEndCodeSimplifierExtension(
       ...diagnostics(ctx),
       supportedPaths,
     });
-    const title = "Run code-simplifier?";
+    const title = "Run me-code-simplifier?";
     const body = `本轮检测到以下代码文件被修改：\n${supportedPaths
       .map((filePath) => `- ${filePath}`)
-      .join("\n")}\n\n是否触发 code-simplifier 做一次行为不变的简化？`;
+      .join("\n")}\n\n是否触发 me-code-simplifier 做一次行为不变的简化？`;
     const localAbortController = new AbortController();
     const localDecision = ctx.ui.confirm(title, body, {
       signal: localAbortController.signal,

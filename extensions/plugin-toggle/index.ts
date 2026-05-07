@@ -95,6 +95,10 @@ const GLOBAL_EXTENSION_DIR = path.join(
   "extensions",
 );
 const GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES = new Set(["plugin-toggle", "shared"]);
+const PROJECT_DEFAULT_ENABLED_PLUGINS = new Set([
+  "plannotator-pi-extension",
+  "pi-context",
+]);
 const DEFAULT_DISABLED_PLUGINS = [
   "cwd-history",
   "diffx-review",
@@ -178,6 +182,10 @@ function isDefaultBootstrapEntry(plugin: PluginEntry): boolean {
   return !GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES.has(normalizeName(plugin.name));
 }
 
+function isProjectDefaultEnabledPlugin(plugin: PluginEntry): boolean {
+  return PROJECT_DEFAULT_ENABLED_PLUGINS.has(normalizeName(plugin.name));
+}
+
 function readManagedPlugins(cwd: string): Set<string> {
   const { globalPath } = getSettingsPaths(cwd);
   const { byCwd } = getPluginToggleSettings(globalPath);
@@ -224,8 +232,28 @@ function isDirectoryTarget(filePath: string): boolean {
   return statTargetOrNull(filePath)?.isDirectory() ?? false;
 }
 
+function hasDeclaredPiExtensions(dir: string): boolean {
+  try {
+    const packageJson = fs.readFileSync(
+      path.join(dir, "package.json"),
+      "utf-8",
+    );
+    const parsed = JSON.parse(packageJson) as Record<string, unknown>;
+    if (!isRecord(parsed.pi)) return false;
+
+    return toStringList(parsed.pi.extensions).some(
+      (extensionPath) =>
+        extensionPath.trim().length > 0 && !extensionPath.startsWith("!"),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isPluginDir(dir: string): boolean {
-  return fs.existsSync(path.join(dir, "index.ts"));
+  return (
+    fs.existsSync(path.join(dir, "index.ts")) || hasDeclaredPiExtensions(dir)
+  );
 }
 
 function isPluginFile(file: string): boolean {
@@ -287,6 +315,14 @@ function copyPluginSource(sourcePath: string, targetPath: string): void {
   fs.cpSync(sourcePath, targetPath, { recursive: true });
 }
 
+function installNpmProductionDependencies(targetPath: string): void {
+  childProcess.execFileSync(
+    "npm",
+    ["install", "--omit=dev", "--ignore-scripts"],
+    { cwd: targetPath, stdio: "ignore" },
+  );
+}
+
 function installNpmPackageSource(source: string, targetPath: string): void {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-plugin-npm-"));
   try {
@@ -309,6 +345,7 @@ function installNpmPackageSource(source: string, targetPath: string): void {
       },
     );
     copyPluginSource(path.join(tempDir, "package"), targetPath);
+    installNpmProductionDependencies(targetPath);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -348,14 +385,23 @@ function installThirdPartySource(
 ): void {
   if (sourceKind === "npm") {
     const packageRoot = options.npmPackageRoot;
-    if (packageRoot) copyPluginSource(packageRoot, installedPath);
-    else installNpmPackageSource(source, installedPath);
+    if (!packageRoot) {
+      installNpmPackageSource(source, installedPath);
+      return;
+    }
+
+    copyPluginSource(packageRoot, installedPath);
+    installNpmProductionDependencies(installedPath);
     return;
   }
 
   const repoRoot = options.githubRepoRoot;
-  if (repoRoot) copyPluginSource(repoRoot, installedPath);
-  else installGithubSource(source, installedPath);
+  if (repoRoot) {
+    copyPluginSource(repoRoot, installedPath);
+    return;
+  }
+
+  installGithubSource(source, installedPath);
 }
 
 export function installThirdPartyPluginToLibrary(
@@ -540,24 +586,29 @@ export function disablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
   return { status: "disabled" };
 }
 
-export function bootstrapDefaultManagedPlugins(
+function sortDefaultBootstrapResult(
+  result: DefaultBootstrapResult,
+): DefaultBootstrapResult {
+  result.enabled.sort((left, right) => left.localeCompare(right));
+  result.skippedDefaultDisabled.sort((left, right) =>
+    left.localeCompare(right),
+  );
+  result.conflicts.sort((left, right) => left.localeCompare(right));
+  return result;
+}
+
+function bootstrapPlugins(
   cwd: string,
   plugins: PluginEntry[],
+  disabled: Set<string>,
 ): DefaultBootstrapResult {
   const result = emptyDefaultBootstrapResult("bootstrapped");
 
-  if (hasManagedPluginsEntry(cwd)) {
-    return emptyDefaultBootstrapResult("already-configured");
-  }
-
-  const disabled = readDefaultDisabledPlugins(cwd);
   for (const plugin of plugins) {
     if (disabled.has(normalizeName(plugin.name))) {
       result.skippedDefaultDisabled.push(plugin.name);
       continue;
     }
-
-    if (!isDefaultBootstrapEntry(plugin)) continue;
 
     const toggleResult = enablePlugin(cwd, plugin);
     if (toggleResult.status === "conflict") {
@@ -567,14 +618,32 @@ export function bootstrapDefaultManagedPlugins(
     result.enabled.push(plugin.name);
   }
 
-  ensureManagedPluginsEntry(cwd);
-
-  result.enabled.sort((left, right) => left.localeCompare(right));
-  result.skippedDefaultDisabled.sort((left, right) =>
-    left.localeCompare(right),
-  );
-  result.conflicts.sort((left, right) => left.localeCompare(right));
   return result;
+}
+
+export function bootstrapDefaultManagedPlugins(
+  cwd: string,
+  plugins: PluginEntry[],
+): DefaultBootstrapResult {
+  const disabled = readDefaultDisabledPlugins(cwd);
+
+  if (hasManagedPluginsEntry(cwd)) {
+    const missingProjectDefaults = plugins
+      .filter(isProjectDefaultEnabledPlugin)
+      .filter((plugin) => !fs.existsSync(pluginTargetPath(cwd, plugin)));
+    const result = bootstrapPlugins(cwd, missingProjectDefaults, disabled);
+    result.status =
+      result.enabled.length > 0 ? "bootstrapped" : "already-configured";
+    return sortDefaultBootstrapResult(result);
+  }
+
+  const result = bootstrapPlugins(
+    cwd,
+    plugins.filter(isDefaultBootstrapEntry),
+    disabled,
+  );
+  ensureManagedPluginsEntry(cwd);
+  return sortDefaultBootstrapResult(result);
 }
 
 function notifyDefaultBootstrapWarnings(

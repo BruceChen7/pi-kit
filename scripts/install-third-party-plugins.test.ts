@@ -47,7 +47,7 @@ const createFakeInstallTools = (binDir: string): void => {
   fs.mkdirSync(binDir, { recursive: true });
   fs.writeFileSync(
     path.join(binDir, "npm"),
-    `#!/bin/sh\nset -eu\ndest=""\nprev=""\nfor arg in "$@"; do\n  if [ "$prev" = "--pack-destination" ]; then dest="$arg"; fi\n  prev="$arg"\ndone\nmkdir -p "$dest/package"\necho 'export default function() {}' > "$dest/package/index.ts"\ntar -czf "$dest/fake.tgz" -C "$dest" package\n`,
+    `#!/bin/sh\nset -eu\nif [ "\${1:-}" = "install" ]; then\n  mkdir -p node_modules\n  echo installed > node_modules/.prod-deps-installed\n  exit 0\nfi\ndest=""\nprev=""\nfor arg in "$@"; do\n  if [ "$prev" = "--pack-destination" ]; then dest="$arg"; fi\n  prev="$arg"\ndone\nmkdir -p "$dest/package"\necho 'export default function() {}' > "$dest/package/index.ts"\necho '{"dependencies":{"left-pad":"1.0.0"}}' > "$dest/package/package.json"\ntar -czf "$dest/fake.tgz" -C "$dest" package\n`,
     "utf8",
   );
   fs.writeFileSync(
@@ -219,6 +219,16 @@ describe("install-third-party-plugins.sh", () => {
     expect(fs.existsSync(path.join(library, "pi-context", "index.ts"))).toBe(
       true,
     );
+    expect(
+      fs.existsSync(
+        path.join(
+          library,
+          "plannotator-pi-extension",
+          "node_modules",
+          ".prod-deps-installed",
+        ),
+      ),
+    ).toBe(true);
     expect(fs.existsSync(logPath)).toBe(false);
   });
 

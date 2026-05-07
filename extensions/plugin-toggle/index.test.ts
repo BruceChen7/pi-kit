@@ -171,6 +171,31 @@ describe("plugin discovery", () => {
     expect(plugins[0]).toMatchObject({ kind: "directory" });
     expect(plugins[1]).toMatchObject({ kind: "file" });
   });
+
+  it("discovers package plugins that declare pi.extensions", async () => {
+    const home = createTempHome();
+    const library = path.join(home, ".agents", "pi-plugins");
+    const packageDir = path.join(library, "pi-context");
+    fs.mkdirSync(path.join(packageDir, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(packageDir, "package.json"),
+      JSON.stringify({ pi: { extensions: ["./src/index.ts"] } }),
+    );
+    fs.writeFileSync(
+      path.join(packageDir, "src", "index.ts"),
+      "export default function() {}\n",
+    );
+
+    const { discoverPlugins } = await importPluginToggle();
+    const plugins = discoverPlugins(library);
+
+    expect(plugins.map((plugin) => plugin.name)).toEqual(["pi-context"]);
+    expect(plugins[0]).toMatchObject({
+      kind: "directory",
+      enabledName: "pi-context",
+      sourcePath: packageDir,
+    });
+  });
 });
 
 describe("third-party plugin library", () => {
@@ -441,6 +466,32 @@ describe("default project bootstrap", () => {
     await runSessionStart(cwd);
 
     expect(sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("enables plannotator by default even after the cwd was configured", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary("alpha", "plannotator-pi-extension");
+    const { bootstrapDefaultManagedPlugins, discoverPlugins } =
+      await importPluginToggle();
+    const plugins = discoverPlugins(library);
+    bootstrapDefaultManagedPlugins(
+      cwd,
+      plugins.filter((plugin) => plugin.name === "alpha"),
+    );
+
+    const result = bootstrapDefaultManagedPlugins(cwd, plugins);
+
+    expect(result.status).toBe("bootstrapped");
+    expect(result.enabled).toEqual(["plannotator-pi-extension"]);
+    expect(readManagedPluginNames(cwd)).toEqual([
+      "alpha",
+      "plannotator-pi-extension",
+    ]);
+    expect(
+      fs
+        .lstatSync(projectPluginPath(cwd, "plannotator-pi-extension"))
+        .isSymbolicLink(),
+    ).toBe(true);
   });
 
   it("does not queue reload when every discovered plugin is default-disabled", async () => {

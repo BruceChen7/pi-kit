@@ -80,6 +80,9 @@ const DEFAULT_DISABLED_PLUGINS = [
 const PROJECT_EXTENSION_DIR = path.join(".pi", "extensions");
 const PICKER_PAGE_SIZE = 8;
 const SHARED_EXTENSION_NAME = "shared";
+const DEFAULT_BOOTSTRAP_RELOAD_COMMAND = "/reload";
+const DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE =
+  "同步插件成功，请重启 Pi 以加载新插件。";
 const PLUGIN_TOGGLE_EXTENSION_DIR = path.dirname(
   fileURLToPath(import.meta.url),
 );
@@ -421,6 +424,18 @@ function notifyDefaultBootstrapWarnings(
       "warning",
     );
   }
+}
+
+function queueDefaultBootstrapReload(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+): void {
+  if (ctx.hasUI) {
+    ctx.ui.notify(DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE, "info");
+  }
+  pi.sendUserMessage(DEFAULT_BOOTSTRAP_RELOAD_COMMAND, {
+    deliverAs: "followUp",
+  });
 }
 
 export function getEnabledManagedPlugins(
@@ -815,7 +830,7 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
     const bootstrap = bootstrapDefaultManagedPlugins(ctx.cwd, plugins);
     notifyDefaultBootstrapWarnings(ctx, bootstrap);
     if (bootstrap.enabled.length > 0) {
-      await ctx.reload();
+      queueDefaultBootstrapReload(pi, ctx);
       return;
     }
     const enabled = getEnabledManagedPlugins(ctx.cwd, plugins);

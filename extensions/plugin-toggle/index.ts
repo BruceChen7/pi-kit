@@ -5,12 +5,14 @@
  */
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   ExtensionAPI,
   ExtensionContext,
+  SessionStartEvent,
 } from "@mariozechner/pi-coding-agent";
 import {
   matchesKey,
@@ -44,6 +46,8 @@ export interface DefaultBootstrapResult {
   enabled: string[];
   skippedDefaultDisabled: string[];
   conflicts: string[];
+  loaded: string[];
+  loadErrors: Array<{ plugin: string; error: string }>;
 }
 
 export type ToggleResult =
@@ -60,6 +64,20 @@ interface MigrationOptions {
   home?: string;
   globalDir?: string;
   libraryDir?: string;
+}
+
+interface JitiModule {
+  createJiti: (
+    filename: string,
+    options: { moduleCache: boolean },
+  ) => {
+    import: (id: string, options: { default: boolean }) => Promise<unknown>;
+  };
+}
+
+interface CurrentSession {
+  event: SessionStartEvent;
+  ctx: ExtensionContext;
 }
 
 const DEFAULT_LIBRARY_DIR = path.join(os.homedir(), ".agents", "pi-plugins");
@@ -142,7 +160,13 @@ function emptyDefaultBootstrapResult(
     enabled: [],
     skippedDefaultDisabled: [],
     conflicts: [],
+    loaded: [],
+    loadErrors: [],
   };
+}
+
+function isDefaultBootstrapEntry(plugin: PluginEntry): boolean {
+  return !GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES.has(normalizeName(plugin.name));
 }
 
 function readManagedPlugins(cwd: string): Set<string> {
@@ -385,6 +409,8 @@ export function bootstrapDefaultManagedPlugins(
       continue;
     }
 
+    if (!isDefaultBootstrapEntry(plugin)) continue;
+
     const toggleResult = enablePlugin(cwd, plugin);
     if (toggleResult.status === "conflict") {
       result.conflicts.push(toggleResult.path);
@@ -401,6 +427,114 @@ export function bootstrapDefaultManagedPlugins(
   );
   result.conflicts.sort((left, right) => left.localeCompare(right));
   return result;
+}
+
+function currentExtensionFile(): string {
+  const currentFile = fileURLToPath(import.meta.url);
+  return realPathOrNull(currentFile) ?? currentFile;
+}
+
+function loadJitiModule(extensionFile: string): JitiModule {
+  const require = createRequire(import.meta.url);
+  const currentFile = fileURLToPath(import.meta.url);
+  const modulePath = require.resolve("@mariozechner/jiti", {
+    paths: [
+      path.dirname(extensionFile),
+      path.dirname(currentFile),
+      process.cwd(),
+    ],
+  });
+  const module = require(modulePath) as Partial<JitiModule>;
+  if (typeof module.createJiti !== "function") {
+    throw new Error("@mariozechner/jiti does not export createJiti");
+  }
+  return module as JitiModule;
+}
+
+async function loadPluginFactory(plugin: PluginEntry): Promise<unknown> {
+  const extensionFile = currentExtensionFile();
+  const { createJiti } = loadJitiModule(extensionFile);
+  const jiti = createJiti(extensionFile, { moduleCache: false });
+  return await jiti.import(plugin.sourcePath, { default: true });
+}
+
+function withImmediateSessionStart(
+  pi: ExtensionAPI,
+  currentSession?: CurrentSession,
+): ExtensionAPI {
+  if (!currentSession) return pi;
+  return new Proxy(pi, {
+    get(target, property, receiver) {
+      if (property !== "on") return Reflect.get(target, property, receiver);
+      return (event: string, handler: unknown) => {
+        target.on(event as never, handler as never);
+        if (event === "session_start" && typeof handler === "function") {
+          void handler(currentSession.event, currentSession.ctx);
+        }
+      };
+    },
+  });
+}
+
+export async function bootstrapAndLoadDefaultManagedPlugins(
+  cwd: string,
+  plugins: PluginEntry[],
+  pi: ExtensionAPI,
+  currentSession?: CurrentSession,
+): Promise<DefaultBootstrapResult> {
+  const result = bootstrapDefaultManagedPlugins(cwd, plugins);
+  const pluginPi = withImmediateSessionStart(pi, currentSession);
+  const enabled = new Set(result.enabled.map(normalizeName));
+  const pluginsToLoad = plugins.filter((plugin) =>
+    enabled.has(normalizeName(plugin.name)),
+  );
+
+  for (const plugin of pluginsToLoad) {
+    try {
+      const factory = await loadPluginFactory(plugin);
+      if (typeof factory !== "function") {
+        result.loadErrors.push({
+          plugin: plugin.name,
+          error: "Extension does not export a valid factory function",
+        });
+        continue;
+      }
+      await factory(pluginPi);
+      result.loaded.push(plugin.name);
+    } catch (error) {
+      result.loadErrors.push({
+        plugin: plugin.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  result.loaded.sort((left, right) => left.localeCompare(right));
+  result.loadErrors.sort((left, right) =>
+    left.plugin.localeCompare(right.plugin),
+  );
+  return result;
+}
+
+function notifyDefaultBootstrapWarnings(
+  ctx: ExtensionContext,
+  bootstrap: DefaultBootstrapResult,
+): void {
+  if (!ctx.hasUI) return;
+
+  if (bootstrap.conflicts.length > 0) {
+    ctx.ui.notify(
+      `Default plugin bootstrap skipped conflicting paths: ${bootstrap.conflicts.join(", ")}`,
+      "warning",
+    );
+  }
+
+  if (bootstrap.loadErrors.length > 0) {
+    ctx.ui.notify(
+      `Default plugin bootstrap failed to load: ${bootstrap.loadErrors.map((item) => `${item.plugin}: ${item.error}`).join(", ")}`,
+      "warning",
+    );
+  }
 }
 
 export function getEnabledManagedPlugins(
@@ -792,13 +926,13 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (_event, ctx) => {
     const plugins = discoverPlugins();
-    const bootstrap = bootstrapDefaultManagedPlugins(ctx.cwd, plugins);
-    if (bootstrap.conflicts.length > 0 && ctx.hasUI) {
-      ctx.ui.notify(
-        `Default plugin bootstrap skipped conflicting paths: ${bootstrap.conflicts.join(", ")}`,
-        "warning",
-      );
-    }
+    const bootstrap = await bootstrapAndLoadDefaultManagedPlugins(
+      ctx.cwd,
+      plugins,
+      pi,
+      { event: _event, ctx },
+    );
+    notifyDefaultBootstrapWarnings(ctx, bootstrap);
     const enabled = getEnabledManagedPlugins(ctx.cwd, plugins);
     updateStatus(ctx, enabled.length);
     if (fs.existsSync(GLOBAL_EXTENSION_DIR)) {

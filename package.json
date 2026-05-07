@@ -50,6 +50,7 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
+    "@mariozechner/jiti": "^2.6.5",
     "@sinclair/typebox": "^0.34.49"
   }
 }

@@ -779,6 +779,66 @@ describe("skill picker input", () => {
 });
 
 describe("stale settings pruning", () => {
+  it("does not prune other projects with the current project's skill inventory", async () => {
+    createTempHome();
+    const currentCwd = createTempDir("pi-kit-skill-toggle-current-");
+    const otherCwd = createTempDir("pi-kit-skill-toggle-other-");
+    const currentSkillDir = path.join(
+      currentCwd,
+      ".agents",
+      "skills",
+      "current",
+    );
+    const otherDisabledPath = path.join(otherCwd, ".agents", "skills", "other");
+    const { globalPath } = getSettingsPaths(currentCwd);
+    const otherEntry: SkillToggleTestEntry = {
+      disabledSkills: ["Other"],
+      disabledSkillPaths: [otherDisabledPath],
+      managedOverrides: [`-${otherDisabledPath}`],
+      managedSkillLinks: [
+        {
+          name: "Other",
+          description: "Other skill",
+          path: otherDisabledPath,
+          target: path.join(otherCwd, "source", "other"),
+        },
+      ],
+    };
+
+    fs.mkdirSync(path.dirname(globalPath), { recursive: true });
+    fs.writeFileSync(
+      globalPath,
+      JSON.stringify(
+        {
+          skillToggle: {
+            byCwd: {
+              [currentCwd]: { disabledSkills: ["Current"] },
+              [otherCwd]: otherEntry,
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+
+    const { pruneSettingsFiles } = await importSkillToggle();
+    pruneSettingsFiles(currentCwd, [
+      {
+        name: "Current",
+        description: "Current skill",
+        filePath: path.join(currentSkillDir, "SKILL.md"),
+        scope: "project",
+      },
+    ]);
+
+    const saved = readSettingsFile(globalPath);
+    const byCwd = (saved.skillToggle as { byCwd: Record<string, unknown> })
+      .byCwd;
+    expect(byCwd[otherCwd]).toEqual(otherEntry);
+  });
+
   it("removes stale path disabled records while preserving restorable managed links", async () => {
     createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
@@ -838,6 +898,94 @@ describe("stale settings pruning", () => {
 });
 
 describe("input interception", () => {
+  it("continues non-skill input without loading available skills", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const skillToggle = await importSkillToggle();
+    const inputHandlers: Array<(event: unknown, ctx: unknown) => unknown> = [];
+    const pi = {
+      getCommands: vi.fn(() => []),
+      registerCommand: vi.fn(),
+      on: vi.fn(
+        (name: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+          if (name === "input") inputHandlers.push(handler);
+        },
+      ),
+    };
+    const ctx = {
+      cwd,
+      hasUI: false,
+      ui: {
+        notify: vi.fn(),
+        setStatus: vi.fn(),
+      },
+    };
+
+    skillToggle.default(pi as never);
+    expect(inputHandlers).toHaveLength(1);
+    const handleInput = inputHandlers[0];
+
+    await expect(
+      handleInput({ source: "user", text: "hello" }, ctx),
+    ).resolves.toEqual({ action: "continue" });
+    expect(pi.getCommands).not.toHaveBeenCalled();
+  });
+
+  it("reuses session skill cache when intercepting skill commands", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const skillPath = path.join(cwd, ".agents", "skills", "alpha", "SKILL.md");
+    writeGlobalSkillToggleEntry(cwd, {
+      disabledSkillPaths: [path.dirname(skillPath)],
+    });
+    const skillToggle = await importSkillToggle();
+    const inputHandlers: Array<(event: unknown, ctx: unknown) => unknown> = [];
+    const sessionStartHandlers: Array<
+      (event: unknown, ctx: unknown) => unknown
+    > = [];
+    const pi = {
+      getCommands: vi.fn(() => [
+        {
+          source: "skill",
+          name: "skill:Alpha",
+          description: "Alpha skill",
+          sourceInfo: { path: skillPath, scope: "project" },
+        },
+      ]),
+      registerCommand: vi.fn(),
+      on: vi.fn(
+        (name: string, handler: (event: unknown, ctx: unknown) => unknown) => {
+          if (name === "input") inputHandlers.push(handler);
+          if (name === "session_start") sessionStartHandlers.push(handler);
+        },
+      ),
+    };
+    const ctx = {
+      cwd,
+      hasUI: false,
+      ui: {
+        notify: vi.fn(),
+        setStatus: vi.fn(),
+      },
+    };
+
+    skillToggle.default(pi as never);
+    expect(inputHandlers).toHaveLength(1);
+    expect(sessionStartHandlers).toHaveLength(1);
+    const handleInput = inputHandlers[0];
+    const handleSessionStart = sessionStartHandlers[0];
+
+    await handleSessionStart({}, ctx);
+
+    await expect(
+      handleInput({ source: "user", text: "/skill:Alpha" }, ctx),
+    ).resolves.toEqual({ action: "handled" });
+    await expect(
+      handleInput({ source: "user", text: "/skill:Alpha" }, ctx),
+    ).resolves.toEqual({ action: "handled" });
+    expect(pi.getCommands).toHaveBeenCalledTimes(1);
+  });
+
   it("blocks path-disabled skill commands before reload", async () => {
     createTempHome();
     const skillToggle = await importSkillToggle();

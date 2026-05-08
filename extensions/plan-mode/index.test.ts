@@ -29,6 +29,7 @@ type TestCtx = {
   cwd: string;
   hasUI: boolean;
   isIdle: () => boolean;
+  signal?: AbortSignal;
   ui: {
     notify: ReturnType<typeof vi.fn>;
     setStatus: ReturnType<typeof vi.fn>;
@@ -141,12 +142,16 @@ const buildCtx = (entries: CustomEntry[] = []): TestCtx => ({
   },
 });
 
-const lastWidgetLines = (ctx: TestCtx): string[] => {
-  const calls = ctx.ui.setWidget.mock.calls.filter(
-    (call) => call[0] === "plan-mode-todos",
+const lastTodoWidgetCall = (ctx: TestCtx) => {
+  const call = ctx.ui.setWidget.mock.calls.findLast(
+    ([key]) => key === "plan-mode-todos",
   );
-  return calls.at(-1)?.[1] as string[];
+  if (!call) throw new Error("Expected a plan-mode TODO widget call");
+  return call;
 };
+
+const lastWidgetLines = (ctx: TestCtx): string[] =>
+  lastTodoWidgetCall(ctx)[1] as string[];
 
 const createTempCtx = (): { ctx: TestCtx; cleanup: () => void } => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "plan-mode-policy-"));
@@ -271,6 +276,69 @@ describe("plan-mode extension", () => {
     expect(widget).toContain("0/2 done");
   });
 
+  it("does not render auto act progress in the status area", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    await harness.emit(
+      "tool_result",
+      {
+        toolName: "plannotator_auto_submit_review",
+        isError: false,
+        content: [
+          {
+            type: "text",
+            text: "Review approved for .pi/plans/pi-kit/plan/2026-05-08-demo.md.",
+          },
+        ],
+      },
+      ctx,
+    );
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [
+          { text: "编写测试", status: "done" },
+          { text: "实现改动", status: "done" },
+          { text: "验证结果", status: "done" },
+        ],
+      },
+      ctx,
+    );
+
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("plan-mode", undefined);
+    expect(ctx.ui.setStatus).not.toHaveBeenCalledWith(
+      "plan-mode",
+      expect.stringContaining("auto:act 3/3"),
+    );
+    expect(lastWidgetLines(ctx).join("\n")).toContain("完成 3/3 done");
+    expect(lastTodoWidgetCall(ctx)[2]).toEqual({ placement: "aboveEditor" });
+  });
+
+  it("normalizes pending todo input to todo", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    const result = await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "确认需求", status: "pending" }],
+      },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      details: { todos: [{ text: "确认需求", status: "todo" }] },
+    });
+    expect(lastWidgetLines(ctx).join("\n")).toContain("#1 [ ] 确认需求");
+  });
+
   it("restores mode and todos from the latest session snapshot", async () => {
     const restoredEntries: CustomEntry[] = [
       {
@@ -294,10 +362,7 @@ describe("plan-mode extension", () => {
 
     await harness.emit("session_start", {}, ctx);
 
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
-      "plan-mode",
-      expect.stringContaining("act 0/1"),
-    );
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("plan-mode", undefined);
     expect(lastWidgetLines(ctx).join("\n")).toContain("恢复后的当前步骤");
   });
 
@@ -314,6 +379,36 @@ describe("plan-mode extension", () => {
       expect.stringContaining("plan_mode_todo"),
       { deliverAs: "followUp" },
     );
+  });
+
+  it("skips plan reminders after an aborted assistant turn", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
+
+    await harness.emit(
+      "agent_end",
+      { messages: [{ role: "assistant", stopReason: "aborted" }] },
+      ctx,
+    );
+
+    expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("skips plan reminders when the runtime signal was aborted", async () => {
+    const harness = buildHarness();
+    const abortController = new AbortController();
+    abortController.abort();
+    const ctx = { ...buildCtx(), signal: abortController.signal };
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
+
+    await harness.emit("agent_end", { messages: [] }, ctx);
+
+    expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
   });
 
   it("switches auto plan to act after plannotator approves the submitted plan", async () => {
@@ -337,10 +432,7 @@ describe("plan-mode extension", () => {
       ctx,
     );
 
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith(
-      "plan-mode",
-      expect.stringContaining("auto:act"),
-    );
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("plan-mode", undefined);
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
     ).resolves.toBeUndefined();

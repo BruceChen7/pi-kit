@@ -19,6 +19,19 @@ import {
 type PlanMode = "plan" | "act" | "auto" | "fast";
 type PlanPhase = "plan" | "act";
 type TodoStatus = "todo" | "in_progress" | "done" | "blocked";
+type TodoStatusInput = TodoStatus | "pending";
+
+type TodoInput = {
+  text: string;
+  status?: TodoStatusInput;
+  notes?: string;
+};
+
+type TodoPatch = {
+  text?: string;
+  status?: TodoStatusInput;
+  notes?: string;
+};
 
 type TodoItem = {
   id: number;
@@ -101,6 +114,7 @@ const PLAN_INSPECTION_TOOL_COMMA_LIST = PLAN_INSPECTION_TOOL_NAMES.join(", ");
 
 const todoStatusSchema = Type.Union([
   Type.Literal("todo"),
+  Type.Literal("pending"),
   Type.Literal("in_progress"),
   Type.Literal("done"),
   Type.Literal("blocked"),
@@ -152,6 +166,9 @@ const isTodoStatus = (value: unknown): value is TodoStatus =>
   value === "in_progress" ||
   value === "done" ||
   value === "blocked";
+
+const normalizeTodoStatus = (status: TodoStatusInput): TodoStatus =>
+  status === "pending" ? "todo" : status;
 
 const sanitizeStringArray = (value: unknown, fallback: string[]): string[] => {
   if (!Array.isArray(value)) {
@@ -370,9 +387,7 @@ class PlanModeState {
     );
   }
 
-  replaceTodos(
-    items: Array<{ text: string; status?: TodoStatus; notes?: string }>,
-  ): void {
+  replaceTodos(items: TodoInput[]): void {
     this.todos = [];
     this.nextTodoId = 1;
     for (const item of items) {
@@ -380,11 +395,15 @@ class PlanModeState {
     }
   }
 
-  addTodo(text: string, status: TodoStatus = "todo", notes?: string): TodoItem {
+  addTodo(
+    text: string,
+    status: TodoStatusInput = "todo",
+    notes?: string,
+  ): TodoItem {
     const todo: TodoItem = {
       id: this.nextTodoId,
       text,
-      status,
+      status: normalizeTodoStatus(status),
       ...(notes ? { notes } : {}),
     };
     this.nextTodoId += 1;
@@ -392,10 +411,7 @@ class PlanModeState {
     return todo;
   }
 
-  updateTodo(
-    id: number,
-    patch: { text?: string; status?: TodoStatus; notes?: string },
-  ): boolean {
+  updateTodo(id: number, patch: TodoPatch): boolean {
     const todo = this.todos.find((item) => item.id === id);
     if (!todo) {
       return false;
@@ -404,7 +420,7 @@ class PlanModeState {
       todo.text = patch.text;
     }
     if (patch.status !== undefined) {
-      todo.status = patch.status;
+      todo.status = normalizeTodoStatus(patch.status);
     }
     if (patch.notes !== undefined) {
       if (patch.notes) {
@@ -584,6 +600,21 @@ const extractApprovedPath = (text: string): string | null => {
   return match?.[1]?.trim() ?? null;
 };
 
+const turnWasAborted = (
+  event: { messages?: readonly unknown[] },
+  ctx: { signal?: AbortSignal },
+): boolean => {
+  if (ctx.signal?.aborted) {
+    return true;
+  }
+  return (event.messages ?? []).some(
+    (message) =>
+      isRecord(message) &&
+      message.role === "assistant" &&
+      message.stopReason === "aborted",
+  );
+};
+
 class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
   state = new PlanModeState(DEFAULT_CONFIG.defaultMode);
@@ -629,14 +660,7 @@ class PlanModeController {
       return;
     }
 
-    const done = this.state.todos.filter(
-      (todo) => todo.status === "done",
-    ).length;
-    const total = this.state.todos.length;
-    ctx.ui.setStatus(
-      STATUS_KEY,
-      ctx.ui.theme.fg("accent", `${getModeLabel(this.state)} ${done}/${total}`),
-    );
+    ctx.ui.setStatus(STATUS_KEY, undefined);
 
     const widgetLines = formatTodoWidgetLines(this.state);
     if (widgetLines.length === 0) {
@@ -976,8 +1000,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     controller.updateUi(ctx);
   });
 
-  pi.on("agent_end", async (_event, ctx) => {
+  pi.on("agent_end", async (event, ctx) => {
     controller.updateUi(ctx);
+    if (turnWasAborted(event, ctx)) {
+      return;
+    }
     if (controller.state.isPlanPhase() && controller.state.todos.length === 0) {
       pi.sendUserMessage(
         "Plan Mode requires a concrete TODO list before ending this planning turn. " +

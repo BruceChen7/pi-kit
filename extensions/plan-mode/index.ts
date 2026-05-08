@@ -15,6 +15,12 @@ import {
   isStandardPlanArtifactPath,
   validateArtifactPolicy,
 } from "./artifact-policy.ts";
+import {
+  DEFAULT_WORKFLOW_BYPASS_STATE,
+  decideWorkflowBypass,
+  type WorkflowBypassState,
+  workflowBypassFromSnapshot,
+} from "./workflow-bypass.ts";
 
 type PlanMode = "plan" | "act" | "auto" | "fast";
 type PlanPhase = "plan" | "act";
@@ -50,6 +56,7 @@ type PlanModeSnapshot = {
   latestReviewArtifactPath: string | null;
   reviewApprovedPlanPaths: string[];
   endConversationRequested: boolean;
+  workflowBypass?: WorkflowBypassState;
 };
 
 type PlanModeConfig = {
@@ -311,6 +318,7 @@ const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
       [],
     ),
     endConversationRequested: data.endConversationRequested === true,
+    workflowBypass: workflowBypassFromSnapshot(data.workflowBypass),
   };
 };
 
@@ -334,6 +342,7 @@ class PlanModeState {
   latestReviewArtifactPath: string | null = null;
   reviewApprovedPlanPaths = new Set<string>();
   endConversationRequested = false;
+  workflowBypass: WorkflowBypassState = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
 
   constructor(defaultMode: PlanMode) {
     this.mode = defaultMode;
@@ -350,6 +359,7 @@ class PlanModeState {
     this.latestReviewArtifactPath = null;
     this.reviewApprovedPlanPaths = new Set();
     this.endConversationRequested = false;
+    this.workflowBypass = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
   }
 
   restore(snapshot: PlanModeSnapshot | null, defaultMode: PlanMode): void {
@@ -367,12 +377,14 @@ class PlanModeState {
     this.latestReviewArtifactPath = snapshot.latestReviewArtifactPath;
     this.reviewApprovedPlanPaths = new Set(snapshot.reviewApprovedPlanPaths);
     this.endConversationRequested = snapshot.endConversationRequested;
+    this.workflowBypass = workflowBypassFromSnapshot(snapshot.workflowBypass);
   }
 
   setMode(mode: PlanMode): void {
     this.mode = mode;
     this.phase = phaseForMode(mode);
     this.endConversationRequested = false;
+    this.workflowBypass = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
   }
 
   switchAutoToAct(): void {
@@ -385,6 +397,31 @@ class PlanModeState {
     return (
       this.mode === "plan" || (this.mode === "auto" && this.phase === "plan")
     );
+  }
+
+  hasUnfinishedTodos(): boolean {
+    return this.todos.some((todo) => todo.status !== "done");
+  }
+
+  isWorkflowBypassActive(): boolean {
+    return this.isPlanPhase() && this.workflowBypass.active;
+  }
+
+  updateWorkflowBypassForPrompt(prompt: string): boolean {
+    const next = decideWorkflowBypass(
+      prompt,
+      this.workflowBypass,
+      this.hasUnfinishedTodos(),
+    );
+    const changed =
+      next.active !== this.workflowBypass.active ||
+      next.reason !== this.workflowBypass.reason;
+    this.workflowBypass = { ...next };
+    return changed;
+  }
+
+  clearWorkflowBypass(): void {
+    this.workflowBypass = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
   }
 
   replaceTodos(items: TodoInput[]): void {
@@ -454,6 +491,7 @@ class PlanModeState {
       latestReviewArtifactPath: this.latestReviewArtifactPath,
       reviewApprovedPlanPaths: [...this.reviewApprovedPlanPaths],
       endConversationRequested: this.endConversationRequested,
+      workflowBypass: { ...this.workflowBypass },
     };
   }
 }
@@ -673,7 +711,7 @@ class PlanModeController {
   }
 
   buildModePrompt(): string {
-    return [
+    const lines = [
       "## Plan Mode Extension",
       "",
       `Current mode: ${getModeLabel(this.state)}.`,
@@ -689,7 +727,23 @@ class PlanModeController {
       "- If Plannotator denies the plan, revise the same file and submit again.",
       "- In act phases, execute the approved plan and update " +
         `${TODO_TOOL_NAME} statuses to in_progress and done so the widget shows the current step.`,
-    ].join("\n");
+    ];
+
+    if (this.state.isWorkflowBypassActive()) {
+      lines.push(
+        "- Workflow-only bypass is active: this turn may use bash for the " +
+          "requested workflow, but must not implement code or write plan/spec drafts.",
+      );
+    }
+
+    return lines.join("\n");
+  }
+
+  handleAgentStart(event: unknown): void {
+    const prompt = stringProperty(event, "prompt") ?? "";
+    if (this.state.updateWorkflowBypassForPrompt(prompt)) {
+      this.persist();
+    }
   }
 
   validateArtifactPolicyForPath(
@@ -757,6 +811,9 @@ class PlanModeController {
     }
 
     if (this.state.isPlanPhase() && event.toolName === "bash") {
+      if (this.state.isWorkflowBypassActive()) {
+        return undefined;
+      }
       return {
         block: true,
         reason:
@@ -766,6 +823,14 @@ class PlanModeController {
     }
 
     if (this.state.isPlanPhase() && WRITE_TOOL_NAMES.has(event.toolName)) {
+      if (this.state.isWorkflowBypassActive()) {
+        return {
+          block: true,
+          reason:
+            `plan-mode blocked ${event.toolName}: workflow-only bypass ` +
+            "allows bash workflows but not file writes.",
+        };
+      }
       const rawPath = pathFromToolCall(event);
       if (rawPath && isReviewArtifactPath(ctx.cwd, rawPath)) {
         return undefined;
@@ -987,9 +1052,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
   });
 
-  pi.on("before_agent_start", async (event) => ({
-    systemPrompt: `${event.systemPrompt ?? ""}\n\n${controller.buildModePrompt()}`,
-  }));
+  pi.on("before_agent_start", async (event) => {
+    controller.handleAgentStart(event);
+    return {
+      systemPrompt: `${event.systemPrompt ?? ""}\n\n${controller.buildModePrompt()}`,
+    };
+  });
 
   pi.on("tool_call", async (event, ctx) =>
     controller.maybeBlockTool(event, ctx),
@@ -1003,6 +1071,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   pi.on("agent_end", async (event, ctx) => {
     controller.updateUi(ctx);
     if (turnWasAborted(event, ctx)) {
+      return;
+    }
+    if (controller.state.isWorkflowBypassActive()) {
+      if (!controller.state.hasUnfinishedTodos()) {
+        controller.state.clearWorkflowBypass();
+        controller.persist();
+      }
       return;
     }
     if (controller.state.isPlanPhase() && controller.state.todos.length === 0) {

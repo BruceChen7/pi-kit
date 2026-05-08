@@ -9,6 +9,26 @@ Runtime Plan Mode workflow for Pi. This extension turns the project convention o
 - `act`: manual implementation mode.
 - `fast`: direct execution mode without plan-review gating.
 
+## Workflow-only bypass
+
+`auto:plan` can temporarily bypass plan review for pure operational workflows such as
+`commit all changes`, `commit and push`, `git status`, `git diff`, `run tests`, or
+`run lint`. These requests do not ask the agent to implement behavior, so requiring a
+plan/spec draft adds friction without improving safety.
+
+The bypass is intentionally narrow:
+
+- It only activates when the prompt looks like a workflow and does not contain
+  implementation intent such as fixing, implementing, adding, creating, refactoring, or
+  optimizing code.
+- It allows `bash` so the agent can run git, npm, and verification commands.
+- It still blocks `edit` and `write`, including plan/spec draft writes, because a workflow
+  bypass must not become an implementation path.
+- It can continue across short confirmation replies like `yes` or `no` while unfinished
+  TODOs remain, for example when the agent asks whether to include untracked files.
+- It clears after the workflow has no unfinished TODOs, so later implementation requests
+  return to normal plan review.
+
 ## Commands
 
 ```text
@@ -89,10 +109,10 @@ they can keep their own PRD/spec structure.
 
 In Plan phase, runtime guards block:
 
-- `bash`
+- `bash`, unless workflow-only bypass is active
 - source-code `edit` / `write`
 
-Plan/spec artifact writes are allowed only for reviewable Plannotator paths under `.pi/plans/<repo>/plan/` and `.pi/plans/<repo>/specs/`. This lets the agent create or revise the review draft while still preventing implementation before approval.
+Plan/spec artifact writes are allowed only for reviewable Plannotator paths under `.pi/plans/<repo>/plan/` and `.pi/plans/<repo>/specs/`. This lets the agent create or revise the review draft while still preventing implementation before approval. During workflow-only bypass, `edit` and `write` remain blocked so the agent does not create plan/spec drafts for workflow-only requests.
 
 This is enforced through Pi's `tool_call` hook, not just prompt instructions.
 

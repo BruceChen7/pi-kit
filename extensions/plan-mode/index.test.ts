@@ -171,6 +171,28 @@ const writePlanArtifact = (
   fs.writeFileSync(absolutePath, content, "utf-8");
 };
 
+const startPlanModeSession = async () => {
+  const harness = buildHarness();
+  const ctx = buildCtx();
+  planModeExtension(harness.api as unknown as ExtensionAPI);
+  await harness.emit("session_start", {}, ctx);
+  return { harness, ctx };
+};
+
+const sendAgentPrompt = async (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+  prompt: string,
+) =>
+  harness.emit(
+    "before_agent_start",
+    {
+      prompt,
+      systemPrompt: "base",
+    },
+    ctx,
+  );
+
 const validPlanContent = `## Context
 - 用户希望用中文描述计划背景、成功标准和受影响模块。
 
@@ -379,6 +401,80 @@ describe("plan-mode extension", () => {
       expect.stringContaining("plan_mode_todo"),
       { deliverAs: "followUp" },
     );
+  });
+
+  it("allows bash without plan review for commit-only workflows", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await sendAgentPrompt(
+      harness,
+      ctx,
+      "commit all changes and no extra branch",
+    );
+
+    await expect(
+      harness.runToolCall("bash", { command: "git status --short" }, ctx),
+    ).resolves.toBeUndefined();
+    await expect(
+      harness.runToolCall("write", { path: "x.ts" }, ctx),
+    ).resolves.toMatchObject({ block: true });
+
+    await harness.emit("agent_end", { messages: [] }, ctx);
+
+    expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining("Plan Mode requires"),
+      expect.anything(),
+    );
+  });
+
+  it("keeps implementation prompts in normal plan mode", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await sendAgentPrompt(harness, ctx, "fix the bug and commit");
+
+    await expect(
+      harness.runToolCall("bash", { command: "git status --short" }, ctx),
+    ).resolves.toMatchObject({ block: true });
+  });
+
+  it("extends workflow bypass across user confirmation while todos remain", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+    await sendAgentPrompt(harness, ctx, "commit all the changes");
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "确认是否包含未跟踪文件", status: "todo" }],
+      },
+      ctx,
+    );
+
+    await harness.emit("agent_end", { messages: [] }, ctx);
+    await sendAgentPrompt(harness, ctx, "no");
+
+    await expect(
+      harness.runToolCall("bash", { command: "git status --short" }, ctx),
+    ).resolves.toBeUndefined();
+  });
+
+  it("clears workflow bypass after workflow todos are complete", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+    await sendAgentPrompt(harness, ctx, "commit all the changes");
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "提交当前变更", status: "done" }],
+      },
+      ctx,
+    );
+
+    await harness.emit("agent_end", { messages: [] }, ctx);
+    await sendAgentPrompt(harness, ctx, "no");
+
+    await expect(
+      harness.runToolCall("bash", { command: "git status --short" }, ctx),
+    ).resolves.toMatchObject({ block: true });
   });
 
   it("skips plan reminders after an aborted assistant turn", async () => {

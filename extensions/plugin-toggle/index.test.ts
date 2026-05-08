@@ -552,9 +552,14 @@ describe("default project bootstrap", () => {
     expect(sendUserMessage).not.toHaveBeenCalled();
   });
 
-  it("enables plannotator by default even after the cwd was configured", async () => {
+  it("enables project defaults even after the cwd was configured", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = createPluginLibrary("alpha", "plannotator-pi-extension");
+    const defaultPluginsToBackfill = [
+      "plan-mode",
+      "plannotator-auto",
+      "plannotator-pi-extension",
+    ];
+    const library = createPluginLibrary("alpha", ...defaultPluginsToBackfill);
     const { bootstrapDefaultManagedPlugins, discoverPlugins } =
       await importPluginToggle();
     const plugins = discoverPlugins(library);
@@ -566,16 +571,16 @@ describe("default project bootstrap", () => {
     const result = bootstrapDefaultManagedPlugins(cwd, plugins);
 
     expect(result.status).toBe("bootstrapped");
-    expect(result.enabled).toEqual(["plannotator-pi-extension"]);
+    expect(result.enabled).toEqual(defaultPluginsToBackfill);
     expect(readManagedPluginNames(cwd)).toEqual([
       "alpha",
-      "plannotator-pi-extension",
+      ...defaultPluginsToBackfill,
     ]);
-    expect(
-      fs
-        .lstatSync(projectPluginPath(cwd, "plannotator-pi-extension"))
-        .isSymbolicLink(),
-    ).toBe(true);
+    for (const pluginName of defaultPluginsToBackfill) {
+      expect(
+        fs.lstatSync(projectPluginPath(cwd, pluginName)).isSymbolicLink(),
+      ).toBe(true);
+    }
   });
 
   it("does not queue reload when every discovered plugin is default-disabled", async () => {

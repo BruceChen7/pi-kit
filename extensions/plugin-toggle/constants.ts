@@ -18,6 +18,8 @@ export const GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES = new Set([
   "shared",
 ]);
 export const PROJECT_DEFAULT_ENABLED_PLUGINS = new Set([
+  "plan-mode",
+  "plannotator-auto",
   "plannotator-pi-extension",
   "pi-context",
 ]);

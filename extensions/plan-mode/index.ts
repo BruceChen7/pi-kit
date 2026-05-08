@@ -78,6 +78,13 @@ const TODO_TOOL_NAME = "plan_mode_todo";
 const PLANNOTATOR_SUBMIT_TOOL_NAME = "plannotator_auto_submit_review";
 const REVIEW_ARTIFACT_LOCATION =
   ".pi/plans/<repo>/plan/ or .pi/plans/<repo>/specs/";
+const COMPLETED_TODO_WIDGET_HIDE_DELAY_MS = 15_000;
+const PLAN_REVIEW_INTENT_PATTERNS = [
+  // English implementation verbs mean auto:plan should require review.
+  /\b(fix|implement|impl|add|create|build|refactor|optimi[sz]e|modify|edit|debug)\b/iu,
+  // Common Chinese implementation verbs for the same plan-review obligation.
+  /修复|实现|添加|新增|创建|修改|重构|优化|调试/u,
+] as const;
 
 const DEFAULT_CONFIG: PlanModeConfig = {
   defaultMode: "auto",
@@ -393,10 +400,12 @@ class PlanModeState {
     }
   }
 
+  isAutoPlanPhase(): boolean {
+    return this.mode === "auto" && this.phase === "plan";
+  }
+
   isPlanPhase(): boolean {
-    return (
-      this.mode === "plan" || (this.mode === "auto" && this.phase === "plan")
-    );
+    return this.mode === "plan" || this.isAutoPlanPhase();
   }
 
   hasUnfinishedTodos(): boolean {
@@ -520,6 +529,9 @@ const findCurrentTodo = (todos: TodoItem[]): TodoItem | undefined =>
   todos.find((todo) => todo.status === "in_progress") ??
   todos.find((todo) => todo.status === "todo") ??
   todos.find((todo) => todo.status === "blocked");
+
+const hasCompletedAllTodos = (todos: TodoItem[]): boolean =>
+  todos.length > 0 && todos.every((todo) => todo.status === "done");
 
 const formatTodoWidgetLines = (state: PlanModeState): string[] => {
   if (state.todos.length === 0) {
@@ -653,9 +665,14 @@ const turnWasAborted = (
   );
 };
 
+const promptHasPlanReviewIntent = (prompt: string): boolean =>
+  PLAN_REVIEW_INTENT_PATTERNS.some((pattern) => pattern.test(prompt));
+
 class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
   state = new PlanModeState(DEFAULT_CONFIG.defaultMode);
+  private autoPlanReviewRequiredForTurn = false;
+  private completedTodoHideTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly pi: ExtensionAPI) {}
 
@@ -663,6 +680,7 @@ class PlanModeController {
     this.config = loadPlanModeConfig(ctx.cwd);
     const entries = ctx.sessionManager.getEntries() as unknown[];
     this.state.restore(latestSnapshot(entries), this.config.defaultMode);
+    this.autoPlanReviewRequiredForTurn = false;
   }
 
   persist(): void {
@@ -693,8 +711,30 @@ class PlanModeController {
     ctx.ui.notify(`Plan mode: ${getModeLabel(this.state)}`, "info");
   }
 
+  cancelCompletedTodoWidgetHide(): void {
+    if (!this.completedTodoHideTimer) {
+      return;
+    }
+    clearTimeout(this.completedTodoHideTimer);
+    this.completedTodoHideTimer = undefined;
+  }
+
+  scheduleCompletedTodoWidgetHide(ctx: ExtensionContext): void {
+    if (this.completedTodoHideTimer) {
+      return;
+    }
+    this.completedTodoHideTimer = setTimeout(() => {
+      this.completedTodoHideTimer = undefined;
+      if (!ctx.hasUI || !hasCompletedAllTodos(this.state.todos)) {
+        return;
+      }
+      ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
+    }, COMPLETED_TODO_WIDGET_HIDE_DELAY_MS);
+  }
+
   updateUi(ctx: ExtensionContext): void {
     if (!ctx.hasUI) {
+      this.cancelCompletedTodoWidgetHide();
       return;
     }
 
@@ -702,12 +742,20 @@ class PlanModeController {
 
     const widgetLines = formatTodoWidgetLines(this.state);
     if (widgetLines.length === 0) {
+      this.cancelCompletedTodoWidgetHide();
       ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
       return;
     }
+
     ctx.ui.setWidget(TODO_WIDGET_KEY, widgetLines, {
       placement: "aboveEditor",
     });
+
+    if (hasCompletedAllTodos(this.state.todos)) {
+      this.scheduleCompletedTodoWidgetHide(ctx);
+      return;
+    }
+    this.cancelCompletedTodoWidgetHide();
   }
 
   buildModePrompt(): string {
@@ -744,6 +792,24 @@ class PlanModeController {
     if (this.state.updateWorkflowBypassForPrompt(prompt)) {
       this.persist();
     }
+    this.autoPlanReviewRequiredForTurn =
+      this.state.isAutoPlanPhase() &&
+      !this.state.isWorkflowBypassActive() &&
+      promptHasPlanReviewIntent(prompt);
+  }
+
+  hasPlanReviewObligation(): boolean {
+    if (!this.state.isPlanPhase()) {
+      return false;
+    }
+    if (this.state.mode === "plan") {
+      return true;
+    }
+    return (
+      this.autoPlanReviewRequiredForTurn ||
+      this.state.todos.length > 0 ||
+      this.state.latestReviewArtifactPath !== null
+    );
   }
 
   validateArtifactPolicyForPath(
@@ -1045,6 +1111,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
+    controller.cancelCompletedTodoWidgetHide();
     if (!ctx.hasUI) {
       return;
     }
@@ -1080,7 +1147,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       }
       return;
     }
-    if (controller.state.isPlanPhase() && controller.state.todos.length === 0) {
+    if (
+      controller.hasPlanReviewObligation() &&
+      controller.state.todos.length === 0
+    ) {
       pi.sendUserMessage(
         "Plan Mode requires a concrete TODO list before ending this planning turn. " +
           `Call ${TODO_TOOL_NAME} with action "set" or "add", then create and ` +

@@ -2,8 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import planModeExtension from "./index.js";
+
+const COMPLETED_TODO_WIDGET_HIDE_DELAY_MS = 15_000;
 
 type Handler = (event: unknown, ctx: TestCtx) => Promise<unknown> | unknown;
 type CommandRegistration = {
@@ -210,6 +212,10 @@ const validPlanContent = `## Context
 const invalidPlanContent = validPlanContent.replace("## Review", "## Notes");
 
 describe("plan-mode extension", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("blocks source writes during auto plan phase but allows review artifact writes", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
@@ -298,7 +304,8 @@ describe("plan-mode extension", () => {
     expect(widget).toContain("0/2 done");
   });
 
-  it("does not render auto act progress in the status area", async () => {
+  it("hides completed todo widget after a short completion summary", async () => {
+    vi.useFakeTimers();
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -338,6 +345,48 @@ describe("plan-mode extension", () => {
     );
     expect(lastWidgetLines(ctx).join("\n")).toContain("完成 3/3 done");
     expect(lastTodoWidgetCall(ctx)[2]).toEqual({ placement: "aboveEditor" });
+
+    await vi.advanceTimersByTimeAsync(COMPLETED_TODO_WIDGET_HIDE_DELAY_MS - 1);
+    expect(lastWidgetLines(ctx).join("\n")).toContain("完成 3/3 done");
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(lastTodoWidgetCall(ctx)).toEqual(["plan-mode-todos", undefined]);
+  });
+
+  it("does not let a stale completion timer hide a new unfinished todo widget", async () => {
+    vi.useFakeTimers();
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+    await harness.runCommand("plan-mode", "act", ctx);
+
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "完成第一批任务", status: "done" }],
+      },
+      ctx,
+    );
+    expect(lastWidgetLines(ctx).join("\n")).toContain("完成 1/1 done");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "add",
+        text: "继续处理新任务",
+        status: "todo",
+      },
+      ctx,
+    );
+    expect(lastWidgetLines(ctx).join("\n")).toContain("继续处理新任务");
+
+    await vi.advanceTimersByTimeAsync(
+      COMPLETED_TODO_WIDGET_HIDE_DELAY_MS - 5_000,
+    );
+    expect(lastWidgetLines(ctx).join("\n")).toContain("继续处理新任务");
   });
 
   it("normalizes pending todo input to todo", async () => {
@@ -399,6 +448,51 @@ describe("plan-mode extension", () => {
 
     expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
       expect.stringContaining("plan_mode_todo"),
+      { deliverAs: "followUp" },
+    );
+  });
+
+  it("does not require a TODO or plan review for read-only Q&A in auto plan", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await sendAgentPrompt(
+      harness,
+      ctx,
+      "why does the plan mode todo widget keep showing?",
+    );
+    await harness.emit("agent_end", { messages: [] }, ctx);
+
+    expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("still requires a TODO for implementation prompts in auto plan", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await sendAgentPrompt(harness, ctx, "fix the plan mode guard bug");
+    await harness.emit("agent_end", { messages: [] }, ctx);
+
+    expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining("plan_mode_todo"),
+      { deliverAs: "followUp" },
+    );
+  });
+
+  it("keeps review gating when read-only prompts create planning TODOs", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await sendAgentPrompt(harness, ctx, "why is plan mode asking for TODOs?");
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "记录诊断结论", status: "todo" }],
+      },
+      ctx,
+    );
+    await harness.emit("agent_end", { messages: [] }, ctx);
+
+    expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining("approved Plannotator plan/spec"),
       { deliverAs: "followUp" },
     );
   });

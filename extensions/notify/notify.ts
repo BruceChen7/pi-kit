@@ -17,14 +17,51 @@ import {
   type PiKitNotifyIdleEvent,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
+import { loadSettings } from "../shared/settings.ts";
 
 export interface NotifyConfig {
   /** Enable/disable the notification extension (default: true) */
-  enabled?: boolean;
+  enabled: boolean;
+  /** Send a desktop notification when the turn was explicitly aborted. */
+  notifyOnAbort: boolean;
+  /** Send a desktop notification when the turn ended with an error. */
+  notifyOnFailure: boolean;
+  /** Send a desktop notification when the assistant output was truncated. */
+  notifyOnTruncation: boolean;
+  /** Maximum body length after markdown simplification and whitespace normalization. */
+  maxBodyChars: number;
 }
 
 export const DEFAULT_CONFIG: NotifyConfig = {
   enabled: true,
+  notifyOnAbort: false,
+  notifyOnFailure: true,
+  notifyOnTruncation: true,
+  maxBodyChars: 200,
+};
+
+type NotifySettings = Partial<Record<keyof NotifyConfig, unknown>>;
+type AgentEndMessage = {
+  role?: string;
+  content?: unknown;
+  stopReason?: unknown;
+};
+type AgentEndEvent = { messages?: AgentEndMessage[] };
+type NotifyTurnStatus = "success" | "aborted" | "error" | "length";
+type NotifyTransportStatus = "sent" | "write-failed";
+
+type NotificationDecision = {
+  shouldNotify: boolean;
+  shouldEmitIdleEvent: boolean;
+  title: string;
+  body: string;
+  status: NotifyTurnStatus;
+  skipReason?: string;
+};
+
+type NotifyRuntimeContext = {
+  cwd?: string;
+  signal?: { aborted?: boolean };
 };
 
 /**
@@ -32,11 +69,60 @@ export const DEFAULT_CONFIG: NotifyConfig = {
  */
 let log: ReturnType<typeof createLogger> | null = null;
 
-async function initLogger(_cwd: string): Promise<void> {
+async function initLogger(): Promise<void> {
   log = createLogger("notify", {
     stderr: null,
   });
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const normalizeBoolean = (value: unknown, fallback: boolean): boolean =>
+  typeof value === "boolean" ? value : fallback;
+
+const normalizePositiveInteger = (value: unknown, fallback: number): number => {
+  if (!Number.isInteger(value) || typeof value !== "number" || value <= 0) {
+    return fallback;
+  }
+  return value;
+};
+
+export const normalizeNotifyConfig = (value: unknown): NotifyConfig => {
+  const settings = isRecord(value) ? (value as NotifySettings) : {};
+  return {
+    enabled: normalizeBoolean(settings.enabled, DEFAULT_CONFIG.enabled),
+    notifyOnAbort: normalizeBoolean(
+      settings.notifyOnAbort,
+      DEFAULT_CONFIG.notifyOnAbort,
+    ),
+    notifyOnFailure: normalizeBoolean(
+      settings.notifyOnFailure,
+      DEFAULT_CONFIG.notifyOnFailure,
+    ),
+    notifyOnTruncation: normalizeBoolean(
+      settings.notifyOnTruncation,
+      DEFAULT_CONFIG.notifyOnTruncation,
+    ),
+    maxBodyChars: normalizePositiveInteger(
+      settings.maxBodyChars,
+      DEFAULT_CONFIG.maxBodyChars,
+    ),
+  };
+};
+
+const loadNotifyConfig = (cwd: string): NotifyConfig => {
+  const { merged } = loadSettings(cwd);
+  return normalizeNotifyConfig(merged.notify);
+};
+
+const isUnsafeOscCodePoint = (codePoint: number): boolean =>
+  codePoint === 0x1b || codePoint === 0x7f || codePoint < 0x20;
+
+const sanitizeOscField = (value: string): string =>
+  Array.from(value)
+    .filter((char) => !isUnsafeOscCodePoint(char.codePointAt(0) ?? 0))
+    .join("");
 
 const wrapForTmuxPassthrough = (payload: string): string => {
   const escaped = payload.split("\x1b").join("\x1b\x1b");
@@ -44,17 +130,19 @@ const wrapForTmuxPassthrough = (payload: string): string => {
   return `\x1bPtmux;${escaped}\x1b\\`;
 };
 
-const notify = (title: string, body: string): void => {
+const notify = (title: string, body: string): NotifyTransportStatus => {
+  const safeTitle = sanitizeOscField(title);
+  const safeBody = sanitizeOscField(body);
   // OSC 777 format: ESC ] 777 ; notify ; title ; body BEL
-  const osc777 = `\x1b]777;notify;${title};${body}\x07`;
+  const osc777 = `\x1b]777;notify;${safeTitle};${safeBody}\x07`;
   const inTmux = Boolean(process.env.TMUX);
   const payload = inTmux ? wrapForTmuxPassthrough(osc777) : osc777;
 
   log?.debug("writing notification payload", {
     protocol: "OSC777",
     inTmux,
-    titleLength: title.length,
-    bodyLength: body.length,
+    titleLength: safeTitle.length,
+    bodyLength: safeBody.length,
     payloadPreview: payload
       .split("\x1b")
       .join("<ESC>")
@@ -65,7 +153,18 @@ const notify = (title: string, body: string): void => {
     tty: Boolean(process.stdout.isTTY),
   });
 
-  process.stdout.write(payload);
+  try {
+    process.stdout.write(payload);
+    return "sent";
+  } catch (error) {
+    log?.warn("notification write failed", {
+      error: error instanceof Error ? error.message : String(error),
+      term: process.env.TERM,
+      termProgram: process.env.TERM_PROGRAM,
+      tty: Boolean(process.stdout.isTTY),
+    });
+    return "write-failed";
+  }
 };
 
 const execFileAsync = (
@@ -126,33 +225,61 @@ const isTextPart = (part: unknown): part is { type: "text"; text: string } =>
       "text" in part,
   );
 
-const extractLastAssistantText = (
-  messages: Array<{ role?: string; content?: unknown }>,
-): string | null => {
+const findLastAssistantMessage = (
+  messages: AgentEndMessage[],
+): AgentEndMessage | null => {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
-    if (message?.role !== "assistant") {
-      continue;
+    if (message?.role === "assistant") {
+      return message;
     }
+  }
+  return null;
+};
 
-    const content = message.content;
-    if (typeof content === "string") {
-      return content.trim() || null;
-    }
+const extractLastAssistantText = (
+  messages: AgentEndMessage[],
+): string | null => {
+  const message = findLastAssistantMessage(messages);
+  const content = message?.content;
+  if (typeof content === "string") {
+    return content.trim() || null;
+  }
 
-    if (Array.isArray(content)) {
-      const text = content
-        .filter(isTextPart)
-        .map((part) => part.text)
-        .join("\n")
-        .trim();
-      return text || null;
-    }
-
-    return null;
+  if (Array.isArray(content)) {
+    const text = content
+      .filter(isTextPart)
+      .map((part) => part.text)
+      .join("\n")
+      .trim();
+    return text || null;
   }
 
   return null;
+};
+
+const extractLastAssistantStopReason = (
+  messages: AgentEndMessage[],
+): string | null => {
+  const stopReason = findLastAssistantMessage(messages)?.stopReason;
+  return typeof stopReason === "string" ? stopReason : null;
+};
+
+const resolveTurnStatus = (
+  event: AgentEndEvent,
+  ctx: NotifyRuntimeContext,
+): NotifyTurnStatus => {
+  const stopReason = extractLastAssistantStopReason(event.messages ?? []);
+  if (ctx.signal?.aborted || stopReason === "aborted") {
+    return "aborted";
+  }
+  if (stopReason === "error") {
+    return "error";
+  }
+  if (stopReason === "length") {
+    return "length";
+  }
+  return "success";
 };
 
 const plainMarkdownTheme: MarkdownTheme = {
@@ -177,21 +304,103 @@ const simpleMarkdown = (text: string, width = 80): string => {
   return markdown.render(width).join("\n");
 };
 
-const formatNotification = (
+const normalizeNotificationBody = (
   text: string | null,
-): { title: string; body: string } => {
+  maxBodyChars: number,
+): string => {
   const simplified = text ? simpleMarkdown(text) : "";
-  const normalized = simplified.replace(/\s+/g, " ").trim();
+  const normalized = sanitizeOscField(simplified.replace(/\s+/g, " ")).trim();
   if (!normalized) {
-    return { title: "Ready for input", body: "" };
+    return "";
+  }
+  return normalized.length > maxBodyChars
+    ? `${normalized.slice(0, maxBodyChars - 1)}…`
+    : normalized;
+};
+
+const fallbackBodyForStatus = (status: NotifyTurnStatus): string => {
+  switch (status) {
+    case "aborted":
+      return "Agent run was stopped.";
+    case "error":
+      return "Agent ended with an error.";
+    case "length":
+      return "Output was truncated.";
+    case "success":
+      return "";
+  }
+};
+
+const titleForStatus = (status: NotifyTurnStatus, hasBody: boolean): string => {
+  switch (status) {
+    case "aborted":
+      return "π stopped";
+    case "error":
+      return "π failed";
+    case "length":
+      return "π output truncated";
+    case "success":
+      return hasBody ? "π" : "Ready for input";
+  }
+};
+
+const shouldNotifyStatus = (
+  status: NotifyTurnStatus,
+  config: NotifyConfig,
+): boolean => {
+  switch (status) {
+    case "aborted":
+      return config.notifyOnAbort;
+    case "error":
+      return config.notifyOnFailure;
+    case "length":
+      return config.notifyOnTruncation;
+    case "success":
+      return true;
+  }
+};
+
+const buildNotificationDecision = (input: {
+  event: AgentEndEvent;
+  ctx: NotifyRuntimeContext;
+  config: NotifyConfig;
+  lastText: string | null;
+}): NotificationDecision => {
+  const status = resolveTurnStatus(input.event, input.ctx);
+  const body =
+    normalizeNotificationBody(input.lastText, input.config.maxBodyChars) ||
+    fallbackBodyForStatus(status);
+  const title = titleForStatus(status, Boolean(body));
+
+  if (!input.config.enabled) {
+    return {
+      shouldNotify: false,
+      shouldEmitIdleEvent: false,
+      title,
+      body,
+      status,
+      skipReason: "disabled",
+    };
   }
 
-  const maxBody = 200;
-  const body =
-    normalized.length > maxBody
-      ? `${normalized.slice(0, maxBody - 1)}…`
-      : normalized;
-  return { title: "π", body };
+  if (!shouldNotifyStatus(status, input.config)) {
+    return {
+      shouldNotify: false,
+      shouldEmitIdleEvent: false,
+      title,
+      body,
+      status,
+      skipReason: `status-${status}-disabled`,
+    };
+  }
+
+  return {
+    shouldNotify: true,
+    shouldEmitIdleEvent: status === "success",
+    title,
+    body,
+    status,
+  };
 };
 
 const createNotifyIdleEvent = (input: {
@@ -212,7 +421,7 @@ const createNotifyIdleEvent = (input: {
 });
 
 export default async function (pi: ExtensionAPI) {
-  await initLogger(process.cwd());
+  await initLogger();
 
   log?.debug("extension initialized", {
     pid: process.pid,
@@ -221,7 +430,7 @@ export default async function (pi: ExtensionAPI) {
     tty: Boolean(process.stdout.isTTY),
   });
 
-  pi.on("agent_end", async (event, ctx) => {
+  pi.on("agent_end", async (event: AgentEndEvent, ctx: unknown) => {
     const messages = event.messages ?? [];
     const last = messages.at(-1);
     const lastContentType =
@@ -242,20 +451,49 @@ export default async function (pi: ExtensionAPI) {
       preview: lastText ? lastText.slice(0, 120) : null,
     });
 
-    const { title, body } = formatNotification(lastText);
+    const runtimeCtx = isRecord(ctx) ? (ctx as NotifyRuntimeContext) : {};
+    const config = loadNotifyConfig(runtimeCtx.cwd ?? process.cwd());
+    const decision = buildNotificationDecision({
+      event,
+      ctx: runtimeCtx,
+      config,
+      lastText,
+    });
+    if (!decision.shouldNotify) {
+      log?.debug("notification skipped", {
+        status: decision.status,
+        skipReason: decision.skipReason,
+      });
+      return;
+    }
+
     const inTmux = Boolean(process.env.TMUX);
-    const resolvedTitle = await resolveNotificationTitle(title, inTmux);
+    const resolvedTitle = await resolveNotificationTitle(
+      decision.title,
+      inTmux,
+    );
     log?.debug("notification formatted", {
       title: resolvedTitle,
-      bodyPreview: body.slice(0, 120),
-      bodyLength: body.length,
+      bodyPreview: decision.body.slice(0, 120),
+      bodyLength: decision.body.length,
+      status: decision.status,
       inTmux,
     });
 
-    notify(resolvedTitle, body);
-    pi.events.emit(
-      NOTIFY_IDLE_CHANNEL,
-      createNotifyIdleEvent({ title: resolvedTitle, body, ctx }),
-    );
+    const transportStatus = notify(resolvedTitle, decision.body);
+    if (transportStatus !== "sent") {
+      return;
+    }
+
+    if (decision.shouldEmitIdleEvent) {
+      pi.events.emit(
+        NOTIFY_IDLE_CHANNEL,
+        createNotifyIdleEvent({
+          title: resolvedTitle,
+          body: decision.body,
+          ctx,
+        }),
+      );
+    }
   });
 }

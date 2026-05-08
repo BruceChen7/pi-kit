@@ -87,6 +87,7 @@ type SessionRuntimeState = PlanReviewSessionState & {
     string,
     Map<string, PendingPlanReviewEventHandle>
   >;
+  pendingPlanReviewGateKeysByCwd: Map<string, string>;
   pendingPlanReviewTargetsByCwd: Map<string, Map<string, PendingPlanReview>>;
   toolArgsByCallId: Map<string, unknown>;
   markdownFilesByCwd: Map<string, Map<string, SessionMarkdownFile>>;
@@ -152,6 +153,7 @@ const syncPrimaryPendingPlanReview = (
   }
 
   state.pendingPlanReviewByCwd.delete(cwd);
+  state.pendingPlanReviewGateKeysByCwd.delete(cwd);
   state.pendingPlanReviewTargetsByCwd.delete(cwd);
 };
 
@@ -318,6 +320,37 @@ const emitPendingPlanReviewEvent = (
   } satisfies PiKitPlannotatorPendingReviewEvent);
 };
 
+const getPendingPlanReviewGateKey = (
+  pendingPlanReviews: PendingPlanReview[],
+): string =>
+  pendingPlanReviews
+    .map((pending) => pending.resolvedPlanPath)
+    .sort((left, right) => left.localeCompare(right))
+    .join("\0");
+
+const notifyPendingPlanReviewGate = (
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  state: SessionRuntimeState,
+  pendingPlanReviews: PendingPlanReview[],
+): void => {
+  if (pendingPlanReviews.length === 0) {
+    return;
+  }
+
+  const gateKey = getPendingPlanReviewGateKey(pendingPlanReviews);
+  if (state.pendingPlanReviewGateKeysByCwd.get(ctx.cwd) === gateKey) {
+    return;
+  }
+
+  state.pendingPlanReviewGateKeysByCwd.set(ctx.cwd, gateKey);
+  const planFiles = pendingPlanReviews.map((pending) => pending.planFile);
+  pi.sendUserMessage(formatPendingPlanReviewGateMessage(planFiles), {
+    deliverAs: "followUp",
+  });
+  emitPendingPlanReviewEvent(pi, ctx, state, pendingPlanReviews);
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -379,6 +412,7 @@ let log: ReturnType<typeof createLogger> | null = null;
 
 const createSessionRuntimeState = (): SessionRuntimeState => ({
   pendingPlanReviewEventsByCwd: new Map(),
+  pendingPlanReviewGateKeysByCwd: new Map(),
   pendingPlanReviewTargetsByCwd: new Map(),
   toolArgsByCallId: new Map<string, unknown>(),
   markdownFilesByCwd: new Map(),
@@ -1958,14 +1992,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       pendingPlanReviews.length > 0 &&
       !activePlanReview
     ) {
-      const planFiles = pendingPlanReviews.map((pending) => pending.planFile);
-      pi.sendUserMessage(formatPendingPlanReviewGateMessage(planFiles), {
-        deliverAs: ctx.isIdle() ? "followUp" : "steer",
-      });
-      emitPendingPlanReviewEvent(pi, ctx, state, pendingPlanReviews);
-      if (!ctx.isIdle()) {
-        ctx.abort();
-      }
+      notifyPendingPlanReviewGate(pi, ctx, state, pendingPlanReviews);
     }
 
     setReviewWidget(ctx);
@@ -1983,11 +2010,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     const pendingPlanReviews = listPendingPlanReviews(state, ctx.cwd);
     const activePlanReview = state.activePlanReviewByCwd.get(ctx.cwd);
     if (pendingPlanReviews.length > 0 && !activePlanReview) {
-      const planFiles = pendingPlanReviews.map((pending) => pending.planFile);
-      pi.sendUserMessage(formatPendingPlanReviewGateMessage(planFiles), {
-        deliverAs: "followUp",
-      });
-      emitPendingPlanReviewEvent(pi, ctx, state, pendingPlanReviews);
+      notifyPendingPlanReviewGate(pi, ctx, state, pendingPlanReviews);
       setReviewWidget(ctx);
       return;
     }

@@ -29,7 +29,9 @@ During Act phase, update a task to `in_progress` before starting it and `done` a
 
 Plan Mode is intentionally separate from `extensions/plannotator-auto/`:
 
-- Plan Mode owns mode state, tool guards, TODOs, and progress UI.
+- Plan Mode owns mode state, tool guards, TODOs, and progress UI. Progress details are
+  shown in the TODO widget above the editor; Plan Mode does not use the status area below
+  the editor for `auto:act 3/3`-style summaries.
 - Plannotator Auto owns plan/spec detection and review feedback.
 
 For implementation tasks, create a reviewable artifact under one of the paths watched by Plannotator Auto, for example:

@@ -18,6 +18,11 @@ type FakePi = ReturnType<typeof createFakePi>;
 type Emit = FakePi["emit"];
 type TestApi = FakePi["api"];
 type ReviewPromptDelivery = "steer" | "followUp";
+type ReviewPromptOptions = {
+  path: string;
+  deliverAs: ReviewPromptDelivery;
+  shouldContainToolName?: boolean;
+};
 type PlanReviewApiMockOptions = {
   createRequestPlannotator?: ReturnType<typeof vi.fn>;
   startPlanReview?: ReturnType<typeof vi.fn>;
@@ -132,30 +137,33 @@ async function writeSpecDraft(
   return relativePath;
 }
 
+function matchingReviewPromptCalls(
+  sendUserMessage: TestApi["sendUserMessage"],
+  options: ReviewPromptOptions,
+): Array<[unknown, unknown]> {
+  return (sendUserMessage.mock.calls as Array<[unknown, unknown]>).filter(
+    ([body, delivery]) => {
+      const message = String(body);
+      const deliverAs = (delivery as { deliverAs?: unknown } | undefined)
+        ?.deliverAs;
+      const hasExpectedDelivery = deliverAs === options.deliverAs;
+      const hasExpectedPath = message.includes(options.path);
+      const hasExpectedToolName =
+        options.shouldContainToolName === false ||
+        message.includes("plannotator_auto_submit_review");
+
+      return hasExpectedDelivery && hasExpectedPath && hasExpectedToolName;
+    },
+  );
+}
+
 function expectReviewPromptSent(
   sendUserMessage: TestApi["sendUserMessage"],
-  options: {
-    path: string;
-    deliverAs: ReviewPromptDelivery;
-    shouldContainToolName?: boolean;
-  },
+  options: ReviewPromptOptions,
 ): void {
-  const matchingCall = (
-    sendUserMessage.mock.calls as Array<[unknown, unknown]>
-  ).find(([body, delivery]) => {
-    const message = String(body);
-    const deliverAs = (delivery as { deliverAs?: unknown } | undefined)
-      ?.deliverAs;
-    const hasExpectedDelivery = deliverAs === options.deliverAs;
-    const hasExpectedPath = message.includes(options.path);
-    const hasExpectedToolName =
-      options.shouldContainToolName === false ||
-      message.includes("plannotator_auto_submit_review");
-
-    return hasExpectedDelivery && hasExpectedPath && hasExpectedToolName;
-  });
-
-  expect(matchingCall).toBeDefined();
+  expect(
+    matchingReviewPromptCalls(sendUserMessage, options).length,
+  ).toBeGreaterThan(0);
 }
 
 type PlannotatorAutoTestHarness = FakePi &
@@ -221,16 +229,16 @@ describe("plan review trigger timing", () => {
         );
 
         expect(startPlanReview).not.toHaveBeenCalled();
-        expect(ctx.abort).toHaveBeenCalledTimes(1);
+        expect(ctx.abort).not.toHaveBeenCalled();
         expectReviewPromptSent(api.sendUserMessage, {
           path: planFileRelative,
-          deliverAs: "steer",
+          deliverAs: "followUp",
         });
       },
     );
   });
 
-  it("immediately steers manual review submission after a busy plan-file write", async () => {
+  it("queues manual review submission after a busy plan-file write", async () => {
     await withPlannotatorAutoTest(
       "plannotator-auto-plan-review-",
       async ({ api, emit, repoRoot, repoName, startPlanReview, createCtx }) => {
@@ -244,11 +252,11 @@ describe("plan review trigger timing", () => {
         await reviewPromise;
 
         expect(startPlanReview).not.toHaveBeenCalled();
-        expect(ctx.abort).toHaveBeenCalledTimes(1);
+        expect(ctx.abort).not.toHaveBeenCalled();
         expect(ctx.ui.notify).not.toHaveBeenCalled();
         expectReviewPromptSent(api.sendUserMessage, {
           path: planFileRelative,
-          deliverAs: "steer",
+          deliverAs: "followUp",
         });
       },
     );
@@ -279,7 +287,7 @@ describe("plan review trigger timing", () => {
     );
   });
 
-  it("sends a strict follow-up gate message at agent_end when a plan draft is still pending", async () => {
+  it("sends one follow-up gate message when a plan draft is still pending", async () => {
     await withPlannotatorAutoTest(
       "plannotator-auto-pending-gate-",
       async ({ api, emit, repoRoot, repoName, startPlanReview, createCtx }) => {
@@ -291,10 +299,12 @@ describe("plan review trigger timing", () => {
         await emit("agent_end", {}, ctx);
 
         expect(startPlanReview).not.toHaveBeenCalled();
-        expectReviewPromptSent(api.sendUserMessage, {
-          path: planFileRelative,
-          deliverAs: "followUp",
-        });
+        expect(
+          matchingReviewPromptCalls(api.sendUserMessage, {
+            path: planFileRelative,
+            deliverAs: "followUp",
+          }),
+        ).toHaveLength(1);
       },
     );
   });

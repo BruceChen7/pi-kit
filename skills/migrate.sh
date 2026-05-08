@@ -2,9 +2,9 @@
 
 # Skills Migration Script
 # Usage:
-#   ./migrate.sh import   - Install GitHub + local repo skills into ~/.agents/skills
+#   ./migrate.sh import   - Install GitHub skills into ~/.agents/git-skills and local repo skills into ~/.agents/me-skills
 #   ./migrate.sh update   - Update GitHub skill repos in ~/.agents/git-skills
-#   ./migrate.sh export   - Scan ~/.agents/skills and update skills/skills.txt
+#   ./migrate.sh export   - Scan ~/.agents/me-skills + ~/.agents/git-skills and update skills/skills.txt
 #
 # Configuration:
 #   skills.txt - List of skills with format:
@@ -17,7 +17,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_FILE="$SCRIPT_DIR/skills.txt"
-MACHINE_SKILLS_DIR="$HOME/.agents/skills"
+ME_SKILLS_DIR="$HOME/.agents/me-skills"
 GIT_CLONE_BASE_DIR="$HOME/.agents/git-skills"
 
 # Colors for output
@@ -42,9 +42,9 @@ usage() {
     echo "Usage: $0 {import|export|update}"
     echo ""
     echo "Commands:"
-    echo "  import   Install GitHub + local repo skills into ~/.agents/skills"
+    echo "  import   Install GitHub skills into ~/.agents/git-skills and local repo skills into ~/.agents/me-skills"
     echo "  update   Update GitHub skill repos in ~/.agents/git-skills"
-    echo "  export   Scan ~/.agents/skills and update skills/skills.txt"
+    echo "  export   Scan ~/.agents/me-skills + ~/.agents/git-skills and update skills/skills.txt"
     echo ""
     echo "Configuration:"
     echo "  Edit skills.txt to manage skill list"
@@ -112,7 +112,7 @@ checkout_default_branch() {
     fi
 }
 
-# Ensure repo is cloned (supports sparse checkout when repo_path is provided)
+# Ensure repo is cloned (supports accumulating sparse checkout paths).
 ensure_repo_cloned() {
     local repo_url="$1"
     local repo_path="$2"
@@ -135,14 +135,29 @@ ensure_repo_cloned() {
     fi
 
     if [ -n "$repo_path" ]; then
-        (cd "$clone_base" && git sparse-checkout init --cone >/dev/null 2>&1 || true)
-        (cd "$clone_base" && git sparse-checkout set "$repo_path" >/dev/null 2>&1 || true)
-        (cd "$clone_base" && checkout_default_branch)
+        (
+            cd "$clone_base"
+            git sparse-checkout init --cone >/dev/null 2>&1 || true
+
+            local sparse_paths=()
+            while IFS= read -r path; do
+                if [ -n "$path" ]; then
+                    sparse_paths+=("$path")
+                fi
+            done < <(git sparse-checkout list 2>/dev/null || true)
+
+            if ! array_contains "$repo_path" "${sparse_paths[@]}"; then
+                sparse_paths+=("$repo_path")
+            fi
+
+            git sparse-checkout set "${sparse_paths[@]}" >/dev/null 2>&1 || true
+            checkout_default_branch
+        )
     else
         if [ "$(cd "$clone_base" && git config --bool core.sparseCheckout 2>/dev/null)" = "true" ]; then
             (cd "$clone_base" && git sparse-checkout disable >/dev/null 2>&1 || true)
-            (cd "$clone_base" && checkout_default_branch)
         fi
+        (cd "$clone_base" && checkout_default_branch)
     fi
 
     echo "$clone_base"
@@ -153,18 +168,21 @@ resolve_path() {
     if command -v realpath >/dev/null 2>&1; then
         realpath "$path"
     else
-        python3 - "$path" <<'PY'
-import os, sys
-print(os.path.realpath(sys.argv[1]))
-PY
+        python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$path"
     fi
 }
 
 relative_path() {
-    python3 - "$1" "$2" <<'PY'
-import os, sys
-print(os.path.relpath(sys.argv[1], sys.argv[2]))
-PY
+    local path
+    local root
+    path=$(resolve_path "$1")
+    root=$(resolve_path "$2")
+
+    if [ "$path" = "$root" ]; then
+        echo "."
+    else
+        echo "${path#"$root"/}"
+    fi
 }
 
 extract_skill_name() {
@@ -212,11 +230,11 @@ is_path_within_root() {
     esac
 }
 
-# Import skills: git clone + symlink to machine directory
+# Import skills: clone GitHub repos and symlink local repo skills into me-skills.
 import_skills() {
-    log_info "Importing skills to $MACHINE_SKILLS_DIR..."
+    log_info "Importing GitHub skills to $GIT_CLONE_BASE_DIR and local skills to $ME_SKILLS_DIR..."
     ensure_git_clone_dir
-    mkdir -p "$MACHINE_SKILLS_DIR"
+    mkdir -p "$ME_SKILLS_DIR"
 
     local skipped=()
     local local_repo_root
@@ -251,23 +269,15 @@ import_skills() {
                 log_warn "Local skill name mismatch ($skill_name vs $resolved_name), using $resolved_name"
             fi
 
-            local skill_symlink_path="$MACHINE_SKILLS_DIR/$resolved_name"
+            local skill_symlink_path="$ME_SKILLS_DIR/$resolved_name"
             if [ -e "$skill_symlink_path" ] || [ -L "$skill_symlink_path" ]; then
-                log_warn "Skipping existing skill: $resolved_name"
+                log_warn "Skipping existing local skill: $resolved_name"
                 skipped+=("$resolved_name")
                 continue
             fi
 
             ln -s "$local_skill_dir" "$skill_symlink_path"
-            log_info "Created symlink: $resolved_name -> $local_skill_dir"
-            continue
-        fi
-
-        skill_symlink_path="$MACHINE_SKILLS_DIR/$skill_name"
-
-        if [ -e "$skill_symlink_path" ] || [ -L "$skill_symlink_path" ]; then
-            log_warn "Skipping existing skill: $skill_name"
-            skipped+=("$skill_name")
+            log_info "Created local symlink: $resolved_name -> $local_skill_dir"
             continue
         fi
 
@@ -277,31 +287,30 @@ import_skills() {
                 continue
             fi
 
+            local clone_base
             clone_base=$(ensure_repo_cloned "$repo_url" "$repo_path") || {
                 log_error "Failed to clone: $skill_name"
                 continue
             }
 
+            local skill_source="$clone_base"
             if [ -n "$repo_path" ]; then
-                link_source="$clone_base/$repo_path"
-            else
-                link_source="$clone_base"
+                skill_source="$clone_base/$repo_path"
             fi
 
-            if [ ! -d "$link_source" ]; then
-                log_error "Skill path not found: $link_source"
+            if [ ! -d "$skill_source" ]; then
+                log_error "Skill path not found: $skill_source"
                 continue
             fi
 
-            ln -s "$link_source" "$skill_symlink_path"
-            log_info "Created symlink: $skill_name -> $link_source"
+            log_info "GitHub skill available from library: $skill_name -> $skill_source"
         else
             log_warn "No git repo specified for: $skill_name"
         fi
     done < <(read_skills)
 
     if [ "${#skipped[@]}" -gt 0 ]; then
-        log_warn "Skipped existing skills: ${skipped[*]}"
+        log_warn "Skipped existing local skills: ${skipped[*]}"
     fi
 
     log_info "Import completed!"
@@ -367,47 +376,52 @@ update_skills() {
     log_info "Update completed!"
 }
 
-# Export skills: scan machine directory and update skills.txt
+# Export skills: scan me-skills + git-skills and update skills.txt.
 export_skills() {
-    log_info "Exporting skills from $MACHINE_SKILLS_DIR to $SKILLS_FILE..."
-
-    if [ ! -d "$MACHINE_SKILLS_DIR" ]; then
-        log_error "Machine skills directory not found: $MACHINE_SKILLS_DIR"
-        exit 1
-    fi
+    log_info "Exporting skills from $ME_SKILLS_DIR and $GIT_CLONE_BASE_DIR to $SKILLS_FILE..."
 
     local entries=()
     local local_repo_root
     local_repo_root=$(resolve_path "$SCRIPT_DIR/..")
 
-    while IFS= read -r -d '' entry; do
-        local skill_name
-        local target_path
-        local git_repo_root
-        local repo_url
-        local repo_path
-        local resolved_target
-
-        skill_name=$(basename "$entry")
-
-        if [ "$skill_name" = "skills.txt" ] || [ "$skill_name" = "migrate.sh" ]; then
-            continue
+    add_export_entry() {
+        local entry="$1"
+        if ! array_contains "$entry" "${entries[@]}"; then
+            entries+=("$entry")
         fi
+    }
 
-        if [ -L "$entry" ]; then
-            target_path=$(resolve_path "$entry")
-        else
-            target_path="$entry"
-        fi
+    if [ -d "$ME_SKILLS_DIR" ]; then
+        while IFS= read -r -d '' entry; do
+            local skill_name
+            local target_path
+            local repo_path
+            local resolved_target
 
-        if [ ! -d "$target_path" ]; then
-            log_warn "Skipping non-directory skill: $skill_name"
-            continue
-        fi
+            skill_name=$(basename "$entry")
 
-        resolved_target=$(resolve_path "$target_path")
+            if [ "$skill_name" = "skills.txt" ] || [ "$skill_name" = "migrate.sh" ]; then
+                continue
+            fi
 
-        if is_path_within_root "$resolved_target" "$local_repo_root"; then
+            if [ -L "$entry" ]; then
+                target_path=$(resolve_path "$entry")
+            else
+                target_path="$entry"
+            fi
+
+            if [ ! -d "$target_path" ]; then
+                log_warn "Skipping non-directory personal skill: $skill_name"
+                continue
+            fi
+
+            resolved_target=$(resolve_path "$target_path")
+
+            if ! is_path_within_root "$resolved_target" "$local_repo_root"; then
+                log_warn "Skipping personal skill outside this repo: $skill_name"
+                continue
+            fi
+
             local local_name
             if ! local_name=$(extract_skill_name "$resolved_target"); then
                 local_name=$(basename "$resolved_target")
@@ -416,33 +430,55 @@ export_skills() {
 
             repo_path=$(relative_path "$resolved_target" "$local_repo_root")
             repo_path=$(sanitize_repo_path "$repo_path")
-            entries+=("$local_name|local|$repo_path")
-            continue
-        fi
+            add_export_entry "$local_name|local|$repo_path"
+        done < <(find "$ME_SKILLS_DIR" -mindepth 1 -maxdepth 1 -print0)
+    else
+        log_warn "Personal skills directory not found: $ME_SKILLS_DIR"
+    fi
 
-        git_repo_root=$(git -C "$resolved_target" rev-parse --show-toplevel 2>/dev/null) || {
-            log_warn "Skipping non-git skill: $skill_name"
-            continue
-        }
+    if [ -d "$GIT_CLONE_BASE_DIR" ]; then
+        while IFS= read -r -d '' skill_file; do
+            local skill_dir
+            local skill_name
+            local git_repo_root
+            local repo_url
+            local repo_path
+            local resolved_target
 
-        repo_url=$(git -C "$git_repo_root" remote get-url origin 2>/dev/null) || {
-            log_warn "Skipping git repo without origin: $skill_name"
-            continue
-        }
+            skill_dir=$(dirname "$skill_file")
+            resolved_target=$(resolve_path "$skill_dir")
 
-        if ! is_github_repo "$repo_url"; then
-            log_warn "Skipping non-GitHub repo: $skill_name"
-            continue
-        fi
+            if ! skill_name=$(extract_skill_name "$resolved_target"); then
+                skill_name=$(basename "$resolved_target")
+                log_warn "Missing SKILL.md name for GitHub skill: $resolved_target (using $skill_name)"
+            fi
 
-        repo_path=""
-        if [ "$(resolve_path "$git_repo_root")" != "$resolved_target" ]; then
-            repo_path=$(relative_path "$resolved_target" "$git_repo_root")
-            repo_path=$(sanitize_repo_path "$repo_path")
-        fi
+            git_repo_root=$(git -C "$resolved_target" rev-parse --show-toplevel 2>/dev/null) || {
+                log_warn "Skipping non-git skill: $skill_name"
+                continue
+            }
 
-        entries+=("$skill_name|$repo_url|$repo_path")
-    done < <(find "$MACHINE_SKILLS_DIR" -mindepth 1 -maxdepth 1 -print0)
+            repo_url=$(git -C "$git_repo_root" remote get-url origin 2>/dev/null) || {
+                log_warn "Skipping git repo without origin: $skill_name"
+                continue
+            }
+
+            if ! is_github_repo "$repo_url"; then
+                log_warn "Skipping non-GitHub repo: $skill_name"
+                continue
+            fi
+
+            repo_path=""
+            if [ "$(resolve_path "$git_repo_root")" != "$resolved_target" ]; then
+                repo_path=$(relative_path "$resolved_target" "$git_repo_root")
+                repo_path=$(sanitize_repo_path "$repo_path")
+            fi
+
+            add_export_entry "$skill_name|$repo_url|$repo_path"
+        done < <(find "$GIT_CLONE_BASE_DIR" \( -name .git -o -name node_modules \) -prune -o -name SKILL.md -print0)
+    else
+        log_warn "Git skill directory not found: $GIT_CLONE_BASE_DIR"
+    fi
 
     {
         cat <<'EOF'

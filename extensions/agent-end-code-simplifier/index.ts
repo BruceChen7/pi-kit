@@ -7,10 +7,13 @@ import {
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
 
+export type AgentEndCodeSimplifierAbortBehavior = "skip" | "confirm";
+
 export type AgentEndCodeSimplifierConfig = {
   enabled: boolean;
   extensions: string[];
   promptTemplate: string;
+  abortBehavior: AgentEndCodeSimplifierAbortBehavior;
 };
 
 type AgentEndCodeSimplifierSettings = {
@@ -18,6 +21,7 @@ type AgentEndCodeSimplifierSettings = {
   extensions?: unknown;
   extraExtensions?: unknown;
   promptTemplate?: unknown;
+  abortBehavior?: unknown;
 };
 
 export const DEFAULT_SUPPORTED_EXTENSIONS = [
@@ -72,6 +76,11 @@ const normalizeBoolean = (value: unknown, fallback: boolean): boolean =>
 const normalizeString = (value: unknown, fallback: string): string =>
   typeof value === "string" && value.trim().length > 0 ? value : fallback;
 
+const normalizeAbortBehavior = (
+  value: unknown,
+): AgentEndCodeSimplifierAbortBehavior =>
+  value === "confirm" || value === "skip" ? value : "skip";
+
 const normalizeExtensionList = (
   value: unknown,
   fallback: readonly string[] = [],
@@ -119,6 +128,7 @@ export const normalizeConfig = (
       raw?.promptTemplate,
       DEFAULT_PROMPT_TEMPLATE,
     ),
+    abortBehavior: normalizeAbortBehavior(raw?.abortBehavior),
   };
 };
 
@@ -205,6 +215,21 @@ const lastUserMessageLooksAutoTriggered = (
   return false;
 };
 
+const containsAbortedMessage = (messages: readonly unknown[]): boolean =>
+  messages.some(
+    (message) =>
+      Boolean(message) &&
+      typeof message === "object" &&
+      "stopReason" in message &&
+      message.stopReason === "aborted",
+  );
+
+const turnWasAborted = (
+  event: { messages?: readonly unknown[] },
+  ctx: { signal?: AbortSignal },
+): boolean =>
+  Boolean(ctx.signal?.aborted) || containsAbortedMessage(event.messages ?? []);
+
 type ApprovalRaceInput = {
   localDecision: Promise<boolean>;
   remoteDecisions: Array<Promise<boolean>>;
@@ -251,6 +276,7 @@ export default function agentEndCodeSimplifierExtension(
       enabled: config.enabled,
       extensions: config.extensions,
       promptTemplateLength: config.promptTemplate.length,
+      abortBehavior: config.abortBehavior,
     });
   };
 
@@ -258,6 +284,7 @@ export default function agentEndCodeSimplifierExtension(
     cwd: ctx.cwd,
     hasUI: ctx.hasUI,
     enabled: config.enabled,
+    abortBehavior: config.abortBehavior,
     modifiedPaths: [...modifiedPaths].sort(),
   });
 
@@ -351,6 +378,18 @@ export default function agentEndCodeSimplifierExtension(
     const supportedPaths = collectSupportedPaths(modifiedPaths, config);
     if (supportedPaths.length === 0) {
       log.debug("agent_end_skipped_no_supported_paths", diagnostics(ctx));
+      return;
+    }
+
+    if (config.abortBehavior === "skip" && turnWasAborted(event, ctx)) {
+      log.debug("agent_end_skipped_aborted_turn", {
+        ...diagnostics(ctx),
+        supportedPaths,
+      });
+      ctx.ui.notify(
+        `Skipped me-code-simplifier because this turn was aborted. Press Ctrl+Alt+Y to run it for ${supportedPaths.length} modified file(s).`,
+        "info",
+      );
       return;
     }
 

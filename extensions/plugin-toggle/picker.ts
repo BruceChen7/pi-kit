@@ -44,11 +44,11 @@ export class PluginTogglePicker {
       if (plugin) this.onToggle(plugin);
       return;
     }
-    if (data === "k" || data === "\u001b[A") {
+    if (matchesKey(data, "up")) {
       this.moveSelection(-1);
       return;
     }
-    if (data === "j" || data === "\u001b[B") {
+    if (matchesKey(data, "down")) {
       this.moveSelection(1);
       return;
     }
@@ -63,7 +63,7 @@ export class PluginTogglePicker {
     }
   }
 
-  private moveSelection(delta: number): void {
+  private moveSelection(delta: -1 | 1): void {
     const lastIndex = Math.max(0, this.filtered.length - 1);
     this.selected = Math.min(lastIndex, Math.max(0, this.selected + delta));
   }
@@ -119,7 +119,7 @@ export class PluginTogglePicker {
     if (this.filtered.length === 0)
       lines.push(row(muted("No matching plugins")));
     lines.push(border(`├${"─".repeat(innerW)}┤`));
-    lines.push(row(muted("j/k or ↑/↓ navigate  enter toggle  esc cancel")));
+    lines.push(row(muted("↑/↓ navigate  enter toggle  esc cancel")));
     lines.push(border(`╰${"─".repeat(innerW)}╯`));
     return lines;
   }

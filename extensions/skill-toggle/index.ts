@@ -165,15 +165,24 @@ function getPathDisabledSkillNames(
   return names;
 }
 
-function getNameDisabledSkills(
-  disabledNames: Set<string>,
-  skills: Skill[],
-  disabledPaths: Set<string>,
-): Set<string> {
-  const pathDisabledNames = getPathDisabledSkillNames(skills, disabledPaths);
-  return new Set(
-    Array.from(disabledNames).filter((name) => !pathDisabledNames.has(name)),
+function hasProjectSkillNamed(name: string, skills: Skill[]): boolean {
+  return skills.some(
+    (skill) =>
+      skill.scope === "project" && normalizeSkillName(skill.name) === name,
   );
+}
+
+function isNameDisabledSkill(
+  skill: Skill,
+  skills: Skill[],
+  disabledNames: Set<string>,
+  disabledPaths: Set<string>,
+): boolean {
+  const name = normalizeSkillName(skill.name);
+  if (!disabledNames.has(name)) return false;
+  if (getPathDisabledSkillNames(skills, disabledPaths).has(name)) return false;
+  if (skill.scope !== "project") return true;
+  return !hasProjectSkillNamed(name, skills);
 }
 
 export function isSkillDisabledForList(
@@ -182,9 +191,10 @@ export function isSkillDisabledForList(
   disabledNames: Set<string>,
   disabledPaths: Set<string>,
 ): boolean {
-  if (isSkillPathDisabled(skill, disabledPaths)) return true;
-  const name = normalizeSkillName(skill.name);
-  return getNameDisabledSkills(disabledNames, skills, disabledPaths).has(name);
+  return (
+    isSkillPathDisabled(skill, disabledPaths) ||
+    isNameDisabledSkill(skill, skills, disabledNames, disabledPaths)
+  );
 }
 
 export function formatSkillDisplayDetails(skill: Skill): string {
@@ -1423,7 +1433,7 @@ function notifySkillLinkResult(
   }
 }
 
-class SkillTogglePicker {
+export class SkillTogglePicker {
   private filtered: Skill[];
   private selected = 0;
   private query = "";
@@ -1473,32 +1483,20 @@ class SkillTogglePicker {
       return;
     }
 
+    if (matchesKey(data, "up")) {
+      this.moveSelection(-1);
+      return;
+    }
+
+    if (matchesKey(data, "down")) {
+      this.moveSelection(1);
+      return;
+    }
+
     if (matchesKey(data, "return")) {
       const skill = this.filtered[this.selected];
       if (skill) {
         this.onToggle(skill);
-      }
-      return;
-    }
-
-    if (data === "k") {
-      if (this.filtered.length > 0) {
-        if (this.selected === 0) {
-          this.showBoundaryMessage("Top");
-        } else {
-          this.selected -= 1;
-        }
-      }
-      return;
-    }
-
-    if (data === "j") {
-      if (this.filtered.length > 0) {
-        if (this.selected === this.filtered.length - 1) {
-          this.showBoundaryMessage("Bottom");
-        } else {
-          this.selected += 1;
-        }
       }
       return;
     }
@@ -1515,6 +1513,21 @@ class SkillTogglePicker {
       this.query += data;
       this.updateFilter();
     }
+  }
+
+  private moveSelection(delta: -1 | 1): void {
+    if (this.filtered.length === 0) return;
+
+    const next = this.selected + delta;
+    if (next < 0) {
+      this.showBoundaryMessage("Top");
+      return;
+    }
+    if (next >= this.filtered.length) {
+      this.showBoundaryMessage("Bottom");
+      return;
+    }
+    this.selected = next;
   }
 
   private updateFilter(): void {
@@ -1630,7 +1643,7 @@ class SkillTogglePicker {
     lines.push(border(`├${"─".repeat(innerW)}┤`));
     lines.push(emptyRow());
 
-    const hints = `${keyHint("j/k")} navigate  ${keyHint("enter")} toggle  ${keyHint("esc")} cancel`;
+    const hints = `${keyHint("↑/↓")} navigate  ${keyHint("enter")} toggle  ${keyHint("esc")} cancel`;
     const hintText = hint(hints);
     const boundaryText = this.boundaryMessage
       ? keyHint(italic(this.boundaryMessage))

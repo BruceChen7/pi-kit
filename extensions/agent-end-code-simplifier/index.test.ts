@@ -33,12 +33,51 @@ afterEach(() => {
   vi.doUnmock("../shared/settings.ts");
 });
 
+type Handler = (event: unknown, ctx: unknown) => unknown;
+type ShortcutRegistration = { handler: (ctx: unknown) => unknown };
+
+type ExtensionHarnessOptions = {
+  events?: { emit: ReturnType<typeof vi.fn> };
+  registerShortcut?: (
+    shortcut: string,
+    registration: ShortcutRegistration,
+  ) => void;
+  sendUserMessage?: ReturnType<typeof vi.fn>;
+};
+
+const createExtensionHarness = async (
+  options: ExtensionHarnessOptions = {},
+) => {
+  const extension = (await import("./index.ts")).default;
+  const handlers = new Map<string, Handler>();
+  const shortcuts = new Map<string, ShortcutRegistration>();
+  const events = options.events ?? { emit: vi.fn() };
+  const sendUserMessage = options.sendUserMessage ?? vi.fn();
+  const registerShortcut =
+    options.registerShortcut ??
+    ((shortcut: string, registration: ShortcutRegistration) => {
+      shortcuts.set(shortcut, registration);
+    });
+
+  extension({
+    on(name: string, handler: Handler) {
+      handlers.set(name, handler);
+    },
+    registerShortcut,
+    events,
+    sendUserMessage,
+  } as never);
+
+  return { handlers, shortcuts, events, sendUserMessage };
+};
+
 describe("normalizeConfig", () => {
   it("uses defaults when settings are missing", () => {
     expect(normalizeConfig({})).toEqual({
       enabled: true,
       extensions: [...DEFAULT_SUPPORTED_EXTENSIONS],
       promptTemplate: DEFAULT_PROMPT_TEMPLATE,
+      abortBehavior: "skip",
     });
   });
 
@@ -56,7 +95,22 @@ describe("normalizeConfig", () => {
       enabled: false,
       extensions: [".ts", ".py", ".rb"],
       promptTemplate: "custom {{files}}",
+      abortBehavior: "skip",
     });
+  });
+
+  it("normalizes abort behavior", () => {
+    expect(
+      normalizeConfig({
+        agentEndCodeSimplifier: { abortBehavior: "confirm" },
+      }).abortBehavior,
+    ).toBe("confirm");
+
+    expect(
+      normalizeConfig({
+        agentEndCodeSimplifier: { abortBehavior: "invalid" },
+      }).abortBehavior,
+    ).toBe("skip");
   });
 });
 
@@ -127,19 +181,7 @@ describe("extension diagnostics", () => {
   it("logs why agent_end skips when UI is unavailable", async () => {
     const logger = mockExtensionDependencies();
 
-    const extension = (await import("./index.ts")).default;
-    const handlers = new Map<
-      string,
-      (event: unknown, ctx: unknown) => unknown
-    >();
-    extension({
-      on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
-        handlers.set(name, handler);
-      },
-      registerShortcut: vi.fn(),
-      events: { emit: vi.fn() },
-      sendUserMessage: vi.fn(),
-    } as never);
+    const { handlers } = await createExtensionHarness();
 
     const ctx = {
       cwd: process.cwd(),
@@ -169,27 +211,8 @@ describe("extension diagnostics", () => {
   it("registers Ctrl+Alt+Y to manually trigger me-code-simplifier", async () => {
     mockExtensionDependencies();
 
-    const extension = (await import("./index.ts")).default;
-    const handlers = new Map<
-      string,
-      (event: unknown, ctx: unknown) => unknown
-    >();
-    const shortcuts = new Map<string, { handler: (ctx: unknown) => unknown }>();
-    const sendUserMessage = vi.fn();
-
-    extension({
-      on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
-        handlers.set(name, handler);
-      },
-      registerShortcut(
-        shortcut: string,
-        registration: { handler: (ctx: unknown) => unknown },
-      ) {
-        shortcuts.set(shortcut, registration);
-      },
-      events: { emit: vi.fn() },
-      sendUserMessage,
-    } as never);
+    const { handlers, shortcuts, sendUserMessage } =
+      await createExtensionHarness();
 
     const ctx = {
       cwd: process.cwd(),
@@ -214,14 +237,136 @@ describe("extension diagnostics", () => {
     );
   });
 
+  it("skips automatic simplifier approval after an aborted turn by default", async () => {
+    mockExtensionDependencies();
+
+    const { handlers, events, sendUserMessage } =
+      await createExtensionHarness();
+
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      signal: AbortSignal.abort(),
+      ui: { confirm: vi.fn(), notify: vi.fn() },
+    };
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "edit",
+        input: { path: "src/aborted.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.(
+      {
+        messages: [
+          {
+            role: "assistant",
+            stopReason: "aborted",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    expect(ctx.ui.confirm).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Skipped me-code-simplifier"),
+      "info",
+    );
+  });
+
+  it("can confirm automatic simplifier approval after an aborted turn when configured", async () => {
+    mockExtensionDependencies();
+    vi.doMock("../shared/settings.ts", () => ({
+      loadSettings: () => ({
+        merged: {
+          agentEndCodeSimplifier: {
+            abortBehavior: "confirm",
+          },
+        },
+      }),
+    }));
+
+    const { handlers, sendUserMessage } = await createExtensionHarness();
+
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      signal: AbortSignal.abort(),
+      ui: { confirm: vi.fn(async () => true), notify: vi.fn() },
+    };
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "edit",
+        input: { path: "src/aborted-confirm.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.(
+      {
+        messages: [{ role: "assistant", stopReason: "aborted" }],
+      },
+      ctx,
+    );
+
+    expect(ctx.ui.confirm).toHaveBeenCalledWith(
+      "Run me-code-simplifier?",
+      expect.stringContaining("src/aborted-confirm.ts"),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining("src/aborted-confirm.ts"),
+      { deliverAs: "followUp" },
+    );
+  });
+
+  it("keeps manually triggering simplifier for tracked files after an aborted turn", async () => {
+    mockExtensionDependencies();
+
+    const { handlers, shortcuts, sendUserMessage } =
+      await createExtensionHarness();
+
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      signal: AbortSignal.abort(),
+      ui: { confirm: vi.fn(), notify: vi.fn() },
+    };
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "write",
+        input: { path: "src/manual-after-abort.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.(
+      {
+        messages: [{ role: "assistant", stopReason: "aborted" }],
+      },
+      ctx,
+    );
+    await shortcuts.get("ctrl+alt+y")?.handler(ctx);
+
+    expect(sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining("src/manual-after-abort.ts"),
+      { deliverAs: "followUp" },
+    );
+  });
+
   it("closes local confirmation when an attached remote allow decision wins", async () => {
     mockExtensionDependencies();
 
-    const extension = (await import("./index.ts")).default;
-    const handlers = new Map<
-      string,
-      (event: unknown, ctx: unknown) => unknown
-    >();
     const events = {
       emit: vi.fn(
         (_channel: string, event: { attachRemoteDecision?: unknown }) => {
@@ -231,16 +376,9 @@ describe("extension diagnostics", () => {
         },
       ),
     };
-    const sendUserMessage = vi.fn();
-
-    extension({
-      on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
-        handlers.set(name, handler);
-      },
-      registerShortcut: vi.fn(),
+    const { handlers, sendUserMessage } = await createExtensionHarness({
       events,
-      sendUserMessage,
-    } as never);
+    });
 
     let abortSignal: AbortSignal | undefined;
     const ctx = {

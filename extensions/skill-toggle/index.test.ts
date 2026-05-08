@@ -7,11 +7,13 @@ import {
   getSettingsPaths,
   readSettingsFile,
 } from "../shared/settings.js";
-import type { Skill } from "./index.js";
+import type { Skill, SkillTogglePicker } from "./index.js";
 
 const tempDirs: string[] = [];
 const originalHome = process.env.HOME;
 const originalCwd = process.cwd();
+const ARROW_DOWN = "\x1b[B";
+const ARROW_UP = "\x1b[A";
 
 const registerTempDir = (dir: string): string => {
   tempDirs.push(dir);
@@ -100,6 +102,30 @@ function alphaSkill(filePath: string): Skill {
     filePath,
     scope: "project",
   };
+}
+
+function namedPickerSkills(...names: string[]): Skill[] {
+  return names.map((name) => ({
+    name,
+    description: "",
+    filePath: `/repo/.agents/skills/${name}/SKILL.md`,
+  }));
+}
+
+async function createTestPicker(
+  skills: Skill[] = namedPickerSkills("alpha", "jira"),
+): Promise<{ picker: SkillTogglePicker; toggled: string[] }> {
+  const { SkillTogglePicker } = await importSkillToggle();
+  const toggled: string[] = [];
+  const picker = new SkillTogglePicker(
+    skills,
+    new Set(),
+    new Set(),
+    (skill) => toggled.push(skill.name),
+    () => undefined,
+    () => undefined,
+  );
+  return { picker, toggled };
 }
 
 afterEach(() => {
@@ -637,7 +663,7 @@ describe("project .agents skill discovery", () => {
     ).toBe("[user] $HOME/.agents/skills/me-code-simplifier");
   });
 
-  it("treats a path-disabled skill as disabled without disabling same-name skills", async () => {
+  it("uses project skills when disabling same-name global skills", async () => {
     createTempHome();
     const { isSkillDisabledForList } = await importSkillToggle();
     const projectSkill: Skill = {
@@ -664,17 +690,17 @@ describe("project .agents skill discovery", () => {
         projectSkill,
         [globalSkill, projectSkill],
         new Set(["me-code-simplifier"]),
-        new Set(["/repo/.agents/skills/me-code-simplifier"]),
+        new Set(),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isSkillDisabledForList(
         globalSkill,
         [globalSkill, projectSkill],
         new Set(["me-code-simplifier"]),
-        new Set(["/repo/.agents/skills/me-code-simplifier"]),
+        new Set(),
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("discovers .agents skills from cwd ancestors up to the git root", async () => {
@@ -717,6 +743,38 @@ describe("project .agents skill discovery", () => {
         }),
       ]),
     );
+  });
+});
+
+describe("skill picker input", () => {
+  it("treats plain j and k as filter text", async () => {
+    createTempHome();
+    const { picker, toggled } = await createTestPicker(
+      namedPickerSkills("alpha", "jira", "kilo"),
+    );
+
+    picker.handleInput("j");
+    picker.handleInput("\r");
+
+    expect(toggled).toEqual(["jira"]);
+
+    picker.handleInput("\b");
+    picker.handleInput("k");
+    picker.handleInput("\r");
+
+    expect(toggled).toEqual(["jira", "kilo"]);
+  });
+
+  it("uses arrow up and arrow down for navigation", async () => {
+    createTempHome();
+    const { picker, toggled } = await createTestPicker();
+
+    picker.handleInput(ARROW_DOWN);
+    picker.handleInput("\r");
+    picker.handleInput(ARROW_UP);
+    picker.handleInput("\r");
+
+    expect(toggled).toEqual(["jira", "alpha"]);
   });
 });
 

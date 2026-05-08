@@ -1297,33 +1297,21 @@ function pruneSettingsFile(
   filePath: string,
   installedNames: Set<string>,
   installedPaths: Set<string>,
+  cwdKey: string,
 ): void {
   if (!fs.existsSync(filePath)) return;
   const settings = readSettingsFile(filePath);
   if (!isRecord(settings.skillToggle)) return;
 
   const skillToggle = settings.skillToggle as SkillToggleSettings;
-  let changed = false;
+  if (!isRecord(skillToggle.byCwd)) return;
 
-  const topLevel = pruneDisabledList(
-    skillToggle.disabledSkills,
-    installedNames,
-  );
-  if (topLevel?.changed) {
-    skillToggle.disabledSkills = topLevel.list;
-    changed = true;
-  }
+  const byCwd = skillToggle.byCwd as Record<string, unknown>;
+  const entryRaw = byCwd[cwdKey];
+  if (!isRecord(entryRaw)) return;
 
-  if (isRecord(skillToggle.byCwd)) {
-    const byCwd = skillToggle.byCwd as Record<string, unknown>;
-    for (const key of Object.keys(byCwd)) {
-      const entryRaw = byCwd[key];
-      if (!isRecord(entryRaw)) continue;
-      const entry = entryRaw as SkillToggleSettingsEntry;
-      changed =
-        pruneSettingsEntry(entry, installedNames, installedPaths) || changed;
-    }
-  }
+  const entry = entryRaw as SkillToggleSettingsEntry;
+  const changed = pruneSettingsEntry(entry, installedNames, installedPaths);
 
   if (!changed) return;
   settings.skillToggle = skillToggle;
@@ -1334,7 +1322,8 @@ export function pruneSettingsFiles(cwd: string, skills: Skill[]): void {
   const installedNames = getInstalledSkillNames(skills);
   const installedPaths = new Set(skills.map(getSkillBasePath));
   const { globalPath } = getSettingsPaths(cwd);
-  pruneSettingsFile(globalPath, installedNames, installedPaths);
+  const state = loadToggleState(cwd);
+  pruneSettingsFile(globalPath, installedNames, installedPaths, state.cwdKey);
 }
 
 function getDisabledSkillDisplayNames(
@@ -1686,6 +1675,7 @@ export class SkillTogglePicker {
 
 export default function skillToggleExtension(pi: ExtensionAPI): void {
   let state: ToggleState = loadToggleState(process.cwd());
+  let availableSkillsCache: { cwd: string; skills: Skill[] } | null = null;
 
   const getDisabledSkillCommand = (
     text: string,
@@ -1698,12 +1688,24 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
       state.disabledSkillPaths,
     );
 
+  const loadAndCacheAvailableSkills = (cwd: string): Skill[] => {
+    const skills = loadAvailableSkills(pi, cwd);
+    availableSkillsCache = { cwd: path.resolve(cwd), skills };
+    return skills;
+  };
+
+  const getAvailableSkills = (cwd: string): Skill[] => {
+    const cacheKey = path.resolve(cwd);
+    if (availableSkillsCache?.cwd === cacheKey) {
+      return availableSkillsCache.skills;
+    }
+    return loadAndCacheAvailableSkills(cwd);
+  };
+
   void createLoggerReady(process.cwd());
 
-  const refreshState = (ctx: ExtensionContext, skills?: Skill[]) => {
-    if (skills) {
-      pruneSettingsFiles(ctx.cwd, skills);
-    }
+  const refreshState = (ctx: ExtensionContext, skills: Skill[]) => {
+    pruneSettingsFiles(ctx.cwd, skills);
     state = loadToggleState(ctx.cwd);
     updateStatus(ctx, state, skills);
   };
@@ -1716,7 +1718,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      const skills = loadAvailableSkills(pi, ctx.cwd);
+      const skills = loadAndCacheAvailableSkills(ctx.cwd);
       refreshState(ctx, skills);
       if (skills.length === 0) {
         ctx.ui.notify("No skills found", "warning");
@@ -1773,7 +1775,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
   pi.registerCommand("disabled-skills", {
     description: "Show currently disabled skills",
     handler: async (_args: string, ctx: ExtensionContext) => {
-      const skills = loadAvailableSkills(pi, ctx.cwd);
+      const skills = loadAndCacheAvailableSkills(ctx.cwd);
       state = loadToggleState(ctx.cwd);
       updateStatus(ctx, state, skills);
       ctx.ui.notify(
@@ -1788,10 +1790,13 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("input", async (event, ctx) => {
-    if (event.source === "extension") return { action: "continue" };
+    if (event.source === "extension" || !event.text.startsWith("/skill:")) {
+      return { action: "continue" };
+    }
+
     const disabledName = getDisabledSkillCommand(
       event.text,
-      loadAvailableSkills(pi, ctx.cwd),
+      getAvailableSkills(ctx.cwd),
     );
     if (!disabledName) return { action: "continue" };
     if (ctx.hasUI) {
@@ -1804,7 +1809,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", (_event, ctx) => {
-    const skills = loadAvailableSkills(pi, ctx.cwd);
+    const skills = loadAndCacheAvailableSkills(ctx.cwd);
     refreshState(ctx, skills);
   });
 }

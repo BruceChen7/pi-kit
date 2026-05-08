@@ -34,4 +34,5 @@ grill-with-docs|local|skills/grill-with-docs
 improve-codebase-architecture|local|skills/improve-codebase-architecture
 to-prd|local|skills/to-prd
 to-issues|local|skills/to-issues
+coding-style-line-length/|local|skills/coding-style-line-length
 software-design-philosophy|https://github.com/luoling8192/software-design-philosophy-skill.git|

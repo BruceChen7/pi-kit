@@ -46,6 +46,41 @@ assert_present() {
   fi
 }
 
+assert_present \
+  "skills/migrate.sh" \
+  'ME_SKILLS_DIR="$HOME/.agents/me-skills"' \
+  "migrate imports local skills into me-skills"
+
+assert_present \
+  "skills/migrate.sh" \
+  'GIT_CLONE_BASE_DIR="$HOME/.agents/git-skills"' \
+  "migrate keeps GitHub skills in git-skills"
+
+assert_absent \
+  "skills/migrate.sh" \
+  "~/.agents/skills" \
+  "migrate no longer references legacy machine skills directory"
+
+assert_absent \
+  "skills/migrate.sh" \
+  "MACHINE_SKILLS_DIR" \
+  "migrate no longer uses legacy machine skills variable"
+
+assert_present \
+  "skills/migrate.sh" \
+  'ln -s "$local_skill_dir" "$skill_symlink_path"' \
+  "migrate symlinks local skills into me-skills"
+
+assert_absent \
+  "skills/migrate.sh" \
+  'ln -s "$skill_source" "$skill_symlink_path"' \
+  "migrate does not symlink GitHub skills into me-skills"
+
+assert_present \
+  "skills/migrate.sh" \
+  'find "$GIT_CLONE_BASE_DIR" \( -name .git -o -name node_modules \) -prune -o -name SKILL.md -print0' \
+  "migrate export prunes git metadata and dependencies"
+
 assert_absent \
   "skills/planning-suite/plan-ceo-review/SKILL.md" \
   "git for-each-ref --format='%(refname:short)' refs/remotes/origin/HEAD" \

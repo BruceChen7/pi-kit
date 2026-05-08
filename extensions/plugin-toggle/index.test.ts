@@ -17,6 +17,8 @@ const originalCwd = process.cwd();
 const DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE =
   "同步插件成功，请重启 Pi 以加载新插件。";
 const RELOAD_FOLLOW_UP = { deliverAs: "followUp" };
+const ARROW_DOWN = "\u001b[B";
+const ARROW_UP = "\u001b[A";
 
 const createTempDir = (prefix: string): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -751,7 +753,7 @@ describe("picker navigation", () => {
     const picker = await createPicker(pluginNames);
 
     for (let i = 0; i < 8; i++) {
-      picker.handleInput("j");
+      picker.handleInput(ARROW_DOWN);
     }
 
     const rendered = picker.render(70).join("\n");
@@ -760,18 +762,24 @@ describe("picker navigation", () => {
     picker.dispose();
   });
 
-  it("supports j/k and arrow keys", async () => {
+  it("supports arrow up and arrow down navigation", async () => {
     const picker = await createPicker();
 
     expect(picker.getSelectedName()).toBe("alpha");
+    picker.handleInput(ARROW_DOWN);
+    expect(picker.getSelectedName()).toBe("beta");
+    picker.handleInput(ARROW_UP);
+    expect(picker.getSelectedName()).toBe("alpha");
+    picker.dispose();
+  });
+
+  it("treats plain j and k as filter text", async () => {
+    const picker = await createPicker(["alpha", "jira", "kilo", "jk-tool"]);
+
     picker.handleInput("j");
-    expect(picker.getSelectedName()).toBe("beta");
-    picker.handleInput("\u001b[A");
-    expect(picker.getSelectedName()).toBe("alpha");
-    picker.handleInput("\u001b[B");
-    expect(picker.getSelectedName()).toBe("beta");
     picker.handleInput("k");
-    expect(picker.getSelectedName()).toBe("alpha");
+
+    expect(picker.getSelectedName()).toBe("jk-tool");
     picker.dispose();
   });
 });

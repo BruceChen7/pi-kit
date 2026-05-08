@@ -16,12 +16,17 @@ const createMockLogger = () => ({
   error: vi.fn(),
 });
 
-const mockExtensionDependencies = (logger = createMockLogger()) => {
+const mockExtensionDependencies = (
+  logger = createMockLogger(),
+  settings: Record<string, unknown> = {},
+  updateSettings = vi.fn(),
+) => {
   vi.doMock("../shared/logger.ts", () => ({
     createLogger: () => logger,
   }));
   vi.doMock("../shared/settings.ts", () => ({
-    loadSettings: () => ({ merged: {} }),
+    loadSettings: () => ({ merged: settings }),
+    updateSettings,
   }));
   return logger;
 };
@@ -35,6 +40,9 @@ afterEach(() => {
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
 type ShortcutRegistration = { handler: (ctx: unknown) => unknown };
+type CommandRegistration = {
+  handler: (args: string, ctx: unknown) => unknown;
+};
 
 type ExtensionHarnessOptions = {
   events?: { emit: ReturnType<typeof vi.fn> };
@@ -42,6 +50,7 @@ type ExtensionHarnessOptions = {
     shortcut: string,
     registration: ShortcutRegistration,
   ) => void;
+  registerCommand?: (name: string, registration: CommandRegistration) => void;
   sendUserMessage?: ReturnType<typeof vi.fn>;
 };
 
@@ -51,6 +60,7 @@ const createExtensionHarness = async (
   const extension = (await import("./index.ts")).default;
   const handlers = new Map<string, Handler>();
   const shortcuts = new Map<string, ShortcutRegistration>();
+  const commands = new Map<string, CommandRegistration>();
   const events = options.events ?? { emit: vi.fn() };
   const sendUserMessage = options.sendUserMessage ?? vi.fn();
   const registerShortcut =
@@ -58,17 +68,23 @@ const createExtensionHarness = async (
     ((shortcut: string, registration: ShortcutRegistration) => {
       shortcuts.set(shortcut, registration);
     });
+  const registerCommand =
+    options.registerCommand ??
+    ((name: string, registration: CommandRegistration) => {
+      commands.set(name, registration);
+    });
 
   extension({
     on(name: string, handler: Handler) {
       handlers.set(name, handler);
     },
     registerShortcut,
+    registerCommand,
     events,
     sendUserMessage,
   } as never);
 
-  return { handlers, shortcuts, events, sendUserMessage };
+  return { handlers, shortcuts, commands, events, sendUserMessage };
 };
 
 describe("normalizeConfig", () => {
@@ -78,6 +94,8 @@ describe("normalizeConfig", () => {
       extensions: [...DEFAULT_SUPPORTED_EXTENSIONS],
       promptTemplate: DEFAULT_PROMPT_TEMPLATE,
       abortBehavior: "skip",
+      autoRun: true,
+      confirmBeforeRun: false,
     });
   });
 
@@ -96,7 +114,21 @@ describe("normalizeConfig", () => {
       extensions: [".ts", ".py", ".rb"],
       promptTemplate: "custom {{files}}",
       abortBehavior: "skip",
+      autoRun: true,
+      confirmBeforeRun: false,
     });
+  });
+
+  it("normalizes automatic run and confirmation behavior", () => {
+    const config = normalizeConfig({
+      agentEndCodeSimplifier: {
+        autoRun: false,
+        confirmBeforeRun: true,
+      },
+    });
+
+    expect(config.autoRun).toBe(false);
+    expect(config.confirmBeforeRun).toBe(true);
   });
 
   it("normalizes abort behavior", () => {
@@ -237,6 +269,37 @@ describe("extension diagnostics", () => {
     );
   });
 
+  it("automatically runs me-code-simplifier by default without confirmation", async () => {
+    mockExtensionDependencies();
+
+    const { handlers, events, sendUserMessage } =
+      await createExtensionHarness();
+
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: { confirm: vi.fn(async () => false), notify: vi.fn() },
+    };
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "edit",
+        input: { path: "src/auto.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+
+    expect(ctx.ui.confirm).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining("src/auto.ts"),
+      { deliverAs: "followUp" },
+    );
+  });
+
   it("skips automatic simplifier approval after an aborted turn by default", async () => {
     mockExtensionDependencies();
 
@@ -281,16 +344,12 @@ describe("extension diagnostics", () => {
   });
 
   it("can confirm automatic simplifier approval after an aborted turn when configured", async () => {
-    mockExtensionDependencies();
-    vi.doMock("../shared/settings.ts", () => ({
-      loadSettings: () => ({
-        merged: {
-          agentEndCodeSimplifier: {
-            abortBehavior: "confirm",
-          },
-        },
-      }),
-    }));
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: {
+        abortBehavior: "confirm",
+        confirmBeforeRun: true,
+      },
+    });
 
     const { handlers, sendUserMessage } = await createExtensionHarness();
 
@@ -364,8 +423,97 @@ describe("extension diagnostics", () => {
     );
   });
 
+  it("skips automatic runs while keeping the manual shortcut available", async () => {
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: {
+        autoRun: false,
+      },
+    });
+
+    const { handlers, shortcuts, sendUserMessage } =
+      await createExtensionHarness();
+
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: { confirm: vi.fn(), notify: vi.fn() },
+    };
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "write",
+        input: { path: "src/auto-disabled.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+    await shortcuts.get("ctrl+alt+y")?.handler(ctx);
+
+    expect(ctx.ui.confirm).not.toHaveBeenCalled();
+    expect(sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining("src/auto-disabled.ts"),
+      { deliverAs: "followUp" },
+    );
+  });
+
+  it("registers commands to toggle automatic runs and confirmation prompts", async () => {
+    const logger = createMockLogger();
+    const updateSettings = vi.fn(
+      (
+        _cwd: string,
+        _scope: "project" | "global",
+        updater: (settings: Record<string, unknown>) => Record<string, unknown>,
+      ) => {
+        const settings = updater({
+          agentEndCodeSimplifier: {
+            autoRun: true,
+            confirmBeforeRun: false,
+          },
+        });
+        return { path: "/repo/.pi/third_extension_settings.json", settings };
+      },
+    );
+
+    mockExtensionDependencies(
+      logger,
+      {
+        agentEndCodeSimplifier: {
+          autoRun: true,
+          confirmBeforeRun: false,
+        },
+      },
+      updateSettings,
+    );
+
+    const { commands } = await createExtensionHarness();
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: { notify: vi.fn() },
+    };
+
+    await commands.get("agent-end-code-simplifier-auto")?.handler("off", ctx);
+    await commands.get("agent-end-code-simplifier-confirm")?.handler("on", ctx);
+
+    expect(updateSettings).toHaveBeenCalledTimes(2);
+    expect(updateSettings.mock.results[0]?.value.settings).toMatchObject({
+      agentEndCodeSimplifier: { autoRun: false },
+    });
+    expect(updateSettings.mock.results[1]?.value.settings).toMatchObject({
+      agentEndCodeSimplifier: { confirmBeforeRun: true },
+    });
+    expect(ctx.ui.notify).toHaveBeenCalledTimes(2);
+  });
+
   it("closes local confirmation when an attached remote allow decision wins", async () => {
-    mockExtensionDependencies();
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: {
+        confirmBeforeRun: true,
+      },
+    });
 
     const events = {
       emit: vi.fn(

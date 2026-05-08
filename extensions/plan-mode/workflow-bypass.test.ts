@@ -25,6 +25,11 @@ describe("workflow bypass policy", () => {
   it.each([
     "fix the bug and commit",
     "implement feature and commit",
+    "update the docs and commit",
+    "remove obsolete code and run tests",
+    "rename the command and run lint",
+    "改进 plan mode 后提交",
+    "删除旧逻辑并运行测试",
   ])("keeps implementation prompt in normal plan mode: %s", (prompt) => {
     expect(
       decideWorkflowBypass(prompt, DEFAULT_WORKFLOW_BYPASS_STATE, false),

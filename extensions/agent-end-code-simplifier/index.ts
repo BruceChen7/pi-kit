@@ -5,7 +5,7 @@ import {
   type PiKitAgentEndCodeSimplifierApprovalEvent,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
-import { loadSettings } from "../shared/settings.ts";
+import { loadSettings, updateSettings } from "../shared/settings.ts";
 
 export type AgentEndCodeSimplifierAbortBehavior = "skip" | "confirm";
 
@@ -14,6 +14,8 @@ export type AgentEndCodeSimplifierConfig = {
   extensions: string[];
   promptTemplate: string;
   abortBehavior: AgentEndCodeSimplifierAbortBehavior;
+  autoRun: boolean;
+  confirmBeforeRun: boolean;
 };
 
 type AgentEndCodeSimplifierSettings = {
@@ -22,6 +24,8 @@ type AgentEndCodeSimplifierSettings = {
   extraExtensions?: unknown;
   promptTemplate?: unknown;
   abortBehavior?: unknown;
+  autoRun?: unknown;
+  confirmBeforeRun?: unknown;
 };
 
 export const DEFAULT_SUPPORTED_EXTENSIONS = [
@@ -65,6 +69,8 @@ export const DEFAULT_PROMPT_TEMPLATE = [
 const SETTINGS_KEY = "agentEndCodeSimplifier";
 const EXTENSION_SOURCE_TAG = "agent-end-code-simplifier";
 const MANUAL_TRIGGER_SHORTCUT = "ctrl+alt+y";
+const AUTO_RUN_COMMAND = "agent-end-code-simplifier-auto";
+const CONFIRM_BEFORE_RUN_COMMAND = "agent-end-code-simplifier-confirm";
 const log = createLogger(EXTENSION_SOURCE_TAG, {
   minLevel: "debug",
   stderr: null,
@@ -129,6 +135,8 @@ export const normalizeConfig = (
       DEFAULT_PROMPT_TEMPLATE,
     ),
     abortBehavior: normalizeAbortBehavior(raw?.abortBehavior),
+    autoRun: normalizeBoolean(raw?.autoRun, true),
+    confirmBeforeRun: normalizeBoolean(raw?.confirmBeforeRun, false),
   };
 };
 
@@ -236,6 +244,13 @@ type ApprovalRaceInput = {
   localAbortController: AbortController;
 };
 
+type BooleanConfigField = "autoRun" | "confirmBeforeRun";
+
+type NotificationContext = {
+  cwd: string;
+  ui: { notify: (message: string, type: string) => void };
+};
+
 const waitForApprovalDecision = async ({
   localDecision,
   remoteDecisions,
@@ -260,6 +275,54 @@ const waitForApprovalDecision = async ({
   return result.decision;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+type BooleanCommandAction =
+  | { kind: "set"; value: boolean }
+  | { kind: "status" }
+  | { kind: "invalid"; raw: string };
+
+const parseBooleanCommandAction = (
+  args: string,
+  current: boolean,
+): BooleanCommandAction => {
+  const action = args.trim().toLowerCase();
+  if (action === "" || action === "toggle") {
+    return { kind: "set", value: !current };
+  }
+  if (action === "on" || action === "true" || action === "enable") {
+    return { kind: "set", value: true };
+  }
+  if (action === "off" || action === "false" || action === "disable") {
+    return { kind: "set", value: false };
+  }
+  if (action === "status") {
+    return { kind: "status" };
+  }
+  return { kind: "invalid", raw: args.trim() };
+};
+
+const setConfigBooleanField = (
+  cwd: string,
+  field: BooleanConfigField,
+  value: boolean,
+): AgentEndCodeSimplifierConfig => {
+  const result = updateSettings(cwd, "project", (settings) => {
+    const raw = settings[SETTINGS_KEY];
+    const current = isRecord(raw) ? raw : {};
+    return {
+      ...settings,
+      [SETTINGS_KEY]: {
+        ...current,
+        [field]: value,
+      },
+    };
+  });
+
+  return normalizeConfig(result.settings);
+};
+
 export default function agentEndCodeSimplifierExtension(
   pi: ExtensionAPI,
 ): void {
@@ -277,6 +340,8 @@ export default function agentEndCodeSimplifierExtension(
       extensions: config.extensions,
       promptTemplateLength: config.promptTemplate.length,
       abortBehavior: config.abortBehavior,
+      autoRun: config.autoRun,
+      confirmBeforeRun: config.confirmBeforeRun,
     });
   };
 
@@ -285,6 +350,8 @@ export default function agentEndCodeSimplifierExtension(
     hasUI: ctx.hasUI,
     enabled: config.enabled,
     abortBehavior: config.abortBehavior,
+    autoRun: config.autoRun,
+    confirmBeforeRun: config.confirmBeforeRun,
     modifiedPaths: [...modifiedPaths].sort(),
   });
 
@@ -295,6 +362,68 @@ export default function agentEndCodeSimplifierExtension(
       { deliverAs: "followUp" },
     );
   };
+
+  const sendLoggedCodeSimplifierPrompt = (
+    ctx: { cwd?: string; hasUI?: boolean },
+    supportedPaths: string[],
+  ) => {
+    log.info("agent_end_sending_code_simplifier_prompt", {
+      ...diagnostics(ctx),
+      supportedPaths,
+    });
+    sendCodeSimplifierPrompt(supportedPaths);
+  };
+
+  const handleBooleanConfigCommand = (
+    args: string,
+    ctx: NotificationContext,
+    field: BooleanConfigField,
+    label: string,
+  ) => {
+    refreshConfig(ctx.cwd);
+    const action = parseBooleanCommandAction(args, config[field]);
+    if (action.kind === "invalid") {
+      ctx.ui.notify(
+        `${label}: unknown action '${action.raw}'. Use on, off, toggle, or status.`,
+        "warning",
+      );
+      return;
+    }
+
+    if (action.kind === "status") {
+      ctx.ui.notify(`${label} is ${config[field] ? "on" : "off"}.`, "info");
+      return;
+    }
+
+    config = setConfigBooleanField(ctx.cwd, field, action.value);
+    ctx.ui.notify(`${label} is now ${config[field] ? "on" : "off"}.`, "info");
+  };
+
+  pi.registerCommand(AUTO_RUN_COMMAND, {
+    description:
+      "Toggle automatic me-code-simplifier follow-ups after agent turns",
+    handler: async (args, ctx) => {
+      handleBooleanConfigCommand(
+        args,
+        ctx,
+        "autoRun",
+        "agent-end-code-simplifier auto-run",
+      );
+    },
+  });
+
+  pi.registerCommand(CONFIRM_BEFORE_RUN_COMMAND, {
+    description:
+      "Toggle confirmation before automatic me-code-simplifier follow-ups",
+    handler: async (args, ctx) => {
+      handleBooleanConfigCommand(
+        args,
+        ctx,
+        "confirmBeforeRun",
+        "agent-end-code-simplifier confirmation",
+      );
+    },
+  });
 
   pi.registerShortcut(MANUAL_TRIGGER_SHORTCUT, {
     description:
@@ -393,6 +522,23 @@ export default function agentEndCodeSimplifierExtension(
       return;
     }
 
+    if (!config.autoRun) {
+      log.debug("agent_end_skipped_auto_run_disabled", {
+        ...diagnostics(ctx),
+        supportedPaths,
+      });
+      ctx.ui.notify(
+        `Skipped me-code-simplifier because automatic runs are disabled. Press Ctrl+Alt+Y to run it for ${supportedPaths.length} modified file(s).`,
+        "info",
+      );
+      return;
+    }
+
+    if (!config.confirmBeforeRun) {
+      sendLoggedCodeSimplifierPrompt(ctx, supportedPaths);
+      return;
+    }
+
     log.debug("agent_end_confirm_requested", {
       ...diagnostics(ctx),
       supportedPaths,
@@ -440,10 +586,6 @@ export default function agentEndCodeSimplifierExtension(
       return;
     }
 
-    log.info("agent_end_sending_code_simplifier_prompt", {
-      ...diagnostics(ctx),
-      supportedPaths,
-    });
-    sendCodeSimplifierPrompt(supportedPaths);
+    sendLoggedCodeSimplifierPrompt(ctx, supportedPaths);
   });
 }

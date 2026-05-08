@@ -10,8 +10,44 @@ export const DEFAULT_WORKFLOW_BYPASS_STATE: WorkflowBypassState = {
 
 // Implementation verbs mean the user is asking the agent to change behavior/code,
 // so plan review should still gate the turn even if the prompt also mentions commit.
-const IMPLEMENTATION_INTENT_PATTERN =
-  /\b(fix|implement|add|create|build|refactor|optimi[sz]e|modify|edit|debug)\b/iu;
+const WORKFLOW_IMPLEMENTATION_INTENT_WORDS = [
+  "fix",
+  "implement",
+  "add",
+  "create",
+  "build",
+  "refactor",
+  "optimi[sz]e",
+  "modify",
+  "edit",
+  "debug",
+  "update",
+  "change",
+  "remove",
+  "delete",
+  "rename",
+  "improve",
+  "clean\\s+up",
+] as const;
+const PLAN_REVIEW_IMPLEMENTATION_INTENT_WORDS = [
+  ...WORKFLOW_IMPLEMENTATION_INTENT_WORDS,
+  "impl",
+] as const;
+const CHINESE_IMPLEMENTATION_INTENT_SOURCE =
+  "修复|实现|添加|新增|创建|修改|重构|优化|调试|删除|调整|变更|完善|开发|改进";
+
+const createImplementationIntentPattern = (
+  englishWords: readonly string[],
+): RegExp =>
+  new RegExp(
+    `\\b(${englishWords.join("|")})\\b|${CHINESE_IMPLEMENTATION_INTENT_SOURCE}`,
+    "iu",
+  );
+
+const WORKFLOW_IMPLEMENTATION_INTENT_PATTERN =
+  createImplementationIntentPattern(WORKFLOW_IMPLEMENTATION_INTENT_WORDS);
+const PLAN_REVIEW_IMPLEMENTATION_INTENT_PATTERN =
+  createImplementationIntentPattern(PLAN_REVIEW_IMPLEMENTATION_INTENT_WORDS);
 
 const WORKFLOW_INTENT_PATTERNS = [
   // Git-only workflows are operational tasks, not implementation work.
@@ -28,6 +64,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const normalizePrompt = (prompt: string): string =>
   prompt.trim().replace(/\s+/gu, " ");
+
+const normalizedPromptHasWorkflowImplementationIntent = (
+  normalizedPrompt: string,
+): boolean => WORKFLOW_IMPLEMENTATION_INTENT_PATTERN.test(normalizedPrompt);
+
+export const hasPlanReviewImplementationIntent = (prompt: string): boolean =>
+  PLAN_REVIEW_IMPLEMENTATION_INTENT_PATTERN.test(normalizePrompt(prompt));
 
 const isConfirmationForActiveWorkflow = (
   normalizedPrompt: string,
@@ -58,7 +101,7 @@ export const decideWorkflowBypass = (
     return current;
   }
 
-  if (IMPLEMENTATION_INTENT_PATTERN.test(normalizedPrompt)) {
+  if (normalizedPromptHasWorkflowImplementationIntent(normalizedPrompt)) {
     return DEFAULT_WORKFLOW_BYPASS_STATE;
   }
 

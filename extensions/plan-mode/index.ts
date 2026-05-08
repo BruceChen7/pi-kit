@@ -18,6 +18,7 @@ import {
 import {
   DEFAULT_WORKFLOW_BYPASS_STATE,
   decideWorkflowBypass,
+  hasPlanReviewImplementationIntent,
   type WorkflowBypassState,
   workflowBypassFromSnapshot,
 } from "./workflow-bypass.ts";
@@ -77,14 +78,22 @@ const TODO_WIDGET_KEY = "plan-mode-todos";
 const TODO_TOOL_NAME = "plan_mode_todo";
 const PLANNOTATOR_SUBMIT_TOOL_NAME = "plannotator_auto_submit_review";
 const REVIEW_ARTIFACT_LOCATION =
-  ".pi/plans/<repo>/plan/ or .pi/plans/<repo>/specs/";
+  ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md or " +
+  ".pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md";
+const REVIEW_ARTIFACT_WRITE_HINT =
+  "No mkdir is needed; use write with a standard filename and the tool will " +
+  "create missing .pi/plans parent directories.";
+const REVIEW_ARTIFACT_TARGET = [
+  "reviewable plan/spec artifacts under",
+  REVIEW_ARTIFACT_LOCATION,
+].join(" ");
+const REVIEW_ARTIFACT_WRITE_GUIDANCE = [
+  `${REVIEW_ARTIFACT_TARGET}.`,
+  REVIEW_ARTIFACT_WRITE_HINT,
+].join(" ");
+const SPEC_REVIEW_ARTIFACT_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
+const ENV_ASSIGNMENT_PREFIX_PATTERN = /^(?:[A-Z_][A-Z0-9_]*=\S+\s+)+/u;
 const COMPLETED_TODO_WIDGET_HIDE_DELAY_MS = 15_000;
-const PLAN_REVIEW_INTENT_PATTERNS = [
-  // English implementation verbs mean auto:plan should require review.
-  /\b(fix|implement|impl|add|create|build|refactor|optimi[sz]e|modify|edit|debug)\b/iu,
-  // Common Chinese implementation verbs for the same plan-review obligation.
-  /修复|实现|添加|新增|创建|修改|重构|优化|调试/u,
-] as const;
 
 const DEFAULT_CONFIG: PlanModeConfig = {
   defaultMode: "auto",
@@ -388,10 +397,20 @@ class PlanModeState {
   }
 
   setMode(mode: PlanMode): void {
+    const previousPhase = this.phase;
     this.mode = mode;
     this.phase = phaseForMode(mode);
     this.endConversationRequested = false;
     this.workflowBypass = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
+    if (previousPhase === "act" && this.phase === "plan") {
+      this.clearReviewTracking();
+    }
+  }
+
+  clearReviewTracking(): void {
+    this.activePlanPath = null;
+    this.latestReviewArtifactPath = null;
+    this.reviewApprovedPlanPaths = new Set();
   }
 
   switchAutoToAct(): void {
@@ -599,10 +618,7 @@ const isReviewArtifactPath = (cwd: string, rawPath: string): boolean => {
     return false;
   }
 
-  if (artifactDir === "specs") {
-    return /^\d{4}-\d{2}-\d{2}-.+-design\.md$/.test(fileName);
-  }
-  return false;
+  return artifactDir === "specs" && SPEC_REVIEW_ARTIFACT_PATTERN.test(fileName);
 };
 
 const isInsideDir = (targetPath: string, dirPath: string): boolean => {
@@ -650,6 +666,83 @@ const extractApprovedPath = (text: string): string | null => {
   return match?.[1]?.trim() ?? null;
 };
 
+const isApprovedReviewResult = (event: ToolResultEvent): boolean => {
+  const details = (event as { details?: unknown }).details;
+  return isRecord(details) && details.status === "approved";
+};
+
+const getApprovedReviewPath = (
+  event: ToolResultEvent,
+  ctx: ExtensionContext,
+): string | null => {
+  const submittedPath = stringProperty(event.input, "path");
+  if (submittedPath && isApprovedReviewResult(event)) {
+    return relativeToolPath(ctx.cwd, submittedPath);
+  }
+
+  const approvedPath = extractApprovedPath(extractTextContent(event));
+  if (!approvedPath) {
+    return null;
+  }
+  return relativeToolPath(ctx.cwd, approvedPath);
+};
+
+const SAFE_WORKFLOW_GIT_COMMAND_PATTERN =
+  /^git\s+(status|diff|log|show|branch|rev-parse|ls-files|add|commit|push)\b/u;
+const NPM_RUN_COMMAND_PATTERN = /^npm\s+run\s+([\w:-]+)\b/u;
+const UNSAFE_NPM_WORKFLOW_SCRIPT_PATTERN =
+  /\b(fix|write|format)\b|:(fix|write|format)\b/u;
+const SAFE_NPM_WORKFLOW_SCRIPT_PATTERN =
+  /^(test|tests?|lint|check|checks?|typecheck)(:|$)/u;
+const UNSAFE_WORKFLOW_SHELL_PATTERN = /[|><`;]|\$\(/u;
+
+const normalizeCommandLine = (command: string): string =>
+  command.trim().replace(/\s+/gu, " ");
+
+const isSafeWorkflowCommandPart = (commandPart: string): boolean => {
+  const normalized = normalizeCommandLine(commandPart);
+  if (!normalized) {
+    return true;
+  }
+
+  const commandWithoutEnv = normalized.replace(
+    ENV_ASSIGNMENT_PREFIX_PATTERN,
+    "",
+  );
+  if (commandWithoutEnv !== normalized) {
+    return isSafeWorkflowCommandPart(commandWithoutEnv);
+  }
+
+  if (SAFE_WORKFLOW_GIT_COMMAND_PATTERN.test(normalized)) {
+    return true;
+  }
+
+  if (/^npm\s+test\b/u.test(normalized)) {
+    return true;
+  }
+
+  const npmRunMatch = normalized.match(NPM_RUN_COMMAND_PATTERN);
+  if (!npmRunMatch) {
+    return false;
+  }
+
+  const scriptName = npmRunMatch[1];
+  if (UNSAFE_NPM_WORKFLOW_SCRIPT_PATTERN.test(scriptName)) {
+    return false;
+  }
+  return SAFE_NPM_WORKFLOW_SCRIPT_PATTERN.test(scriptName);
+};
+
+const isSafeWorkflowBashCommand = (command: string): boolean => {
+  if (UNSAFE_WORKFLOW_SHELL_PATTERN.test(command) || command.includes("||")) {
+    return false;
+  }
+
+  return command
+    .split(/\s*(?:&&|\n)\s*/u)
+    .every((commandPart) => isSafeWorkflowCommandPart(commandPart));
+};
+
 const turnWasAborted = (
   event: { messages?: readonly unknown[] },
   ctx: { signal?: AbortSignal },
@@ -664,9 +757,6 @@ const turnWasAborted = (
       message.stopReason === "aborted",
   );
 };
-
-const promptHasPlanReviewIntent = (prompt: string): boolean =>
-  PLAN_REVIEW_INTENT_PATTERNS.some((pattern) => pattern.test(prompt));
 
 class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
@@ -767,9 +857,10 @@ class PlanModeController {
       `- In plan phases, inspect with ${PLAN_INSPECTION_TOOL_SLASH_LIST}. ` +
         "Runtime guards block bash and source-code edits.",
       `- Use ${TODO_TOOL_NAME} to maintain the concrete TODO list.`,
-      "- For implementation tasks, write only reviewable plan/spec artifacts under " +
-        `${REVIEW_ARTIFACT_LOCATION} and submit them with ` +
+      "- For implementation tasks, write only " +
+        `${REVIEW_ARTIFACT_TARGET} and submit them with ` +
         `${PLANNOTATOR_SUBMIT_TOOL_NAME}.`,
+      `- ${REVIEW_ARTIFACT_WRITE_HINT}`,
       "- Standard plan artifacts must use ## Context, ## Steps, " +
         "## Verification, and ## Review with Chinese checkbox steps.",
       "- If Plannotator denies the plan, revise the same file and submit again.",
@@ -795,7 +886,7 @@ class PlanModeController {
     this.autoPlanReviewRequiredForTurn =
       this.state.isAutoPlanPhase() &&
       !this.state.isWorkflowBypassActive() &&
-      promptHasPlanReviewIntent(prompt);
+      hasPlanReviewImplementationIntent(prompt);
   }
 
   hasPlanReviewObligation(): boolean {
@@ -878,7 +969,17 @@ class PlanModeController {
 
     if (this.state.isPlanPhase() && event.toolName === "bash") {
       if (this.state.isWorkflowBypassActive()) {
-        return undefined;
+        const command = stringProperty(event.input, "command") ?? "";
+        if (isSafeWorkflowBashCommand(command)) {
+          return undefined;
+        }
+        return {
+          block: true,
+          reason:
+            `plan-mode blocked ${event.toolName}: workflow-only bypass ` +
+            "allows only git status/diff/log/add/commit/push and " +
+            "npm test/lint/check commands.",
+        };
       }
       return {
         block: true,
@@ -905,7 +1006,7 @@ class PlanModeController {
         block: true,
         reason:
           `plan-mode blocked ${event.toolName}: current phase can only write ` +
-          `reviewable plan/spec artifacts under ${REVIEW_ARTIFACT_LOCATION}.`,
+          REVIEW_ARTIFACT_WRITE_GUIDANCE,
       };
     }
 
@@ -976,12 +1077,18 @@ class PlanModeController {
       return;
     }
 
-    const approvedPath = extractApprovedPath(extractTextContent(event));
-    if (!approvedPath) {
+    const approvedPath = getApprovedReviewPath(event, ctx);
+    if (!approvedPath || !isReviewArtifactPath(ctx.cwd, approvedPath)) {
+      return;
+    }
+
+    const latestPath = this.state.latestReviewArtifactPath;
+    if (latestPath && approvedPath !== latestPath) {
       return;
     }
 
     this.state.activePlanPath = approvedPath;
+    this.state.latestReviewArtifactPath = approvedPath;
     this.state.reviewApprovedPlanPaths.add(approvedPath);
     this.state.switchAutoToAct();
     this.applyMode(ctx);
@@ -1172,17 +1279,21 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       }
     }
 
+    const latestReviewArtifactApproved = Boolean(
+      latestArtifactPath &&
+        controller.state.reviewApprovedPlanPaths.has(latestArtifactPath),
+    );
     if (
       controller.config.requireReview &&
       controller.state.mode === "auto" &&
       controller.state.phase === "plan" &&
       controller.state.todos.length > 0 &&
-      controller.state.reviewApprovedPlanPaths.size === 0
+      !latestReviewArtifactApproved
     ) {
       pi.sendUserMessage(
         "Plan Mode is waiting for an approved Plannotator plan/spec. Write the plan " +
           `under ${REVIEW_ARTIFACT_LOCATION}, then call ` +
-          `${PLANNOTATOR_SUBMIT_TOOL_NAME}.`,
+          `${PLANNOTATOR_SUBMIT_TOOL_NAME}. ${REVIEW_ARTIFACT_WRITE_HINT}`,
         { deliverAs: "followUp" },
       );
     }

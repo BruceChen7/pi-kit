@@ -258,6 +258,51 @@ describe("plan-mode extension", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("allows date-prefixed plan writes even when .pi does not exist yet", async () => {
+    const harness = buildHarness();
+    const { ctx, cleanup } = createTempCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+
+    try {
+      expect(fs.existsSync(path.join(ctx.cwd, ".pi"))).toBe(false);
+      await harness.emit("session_start", {}, ctx);
+
+      await expect(
+        harness.runToolCall(
+          "write",
+          { path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md" },
+          ctx,
+        ),
+      ).resolves.toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("explains the date-prefixed review artifact filename when blocking plan writes", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+
+    await harness.emit("session_start", {}, ctx);
+
+    const result = await harness.runToolCall(
+      "write",
+      { path: ".pi/plans/pi-kit/plan/demo.md" },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      block: true,
+      reason: expect.stringContaining(
+        ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md",
+      ),
+    });
+    expect(result).toMatchObject({
+      reason: expect.stringContaining("No mkdir is needed"),
+    });
+  });
+
   it("allows reads outside cwd while still blocking writes outside cwd", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
@@ -497,7 +542,7 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("allows bash without plan review for commit-only workflows", async () => {
+  it("allows safe bash commands without plan review for commit-only workflows", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendAgentPrompt(
@@ -510,6 +555,13 @@ describe("plan-mode extension", () => {
       harness.runToolCall("bash", { command: "git status --short" }, ctx),
     ).resolves.toBeUndefined();
     await expect(
+      harness.runToolCall(
+        "bash",
+        { command: "npm test -- extensions/plan-mode" },
+        ctx,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
     ).resolves.toMatchObject({ block: true });
 
@@ -519,6 +571,19 @@ describe("plan-mode extension", () => {
       expect.stringContaining("Plan Mode requires"),
       expect.anything(),
     );
+  });
+
+  it("blocks unsafe bash commands during workflow-only bypass", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await sendAgentPrompt(harness, ctx, "commit all the changes");
+
+    await expect(
+      harness.runToolCall("bash", { command: "rm -rf src" }, ctx),
+    ).resolves.toMatchObject({
+      block: true,
+      reason: expect.stringContaining("workflow-only bypass"),
+    });
   });
 
   it("keeps implementation prompts in normal plan mode", async () => {
@@ -612,6 +677,7 @@ describe("plan-mode extension", () => {
       {
         toolName: "plannotator_auto_submit_review",
         isError: false,
+        input: { path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md" },
         content: [
           {
             type: "text",
@@ -626,6 +692,92 @@ describe("plan-mode extension", () => {
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
     ).resolves.toBeUndefined();
+  });
+
+  it("uses the submitted path when approved review details omit the path", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    await harness.emit(
+      "tool_result",
+      {
+        toolName: "plannotator_auto_submit_review",
+        isError: false,
+        input: { path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md" },
+        content: [{ type: "text", text: "Review approved." }],
+        details: { status: "approved" },
+      },
+      ctx,
+    );
+
+    await expect(
+      harness.runToolCall("write", { path: "x.ts" }, ctx),
+    ).resolves.toBeUndefined();
+  });
+
+  it("requires review again after a newer plan artifact is written", async () => {
+    const harness = buildHarness();
+    const { ctx, cleanup } = createTempCtx();
+    const firstPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-first.md";
+    const secondPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-second.md";
+    writePlanArtifact(ctx.cwd, firstPlanPath, validPlanContent);
+    writePlanArtifact(ctx.cwd, secondPlanPath, validPlanContent);
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+
+    try {
+      await harness.emit("session_start", {}, ctx);
+
+      await harness.emit(
+        "tool_result",
+        {
+          toolName: "write",
+          isError: false,
+          input: { path: firstPlanPath },
+        },
+        ctx,
+      );
+      await harness.emit(
+        "tool_result",
+        {
+          toolName: "plannotator_auto_submit_review",
+          isError: false,
+          input: { path: firstPlanPath },
+          content: [
+            { type: "text", text: `Review approved for ${firstPlanPath}.` },
+          ],
+        },
+        ctx,
+      );
+      await harness.runCommand("plan-mode", "auto", ctx);
+      await harness.runTool(
+        "plan_mode_todo",
+        {
+          action: "set",
+          items: [{ text: "实现第二个任务", status: "todo" }],
+        },
+        ctx,
+      );
+      await harness.emit(
+        "tool_result",
+        {
+          toolName: "write",
+          isError: false,
+          input: { path: secondPlanPath },
+        },
+        ctx,
+      );
+
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("approved Plannotator plan/spec"),
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      cleanup();
+    }
   });
 
   it("blocks review submission when a plan artifact violates the policy", async () => {

@@ -21,7 +21,9 @@ The bypass is intentionally narrow:
 - It only activates when the prompt looks like a workflow and does not contain
   implementation intent such as fixing, implementing, adding, creating, refactoring, or
   optimizing code.
-- It allows `bash` so the agent can run git, npm, and verification commands.
+- It allows only a narrow `bash` allow-list for workflow commands: selected `git`
+  status/diff/log/add/commit/push commands and non-mutating npm test/lint/check
+  scripts. Destructive shell, redirection, pipes, and arbitrary commands remain blocked.
 - It still blocks `edit` and `write`, including plan/spec draft writes, because a workflow
   bypass must not become an implementation path.
 - It can continue across short confirmation replies like `yes` or `no` while unfinished
@@ -76,6 +78,9 @@ For implementation tasks, create a reviewable artifact under one of the paths wa
 .pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md
 ```
 
+Use `write` directly with the standard filename. No separate `mkdir` is needed; the
+write tool creates missing `.pi/plans` parent directories.
+
 After the file is written, Plannotator Auto gates the session and asks the agent to call:
 
 ```text
@@ -84,7 +89,9 @@ plannotator_auto_submit_review({ path })
 
 Before that submit call is allowed, Plan Mode validates standard plan artifacts with the
 Artifact Policy below. If review is denied, revise the same file and submit again. When the
-review result says `Review approved for ...`, Plan Mode switches `auto:plan` to `auto:act`.
+review result approves the currently submitted artifact, Plan Mode switches `auto:plan` to
+`auto:act`. Approval is tied to the current plan/spec artifact, so writing or switching to a
+newer planning artifact requires a fresh review instead of reusing an older approval.
 
 ## Artifact Policy
 
@@ -124,10 +131,17 @@ they can keep their own PRD/spec structure.
 
 In Plan phase, runtime guards block:
 
-- `bash`, unless workflow-only bypass is active
+- `bash`, unless workflow-only bypass is active and the command matches the narrow
+  workflow allow-list
 - source-code `edit` / `write`
 
-Plan/spec artifact writes are allowed only for reviewable Plannotator paths under `.pi/plans/<repo>/plan/` and `.pi/plans/<repo>/specs/`. This lets the agent create or revise the review draft while still preventing implementation before approval. During workflow-only bypass, `edit` and `write` remain blocked so the agent does not create plan/spec drafts for workflow-only requests.
+Plan/spec artifact writes are allowed only for reviewable Plannotator file paths matching
+`.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` or
+`.pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md`. This lets the agent create or
+revise the review draft while still preventing implementation before approval, including
+when the `.pi/plans` directories do not exist yet. During workflow-only bypass, `edit`
+and `write` remain blocked so the agent does not create plan/spec drafts for workflow-only
+requests.
 
 This is enforced through Pi's `tool_call` hook, not just prompt instructions.
 

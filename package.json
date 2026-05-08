@@ -18,6 +18,7 @@
       "./extensions/env-guard",
       "./extensions/rtk-rewrite",
       "./extensions/plannotator-auto",
+      "./extensions/plan-mode",
       "./extensions/dirty-git-status",
       "./extensions/codex-plan-limits",
       "./extensions/feature-workflow",

@@ -29,6 +29,17 @@ The bypass is intentionally narrow:
 - It clears after the workflow has no unfinished TODOs, so later implementation requests
   return to normal plan review.
 
+## Read-only Q&A
+
+`auto:plan` also permits ordinary read-only questions to end without a TODO list or
+Plannotator review. For example, questions like “why does this widget keep showing?” may
+inspect files and answer directly while still keeping Plan phase write and `bash` guards in
+place.
+
+Implementation requests still create a plan obligation. Prompts that ask the agent to fix,
+implement, add, create, modify, refactor, optimize, or debug code must create concrete
+TODOs and submit a reviewable plan/spec before acting.
+
 ## Commands
 
 ```text
@@ -43,15 +54,19 @@ The bypass is intentionally narrow:
 
 `plan_mode_todo` manages the workflow TODO list.
 
-During Act phase, update a task to `in_progress` before starting it and `done` after finishing it. The widget highlights the current step as `当前 #<id>/<total>` with completion counts.
+During Act phase, update a task to `in_progress` before starting it and `done` after
+finishing it. The widget highlights the current step as `当前 #<id>/<total>` with
+completion counts. After all TODOs are `done`, it shows the completion summary briefly,
+then hides automatically after 15 seconds without clearing the TODO state.
 
 ## Plannotator Auto Integration
 
 Plan Mode is intentionally separate from `extensions/plannotator-auto/`:
 
 - Plan Mode owns mode state, tool guards, TODOs, and progress UI. Progress details are
-  shown in the TODO widget above the editor; Plan Mode does not use the status area below
-  the editor for `auto:act 3/3`-style summaries.
+  shown in the TODO widget above the editor while work is active; completed TODO summaries
+  auto-hide after 15 seconds. Plan Mode does not use the status area below the editor for
+  `auto:act 3/3`-style summaries.
 - Plannotator Auto owns plan/spec detection and review feedback.
 
 For implementation tasks, create a reviewable artifact under one of the paths watched by Plannotator Auto, for example:

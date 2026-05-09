@@ -184,6 +184,13 @@ const startPlanModeSession = async () => {
   return { harness, ctx };
 };
 
+const sendInput = async (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+  text: string,
+  source: string,
+) => harness.emit("input", { text, source }, ctx);
+
 const sendAgentPrompt = async (
   harness: ReturnType<typeof buildHarness>,
   ctx: TestCtx,
@@ -214,6 +221,30 @@ const validPlanContent = `## Context
 
 const invalidPlanContent = validPlanContent.replace("## Review", "## Notes");
 const oneItemCompletedSummary = "✅ 计划「当前计划」已完成 · 1/1 项任务已交付";
+const actOneItemCompletedSummary = `【act】${oneItemCompletedSummary}`;
+const autoPlanOneItemCompletedSummary = `【auto:plan】${oneItemCompletedSummary}`;
+const demoPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
+
+const approveDemoPlan = async (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+): Promise<void> => {
+  await harness.emit(
+    "tool_result",
+    {
+      toolName: "plannotator_auto_submit_review",
+      isError: false,
+      input: { path: demoPlanPath },
+      content: [
+        {
+          type: "text",
+          text: `Review approved for ${demoPlanPath}.`,
+        },
+      ],
+    },
+    ctx,
+  );
+};
 
 describe("plan-mode extension", () => {
   afterEach(() => {
@@ -307,25 +338,29 @@ describe("plan-mode extension", () => {
     });
   });
 
-  it("allows reads outside cwd while still blocking writes outside cwd", async () => {
+  it("allows read-only tools outside cwd while still blocking writes", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     const outsidePath = "/tmp/outside-cwd.txt";
     planModeExtension(harness.api as unknown as ExtensionAPI);
 
     await harness.emit("session_start", {}, ctx);
-
-    await expect(
-      harness.runToolCall("read", { path: outsidePath }, ctx),
-    ).resolves.toBeUndefined();
-
     await harness.runCommand("plan-mode", "act", ctx);
-    await expect(
-      harness.runToolCall("write", { path: outsidePath }, ctx),
-    ).resolves.toMatchObject({
-      block: true,
-      reason: expect.stringContaining("path is outside cwd"),
-    });
+
+    for (const toolName of ["read", "grep", "find", "ls", "rg", "fd"]) {
+      await expect(
+        harness.runToolCall(toolName, { path: outsidePath }, ctx),
+      ).resolves.toBeUndefined();
+    }
+
+    for (const toolName of ["write", "edit"]) {
+      await expect(
+        harness.runToolCall(toolName, { path: outsidePath }, ctx),
+      ).resolves.toMatchObject({
+        block: true,
+        reason: expect.stringContaining("path is outside cwd"),
+      });
+    }
   });
 
   it("updates the act widget with the current in-progress step and completion counts", async () => {
@@ -348,12 +383,12 @@ describe("plan-mode extension", () => {
     );
 
     const [heading, progress, firstTodo] = lastWidgetLines(ctx);
-    expect(heading).toBe("<accent>进行中 #1/2：实现状态机</accent>");
+    expect(heading).toBe("<accent>【act】进行中 #1/2：实现状态机</accent>");
     expect(progress).toBe("已完成 0/2 · 剩余 2 项");
     expect(firstTodo).toBe("→ #1 [~] 实现状态机");
     expect(ctx.ui.theme.fg).toHaveBeenCalledWith(
       "accent",
-      "进行中 #1/2：实现状态机",
+      "【act】进行中 #1/2：实现状态机",
     );
   });
 
@@ -397,13 +432,13 @@ describe("plan-mode extension", () => {
       expect.stringContaining("auto:act 3/3"),
     );
     expect(lastWidgetLines(ctx)).toEqual([
-      "<accent>✅ 计划「demo」已完成 · 3/3 项任务已交付</accent>",
+      "<accent>【auto:act】✅ 计划「demo」已完成 · 3/3 项任务已交付</accent>",
     ]);
     expect(lastTodoWidgetCall(ctx)[2]).toEqual({ placement: "aboveEditor" });
 
     await vi.advanceTimersByTimeAsync(60_000);
     expect(lastWidgetLines(ctx)).toEqual([
-      "<accent>✅ 计划「demo」已完成 · 3/3 项任务已交付</accent>",
+      "<accent>【auto:act】✅ 计划「demo」已完成 · 3/3 项任务已交付</accent>",
     ]);
   });
 
@@ -422,7 +457,7 @@ describe("plan-mode extension", () => {
       },
       ctx,
     );
-    expect(plainWidgetText(ctx)).toBe(oneItemCompletedSummary);
+    expect(plainWidgetText(ctx)).toBe(actOneItemCompletedSummary);
 
     await harness.runTool(
       "plan_mode_todo",
@@ -448,7 +483,7 @@ describe("plan-mode extension", () => {
       },
       ctx,
     );
-    expect(plainWidgetText(ctx)).toBe(oneItemCompletedSummary);
+    expect(plainWidgetText(ctx)).toBe(autoPlanOneItemCompletedSummary);
 
     await harness.runTool("plan_mode_todo", { action: "clear" }, ctx);
 
@@ -466,7 +501,7 @@ describe("plan-mode extension", () => {
       },
       ctx,
     );
-    expect(plainWidgetText(ctx)).toBe(oneItemCompletedSummary);
+    expect(plainWidgetText(ctx)).toBe(autoPlanOneItemCompletedSummary);
 
     await expect(
       harness.emit("session_shutdown", {}, ctx),
@@ -620,6 +655,22 @@ describe("plan-mode extension", () => {
     expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
   });
 
+  it("injects architecture testing guidance into implementation plans", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    const result = await sendAgentPrompt(
+      harness,
+      ctx,
+      "fix the plan mode guard bug",
+    );
+
+    expect(result).toMatchObject({
+      systemPrompt: expect.stringMatching(
+        /写测试[\s\S]+Module[\s\S]+Interface[\s\S]+test surface/u,
+      ),
+    });
+  });
+
   it("injects mandatory diagrams guidance for code logic changes", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
@@ -636,9 +687,26 @@ describe("plan-mode extension", () => {
     });
   });
 
-  it("still requires a TODO for implementation prompts in auto plan", async () => {
+  it("requires color-coded diagram changes in implementation plans", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
+    const result = await sendAgentPrompt(
+      harness,
+      ctx,
+      "fix the plan mode guard bug",
+    );
+
+    expect(result).toMatchObject({
+      systemPrompt: expect.stringMatching(
+        /颜色[\s\S]+数据变更[\s\S]+逻辑变更[\s\S]+新增[\s\S]+删除[\s\S]+修改/u,
+      ),
+    });
+  });
+
+  it("still requires a TODO for user implementation prompts in auto plan", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await sendInput(harness, ctx, "fix the plan mode guard bug", "interactive");
     await sendAgentPrompt(harness, ctx, "fix the plan mode guard bug");
     await harness.emit("agent_end", { messages: [] }, ctx);
 
@@ -646,6 +714,37 @@ describe("plan-mode extension", () => {
       expect.stringContaining("plan_mode_todo"),
       { deliverAs: "followUp" },
     );
+  });
+
+  it("does not require plan review for extension-sourced implementation prompts", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await sendInput(harness, ctx, "refactor the modified code", "extension");
+    await sendAgentPrompt(harness, ctx, "refactor the modified code");
+    await harness.emit("agent_end", { messages: [] }, ctx);
+
+    expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining("plan_mode_todo"),
+      expect.anything(),
+    );
+    expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining("approved Plannotator plan/spec"),
+      expect.anything(),
+    );
+  });
+
+  it("allows any tool during extension-sourced implementation prompts", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await sendInput(harness, ctx, "refactor the modified code", "extension");
+    await sendAgentPrompt(harness, ctx, "refactor the modified code");
+
+    await expect(
+      harness.runToolCall("bash", { command: "rm -rf src" }, ctx),
+    ).resolves.toBeUndefined();
+    await expect(
+      harness.runToolCall("write", { path: "src/demo.ts" }, ctx),
+    ).resolves.toBeUndefined();
   });
 
   it("keeps review gating when read-only prompts create planning TODOs", async () => {
@@ -798,23 +897,63 @@ describe("plan-mode extension", () => {
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
 
-    await harness.emit(
-      "tool_result",
+    await approveDemoPlan(harness, ctx);
+
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("plan-mode", undefined);
+    await expect(
+      harness.runToolCall("write", { path: "x.ts" }, ctx),
+    ).resolves.toBeUndefined();
+  });
+
+  it("returns auto act to plan after a completed run gets a new implementation prompt", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    await harness.runTool(
+      "plan_mode_todo",
       {
-        toolName: "plannotator_auto_submit_review",
-        isError: false,
-        input: { path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md" },
-        content: [
-          {
-            type: "text",
-            text: "Review approved for .pi/plans/pi-kit/plan/2026-05-08-demo.md.",
-          },
-        ],
+        action: "set",
+        items: [{ text: "实现已批准任务", status: "todo" }],
       },
       ctx,
     );
+    await approveDemoPlan(harness, ctx);
+    await harness.runTool(
+      "plan_mode_todo",
+      { action: "update", id: 1, status: "done" },
+      ctx,
+    );
 
-    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("plan-mode", undefined);
+    await sendAgentPrompt(harness, ctx, "迁移到 Svelte + Vite");
+
+    await expect(
+      harness.runToolCall("write", { path: "x.ts" }, ctx),
+    ).resolves.toMatchObject({ block: true });
+    await expect(
+      harness.runToolCall("bash", { command: "npm test" }, ctx),
+    ).resolves.toMatchObject({ block: true });
+  });
+
+  it("keeps auto act for a new prompt while the approved run is unfinished", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "实现已批准任务", status: "todo" }],
+      },
+      ctx,
+    );
+    await approveDemoPlan(harness, ctx);
+
+    await sendAgentPrompt(harness, ctx, "go ahead");
+
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
     ).resolves.toBeUndefined();

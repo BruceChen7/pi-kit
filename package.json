@@ -22,6 +22,7 @@
       "./extensions/dirty-git-status",
       "./extensions/codex-plan-limits",
       "./extensions/feature-workflow",
+      "./extensions/kanban-worktree",
       "./extensions/todo-workflow",
       "./extensions/diffx-review",
       "./extensions/session-path-copy",
@@ -38,6 +39,7 @@
     "update:pi-agent": "node scripts/update-pi-coding-agent.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "kanban-worktree:ui:build": "vite build --config extensions/kanban-worktree/vite.config.mts",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -45,12 +47,16 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",
+    "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.3.1",
+    "svelte": "^5.0.0",
     "typescript": "^5.9.3",
+    "vite": "^6.0.0",
     "vitest": "^3.0.0"
   },
   "dependencies": {
-    "@sinclair/typebox": "^0.34.49"
+    "@sinclair/typebox": "^0.34.49",
+    "glimpseui": "file:../glimpse"
   }
 }

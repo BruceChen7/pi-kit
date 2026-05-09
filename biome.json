@@ -6,7 +6,12 @@
     "useIgnoreFile": true
   },
   "files": {
-    "ignoreUnknown": false
+    "ignoreUnknown": false,
+    "includes": [
+      "**",
+      "!extensions/kanban-worktree/ui-dist",
+      "!extensions/kanban-worktree/ui/**/*.svelte"
+    ]
   },
   "formatter": {
     "enabled": true,

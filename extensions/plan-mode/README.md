@@ -1,48 +1,23 @@
 # Plan Mode
 
-Runtime Plan Mode workflow for Pi. This extension turns the project convention of “plan first, then act” into an enforceable plugin instead of relying only on `AGENTS.md` prompt rules.
+Runtime Plan Mode workflow for Pi. It enforces “plan first, then act” with runtime
+guards, a TODO widget, and Plannotator approval before implementation.
 
-## Modes
+## Recommended workflow
 
-- `auto` (default): starts in read-only Plan phase, then switches to Act after Plannotator approves a plan/spec.
-- `plan`: manual read-only planning mode.
-- `act`: manual implementation mode.
-- `fast`: direct execution mode without plan-review gating.
+Use `auto` for normal work:
 
-## Workflow-only bypass
+1. The session starts in `auto:plan`.
+2. For implementation requests, create a concrete TODO list and a reviewable plan/spec.
+3. Submit the plan/spec to Plannotator.
+4. After approval, Plan Mode switches to `auto:act` and implementation can proceed.
+5. During Act phase, update TODOs from `in_progress` to `done` as work completes.
 
-`auto:plan` can temporarily bypass plan review for pure operational workflows such as
-`commit all changes`, `commit and push`, `git status`, `git diff`, `run tests`, or
-`run lint`. These requests do not ask the agent to implement behavior, so requiring a
-plan/spec draft adds friction without improving safety.
+Read-only questions may be answered directly without a plan/spec. Pure operational
+workflows, such as git status or running tests, may use a narrow command bypass when no
+implementation is requested.
 
-The bypass is intentionally narrow:
-
-- It only activates when the prompt looks like a workflow and does not contain
-  implementation intent such as fixing, implementing, adding, creating, refactoring, or
-  optimizing code.
-- It allows only a narrow `bash` allow-list for workflow commands: selected `git`
-  status/diff/log/add/commit/push commands and non-mutating npm test/lint/check
-  scripts. Destructive shell, redirection, pipes, and arbitrary commands remain blocked.
-- It still blocks `edit` and `write`, including plan/spec draft writes, because a workflow
-  bypass must not become an implementation path.
-- It can continue across short confirmation replies like `yes` or `no` while unfinished
-  TODOs remain, for example when the agent asks whether to include untracked files.
-- It clears after the workflow has no unfinished TODOs, so later implementation requests
-  return to normal plan review.
-
-## Read-only Q&A
-
-`auto:plan` also permits ordinary read-only questions to end without a TODO list or
-Plannotator review. For example, questions like “why does this widget keep showing?” may
-inspect files and answer directly while still keeping Plan phase write and `bash` guards in
-place.
-
-Implementation requests still create a plan obligation. Prompts that ask the agent to fix,
-implement, add, create, modify, refactor, optimize, or debug code must create concrete
-TODOs and submit a reviewable plan/spec before acting.
-
-## Commands
+## Modes and commands
 
 ```text
 /plan-mode status
@@ -52,79 +27,56 @@ TODOs and submit a reviewable plan/spec before acting.
 /plan-mode fast
 ```
 
-## Tool
+- `auto` is the default and recommended mode.
+- `plan` keeps the session in read-only planning mode.
+- `act` allows implementation without waiting for auto approval.
+- `fast` is an escape hatch for direct execution; prefer `auto` for normal work.
 
-`plan_mode_todo` manages the workflow TODO list.
+## TODO tool
+
+`plan_mode_todo` manages the active Plan Run.
 
 During Act phase, update a task to `in_progress` before starting it and `done` after
-finishing it. The widget highlights the current step as `进行中 #<id>/<total>：<text>`
-with Chinese completion counts such as `已完成 1/3 · 剩余 2 项`.
+finishing it. The widget highlights the current step, shows completion counts, and
+collapses completed runs to a one-line summary until a new run replaces it or `clear`
+hides it.
 
-TODOs are tracked as a Plan Run, not just a loose widget list. A run starts as `draft`,
-binds to the approved plan/spec path when Plannotator approves it, moves through
-`executing`, and becomes `completed` when every TODO is `done`. Completed runs collapse
-the widget to a single persistent summary such as `✅ 计划「demo」已完成 · 3/3 项任务已交付`
-until a new run replaces it or `clear` hides it; hiding the widget does not mean the run
-was cleared.
+## Plannotator Auto integration
 
-When a new TODO list starts, the previous completed run is archived into `recentRuns`.
-Archived runs are stored only as session snapshot summaries in `plan-mode-state`; they do
-not write project files, do not affect plan obligations, and do not accept further TODO
-updates. Plan Mode keeps the five most recent archived run summaries and drops older ones
-to avoid session growth. `clear` removes only the active run and leaves archived summaries
-intact.
+Plan Mode owns mode state, runtime guards, TODOs, and progress UI. Plannotator Auto owns
+plan/spec detection and review feedback.
 
-## Plannotator Auto Integration
-
-Plan Mode is intentionally separate from `extensions/plannotator-auto/`:
-
-- Plan Mode owns mode state, tool guards, TODOs, and progress UI. Progress details are
-  shown in the TODO widget above the editor while work is active; completed TODO summaries
-  collapse to a persistent one-line summary until a new run replaces them or `clear` hides
-  them. Plan Mode does not use the status area below the editor for `auto:act 3/3`-style
-  summaries.
-- Plannotator Auto owns plan/spec detection and review feedback.
-
-For implementation tasks, create a reviewable artifact under one of the paths watched by Plannotator Auto, for example:
+For implementation tasks, create a reviewable artifact under one of the watched paths:
 
 ```text
 .pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md
 .pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md
 ```
 
-Use `write` directly with the standard filename. No separate `mkdir` is needed; the
-write tool creates missing `.pi/plans` parent directories.
+Use `write` directly with the standard filename; the write tool creates missing
+`.pi/plans` parent directories.
 
-For every code-writing plan/spec that changes logic, state, data models, control flow, or
-process flow, the artifact must include before/after diagrams for the affected data model
-and flow. This is a mandatory planning requirement for logic changes, not an optional
-polish step. Put these diagrams inside the standard sections below, typically `## Context`
-or `## Steps`, rather than adding extra top-level sections to standard plan files.
+For code-writing plans/specs that change logic, state, data models, control flow, or
+process flow, include before/after diagrams for the affected data model and flow inside
+the standard plan sections.
 
-After the file is written, Plannotator Auto gates the session and asks the agent to call:
+After writing the artifact, submit it for review:
 
 ```text
 plannotator_auto_submit_review({ path })
 ```
 
-Before that submit call is allowed, Plan Mode validates standard plan artifacts with the
-Artifact Policy below. If review is denied, revise the same file and submit again. When the
-review result approves the currently submitted artifact, Plan Mode switches `auto:plan` to
-`auto:act`. Approval is tied to the current plan/spec artifact, so writing or switching to a
-newer planning artifact requires a fresh review instead of reusing an older approval.
+If review is denied, revise the same file and submit again. Approval applies to the
+currently submitted artifact; switching to a newer artifact requires a fresh review.
 
 ## Artifact Policy
 
-Plan Mode enforces a default Markdown structure for files under
-`.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md`, so this format is protected even when a
-project does not load `AGENTS.md`.
-
-Standard plan files must contain these top-level sections, in order:
+Plan files under `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` must use this structure:
 
 ```markdown
 ## Context
-- Describe the user's goal, success criteria, current constraints, affected files or
-  modules, explicit non-goals, and open questions. Use Chinese by default.
+- Describe the goal, success criteria, constraints, affected files/modules, non-goals,
+  and open questions. Use Chinese by default.
 
 ## Steps
 - [ ] Use outcome-oriented, verifiable checkbox steps.
@@ -133,37 +85,27 @@ Standard plan files must contain these top-level sections, in order:
 - List test commands, manual checks, or skipped checks with reasons.
 
 ## Review
-- Placeholder is allowed before implementation, but it should say the final review will
-  record change points, verification results, remaining risks, and bug/root-cause reasons.
+- State that the final review will record change points, verification results, remaining
+  risks, and bug/root-cause reasons.
 ```
 
-Additional `##` sections are rejected by default. Put extra details into one of the four
-standard sections instead, so every plan stays predictable and easy to scan.
+Additional top-level `##` sections are rejected by default; put extra details inside one
+of the four standard sections. Spec/PRD files under `.pi/plans/<repo>/specs/` may keep
+their own structure.
 
-The policy is checked when the agent calls `plannotator_auto_submit_review` and again at
-`agent_end` for the latest plan artifact. Draft writes are not blocked, which lets the
-agent build or revise the Markdown incrementally.
-
-Spec/PRD files under `.pi/plans/<repo>/specs/` are not forced to use this plan template;
-they can keep their own PRD/spec structure.
-
-## Runtime Guards
+## Runtime guards
 
 In Plan phase, runtime guards block:
 
-- `bash`, unless workflow-only bypass is active and the command matches the narrow
-  workflow allow-list
+- `bash`, except for the narrow operational workflow allow-list
 - source-code `edit` / `write`
 
-Plan/spec artifact writes are allowed only for reviewable Plannotator file paths matching
-`.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` or
-`.pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md`. This lets the agent create or
-revise the review draft while still preventing implementation before approval, including
-when the `.pi/plans` directories do not exist yet. During workflow-only bypass, `edit`
-and `write` remain blocked so the agent does not create plan/spec drafts for workflow-only
-requests.
+Plan/spec artifact writes are allowed only for reviewable Plannotator paths:
 
-This is enforced through Pi's `tool_call` hook, not just prompt instructions.
+```text
+.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md
+.pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md
+```
 
 Optional guards are enabled by default:
 
@@ -172,9 +114,8 @@ Optional guards are enabled by default:
 
 ## Configuration
 
-Configuration is read from the shared pi-kit settings namespace `planMode` in `third_extension_settings.json`.
-
-Example:
+Configuration is read from the shared pi-kit settings namespace `planMode` in
+`third_extension_settings.json`.
 
 ```json
 {

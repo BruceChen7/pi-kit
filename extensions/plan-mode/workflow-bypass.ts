@@ -34,7 +34,7 @@ const PLAN_REVIEW_IMPLEMENTATION_INTENT_WORDS = [
   "impl",
 ] as const;
 const CHINESE_IMPLEMENTATION_INTENT_SOURCE =
-  "修复|实现|添加|新增|创建|修改|重构|优化|调试|删除|调整|变更|完善|开发|改进";
+  "修复|实现|添加|新增|创建|修改|重构|优化|调试|删除|调整|变更|完善|开发|改进|迁移";
 
 const createImplementationIntentPattern = (
   englishWords: readonly string[],

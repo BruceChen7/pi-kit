@@ -25,6 +25,7 @@ import {
 
 type PlanMode = "plan" | "act" | "auto" | "fast";
 type PlanPhase = "plan" | "act";
+type InputSource = "interactive" | "rpc" | "extension" | "unknown";
 type TodoStatus = "todo" | "in_progress" | "done" | "blocked";
 type TodoStatusInput = TodoStatus | "pending";
 
@@ -139,28 +140,28 @@ const BUILTIN_TOOL_NAMES = [
 ];
 const PLAN_MODE_TOOL_NAMES = new Set([...BUILTIN_TOOL_NAMES, TODO_TOOL_NAME]);
 const WRITE_TOOL_NAMES = new Set(["edit", "write"]);
+const READ_ONLY_PATH_TOOL_NAMES = ["read", "grep", "find", "ls", "rg", "fd"];
 const PATH_GUARDED_TOOL_NAMES = new Set([
-  "read",
-  "grep",
-  "find",
-  "ls",
-  "write",
-  "edit",
-  "rg",
-  "fd",
+  ...READ_ONLY_PATH_TOOL_NAMES,
+  ...WRITE_TOOL_NAMES,
 ]);
-const OUTSIDE_CWD_ALLOWED_TOOL_NAMES = new Set(["read"]);
-const PLAN_INSPECTION_TOOL_NAMES = [...PATH_GUARDED_TOOL_NAMES].filter(
-  (toolName) => !WRITE_TOOL_NAMES.has(toolName),
-);
+const OUTSIDE_CWD_ALLOWED_TOOL_NAMES = new Set(READ_ONLY_PATH_TOOL_NAMES);
+const PLAN_INSPECTION_TOOL_NAMES = READ_ONLY_PATH_TOOL_NAMES;
 const PLAN_INSPECTION_TOOL_SLASH_LIST = PLAN_INSPECTION_TOOL_NAMES.join("/");
 const PLAN_INSPECTION_TOOL_COMMA_LIST = PLAN_INSPECTION_TOOL_NAMES.join(", ");
+const ARCHITECTURE_TEST_GUIDANCE =
+  "- 写测试时按 improve-codebase-architecture：Module 的 Interface " +
+  "is the test surface; test seam/Adapter behavior, not Implementation details.";
+const DIAGRAM_CHANGE_COLOR_GUIDANCE =
+  "- 画流程图/数据模型图时，必须用颜色或图例区分数据变更与逻辑变更，" +
+  "并标明新增、删除、修改。";
 const LOGIC_CHANGE_DIAGRAM_GUIDANCE = [
   "- For any code-writing plan/spec that changes logic, state, data models, " +
     "control flow, or process flow, the artifact must include before/after " +
     "diagrams for the affected data model and flow.",
   "- 写代码且涉及逻辑、状态、数据模型、控制流或流程变更的 plan/spec " +
     "必须包含变更前后数据模型与流程图。",
+  DIAGRAM_CHANGE_COLOR_GUIDANCE,
 ];
 
 const todoStatusSchema = Type.Union([
@@ -540,6 +541,21 @@ class PlanModeState {
     }
   }
 
+  shouldReturnAutoActToPlan(hasImplementationIntent: boolean): boolean {
+    return (
+      this.mode === "auto" &&
+      this.phase === "act" &&
+      hasImplementationIntent &&
+      !this.hasUnfinishedTodos()
+    );
+  }
+
+  returnAutoActToPlan(): void {
+    this.archiveCompletedActiveRun();
+    this.phase = "plan";
+    this.clearReviewTracking();
+  }
+
   isAutoPlanPhase(): boolean {
     return this.mode === "auto" && this.phase === "plan";
   }
@@ -761,10 +777,13 @@ const formatTodoWidgetLines = (state: PlanModeState): string[] => {
 
   const total = state.todos.length;
   const done = state.todos.filter((todo) => todo.status === "done").length;
+  const modePrefix = `【${getModeLabel(state)}】`;
   const current = findCurrentTodo(state.todos);
   if (!current && state.activeRun?.status === "completed") {
     const planName = formatPlanName(state.activeRun.planPath);
-    return [`✅ 计划「${planName}」已完成 · ${done}/${total} 项任务已交付`];
+    return [
+      `${modePrefix}✅ 计划「${planName}」已完成 · ${done}/${total} 项任务已交付`,
+    ];
   }
 
   const heading = current
@@ -777,7 +796,7 @@ const formatTodoWidgetLines = (state: PlanModeState): string[] => {
     return `${marker} #${todo.id} [${symbolForStatus(todo.status)}] ${todo.text}${notes}`;
   });
 
-  return [heading, progress, ...todoLines];
+  return [`${modePrefix}${heading}`, progress, ...todoLines];
 };
 
 const colorTodoWidgetHeading = (
@@ -974,6 +993,8 @@ class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
   state = new PlanModeState(DEFAULT_CONFIG.defaultMode);
   private autoPlanReviewRequiredForTurn = false;
+  private inputSourceForTurn: InputSource = "unknown";
+  private internalExtensionBypassForTurn = false;
   constructor(private readonly pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext): void {
@@ -981,6 +1002,8 @@ class PlanModeController {
     const entries = ctx.sessionManager.getEntries() as unknown[];
     this.state.restore(latestSnapshot(entries), this.config.defaultMode);
     this.autoPlanReviewRequiredForTurn = false;
+    this.inputSourceForTurn = "unknown";
+    this.internalExtensionBypassForTurn = false;
   }
 
   persist(): void {
@@ -1048,6 +1071,7 @@ class PlanModeController {
       `- ${REVIEW_ARTIFACT_WRITE_HINT}`,
       "- Standard plan artifacts must use ## Context, ## Steps, " +
         "## Verification, and ## Review with Chinese checkbox steps.",
+      ARCHITECTURE_TEST_GUIDANCE,
       ...LOGIC_CHANGE_DIAGRAM_GUIDANCE,
       "- If Plannotator denies the plan, revise the same file and submit again.",
       "- In act phases, execute the approved plan and update " +
@@ -1064,15 +1088,40 @@ class PlanModeController {
     return lines.join("\n");
   }
 
+  handleInput(event: unknown): void {
+    const source = stringProperty(event, "source");
+    this.inputSourceForTurn =
+      source === "interactive" || source === "rpc" || source === "extension"
+        ? source
+        : "unknown";
+  }
+
   handleAgentStart(event: unknown): void {
     const prompt = stringProperty(event, "prompt") ?? "";
-    if (this.state.updateWorkflowBypassForPrompt(prompt)) {
-      this.persist();
+    const hasImplementationIntent = hasPlanReviewImplementationIntent(prompt);
+    this.internalExtensionBypassForTurn =
+      this.inputSourceForTurn === "extension";
+
+    if (!this.internalExtensionBypassForTurn) {
+      if (this.state.updateWorkflowBypassForPrompt(prompt)) {
+        this.persist();
+      }
+      if (this.state.shouldReturnAutoActToPlan(hasImplementationIntent)) {
+        this.state.returnAutoActToPlan();
+        this.persist();
+      }
     }
+
     this.autoPlanReviewRequiredForTurn =
       this.state.isAutoPlanPhase() &&
       !this.state.isWorkflowBypassActive() &&
-      hasPlanReviewImplementationIntent(prompt);
+      !this.internalExtensionBypassForTurn &&
+      hasImplementationIntent;
+  }
+
+  clearTurnSource(): void {
+    this.inputSourceForTurn = "unknown";
+    this.internalExtensionBypassForTurn = false;
   }
 
   hasPlanReviewObligation(): boolean {
@@ -1127,6 +1176,10 @@ class PlanModeController {
     event: ToolCallEvent,
     ctx: ExtensionContext,
   ): { block: true; reason: string } | undefined {
+    if (this.internalExtensionBypassForTurn) {
+      return undefined;
+    }
+
     if (event.toolName === PLANNOTATOR_SUBMIT_TOOL_NAME) {
       const rawPath = pathFromToolCall(event);
       if (rawPath) {
@@ -1424,6 +1477,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
   });
 
+  pi.on("input", async (event) => {
+    controller.handleInput(event);
+    return { action: "continue" };
+  });
+
   pi.on("before_agent_start", async (event) => {
     controller.handleAgentStart(event);
     return {
@@ -1443,6 +1501,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   pi.on("agent_end", async (event, ctx) => {
     controller.updateUi(ctx);
     if (turnWasAborted(event, ctx)) {
+      controller.clearTurnSource();
       return;
     }
     if (controller.state.isWorkflowBypassActive()) {
@@ -1450,6 +1509,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
         controller.state.clearWorkflowBypass();
         controller.persist();
       }
+      controller.clearTurnSource();
       return;
     }
     if (
@@ -1462,6 +1522,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
           `submit a reviewable plan/spec with ${PLANNOTATOR_SUBMIT_TOOL_NAME}.`,
         { deliverAs: "followUp" },
       );
+      controller.clearTurnSource();
       return;
     }
 
@@ -1473,6 +1534,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       );
       if (policyFailure) {
         pi.sendUserMessage(policyFailure, { deliverAs: "followUp" });
+        controller.clearTurnSource();
         return;
       }
     }
@@ -1495,5 +1557,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
         { deliverAs: "followUp" },
       );
     }
+    controller.clearTurnSource();
   });
 }

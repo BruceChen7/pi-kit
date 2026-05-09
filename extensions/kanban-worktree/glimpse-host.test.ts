@@ -10,26 +10,6 @@ const BUILT_SVELTE_SHELL = [
   '<script type="module" src="/assets/app.js"></script>',
   '</head><body><div id="app"></div></body></html>',
 ].join("");
-const GLIMPSE_STDERR_SAMPLE_LINES = [
-  "+[IMKClient subclass]: chose IMKClient_Modern",
-  "+[IMKInputSession subclass]: chose IMKInputSession_Modern",
-  "completionHandler:] called for async work",
-  "TSM AdjustCapsLockLEDForKeyTransitionHandling",
-  "_ISSetPhysicalKeyboardCapsLockLED",
-  "error messaging the mach port for IMKCFRunLoopWakeUpReliable",
-];
-const GLIMPSE_STDERR_SAMPLE = [
-  GLIMPSE_STDERR_SAMPLE_LINES[0],
-  GLIMPSE_STDERR_SAMPLE_LINES[1],
-  `dleEvent:${GLIMPSE_STDERR_SAMPLE_LINES[2]}, ` +
-    "*rejected* for synchronous call sites.",
-  "2026-05-09 17:03:04.692 glimpse[89257:9632383] " +
-    `${GLIMPSE_STDERR_SAMPLE_LINES[3]} - ` +
-    `${GLIMPSE_STDERR_SAMPLE_LINES[4]} Inhibit`,
-  "2026-05-09 17:25:27.547 glimpse[11816:9677414] " +
-    GLIMPSE_STDERR_SAMPLE_LINES[5],
-].join("\n");
-
 let dir: string;
 
 type TestRequest = (socketPath: string, message: unknown) => Promise<unknown>;
@@ -44,11 +24,15 @@ function restoreTestEnv(name: string, previous: string | undefined): void {
   process.env[name] = previous;
 }
 
+async function writeBuiltSvelteShell(): Promise<void> {
+  await writeFile(path.join(dir, "index.html"), BUILT_SVELTE_SHELL);
+}
+
 async function openKanbanWithCapturedMessageHandler(input: {
   request: TestRequest;
   send?: TestSend;
 }): Promise<TestMessageHandler> {
-  await writeFile(path.join(dir, "index.html"), BUILT_SVELTE_SHELL);
+  await writeBuiltSvelteShell();
   let messageHandler: TestMessageHandler | undefined;
 
   await openGlimpseKanban("/tmp/kanban.sock", {
@@ -109,7 +93,7 @@ afterEach(async () => {
 });
 
 test("openGlimpseKanban redirects open-window stderr to a log file", async () => {
-  await writeFile(path.join(dir, "index.html"), BUILT_SVELTE_SHELL);
+  await writeBuiltSvelteShell();
   const logPath = path.join(dir, "glimpse-stderr.log");
   let stderrOutput = "";
   const originalWrite = process.stderr.write;
@@ -124,7 +108,7 @@ test("openGlimpseKanban redirects open-window stderr to a log file", async () =>
       request: vi.fn().mockResolvedValue({ result: [] }),
       glimpseStderrLogPath: logPath,
       openWindow: () => {
-        process.stderr.write(`${GLIMPSE_STDERR_SAMPLE}\nreal warning\n`);
+        process.stderr.write("real warning\n");
         return { on: vi.fn() };
       },
     });
@@ -134,12 +118,11 @@ test("openGlimpseKanban redirects open-window stderr to a log file", async () =>
 
   expect(stderrOutput).toBe("");
   const log = await readFile(logPath, "utf8");
-  expect(log).toContain("IMKCFRunLoopWakeUpReliable");
   expect(log).toContain("real warning");
 });
 
 test("openGlimpseKanban restores the original stderr write method", async () => {
-  await writeFile(path.join(dir, "index.html"), BUILT_SVELTE_SHELL);
+  await writeBuiltSvelteShell();
   const originalWrite = process.stderr.write;
 
   await openGlimpseKanban("/tmp/kanban.sock", {
@@ -154,7 +137,7 @@ test("openGlimpseKanban restores the original stderr write method", async () => 
 });
 
 test("openGlimpseKanban preserves redirected stderr write callbacks", async () => {
-  await writeFile(path.join(dir, "index.html"), BUILT_SVELTE_SHELL);
+  await writeBuiltSvelteShell();
   const logPath = path.join(dir, "glimpse-stderr.log");
   const firstCallback = vi.fn();
   const secondCallback = vi.fn();
@@ -165,11 +148,7 @@ test("openGlimpseKanban preserves redirected stderr write callbacks", async () =
     glimpseStderrLogPath: logPath,
     openWindow: () => {
       process.stderr.write("real warning\n", "utf8", firstCallback);
-      process.stderr.write(
-        `${GLIMPSE_STDERR_SAMPLE}\n`,
-        "utf8",
-        secondCallback,
-      );
+      process.stderr.write("another warning\n", "utf8", secondCallback);
       return { on: vi.fn() };
     },
   });
@@ -178,7 +157,7 @@ test("openGlimpseKanban preserves redirected stderr write callbacks", async () =
   expect(secondCallback).toHaveBeenCalledOnce();
   const log = await readFile(logPath, "utf8");
   expect(log).toContain("real warning");
-  expect(log).toContain("IMKCFRunLoopWakeUpReliable");
+  expect(log).toContain("another warning");
 });
 
 test("glimpse host wrapper redirects native stderr to a log file", async () => {
@@ -193,7 +172,7 @@ test("glimpse host wrapper redirects native stderr to a log file", async () => {
 });
 
 test("wraps existing Glimpse binary override so native stderr is redirected", async () => {
-  await writeFile(path.join(dir, "index.html"), BUILT_SVELTE_SHELL);
+  await writeBuiltSvelteShell();
   const previousBinaryPath = process.env.GLIMPSE_BINARY_PATH;
   const previousHostPath = process.env.GLIMPSE_HOST_PATH;
   process.env.GLIMPSE_BINARY_PATH = "/tmp/custom-glimpse-host";
@@ -710,7 +689,7 @@ test("inlines built Svelte assets so Glimpse can render string HTML", async () =
 });
 
 test("injects boot data into the built Svelte HTML shell", async () => {
-  await writeFile(path.join(dir, "index.html"), BUILT_SVELTE_SHELL);
+  await writeBuiltSvelteShell();
 
   const html = await createGlimpseHtml("/tmp/kanban.sock", {
     uiDistDir: dir,

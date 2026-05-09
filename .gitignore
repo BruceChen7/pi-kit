@@ -5,6 +5,7 @@ PLAN.md
 .DS_Store
 dist/
 build/
+extensions/kanban-worktree/ui-dist/
 .pi-memory/
 package-lock.json
 /.pi

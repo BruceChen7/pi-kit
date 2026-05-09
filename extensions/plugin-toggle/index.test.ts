@@ -16,7 +16,6 @@ const originalHome = process.env.HOME;
 const originalCwd = process.cwd();
 const DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE =
   "同步插件成功，请重启 Pi 以加载新插件。";
-const RELOAD_FOLLOW_UP = { deliverAs: "followUp" };
 const ARROW_DOWN = "\u001b[B";
 const ARROW_UP = "\u001b[A";
 
@@ -521,7 +520,7 @@ describe("default project bootstrap", () => {
     expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(false);
   });
 
-  it("queues reload and notifies after bootstrapping newly enabled plugins", async () => {
+  it("notifies without queueing reload after bootstrapping newly enabled plugins", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     createPluginLibrary("alpha");
     const notify = vi.fn();
@@ -530,7 +529,7 @@ describe("default project bootstrap", () => {
 
     await runSessionStart(cwd, { hasUI: true, notify });
 
-    expect(sendUserMessage).toHaveBeenCalledWith("/reload", RELOAD_FOLLOW_UP);
+    expect(sendUserMessage).not.toHaveBeenCalled();
     expect(notify).toHaveBeenCalledWith(
       DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE,
       "info",
@@ -612,7 +611,7 @@ describe("default project bootstrap", () => {
     expect(fs.existsSync(projectPluginPath(cwd, "plugin-toggle"))).toBe(false);
   });
 
-  it("queues reload when at least one plugin is enabled even if another plugin conflicts", async () => {
+  it("does not queue reload when a plugin is enabled and another conflicts", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     createPluginLibrary("alpha", "beta");
     const projectPlugin = projectPluginPath(cwd, "beta");
@@ -624,7 +623,7 @@ describe("default project bootstrap", () => {
 
     await runSessionStart(cwd, { hasUI: true, notify });
 
-    expect(sendUserMessage).toHaveBeenCalledWith("/reload", RELOAD_FOLLOW_UP);
+    expect(sendUserMessage).not.toHaveBeenCalled();
     expect(readManagedPluginNames(cwd)).toEqual(["alpha"]);
     expect(notify).toHaveBeenCalledWith(
       `Default plugin bootstrap skipped conflicting paths: ${projectPlugin}`,

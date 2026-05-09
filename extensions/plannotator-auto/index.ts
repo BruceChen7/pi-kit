@@ -344,11 +344,18 @@ const notifyPendingPlanReviewGate = (
   }
 
   state.pendingPlanReviewGateKeysByCwd.set(ctx.cwd, gateKey);
-  const planFiles = pendingPlanReviews.map((pending) => pending.planFile);
-  pi.sendUserMessage(formatPendingPlanReviewGateMessage(planFiles), {
-    deliverAs: "followUp",
-  });
   emitPendingPlanReviewEvent(pi, ctx, state, pendingPlanReviews);
+};
+
+const getGateablePendingPlanReviews = (
+  state: SessionRuntimeState,
+  cwd: string,
+): PendingPlanReview[] => {
+  if (state.activePlanReviewByCwd.has(cwd)) {
+    return [];
+  }
+
+  return listPendingPlanReviews(state, cwd);
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -1852,7 +1859,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (_event, ctx) => {
-    const pendingPlanReviews = listPendingPlanReviews(
+    const pendingPlanReviews = getGateablePendingPlanReviews(
       getSessionState(ctx),
       ctx.cwd,
     );
@@ -1985,13 +1992,8 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
             planConfig,
           );
 
-    const pendingPlanReviews = listPendingPlanReviews(state, ctx.cwd);
-    const activePlanReview = state.activePlanReviewByCwd.get(ctx.cwd);
-    if (
-      queuedPlanReview &&
-      pendingPlanReviews.length > 0 &&
-      !activePlanReview
-    ) {
+    const pendingPlanReviews = getGateablePendingPlanReviews(state, ctx.cwd);
+    if (queuedPlanReview && pendingPlanReviews.length > 0) {
       notifyPendingPlanReviewGate(pi, ctx, state, pendingPlanReviews);
     }
 
@@ -2007,9 +2009,8 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     });
 
     const state = getSessionState(ctx);
-    const pendingPlanReviews = listPendingPlanReviews(state, ctx.cwd);
-    const activePlanReview = state.activePlanReviewByCwd.get(ctx.cwd);
-    if (pendingPlanReviews.length > 0 && !activePlanReview) {
+    const pendingPlanReviews = getGateablePendingPlanReviews(state, ctx.cwd);
+    if (pendingPlanReviews.length > 0) {
       notifyPendingPlanReviewGate(pi, ctx, state, pendingPlanReviews);
       setReviewWidget(ctx);
       return;

@@ -3,18 +3,18 @@ import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 import type { FeatureRecord } from "./storage.js";
-import { trimToNull } from "./utils.js";
+import { trimToNull } from "./utils.ts";
 import {
   buildWtSwitchArgs,
   buildWtSwitchCreateArgs,
   parseWtJsonResult,
-} from "./wt.js";
+} from "./wt.ts";
 import {
   resolveWorktreePathForBranchFromWtList as findWorktreePathForBranchFromWtList,
   listFeatureRecordsFromWtList,
   listSwitchableFeatureRecordsFromWtList,
   resolvePrimaryWorktreePathFromWtList,
-} from "./wt-list.js";
+} from "./wt-list.ts";
 
 export type WtExecutionResult = {
   code: number;
@@ -37,6 +37,12 @@ const toErrorMessage = (result: WtExecutionResult, fallback: string): string =>
 const isExistingBranchSwitchHint = (message: string): boolean =>
   /branch\s+.+\s+already exists/i.test(message) &&
   /without\s+--create/i.test(message);
+
+const timeoutFromOptions = (options: WtRunOptions): number | undefined => {
+  if (typeof options.timeoutMs !== "number") return undefined;
+  if (!Number.isFinite(options.timeoutMs)) return undefined;
+  return options.timeoutMs > 0 ? options.timeoutMs : undefined;
+};
 
 const getWorktreePath = (
   result: WtExecutionResult,
@@ -73,13 +79,7 @@ export function createWtRunner(pi: ExtensionAPI, repoRoot: string): WtRunner {
     args: string[],
     options: WtRunOptions = {},
   ): Promise<WtExecutionResult> => {
-    const timeout =
-      typeof options.timeoutMs === "number" &&
-      Number.isFinite(options.timeoutMs) &&
-      options.timeoutMs > 0
-        ? options.timeoutMs
-        : undefined;
-
+    const timeout = timeoutFromOptions(options);
     const execOptions = typeof timeout === "number" ? { timeout } : undefined;
 
     const result =
@@ -99,12 +99,7 @@ export function createProcessWtRunner(repoRoot: string): WtRunner {
     args: string[],
     options: WtRunOptions = {},
   ): Promise<WtExecutionResult> => {
-    const timeout =
-      typeof options.timeoutMs === "number" &&
-      Number.isFinite(options.timeoutMs) &&
-      options.timeoutMs > 0
-        ? options.timeoutMs
-        : undefined;
+    const timeout = timeoutFromOptions(options);
 
     return new Promise((resolve) => {
       execFile(

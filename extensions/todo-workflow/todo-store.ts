@@ -206,18 +206,6 @@ function slugifyId(value: string): string {
   );
 }
 
-function createId(description: string, existing: TodoItem[]): string {
-  const slug = slugifyId(description);
-  let candidate = slug;
-  let counter = 2;
-  const existingIds = new Set(existing.map((todo) => todo.id));
-  while (existingIds.has(candidate)) {
-    candidate = `${slug}-${counter}`;
-    counter += 1;
-  }
-  return candidate;
-}
-
 export function createUniqueTodoId(base: string, existing: TodoItem[]): string {
   const slug = slugifyId(base);
   let candidate = slug;
@@ -240,18 +228,20 @@ export function createTodo(
   input?: {
     id?: string;
     now?: string;
+    sourceBranch?: string;
+    workBranch?: string;
   },
 ): TodoItem {
   const store = readStore(repoRoot);
   const timestamp = input?.now ?? new Date().toISOString();
   const todo: TodoItem = {
-    id: input?.id
-      ? createUniqueTodoId(input.id, store.todos)
-      : createId(description, store.todos),
+    id: createUniqueTodoId(input?.id ?? description, store.todos),
     description: description.trim(),
     status: "todo",
     createdAt: timestamp,
     updatedAt: timestamp,
+    sourceBranch: input?.sourceBranch,
+    workBranch: input?.workBranch,
   };
   store.todos.push(todo);
   writeStore(repoRoot, store);

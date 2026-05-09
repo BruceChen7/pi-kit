@@ -11,7 +11,6 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import { bootstrapDefaultManagedPlugins } from "./bootstrap.ts";
 import {
-  DEFAULT_BOOTSTRAP_RELOAD_COMMAND,
   DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE,
   DEFAULT_LIBRARY_DIR,
   GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES,
@@ -75,18 +74,6 @@ function notifyDefaultBootstrapWarnings(
     `Default plugin bootstrap skipped conflicting paths: ${bootstrap.conflicts.join(", ")}`,
     "warning",
   );
-}
-
-function queueDefaultBootstrapReload(
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-): void {
-  if (ctx.hasUI) {
-    ctx.ui.notify(DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE, "info");
-  }
-  pi.sendUserMessage(DEFAULT_BOOTSTRAP_RELOAD_COMMAND, {
-    deliverAs: "followUp",
-  });
 }
 
 function isGlobalAutoloadPlugin(entry: string): boolean {
@@ -212,7 +199,9 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
     const bootstrap = bootstrapDefaultManagedPlugins(ctx.cwd, plugins);
     notifyDefaultBootstrapWarnings(ctx, bootstrap);
     if (bootstrap.enabled.length > 0) {
-      queueDefaultBootstrapReload(pi, ctx);
+      if (ctx.hasUI) {
+        ctx.ui.notify(DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE, "info");
+      }
       return;
     }
     const enabled = getEnabledManagedPlugins(ctx.cwd, plugins);

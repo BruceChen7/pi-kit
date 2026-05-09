@@ -13,10 +13,25 @@ async function importPlannotatorAuto() {
   return (await import("./index.js")).default;
 }
 
+const SUBMITTED_REVIEW_ID = "review-submit-plan";
+const PLAN_DRAFT_CONTENT = "# Plan\n\n- [ ] test\n";
+
 type PendingReviewEvent = {
   handled?: {
     isHandled: () => boolean;
   };
+};
+
+type ReviewResult = {
+  reviewId?: string;
+  approved: boolean;
+  feedback?: string;
+};
+
+type CompletedReviewResult = {
+  status: "completed";
+  reviewId: string;
+  approved: true;
 };
 
 function createReviewStoreMock(
@@ -49,7 +64,7 @@ function mockSubmitReviewApi(
     status: "handled" as const,
     result: {
       status: "pending" as const,
-      reviewId: "review-submit-plan",
+      reviewId: SUBMITTED_REVIEW_ID,
     },
   }));
 
@@ -125,6 +140,26 @@ function attachWidgetSpy(ctx: ReturnType<typeof createTestContext>) {
   return setWidget;
 }
 
+function emitReviewResult(
+  reviewResultListeners: Array<(result: unknown) => void>,
+  result: ReviewResult,
+): void {
+  const event = { reviewId: SUBMITTED_REVIEW_ID, ...result };
+  for (const listener of reviewResultListeners) {
+    listener(event);
+  }
+}
+
+function resolveApprovedReview(
+  resolveReviewResult: ((value: CompletedReviewResult) => void) | undefined,
+): void {
+  resolveReviewResult?.({
+    status: "completed",
+    reviewId: SUBMITTED_REVIEW_ID,
+    approved: true,
+  });
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -142,7 +177,7 @@ describe("submit review tool", () => {
     const repoRoot = await createTempRepo("plannotator-auto-submit-tool-");
     const repoName = repoRoot.split("/").pop() ?? "repo";
     const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
+    await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
     const ctx = createTestContext(repoRoot);
 
     try {
@@ -171,12 +206,7 @@ describe("submit review tool", () => {
       expect(startPlanReview).toHaveBeenCalledTimes(1);
       expect(settled).toBe(false);
 
-      for (const listener of reviewResultListeners) {
-        listener({
-          reviewId: "review-submit-plan",
-          approved: true,
-        });
-      }
+      emitReviewResult(reviewResultListeners, { approved: true });
 
       const result = (await submitPromise) as {
         content?: Array<{ type?: string; text?: string }>;
@@ -186,6 +216,114 @@ describe("submit review tool", () => {
       expect(result.content?.[0]?.text ?? "").toContain("approved");
       expect(emitted[0]?.handled?.isHandled()).toBe(true);
       expect(ctx.abort).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("does not enqueue a stale gate or request another submit while review is active", async () => {
+    vi.resetModules();
+    const { reviewResultListeners, startPlanReview } = mockSubmitReviewApi();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-submit-once-");
+    const repoName = repoRoot.split("/").pop() ?? "repo";
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      const submitPromise = Promise.resolve(
+        runTool(
+          "plannotator_auto_submit_review",
+          { path: planFileRelative },
+          ctx,
+        ),
+      );
+
+      await flushMicrotasks();
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
+
+      const activeGateResult = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+      expect(activeGateResult?.message).toBeUndefined();
+
+      emitReviewResult(reviewResultListeners, { approved: true });
+
+      await submitPromise;
+      await emit("agent_end", {}, ctx);
+      const approvedGateResult = (await emit(
+        "before_agent_start",
+        {},
+        ctx,
+      )) as {
+        message?: { content?: string };
+      };
+
+      expect(approvedGateResult?.message).toBeUndefined();
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("keeps the pending gate available after a denied review", async () => {
+    vi.resetModules();
+    const { reviewResultListeners, startPlanReview } = mockSubmitReviewApi();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-submit-denied-");
+    const repoName = repoRoot.split("/").pop() ?? "repo";
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      const submitPromise = Promise.resolve(
+        runTool(
+          "plannotator_auto_submit_review",
+          { path: planFileRelative },
+          ctx,
+        ),
+      );
+      await flushMicrotasks();
+
+      emitReviewResult(reviewResultListeners, {
+        approved: false,
+        feedback: "Please revise.",
+      });
+
+      const result = (await submitPromise) as {
+        details?: { status?: string };
+      };
+      const gateResult = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+
+      expect(result.details?.status).toBe("denied");
+      expect(gateResult.message?.content ?? "").toContain(
+        "plannotator_auto_submit_review",
+      );
+      expect(gateResult.message?.content ?? "").toContain(planFileRelative);
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);
@@ -203,7 +341,7 @@ describe("submit review tool", () => {
     const repoRoot = await createTempRepo("plannotator-auto-submit-busy-");
     const repoName = repoRoot.split("/").pop() ?? "repo";
     const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
+    await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
     const ctx = createTestContext(repoRoot, { isIdle: false });
 
     try {
@@ -220,12 +358,7 @@ describe("submit review tool", () => {
       );
 
       await flushMicrotasks();
-      for (const listener of reviewResultListeners) {
-        listener({
-          reviewId: "review-submit-plan",
-          approved: true,
-        });
-      }
+      emitReviewResult(reviewResultListeners, { approved: true });
       await submitPromise;
 
       expect(ctx.abort).not.toHaveBeenCalled();
@@ -239,11 +372,7 @@ describe("submit review tool", () => {
     vi.resetModules();
 
     let resolveReviewResult:
-      | ((value: {
-          status: "completed";
-          reviewId: string;
-          approved: true;
-        }) => void)
+      | ((value: CompletedReviewResult) => void)
       | undefined;
     mockSubmitReviewApi({
       waitForReviewResult: vi.fn(
@@ -261,7 +390,7 @@ describe("submit review tool", () => {
     const repoRoot = await createTempRepo("plannotator-auto-widget-active-");
     const repoName = repoRoot.split("/").pop() ?? "repo";
     const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
+    await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
     const ctx = createTestContext(repoRoot);
     const setWidget = attachWidgetSpy(ctx);
 
@@ -285,11 +414,7 @@ describe("submit review tool", () => {
         { placement: "belowEditor" },
       );
 
-      resolveReviewResult?.({
-        status: "completed",
-        reviewId: "review-submit-plan",
-        approved: true,
-      });
+      resolveApprovedReview(resolveReviewResult);
       await submitPromise;
     } finally {
       await emit("session_shutdown", {}, ctx);
@@ -305,16 +430,12 @@ describe("submit review tool", () => {
       status: "handled" as const,
       result: {
         status: "completed" as const,
-        reviewId: "review-submit-plan",
+        reviewId: SUBMITTED_REVIEW_ID,
         approved: true,
       },
     }));
     let resolveReviewResult:
-      | ((value: {
-          status: "completed";
-          reviewId: string;
-          approved: true;
-        }) => void)
+      | ((value: CompletedReviewResult) => void)
       | undefined;
     const { startPlanReview } = mockSubmitReviewApi({
       requestReviewStatus,
@@ -333,7 +454,7 @@ describe("submit review tool", () => {
     const repoRoot = await createTempRepo("plannotator-auto-submit-event-");
     const repoName = repoRoot.split("/").pop() ?? "repo";
     const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
-    await writeTestFile(repoRoot, planFileRelative, "# Plan\n\n- [ ] test\n");
+    await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
     const ctx = createTestContext(repoRoot);
 
     try {
@@ -358,11 +479,7 @@ describe("submit review tool", () => {
       expect(requestReviewStatus).not.toHaveBeenCalled();
       expect(settled).toBe(false);
 
-      resolveReviewResult?.({
-        status: "completed",
-        reviewId: "review-submit-plan",
-        approved: true,
-      });
+      resolveApprovedReview(resolveReviewResult);
       await submitPromise;
       expect(settled).toBe(true);
     } finally {

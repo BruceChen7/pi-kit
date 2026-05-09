@@ -47,11 +47,32 @@ type TodoItem = {
   notes?: string;
 };
 
+type PlanRunStatus =
+  | "draft"
+  | "approved"
+  | "executing"
+  | "completed"
+  | "archived";
+
+type PlanRun = {
+  id: string;
+  status: PlanRunStatus;
+  planPath: string | null;
+  todos: TodoItem[];
+  nextTodoId: number;
+  createdAt: string;
+  approvedAt?: string;
+  completedAt?: string;
+  archivedAt?: string;
+};
+
 type PlanModeSnapshot = {
   mode: PlanMode;
   phase: PlanPhase;
   todos: TodoItem[];
   nextTodoId: number;
+  activeRun: PlanRun | null;
+  recentRuns: PlanRun[];
   readFiles: string[];
   activePlanPath: string | null;
   latestReviewArtifactPath: string | null;
@@ -93,7 +114,7 @@ const REVIEW_ARTIFACT_WRITE_GUIDANCE = [
 ].join(" ");
 const SPEC_REVIEW_ARTIFACT_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
 const ENV_ASSIGNMENT_PREFIX_PATTERN = /^(?:[A-Z_][A-Z0-9_]*=\S+\s+)+/u;
-const COMPLETED_TODO_WIDGET_HIDE_DELAY_MS = 15_000;
+const RECENT_RUN_LIMIT = 5;
 
 const DEFAULT_CONFIG: PlanModeConfig = {
   defaultMode: "auto",
@@ -134,6 +155,13 @@ const PLAN_INSPECTION_TOOL_NAMES = [...PATH_GUARDED_TOOL_NAMES].filter(
 );
 const PLAN_INSPECTION_TOOL_SLASH_LIST = PLAN_INSPECTION_TOOL_NAMES.join("/");
 const PLAN_INSPECTION_TOOL_COMMA_LIST = PLAN_INSPECTION_TOOL_NAMES.join(", ");
+const LOGIC_CHANGE_DIAGRAM_GUIDANCE = [
+  "- For any code-writing plan/spec that changes logic, state, data models, " +
+    "control flow, or process flow, the artifact must include before/after " +
+    "diagrams for the affected data model and flow.",
+  "- 写代码且涉及逻辑、状态、数据模型、控制流或流程变更的 plan/spec " +
+    "必须包含变更前后数据模型与流程图。",
+];
 
 const todoStatusSchema = Type.Union([
   Type.Literal("todo"),
@@ -216,6 +244,13 @@ const finiteNumberOr = (value: unknown, fallback: number): number =>
 const phaseForMode = (mode: PlanMode): PlanPhase =>
   mode === "act" ? "act" : "plan";
 
+const isPlanRunStatus = (value: unknown): value is PlanRunStatus =>
+  value === "draft" ||
+  value === "approved" ||
+  value === "executing" ||
+  value === "completed" ||
+  value === "archived";
+
 const todoFromSnapshot = (value: unknown): TodoItem | null => {
   if (
     !isRecord(value) ||
@@ -237,6 +272,57 @@ const todoFromSnapshot = (value: unknown): TodoItem | null => {
     ...(typeof value.notes === "string" ? { notes: value.notes } : {}),
   };
 };
+
+const todosFromSnapshot = (value: unknown): TodoItem[] =>
+  Array.isArray(value)
+    ? value.flatMap((todo): TodoItem[] => {
+        const parsed = todoFromSnapshot(todo);
+        return parsed ? [parsed] : [];
+      })
+    : [];
+
+const runFromSnapshot = (value: unknown): PlanRun | null => {
+  if (!isRecord(value) || !isPlanRunStatus(value.status)) {
+    return null;
+  }
+
+  const todos = todosFromSnapshot(value.todos);
+
+  return {
+    id: typeof value.id === "string" ? value.id : `run-${Date.now()}`,
+    status: value.status,
+    planPath: typeof value.planPath === "string" ? value.planPath : null,
+    todos,
+    nextTodoId: finiteNumberOr(value.nextTodoId, todos.length + 1),
+    createdAt:
+      typeof value.createdAt === "string"
+        ? value.createdAt
+        : new Date(0).toISOString(),
+    ...(typeof value.approvedAt === "string"
+      ? { approvedAt: value.approvedAt }
+      : {}),
+    ...(typeof value.completedAt === "string"
+      ? { completedAt: value.completedAt }
+      : {}),
+    ...(typeof value.archivedAt === "string"
+      ? { archivedAt: value.archivedAt }
+      : {}),
+  };
+};
+
+const createPlanRun = (
+  todos: TodoItem[],
+  nextTodoId: number,
+  status: PlanRunStatus = "draft",
+  planPath: string | null = null,
+): PlanRun => ({
+  id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  status,
+  planPath,
+  todos,
+  nextTodoId,
+  createdAt: new Date().toISOString(),
+});
 
 const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
   const { merged } = loadSettings(cwd);
@@ -310,9 +396,11 @@ const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
     return null;
   }
 
-  const todos = Array.isArray(data.todos)
-    ? data.todos.flatMap((todo): TodoItem[] => {
-        const parsed = todoFromSnapshot(todo);
+  const todos = todosFromSnapshot(data.todos);
+  const activeRun = runFromSnapshot(data.activeRun);
+  const recentRuns = Array.isArray(data.recentRuns)
+    ? data.recentRuns.flatMap((run): PlanRun[] => {
+        const parsed = runFromSnapshot(run);
         return parsed ? [parsed] : [];
       })
     : [];
@@ -320,8 +408,22 @@ const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
   return {
     mode: data.mode,
     phase: data.phase,
-    todos,
-    nextTodoId: finiteNumberOr(data.nextTodoId, todos.length + 1),
+    todos: activeRun ? activeRun.todos : todos,
+    nextTodoId: activeRun
+      ? activeRun.nextTodoId
+      : finiteNumberOr(data.nextTodoId, todos.length + 1),
+    activeRun:
+      activeRun ??
+      (todos.length > 0
+        ? createPlanRun(
+            todos,
+            finiteNumberOr(data.nextTodoId, todos.length + 1),
+            todos.every((todo) => todo.status === "done")
+              ? "completed"
+              : "draft",
+          )
+        : null),
+    recentRuns: recentRuns.slice(0, RECENT_RUN_LIMIT),
     readFiles: sanitizeStringArray(data.readFiles, []),
     activePlanPath:
       typeof data.activePlanPath === "string" ? data.activePlanPath : null,
@@ -338,6 +440,11 @@ const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
   };
 };
 
+const clonePlanRun = (run: PlanRun): PlanRun => ({
+  ...run,
+  todos: run.todos.map((todo) => ({ ...todo })),
+});
+
 const latestSnapshot = (entries: unknown[]): PlanModeSnapshot | null => {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const snapshot = snapshotFromEntry(entries[index]);
@@ -353,6 +460,8 @@ class PlanModeState {
   phase: PlanPhase = "plan";
   todos: TodoItem[] = [];
   nextTodoId = 1;
+  activeRun: PlanRun | null = null;
+  recentRuns: PlanRun[] = [];
   readFiles = new Set<string>();
   activePlanPath: string | null = null;
   latestReviewArtifactPath: string | null = null;
@@ -370,6 +479,8 @@ class PlanModeState {
     this.phase = phaseForMode(defaultMode);
     this.todos = [];
     this.nextTodoId = 1;
+    this.activeRun = null;
+    this.recentRuns = [];
     this.readFiles = new Set();
     this.activePlanPath = null;
     this.latestReviewArtifactPath = null;
@@ -386,8 +497,18 @@ class PlanModeState {
 
     this.mode = snapshot.mode;
     this.phase = snapshot.phase;
-    this.todos = snapshot.todos.map((todo) => ({ ...todo }));
-    this.nextTodoId = snapshot.nextTodoId;
+    this.activeRun = snapshot.activeRun
+      ? clonePlanRun(snapshot.activeRun)
+      : null;
+    this.recentRuns = snapshot.recentRuns
+      .map(clonePlanRun)
+      .slice(0, RECENT_RUN_LIMIT);
+    this.todos = this.activeRun
+      ? this.activeRun.todos
+      : snapshot.todos.map((todo) => ({ ...todo }));
+    this.nextTodoId = this.activeRun
+      ? this.activeRun.nextTodoId
+      : snapshot.nextTodoId;
     this.readFiles = new Set(snapshot.readFiles);
     this.activePlanPath = snapshot.activePlanPath;
     this.latestReviewArtifactPath = snapshot.latestReviewArtifactPath;
@@ -453,11 +574,14 @@ class PlanModeState {
   }
 
   replaceTodos(items: TodoInput[]): void {
-    this.todos = [];
+    this.archiveCompletedActiveRun();
+    this.activeRun = createPlanRun([], 1, "draft", this.activePlanPath);
+    this.todos = this.activeRun.todos;
     this.nextTodoId = 1;
     for (const item of items) {
       this.addTodo(item.text, item.status ?? "todo", item.notes);
     }
+    this.refreshActiveRunStatus();
   }
 
   addTodo(
@@ -471,8 +595,19 @@ class PlanModeState {
       status: normalizeTodoStatus(status),
       ...(notes ? { notes } : {}),
     };
+    if (!this.activeRun || this.activeRun.status === "archived") {
+      this.activeRun = createPlanRun(
+        [],
+        this.nextTodoId,
+        "draft",
+        this.activePlanPath,
+      );
+      this.todos = this.activeRun.todos;
+    }
     this.nextTodoId += 1;
     this.todos.push(todo);
+    this.activeRun.nextTodoId = this.nextTodoId;
+    this.refreshActiveRunStatus();
     return todo;
   }
 
@@ -494,18 +629,56 @@ class PlanModeState {
         delete todo.notes;
       }
     }
+    this.refreshActiveRunStatus();
     return true;
   }
 
   removeTodo(id: number): boolean {
     const before = this.todos.length;
     this.todos = this.todos.filter((item) => item.id !== id);
+    if (this.activeRun) {
+      this.activeRun.todos = this.todos;
+    }
+    this.refreshActiveRunStatus();
     return before !== this.todos.length;
   }
 
   clearTodos(): void {
     this.todos = [];
     this.nextTodoId = 1;
+    this.activeRun = null;
+  }
+
+  archiveCompletedActiveRun(): void {
+    if (!this.activeRun || this.activeRun.status !== "completed") {
+      return;
+    }
+    const archived = clonePlanRun({
+      ...this.activeRun,
+      status: "archived",
+      archivedAt: new Date().toISOString(),
+    });
+    this.recentRuns = [archived, ...this.recentRuns].slice(0, RECENT_RUN_LIMIT);
+    this.activeRun = null;
+  }
+
+  refreshActiveRunStatus(): void {
+    if (!this.activeRun) {
+      return;
+    }
+    this.activeRun.todos = this.todos;
+    this.activeRun.nextTodoId = this.nextTodoId;
+
+    const completed = hasCompletedAllTodos(this.todos);
+    if (completed && this.activeRun.status !== "completed") {
+      this.activeRun.status = "completed";
+      this.activeRun.completedAt = new Date().toISOString();
+      return;
+    }
+    if (!completed && this.activeRun.status === "completed") {
+      this.activeRun.status = this.activeRun.planPath ? "executing" : "draft";
+      delete this.activeRun.completedAt;
+    }
   }
 
   snapshot(): PlanModeSnapshot {
@@ -514,6 +687,8 @@ class PlanModeState {
       phase: this.phase,
       todos: this.todos.map((todo) => ({ ...todo })),
       nextTodoId: this.nextTodoId,
+      activeRun: this.activeRun ? clonePlanRun(this.activeRun) : null,
+      recentRuns: this.recentRuns.map(clonePlanRun).slice(0, RECENT_RUN_LIMIT),
       readFiles: [...this.readFiles],
       activePlanPath: this.activePlanPath,
       latestReviewArtifactPath: this.latestReviewArtifactPath,
@@ -552,6 +727,33 @@ const findCurrentTodo = (todos: TodoItem[]): TodoItem | undefined =>
 const hasCompletedAllTodos = (todos: TodoItem[]): boolean =>
   todos.length > 0 && todos.every((todo) => todo.status === "done");
 
+const formatPlanName = (planPath: string | null | undefined): string => {
+  if (!planPath) {
+    return "当前计划";
+  }
+
+  const filename = path.basename(planPath);
+  const withoutExtension = filename.replace(/\.md$/u, "");
+  return withoutExtension.replace(/^\d{4}-\d{2}-\d{2}-/u, "") || "当前计划";
+};
+
+const formatPlanModeStatus = (state: PlanModeState): string => {
+  const mode = getModeLabel(state);
+  if (!state.activeRun) {
+    return `Plan mode: ${mode} • no active plan run`;
+  }
+
+  const plan = state.activeRun.planPath ?? "unbound plan";
+  const archived = state.recentRuns.length;
+  return [
+    `Plan mode: ${mode}`,
+    `run: ${state.activeRun.status}`,
+    `plan: ${plan}`,
+    `todos: ${state.todos.filter((todo) => todo.status === "done").length}/${state.todos.length} done`,
+    `archived: ${archived}`,
+  ].join(" • ");
+};
+
 const formatTodoWidgetLines = (state: PlanModeState): string[] => {
   if (state.todos.length === 0) {
     return [];
@@ -560,24 +762,34 @@ const formatTodoWidgetLines = (state: PlanModeState): string[] => {
   const total = state.todos.length;
   const done = state.todos.filter((todo) => todo.status === "done").length;
   const current = findCurrentTodo(state.todos);
-  const lines: string[] = [];
-
-  if (current) {
-    lines.push(`当前 #${current.id}/${total}: ${current.text}`);
-  } else {
-    lines.push(`完成 ${done}/${total} done`);
+  if (!current && state.activeRun?.status === "completed") {
+    const planName = formatPlanName(state.activeRun.planPath);
+    return [`✅ 计划「${planName}」已完成 · ${done}/${total} 项任务已交付`];
   }
-  lines.push(`${done}/${total} done • ${total - done} remaining`);
 
-  for (const todo of state.todos) {
+  const heading = current
+    ? `进行中 #${current.id}/${total}：${current.text}`
+    : `已完成 ${done}/${total}`;
+  const progress = `已完成 ${done}/${total} · 剩余 ${total - done} 项`;
+  const todoLines = state.todos.map((todo) => {
     const marker = todo === current ? "→" : " ";
     const notes = todo.notes ? ` (${todo.notes})` : "";
-    lines.push(
-      `${marker} #${todo.id} [${symbolForStatus(todo.status)}] ${todo.text}${notes}`,
-    );
+    return `${marker} #${todo.id} [${symbolForStatus(todo.status)}] ${todo.text}${notes}`;
+  });
+
+  return [heading, progress, ...todoLines];
+};
+
+const colorTodoWidgetHeading = (
+  lines: string[],
+  ctx: ExtensionContext,
+): string[] => {
+  const [heading, ...details] = lines;
+  if (!heading) {
+    return lines;
   }
 
-  return lines;
+  return [ctx.ui.theme.fg("accent", heading), ...details];
 };
 
 const pathFromToolCall = (event: ToolCallEvent): string | null =>
@@ -762,8 +974,6 @@ class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
   state = new PlanModeState(DEFAULT_CONFIG.defaultMode);
   private autoPlanReviewRequiredForTurn = false;
-  private completedTodoHideTimer: ReturnType<typeof setTimeout> | undefined;
-
   constructor(private readonly pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext): void {
@@ -801,30 +1011,8 @@ class PlanModeController {
     ctx.ui.notify(`Plan mode: ${getModeLabel(this.state)}`, "info");
   }
 
-  cancelCompletedTodoWidgetHide(): void {
-    if (!this.completedTodoHideTimer) {
-      return;
-    }
-    clearTimeout(this.completedTodoHideTimer);
-    this.completedTodoHideTimer = undefined;
-  }
-
-  scheduleCompletedTodoWidgetHide(ctx: ExtensionContext): void {
-    if (this.completedTodoHideTimer) {
-      return;
-    }
-    this.completedTodoHideTimer = setTimeout(() => {
-      this.completedTodoHideTimer = undefined;
-      if (!ctx.hasUI || !hasCompletedAllTodos(this.state.todos)) {
-        return;
-      }
-      ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
-    }, COMPLETED_TODO_WIDGET_HIDE_DELAY_MS);
-  }
-
   updateUi(ctx: ExtensionContext): void {
     if (!ctx.hasUI) {
-      this.cancelCompletedTodoWidgetHide();
       return;
     }
 
@@ -832,20 +1020,17 @@ class PlanModeController {
 
     const widgetLines = formatTodoWidgetLines(this.state);
     if (widgetLines.length === 0) {
-      this.cancelCompletedTodoWidgetHide();
       ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
       return;
     }
 
-    ctx.ui.setWidget(TODO_WIDGET_KEY, widgetLines, {
-      placement: "aboveEditor",
-    });
-
-    if (hasCompletedAllTodos(this.state.todos)) {
-      this.scheduleCompletedTodoWidgetHide(ctx);
-      return;
-    }
-    this.cancelCompletedTodoWidgetHide();
+    ctx.ui.setWidget(
+      TODO_WIDGET_KEY,
+      colorTodoWidgetHeading(widgetLines, ctx),
+      {
+        placement: "aboveEditor",
+      },
+    );
   }
 
   buildModePrompt(): string {
@@ -863,6 +1048,7 @@ class PlanModeController {
       `- ${REVIEW_ARTIFACT_WRITE_HINT}`,
       "- Standard plan artifacts must use ## Context, ## Steps, " +
         "## Verification, and ## Review with Chinese checkbox steps.",
+      ...LOGIC_CHANGE_DIAGRAM_GUIDANCE,
       "- If Plannotator denies the plan, revise the same file and submit again.",
       "- In act phases, execute the approved plan and update " +
         `${TODO_TOOL_NAME} statuses to in_progress and done so the widget shows the current step.`,
@@ -1090,6 +1276,13 @@ class PlanModeController {
     this.state.activePlanPath = approvedPath;
     this.state.latestReviewArtifactPath = approvedPath;
     this.state.reviewApprovedPlanPaths.add(approvedPath);
+    if (this.state.activeRun) {
+      this.state.activeRun.planPath = approvedPath;
+      this.state.activeRun.status = hasCompletedAllTodos(this.state.todos)
+        ? "completed"
+        : "executing";
+      this.state.activeRun.approvedAt = new Date().toISOString();
+    }
     this.state.switchAutoToAct();
     this.applyMode(ctx);
     this.persist();
@@ -1128,7 +1321,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const requested = args.trim();
       if (requested === "status" || requested.length === 0) {
-        ctx.ui.notify(`Plan mode: ${getModeLabel(controller.state)}`, "info");
+        ctx.ui.notify(formatPlanModeStatus(controller.state), "info");
         controller.updateUi(ctx);
         return;
       }
@@ -1199,7 +1392,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       controller.persist();
       return {
         content: [{ type: "text", text: formatTodoResult(controller.state) }],
-        details: { todos: controller.state.todos.map((todo) => ({ ...todo })) },
+        details: {
+          todos: controller.state.todos.map((todo) => ({ ...todo })),
+          activeRun: controller.state.activeRun
+            ? clonePlanRun(controller.state.activeRun)
+            : null,
+          recentRuns: controller.state.recentRuns.map(clonePlanRun),
+        },
       };
     },
   });
@@ -1218,7 +1417,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    controller.cancelCompletedTodoWidgetHide();
     if (!ctx.hasUI) {
       return;
     }

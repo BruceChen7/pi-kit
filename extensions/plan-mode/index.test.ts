@@ -5,8 +5,6 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import planModeExtension from "./index.js";
 
-const COMPLETED_TODO_WIDGET_HIDE_DELAY_MS = 15_000;
-
 type Handler = (event: unknown, ctx: TestCtx) => Promise<unknown> | unknown;
 type CommandRegistration = {
   description: string;
@@ -134,7 +132,7 @@ const buildCtx = (entries: CustomEntry[] = []): TestCtx => ({
     setStatus: vi.fn(),
     setWidget: vi.fn(),
     theme: {
-      fg: (_tone: string, text: string) => text,
+      fg: vi.fn((tone: string, text: string) => `<${tone}>${text}</${tone}>`),
       strikethrough: (text: string) => `~~${text}~~`,
     },
   },
@@ -154,6 +152,11 @@ const lastTodoWidgetCall = (ctx: TestCtx) => {
 
 const lastWidgetLines = (ctx: TestCtx): string[] =>
   lastTodoWidgetCall(ctx)[1] as string[];
+
+const plainWidgetText = (ctx: TestCtx): string =>
+  lastWidgetLines(ctx)
+    .join("\n")
+    .replace(/<[^>]+>/gu, "");
 
 const createTempCtx = (): { ctx: TestCtx; cleanup: () => void } => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "plan-mode-policy-"));
@@ -210,6 +213,7 @@ const validPlanContent = `## Context
 `;
 
 const invalidPlanContent = validPlanContent.replace("## Review", "## Notes");
+const oneItemCompletedSummary = "✅ 计划「当前计划」已完成 · 1/1 项任务已交付";
 
 describe("plan-mode extension", () => {
   afterEach(() => {
@@ -343,13 +347,17 @@ describe("plan-mode extension", () => {
       ctx,
     );
 
-    const widget = lastWidgetLines(ctx).join("\n");
-    expect(widget).toContain("当前 #1/2");
-    expect(widget).toContain("实现状态机");
-    expect(widget).toContain("0/2 done");
+    const [heading, progress, firstTodo] = lastWidgetLines(ctx);
+    expect(heading).toBe("<accent>进行中 #1/2：实现状态机</accent>");
+    expect(progress).toBe("已完成 0/2 · 剩余 2 项");
+    expect(firstTodo).toBe("→ #1 [~] 实现状态机");
+    expect(ctx.ui.theme.fg).toHaveBeenCalledWith(
+      "accent",
+      "进行中 #1/2：实现状态机",
+    );
   });
 
-  it("hides completed todo widget after a short completion summary", async () => {
+  it("keeps a collapsed completed todo summary above the editor", async () => {
     vi.useFakeTimers();
     const harness = buildHarness();
     const ctx = buildCtx();
@@ -388,18 +396,18 @@ describe("plan-mode extension", () => {
       "plan-mode",
       expect.stringContaining("auto:act 3/3"),
     );
-    expect(lastWidgetLines(ctx).join("\n")).toContain("完成 3/3 done");
+    expect(lastWidgetLines(ctx)).toEqual([
+      "<accent>✅ 计划「demo」已完成 · 3/3 项任务已交付</accent>",
+    ]);
     expect(lastTodoWidgetCall(ctx)[2]).toEqual({ placement: "aboveEditor" });
 
-    await vi.advanceTimersByTimeAsync(COMPLETED_TODO_WIDGET_HIDE_DELAY_MS - 1);
-    expect(lastWidgetLines(ctx).join("\n")).toContain("完成 3/3 done");
-
-    await vi.advanceTimersByTimeAsync(1);
-    expect(lastTodoWidgetCall(ctx)).toEqual(["plan-mode-todos", undefined]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(lastWidgetLines(ctx)).toEqual([
+      "<accent>✅ 计划「demo」已完成 · 3/3 项任务已交付</accent>",
+    ]);
   });
 
-  it("does not let a stale completion timer hide a new unfinished todo widget", async () => {
-    vi.useFakeTimers();
+  it("replaces a completed summary when a new todo list starts", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -414,24 +422,126 @@ describe("plan-mode extension", () => {
       },
       ctx,
     );
-    expect(lastWidgetLines(ctx).join("\n")).toContain("完成 1/1 done");
+    expect(plainWidgetText(ctx)).toBe(oneItemCompletedSummary);
 
-    await vi.advanceTimersByTimeAsync(5_000);
     await harness.runTool(
       "plan_mode_todo",
       {
-        action: "add",
-        text: "继续处理新任务",
-        status: "todo",
+        action: "set",
+        items: [{ text: "继续处理新任务", status: "todo" }],
       },
       ctx,
     );
-    expect(lastWidgetLines(ctx).join("\n")).toContain("继续处理新任务");
+    const widget = plainWidgetText(ctx);
+    expect(widget).toContain("继续处理新任务");
+    expect(widget).toContain("已完成 0/1 · 剩余 1 项");
+  });
 
-    await vi.advanceTimersByTimeAsync(
-      COMPLETED_TODO_WIDGET_HIDE_DELAY_MS - 5_000,
+  it("hides the completed summary when todos are cleared", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "完成后清理", status: "done" }],
+      },
+      ctx,
     );
-    expect(lastWidgetLines(ctx).join("\n")).toContain("继续处理新任务");
+    expect(plainWidgetText(ctx)).toBe(oneItemCompletedSummary);
+
+    await harness.runTool("plan_mode_todo", { action: "clear" }, ctx);
+
+    expect(lastTodoWidgetCall(ctx)).toEqual(["plan-mode-todos", undefined]);
+  });
+
+  it("clears plan-mode UI on session shutdown after completed todos", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "完成后关闭 session", status: "done" }],
+      },
+      ctx,
+    );
+    expect(plainWidgetText(ctx)).toBe(oneItemCompletedSummary);
+
+    await expect(
+      harness.emit("session_shutdown", {}, ctx),
+    ).resolves.toBeUndefined();
+
+    expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("plan-mode", undefined);
+    expect(lastTodoWidgetCall(ctx)).toEqual(["plan-mode-todos", undefined]);
+  });
+
+  it("marks the active plan run completed when all todos are done", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    const result = await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "完成生命周期", status: "done" }],
+      },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      details: { activeRun: { status: "completed" } },
+    });
+    expect(plainWidgetText(ctx)).toContain(
+      "✅ 计划「当前计划」已完成 · 1/1 项任务已交付",
+    );
+  });
+
+  it("archives completed runs before starting a new todo list", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "完成旧计划", status: "done" }],
+      },
+      ctx,
+    );
+    const result = await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "开始新计划", status: "todo" }],
+      },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      details: {
+        activeRun: { status: "draft" },
+        recentRuns: [{ status: "archived" }],
+      },
+    });
+    expect(plainWidgetText(ctx)).toContain("开始新计划");
+  });
+
+  it("shows active run state in plan-mode status", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "查看状态", status: "todo" }],
+      },
+      ctx,
+    );
+    await harness.runCommand("plan-mode", "status", ctx);
+
+    expect(ctx.ui.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("run: draft"),
+      "info",
+    );
   });
 
   it("normalizes pending todo input to todo", async () => {
@@ -452,7 +562,7 @@ describe("plan-mode extension", () => {
     expect(result).toMatchObject({
       details: { todos: [{ text: "确认需求", status: "todo" }] },
     });
-    expect(lastWidgetLines(ctx).join("\n")).toContain("#1 [ ] 确认需求");
+    expect(plainWidgetText(ctx)).toContain("#1 [ ] 确认需求");
   });
 
   it("restores mode and todos from the latest session snapshot", async () => {
@@ -479,7 +589,7 @@ describe("plan-mode extension", () => {
     await harness.emit("session_start", {}, ctx);
 
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("plan-mode", undefined);
-    expect(lastWidgetLines(ctx).join("\n")).toContain("恢复后的当前步骤");
+    expect(plainWidgetText(ctx)).toContain("恢复后的当前步骤");
   });
 
   it("reminds the agent to create a TODO before ending plan mode", async () => {
@@ -508,6 +618,22 @@ describe("plan-mode extension", () => {
     await harness.emit("agent_end", { messages: [] }, ctx);
 
     expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("injects mandatory diagrams guidance for code logic changes", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    const result = await sendAgentPrompt(
+      harness,
+      ctx,
+      "fix the plan mode guard bug",
+    );
+
+    expect(result).toMatchObject({
+      systemPrompt: expect.stringMatching(
+        /写代码且涉及逻辑、状态、数据模型、控制流或流程变更[\s\S]+必须包含变更前后/u,
+      ),
+    });
   });
 
   it("still requires a TODO for implementation prompts in auto plan", async () => {

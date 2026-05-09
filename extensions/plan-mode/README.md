@@ -57,9 +57,22 @@ TODOs and submit a reviewable plan/spec before acting.
 `plan_mode_todo` manages the workflow TODO list.
 
 During Act phase, update a task to `in_progress` before starting it and `done` after
-finishing it. The widget highlights the current step as `当前 #<id>/<total>` with
-completion counts. After all TODOs are `done`, it shows the completion summary briefly,
-then hides automatically after 15 seconds without clearing the TODO state.
+finishing it. The widget highlights the current step as `进行中 #<id>/<total>：<text>`
+with Chinese completion counts such as `已完成 1/3 · 剩余 2 项`.
+
+TODOs are tracked as a Plan Run, not just a loose widget list. A run starts as `draft`,
+binds to the approved plan/spec path when Plannotator approves it, moves through
+`executing`, and becomes `completed` when every TODO is `done`. Completed runs collapse
+the widget to a single persistent summary such as `✅ 计划「demo」已完成 · 3/3 项任务已交付`
+until a new run replaces it or `clear` hides it; hiding the widget does not mean the run
+was cleared.
+
+When a new TODO list starts, the previous completed run is archived into `recentRuns`.
+Archived runs are stored only as session snapshot summaries in `plan-mode-state`; they do
+not write project files, do not affect plan obligations, and do not accept further TODO
+updates. Plan Mode keeps the five most recent archived run summaries and drops older ones
+to avoid session growth. `clear` removes only the active run and leaves archived summaries
+intact.
 
 ## Plannotator Auto Integration
 
@@ -67,8 +80,9 @@ Plan Mode is intentionally separate from `extensions/plannotator-auto/`:
 
 - Plan Mode owns mode state, tool guards, TODOs, and progress UI. Progress details are
   shown in the TODO widget above the editor while work is active; completed TODO summaries
-  auto-hide after 15 seconds. Plan Mode does not use the status area below the editor for
-  `auto:act 3/3`-style summaries.
+  collapse to a persistent one-line summary until a new run replaces them or `clear` hides
+  them. Plan Mode does not use the status area below the editor for `auto:act 3/3`-style
+  summaries.
 - Plannotator Auto owns plan/spec detection and review feedback.
 
 For implementation tasks, create a reviewable artifact under one of the paths watched by Plannotator Auto, for example:
@@ -80,6 +94,12 @@ For implementation tasks, create a reviewable artifact under one of the paths wa
 
 Use `write` directly with the standard filename. No separate `mkdir` is needed; the
 write tool creates missing `.pi/plans` parent directories.
+
+For every code-writing plan/spec that changes logic, state, data models, control flow, or
+process flow, the artifact must include before/after diagrams for the affected data model
+and flow. This is a mandatory planning requirement for logic changes, not an optional
+polish step. Put these diagrams inside the standard sections below, typically `## Context`
+or `## Steps`, rather than adding extra top-level sections to standard plan files.
 
 After the file is written, Plannotator Auto gates the session and asks the agent to call:
 

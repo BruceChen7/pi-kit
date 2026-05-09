@@ -16,13 +16,6 @@ async function importPlannotatorAuto() {
 
 type FakePi = ReturnType<typeof createFakePi>;
 type Emit = FakePi["emit"];
-type TestApi = FakePi["api"];
-type ReviewPromptDelivery = "steer" | "followUp";
-type ReviewPromptOptions = {
-  path: string;
-  deliverAs: ReviewPromptDelivery;
-  shouldContainToolName?: boolean;
-};
 type PlanReviewApiMockOptions = {
   createRequestPlannotator?: ReturnType<typeof vi.fn>;
   startPlanReview?: ReturnType<typeof vi.fn>;
@@ -137,35 +130,6 @@ async function writeSpecDraft(
   return relativePath;
 }
 
-function matchingReviewPromptCalls(
-  sendUserMessage: TestApi["sendUserMessage"],
-  options: ReviewPromptOptions,
-): Array<[unknown, unknown]> {
-  return (sendUserMessage.mock.calls as Array<[unknown, unknown]>).filter(
-    ([body, delivery]) => {
-      const message = String(body);
-      const deliverAs = (delivery as { deliverAs?: unknown } | undefined)
-        ?.deliverAs;
-      const hasExpectedDelivery = deliverAs === options.deliverAs;
-      const hasExpectedPath = message.includes(options.path);
-      const hasExpectedToolName =
-        options.shouldContainToolName === false ||
-        message.includes("plannotator_auto_submit_review");
-
-      return hasExpectedDelivery && hasExpectedPath && hasExpectedToolName;
-    },
-  );
-}
-
-function expectReviewPromptSent(
-  sendUserMessage: TestApi["sendUserMessage"],
-  options: ReviewPromptOptions,
-): void {
-  expect(
-    matchingReviewPromptCalls(sendUserMessage, options).length,
-  ).toBeGreaterThan(0);
-}
-
 type PlannotatorAutoTestHarness = FakePi &
   ReturnType<typeof mockPlanReviewApi> & {
     repoRoot: string;
@@ -230,10 +194,7 @@ describe("plan review trigger timing", () => {
 
         expect(startPlanReview).not.toHaveBeenCalled();
         expect(ctx.abort).not.toHaveBeenCalled();
-        expectReviewPromptSent(api.sendUserMessage, {
-          path: planFileRelative,
-          deliverAs: "followUp",
-        });
+        expect(api.sendUserMessage).not.toHaveBeenCalled();
       },
     );
   });
@@ -254,10 +215,7 @@ describe("plan review trigger timing", () => {
         expect(startPlanReview).not.toHaveBeenCalled();
         expect(ctx.abort).not.toHaveBeenCalled();
         expect(ctx.ui.notify).not.toHaveBeenCalled();
-        expectReviewPromptSent(api.sendUserMessage, {
-          path: planFileRelative,
-          deliverAs: "followUp",
-        });
+        expect(api.sendUserMessage).not.toHaveBeenCalled();
       },
     );
   });
@@ -287,7 +245,7 @@ describe("plan review trigger timing", () => {
     );
   });
 
-  it("sends one follow-up gate message when a plan draft is still pending", async () => {
+  it("does not send a follow-up gate message when a plan draft is still pending", async () => {
     await withPlannotatorAutoTest(
       "plannotator-auto-pending-gate-",
       async ({ api, emit, repoRoot, repoName, startPlanReview, createCtx }) => {
@@ -299,12 +257,7 @@ describe("plan review trigger timing", () => {
         await emit("agent_end", {}, ctx);
 
         expect(startPlanReview).not.toHaveBeenCalled();
-        expect(
-          matchingReviewPromptCalls(api.sendUserMessage, {
-            path: planFileRelative,
-            deliverAs: "followUp",
-          }),
-        ).toHaveLength(1);
+        expect(api.sendUserMessage).not.toHaveBeenCalled();
       },
     );
   });
@@ -375,11 +328,7 @@ describe("plan review trigger timing", () => {
         await emit("agent_end", {}, ctx);
 
         expect(startPlanReview).not.toHaveBeenCalled();
-        expectReviewPromptSent(api.sendUserMessage, {
-          path: planFileRelative,
-          deliverAs: "followUp",
-          shouldContainToolName: false,
-        });
+        expect(api.sendUserMessage).not.toHaveBeenCalled();
       },
     );
   });
@@ -398,11 +347,7 @@ describe("plan review trigger timing", () => {
         await emit("agent_end", {}, ctx);
 
         expect(startPlanReview).not.toHaveBeenCalled();
-        expectReviewPromptSent(api.sendUserMessage, {
-          path: specFileRelative,
-          deliverAs: "followUp",
-          shouldContainToolName: false,
-        });
+        expect(api.sendUserMessage).not.toHaveBeenCalled();
       },
     );
   });
@@ -419,10 +364,7 @@ describe("plan review trigger timing", () => {
         await emit("agent_end", {}, ctx);
 
         expect(startPlanReview).not.toHaveBeenCalled();
-        expectReviewPromptSent(api.sendUserMessage, {
-          path: specFileRelative,
-          deliverAs: "followUp",
-        });
+        expect(api.sendUserMessage).not.toHaveBeenCalled();
       },
     );
   });
@@ -459,11 +401,7 @@ describe("plan review trigger timing", () => {
         await emit("agent_end", {}, ctx);
 
         expect(startPlanReview).not.toHaveBeenCalled();
-        expectReviewPromptSent(api.sendUserMessage, {
-          path: extraTargetRelative,
-          deliverAs: "followUp",
-          shouldContainToolName: false,
-        });
+        expect(api.sendUserMessage).not.toHaveBeenCalled();
       },
     );
   });

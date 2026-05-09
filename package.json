@@ -40,6 +40,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "kanban-worktree:ui:build": "vite build --config extensions/kanban-worktree/vite.config.mts",
+    "prepack": "npm run kanban-worktree:ui:build",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -57,6 +58,6 @@
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.49",
-    "glimpseui": "file:../glimpse"
+    "glimpseui": "^0.8.0"
   }
 }

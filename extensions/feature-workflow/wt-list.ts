@@ -1,6 +1,6 @@
 import type { FeatureRecord } from "./storage.js";
 
-import { isRecord, trimToNull } from "./utils.js";
+import { isRecord, trimToNull } from "./utils.ts";
 
 export type WorktreePruneCandidate = {
   branch: string;
@@ -39,13 +39,14 @@ function toIsoFromWtCommitTimestamp(value: unknown): string | null {
   return Number.isNaN(parsed.valueOf()) ? null : parsed.toISOString();
 }
 
+function readEntryString(entry: WtListEntry, key: string): string | null {
+  const value = entry[key];
+  return trimToNull(typeof value === "string" ? value : null);
+}
+
 function toFeatureRecord(entry: WtListEntry): FeatureRecord | null {
-  const branch = trimToNull(
-    typeof entry.branch === "string" ? entry.branch : null,
-  );
-  const worktreePath = trimToNull(
-    typeof entry.path === "string" ? entry.path : null,
-  );
+  const branch = readEntryString(entry, "branch");
+  const worktreePath = readEntryString(entry, "path");
   if (!branch || !worktreePath) {
     return null;
   }
@@ -88,35 +89,27 @@ export function listSwitchableFeatureRecordsFromWtList(
   return sortFeatureRecords(records);
 }
 
+function toPruneCandidate(entry: WtListEntry): WorktreePruneCandidate | null {
+  if (entry.is_main === true) return null;
+
+  const branch = readEntryString(entry, "branch");
+  const path = readEntryString(entry, "path");
+  const mainState = readEntryString(entry, "main_state");
+  if (!branch || !path || !mainState) return null;
+  if (!PRUNE_ELIGIBLE_MAIN_STATES.has(mainState)) return null;
+
+  return {
+    branch,
+    path,
+    mainState,
+  };
+}
+
 export function listPruneCandidatesFromWtList(
   wtListJson: string,
 ): WorktreePruneCandidate[] {
   return parseWtListJson(wtListJson)
-    .map((entry) => {
-      const branch = trimToNull(
-        typeof entry.branch === "string" ? entry.branch : null,
-      );
-      const path = trimToNull(
-        typeof entry.path === "string" ? entry.path : null,
-      );
-      const mainState = trimToNull(
-        typeof entry.main_state === "string" ? entry.main_state : null,
-      );
-
-      if (!branch || !path || !mainState || entry.is_main === true) {
-        return null;
-      }
-
-      if (!PRUNE_ELIGIBLE_MAIN_STATES.has(mainState)) {
-        return null;
-      }
-
-      return {
-        branch,
-        path,
-        mainState,
-      } satisfies WorktreePruneCandidate;
-    })
+    .map((entry) => toPruneCandidate(entry))
     .filter(
       (candidate): candidate is WorktreePruneCandidate => candidate !== null,
     );
@@ -130,7 +123,7 @@ export function resolvePrimaryWorktreePathFromWtList(
       continue;
     }
 
-    const path = trimToNull(typeof entry.path === "string" ? entry.path : null);
+    const path = readEntryString(entry, "path");
     if (path) {
       return path;
     }
@@ -153,7 +146,7 @@ export function resolveWorktreePathForBranchFromWtList(
       continue;
     }
 
-    const path = trimToNull(typeof entry.path === "string" ? entry.path : null);
+    const path = readEntryString(entry, "path");
     if (path) {
       return path;
     }

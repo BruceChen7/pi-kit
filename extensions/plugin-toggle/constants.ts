@@ -33,7 +33,6 @@ export const DEFAULT_DISABLED_PLUGINS = [
 export const PROJECT_EXTENSION_DIR = path.join(".pi", "extensions");
 export const PICKER_PAGE_SIZE = 8;
 export const SHARED_EXTENSION_NAME = "shared";
-export const DEFAULT_BOOTSTRAP_RELOAD_COMMAND = "/reload";
 export const DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE =
   "同步插件成功，请重启 Pi 以加载新插件。";
 export const PLUGIN_TOGGLE_EXTENSION_DIR = path.dirname(

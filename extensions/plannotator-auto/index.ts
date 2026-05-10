@@ -18,15 +18,11 @@ import {
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
-import {
-  createPlanReviewCoordinator,
-  type PlanReviewCoordinator,
-} from "./plan-review/coordinator.ts";
 import type {
+  ActivePlanReview,
   ExtraReviewTarget,
   PendingPlanReview,
   PlanFileConfig,
-  PlanReviewSessionState,
   ReviewTargetKind,
   SessionKeyContext,
 } from "./plan-review/types.ts";
@@ -82,7 +78,10 @@ type PendingPlanReviewEventHandle = {
   markHandled: () => void;
 };
 
-type SessionRuntimeState = PlanReviewSessionState & {
+type SessionRuntimeState = {
+  activePlanReviewByCwd: Map<string, ActivePlanReview>;
+  settledPlanReviewPaths: Set<string>;
+  plannotatorUnavailableNotified: boolean;
   pendingPlanReviewEventsByCwd: Map<
     string,
     Map<string, PendingPlanReviewEventHandle>
@@ -133,36 +132,25 @@ const getPendingPlanReviewTargets = (
   return next;
 };
 
+const findPendingPlanReviewTargets = (
+  state: SessionRuntimeState,
+  cwd: string,
+): Map<string, PendingPlanReview> | undefined =>
+  state.pendingPlanReviewTargetsByCwd.get(cwd);
+
 const listPendingPlanReviews = (
   state: SessionRuntimeState,
   cwd: string,
-): PendingPlanReview[] =>
-  Array.from(getPendingPlanReviewTargets(state, cwd).values());
-
-const syncPrimaryPendingPlanReview = (
-  state: SessionRuntimeState,
-  cwd: string,
-): void => {
-  const pending = listPendingPlanReviews(state, cwd).sort(
-    (a, b) => b.updatedAt - a.updatedAt,
-  );
-  const primary = pending[0];
-  if (primary) {
-    state.pendingPlanReviewByCwd.set(cwd, primary);
-    return;
-  }
-
-  state.pendingPlanReviewByCwd.delete(cwd);
-  state.pendingPlanReviewGateKeysByCwd.delete(cwd);
-  state.pendingPlanReviewTargetsByCwd.delete(cwd);
+): PendingPlanReview[] => {
+  const pendingTargets = findPendingPlanReviewTargets(state, cwd);
+  return pendingTargets ? Array.from(pendingTargets.values()) : [];
 };
 
 const getReviewWidgetMessage = (
   state: SessionRuntimeState,
   cwd: string,
 ): string | null => {
-  const planReviewActive =
-    state.planReviewInFlight || state.activePlanReviewByCwd.has(cwd);
+  const planReviewActive = state.activePlanReviewByCwd.has(cwd);
   const codeReviewActive =
     state.reviewInFlight || state.activeCodeReviewByCwd.has(cwd);
 
@@ -358,6 +346,13 @@ const getGateablePendingPlanReviews = (
   return listPendingPlanReviews(state, cwd);
 };
 
+const isPlanReviewSettled = (
+  state: SessionRuntimeState,
+  cwd: string,
+): boolean =>
+  !state.activePlanReviewByCwd.has(cwd) &&
+  (findPendingPlanReviewTargets(state, cwd)?.size ?? 0) === 0;
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -423,13 +418,8 @@ const createSessionRuntimeState = (): SessionRuntimeState => ({
   pendingPlanReviewTargetsByCwd: new Map(),
   toolArgsByCallId: new Map<string, unknown>(),
   markdownFilesByCwd: new Map(),
-  pendingPlanReviewByCwd: new Map(),
   activePlanReviewByCwd: new Map(),
-  processedPlanReviewIds: new Set(),
   settledPlanReviewPaths: new Set(),
-  pendingPlanReviewRetry: null,
-  planReviewRetryAttemptsByCwd: new Map(),
-  planReviewInFlight: false,
   plannotatorUnavailableNotified: false,
   pendingReviewByCwd: new Set<string>(),
   activeCodeReviewByCwd: new Map<string, ActiveCodeReview>(),
@@ -459,10 +449,6 @@ const clearSessionState = (sessionKey: string): void => {
   const state = sessionRuntimeState.get(sessionKey);
   if (!state) {
     return;
-  }
-
-  if (state.pendingPlanReviewRetry) {
-    clearTimeout(state.pendingPlanReviewRetry);
   }
 
   if (state.pendingReviewRetry) {
@@ -1069,7 +1055,6 @@ const notifyCodeReviewUnavailable = (
 const scheduleReviewRetry = (
   pi: ExtensionAPI,
   reviewResults: ReturnType<typeof createReviewResultStore>,
-  planReviewCoordinator: PlanReviewCoordinator,
   ctx: ExtensionContext,
   reason: string,
   delay = 180,
@@ -1092,13 +1077,7 @@ const scheduleReviewRetry = (
       return;
     }
 
-    void maybeStartCodeReview(
-      pi,
-      reviewResults,
-      planReviewCoordinator,
-      currentCtx,
-      reason,
-    );
+    void maybeStartCodeReview(pi, reviewResults, currentCtx, reason);
   }, delay);
 };
 
@@ -1192,7 +1171,6 @@ const probeCodeReviewAvailability = async (
 const maybeStartCodeReview = async (
   pi: ExtensionAPI,
   reviewResults: ReturnType<typeof createReviewResultStore>,
-  planReviewCoordinator: PlanReviewCoordinator,
   ctx: ExtensionContext,
   reason: string,
 ): Promise<void> => {
@@ -1231,17 +1209,11 @@ const maybeStartCodeReview = async (
   }
 
   if (!ctx.isIdle()) {
-    scheduleReviewRetry(
-      pi,
-      reviewResults,
-      planReviewCoordinator,
-      ctx,
-      "busy-review",
-    );
+    scheduleReviewRetry(pi, reviewResults, ctx, "busy-review");
     return;
   }
 
-  if (!planReviewCoordinator.isPlanReviewSettled(ctx)) {
+  if (!isPlanReviewSettled(state, ctx.cwd)) {
     log?.debug(
       "plannotator-auto deferring code review until plan review settles",
       {
@@ -1250,13 +1222,7 @@ const maybeStartCodeReview = async (
         sessionKey: getSessionKey(ctx),
       },
     );
-    scheduleReviewRetry(
-      pi,
-      reviewResults,
-      planReviewCoordinator,
-      ctx,
-      "review-after-plan-review",
-    );
+    scheduleReviewRetry(pi, reviewResults, ctx, "review-after-plan-review");
     return;
   }
 
@@ -1313,7 +1279,6 @@ const maybeStartCodeReview = async (
           scheduleReviewRetry(
             pi,
             reviewResults,
-            planReviewCoordinator,
             ctx,
             "pending-code-review-status",
             1_200,
@@ -1348,7 +1313,6 @@ const maybeStartCodeReview = async (
         scheduleReviewRetry(
           pi,
           reviewResults,
-          planReviewCoordinator,
           ctx,
           "code-review-status-unavailable",
           1_200,
@@ -1362,7 +1326,6 @@ const maybeStartCodeReview = async (
         scheduleReviewRetry(
           pi,
           reviewResults,
-          planReviewCoordinator,
           ctx,
           "code-review-status-error",
           1_200,
@@ -1444,7 +1407,6 @@ const maybeStartCodeReview = async (
         scheduleReviewRetry(
           pi,
           reviewResults,
-          planReviewCoordinator,
           ctx,
           "await-code-review-result",
           1_200,
@@ -1465,7 +1427,6 @@ const maybeStartCodeReview = async (
         scheduleReviewRetry(
           pi,
           reviewResults,
-          planReviewCoordinator,
           ctx,
           "review-after-sync-code-review",
         );
@@ -1502,12 +1463,11 @@ const maybeStartCodeReview = async (
   }
 };
 
-const queuePlanReviewForToolPath = async (
-  planReviewCoordinator: PlanReviewCoordinator,
+const queuePlanReviewForToolPath = (
   ctx: ExtensionContext,
   planConfig: PlanFileConfig,
   toolPath: string,
-): Promise<boolean> => {
+): boolean => {
   const state = getSessionState(ctx);
   const targetPath = path.resolve(ctx.cwd, toolPath);
   if (state.settledPlanReviewPaths.has(targetPath)) {
@@ -1553,18 +1513,14 @@ const queuePlanReviewForToolPath = async (
     pendingPlanReview.resolvedPlanPath,
     pendingPlanReview,
   );
-  syncPrimaryPendingPlanReview(state, ctx.cwd);
-
-  await planReviewCoordinator.queuePendingPlanReview(ctx, pendingPlanReview);
   return true;
 };
 
-const handlePlanFileWrite = async (
-  planReviewCoordinator: PlanReviewCoordinator,
+const handlePlanFileWrite = (
   ctx: ExtensionContext,
   args: unknown,
   planConfig: PlanFileConfig | null,
-): Promise<boolean> => {
+): boolean => {
   if (!planConfig) {
     log?.debug(
       "plannotator-auto skipped plan-file write handling (plan review disabled)",
@@ -1589,39 +1545,41 @@ const handlePlanFileWrite = async (
     return false;
   }
 
-  return queuePlanReviewForToolPath(
-    planReviewCoordinator,
-    ctx,
-    planConfig,
-    toolPath,
-  );
+  return queuePlanReviewForToolPath(ctx, planConfig, toolPath);
 };
 
-const handleBashPlanFileWrites = async (
-  planReviewCoordinator: PlanReviewCoordinator,
+const handleBashPlanFileWrites = (
   ctx: ExtensionContext,
   args: unknown,
   planConfig: PlanFileConfig | null,
-): Promise<boolean> => {
+): boolean => {
   if (!planConfig) {
     return false;
   }
 
   let queued = false;
   for (const toolPath of extractBashPathCandidates(args)) {
-    if (
-      await queuePlanReviewForToolPath(
-        planReviewCoordinator,
-        ctx,
-        planConfig,
-        toolPath,
-      )
-    ) {
+    if (queuePlanReviewForToolPath(ctx, planConfig, toolPath)) {
       queued = true;
     }
   }
 
   return queued;
+};
+
+const clearPendingPlanReviewTarget = (
+  state: SessionRuntimeState,
+  cwd: string,
+  pendingPlanReviews: Map<string, PendingPlanReview>,
+  resolvedPlanPath: string,
+): void => {
+  pendingPlanReviews.delete(resolvedPlanPath);
+  if (pendingPlanReviews.size > 0) {
+    return;
+  }
+
+  state.pendingPlanReviewGateKeysByCwd.delete(cwd);
+  state.pendingPlanReviewTargetsByCwd.delete(cwd);
 };
 
 const isReviewTrackedToolName = (toolName: string): boolean =>
@@ -1630,23 +1588,6 @@ const isReviewTrackedToolName = (toolName: string): boolean =>
 export default function plannotatorAuto(pi: ExtensionAPI) {
   log = createLogger("plannotator-auto", { stderr: null });
   const reviewResults = createReviewResultStore(pi.events);
-  const planReviewCoordinator = createPlanReviewCoordinator({
-    pi,
-    reviewResults,
-    getSessionState: (ctx) => getSessionState(ctx),
-    getSessionStateByKey: (sessionKey) => sessionRuntimeState.get(sessionKey),
-    getSessionContextByKey: (sessionKey) => sessionContextByKey.get(sessionKey),
-    getSessionKey,
-    iterateSessionStates: () =>
-      Array.from(sessionRuntimeState.entries()).map(([sessionKey, state]) => ({
-        sessionKey,
-        state,
-      })),
-    onStateChanged: (sessionKey) => {
-      setReviewWidgetBySessionKey(sessionKey);
-    },
-    log,
-  });
 
   pi.registerTool({
     name: PLAN_REVIEW_SUBMIT_TOOL,
@@ -1657,8 +1598,8 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     async execute(_toolCallId, rawParams, _signal, _onUpdate, ctx) {
       const params = rawParams as PlanReviewSubmitToolParams;
       const state = getSessionState(ctx);
-      const pendingPlanReviews = getPendingPlanReviewTargets(state, ctx.cwd);
-      if (pendingPlanReviews.size === 0) {
+      const pendingPlanReviews = findPendingPlanReviewTargets(state, ctx.cwd);
+      if (!pendingPlanReviews || pendingPlanReviews.size === 0) {
         return {
           content: [
             {
@@ -1766,15 +1707,18 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
         response.result.reviewId,
       );
 
-      state.processedPlanReviewIds.add(response.result.reviewId);
       state.activePlanReviewByCwd.delete(ctx.cwd);
       if (result.approved) {
         state.settledPlanReviewPaths.add(pendingPlanReview.resolvedPlanPath);
-        pendingPlanReviews.delete(pendingPlanReview.resolvedPlanPath);
+        clearPendingPlanReviewTarget(
+          state,
+          ctx.cwd,
+          pendingPlanReviews,
+          pendingPlanReview.resolvedPlanPath,
+        );
         markPendingPlanReviewEventsHandled(state, ctx.cwd, [
           pendingPlanReview.resolvedPlanPath,
         ]);
-        syncPrimaryPendingPlanReview(state, ctx.cwd);
         setReviewWidget(ctx);
         return {
           content: [
@@ -1787,7 +1731,6 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
         };
       }
 
-      syncPrimaryPendingPlanReview(state, ctx.cwd);
       setReviewWidget(ctx);
       return {
         content: [
@@ -1979,18 +1922,8 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
 
     const queuedPlanReview =
       event.toolName === "bash"
-        ? await handleBashPlanFileWrites(
-            planReviewCoordinator,
-            ctx,
-            args,
-            planConfig,
-          )
-        : await handlePlanFileWrite(
-            planReviewCoordinator,
-            ctx,
-            args,
-            planConfig,
-          );
+        ? handleBashPlanFileWrites(ctx, args, planConfig)
+        : handlePlanFileWrite(ctx, args, planConfig);
 
     const pendingPlanReviews = getGateablePendingPlanReviews(state, ctx.cwd);
     if (queuedPlanReview && pendingPlanReviews.length > 0) {
@@ -2016,14 +1949,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       return;
     }
 
-    await planReviewCoordinator.runPlanReview(ctx, "agent_end");
-    await maybeStartCodeReview(
-      pi,
-      reviewResults,
-      planReviewCoordinator,
-      ctx,
-      "agent_end",
-    );
+    await maybeStartCodeReview(pi, reviewResults, ctx, "agent_end");
     setReviewWidget(ctx);
   });
 }

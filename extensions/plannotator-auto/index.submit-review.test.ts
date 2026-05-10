@@ -160,6 +160,20 @@ function resolveApprovedReview(
   });
 }
 
+function createDeferredApprovedReview() {
+  let resolveReviewResult: ((value: CompletedReviewResult) => void) | undefined;
+
+  return {
+    waitForReviewResult: vi.fn(
+      () =>
+        new Promise<CompletedReviewResult>((resolve) => {
+          resolveReviewResult = resolve;
+        }),
+    ),
+    resolve: () => resolveApprovedReview(resolveReviewResult),
+  };
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -330,6 +344,58 @@ describe("submit review tool", () => {
     }
   });
 
+  it("does not poll review-status on agent_end while a manual submit is active", async () => {
+    vi.resetModules();
+
+    const requestReviewStatus = vi.fn(async () => ({
+      status: "handled" as const,
+      result: {
+        status: "missing" as const,
+      },
+    }));
+    const approvedReview = createDeferredApprovedReview();
+    const { startPlanReview } = mockSubmitReviewApi({
+      requestReviewStatus,
+      waitForReviewResult: approvedReview.waitForReviewResult,
+    });
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-submit-agent-end-");
+    const repoName = repoRoot.split("/").pop() ?? "repo";
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      const submitPromise = Promise.resolve(
+        runTool(
+          "plannotator_auto_submit_review",
+          { path: planFileRelative },
+          ctx,
+        ),
+      );
+      await flushMicrotasks();
+
+      await emit("agent_end", {}, ctx);
+
+      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      expect(requestReviewStatus).not.toHaveBeenCalled();
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
+
+      approvedReview.resolve();
+      await submitPromise;
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
   it("does not abort while waiting for a manually submitted review result", async () => {
     vi.resetModules();
     const { reviewResultListeners } = mockSubmitReviewApi();
@@ -371,16 +437,9 @@ describe("submit review tool", () => {
   it("shows the review widget once manual review submission creates an active review", async () => {
     vi.resetModules();
 
-    let resolveReviewResult:
-      | ((value: CompletedReviewResult) => void)
-      | undefined;
+    const approvedReview = createDeferredApprovedReview();
     mockSubmitReviewApi({
-      waitForReviewResult: vi.fn(
-        () =>
-          new Promise((resolve) => {
-            resolveReviewResult = resolve as typeof resolveReviewResult;
-          }),
-      ),
+      waitForReviewResult: approvedReview.waitForReviewResult,
     });
 
     const plannotatorAuto = await importPlannotatorAuto();
@@ -414,7 +473,7 @@ describe("submit review tool", () => {
         { placement: "belowEditor" },
       );
 
-      resolveApprovedReview(resolveReviewResult);
+      approvedReview.resolve();
       await submitPromise;
     } finally {
       await emit("session_shutdown", {}, ctx);
@@ -434,17 +493,10 @@ describe("submit review tool", () => {
         approved: true,
       },
     }));
-    let resolveReviewResult:
-      | ((value: CompletedReviewResult) => void)
-      | undefined;
+    const approvedReview = createDeferredApprovedReview();
     const { startPlanReview } = mockSubmitReviewApi({
       requestReviewStatus,
-      waitForReviewResult: vi.fn(
-        () =>
-          new Promise((resolve) => {
-            resolveReviewResult = resolve as typeof resolveReviewResult;
-          }),
-      ),
+      waitForReviewResult: approvedReview.waitForReviewResult,
     });
 
     const plannotatorAuto = await importPlannotatorAuto();
@@ -479,7 +531,7 @@ describe("submit review tool", () => {
       expect(requestReviewStatus).not.toHaveBeenCalled();
       expect(settled).toBe(false);
 
-      resolveApprovedReview(resolveReviewResult);
+      approvedReview.resolve();
       await submitPromise;
       expect(settled).toBe(true);
     } finally {

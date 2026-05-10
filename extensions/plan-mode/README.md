@@ -11,12 +11,15 @@ Use `auto` for normal work:
 2. For implementation requests, create a concrete TODO list and a reviewable plan/spec.
 3. Submit the plan/spec to Plannotator.
 4. After approval, Plan Mode switches to `auto:act` and implementation can proceed.
-5. During Act phase, update TODOs from `in_progress` to `done` as work completes.
+5. If the planning TODOs are already complete, a follow-up confirmation such as `approve`,
+   `go ahead`, or `同意实施` continues the approved plan in `auto:act`.
+6. During Act phase, update TODOs from `in_progress` to `done` as work completes.
 
 Read-only questions may be answered directly without a plan/spec. Pure operational
 workflows, such as git status or running tests, may use a narrow command bypass when the
-LLM provides valid structured `workflow_only` intent feedback. Missing, invalid, or
-low-confidence intent feedback fails closed and does not enable the bypass.
+Plan Mode plugin classifier produces valid structured `workflow_only` intent feedback.
+Missing, invalid, unavailable, timed-out, or low-confidence intent feedback fails closed
+and does not enable the bypass.
 
 ## Modes and commands
 
@@ -40,7 +43,8 @@ low-confidence intent feedback fails closed and does not enable the bypass.
 During Act phase, update a task to `in_progress` before starting it and `done` after
 finishing it. The widget highlights the current step, shows completion counts, and
 collapses completed runs to a one-line summary until a new run replaces it or `clear`
-hides it.
+hides it. Reviewed plan runs show the approved plan name; ordinary manual/workflow runs
+show a generic task-completed summary so stale plan names do not leak into unrelated work.
 
 ## Plannotator Auto integration
 
@@ -69,6 +73,11 @@ plannotator_auto_submit_review({ path })
 
 If review is denied, revise the same file and submit again. Approval applies to the
 currently submitted artifact; switching to a newer artifact requires a fresh review.
+After an approved plan is complete on the planning side, short continuation prompts keep
+that same approved plan executable. Unrelated new implementation requests still return to
+`auto:plan` and require their own reviewed plan/spec. New TODO runs do not inherit a
+previous approved plan name unless they are part of that explicit continuation or are
+bound by a fresh review approval.
 
 ## Artifact Policy
 
@@ -102,6 +111,10 @@ In Plan phase, runtime guards block:
   `workflow_only` intent feedback
 - source-code `edit` / `write`
 
+Plan Mode starts each normal user turn by asking a plugin-owned classifier for structured
+intent feedback. Event-provided `intentFeedback` is still accepted for compatibility, but
+Plan Mode no longer depends on Pi core injecting it.
+
 Plan Mode consumes structured intent feedback with these kinds:
 
 - `implementation`: require normal plan/spec review.
@@ -110,6 +123,9 @@ Plan Mode consumes structured intent feedback with these kinds:
 - `ambiguous`: fail closed; do not enable bypass.
 
 The old keyword/regular-expression intent classifier is not used as a runtime fallback.
+If the plugin classifier cannot run because there is no active model, model auth is
+unavailable, the request times out, or the response is invalid, Plan Mode keeps the safe
+fail-closed behavior.
 
 Plan/spec artifact writes are allowed only for reviewable Plannotator paths:
 
@@ -146,6 +162,10 @@ Configuration is read from the shared pi-kit settings namespace `planMode` in
       "requireSectionOrder": true,
       "requireChinese": true,
       "requireReviewDetails": true
+    },
+    "intentClassifier": {
+      "enabled": true,
+      "timeoutMs": 3000
     }
   }
 }

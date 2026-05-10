@@ -16,6 +16,11 @@ import {
   validateArtifactPolicy,
 } from "./artifact-policy.ts";
 import {
+  classifyPlanModeIntent,
+  type IntentClassifierConfig,
+  type IntentClassifierInput,
+} from "./intent-classifier.ts";
+import {
   DEFAULT_WORKFLOW_BYPASS_STATE,
   decideWorkflowBypass,
   requiresPlanReviewForIntentFeedback,
@@ -92,6 +97,7 @@ type PlanModeConfig = {
     readBeforeWrite: boolean;
   };
   artifactPolicy: ArtifactPolicyConfig;
+  intentClassifier: IntentClassifierConfig;
 };
 
 const STATE_ENTRY_TYPE = "plan-mode-state";
@@ -127,6 +133,10 @@ const DEFAULT_CONFIG: PlanModeConfig = {
     readBeforeWrite: true,
   },
   artifactPolicy: getDefaultArtifactPolicyConfig(),
+  intentClassifier: {
+    enabled: true,
+    timeoutMs: 3000,
+  },
 };
 
 const BUILTIN_TOOL_NAMES = [
@@ -334,6 +344,7 @@ const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
     requireReview: DEFAULT_CONFIG.requireReview,
     guards: { ...DEFAULT_CONFIG.guards },
     artifactPolicy: { ...DEFAULT_CONFIG.artifactPolicy },
+    intentClassifier: { ...DEFAULT_CONFIG.intentClassifier },
   };
 
   if (isPlanMode(raw.defaultMode)) {
@@ -351,6 +362,17 @@ const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
     config.guards.allowedPaths = sanitizeStringArray(
       raw.guards.allowedPaths,
       config.guards.allowedPaths,
+    );
+  }
+  if (isRecord(raw.intentClassifier)) {
+    applyBooleanOverride(
+      config.intentClassifier,
+      raw.intentClassifier,
+      "enabled",
+    );
+    config.intentClassifier.timeoutMs = finiteNumberOr(
+      raw.intentClassifier.timeoutMs,
+      config.intentClassifier.timeoutMs,
     );
   }
   if (isRecord(raw.artifactPolicy)) {
@@ -454,6 +476,17 @@ const latestSnapshot = (entries: unknown[]): PlanModeSnapshot | null => {
     }
   }
   return null;
+};
+
+const getSessionStateEntries = (ctx: ExtensionContext): unknown[] => {
+  const sessionManager = ctx.sessionManager as {
+    getBranch?: () => unknown[];
+    getEntries: () => unknown[];
+  };
+
+  return typeof sessionManager.getBranch === "function"
+    ? sessionManager.getBranch()
+    : sessionManager.getEntries();
 };
 
 class PlanModeState {
@@ -593,9 +626,57 @@ class PlanModeState {
     this.workflowBypass = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
   }
 
-  replaceTodos(items: TodoInput[]): void {
+  getNewRunStatus(hasTodos: boolean, planPath: string | null): PlanRunStatus {
+    return hasTodos && planPath && this.phase === "act" ? "executing" : "draft";
+  }
+
+  getApprovedActivePlanPath(): string | null {
+    if (!this.activePlanPath) {
+      return null;
+    }
+    return this.reviewApprovedPlanPaths.has(this.activePlanPath)
+      ? this.activePlanPath
+      : null;
+  }
+
+  hasApprovedActivePlan(): boolean {
+    return this.getApprovedActivePlanPath() !== null;
+  }
+
+  canStartFirstRunForApprovedPlan(): boolean {
+    return (
+      !this.activeRun &&
+      this.todos.length === 0 &&
+      this.recentRuns.length === 0 &&
+      this.phase === "act"
+    );
+  }
+
+  getUnfinishedRunPlanPath(): string | null {
+    if (this.activeRun?.status === "completed") {
+      return null;
+    }
+    return this.activeRun?.planPath ?? null;
+  }
+
+  isApprovedCompletedAutoActRun(): boolean {
+    return (
+      this.mode === "auto" &&
+      this.phase === "act" &&
+      this.activeRun?.status === "completed" &&
+      this.activeRun.planPath === this.activePlanPath &&
+      this.hasApprovedActivePlan()
+    );
+  }
+
+  replaceTodos(items: TodoInput[], newRunPlanPath: string | null = null): void {
     this.archiveCompletedActiveRun();
-    this.activeRun = createPlanRun([], 1, "draft", this.activePlanPath);
+    this.activeRun = createPlanRun(
+      [],
+      1,
+      this.getNewRunStatus(items.length > 0, newRunPlanPath),
+      newRunPlanPath,
+    );
     this.todos = this.activeRun.todos;
     this.nextTodoId = 1;
     for (const item of items) {
@@ -608,6 +689,7 @@ class PlanModeState {
     text: string,
     status: TodoStatusInput = "todo",
     notes?: string,
+    newRunPlanPath: string | null = null,
   ): TodoItem {
     const todo: TodoItem = {
       id: this.nextTodoId,
@@ -619,8 +701,8 @@ class PlanModeState {
       this.activeRun = createPlanRun(
         [],
         this.nextTodoId,
-        "draft",
-        this.activePlanPath,
+        this.getNewRunStatus(true, newRunPlanPath),
+        newRunPlanPath,
       );
       this.todos = this.activeRun.todos;
     }
@@ -747,11 +829,7 @@ const findCurrentTodo = (todos: TodoItem[]): TodoItem | undefined =>
 const hasCompletedAllTodos = (todos: TodoItem[]): boolean =>
   todos.length > 0 && todos.every((todo) => todo.status === "done");
 
-const formatPlanName = (planPath: string | null | undefined): string => {
-  if (!planPath) {
-    return "当前计划";
-  }
-
+const formatPlanName = (planPath: string): string => {
   const filename = path.basename(planPath);
   const withoutExtension = filename.replace(/\.md$/u, "");
   return withoutExtension.replace(/^\d{4}-\d{2}-\d{2}-/u, "") || "当前计划";
@@ -774,6 +852,13 @@ const formatPlanModeStatus = (state: PlanModeState): string => {
   ].join(" • ");
 };
 
+const getCompletedWidgetModeLabel = (state: PlanModeState): string => {
+  if (state.mode === "auto" && state.phase === "act") {
+    return "auto:completed";
+  }
+  return getModeLabel(state);
+};
+
 const formatTodoWidgetLines = (state: PlanModeState): string[] => {
   if (state.todos.length === 0) {
     return [];
@@ -781,15 +866,20 @@ const formatTodoWidgetLines = (state: PlanModeState): string[] => {
 
   const total = state.todos.length;
   const done = state.todos.filter((todo) => todo.status === "done").length;
-  const modePrefix = `【${getModeLabel(state)}】`;
   const current = findCurrentTodo(state.todos);
   if (!current && state.activeRun?.status === "completed") {
+    const modePrefix = `【${getCompletedWidgetModeLabel(state)}】`;
+    if (!state.activeRun.planPath) {
+      return [`${modePrefix}✅ 任务已完成 · ${done}/${total} 项任务已交付`];
+    }
+
     const planName = formatPlanName(state.activeRun.planPath);
     return [
       `${modePrefix}✅ 计划「${planName}」已完成 · ${done}/${total} 项任务已交付`,
     ];
   }
 
+  const modePrefix = `【${getModeLabel(state)}】`;
   const heading = current
     ? `进行中 #${current.id}/${total}：${current.text}`
     : `已完成 ${done}/${total}`;
@@ -978,6 +1068,40 @@ const isSafeWorkflowBashCommand = (command: string): boolean => {
     .every((commandPart) => isSafeWorkflowCommandPart(commandPart));
 };
 
+const APPROVED_PLAN_CONTINUATION_PHRASES = [
+  "approve(?:d)?",
+  "yes|y",
+  "go ahead",
+  "proceed",
+  "continue",
+  "implement(?: it| the plan)?",
+  "impl(?: it| the plan)?",
+  "start implementation",
+  "同意(?:实施)?",
+  "批准",
+  "继续(?:实施)?",
+  "开始(?:实施|吧)",
+  "可以实施",
+  "执行(?:计划)?",
+  "按计划实施",
+];
+
+const APPROVED_PLAN_CONTINUATION_PATTERN = new RegExp(
+  `^(?:${APPROVED_PLAN_CONTINUATION_PHRASES.join("|")})[.!。！?？]*$`,
+  "iu",
+);
+
+const normalizeContinuationPrompt = (prompt: string): string =>
+  prompt.trim().replace(/\s+/gu, " ");
+
+const isApprovedPlanContinuationPrompt = (prompt: string): boolean => {
+  const normalized = normalizeContinuationPrompt(prompt);
+  if (!normalized) {
+    return false;
+  }
+  return APPROVED_PLAN_CONTINUATION_PATTERN.test(normalized);
+};
+
 const turnWasAborted = (
   event: { messages?: readonly unknown[] },
   ctx: { signal?: AbortSignal },
@@ -999,15 +1123,17 @@ class PlanModeController {
   private autoPlanReviewRequiredForTurn = false;
   private inputSourceForTurn: InputSource = "unknown";
   private internalExtensionBypassForTurn = false;
+  private approvedPlanContinuationForTurn = false;
   constructor(private readonly pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext): void {
     this.config = loadPlanModeConfig(ctx.cwd);
-    const entries = ctx.sessionManager.getEntries() as unknown[];
+    const entries = getSessionStateEntries(ctx);
     this.state.restore(latestSnapshot(entries), this.config.defaultMode);
     this.autoPlanReviewRequiredForTurn = false;
     this.inputSourceForTurn = "unknown";
     this.internalExtensionBypassForTurn = false;
+    this.approvedPlanContinuationForTurn = false;
   }
 
   persist(): void {
@@ -1100,19 +1226,74 @@ class PlanModeController {
         : "unknown";
   }
 
-  handleAgentStart(event: unknown): void {
+  shouldContinueApprovedPlan(
+    prompt: string,
+    requiresPlanReview: boolean,
+  ): boolean {
+    return (
+      requiresPlanReview &&
+      this.state.isApprovedCompletedAutoActRun() &&
+      isApprovedPlanContinuationPrompt(prompt)
+    );
+  }
+
+  buildIntentClassifierInput(prompt: string): IntentClassifierInput {
+    return {
+      prompt,
+      source: this.inputSourceForTurn,
+      mode: this.state.mode,
+      phase: this.state.phase,
+      hasUnfinishedTodos: this.state.hasUnfinishedTodos(),
+      hasApprovedActivePlan: this.state.hasApprovedActivePlan(),
+      latestReviewArtifactPath: this.state.latestReviewArtifactPath,
+    };
+  }
+
+  async resolveIntentFeedback(
+    event: unknown,
+    ctx: ExtensionContext,
+    prompt: string,
+  ): Promise<unknown> {
+    const eventIntentFeedback = isRecord(event)
+      ? event.intentFeedback
+      : undefined;
+    if (
+      eventIntentFeedback !== undefined ||
+      this.internalExtensionBypassForTurn
+    ) {
+      return eventIntentFeedback;
+    }
+
+    const result = await classifyPlanModeIntent(
+      ctx,
+      this.buildIntentClassifierInput(prompt),
+      this.config.intentClassifier,
+    );
+    return result.feedback ?? undefined;
+  }
+
+  async handleAgentStart(event: unknown, ctx: ExtensionContext): Promise<void> {
     const prompt = stringProperty(event, "prompt") ?? "";
-    const intentFeedback = isRecord(event) ? event.intentFeedback : undefined;
-    const requiresPlanReview =
-      requiresPlanReviewForIntentFeedback(intentFeedback);
     this.internalExtensionBypassForTurn =
       this.inputSourceForTurn === "extension";
+    const intentFeedback = await this.resolveIntentFeedback(event, ctx, prompt);
+    const requiresPlanReview =
+      requiresPlanReviewForIntentFeedback(intentFeedback);
+
+    const continuesApprovedPlan = this.shouldContinueApprovedPlan(
+      prompt,
+      requiresPlanReview,
+    );
+    this.approvedPlanContinuationForTurn = continuesApprovedPlan;
 
     if (!this.internalExtensionBypassForTurn) {
       if (this.state.updateWorkflowBypassForPrompt(prompt, intentFeedback)) {
         this.persist();
       }
-      if (this.state.shouldReturnAutoActToPlan(requiresPlanReview)) {
+      if (
+        this.state.shouldReturnAutoActToPlan(requiresPlanReview) &&
+        !continuesApprovedPlan
+      ) {
         this.state.returnAutoActToPlan();
         this.persist();
       }
@@ -1128,6 +1309,20 @@ class PlanModeController {
   clearTurnSource(): void {
     this.inputSourceForTurn = "unknown";
     this.internalExtensionBypassForTurn = false;
+    this.approvedPlanContinuationForTurn = false;
+  }
+
+  getPlanPathForNewRun(): string | null {
+    const approvedPlanPath = this.state.getApprovedActivePlanPath();
+    if (
+      approvedPlanPath &&
+      (this.approvedPlanContinuationForTurn ||
+        this.state.canStartFirstRunForApprovedPlan())
+    ) {
+      return approvedPlanPath;
+    }
+
+    return this.state.getUnfinishedRunPlanPath();
   }
 
   hasPlanReviewObligation(): boolean {
@@ -1408,7 +1603,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     async execute(_toolCallId, params: TodoParams, _signal, _onUpdate, ctx) {
       switch (params.action) {
         case "set":
-          controller.state.replaceTodos(params.items ?? []);
+          controller.state.replaceTodos(
+            params.items ?? [],
+            controller.getPlanPathForNewRun(),
+          );
           break;
         case "add":
           if (!params.text) {
@@ -1418,6 +1616,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
             params.text,
             params.status ?? "todo",
             params.notes,
+            controller.getPlanPathForNewRun(),
           );
           break;
         case "update":
@@ -1488,8 +1687,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     return { action: "continue" };
   });
 
-  pi.on("before_agent_start", async (event) => {
-    controller.handleAgentStart(event);
+  pi.on("before_agent_start", async (event, ctx) => {
+    await controller.handleAgentStart(event, ctx);
     return {
       systemPrompt: `${event.systemPrompt ?? ""}\n\n${controller.buildModePrompt()}`,
     };

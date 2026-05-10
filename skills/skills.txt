@@ -31,6 +31,7 @@ push-ifs-up-fors-down|local|skills/push-ifs-up-fors-down
 debug-pi-coding-agent|local|skills/debug-pi-coding-agent
 # https://github.com/mattpocock/skills
 grill-with-docs|local|skills/grill-with-docs
+grill-me|local|skills/grill-me
 improve-codebase-architecture|local|skills/improve-codebase-architecture
 to-prd|local|skills/to-prd
 to-issues|local|skills/to-issues

@@ -3,58 +3,26 @@ export type WorkflowBypassState = {
   reason: string | null;
 };
 
+export type IntentFeedbackKind =
+  | "implementation"
+  | "workflow_only"
+  | "read_only"
+  | "ambiguous";
+
+export type IntentFeedback = {
+  kind: IntentFeedbackKind;
+  confidence: number;
+  reason: string;
+  evidence: string[];
+  requestedOperations: string[];
+};
+
 export const DEFAULT_WORKFLOW_BYPASS_STATE: WorkflowBypassState = {
   active: false,
   reason: null,
 };
 
-// Implementation verbs mean the user is asking the agent to change behavior/code,
-// so plan review should still gate the turn even if the prompt also mentions commit.
-const WORKFLOW_IMPLEMENTATION_INTENT_WORDS = [
-  "fix",
-  "implement",
-  "add",
-  "create",
-  "build",
-  "refactor",
-  "optimi[sz]e",
-  "modify",
-  "edit",
-  "debug",
-  "update",
-  "change",
-  "remove",
-  "delete",
-  "rename",
-  "improve",
-  "clean\\s+up",
-] as const;
-const PLAN_REVIEW_IMPLEMENTATION_INTENT_WORDS = [
-  ...WORKFLOW_IMPLEMENTATION_INTENT_WORDS,
-  "impl",
-] as const;
-const CHINESE_IMPLEMENTATION_INTENT_SOURCE =
-  "修复|实现|添加|新增|创建|修改|重构|优化|调试|删除|调整|变更|完善|开发|改进|迁移";
-
-const createImplementationIntentPattern = (
-  englishWords: readonly string[],
-): RegExp =>
-  new RegExp(
-    `\\b(${englishWords.join("|")})\\b|${CHINESE_IMPLEMENTATION_INTENT_SOURCE}`,
-    "iu",
-  );
-
-const WORKFLOW_IMPLEMENTATION_INTENT_PATTERN =
-  createImplementationIntentPattern(WORKFLOW_IMPLEMENTATION_INTENT_WORDS);
-const PLAN_REVIEW_IMPLEMENTATION_INTENT_PATTERN =
-  createImplementationIntentPattern(PLAN_REVIEW_IMPLEMENTATION_INTENT_WORDS);
-
-const WORKFLOW_INTENT_PATTERNS = [
-  // Git-only workflows are operational tasks, not implementation work.
-  /\b(git\s+)?(commit|push|status|diff|log)\b/iu,
-  // Verification commands are operational checks when no implementation verb is present.
-  /\b(run|execute)?\s*(npm\s+run\s+)?(tests?|lint|format|checks?)\b/iu,
-] as const;
+const MINIMUM_INTENT_CONFIDENCE = 0.7;
 
 // Short confirmation replies should continue an already-started workflow turn.
 const WORKFLOW_CONFIRMATION_PATTERN = /^(yes|y|no|n|include it|exclude it)$/iu;
@@ -65,12 +33,48 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const normalizePrompt = (prompt: string): string =>
   prompt.trim().replace(/\s+/gu, " ");
 
-const normalizedPromptHasWorkflowImplementationIntent = (
-  normalizedPrompt: string,
-): boolean => WORKFLOW_IMPLEMENTATION_INTENT_PATTERN.test(normalizedPrompt);
+const isIntentFeedbackKind = (value: unknown): value is IntentFeedbackKind =>
+  value === "implementation" ||
+  value === "workflow_only" ||
+  value === "read_only" ||
+  value === "ambiguous";
 
-export const hasPlanReviewImplementationIntent = (prompt: string): boolean =>
-  PLAN_REVIEW_IMPLEMENTATION_INTENT_PATTERN.test(normalizePrompt(prompt));
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+export const parseIntentFeedback = (value: unknown): IntentFeedback | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (
+    !isIntentFeedbackKind(value.kind) ||
+    typeof value.confidence !== "number" ||
+    value.confidence < MINIMUM_INTENT_CONFIDENCE ||
+    typeof value.reason !== "string" ||
+    !isStringArray(value.evidence) ||
+    !isStringArray(value.requestedOperations)
+  ) {
+    return null;
+  }
+
+  return {
+    kind: value.kind,
+    confidence: value.confidence,
+    reason: value.reason,
+    evidence: value.evidence,
+    requestedOperations: value.requestedOperations,
+  };
+};
+
+export const requiresPlanReviewForIntentFeedback = (
+  feedback: unknown,
+): boolean => {
+  const parsed = parseIntentFeedback(feedback);
+  return (
+    !parsed || parsed.kind === "implementation" || parsed.kind === "ambiguous"
+  );
+};
 
 const isConfirmationForActiveWorkflow = (
   normalizedPrompt: string,
@@ -82,33 +86,26 @@ const isConfirmationForActiveWorkflow = (
   WORKFLOW_CONFIRMATION_PATTERN.test(normalizedPrompt);
 
 export const decideWorkflowBypass = (
-  prompt: string,
+  intentFeedback: unknown,
   current: WorkflowBypassState,
   hasUnfinishedTodos: boolean,
 ): WorkflowBypassState => {
-  const normalizedPrompt = normalizePrompt(prompt);
-  if (!normalizedPrompt) {
+  if (typeof intentFeedback === "string") {
+    const normalizedPrompt = normalizePrompt(intentFeedback);
+    if (
+      isConfirmationForActiveWorkflow(
+        normalizedPrompt,
+        current,
+        hasUnfinishedTodos,
+      )
+    ) {
+      return current;
+    }
     return DEFAULT_WORKFLOW_BYPASS_STATE;
   }
 
-  if (
-    isConfirmationForActiveWorkflow(
-      normalizedPrompt,
-      current,
-      hasUnfinishedTodos,
-    )
-  ) {
-    return current;
-  }
-
-  if (normalizedPromptHasWorkflowImplementationIntent(normalizedPrompt)) {
-    return DEFAULT_WORKFLOW_BYPASS_STATE;
-  }
-
-  const matchedWorkflow = WORKFLOW_INTENT_PATTERNS.some((pattern) =>
-    pattern.test(normalizedPrompt),
-  );
-  if (!matchedWorkflow) {
+  const feedback = parseIntentFeedback(intentFeedback);
+  if (feedback?.kind !== "workflow_only") {
     return DEFAULT_WORKFLOW_BYPASS_STATE;
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WORKFLOW_BYPASS_STATE,
   decideWorkflowBypass,
+  requiresPlanReviewForIntentFeedback,
 } from "./workflow-bypass.js";
 
 const activeWorkflow = {
@@ -9,30 +10,66 @@ const activeWorkflow = {
   reason: "workflow-only request",
 };
 
+const workflowOnlyFeedback = {
+  kind: "workflow_only",
+  confidence: 0.9,
+  reason: "User only asked to commit existing changes.",
+  evidence: ["commit existing changes"],
+  requestedOperations: ["git commit"],
+};
+
+const implementationFeedback = {
+  kind: "implementation",
+  confidence: 0.9,
+  reason: "User asked to fix code before committing.",
+  evidence: ["fix"],
+  requestedOperations: ["edit", "git commit"],
+};
+
 describe("workflow bypass policy", () => {
-  it.each([
-    "commit all the changes",
-    "commit all changes and no extra branch",
-    "commit and push",
-    "git status --short",
-    "run lint checks",
-  ])("enables bypass for pure workflow prompt: %s", (prompt) => {
+  it("enables bypass from structured LLM workflow feedback", () => {
     expect(
-      decideWorkflowBypass(prompt, DEFAULT_WORKFLOW_BYPASS_STATE, false),
+      decideWorkflowBypass(
+        workflowOnlyFeedback,
+        DEFAULT_WORKFLOW_BYPASS_STATE,
+        false,
+      ),
     ).toEqual(activeWorkflow);
   });
 
-  it.each([
-    "fix the bug and commit",
-    "implement feature and commit",
-    "update the docs and commit",
-    "remove obsolete code and run tests",
-    "rename the command and run lint",
-    "改进 plan mode 后提交",
-    "删除旧逻辑并运行测试",
-  ])("keeps implementation prompt in normal plan mode: %s", (prompt) => {
+  it("keeps implementation feedback in normal plan mode", () => {
     expect(
-      decideWorkflowBypass(prompt, DEFAULT_WORKFLOW_BYPASS_STATE, false),
+      decideWorkflowBypass(
+        implementationFeedback,
+        DEFAULT_WORKFLOW_BYPASS_STATE,
+        false,
+      ),
+    ).toEqual(DEFAULT_WORKFLOW_BYPASS_STATE);
+  });
+
+  it("requires plan review when feedback is missing or ambiguous", () => {
+    expect(requiresPlanReviewForIntentFeedback(undefined)).toBe(true);
+    expect(
+      requiresPlanReviewForIntentFeedback({
+        ...workflowOnlyFeedback,
+        kind: "ambiguous",
+      }),
+    ).toBe(true);
+    expect(requiresPlanReviewForIntentFeedback(workflowOnlyFeedback)).toBe(
+      false,
+    );
+  });
+
+  it("fails closed when feedback is missing or invalid", () => {
+    expect(
+      decideWorkflowBypass(undefined, DEFAULT_WORKFLOW_BYPASS_STATE, false),
+    ).toEqual(DEFAULT_WORKFLOW_BYPASS_STATE);
+    expect(
+      decideWorkflowBypass(
+        { ...workflowOnlyFeedback, confidence: 0.4 },
+        DEFAULT_WORKFLOW_BYPASS_STATE,
+        false,
+      ),
     ).toEqual(DEFAULT_WORKFLOW_BYPASS_STATE);
   });
 

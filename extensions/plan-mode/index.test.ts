@@ -195,15 +195,41 @@ const sendAgentPrompt = async (
   harness: ReturnType<typeof buildHarness>,
   ctx: TestCtx,
   prompt: string,
+  intentFeedback?: unknown,
 ) =>
   harness.emit(
     "before_agent_start",
     {
       prompt,
       systemPrompt: "base",
+      intentFeedback,
     },
     ctx,
   );
+
+const workflowOnlyIntentFeedback = {
+  kind: "workflow_only",
+  confidence: 0.9,
+  reason: "User requested only an operational workflow.",
+  evidence: ["commit existing changes"],
+  requestedOperations: ["git status", "git commit"],
+};
+
+const implementationIntentFeedback = {
+  kind: "implementation",
+  confidence: 0.9,
+  reason: "User requested a code change before the workflow.",
+  evidence: ["fix"],
+  requestedOperations: ["edit", "git commit"],
+};
+
+const readOnlyIntentFeedback = {
+  kind: "read_only",
+  confidence: 0.9,
+  reason: "User asked a question without requesting changes.",
+  evidence: ["why"],
+  requestedOperations: [],
+};
 
 const validPlanContent = `## Context
 - 用户希望用中文描述计划背景、成功标准和受影响模块。
@@ -649,6 +675,7 @@ describe("plan-mode extension", () => {
       harness,
       ctx,
       "why does the plan mode todo widget keep showing?",
+      readOnlyIntentFeedback,
     );
     await harness.emit("agent_end", { messages: [] }, ctx);
 
@@ -707,7 +734,12 @@ describe("plan-mode extension", () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendInput(harness, ctx, "fix the plan mode guard bug", "interactive");
-    await sendAgentPrompt(harness, ctx, "fix the plan mode guard bug");
+    await sendAgentPrompt(
+      harness,
+      ctx,
+      "fix the plan mode guard bug",
+      implementationIntentFeedback,
+    );
     await harness.emit("agent_end", { messages: [] }, ctx);
 
     expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
@@ -750,7 +782,12 @@ describe("plan-mode extension", () => {
   it("keeps review gating when read-only prompts create planning TODOs", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
-    await sendAgentPrompt(harness, ctx, "why is plan mode asking for TODOs?");
+    await sendAgentPrompt(
+      harness,
+      ctx,
+      "why is plan mode asking for TODOs?",
+      readOnlyIntentFeedback,
+    );
     await harness.runTool(
       "plan_mode_todo",
       {
@@ -774,6 +811,7 @@ describe("plan-mode extension", () => {
       harness,
       ctx,
       "commit all changes and no extra branch",
+      workflowOnlyIntentFeedback,
     );
 
     await expect(
@@ -798,10 +836,25 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("blocks unsafe bash commands during workflow-only bypass", async () => {
+  it("fails closed without structured workflow feedback", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendAgentPrompt(harness, ctx, "commit all the changes");
+
+    await expect(
+      harness.runToolCall("bash", { command: "git status --short" }, ctx),
+    ).resolves.toMatchObject({ block: true });
+  });
+
+  it("blocks unsafe bash commands during workflow-only bypass", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await sendAgentPrompt(
+      harness,
+      ctx,
+      "commit all the changes",
+      workflowOnlyIntentFeedback,
+    );
 
     await expect(
       harness.runToolCall("bash", { command: "rm -rf src" }, ctx),
@@ -814,7 +867,12 @@ describe("plan-mode extension", () => {
   it("keeps implementation prompts in normal plan mode", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
-    await sendAgentPrompt(harness, ctx, "fix the bug and commit");
+    await sendAgentPrompt(
+      harness,
+      ctx,
+      "fix the bug and commit",
+      implementationIntentFeedback,
+    );
 
     await expect(
       harness.runToolCall("bash", { command: "git status --short" }, ctx),
@@ -823,7 +881,12 @@ describe("plan-mode extension", () => {
 
   it("extends workflow bypass across user confirmation while todos remain", async () => {
     const { harness, ctx } = await startPlanModeSession();
-    await sendAgentPrompt(harness, ctx, "commit all the changes");
+    await sendAgentPrompt(
+      harness,
+      ctx,
+      "commit all the changes",
+      workflowOnlyIntentFeedback,
+    );
     await harness.runTool(
       "plan_mode_todo",
       {
@@ -843,7 +906,12 @@ describe("plan-mode extension", () => {
 
   it("clears workflow bypass after workflow todos are complete", async () => {
     const { harness, ctx } = await startPlanModeSession();
-    await sendAgentPrompt(harness, ctx, "commit all the changes");
+    await sendAgentPrompt(
+      harness,
+      ctx,
+      "commit all the changes",
+      workflowOnlyIntentFeedback,
+    );
     await harness.runTool(
       "plan_mode_todo",
       {
@@ -926,7 +994,12 @@ describe("plan-mode extension", () => {
       ctx,
     );
 
-    await sendAgentPrompt(harness, ctx, "迁移到 Svelte + Vite");
+    await sendAgentPrompt(
+      harness,
+      ctx,
+      "迁移到 Svelte + Vite",
+      implementationIntentFeedback,
+    );
 
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),

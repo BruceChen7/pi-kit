@@ -1,7 +1,19 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+
+const spawnMock = vi.hoisted(() => vi.fn());
+const getNativeHostInfoMock = vi.hoisted(() => vi.fn());
+
+vi.mock("node:child_process", () => ({
+  spawn: spawnMock,
+}));
+
+vi.mock("glimpseui", () => ({
+  getNativeHostInfo: getNativeHostInfoMock,
+}));
 
 import { createGlimpseHtml, openGlimpseKanban } from "./glimpse-host.js";
 
@@ -86,7 +98,29 @@ function expectPageEvent(
 
 beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "kanban-worktree-ui-"));
+  spawnMock.mockReset();
+  getNativeHostInfoMock.mockReset();
+  getNativeHostInfoMock.mockReturnValue({
+    path: "/tmp/glimpse-host",
+    platform: "darwin",
+  });
+  spawnMock.mockReturnValue(createMockHostProcess());
 });
+
+function createMockHostProcess() {
+  return {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    on: vi.fn(),
+  };
+}
+
+function writeHostMessage(
+  host: ReturnType<typeof createMockHostProcess>,
+  message: unknown,
+): void {
+  host.stdout.write(`${JSON.stringify(message)}\n`);
+}
 
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -160,51 +194,94 @@ test("openGlimpseKanban preserves redirected stderr write callbacks", async () =
   expect(log).toContain("another warning");
 });
 
-test("glimpse host wrapper redirects native stderr to a log file", async () => {
-  const filter = await readFile(
-    new URL("./glimpse-host-filter.sh", import.meta.url),
-    "utf8",
-  );
-
-  expect(filter).toContain("KANBAN_GLIMPSE_STDERR_LOG");
-  expect(filter).toContain("2>>");
-  expect(filter).not.toContain("grep -F -v");
-});
-
-test("wraps existing Glimpse binary override so native stderr is redirected", async () => {
+test("default Glimpse opener starts the native host with stderr ignored", async () => {
   await writeBuiltSvelteShell();
   const previousBinaryPath = process.env.GLIMPSE_BINARY_PATH;
   const previousHostPath = process.env.GLIMPSE_HOST_PATH;
+  const previousRealHost = process.env.KANBAN_GLIMPSE_REAL_HOST;
+  const previousLogPath = process.env.KANBAN_GLIMPSE_STDERR_LOG;
   process.env.GLIMPSE_BINARY_PATH = "/tmp/custom-glimpse-host";
-  delete process.env.GLIMPSE_HOST_PATH;
+  process.env.GLIMPSE_HOST_PATH = "/tmp/custom-glimpse-host-alias";
+  process.env.KANBAN_GLIMPSE_REAL_HOST = "/tmp/old-real-host";
+  process.env.KANBAN_GLIMPSE_STDERR_LOG = "/tmp/old-log";
 
-  let hostPathDuringOpen: string | undefined;
-  let binaryPathDuringOpen: string | undefined;
-  let realHostDuringOpen: string | undefined;
-  let logPathDuringOpen: string | undefined;
   try {
     await openGlimpseKanban("/tmp/kanban.sock", {
       uiDistDir: dir,
       request: vi.fn().mockResolvedValue({ result: [] }),
-      glimpseStderrLogPath: path.join(dir, "glimpse-stderr.log"),
-      openWindow: () => {
-        hostPathDuringOpen = process.env.GLIMPSE_HOST_PATH;
-        binaryPathDuringOpen = process.env.GLIMPSE_BINARY_PATH;
-        realHostDuringOpen = process.env.KANBAN_GLIMPSE_REAL_HOST;
-        logPathDuringOpen = process.env.KANBAN_GLIMPSE_STDERR_LOG;
-        return { on: vi.fn() };
-      },
     });
 
-    expect(hostPathDuringOpen).toContain("glimpse-host-filter.sh");
-    expect(binaryPathDuringOpen).toBeUndefined();
-    expect(realHostDuringOpen).toBe("/tmp/custom-glimpse-host");
-    expect(logPathDuringOpen).toBe(path.join(dir, "glimpse-stderr.log"));
+    expect(spawnMock).toHaveBeenCalledWith(
+      "/tmp/glimpse-host",
+      ["--width", "1100", "--height", "720", "--title", "Kanban Worktree"],
+      {
+        stdio: ["pipe", "pipe", "ignore"],
+        windowsHide: false,
+      },
+    );
     expect(process.env.GLIMPSE_BINARY_PATH).toBe("/tmp/custom-glimpse-host");
+    expect(process.env.GLIMPSE_HOST_PATH).toBe(
+      "/tmp/custom-glimpse-host-alias",
+    );
+    expect(process.env.KANBAN_GLIMPSE_REAL_HOST).toBe("/tmp/old-real-host");
+    expect(process.env.KANBAN_GLIMPSE_STDERR_LOG).toBe("/tmp/old-log");
   } finally {
     restoreTestEnv("GLIMPSE_BINARY_PATH", previousBinaryPath);
     restoreTestEnv("GLIMPSE_HOST_PATH", previousHostPath);
+    restoreTestEnv("KANBAN_GLIMPSE_REAL_HOST", previousRealHost);
+    restoreTestEnv("KANBAN_GLIMPSE_STDERR_LOG", previousLogPath);
   }
+});
+
+test("default Glimpse opener bridges host JSONL messages to daemon requests", async () => {
+  await writeBuiltSvelteShell();
+  const host = createMockHostProcess();
+  spawnMock.mockReturnValue(host);
+  const request = vi.fn().mockResolvedValue({ result: [] });
+
+  await openGlimpseKanban("/tmp/kanban.sock", {
+    uiDistDir: dir,
+    request,
+  });
+
+  writeHostMessage(host, { type: "ready" });
+  writeHostMessage(host, {
+    type: "message",
+    data: {
+      type: "launch",
+      originProvider: "todo-workflow",
+      originId: "todo-1",
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(host.stdin.read()?.toString()).toContain('"type":"html"');
+  expect(request).toHaveBeenLastCalledWith("/tmp/kanban.sock", {
+    id: "launch-todo-workflow-todo-1",
+    method: "features.launch",
+    params: {
+      originProvider: "todo-workflow",
+      originId: "todo-1",
+    },
+  });
+});
+
+test("default Glimpse opener sends initial HTML only for the first ready event", async () => {
+  await writeBuiltSvelteShell();
+  const host = createMockHostProcess();
+  spawnMock.mockReturnValue(host);
+
+  await openGlimpseKanban("/tmp/kanban.sock", {
+    uiDistDir: dir,
+    request: vi.fn().mockResolvedValue({ result: [] }),
+  });
+
+  writeHostMessage(host, { type: "ready" });
+  writeHostMessage(host, { type: "ready" });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const writes = host.stdin.read()?.toString() ?? "";
+  expect(writes.match(/"type":"html"/g)).toHaveLength(1);
 });
 
 test("openGlimpseKanban forwards launch origin to daemon", async () => {

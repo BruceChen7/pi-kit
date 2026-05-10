@@ -67,6 +67,12 @@ For code-writing plans/specs that change logic, state, data models, control flow
 process flow, include before/after diagrams for the affected data model and flow inside
 the standard plan sections.
 
+Code-changing plans/specs must also include a key code sketch. This is a minimal,
+reviewable snippet for the important types, function signatures, branch conditions,
+state transitions, or test assertions. It is not a full implementation dump. In standard
+plan artifacts, put the sketch inside `## Context`, for example under a lower-level
+`### 关键代码草案` heading, because extra top-level `##` sections are rejected.
+
 After writing the artifact, submit it for review:
 
 ```text

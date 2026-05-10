@@ -879,6 +879,33 @@ describe("plan-mode extension", () => {
     });
   });
 
+  it("requires key code sketches in code-changing plans", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+    const keyCodeSketchPattern = [
+      "关键代码草案",
+      "类型",
+      "函数签名",
+      "条件判断",
+      "状态迁移",
+      "测试断言",
+    ].join("[\\s\\S]+");
+
+    const result = await sendAgentPrompt(
+      harness,
+      ctx,
+      "fix the plan mode guard bug",
+    );
+
+    expect(result).toMatchObject({
+      systemPrompt: expect.stringMatching(
+        new RegExp(keyCodeSketchPattern, "u"),
+      ),
+    });
+    expect(result).toMatchObject({
+      systemPrompt: expect.stringMatching(/## Context[\s\S]+不能新增顶层章节/u),
+    });
+  });
+
   it("still requires a TODO for user implementation prompts in auto plan", async () => {
     const { harness, ctx } = await startPlanModeSession();
 

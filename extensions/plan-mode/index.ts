@@ -176,6 +176,12 @@ const LOGIC_CHANGE_DIAGRAM_GUIDANCE = [
     "必须包含变更前后数据模型与流程图。",
   DIAGRAM_CHANGE_COLOR_GUIDANCE,
 ];
+const KEY_CODE_SKETCH_GUIDANCE = [
+  "- 写 code-changing plan/spec 时，plan 文件必须包含关键代码草案；" +
+    "包括关键类型、函数签名、条件判断、状态迁移或测试断言的最小片段。",
+  "- 关键代码草案应放在标准 plan 的 ## Context 内，不能新增顶层章节；" +
+    "避免粘贴完整实现，只展示能让 reviewer 判断方向的代码。",
+];
 
 const todoStatusSchema = Type.Union([
   Type.Literal("todo"),
@@ -1264,6 +1270,7 @@ class PlanModeController {
         "## Verification, and ## Review with Chinese checkbox steps.",
       ARCHITECTURE_TEST_GUIDANCE,
       ...LOGIC_CHANGE_DIAGRAM_GUIDANCE,
+      ...KEY_CODE_SKETCH_GUIDANCE,
       "- If Plannotator denies the plan, revise the same file and submit again.",
       "- In act phases, execute the approved plan and update " +
         `${TODO_TOOL_NAME} statuses to in_progress and done so the widget shows the current step.`,

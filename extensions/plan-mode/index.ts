@@ -10,6 +10,7 @@ import { type Static, Type } from "@sinclair/typebox";
 import { loadSettings } from "../shared/settings.ts";
 import {
   type ArtifactPolicyConfig,
+  formatApprovedArtifactPolicyFailure,
   formatArtifactPolicyFailure,
   getDefaultArtifactPolicyConfig,
   isStandardPlanArtifactPath,
@@ -83,6 +84,8 @@ type PlanModeSnapshot = {
   activePlanPath: string | null;
   latestReviewArtifactPath: string | null;
   reviewApprovedPlanPaths: string[];
+  pendingApprovedPlanContinuationPath: string | null;
+  resumableApprovedPlanPath: string | null;
   endConversationRequested: boolean;
   workflowBypass?: WorkflowBypassState;
 };
@@ -458,6 +461,14 @@ const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
       data.reviewApprovedPlanPaths,
       [],
     ),
+    pendingApprovedPlanContinuationPath:
+      typeof data.pendingApprovedPlanContinuationPath === "string"
+        ? data.pendingApprovedPlanContinuationPath
+        : null,
+    resumableApprovedPlanPath:
+      typeof data.resumableApprovedPlanPath === "string"
+        ? data.resumableApprovedPlanPath
+        : null,
     endConversationRequested: data.endConversationRequested === true,
     workflowBypass: workflowBypassFromSnapshot(data.workflowBypass),
   };
@@ -500,6 +511,8 @@ class PlanModeState {
   activePlanPath: string | null = null;
   latestReviewArtifactPath: string | null = null;
   reviewApprovedPlanPaths = new Set<string>();
+  pendingApprovedPlanContinuationPath: string | null = null;
+  resumableApprovedPlanPath: string | null = null;
   endConversationRequested = false;
   workflowBypass: WorkflowBypassState = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
 
@@ -519,6 +532,8 @@ class PlanModeState {
     this.activePlanPath = null;
     this.latestReviewArtifactPath = null;
     this.reviewApprovedPlanPaths = new Set();
+    this.pendingApprovedPlanContinuationPath = null;
+    this.resumableApprovedPlanPath = null;
     this.endConversationRequested = false;
     this.workflowBypass = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
   }
@@ -547,6 +562,9 @@ class PlanModeState {
     this.activePlanPath = snapshot.activePlanPath;
     this.latestReviewArtifactPath = snapshot.latestReviewArtifactPath;
     this.reviewApprovedPlanPaths = new Set(snapshot.reviewApprovedPlanPaths);
+    this.pendingApprovedPlanContinuationPath =
+      snapshot.pendingApprovedPlanContinuationPath;
+    this.resumableApprovedPlanPath = snapshot.resumableApprovedPlanPath;
     this.endConversationRequested = snapshot.endConversationRequested;
     this.workflowBypass = workflowBypassFromSnapshot(snapshot.workflowBypass);
   }
@@ -602,7 +620,7 @@ class PlanModeState {
   }
 
   isWorkflowBypassActive(): boolean {
-    return this.isPlanPhase() && this.workflowBypass.active;
+    return this.workflowBypass.active;
   }
 
   updateWorkflowBypassForPrompt(
@@ -641,6 +659,41 @@ class PlanModeState {
 
   hasApprovedActivePlan(): boolean {
     return this.getApprovedActivePlanPath() !== null;
+  }
+
+  hasApprovedPlanContinuation(): boolean {
+    return (
+      this.isApprovedCompletedAutoActRun() ||
+      this.resumableApprovedPlanPath !== null
+    );
+  }
+
+  getApprovedContinuationPlanPath(): string | null {
+    return this.getApprovedActivePlanPath() ?? this.resumableApprovedPlanPath;
+  }
+
+  activateApprovedPlanContinuation(): boolean {
+    const planPath = this.getApprovedContinuationPlanPath();
+    if (!planPath || this.mode !== "auto") {
+      return false;
+    }
+
+    this.activePlanPath = planPath;
+    this.latestReviewArtifactPath = planPath;
+    this.switchAutoToAct();
+    return true;
+  }
+
+  clearPendingApprovedPlanContinuation(): void {
+    this.pendingApprovedPlanContinuationPath = null;
+  }
+
+  getLatestReviewArtifactPath(): string | null {
+    return this.latestReviewArtifactPath ?? this.getApprovedActivePlanPath();
+  }
+
+  isApprovedReviewArtifactPath(planPath: string | null): boolean {
+    return planPath !== null && this.reviewApprovedPlanPaths.has(planPath);
   }
 
   canStartFirstRunForApprovedPlan(): boolean {
@@ -795,6 +848,9 @@ class PlanModeState {
       activePlanPath: this.activePlanPath,
       latestReviewArtifactPath: this.latestReviewArtifactPath,
       reviewApprovedPlanPaths: [...this.reviewApprovedPlanPaths],
+      pendingApprovedPlanContinuationPath:
+        this.pendingApprovedPlanContinuationPath,
+      resumableApprovedPlanPath: this.resumableApprovedPlanPath,
       endConversationRequested: this.endConversationRequested,
       workflowBypass: { ...this.workflowBypass },
     };
@@ -852,12 +908,8 @@ const formatPlanModeStatus = (state: PlanModeState): string => {
   ].join(" • ");
 };
 
-const getCompletedWidgetModeLabel = (state: PlanModeState): string => {
-  if (state.mode === "auto" && state.phase === "act") {
-    return "auto:completed";
-  }
-  return getModeLabel(state);
-};
+const getCompletedWidgetModeLabel = (state: PlanModeState): string =>
+  `${state.phase}:completed`;
 
 const formatTodoWidgetLines = (state: PlanModeState): string[] => {
   if (state.todos.length === 0) {
@@ -1102,6 +1154,15 @@ const isApprovedPlanContinuationPrompt = (prompt: string): boolean => {
   return APPROVED_PLAN_CONTINUATION_PATTERN.test(normalized);
 };
 
+const isApprovedPlanPolicyFixPrompt = (prompt: string): boolean =>
+  normalizeContinuationPrompt(prompt).startsWith(
+    "Plan Mode artifact policy requires fixes for an already approved plan.",
+  );
+
+const isApprovedPlanContinuationRequest = (prompt: string): boolean =>
+  isApprovedPlanContinuationPrompt(prompt) ||
+  isApprovedPlanPolicyFixPrompt(prompt);
+
 const turnWasAborted = (
   event: { messages?: readonly unknown[] },
   ctx: { signal?: AbortSignal },
@@ -1210,8 +1271,9 @@ class PlanModeController {
 
     if (this.state.isWorkflowBypassActive()) {
       lines.push(
-        "- Workflow-only bypass is active: this turn may use bash for the " +
-          "requested workflow, but must not implement code or write plan/spec drafts.",
+        "- Direct workflow is active: this turn may use only safe git/npm " +
+          "bash for the requested workflow, and must not implement code or " +
+          "write files.",
       );
     }
 
@@ -1230,11 +1292,11 @@ class PlanModeController {
     prompt: string,
     requiresPlanReview: boolean,
   ): boolean {
-    return (
-      requiresPlanReview &&
-      this.state.isApprovedCompletedAutoActRun() &&
-      isApprovedPlanContinuationPrompt(prompt)
-    );
+    if (!requiresPlanReview || !isApprovedPlanContinuationRequest(prompt)) {
+      return false;
+    }
+
+    return this.state.hasApprovedPlanContinuation();
   }
 
   buildIntentClassifierInput(prompt: string): IntentClassifierInput {
@@ -1285,11 +1347,20 @@ class PlanModeController {
       requiresPlanReview,
     );
     this.approvedPlanContinuationForTurn = continuesApprovedPlan;
+    if (
+      continuesApprovedPlan &&
+      this.state.activateApprovedPlanContinuation()
+    ) {
+      this.applyMode(ctx);
+      this.persist();
+    }
 
     if (!this.internalExtensionBypassForTurn) {
+      const hadWorkflowBypass = this.state.isWorkflowBypassActive();
       if (this.state.updateWorkflowBypassForPrompt(prompt, intentFeedback)) {
         this.persist();
       }
+      this.syncAutoPhaseForWorkflowBypass(ctx, hadWorkflowBypass);
       if (
         this.state.shouldReturnAutoActToPlan(requiresPlanReview) &&
         !continuesApprovedPlan
@@ -1306,6 +1377,27 @@ class PlanModeController {
       requiresPlanReview;
   }
 
+  syncAutoPhaseForWorkflowBypass(
+    ctx: ExtensionContext,
+    wasWorkflowBypassActive: boolean,
+  ): void {
+    if (this.state.mode !== "auto") {
+      return;
+    }
+
+    if (this.state.isWorkflowBypassActive()) {
+      this.state.switchAutoToAct();
+      this.applyMode(ctx);
+      this.persist();
+      return;
+    }
+
+    if (wasWorkflowBypassActive && this.state.phase === "act") {
+      this.state.returnAutoActToPlan();
+      this.persist();
+    }
+  }
+
   clearTurnSource(): void {
     this.inputSourceForTurn = "unknown";
     this.internalExtensionBypassForTurn = false;
@@ -1313,7 +1405,7 @@ class PlanModeController {
   }
 
   getPlanPathForNewRun(): string | null {
-    const approvedPlanPath = this.state.getApprovedActivePlanPath();
+    const approvedPlanPath = this.state.getApprovedContinuationPlanPath();
     if (
       approvedPlanPath &&
       (this.approvedPlanContinuationForTurn ||
@@ -1342,6 +1434,7 @@ class PlanModeController {
   validateArtifactPolicyForPath(
     ctx: ExtensionContext,
     rawPath: string,
+    options: { alreadyApproved?: boolean } = {},
   ): string | null {
     const policyPath = relativeToolPath(ctx.cwd, rawPath);
     if (!isStandardPlanArtifactPath(policyPath)) {
@@ -1370,7 +1463,9 @@ class PlanModeController {
       return null;
     }
 
-    return formatArtifactPolicyFailure(policyPath, result.issues);
+    return options.alreadyApproved
+      ? formatApprovedArtifactPolicyFailure(policyPath, result.issues)
+      : formatArtifactPolicyFailure(policyPath, result.issues);
   }
 
   maybeBlockTool(
@@ -1379,6 +1474,11 @@ class PlanModeController {
   ): { block: true; reason: string } | undefined {
     if (this.internalExtensionBypassForTurn) {
       return undefined;
+    }
+
+    const directWorkflowBlock = this.maybeBlockDirectWorkflowTool(event);
+    if (directWorkflowBlock) {
+      return directWorkflowBlock;
     }
 
     if (event.toolName === PLANNOTATOR_SUBMIT_TOOL_NAME) {
@@ -1408,19 +1508,6 @@ class PlanModeController {
     }
 
     if (this.state.isPlanPhase() && event.toolName === "bash") {
-      if (this.state.isWorkflowBypassActive()) {
-        const command = stringProperty(event.input, "command") ?? "";
-        if (isSafeWorkflowBashCommand(command)) {
-          return undefined;
-        }
-        return {
-          block: true,
-          reason:
-            `plan-mode blocked ${event.toolName}: workflow-only bypass ` +
-            "allows only git status/diff/log/add/commit/push and " +
-            "npm test/lint/check commands.",
-        };
-      }
       return {
         block: true,
         reason:
@@ -1430,14 +1517,6 @@ class PlanModeController {
     }
 
     if (this.state.isPlanPhase() && WRITE_TOOL_NAMES.has(event.toolName)) {
-      if (this.state.isWorkflowBypassActive()) {
-        return {
-          block: true,
-          reason:
-            `plan-mode blocked ${event.toolName}: workflow-only bypass ` +
-            "allows bash workflows but not file writes.",
-        };
-      }
       const rawPath = pathFromToolCall(event);
       if (rawPath && isReviewArtifactPath(ctx.cwd, rawPath)) {
         return undefined;
@@ -1491,6 +1570,52 @@ class PlanModeController {
     return undefined;
   }
 
+  maybeBlockDirectWorkflowTool(
+    event: ToolCallEvent,
+  ): { block: true; reason: string } | undefined {
+    if (!this.state.isWorkflowBypassActive()) {
+      return undefined;
+    }
+
+    if (event.toolName === "bash") {
+      const command = stringProperty(event.input, "command") ?? "";
+      if (isSafeWorkflowBashCommand(command)) {
+        return undefined;
+      }
+      return {
+        block: true,
+        reason:
+          `plan-mode blocked ${event.toolName}: direct workflow ` +
+          "allows only git status/diff/log/add/commit/push and " +
+          "npm test/lint/check commands.",
+      };
+    }
+
+    if (!WRITE_TOOL_NAMES.has(event.toolName)) {
+      return undefined;
+    }
+
+    return {
+      block: true,
+      reason:
+        `plan-mode blocked ${event.toolName}: direct workflow allows ` +
+        "safe bash workflows but not file writes.",
+    };
+  }
+
+  finishWorkflowBypassIfComplete(ctx: ExtensionContext): void {
+    if (this.state.hasUnfinishedTodos()) {
+      return;
+    }
+
+    this.state.clearWorkflowBypass();
+    if (this.state.mode === "auto") {
+      this.state.returnAutoActToPlan();
+    }
+    this.applyMode(ctx);
+    this.persist();
+  }
+
   handleToolResult(event: ToolResultEvent, ctx: ExtensionContext): void {
     if (event.toolName === "read" && !event.isError) {
       const rawPath = stringProperty(event.input, "path");
@@ -1530,6 +1655,8 @@ class PlanModeController {
     this.state.activePlanPath = approvedPath;
     this.state.latestReviewArtifactPath = approvedPath;
     this.state.reviewApprovedPlanPaths.add(approvedPath);
+    this.state.pendingApprovedPlanContinuationPath = approvedPath;
+    this.state.resumableApprovedPlanPath = approvedPath;
     if (this.state.activeRun) {
       this.state.activeRun.planPath = approvedPath;
       this.state.activeRun.status = hasCompletedAllTodos(this.state.todos)
@@ -1710,10 +1837,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       return;
     }
     if (controller.state.isWorkflowBypassActive()) {
-      if (!controller.state.hasUnfinishedTodos()) {
-        controller.state.clearWorkflowBypass();
-        controller.persist();
-      }
+      controller.finishWorkflowBypassIfComplete(ctx);
       controller.clearTurnSource();
       return;
     }
@@ -1731,11 +1855,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    const latestArtifactPath = controller.state.latestReviewArtifactPath;
+    const latestArtifactPath = controller.state.getLatestReviewArtifactPath();
+    const latestReviewArtifactApproved =
+      controller.state.isApprovedReviewArtifactPath(latestArtifactPath);
     if (latestArtifactPath) {
       const policyFailure = controller.validateArtifactPolicyForPath(
         ctx,
         latestArtifactPath,
+        { alreadyApproved: latestReviewArtifactApproved },
       );
       if (policyFailure) {
         pi.sendUserMessage(policyFailure, { deliverAs: "followUp" });
@@ -1744,10 +1871,26 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       }
     }
 
-    const latestReviewArtifactApproved = Boolean(
-      latestArtifactPath &&
-        controller.state.reviewApprovedPlanPaths.has(latestArtifactPath),
-    );
+    const pendingContinuationPath =
+      controller.state.pendingApprovedPlanContinuationPath;
+    if (
+      controller.state.mode === "auto" &&
+      controller.state.phase === "act" &&
+      pendingContinuationPath
+    ) {
+      controller.state.clearPendingApprovedPlanContinuation();
+      controller.persist();
+      pi.sendUserMessage(
+        "Continue implementing the approved plan " +
+          `(${pendingContinuationPath}). Do not rewrite or resubmit the ` +
+          "plan. First create implementation TODOs with plan_mode_todo, " +
+          "then execute the approved plan.",
+        { deliverAs: "followUp" },
+      );
+      controller.clearTurnSource();
+      return;
+    }
+
     if (
       controller.config.requireReview &&
       controller.state.mode === "auto" &&

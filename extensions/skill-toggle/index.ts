@@ -51,7 +51,7 @@ interface PaletteTheme {
   title: string;
   selected: string;
   selectedText: string;
-  disabled: string;
+  enabledStatus: string;
   searchIcon: string;
   placeholder: string;
   description: string;
@@ -60,11 +60,11 @@ interface PaletteTheme {
 
 const DEFAULT_THEME: PaletteTheme = {
   border: "2",
-  title: "2",
+  title: "1;36",
   selected: "36",
-  selectedText: "36",
-  disabled: "31",
-  searchIcon: "2",
+  selectedText: "1;96",
+  enabledStatus: "32",
+  searchIcon: "36",
   placeholder: "2;3",
   description: "2",
   hint: "2",
@@ -917,7 +917,7 @@ export class SkillTogglePicker {
     const title = (s: string) => fg(t.title, s);
     const selected = (s: string) => fg(t.selected, s);
     const selectedText = (s: string) => fg(t.selectedText, s);
-    const disabled = (s: string) => fg(t.disabled, s);
+    const enabledStatus = (s: string) => fg(t.enabledStatus, s);
     const searchIcon = (s: string) => fg(t.searchIcon, s);
     const description = (s: string) => fg(t.description, s);
     const hint = (s: string) => fg(t.hint, s);
@@ -975,11 +975,11 @@ export class SkillTogglePicker {
         const isEnabled = this.enabled.has(normalizeSkillName(skill.name));
 
         const prefix = isSelected ? selected("▸") : border("·");
-        const enabledBadge = isEnabled ? ` ${disabled("✓")}` : "";
+        const enabledBadge = isEnabled ? ` ${enabledStatus("✓")}` : "";
         const nameStr = isSelected
           ? bold(selectedText(skill.name))
           : isEnabled
-            ? disabled(skill.name)
+            ? enabledStatus(skill.name)
             : skill.name;
         const maxDescLen = Math.max(0, innerW - visibleWidth(skill.name) - 12);
         const detailText = [formatSkillDisplayDetails(skill), skill.description]

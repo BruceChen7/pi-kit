@@ -15,11 +15,13 @@ Use `auto` for normal work:
    `go ahead`, or `同意实施` continues the approved plan in `auto:act`.
 6. During Act phase, update TODOs from `in_progress` to `done` as work completes.
 
-Read-only questions may be answered directly without a plan/spec. Pure operational
-workflows, such as git status or running tests, may use a narrow command bypass when the
-Plan Mode plugin classifier produces valid structured `workflow_only` intent feedback.
-Missing, invalid, unavailable, timed-out, or low-confidence intent feedback fails closed
-and does not enable the bypass.
+Auto Mode chooses between three user-visible outcomes: answer directly, run a safe
+workflow directly, or require plan/spec review. Pure operational workflows, such as git
+status, commit, push, tests, or lint, switch the turn to direct workflow execution when
+the Plan Mode plugin classifier produces valid structured intent feedback. Direct
+workflow execution may show `auto:act`, but it is still limited to safe git/npm bash;
+source-code writes remain blocked. Missing, invalid, unavailable, timed-out, or
+low-confidence intent feedback fails closed and requires the safer planning path.
 
 ## Modes and commands
 
@@ -105,22 +107,24 @@ their own structure.
 
 ## Runtime guards
 
-In Plan phase, runtime guards block:
+Runtime guards enforce the selected Auto outcome:
 
-- `bash`, except for the narrow operational workflow allow-list after valid structured
-  `workflow_only` intent feedback
-- source-code `edit` / `write`
+- plan-required turns block `bash` and source-code `edit` / `write`, except for writing
+  reviewable plan/spec artifacts
+- direct workflow turns allow only the narrow safe git/npm bash allow-list
+- direct workflow turns still block source-code `edit` / `write` even when shown as
+  `auto:act`
 
 Plan Mode starts each normal user turn by asking a plugin-owned classifier for structured
 intent feedback. Event-provided `intentFeedback` is still accepted for compatibility, but
 Plan Mode no longer depends on Pi core injecting it.
 
-Plan Mode consumes structured intent feedback with these kinds:
+Plan Mode consumes structured intent feedback and folds it into three Auto decisions:
 
-- `implementation`: require normal plan/spec review.
-- `workflow_only`: allow the narrow workflow-only bash bypass.
-- `read_only`: no implementation obligation.
-- `ambiguous`: fail closed; do not enable bypass.
+- direct answer: no plan/spec obligation for read-only questions
+- direct workflow: safe git/npm workflow execution without plan/spec review
+- plan required: normal TODO + plan/spec review for implementation, ambiguity, or invalid
+  classifier output
 
 The old keyword/regular-expression intent classifier is not used as a runtime fallback.
 If the plugin classifier cannot run because there is no active model, model auth is

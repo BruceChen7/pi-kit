@@ -122,6 +122,37 @@ async function createTestPicker(
   return { picker, toggled };
 }
 
+async function createRenderPicker(
+  skills: Skill[],
+  enabledNames: string[] = [],
+): Promise<SkillTogglePicker> {
+  const { SkillTogglePicker } = await importSkillToggle();
+  return new SkillTogglePicker(
+    skills,
+    new Set(enabledNames),
+    new Set(),
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
+}
+
+function writeSkillToggleTheme(
+  home: string,
+  theme: Record<string, string>,
+): void {
+  const themePath = path.join(
+    home,
+    ".pi",
+    "agent",
+    "extensions",
+    "skill-toggle",
+    "theme.json",
+  );
+  fs.mkdirSync(path.dirname(themePath), { recursive: true });
+  fs.writeFileSync(themePath, JSON.stringify(theme), "utf-8");
+}
+
 afterEach(() => {
   clearSettingsCache();
   restoreHome();
@@ -567,6 +598,44 @@ describe("skill library discovery", () => {
         new Set(),
       ),
     ).toBe(true);
+  });
+});
+
+describe("skill picker render", () => {
+  it("uses positive status and high-contrast focus colors", async () => {
+    createTempHome();
+    const picker = await createRenderPicker(
+      namedPickerSkills("alpha", "beta"),
+      ["beta"],
+    );
+
+    const output = picker.render(80).join("\n");
+
+    expect(output).toContain("\x1b[32m✓\x1b[0m");
+    expect(output).toContain("\x1b[32mbeta\x1b[0m");
+    expect(output).toContain("\x1b[1;96malpha\x1b[0m");
+    expect(output).not.toContain("\x1b[31m✓\x1b[0m");
+  });
+
+  it("uses enabledStatus theme overrides for enabled skill status", async () => {
+    writeSkillToggleTheme(createTempHome(), { enabledStatus: "35" });
+    const picker = await createRenderPicker(namedPickerSkills("alpha"), [
+      "alpha",
+    ]);
+
+    expect(picker.render(80).join("\n")).toContain("\x1b[35m✓\x1b[0m");
+  });
+
+  it("ignores legacy disabled theme overrides", async () => {
+    writeSkillToggleTheme(createTempHome(), { disabled: "35" });
+    const picker = await createRenderPicker(namedPickerSkills("alpha"), [
+      "alpha",
+    ]);
+
+    const output = picker.render(80).join("\n");
+
+    expect(output).toContain("\x1b[32m✓\x1b[0m");
+    expect(output).not.toContain("\x1b[35m✓\x1b[0m");
   });
 });
 

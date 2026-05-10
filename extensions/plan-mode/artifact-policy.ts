@@ -258,22 +258,34 @@ export const validateArtifactPolicy = ({
   };
 };
 
-export const formatArtifactPolicyFailure = (
-  artifactPath: string,
-  issues: ArtifactPolicyIssue[],
-): string => {
-  const formattedIssues = issues
+const formatPolicyIssues = (issues: ArtifactPolicyIssue[]): string =>
+  issues
     .map((issue) => {
       const section = issue.section ? ` (${issue.section})` : "";
       return `- ${issue.message}${section}\n  Fix: ${issue.suggestion}`;
     })
     .join("\n");
 
-  return [
+export const formatArtifactPolicyFailure = (
+  artifactPath: string,
+  issues: ArtifactPolicyIssue[],
+): string =>
+  [
     "Plan Mode artifact policy blocked review submission.",
     `Path: ${artifactPath}`,
     "",
     "Fix the plan format before calling plannotator_auto_submit_review:",
-    formattedIssues,
+    formatPolicyIssues(issues),
   ].join("\n");
-};
+
+export const formatApprovedArtifactPolicyFailure = (
+  artifactPath: string,
+  issues: ArtifactPolicyIssue[],
+): string =>
+  [
+    "Plan Mode artifact policy requires fixes for an already approved plan.",
+    `Path: ${artifactPath}`,
+    "",
+    "Fix the plan format before continuing with the approved plan:",
+    formatPolicyIssues(issues),
+  ].join("\n");

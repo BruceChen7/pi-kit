@@ -6,6 +6,11 @@ import type {
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 import {
+  formatArtifactPolicyFailure,
+  isStandardPlanArtifactPath,
+  validateArtifactPolicy,
+} from "../plan-mode/artifact-policy.ts";
+import {
   checkRepoDirty,
   DEFAULT_GIT_TIMEOUT_MS,
   getGitCommonDir,
@@ -137,6 +142,25 @@ const findPendingPlanReviewTargets = (
   cwd: string,
 ): Map<string, PendingPlanReview> | undefined =>
   state.pendingPlanReviewTargetsByCwd.get(cwd);
+
+const formatPendingPlanArtifactPolicyFailure = (
+  pendingPlanReview: PendingPlanReview,
+  planContent: string,
+): string | null => {
+  if (!isStandardPlanArtifactPath(pendingPlanReview.planFile)) {
+    return null;
+  }
+
+  const result = validateArtifactPolicy({
+    path: pendingPlanReview.planFile,
+    content: planContent,
+  });
+  if (result.approved) {
+    return null;
+  }
+
+  return formatArtifactPolicyFailure(pendingPlanReview.planFile, result.issues);
+};
 
 const listPendingPlanReviews = (
   state: SessionRuntimeState,
@@ -1662,6 +1686,22 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
             },
           ],
           details: { status: "error" },
+        };
+      }
+
+      const policyFailure = formatPendingPlanArtifactPolicyFailure(
+        pendingPlanReview,
+        planContent,
+      );
+      if (policyFailure) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: policyFailure,
+            },
+          ],
+          details: { status: "error", reason: "artifact-policy" },
         };
       }
 

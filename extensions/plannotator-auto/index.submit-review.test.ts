@@ -14,7 +14,31 @@ async function importPlannotatorAuto() {
 }
 
 const SUBMITTED_REVIEW_ID = "review-submit-plan";
-const PLAN_DRAFT_CONTENT = "# Plan\n\n- [ ] test\n";
+const PLAN_DRAFT_CONTENT = `# Plan
+
+## Context
+
+这是一个用于测试的计划草稿，描述提交 Plannotator 审核前的上下文。
+
+## Steps
+
+- [ ] 中文检查：执行一个测试步骤。
+
+## Verification
+
+- [ ] 中文验证：确认测试审核流程按预期完成。
+
+## Review
+
+- [ ] 中文复核：后续结果记录包含改动点、验证结果、剩余风险和 bug 修复原因。
+`;
+
+const INVALID_STANDARD_PLAN_CONTENT = "# Plan\n\n- [ ] test\n";
+
+const getPlanFileRelative = (repoRoot: string): string => {
+  const repoName = repoRoot.split("/").pop() ?? "repo";
+  return `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+};
 
 type PendingReviewEvent = {
   handled?: {
@@ -189,8 +213,7 @@ describe("submit review tool", () => {
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo("plannotator-auto-submit-tool-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileRelative = getPlanFileRelative(repoRoot);
     await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
     const ctx = createTestContext(repoRoot);
 
@@ -236,6 +259,57 @@ describe("submit review tool", () => {
     }
   });
 
+  it("blocks invalid standard plan artifacts before starting review", async () => {
+    vi.resetModules();
+    const { startPlanReview } = mockSubmitReviewApi();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-invalid-plan-");
+    const planFileRelative = getPlanFileRelative(repoRoot);
+    await writeTestFile(
+      repoRoot,
+      planFileRelative,
+      INVALID_STANDARD_PLAN_CONTENT,
+    );
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      const emitted: PendingReviewEvent[] = [];
+      api.events.on(PLANNOTATOR_PENDING_REVIEW_CHANNEL, (event) => {
+        emitted.push(event as PendingReviewEvent);
+      });
+
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
+      )) as {
+        content?: Array<{ type?: string; text?: string }>;
+        details?: { status?: string };
+      };
+      const gateResult = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+
+      expect(result.details?.status).toBe("error");
+      expect(result.content?.[0]?.text ?? "").toContain(
+        "Plan Mode artifact policy blocked review submission",
+      );
+      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(emitted[0]?.handled?.isHandled()).toBe(false);
+      expect(gateResult.message?.content ?? "").toContain(planFileRelative);
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
   it("does not enqueue a stale gate or request another submit while review is active", async () => {
     vi.resetModules();
     const { reviewResultListeners, startPlanReview } = mockSubmitReviewApi();
@@ -245,8 +319,7 @@ describe("submit review tool", () => {
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo("plannotator-auto-submit-once-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileRelative = getPlanFileRelative(repoRoot);
     await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
     const ctx = createTestContext(repoRoot);
 
@@ -301,8 +374,7 @@ describe("submit review tool", () => {
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo("plannotator-auto-submit-denied-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileRelative = getPlanFileRelative(repoRoot);
     await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
     const ctx = createTestContext(repoRoot);
 
@@ -364,8 +436,7 @@ describe("submit review tool", () => {
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo("plannotator-auto-submit-agent-end-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileRelative = getPlanFileRelative(repoRoot);
     await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
     const ctx = createTestContext(repoRoot);
 
@@ -405,8 +476,7 @@ describe("submit review tool", () => {
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo("plannotator-auto-submit-busy-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileRelative = getPlanFileRelative(repoRoot);
     await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
     const ctx = createTestContext(repoRoot, { isIdle: false });
 
@@ -447,8 +517,7 @@ describe("submit review tool", () => {
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo("plannotator-auto-widget-active-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileRelative = getPlanFileRelative(repoRoot);
     await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
     const ctx = createTestContext(repoRoot);
     const setWidget = attachWidgetSpy(ctx);
@@ -504,8 +573,7 @@ describe("submit review tool", () => {
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo("plannotator-auto-submit-event-");
-    const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+    const planFileRelative = getPlanFileRelative(repoRoot);
     await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
     const ctx = createTestContext(repoRoot);
 

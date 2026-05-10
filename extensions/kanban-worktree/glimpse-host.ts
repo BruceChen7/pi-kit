@@ -1,11 +1,13 @@
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
-import { open } from "glimpseui";
+import { getNativeHostInfo } from "glimpseui";
 
 import { sendJsonLineRequest } from "./protocol.ts";
 
@@ -58,6 +60,12 @@ type GlimpseWindow = {
     handler: (message: unknown) => void | Promise<void>,
   ): void;
   send?(js: string): void;
+  close?(): void;
+};
+
+type NativeHostInfo = {
+  path: string;
+  extraArgs?: string[];
 };
 
 type LaunchIntent = {
@@ -176,10 +184,6 @@ const GLIMPSE_WINDOW_OPTIONS = {
 const DEFAULT_UI_DIST_DIR = fileURLToPath(
   new URL("./ui-dist", import.meta.url),
 );
-const GLIMPSE_FILTER_HOST = fileURLToPath(
-  new URL("./glimpse-host-filter.sh", import.meta.url),
-);
-const require = createRequire(import.meta.url);
 
 function defaultGlimpseStderrLogPath(): string {
   return path.join(
@@ -212,14 +216,14 @@ export async function openGlimpseKanban(
   options: OpenGlimpseKanbanOptions = {},
 ): Promise<void> {
   const request = options.request ?? sendJsonLineRequest;
-  const openWindow = options.openWindow ?? open;
+  const openWindow = options.openWindow ?? openGlimpseWindow;
   const html = await createGlimpseHtml(socketPath, {
     request,
     uiDistDir: options.uiDistDir,
   });
   const glimpseStderrLogPath =
     options.glimpseStderrLogPath ?? defaultGlimpseStderrLogPath();
-  const window = withRedirectedGlimpseStderr(glimpseStderrLogPath, () =>
+  const window = withRedirectedOpenWindowStderr(glimpseStderrLogPath, () =>
     openWindow(html, GLIMPSE_WINDOW_OPTIONS),
   );
   window.on("message", async (message: unknown) => {
@@ -244,50 +248,96 @@ export async function openGlimpseKanban(
   });
 }
 
-function withRedirectedGlimpseStderr<T>(logPath: string, run: () => T): T {
-  return withRedirectedNativeHostStderr(logPath, () =>
-    withRedirectedOpenWindowStderr(logPath, run),
-  );
+function openGlimpseWindow(
+  html: string,
+  options: typeof GLIMPSE_WINDOW_OPTIONS,
+): GlimpseWindow {
+  const host = getNativeHostInfo() as NativeHostInfo;
+  const args = [...(host.extraArgs ?? []), ...glimpseWindowArgs(options)];
+  const proc = spawn(host.path, args, {
+    stdio: ["pipe", "pipe", "ignore"],
+    windowsHide: process.platform === "win32",
+  });
+  return new PiKitGlimpseWindow(proc, html);
 }
 
-function withRedirectedNativeHostStderr<T>(logPath: string, run: () => T): T {
-  const realHost = resolveNativeGlimpseHost();
-  if (!realHost) return run();
+function glimpseWindowArgs(options: typeof GLIMPSE_WINDOW_OPTIONS): string[] {
+  return [
+    "--width",
+    String(options.width),
+    "--height",
+    String(options.height),
+    "--title",
+    options.title,
+  ];
+}
 
-  const previousHost = process.env.GLIMPSE_HOST_PATH;
-  const previousBinary = process.env.GLIMPSE_BINARY_PATH;
-  const previousRealHost = process.env.KANBAN_GLIMPSE_REAL_HOST;
-  const previousLogPath = process.env.KANBAN_GLIMPSE_STDERR_LOG;
-  process.env.GLIMPSE_HOST_PATH = GLIMPSE_FILTER_HOST;
-  delete process.env.GLIMPSE_BINARY_PATH;
-  process.env.KANBAN_GLIMPSE_REAL_HOST = realHost;
-  process.env.KANBAN_GLIMPSE_STDERR_LOG = logPath;
+class PiKitGlimpseWindow extends EventEmitter implements GlimpseWindow {
+  #pendingHtmlBase64: string | null;
+  #closed = false;
+
+  constructor(
+    private readonly proc: ReturnType<typeof spawn>,
+    initialHtml: string,
+  ) {
+    super();
+    this.#pendingHtmlBase64 = Buffer.from(initialHtml).toString("base64");
+    proc.stdin.on("error", () => {});
+    const rl = createInterface({ input: proc.stdout, crlfDelay: Infinity });
+    rl.on("line", (line) => this.#handleLine(line));
+    proc.on("error", (error) => this.emit("error", error));
+    proc.on("exit", () => this.#markClosed());
+  }
+
+  send(js: string): void {
+    this.#write({ type: "eval", js });
+  }
+
+  close(): void {
+    this.#write({ type: "close" });
+  }
+
+  #handleLine(line: string): void {
+    const message = parseHostMessage(line);
+    if (!message) return;
+
+    switch (message.type) {
+      case "ready":
+        this.#sendPendingHtml();
+        return;
+      case "message":
+        this.emit("message", message.data);
+        return;
+      case "closed":
+        this.#markClosed();
+    }
+  }
+
+  #sendPendingHtml(): void {
+    if (!this.#pendingHtmlBase64) return;
+    this.#write({ type: "html", html: this.#pendingHtmlBase64 });
+    this.#pendingHtmlBase64 = null;
+  }
+
+  #write(message: JsonRecord): void {
+    if (this.#closed) return;
+    this.proc.stdin.write(`${JSON.stringify(message)}\n`);
+  }
+
+  #markClosed(): void {
+    if (this.#closed) return;
+    this.#closed = true;
+    this.emit("closed");
+  }
+}
+
+function parseHostMessage(line: string): JsonRecord | null {
   try {
-    return run();
-  } finally {
-    restoreEnv("GLIMPSE_HOST_PATH", previousHost);
-    restoreEnv("GLIMPSE_BINARY_PATH", previousBinary);
-    restoreEnv("KANBAN_GLIMPSE_REAL_HOST", previousRealHost);
-    restoreEnv("KANBAN_GLIMPSE_STDERR_LOG", previousLogPath);
+    const message = JSON.parse(line);
+    return isRecord(message) ? message : null;
+  } catch {
+    return null;
   }
-}
-
-function resolveNativeGlimpseHost(): string | null {
-  if (process.platform !== "darwin") return null;
-  if (process.env.GLIMPSE_BINARY_PATH) return process.env.GLIMPSE_BINARY_PATH;
-  if (process.env.GLIMPSE_HOST_PATH) return process.env.GLIMPSE_HOST_PATH;
-
-  const modulePath = require.resolve("glimpseui");
-  const hostPath = path.join(path.dirname(modulePath), "glimpse");
-  return existsSync(hostPath) ? hostPath : null;
-}
-
-function restoreEnv(name: string, previous: string | undefined): void {
-  if (previous === undefined) {
-    delete process.env[name];
-    return;
-  }
-  process.env[name] = previous;
 }
 
 function appendGlimpseStderr(logPath: string, args: StderrWriteArgs): void {

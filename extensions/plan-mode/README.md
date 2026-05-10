@@ -14,8 +14,9 @@ Use `auto` for normal work:
 5. During Act phase, update TODOs from `in_progress` to `done` as work completes.
 
 Read-only questions may be answered directly without a plan/spec. Pure operational
-workflows, such as git status or running tests, may use a narrow command bypass when no
-implementation is requested.
+workflows, such as git status or running tests, may use a narrow command bypass when the
+LLM provides valid structured `workflow_only` intent feedback. Missing, invalid, or
+low-confidence intent feedback fails closed and does not enable the bypass.
 
 ## Modes and commands
 
@@ -97,8 +98,18 @@ their own structure.
 
 In Plan phase, runtime guards block:
 
-- `bash`, except for the narrow operational workflow allow-list
+- `bash`, except for the narrow operational workflow allow-list after valid structured
+  `workflow_only` intent feedback
 - source-code `edit` / `write`
+
+Plan Mode consumes structured intent feedback with these kinds:
+
+- `implementation`: require normal plan/spec review.
+- `workflow_only`: allow the narrow workflow-only bash bypass.
+- `read_only`: no implementation obligation.
+- `ambiguous`: fail closed; do not enable bypass.
+
+The old keyword/regular-expression intent classifier is not used as a runtime fallback.
 
 Plan/spec artifact writes are allowed only for reviewable Plannotator paths:
 

@@ -18,7 +18,7 @@ import {
 import {
   DEFAULT_WORKFLOW_BYPASS_STATE,
   decideWorkflowBypass,
-  hasPlanReviewImplementationIntent,
+  requiresPlanReviewForIntentFeedback,
   type WorkflowBypassState,
   workflowBypassFromSnapshot,
 } from "./workflow-bypass.ts";
@@ -541,11 +541,11 @@ class PlanModeState {
     }
   }
 
-  shouldReturnAutoActToPlan(hasImplementationIntent: boolean): boolean {
+  shouldReturnAutoActToPlan(requiresPlanReview: boolean): boolean {
     return (
       this.mode === "auto" &&
       this.phase === "act" &&
-      hasImplementationIntent &&
+      requiresPlanReview &&
       !this.hasUnfinishedTodos()
     );
   }
@@ -572,9 +572,13 @@ class PlanModeState {
     return this.isPlanPhase() && this.workflowBypass.active;
   }
 
-  updateWorkflowBypassForPrompt(prompt: string): boolean {
+  updateWorkflowBypassForPrompt(
+    prompt: string,
+    intentFeedback: unknown,
+  ): boolean {
+    const decisionInput = this.workflowBypass.active ? prompt : intentFeedback;
     const next = decideWorkflowBypass(
-      prompt,
+      decisionInput,
       this.workflowBypass,
       this.hasUnfinishedTodos(),
     );
@@ -1098,15 +1102,17 @@ class PlanModeController {
 
   handleAgentStart(event: unknown): void {
     const prompt = stringProperty(event, "prompt") ?? "";
-    const hasImplementationIntent = hasPlanReviewImplementationIntent(prompt);
+    const intentFeedback = isRecord(event) ? event.intentFeedback : undefined;
+    const requiresPlanReview =
+      requiresPlanReviewForIntentFeedback(intentFeedback);
     this.internalExtensionBypassForTurn =
       this.inputSourceForTurn === "extension";
 
     if (!this.internalExtensionBypassForTurn) {
-      if (this.state.updateWorkflowBypassForPrompt(prompt)) {
+      if (this.state.updateWorkflowBypassForPrompt(prompt, intentFeedback)) {
         this.persist();
       }
-      if (this.state.shouldReturnAutoActToPlan(hasImplementationIntent)) {
+      if (this.state.shouldReturnAutoActToPlan(requiresPlanReview)) {
         this.state.returnAutoActToPlan();
         this.persist();
       }
@@ -1116,7 +1122,7 @@ class PlanModeController {
       this.state.isAutoPlanPhase() &&
       !this.state.isWorkflowBypassActive() &&
       !this.internalExtensionBypassForTurn &&
-      hasImplementationIntent;
+      requiresPlanReview;
   }
 
   clearTurnSource(): void {

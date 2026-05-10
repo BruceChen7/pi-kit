@@ -5,16 +5,15 @@ declare module "glimpseui" {
       handler: (message: unknown) => void | Promise<void>,
     ): void;
     send?(js: string): void;
+    close?(): void;
   };
 
-  export type GlimpseWindowOptions = {
-    width?: number;
-    height?: number;
-    title?: string;
+  export type NativeHostInfo = {
+    path: string;
+    platform: string;
+    extraArgs?: string[];
+    buildHint?: string;
   };
 
-  export function open(
-    html: string,
-    options?: GlimpseWindowOptions,
-  ): GlimpseWindow;
+  export function getNativeHostInfo(): NativeHostInfo;
 }

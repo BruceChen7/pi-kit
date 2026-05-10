@@ -18,6 +18,7 @@ You are executing a git workflow for branching, committing, and pushing.
 - If on the base branch (master/main), create a new branch before committing/pushing.
 - Ask before including untracked files.
 - Commit messages must follow Conventional Commits.
+- When changes have multiple independent purposes, the commit message must list every purpose/change.
 - Do not write a result file; respond with a Markdown summary in-chat.
 
 ## Step 0: Repo context
@@ -41,8 +42,20 @@ You are executing a git workflow for branching, committing, and pushing.
 
 ## Step 4: Commit
 - Stage changes (`git add -A` unless the user requests a narrower scope).
-- Draft a Conventional Commits message (confirm if not provided).
-- `git commit -m "<message>"`.
+- Before drafting the message, group the staged diff by independent purpose/change area.
+  - A purpose can be a feature, fix, refactor, doc/update, config change, test addition, or
+    workflow/tooling change.
+  - If the diff has one purpose, use a single Conventional Commits summary.
+  - If the diff has multiple purposes, write a Conventional Commits summary that describes the
+    overall commit and add a body with bullet points listing every purpose/change.
+  - If the user supplied a message that only describes one purpose while the diff shows several,
+    propose a fuller message/body and ask for confirmation before committing.
+- Draft the commit message (confirm if not provided).
+  - Single purpose: `type(scope): summary`.
+  - Multiple purposes: `type(scope): summary` plus body bullets, e.g.
+    `git commit -m "chore: update workflow support" -m "- Optimize branch commit guidance\n- Add validation docs\n- Refresh tests"`.
+- `git commit -m "<summary>"` for single-purpose commits, or
+  `git commit -m "<summary>" -m "<body>"` for multi-purpose commits.
 
 ## Step 5: Push
 - `git push -u origin <branch>`.
@@ -53,7 +66,7 @@ Provide a Markdown summary:
 ```
 # Branch/Commit/Push Result
 - Branch: <name>
-- Commit: <hash> <message>
+- Commit: <hash> <summary/body if multi-purpose>
 - Push: <remote>/<branch> (success)
 - Untracked files: <included/excluded>
 - Notes: <format/lint results or next steps>

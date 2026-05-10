@@ -189,7 +189,7 @@ describe("buildCodeSimplifierPrompt", () => {
   it("tells automatic me-code-simplifier follow-ups to inspect full file context", () => {
     const prompt = buildCodeSimplifierPrompt(["a.ts"]);
     const expectedFragments = [
-      "先遵循 me-code-simplifier、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则",
+      "先遵循 me-code-simplifier、improve-codebase-architecture、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则",
       "这是自动后处理任务，不要创建 plan",
       "读取 modified_files 中每个文件的完整内容",
       "不要只看 diff 或刚改动的片段",
@@ -198,6 +198,10 @@ describe("buildCodeSimplifierPrompt", () => {
       "information leakage",
       "temporal decomposition",
       "浅封装/pass-through helper",
+      "Module / Interface / Implementation / Depth / Seam / Adapter",
+      "Interface is the test surface",
+      "test seam/Adapter behavior",
+      "Implementation details",
       "push ifs up and fors down",
       "集中分支决策",
       "批量处理",

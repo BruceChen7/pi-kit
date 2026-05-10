@@ -43,6 +43,21 @@ export const DEFAULT_SUPPORTED_EXTENSIONS = [
   ".py",
 ] as const;
 
+const DEFAULT_PROMPT_REQUIREMENTS = [
+  "先遵循 me-code-simplifier、improve-codebase-architecture、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则，再遵循以下附加约束",
+  "这是自动后处理任务，不要创建 plan",
+  "仅处理 modified_files 中列出的文件",
+  "先读取 modified_files 中每个文件的完整内容；不要只看 diff 或刚改动的片段",
+  "用 software-design-philosophy 的复杂度视角审查：降低 change amplification、cognitive load 和 unknown unknowns",
+  "优先保留或形成 deep module、information hiding 和不同层级的不同抽象",
+  "按 improve-codebase-architecture 词汇审查 Module / Interface / Implementation / Depth / Seam / Adapter；测试以 Interface is the test surface 为准，优先 test seam/Adapter behavior，不测试 Implementation details",
+  "检查整个文件内的 shallow module、information leakage、temporal decomposition、浅封装/pass-through helper、无意义转发函数和可直接内联的局部抽象",
+  "将不可避免的复杂度向模块内部下沉；不要把特殊情况或错误处理负担推给调用方",
+  "用 push ifs up and fors down 视角检查控制流：在不改变语义时集中分支决策，并将重复标量处理下沉为批量处理",
+  "保持行为、接口、错误语义和副作用不变",
+  "如果没有必要的简化空间，直接说明无需修改",
+];
+
 export const DEFAULT_PROMPT_TEMPLATE = [
   "/skill:me-code-simplifier",
   "<code_simplifier_request>",
@@ -51,17 +66,9 @@ export const DEFAULT_PROMPT_TEMPLATE = [
   "{{files}}",
   "  </modified_files>",
   "  <requirements>",
-  "    <requirement>先遵循 me-code-simplifier、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则，再遵循以下附加约束</requirement>",
-  "    <requirement>这是自动后处理任务，不要创建 plan</requirement>",
-  "    <requirement>仅处理 modified_files 中列出的文件</requirement>",
-  "    <requirement>先读取 modified_files 中每个文件的完整内容；不要只看 diff 或刚改动的片段</requirement>",
-  "    <requirement>用 software-design-philosophy 的复杂度视角审查：降低 change amplification、cognitive load 和 unknown unknowns</requirement>",
-  "    <requirement>优先保留或形成 deep module、information hiding 和不同层级的不同抽象</requirement>",
-  "    <requirement>检查整个文件内的 shallow module、information leakage、temporal decomposition、浅封装/pass-through helper、无意义转发函数和可直接内联的局部抽象</requirement>",
-  "    <requirement>将不可避免的复杂度向模块内部下沉；不要把特殊情况或错误处理负担推给调用方</requirement>",
-  "    <requirement>用 push ifs up and fors down 视角检查控制流：在不改变语义时集中分支决策，并将重复标量处理下沉为批量处理</requirement>",
-  "    <requirement>保持行为、接口、错误语义和副作用不变</requirement>",
-  "    <requirement>如果没有必要的简化空间，直接说明无需修改</requirement>",
+  ...DEFAULT_PROMPT_REQUIREMENTS.map(
+    (requirement) => `    <requirement>${requirement}</requirement>`,
+  ),
   "  </requirements>",
   "</code_simplifier_request>",
 ].join("\n");

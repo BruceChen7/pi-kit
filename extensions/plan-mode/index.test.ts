@@ -3,6 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const mockComplete = vi.hoisted(() => vi.fn());
+
+vi.mock("@mariozechner/pi-ai", () => ({
+  complete: mockComplete,
+}));
+
 import planModeExtension from "./index.js";
 
 type Handler = (event: unknown, ctx: TestCtx) => Promise<unknown> | unknown;
@@ -42,6 +49,11 @@ type TestCtx = {
   sessionManager: {
     getSessionFile: () => string;
     getEntries: () => CustomEntry[];
+    getBranch: () => CustomEntry[];
+  };
+  model?: Record<string, unknown>;
+  modelRegistry?: {
+    getApiKeyAndHeaders: ReturnType<typeof vi.fn>;
   };
 };
 
@@ -123,7 +135,10 @@ const buildHarness = () => {
   };
 };
 
-const buildCtx = (entries: CustomEntry[] = []): TestCtx => ({
+const buildCtx = (
+  entries: CustomEntry[] = [],
+  branchEntries: CustomEntry[] = entries,
+): TestCtx => ({
   cwd: "/repo",
   hasUI: true,
   isIdle: () => true,
@@ -139,6 +154,7 @@ const buildCtx = (entries: CustomEntry[] = []): TestCtx => ({
   sessionManager: {
     getSessionFile: () => "/repo/.pi/session.jsonl",
     getEntries: () => entries,
+    getBranch: () => branchEntries,
   },
 });
 
@@ -157,6 +173,12 @@ const plainWidgetText = (ctx: TestCtx): string =>
   lastWidgetLines(ctx)
     .join("\n")
     .replace(/<[^>]+>/gu, "");
+
+const planModeStateEntry = (data: Record<string, unknown>): CustomEntry => ({
+  type: "custom",
+  customType: "plan-mode-state",
+  data,
+});
 
 const createTempCtx = (): { ctx: TestCtx; cleanup: () => void } => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "plan-mode-policy-"));
@@ -231,6 +253,25 @@ const readOnlyIntentFeedback = {
   requestedOperations: [],
 };
 
+const mockPluginClassifierFeedback = (
+  ctx: TestCtx,
+  feedback: unknown,
+): void => {
+  ctx.model = {
+    id: "classifier-model",
+    provider: "test",
+    api: "openai-responses",
+    reasoning: false,
+  };
+  ctx.modelRegistry = {
+    getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "test-key" })),
+  };
+  mockComplete.mockResolvedValueOnce({
+    content: [{ type: "text", text: JSON.stringify(feedback) }],
+    stopReason: "stop",
+  });
+};
+
 const validPlanContent = `## Context
 - 用户希望用中文描述计划背景、成功标准和受影响模块。
 
@@ -246,10 +287,17 @@ const validPlanContent = `## Context
 `;
 
 const invalidPlanContent = validPlanContent.replace("## Review", "## Notes");
-const oneItemCompletedSummary = "✅ 计划「当前计划」已完成 · 1/1 项任务已交付";
+const oneItemCompletedSummary = "✅ 任务已完成 · 1/1 项任务已交付";
 const actOneItemCompletedSummary = `【act】${oneItemCompletedSummary}`;
 const autoPlanOneItemCompletedSummary = `【auto:plan】${oneItemCompletedSummary}`;
 const demoPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
+const demoCompletedSummary = "✅ 计划「demo」已完成 · 3/3 项任务已交付";
+const autoCompletedDemoSummary = `【auto:completed】${demoCompletedSummary}`;
+const approvedPlanContinuationPrompts = [
+  "approve",
+  "同意实施",
+  "impl the plan",
+];
 
 const approveDemoPlan = async (
   harness: ReturnType<typeof buildHarness>,
@@ -272,9 +320,39 @@ const approveDemoPlan = async (
   );
 };
 
+const startApprovedDemoRun = async (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+  todoText = "实现已批准任务",
+): Promise<void> => {
+  await harness.runTool(
+    "plan_mode_todo",
+    {
+      action: "set",
+      items: [{ text: todoText, status: "todo" }],
+    },
+    ctx,
+  );
+  await approveDemoPlan(harness, ctx);
+};
+
+const completeApprovedDemoRun = async (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+  todoText = "实现已批准任务",
+): Promise<void> => {
+  await startApprovedDemoRun(harness, ctx, todoText);
+  await harness.runTool(
+    "plan_mode_todo",
+    { action: "update", id: 1, status: "done" },
+    ctx,
+  );
+};
+
 describe("plan-mode extension", () => {
   afterEach(() => {
     vi.useRealTimers();
+    mockComplete.mockReset();
   });
 
   it("blocks source writes during auto plan phase but allows review artifact writes", async () => {
@@ -457,15 +535,11 @@ describe("plan-mode extension", () => {
       "plan-mode",
       expect.stringContaining("auto:act 3/3"),
     );
-    expect(lastWidgetLines(ctx)).toEqual([
-      "<accent>【auto:act】✅ 计划「demo」已完成 · 3/3 项任务已交付</accent>",
-    ]);
+    expect(plainWidgetText(ctx)).toBe(autoCompletedDemoSummary);
     expect(lastTodoWidgetCall(ctx)[2]).toEqual({ placement: "aboveEditor" });
 
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(lastWidgetLines(ctx)).toEqual([
-      "<accent>【auto:act】✅ 计划「demo」已完成 · 3/3 项任务已交付</accent>",
-    ]);
+    expect(plainWidgetText(ctx)).toBe(autoCompletedDemoSummary);
   });
 
   it("replaces a completed summary when a new todo list starts", async () => {
@@ -552,9 +626,7 @@ describe("plan-mode extension", () => {
     expect(result).toMatchObject({
       details: { activeRun: { status: "completed" } },
     });
-    expect(plainWidgetText(ctx)).toContain(
-      "✅ 计划「当前计划」已完成 · 1/1 项任务已交付",
-    );
+    expect(plainWidgetText(ctx)).toContain(oneItemCompletedSummary);
   });
 
   it("archives completed runs before starting a new todo list", async () => {
@@ -579,11 +651,85 @@ describe("plan-mode extension", () => {
 
     expect(result).toMatchObject({
       details: {
-        activeRun: { status: "draft" },
+        activeRun: { status: "draft", planPath: null },
         recentRuns: [{ status: "archived" }],
       },
     });
     expect(plainWidgetText(ctx)).toContain("开始新计划");
+  });
+
+  it("does not carry an old approved plan name into unrelated completed work", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await completeApprovedDemoRun(harness, ctx);
+    await harness.runCommand("plan-mode", "act", ctx);
+
+    const started = await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "补测试覆盖新的默认 prompt", status: "in_progress" }],
+      },
+      ctx,
+    );
+
+    expect(started).toMatchObject({
+      details: { activeRun: { planPath: null, status: "draft" } },
+    });
+
+    await harness.runTool(
+      "plan_mode_todo",
+      { action: "update", id: 1, status: "done" },
+      ctx,
+    );
+
+    const widget = plainWidgetText(ctx);
+    expect(widget).toBe(actOneItemCompletedSummary);
+    expect(widget).not.toContain("demo");
+  });
+
+  it("restores plan-mode state from the active session branch", async () => {
+    const staleCompletedEntry = planModeStateEntry({
+      mode: "act",
+      phase: "act",
+      todos: [{ id: 1, text: "旧分支任务", status: "done" }],
+      nextTodoId: 2,
+      activeRun: {
+        id: "run-stale",
+        status: "completed",
+        planPath: demoPlanPath,
+        todos: [{ id: 1, text: "旧分支任务", status: "done" }],
+        nextTodoId: 2,
+        createdAt: new Date(0).toISOString(),
+      },
+      readFiles: [],
+      activePlanPath: demoPlanPath,
+      reviewApprovedPlanPaths: [demoPlanPath],
+      endConversationRequested: false,
+    });
+    const activeBranchEntry = planModeStateEntry({
+      mode: "act",
+      phase: "act",
+      todos: [{ id: 1, text: "当前分支任务", status: "in_progress" }],
+      nextTodoId: 2,
+      activeRun: null,
+      readFiles: [],
+      activePlanPath: null,
+      reviewApprovedPlanPaths: [],
+      endConversationRequested: false,
+    });
+    const harness = buildHarness();
+    const ctx = buildCtx(
+      [activeBranchEntry, staleCompletedEntry],
+      [activeBranchEntry],
+    );
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+
+    await harness.emit("session_start", {}, ctx);
+
+    const widget = plainWidgetText(ctx);
+    expect(widget).toContain("当前分支任务");
+    expect(widget).not.toContain("demo");
   });
 
   it("shows active run state in plan-mode status", async () => {
@@ -628,20 +774,16 @@ describe("plan-mode extension", () => {
 
   it("restores mode and todos from the latest session snapshot", async () => {
     const restoredEntries: CustomEntry[] = [
-      {
-        type: "custom",
-        customType: "plan-mode-state",
-        data: {
-          mode: "act",
-          phase: "act",
-          todos: [{ id: 1, text: "恢复后的当前步骤", status: "in_progress" }],
-          nextTodoId: 2,
-          readFiles: [],
-          activePlanPath: null,
-          reviewApprovedPlanPaths: [],
-          endConversationRequested: false,
-        },
-      },
+      planModeStateEntry({
+        mode: "act",
+        phase: "act",
+        todos: [{ id: 1, text: "恢复后的当前步骤", status: "in_progress" }],
+        nextTodoId: 2,
+        readFiles: [],
+        activePlanPath: null,
+        reviewApprovedPlanPaths: [],
+        endConversationRequested: false,
+      }),
     ];
     const harness = buildHarness();
     const ctx = buildCtx(restoredEntries);
@@ -802,6 +944,34 @@ describe("plan-mode extension", () => {
       expect.stringContaining("approved Plannotator plan/spec"),
       { deliverAs: "followUp" },
     );
+  });
+
+  it("uses plugin classifier feedback when event feedback is missing", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+    mockPluginClassifierFeedback(ctx, readOnlyIntentFeedback);
+
+    await sendAgentPrompt(harness, ctx, "为什么会提示要创建 TODO？");
+    await harness.emit("agent_end", { messages: [] }, ctx);
+
+    expect(mockComplete).toHaveBeenCalledOnce();
+    expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining("Plan Mode requires"),
+      expect.anything(),
+    );
+  });
+
+  it("enables workflow bypass from plugin classifier feedback", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+    mockPluginClassifierFeedback(ctx, workflowOnlyIntentFeedback);
+
+    await sendAgentPrompt(harness, ctx, "提交当前改动");
+
+    await expect(
+      harness.runToolCall("bash", { command: "git status --short" }, ctx),
+    ).resolves.toBeUndefined();
+    await expect(
+      harness.runToolCall("write", { path: "x.ts" }, ctx),
+    ).resolves.toMatchObject({ block: true });
   });
 
   it("allows safe bash commands without plan review for commit-only workflows", async () => {
@@ -979,20 +1149,7 @@ describe("plan-mode extension", () => {
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
 
-    await harness.runTool(
-      "plan_mode_todo",
-      {
-        action: "set",
-        items: [{ text: "实现已批准任务", status: "todo" }],
-      },
-      ctx,
-    );
-    await approveDemoPlan(harness, ctx);
-    await harness.runTool(
-      "plan_mode_todo",
-      { action: "update", id: 1, status: "done" },
-      ctx,
-    );
+    await completeApprovedDemoRun(harness, ctx);
 
     await sendAgentPrompt(
       harness,
@@ -1009,21 +1166,47 @@ describe("plan-mode extension", () => {
     ).resolves.toMatchObject({ block: true });
   });
 
+  it.each(
+    approvedPlanContinuationPrompts,
+  )("keeps auto act when the user confirms an approved plan: %s", async (prompt) => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    await completeApprovedDemoRun(harness, ctx, "写入并提交 reviewable plan");
+
+    await sendAgentPrompt(harness, ctx, prompt, implementationIntentFeedback);
+
+    await expect(
+      harness.runToolCall("write", { path: "x.ts" }, ctx),
+    ).resolves.toBeUndefined();
+
+    const result = await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "实现已批准 plan", status: "todo" }],
+      },
+      ctx,
+    );
+    expect(result).toMatchObject({
+      details: {
+        activeRun: {
+          planPath: demoPlanPath,
+          status: "executing",
+        },
+      },
+    });
+  });
+
   it("keeps auto act for a new prompt while the approved run is unfinished", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
 
-    await harness.runTool(
-      "plan_mode_todo",
-      {
-        action: "set",
-        items: [{ text: "实现已批准任务", status: "todo" }],
-      },
-      ctx,
-    );
-    await approveDemoPlan(harness, ctx);
+    await startApprovedDemoRun(harness, ctx);
 
     await sendAgentPrompt(harness, ctx, "go ahead");
 

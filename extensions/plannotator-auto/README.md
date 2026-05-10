@@ -1,6 +1,6 @@
 # Plannotator Auto
 
-Auto-triggers Plannotator reviews for generated plan/spec files, supports configurable extra review targets, and can optionally auto-trigger code review for non-plan edits.
+Auto-detects generated plan/spec files, gates the next agent turn until the agent explicitly submits the pending draft to Plannotator, supports configurable extra review targets, and can optionally auto-trigger code review for non-plan edits.
 
 ## What it watches
 
@@ -21,14 +21,15 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 
 ## What it does
 
-- `write` / `edit` to a matching **plan** file → queue and run plan review.
-- `write` / `edit` to a matching **spec** file → queue and run spec review.
-- `write` / `edit` to a matching **issue** file → queue and run plan review.
-- When a plan/spec/issue review target is pending, emit a handled pending-review event and use a hidden next-turn gate for manual submission instead of enqueueing a follow-up user message.
-- Multiple plan writes before dispatch → keep only the latest pending plan file.
-- Once `plannotator_auto_submit_review` starts a review for a target, the same session will not ask for another submit while that review is active; approval clears the pending target, while denial keeps it pending for a later retry.
+- `write` / `edit` to a matching **plan** file → queue a pending plan review gate.
+- `write` / `edit` to a matching **spec** file → queue a pending spec review gate.
+- `write` / `edit` to a matching **issue** file → queue a pending plan review gate.
+- Matching `bash` output redirects are treated the same as `write` / `edit`.
+- When a plan/spec/issue review target is pending, emit a handled pending-review event and use a hidden next-turn gate that requires `plannotator_auto_submit_review`.
+- Multiple review-target writes before submission are tracked by target path and shown together in the pending gate.
+- `plannotator_auto_submit_review` is the only plan/spec review runner. While it waits for a result, the same session will not ask for another submit; approval clears the pending target, while denial keeps it pending for a later retry.
 - `write` / `edit` to **non-plan** files → mark code review pending only if `codeReviewAutoTrigger` is `true`.
-- On `agent_end`, if code review is pending and repo is dirty, request code review.
+- On `agent_end`, if code review is pending, no plan/spec review is pending or active, and the repo is dirty, request code review.
 - `Ctrl+Alt+L` annotates the latest Markdown file modified in the current session.
 
 ## Configuration

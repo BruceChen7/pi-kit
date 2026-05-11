@@ -1,4 +1,4 @@
-import type { AutocompleteItem } from "@mariozechner/pi-tui";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 
 const TODO_TOP_LEVEL_COMMAND_SPECS = [
   {

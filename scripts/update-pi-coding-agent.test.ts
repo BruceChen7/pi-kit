@@ -9,16 +9,16 @@ describe("updatePeerDependencies", () => {
     const packageJson = {
       name: "pi-kit",
       peerDependencies: {
-        "@mariozechner/pi-coding-agent": "^0.63.1",
-        "@mariozechner/pi-tui": "^0.63.1",
+        "@earendil-works/pi-coding-agent": "^0.63.1",
+        "@earendil-works/pi-tui": "^0.63.1",
       },
     };
 
     const result = updatePeerDependencies(packageJson, "0.67.3");
 
     expect(result.peerDependencies).toEqual({
-      "@mariozechner/pi-coding-agent": "^0.67.3",
-      "@mariozechner/pi-tui": "^0.67.3",
+      "@earendil-works/pi-coding-agent": "^0.67.3",
+      "@earendil-works/pi-tui": "^0.67.3",
     });
   });
 
@@ -30,8 +30,8 @@ describe("updatePeerDependencies", () => {
         test: "vitest run",
       },
       peerDependencies: {
-        "@mariozechner/pi-coding-agent": "^0.63.1",
-        "@mariozechner/pi-tui": "^0.63.1",
+        "@earendil-works/pi-coding-agent": "^0.63.1",
+        "@earendil-works/pi-tui": "^0.63.1",
       },
       custom: {
         enabled: true,
@@ -53,8 +53,8 @@ describe("updatePeerDependencies", () => {
   it("does not change other peer dependency entries", () => {
     const packageJson = {
       peerDependencies: {
-        "@mariozechner/pi-coding-agent": "^0.63.1",
-        "@mariozechner/pi-tui": "^0.63.1",
+        "@earendil-works/pi-coding-agent": "^0.63.1",
+        "@earendil-works/pi-tui": "^0.63.1",
         react: "^19.0.0",
       },
     };
@@ -62,8 +62,8 @@ describe("updatePeerDependencies", () => {
     const result = updatePeerDependencies(packageJson, "0.67.3");
 
     expect(result.peerDependencies).toEqual({
-      "@mariozechner/pi-coding-agent": "^0.67.3",
-      "@mariozechner/pi-tui": "^0.67.3",
+      "@earendil-works/pi-coding-agent": "^0.67.3",
+      "@earendil-works/pi-tui": "^0.67.3",
       react: "^19.0.0",
     });
   });

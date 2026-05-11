@@ -12,8 +12,8 @@
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-} from "@mariozechner/pi-coding-agent";
-import { copyToClipboard } from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
+import { copyToClipboard } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
   Key,
@@ -22,7 +22,7 @@ import {
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import type { MessageItem } from "./types.js";
 import { DEFAULT_MAX_MESSAGES, truncatePreview } from "./types.js";
 

@@ -2,7 +2,7 @@ import {
   matchesKey,
   truncateToWidth,
   visibleWidth,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import { PICKER_PAGE_SIZE } from "./constants.ts";
 import type { PluginEntry } from "./types.ts";
 import { normalizeName } from "./utils.ts";

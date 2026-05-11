@@ -3,7 +3,7 @@ import {
   type ExtensionCommandContext,
   type ExtensionContext,
   isBashToolResult,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { getBashHookStatus, registerBashHook } from "../shared/bash-hook.ts";
 import { createLogger } from "../shared/logger.ts";
 import { loadGlobalSettings, updateSettings } from "../shared/settings.ts";

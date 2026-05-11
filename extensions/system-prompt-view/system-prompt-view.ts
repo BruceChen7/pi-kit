@@ -7,8 +7,8 @@
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-} from "@mariozechner/pi-coding-agent";
-import { DynamicBorder } from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
   Container,
@@ -17,7 +17,7 @@ import {
   type MarkdownTheme,
   matchesKey,
   Text,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 
 type ThemeLike = {
   fg?: (name: string, text: string) => string;

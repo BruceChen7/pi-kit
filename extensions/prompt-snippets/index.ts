@@ -24,8 +24,8 @@
  * /snippet delete <name> - Delete snippet
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Key } from "@mariozechner/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Key } from "@earendil-works/pi-tui";
 import { getCurrentSnippets, registerSnippetCommand } from "./commands.js";
 import { insertSnippetText, showSnippetSelector } from "./selector.js";
 import { loadSnippets } from "./storage.js";

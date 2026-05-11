@@ -6,7 +6,7 @@ import path from "node:path";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { clearSettingsCache } from "../shared/settings.js";

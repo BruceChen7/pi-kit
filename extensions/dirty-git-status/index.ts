@@ -1,7 +1,7 @@
 import type {
   ExtensionAPI,
   ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
   checkRepoDirty,
   computeDirtySummary,
@@ -803,7 +803,7 @@ const generateAiDefaultCommitMessage = async (input: {
 
   let mod: unknown;
   try {
-    mod = await import("@mariozechner/pi-ai");
+    mod = await import("@earendil-works/pi-ai");
   } catch {
     return null;
   }

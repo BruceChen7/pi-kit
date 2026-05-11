@@ -7,9 +7,9 @@
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-} from "@mariozechner/pi-coding-agent";
-import { copyToClipboard } from "@mariozechner/pi-coding-agent";
-import { Key } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import { copyToClipboard } from "@earendil-works/pi-coding-agent";
+import { Key } from "@earendil-works/pi-tui";
 
 import { isStaleSessionContextError } from "../shared/stale-context.js";
 

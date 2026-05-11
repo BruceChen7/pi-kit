@@ -1,14 +1,14 @@
-import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   BorderedLoader: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-coding-agent", async () => {
+vi.mock("@earendil-works/pi-coding-agent", async () => {
   const actual = await vi.importActual<
-    typeof import("@mariozechner/pi-coding-agent")
-  >("@mariozechner/pi-coding-agent");
+    typeof import("@earendil-works/pi-coding-agent")
+  >("@earendil-works/pi-coding-agent");
 
   return {
     ...actual,

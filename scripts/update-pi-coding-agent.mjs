@@ -2,8 +2,8 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-const PI_CODING_AGENT_PACKAGE = "@mariozechner/pi-coding-agent";
-const PI_TUI_PACKAGE = "@mariozechner/pi-tui";
+const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
+const PI_TUI_PACKAGE = "@earendil-works/pi-tui";
 const DEFAULT_GLOBAL_PI_BIN = "/opt/homebrew/bin/pi";
 
 const getNpmCommand = () => (process.platform === "win32" ? "npm.cmd" : "npm");

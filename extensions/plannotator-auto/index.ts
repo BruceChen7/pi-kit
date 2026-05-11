@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Type } from "@mariozechner/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
   formatArtifactPolicyFailure,
   isStandardPlanArtifactPath,

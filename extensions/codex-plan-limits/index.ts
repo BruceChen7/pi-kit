@@ -1,7 +1,7 @@
 import type {
   ExtensionAPI,
   ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 const STATUS_KEY = "codex-plan-limits";
 const POLL_INTERVAL_MS = 60_000;

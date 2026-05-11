@@ -6,14 +6,19 @@ import type {
   ExtensionContext,
   SessionEntry,
   SessionHeader,
-} from "@mariozechner/pi-coding-agent";
-import { copyToClipboard, SessionManager } from "@mariozechner/pi-coding-agent";
-import { Key } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import {
+  copyToClipboard,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
+import { Key } from "@earendil-works/pi-tui";
 
 import { isStaleSessionContextError } from "../shared/stale-context.js";
 
 const STATUS_KEY = "session-path-copy";
 const STATUS_DURATION_MS = 2000;
+const PERSIST_SNAPSHOT_FAILED_MESSAGE = "Failed to persist session snapshot";
+const ACTIVATE_SESSION_FAILED_MESSAGE = "Failed to activate persisted session";
 
 type StatusLevel = "info" | "warning";
 type TimerRef = { value: ReturnType<typeof setTimeout> | null };
@@ -145,22 +150,12 @@ export async function copyCurrentSessionPath(
   try {
     persistedPath = persistSessionSnapshot(ctx.cwd, header, entries);
   } catch {
-    showStatus(
-      ctx,
-      "Failed to persist session snapshot",
-      "warning",
-      clearTimerRef,
-    );
+    showStatus(ctx, PERSIST_SNAPSHOT_FAILED_MESSAGE, "warning", clearTimerRef);
     return { ok: false, reason: "persist-session-snapshot-failed" };
   }
 
   if (!persistedPath) {
-    showStatus(
-      ctx,
-      "Failed to persist session snapshot",
-      "warning",
-      clearTimerRef,
-    );
+    showStatus(ctx, PERSIST_SNAPSHOT_FAILED_MESSAGE, "warning", clearTimerRef);
     return { ok: false, reason: "missing-persisted-session-path" };
   }
 
@@ -168,24 +163,14 @@ export async function copyCurrentSessionPath(
     activatePersistedSession(ctx.sessionManager, persistedPath);
   } catch {
     cleanupSessionFile(persistedPath);
-    showStatus(
-      ctx,
-      "Failed to activate persisted session",
-      "warning",
-      clearTimerRef,
-    );
+    showStatus(ctx, ACTIVATE_SESSION_FAILED_MESSAGE, "warning", clearTimerRef);
     return { ok: false, reason: "activate-persisted-session-failed" };
   }
 
   const activePath = trimToNull(ctx.sessionManager.getSessionFile());
   if (!activePath) {
     cleanupSessionFile(persistedPath);
-    showStatus(
-      ctx,
-      "Failed to activate persisted session",
-      "warning",
-      clearTimerRef,
-    );
+    showStatus(ctx, ACTIVATE_SESSION_FAILED_MESSAGE, "warning", clearTimerRef);
     return { ok: false, reason: "missing-active-session-path" };
   }
 

@@ -11,8 +11,9 @@ Use `auto` for normal work:
 2. For implementation requests, create a concrete TODO list and a reviewable plan/spec.
 3. Submit the plan/spec to Plannotator.
 4. After approval, Plan Mode switches to `auto:act` and implementation can proceed.
-5. If the planning TODOs are already complete, a follow-up confirmation such as `approve`,
-   `go ahead`, or `同意实施` continues the approved plan in `auto:act`.
+5. If the planning TODOs are already complete, Plan Mode continues according to
+   `approval.continueAfterApproval`: confirm by default, auto-continue for balanced/solo
+   presets, or stay ready for manual continuation.
 6. During Act phase, update TODOs from `in_progress` to `done` as work completes.
 
 Auto Mode chooses between three user-visible outcomes: answer directly, run a safe
@@ -41,6 +42,8 @@ with the latest decision reason shown in status/follow-up messages.
 - `act` allows implementation without waiting for auto approval.
 - `fast` is an escape hatch for direct execution; prefer `auto` for normal work.
   When active, Plan Mode warns that review workflow guards are bypassed.
+- `/plan-mode status` reports a user-facing run state such as Planning, Waiting for
+  review, Ready to act, Executing, or Done, plus internal details when useful.
 
 ## TODO tool
 
@@ -85,7 +88,8 @@ plannotator_auto_submit_review({ path })
 ```
 
 If artifact policy rejects a plan, the error includes a concrete fix suggestion and,
-where possible, a copyable snippet for the missing standard content. If review is denied,
+where possible, a copyable snippet for common missing standard content such as section
+headings, checkbox steps, Chinese content, or Review details. If review is denied,
 revise the same file and submit again. Approval applies to the
 currently submitted artifact; switching to a newer artifact requires a fresh review.
 After an approved plan is complete on the planning side, short continuation prompts keep
@@ -135,7 +139,8 @@ Plan Mode no longer depends on Pi core injecting it.
 Plan Mode consumes structured intent feedback and folds it into three Auto decisions:
 
 - direct answer: no plan/spec obligation for read-only questions
-- direct workflow: safe git/npm workflow execution without plan/spec review
+- direct workflow: safe git/npm workflow execution without plan/spec review; Plan Mode
+  labels it as read-only or stateful git based on requested operations
 - plan required: normal TODO + plan/spec review for implementation, ambiguity, or invalid
   classifier output
 
@@ -161,12 +166,24 @@ Optional guards are enabled by default:
 Configuration is read from the shared pi-kit settings namespace `planMode` in
 `third_extension_settings.json`.
 
+Presets are optional shortcuts:
+
+- `strict`: default review-first behavior.
+- `balanced`: keep review requirements but auto-continue after approval.
+- `solo`: disable review waiting reminders and auto-continue after approval.
+
+Explicit settings override preset defaults.
+
 ```json
 {
   "planMode": {
     "defaultMode": "auto",
     "preserveExternalTools": true,
     "requireReview": true,
+    "preset": "strict",
+    "approval": {
+      "continueAfterApproval": "confirm"
+    },
     "guards": {
       "cwdOnly": true,
       "allowedPaths": [],

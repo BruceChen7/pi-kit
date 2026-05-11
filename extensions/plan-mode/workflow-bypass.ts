@@ -1,6 +1,9 @@
+export type WorkflowBypassKind = "read_only" | "stateful_git";
+
 export type WorkflowBypassState = {
   active: boolean;
   reason: string | null;
+  kind: WorkflowBypassKind | null;
 };
 
 export type IntentFeedbackKind =
@@ -20,12 +23,14 @@ export type IntentFeedback = {
 export const DEFAULT_WORKFLOW_BYPASS_STATE: WorkflowBypassState = {
   active: false,
   reason: null,
+  kind: null,
 };
 
 const MINIMUM_INTENT_CONFIDENCE = 0.7;
 
 // Short confirmation replies should continue an already-started workflow turn.
 const WORKFLOW_CONFIRMATION_PATTERN = /^(yes|y|no|n|include it|exclude it)$/iu;
+const STATEFUL_GIT_OPERATION_PATTERN = /\bgit\s+(?:add|commit|push)\b/iu;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -41,6 +46,15 @@ const isIntentFeedbackKind = (value: unknown): value is IntentFeedbackKind =>
 
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string");
+
+const inferWorkflowBypassKind = (
+  requestedOperations: string[],
+): WorkflowBypassKind =>
+  requestedOperations.some((operation) =>
+    STATEFUL_GIT_OPERATION_PATTERN.test(operation),
+  )
+    ? "stateful_git"
+    : "read_only";
 
 export const parseIntentFeedback = (value: unknown): IntentFeedback | null => {
   if (!isRecord(value)) {
@@ -112,6 +126,7 @@ export const decideWorkflowBypass = (
   return {
     active: true,
     reason: "workflow-only request",
+    kind: inferWorkflowBypassKind(feedback.requestedOperations),
   };
 };
 
@@ -124,5 +139,9 @@ export const workflowBypassFromSnapshot = (
   return {
     active: value.active === true,
     reason: typeof value.reason === "string" ? value.reason : null,
+    kind:
+      value.kind === "read_only" || value.kind === "stateful_git"
+        ? value.kind
+        : null,
   };
 };

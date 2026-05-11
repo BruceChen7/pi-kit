@@ -66,6 +66,19 @@ describe("plan artifact policy", () => {
     );
   });
 
+  it("includes copyable snippets for common plan format issues", () => {
+    const checkboxResult = validateArtifactPolicy({
+      path: planPath,
+      content: validPlan
+        .replace("- [ ] 新增 policy 测试", "- 新增 policy 测试")
+        .replace("- [ ] 实现 policy 模块", "- 实现 policy 模块"),
+    });
+
+    expect(
+      formatArtifactPolicyFailure(planPath, checkboxResult.issues),
+    ).toContain("- [ ] 描述一个可验证的执行步骤");
+  });
+
   it("includes a copyable Review fix snippet", () => {
     const result = validateArtifactPolicy({
       path: planPath,

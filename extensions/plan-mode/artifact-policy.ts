@@ -258,21 +258,27 @@ export const validateArtifactPolicy = ({
   };
 };
 
-const REVIEW_DETAILS_FIX_SNIPPET =
-  "最终 review 将记录改动点、验证结果、剩余风险，以及 bug/根因原因。";
+const FIX_SNIPPETS: Partial<Record<ArtifactPolicyIssueCode, string>> = {
+  missing_section: "## Context\n- 用中文描述目标、约束、影响范围和非目标。",
+  missing_steps_checkbox: "- [ ] 描述一个可验证的执行步骤",
+  missing_chinese_content: "请用中文补充本章节的目标、约束或验证方式。",
+  missing_review_details:
+    "最终 review 将记录改动点、验证结果、剩余风险，以及 bug/根因原因。",
+  section_order: "## Context\n\n## Steps\n\n## Verification\n\n## Review",
+};
 
 const fixSnippetForIssue = (issue: ArtifactPolicyIssue): string | null =>
-  issue.code === "missing_review_details" ? REVIEW_DETAILS_FIX_SNIPPET : null;
+  FIX_SNIPPETS[issue.code] ?? null;
+
+const formatPolicyIssue = (issue: ArtifactPolicyIssue): string => {
+  const section = issue.section ? ` (${issue.section})` : "";
+  const snippet = fixSnippetForIssue(issue);
+  const snippetText = snippet ? `\n  Suggested snippet: ${snippet}` : "";
+  return `- ${issue.message}${section}\n  Fix: ${issue.suggestion}${snippetText}`;
+};
 
 const formatPolicyIssues = (issues: ArtifactPolicyIssue[]): string =>
-  issues
-    .map((issue) => {
-      const section = issue.section ? ` (${issue.section})` : "";
-      const snippet = fixSnippetForIssue(issue);
-      const snippetText = snippet ? `\n  Suggested snippet: ${snippet}` : "";
-      return `- ${issue.message}${section}\n  Fix: ${issue.suggestion}${snippetText}`;
-    })
-    .join("\n");
+  issues.map(formatPolicyIssue).join("\n");
 
 export const formatArtifactPolicyFailure = (
   artifactPath: string,

@@ -3,13 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-const mockComplete = vi.hoisted(() => vi.fn());
-
-vi.mock("@earendil-works/pi-ai", () => ({
-  complete: mockComplete,
-}));
-
 import planModeExtension from "./index.js";
 
 type Handler = (event: unknown, ctx: TestCtx) => Promise<unknown> | unknown;
@@ -52,10 +45,6 @@ type TestCtx = {
     getSessionFile: () => string;
     getEntries: () => CustomEntry[];
     getBranch: () => CustomEntry[];
-  };
-  model?: Record<string, unknown>;
-  modelRegistry?: {
-    getApiKeyAndHeaders: ReturnType<typeof vi.fn>;
   };
 };
 
@@ -260,61 +249,6 @@ const commitWithoutBranchPrompt = "commit and no extra branch";
 const directActTodoGuidance =
   "In direct act mode, create concrete TODOs before using tools or making changes.";
 
-const workflowOnlyIntentFeedback = {
-  kind: "workflow_only",
-  confidence: 0.9,
-  reason: "User requested only an operational workflow.",
-  evidence: ["commit existing changes"],
-  requestedOperations: ["git status", "git commit"],
-};
-
-const implementationIntentFeedback = {
-  kind: "implementation",
-  confidence: 0.9,
-  reason: "User requested a code change before the workflow.",
-  evidence: ["fix"],
-  requestedOperations: ["edit", "git commit"],
-};
-
-const readOnlyIntentFeedback = {
-  kind: "read_only",
-  confidence: 0.9,
-  reason: "User asked a question without requesting changes.",
-  evidence: ["why"],
-  requestedOperations: [],
-};
-
-const mockPluginClassifierFeedback = (
-  ctx: TestCtx,
-  feedback: unknown,
-): void => {
-  ctx.model = {
-    id: "classifier-model",
-    provider: "test",
-    api: "openai-responses",
-    reasoning: false,
-  };
-  ctx.modelRegistry = {
-    getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "test-key" })),
-  };
-  mockComplete.mockResolvedValueOnce({
-    content: [{ type: "text", text: JSON.stringify(feedback) }],
-    stopReason: "stop",
-  });
-};
-
-type ClassifierRequest = { systemPrompt?: unknown };
-
-const lastClassifierSystemPrompt = (): string => {
-  const call = mockComplete.mock.calls.at(-1);
-  if (!call) throw new Error("Expected classifier to be called");
-  const request = call[1] as ClassifierRequest;
-  if (typeof request.systemPrompt !== "string") {
-    throw new Error("Expected classifier system prompt");
-  }
-  return request.systemPrompt;
-};
-
 const validPlanContent = `## Context
 - 用户希望用中文描述计划背景、成功标准和受影响模块。
 
@@ -401,12 +335,7 @@ describe("plan-mode extension", () => {
     planModeExtension(harness.api as unknown as ExtensionAPI);
 
     await harness.emit("session_start", {}, ctx);
-    const result = await sendAgentPrompt(
-      harness,
-      ctx,
-      "answer directly",
-      readOnlyIntentFeedback,
-    );
+    const result = await sendAgentPrompt(harness, ctx, "answer directly");
 
     expect(result).toMatchObject({
       systemPrompt: expect.stringContaining("Current mode: act."),
@@ -420,7 +349,6 @@ describe("plan-mode extension", () => {
       harness,
       ctx,
       "commit all the changes",
-      readOnlyIntentFeedback,
     );
 
     expect(result.systemPrompt).toContain(directActTodoGuidance);
@@ -430,18 +358,8 @@ describe("plan-mode extension", () => {
     const { harness, ctx } = await startPlanModeSession("act");
 
     await sendInput(harness, ctx, "implement this", "interactive");
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "implement this",
-      readOnlyIntentFeedback,
-    );
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "implement this again",
-      readOnlyIntentFeedback,
-    );
+    await sendAgentPrompt(harness, ctx, "implement this");
+    await sendAgentPrompt(harness, ctx, "implement this again");
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining("3s"),
@@ -453,12 +371,7 @@ describe("plan-mode extension", () => {
       ["act", "plan", "auto", "fast"],
       { timeout: 3000 },
     );
-    const result = await sendAgentPrompt(
-      harness,
-      ctx,
-      "post-timeout prompt",
-      readOnlyIntentFeedback,
-    );
+    const result = await sendAgentPrompt(harness, ctx, "post-timeout prompt");
     expect(result).toMatchObject({
       systemPrompt: expect.stringContaining("Current mode: act."),
     });
@@ -472,7 +385,6 @@ describe("plan-mode extension", () => {
       harness,
       ctx,
       "please plan this change first",
-      readOnlyIntentFeedback,
     );
 
     expect(ctx.ui.select).not.toHaveBeenCalled();
@@ -483,7 +395,6 @@ describe("plan-mode extension", () => {
 
   afterEach(() => {
     vi.useRealTimers();
-    mockComplete.mockReset();
   });
 
   it("blocks source writes during auto plan phase but allows review artifact writes", async () => {
@@ -943,18 +854,20 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("does not require a TODO or plan review for read-only Q&A in auto plan", async () => {
+  it("requires a TODO for auto plan turns even when read-only feedback is provided", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendAgentPrompt(
       harness,
       ctx,
       "why does the todo widget keep showing?",
-      readOnlyIntentFeedback,
     );
     await harness.emit("agent_end", { messages: [] }, ctx);
 
-    expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
+    expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining("plan_mode_todo"),
+      { deliverAs: "followUp" },
+    );
   });
 
   it("injects architecture testing guidance into implementation plans", async () => {
@@ -1036,12 +949,7 @@ describe("plan-mode extension", () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendInput(harness, ctx, "fix the plan mode guard bug", "interactive");
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "fix the plan mode guard bug",
-      implementationIntentFeedback,
-    );
+    await sendAgentPrompt(harness, ctx, "fix the plan mode guard bug");
     await harness.emit("agent_end", { messages: [] }, ctx);
 
     expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
@@ -1049,9 +957,7 @@ describe("plan-mode extension", () => {
       { deliverAs: "followUp" },
     );
     expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "User requested a code change before the workflow",
-      ),
+      expect.stringContaining("auto mode requires a reviewed plan/spec"),
       { deliverAs: "followUp" },
     );
   });
@@ -1094,7 +1000,6 @@ describe("plan-mode extension", () => {
       harness,
       ctx,
       "why is this workflow asking for TODOs?",
-      readOnlyIntentFeedback,
     );
     await harness.runTool(
       "plan_mode_todo",
@@ -1118,226 +1023,43 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("uses plugin classifier feedback when event feedback is missing", async () => {
+  it("keeps auto plan guarded even when workflow feedback is provided", async () => {
     const { harness, ctx } = await startPlanModeSession();
-    mockPluginClassifierFeedback(ctx, readOnlyIntentFeedback);
 
-    await sendAgentPrompt(harness, ctx, "为什么会提示要创建 TODO？");
-    await harness.emit("agent_end", { messages: [] }, ctx);
-
-    expect(mockComplete).toHaveBeenCalledOnce();
-    expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
-      expect.stringContaining("Plan Mode requires"),
-      expect.anything(),
-    );
-  });
-
-  it("guides commit-only and repo inspection prompts as workflow-only", async () => {
-    const { harness, ctx } = await startPlanModeSession();
-    mockPluginClassifierFeedback(ctx, workflowOnlyIntentFeedback);
-
-    await sendAgentPrompt(harness, ctx, commitWithoutBranchPrompt);
-
-    const systemPrompt = lastClassifierSystemPrompt();
-    const expectedGuidanceSnippets = [
-      "commit and no extra branch",
-      "no extra branch",
-      "workflow-only constraint",
-      "analyze this repo",
-      "repo inspection",
-      "searching, reading, listing",
-      "git diff/log/grep",
-      "fix lint and commit",
-      "refactor then commit",
-    ];
-    for (const snippet of expectedGuidanceSnippets) {
-      expect(systemPrompt).toContain(snippet);
-    }
-  });
-
-  it("enters auto act with direct workflow guard from plugin classifier feedback", async () => {
-    const { harness, ctx } = await startPlanModeSession();
-    mockPluginClassifierFeedback(ctx, workflowOnlyIntentFeedback);
-
-    const result = await sendAgentPrompt(harness, ctx, "提交当前改动");
-
-    expect(result).toMatchObject({
-      systemPrompt: expect.stringContaining("Current mode: auto:act."),
+    const result = await sendAgentPrompt(harness, ctx, "提交当前改动", {
+      kind: "workflow_only",
+      confidence: 0.9,
+      reason: "User requested only an operational workflow.",
+      evidence: ["commit existing changes"],
+      requestedOperations: ["git status", "git commit"],
     });
-    expect(result).toMatchObject({
-      systemPrompt: expect.stringContaining("Direct workflow is active"),
-    });
-    expect(result).toMatchObject({
-      systemPrompt: expect.stringContaining("Stateful git operations"),
-    });
-    await expect(
-      harness.runToolCall("bash", { command: "git status --short" }, ctx),
-    ).resolves.toBeUndefined();
-    await expect(
-      harness.runToolCall("write", { path: "x.ts" }, ctx),
-    ).resolves.toMatchObject({ block: true });
-  });
 
-  it("diagnoses exact commit prompt with plugin workflow feedback", async () => {
-    const { harness, ctx } = await startPlanModeSession();
-    const exactWorkflowFeedback = {
-      ...workflowOnlyIntentFeedback,
-      evidence: [commitWithoutBranchPrompt],
-      requestedOperations: ["git commit"],
-    };
-    mockPluginClassifierFeedback(ctx, exactWorkflowFeedback);
-
-    await sendAgentPrompt(harness, ctx, commitWithoutBranchPrompt);
-
-    expect(mockComplete).toHaveBeenCalledOnce();
-    expect(JSON.stringify(mockComplete.mock.calls[0])).toContain(
-      commitWithoutBranchPrompt,
-    );
-    expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-      mode: "auto",
-      phase: "act",
-      workflowBypass: { active: true },
-    });
-  });
-
-  it("documents exact commit prompt failing closed without classifier feedback", async () => {
-    const { harness, ctx } = await startPlanModeSession();
-
-    const result = await sendAgentPrompt(
-      harness,
-      ctx,
-      commitWithoutBranchPrompt,
-    );
-
-    expect(mockComplete).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       systemPrompt: expect.stringContaining("Current mode: auto:plan."),
     });
-    expect(JSON.stringify(result)).not.toContain("Direct workflow is active");
     await expect(
       harness.runToolCall("bash", { command: "git status --short" }, ctx),
     ).resolves.toMatchObject({ block: true });
   });
 
-  it("allows safe bash commands without plan review for commit-only workflows", async () => {
+  it("keeps commit-only prompts in normal auto plan", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "commit all changes and no extra branch",
-      workflowOnlyIntentFeedback,
-    );
+    await sendAgentPrompt(harness, ctx, commitWithoutBranchPrompt);
 
-    await expect(
-      harness.runToolCall("bash", { command: "git status --short" }, ctx),
-    ).resolves.toBeUndefined();
-    await expect(
-      harness.runToolCall(
-        "bash",
-        { command: "npm test -- extensions/plan-mode" },
-        ctx,
-      ),
-    ).resolves.toBeUndefined();
-    await expect(
-      harness.runToolCall("write", { path: "x.ts" }, ctx),
-    ).resolves.toMatchObject({ block: true });
-
-    await harness.emit("agent_end", { messages: [] }, ctx);
-
-    expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
-      expect.stringContaining("Plan Mode requires"),
-      expect.anything(),
-    );
-  });
-
-  it("fails closed without structured workflow feedback", async () => {
-    const { harness, ctx } = await startPlanModeSession();
-
-    await sendAgentPrompt(harness, ctx, "commit all the changes");
-
-    await expect(
-      harness.runToolCall("bash", { command: "git status --short" }, ctx),
-    ).resolves.toMatchObject({ block: true });
-  });
-
-  it("blocks unsafe bash commands during direct workflow", async () => {
-    const { harness, ctx } = await startPlanModeSession();
-
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "commit all the changes",
-      workflowOnlyIntentFeedback,
-    );
-
-    await expect(
-      harness.runToolCall("bash", { command: "rm -rf src" }, ctx),
-    ).resolves.toMatchObject({
-      block: true,
-      reason: expect.stringContaining("direct workflow"),
+    expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+      mode: "auto",
+      phase: "plan",
     });
+    await expect(
+      harness.runToolCall("bash", { command: "git status --short" }, ctx),
+    ).resolves.toMatchObject({ block: true });
   });
 
   it("keeps implementation prompts in normal plan mode", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "fix the bug and commit",
-      implementationIntentFeedback,
-    );
-
-    await expect(
-      harness.runToolCall("bash", { command: "git status --short" }, ctx),
-    ).resolves.toMatchObject({ block: true });
-  });
-
-  it("extends workflow bypass across user confirmation while todos remain", async () => {
-    const { harness, ctx } = await startPlanModeSession();
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "commit all the changes",
-      workflowOnlyIntentFeedback,
-    );
-    await harness.runTool(
-      "plan_mode_todo",
-      {
-        action: "set",
-        items: [{ text: "确认是否包含未跟踪文件", status: "todo" }],
-      },
-      ctx,
-    );
-
-    await harness.emit("agent_end", { messages: [] }, ctx);
-    await sendAgentPrompt(harness, ctx, "no");
-
-    await expect(
-      harness.runToolCall("bash", { command: "git status --short" }, ctx),
-    ).resolves.toBeUndefined();
-  });
-
-  it("clears workflow bypass after workflow todos are complete", async () => {
-    const { harness, ctx } = await startPlanModeSession();
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "commit all the changes",
-      workflowOnlyIntentFeedback,
-    );
-    await harness.runTool(
-      "plan_mode_todo",
-      {
-        action: "set",
-        items: [{ text: "提交当前变更", status: "done" }],
-      },
-      ctx,
-    );
-
-    await harness.emit("agent_end", { messages: [] }, ctx);
-    await sendAgentPrompt(harness, ctx, "no");
+    await sendAgentPrompt(harness, ctx, "fix the bug and commit");
 
     await expect(
       harness.runToolCall("bash", { command: "git status --short" }, ctx),
@@ -1505,12 +1227,7 @@ describe("plan-mode extension", () => {
     try {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
       await harness.emit("agent_end", { messages: [] }, ctx);
-      await sendAgentPrompt(
-        harness,
-        ctx,
-        "start",
-        implementationIntentFeedback,
-      );
+      await sendAgentPrompt(harness, ctx, "start");
 
       await expect(
         harness.runToolCall("bash", { command: "npm test" }, ctx),
@@ -1554,18 +1271,8 @@ describe("plan-mode extension", () => {
     await harness.runCommand("plan-mode", "auto", ctx);
 
     await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "迁移到 Svelte + Vite",
-      implementationIntentFeedback,
-    );
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "impl it",
-      implementationIntentFeedback,
-    );
+    await sendAgentPrompt(harness, ctx, "迁移到 Svelte + Vite");
+    await sendAgentPrompt(harness, ctx, "impl it");
 
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
@@ -1581,12 +1288,7 @@ describe("plan-mode extension", () => {
 
     await completeApprovedDemoRun(harness, ctx);
 
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "迁移到 Svelte + Vite",
-      implementationIntentFeedback,
-    );
+    await sendAgentPrompt(harness, ctx, "迁移到 Svelte + Vite");
 
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
@@ -1605,12 +1307,7 @@ describe("plan-mode extension", () => {
 
     await completeApprovedDemoRun(harness, ctx, "写入并提交 reviewable plan");
 
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      "impl the plan",
-      implementationIntentFeedback,
-    );
+    await sendAgentPrompt(harness, ctx, "impl the plan");
 
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
@@ -1654,12 +1351,7 @@ describe("plan-mode extension", () => {
 
     await completeApprovedDemoRun(harness, ctx);
 
-    await sendAgentPrompt(
-      harness,
-      ctx,
-      approvedPlanPolicyFixPrompt,
-      implementationIntentFeedback,
-    );
+    await sendAgentPrompt(harness, ctx, approvedPlanPolicyFixPrompt);
 
     const result = await harness.runTool(
       "plan_mode_todo",

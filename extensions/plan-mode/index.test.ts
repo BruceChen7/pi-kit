@@ -524,7 +524,7 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("keeps a collapsed completed todo summary above the editor", async () => {
+  it("keeps a collapsed completed todo summary below the editor", async () => {
     vi.useFakeTimers();
     const harness = buildHarness();
     const ctx = buildCtx();
@@ -564,7 +564,7 @@ describe("plan-mode extension", () => {
       expect.stringContaining("auto:act 3/3"),
     );
     expect(plainWidgetText(ctx)).toBe(actCompletedDemoSummary);
-    expect(lastTodoWidgetCall(ctx)[2]).toEqual({ placement: "aboveEditor" });
+    expect(lastTodoWidgetCall(ctx)[2]).toEqual({ placement: "belowEditor" });
 
     await vi.advanceTimersByTimeAsync(60_000);
     expect(plainWidgetText(ctx)).toBe(actCompletedDemoSummary);
@@ -943,6 +943,12 @@ describe("plan-mode extension", () => {
       expect.stringContaining("plan_mode_todo"),
       { deliverAs: "followUp" },
     );
+    expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "User requested a code change before the workflow",
+      ),
+      { deliverAs: "followUp" },
+    );
   });
 
   it("does not require plan review for extension-sourced implementation prompts", async () => {
@@ -1049,6 +1055,9 @@ describe("plan-mode extension", () => {
     });
     expect(result).toMatchObject({
       systemPrompt: expect.stringContaining("Direct workflow is active"),
+    });
+    expect(result).toMatchObject({
+      systemPrompt: expect.stringContaining("Stateful git operations"),
     });
     await expect(
       harness.runToolCall("bash", { command: "git status --short" }, ctx),

@@ -258,11 +258,19 @@ export const validateArtifactPolicy = ({
   };
 };
 
+const REVIEW_DETAILS_FIX_SNIPPET =
+  "最终 review 将记录改动点、验证结果、剩余风险，以及 bug/根因原因。";
+
+const fixSnippetForIssue = (issue: ArtifactPolicyIssue): string | null =>
+  issue.code === "missing_review_details" ? REVIEW_DETAILS_FIX_SNIPPET : null;
+
 const formatPolicyIssues = (issues: ArtifactPolicyIssue[]): string =>
   issues
     .map((issue) => {
       const section = issue.section ? ` (${issue.section})` : "";
-      return `- ${issue.message}${section}\n  Fix: ${issue.suggestion}`;
+      const snippet = fixSnippetForIssue(issue);
+      const snippetText = snippet ? `\n  Suggested snippet: ${snippet}` : "";
+      return `- ${issue.message}${section}\n  Fix: ${issue.suggestion}${snippetText}`;
     })
     .join("\n");
 

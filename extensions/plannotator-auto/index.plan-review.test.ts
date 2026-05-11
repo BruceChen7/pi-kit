@@ -4,7 +4,9 @@ import {
   createFakePi,
   createTempRepo,
   createTestContext,
+  type FakePlannotatorApiMock,
   flushMicrotasks,
+  mockPlannotatorApi,
   removeTempRepo,
   type TestCtx,
   writeTestFile,
@@ -16,39 +18,6 @@ async function importPlannotatorAuto() {
 
 type FakePi = ReturnType<typeof createFakePi>;
 type Emit = FakePi["emit"];
-type PlanReviewApiMockOptions = {
-  createRequestPlannotator?: ReturnType<typeof vi.fn>;
-  startPlanReview?: ReturnType<typeof vi.fn>;
-  waitForReviewResult?: ReturnType<typeof vi.fn>;
-  getStatus?: ReturnType<typeof vi.fn>;
-  requestReviewStatus?: ReturnType<typeof vi.fn>;
-};
-
-function mockPlanReviewApi(options: PlanReviewApiMockOptions = {}) {
-  const startPlanReview = options.startPlanReview ?? vi.fn();
-
-  vi.doMock("./plannotator-api.ts", () => ({
-    createRequestPlannotator:
-      options.createRequestPlannotator ?? vi.fn(() => vi.fn()),
-    createReviewResultStore: vi.fn(() => ({
-      onResult: vi.fn(() => vi.fn()),
-      getStatus: options.getStatus ?? vi.fn(() => null),
-      markPending: vi.fn(),
-      markCompleted: vi.fn(),
-    })),
-    formatAnnotationMessage: vi.fn(() => ""),
-    formatCodeReviewMessage: vi.fn(() => ""),
-    formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
-    requestAnnotation: vi.fn(),
-    requestCodeReview: vi.fn(),
-    requestReviewStatus: options.requestReviewStatus ?? vi.fn(),
-    startCodeReview: vi.fn(),
-    startPlanReview,
-    waitForReviewResult: options.waitForReviewResult ?? vi.fn(),
-  }));
-
-  return { startPlanReview };
-}
 
 async function emitToolWrite(
   emit: Emit,
@@ -131,7 +100,7 @@ async function writeSpecDraft(
 }
 
 type PlannotatorAutoTestHarness = FakePi &
-  ReturnType<typeof mockPlanReviewApi> & {
+  FakePlannotatorApiMock & {
     repoRoot: string;
     repoName: string;
     createCtx: (options?: Parameters<typeof createTestContext>[1]) => TestCtx;
@@ -140,10 +109,10 @@ type PlannotatorAutoTestHarness = FakePi &
 async function withPlannotatorAutoTest(
   repoPrefix: string,
   runTest: (harness: PlannotatorAutoTestHarness) => Promise<void>,
-  apiMockOptions?: PlanReviewApiMockOptions,
+  apiMockOptions?: Parameters<typeof mockPlannotatorApi>[0],
 ): Promise<void> {
   vi.resetModules();
-  const apiMocks = mockPlanReviewApi(apiMockOptions);
+  const apiMocks = mockPlannotatorApi(apiMockOptions);
 
   const plannotatorAuto = await importPlannotatorAuto();
   const pi = createFakePi();

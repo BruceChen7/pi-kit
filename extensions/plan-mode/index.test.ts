@@ -269,6 +269,17 @@ const actOneItemCompletedSummary = `【act:completed】${oneItemCompletedSummary
 const planOneItemCompletedSummary = `【plan:completed】${oneItemCompletedSummary}`;
 const demoPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
 const demoCompletedSummary = "✅ 计划「demo」已完成 · 3/3 项任务已交付";
+
+const expectApprovedContinuationFollowUp = (
+  harness: ReturnType<typeof buildHarness>,
+): void => {
+  expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+    expect.stringContaining(
+      `Continue implementing approved plan: ${demoPlanPath}`,
+    ),
+    { deliverAs: "followUp" },
+  );
+};
 const actCompletedDemoSummary = `【act:completed】${demoCompletedSummary}`;
 const approvedPlanPolicyFixPrompt = [
   "Plan Mode artifact policy requires fixes for an already approved plan.",
@@ -1136,18 +1147,13 @@ describe("plan-mode extension", () => {
       await harness.emit("agent_end", { messages: [] }, ctx);
 
       expect(ctx.ui.confirm).not.toHaveBeenCalled();
-      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(
-          `Continue implementing approved plan: ${demoPlanPath}`,
-        ),
-        { deliverAs: "followUp" },
-      );
+      expectApprovedContinuationFollowUp(harness);
     } finally {
       cleanup();
     }
   });
 
-  it("manual approval continuation records ready state without follow-up", async () => {
+  it("ignores legacy manual approval continuation config", async () => {
     const harness = buildHarness();
     const { ctx, cleanup } = createTempCtx();
     writeProjectSettings(ctx.cwd, {
@@ -1156,15 +1162,16 @@ describe("plan-mode extension", () => {
     writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
+    await harness.runCommand("plan-mode", "review", ctx);
 
     try {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
       await harness.emit("agent_end", { messages: [] }, ctx);
 
       expect(ctx.ui.confirm).not.toHaveBeenCalled();
-      expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
+      expectApprovedContinuationFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-        confirmedApprovedContinuationPath: null,
+        confirmedApprovedContinuationPath: demoPlanPath,
       });
     } finally {
       cleanup();
@@ -1210,16 +1217,8 @@ describe("plan-mode extension", () => {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      expect(ctx.ui.confirm).toHaveBeenCalledWith(
-        "Implement approved plan?",
-        expect.stringContaining("Y / Enter"),
-      );
-      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(
-          `Continue implementing approved plan: ${demoPlanPath}`,
-        ),
-        { deliverAs: "followUp" },
-      );
+      expect(ctx.ui.confirm).not.toHaveBeenCalled();
+      expectApprovedContinuationFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
         confirmedApprovedContinuationPath: demoPlanPath,
       });
@@ -1253,21 +1252,23 @@ describe("plan-mode extension", () => {
     }
   });
 
-  it("does not start implementation when the user declines approved continuation", async () => {
+  it("does not offer a decline path for approved continuation", async () => {
     const harness = buildHarness();
     const { ctx, cleanup } = createTempCtx();
     ctx.ui.confirm.mockResolvedValueOnce(false);
     writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
+    await harness.runCommand("plan-mode", "review", ctx);
 
     try {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
+      expect(ctx.ui.confirm).not.toHaveBeenCalled();
+      expectApprovedContinuationFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-        confirmedApprovedContinuationPath: null,
+        confirmedApprovedContinuationPath: demoPlanPath,
       });
     } finally {
       cleanup();

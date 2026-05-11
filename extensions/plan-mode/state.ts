@@ -8,11 +8,9 @@ import {
   STATE_ENTRY_TYPE,
 } from "./constants.ts";
 import type {
-  ApprovalContinuationMode,
   PlanDecisionSummary,
   PlanMode,
   PlanModeConfig,
-  PlanModePreset,
   PlanModeSnapshot,
   PlanPhase,
   PlanRun,
@@ -44,14 +42,6 @@ export const promptRequestsPlanMode = (prompt: string): boolean =>
 
 export const isPhaseValue = (value: unknown): value is PlanPhase =>
   value === "plan" || value === "act";
-
-export const isPlanModePreset = (value: unknown): value is PlanModePreset =>
-  value === "strict" || value === "balanced" || value === "solo";
-
-export const isApprovalContinuationMode = (
-  value: unknown,
-): value is ApprovalContinuationMode =>
-  value === "confirm" || value === "auto" || value === "manual";
 
 export const isTodoStatus = (value: unknown): value is TodoStatus =>
   value === "todo" ||
@@ -184,23 +174,6 @@ export const createPlanRun = (
   createdAt: new Date().toISOString(),
 });
 
-export const applyPreset = (
-  config: PlanModeConfig,
-  preset: PlanModePreset,
-): void => {
-  switch (preset) {
-    case "solo":
-      config.requireReview = false;
-      config.approval.continueAfterApproval = "auto";
-      return;
-    case "balanced":
-      config.approval.continueAfterApproval = "auto";
-      return;
-    case "strict":
-      return;
-  }
-};
-
 export const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
   const { merged } = loadSettings(cwd);
   const raw = isRecord(merged.planMode) ? merged.planMode : {};
@@ -208,13 +181,12 @@ export const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
     defaultMode: DEFAULT_CONFIG.defaultMode,
     preserveExternalTools: DEFAULT_CONFIG.preserveExternalTools,
     requireReview: DEFAULT_CONFIG.requireReview,
-    approval: { ...DEFAULT_CONFIG.approval },
     guards: { ...DEFAULT_CONFIG.guards },
     artifactPolicy: { ...DEFAULT_CONFIG.artifactPolicy },
   };
 
-  if (isPlanModePreset(raw.preset)) {
-    applyPreset(config, raw.preset);
+  if (raw.preset === "solo") {
+    config.requireReview = false;
   }
   if (isPlanMode(raw.defaultMode)) {
     config.defaultMode = raw.defaultMode;
@@ -224,12 +196,6 @@ export const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
   }
   if (typeof raw.requireReview === "boolean") {
     config.requireReview = raw.requireReview;
-  }
-  if (isRecord(raw.approval)) {
-    const mode = raw.approval.continueAfterApproval;
-    if (isApprovalContinuationMode(mode)) {
-      config.approval.continueAfterApproval = mode;
-    }
   }
   if (isRecord(raw.guards)) {
     applyBooleanOverride(config.guards, raw.guards, "cwdOnly");

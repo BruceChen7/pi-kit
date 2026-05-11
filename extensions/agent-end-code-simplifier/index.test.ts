@@ -54,6 +54,46 @@ type ExtensionHarnessOptions = {
   sendUserMessage?: ReturnType<typeof vi.fn>;
 };
 
+type WidgetTestContext = {
+  cwd: string;
+  hasUI: true;
+  ui: {
+    confirm: ReturnType<typeof vi.fn>;
+    notify: ReturnType<typeof vi.fn>;
+    setWidget: ReturnType<typeof vi.fn>;
+    theme?: { fg: ReturnType<typeof vi.fn> };
+  };
+};
+
+const RUNNING_WIDGET_KEY = "agent-end-code-simplifier";
+
+const createWidgetTestContext = ({
+  withTheme = false,
+}: {
+  withTheme?: boolean;
+} = {}): WidgetTestContext => ({
+  cwd: process.cwd(),
+  hasUI: true,
+  ui: {
+    confirm: vi.fn(),
+    notify: vi.fn(),
+    setWidget: vi.fn(),
+    ...(withTheme
+      ? { theme: { fg: vi.fn((_tone: string, text: string) => text) } }
+      : {}),
+  },
+});
+
+const expectRunningWidgetShown = (ctx: WidgetTestContext): void => {
+  expect(ctx.ui.setWidget).toHaveBeenCalledWith(RUNNING_WIDGET_KEY, [
+    expect.stringContaining("me-code-simplifier running"),
+  ]);
+};
+
+const expectRunningWidgetCleared = (ctx: WidgetTestContext): void => {
+  expect(ctx.ui.setWidget).toHaveBeenCalledWith(RUNNING_WIDGET_KEY, undefined);
+};
+
 const createExtensionHarness = async (
   options: ExtensionHarnessOptions = {},
 ) => {
@@ -300,6 +340,108 @@ describe("extension diagnostics", () => {
     expect(events.emit).not.toHaveBeenCalled();
     expect(sendUserMessage).toHaveBeenCalledWith(
       expect.stringContaining("src/auto.ts"),
+      { deliverAs: "followUp" },
+    );
+  });
+
+  it("shows a running widget when automatic simplifier follow-up starts", async () => {
+    mockExtensionDependencies();
+
+    const { handlers } = await createExtensionHarness();
+    const ctx = createWidgetTestContext({ withTheme: true });
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "edit",
+        input: { path: "src/auto-widget.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+
+    expectRunningWidgetShown(ctx);
+  });
+
+  it("shows a running widget when manual simplifier follow-up starts", async () => {
+    mockExtensionDependencies();
+
+    const { handlers, shortcuts } = await createExtensionHarness();
+    const ctx = createWidgetTestContext();
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "edit",
+        input: { path: "src/manual-widget.ts" },
+      },
+      ctx,
+    );
+    await shortcuts.get("ctrl+alt+y")?.handler(ctx);
+
+    expectRunningWidgetShown(ctx);
+  });
+
+  it("keeps the running widget until the simplifier follow-up ends", async () => {
+    mockExtensionDependencies();
+
+    const { handlers } = await createExtensionHarness();
+    const ctx = createWidgetTestContext();
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "edit",
+        input: { path: "src/auto-widget-clear.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+
+    ctx.ui.setWidget.mockClear();
+    await handlers.get("agent_start")?.({}, ctx);
+
+    expect(ctx.ui.setWidget).not.toHaveBeenCalledWith(
+      RUNNING_WIDGET_KEY,
+      undefined,
+    );
+
+    await handlers.get("agent_end")?.(
+      {
+        messages: [{ role: "user", content: "[agent-end-code-simplifier]" }],
+      },
+      ctx,
+    );
+
+    expectRunningWidgetCleared(ctx);
+  });
+
+  it("does not require widget support to send automatic follow-ups", async () => {
+    mockExtensionDependencies();
+
+    const { handlers, sendUserMessage } = await createExtensionHarness();
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: { confirm: vi.fn(), notify: vi.fn() },
+    };
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "edit",
+        input: { path: "src/no-widget-support.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+
+    expect(sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining("src/no-widget-support.ts"),
       { deliverAs: "followUp" },
     );
   });

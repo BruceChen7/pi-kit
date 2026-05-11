@@ -455,10 +455,7 @@ export class PlanModeController {
       this.state.phase === "act" &&
       pendingContinuationPath
     ) {
-      await this.handlePendingApprovedContinuation(
-        ctx,
-        pendingContinuationPath,
-      );
+      this.handlePendingApprovedContinuation(pendingContinuationPath);
       return;
     }
 
@@ -480,42 +477,14 @@ export class PlanModeController {
     this.clearTurnSource();
   }
 
-  async handlePendingApprovedContinuation(
-    ctx: ExtensionContext,
-    pendingContinuationPath: string,
-  ): Promise<void> {
+  handlePendingApprovedContinuation(pendingContinuationPath: string): void {
     this.state.clearPendingApprovedPlanContinuation();
-    const continuationMode = this.config.approval.continueAfterApproval;
-    const shouldContinue = async (): Promise<boolean> => {
-      if (continuationMode === "auto") {
-        return true;
-      }
-      if (continuationMode === "manual") {
-        return false;
-      }
-      return ctx.ui.confirm(
-        "Implement approved plan?",
-        [
-          `Approved plan: ${pendingContinuationPath}`,
-          "Enter next implementation turn now?",
-          "Y / Enter: continue implementation (default)",
-          "N: stay idle; the approved continuation will be cleared.",
-        ].join("\n"),
-      );
-    };
-    const ok = await shouldContinue();
-    if (ok) {
-      this.state.confirmApprovedContinuation(pendingContinuationPath);
-    } else {
-      this.state.clearConfirmedApprovedContinuation();
-    }
+    this.state.confirmApprovedContinuation(pendingContinuationPath);
     this.persist();
-    if (ok) {
-      this.pi.sendUserMessage(
-        formatApprovedContinuationFollowUp(pendingContinuationPath),
-        { deliverAs: "followUp" },
-      );
-    }
+    this.pi.sendUserMessage(
+      formatApprovedContinuationFollowUp(pendingContinuationPath),
+      { deliverAs: "followUp" },
+    );
     this.clearTurnSource();
   }
 

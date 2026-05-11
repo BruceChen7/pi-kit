@@ -12,9 +12,8 @@ review-first workflow:
 2. For implementation requests, create a concrete TODO list and a reviewable plan/spec.
 3. Submit the plan/spec to Plannotator.
 4. After approval, Plan Mode switches to `review:act` and implementation can proceed.
-5. If the planning TODOs are already complete, Plan Mode continues according to
-   `approval.continueAfterApproval`: confirm by default, auto-continue for balanced/solo
-   presets, or stay ready for manual continuation.
+5. If the planning TODOs are already complete, Plan Mode automatically continues
+   implementation from the approved plan without a second confirmation.
 6. During Act phase, update TODOs from `in_progress` to `done` as work completes.
 
 Review Mode is intentionally fail-closed: normal user turns stay in `review:plan` until a
@@ -90,11 +89,11 @@ where possible, a copyable snippet for common missing standard content such as s
 headings, checkbox steps, Chinese content, or Review details. If review is denied,
 revise the same file and submit again. Approval applies to the
 currently submitted artifact; switching to a newer artifact requires a fresh review.
-After an approved plan is complete on the planning side, short continuation prompts keep
-that same approved plan executable. Unrelated new implementation requests still return to
-`review:plan` and require their own reviewed plan/spec. New TODO runs do not inherit a
-previous approved plan name unless they are part of that explicit continuation or are
-bound by a fresh review approval.
+After an approved plan is complete on the planning side, Plan Mode automatically injects
+an implementation continuation for that same approved plan. Unrelated new implementation
+requests still return to `review:plan` and require their own reviewed plan/spec. New TODO
+runs do not inherit a previous approved plan name unless they are part of that explicit
+continuation or are bound by a fresh review approval.
 
 ## Artifact Policy
 
@@ -149,8 +148,8 @@ Configuration is read from the shared pi-kit settings namespace `planMode` in
 Presets are optional shortcuts:
 
 - `strict`: default review-first behavior.
-- `balanced`: keep review requirements but auto-continue after approval.
-- `solo`: disable review waiting reminders and auto-continue after approval.
+- `balanced`: keep review requirements with the same automatic approval continuation.
+- `solo`: disable review waiting reminders with the same automatic approval continuation.
 
 Explicit settings override preset defaults.
 
@@ -161,9 +160,6 @@ Explicit settings override preset defaults.
     "preserveExternalTools": true,
     "requireReview": true,
     "preset": "strict",
-    "approval": {
-      "continueAfterApproval": "confirm"
-    },
     "guards": {
       "cwdOnly": true,
       "allowedPaths": [],
@@ -180,3 +176,9 @@ Explicit settings override preset defaults.
   }
 }
 ```
+
+## Troubleshooting
+
+If approval does not automatically start implementation, check that the session is still
+in `review` mode, the approved plan path is present in Plan Mode status, and the previous
+turn was not aborted before the approved continuation could be persisted.

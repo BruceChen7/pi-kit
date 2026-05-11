@@ -25,7 +25,9 @@ RTK Rewrite 做两件事：
   - 退出码为 0
   - stdout 非空
   - 改写后命令 `rewritten !== command`
-- 命中时替换原命令；若 `notify=true` 且有 UI，弹出通知
+- 命中时根据 `rtkRewrite.mode` 决定行为：
+  - `rewrite`：替换原命令；若 `notify=true` 且有 UI，弹出通知
+  - `suggest`：只提示 rewritten command，不替换实际执行命令
 
 ### B) 输出过滤（执行后）
 
@@ -76,9 +78,12 @@ sequenceDiagram
         BH-->>B: 原命令执行
     else 可重写
         BH->>R: rtk rewrite <command>
-        alt rewrite 成功且命令有变化
+        alt rewrite 成功且命令有变化且 mode=rewrite
             R-->>BH: rewritten command
             BH-->>B: 执行 rewritten
+        else rewrite 成功且命令有变化且 mode=suggest
+            R-->>BH: suggestion notification
+            BH-->>B: 原命令执行
         else rewrite 失败/空输出/无变化
             BH-->>B: 原命令执行
         end
@@ -114,6 +119,7 @@ sequenceDiagram
 {
   "rtkRewrite": {
     "enabled": true,
+    "mode": "rewrite",
     "notify": true,
     "exclude": [],
     "outputFiltering": true,
@@ -144,6 +150,7 @@ sequenceDiagram
 
 - `/rtk-rewrite-toggle`（单一开关命令；执行后会明确提示当前是 enabled 还是 disabled，并附带关键配置快照。消息过长时会自动截断并追加 `...`）
 - `/rtk-rewrite-matched-command-rewrite-toggle`
+- `/rtk-rewrite-mode <rewrite|suggest>`
 - `/rtk-rewrite-commands <add|remove|clear|list> [pattern]`
 - `/rtk-rewrite-exclude <prefix>`
 - `/rtk-rewrite-include <prefix>`

@@ -67,16 +67,10 @@ export type PlanModeSnapshot = {
   lastAutoDecision?: PlanDecisionSummary | null;
 };
 
-export type PlanModePreset = "strict" | "balanced" | "solo";
-export type ApprovalContinuationMode = "confirm" | "auto" | "manual";
-
 export type PlanModeConfig = {
   defaultMode: PlanMode;
   preserveExternalTools: boolean;
   requireReview: boolean;
-  approval: {
-    continueAfterApproval: ApprovalContinuationMode;
-  };
   guards: {
     cwdOnly: boolean;
     allowedPaths: string[];

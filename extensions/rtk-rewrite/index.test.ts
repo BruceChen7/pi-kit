@@ -1,10 +1,79 @@
-import { describe, expect, it } from "vitest";
-import {
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { clearBashHooks, runBashHooks } from "../shared/bash-hook.js";
+import { clearSettingsCache, getSettingsPaths } from "../shared/settings.js";
+import rtkRewriteExtension, {
   applyCommandRegistryAction,
   buildStatusMessage,
   parseCommandRegistryArgs,
   shouldSkipRewriteForRegisteredCommand,
 } from "./index.js";
+
+const tempDirs: string[] = [];
+const originalHome = process.env.HOME;
+
+const registerTempDir = (dir: string): string => {
+  tempDirs.push(dir);
+  return dir;
+};
+
+const createTempDir = (prefix: string): string =>
+  registerTempDir(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+
+const createTempHome = (): string => {
+  const dir = createTempDir("pi-kit-rtk-rewrite-home-");
+  process.env.HOME = dir;
+  return dir;
+};
+
+const restoreHome = (): void => {
+  if (originalHome === undefined) {
+    delete process.env.HOME;
+  } else {
+    process.env.HOME = originalHome;
+  }
+};
+
+const writeGlobalRtkConfig = (
+  cwd: string,
+  rtkRewrite: Record<string, unknown>,
+): void => {
+  const { globalPath } = getSettingsPaths(cwd);
+  fs.mkdirSync(path.dirname(globalPath), { recursive: true });
+  fs.writeFileSync(
+    globalPath,
+    JSON.stringify({ rtkRewrite }, null, 2),
+    "utf-8",
+  );
+};
+
+const createContext = (
+  cwd: string,
+): ExtensionContext & ExtensionCommandContext =>
+  ({
+    cwd,
+    hasUI: true,
+    ui: {
+      notify: vi.fn(),
+    },
+  }) as unknown as ExtensionContext & ExtensionCommandContext;
+
+afterEach(() => {
+  clearBashHooks();
+  clearSettingsCache();
+  restoreHome();
+  vi.restoreAllMocks();
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe("parseCommandRegistryArgs", () => {
   it("parses add command with multi-word pattern", () => {
@@ -136,6 +205,7 @@ describe("shouldSkipRewriteForRegisteredCommand", () => {
 describe("buildStatusMessage", () => {
   const baseConfig = {
     enabled: true,
+    mode: "rewrite" as const,
     notify: true,
     exclude: ["git"],
     outputFiltering: true,
@@ -157,6 +227,7 @@ describe("buildStatusMessage", () => {
 
     expect(message).toContain("RTK rewrite disabled.");
     expect(message).toContain("RTK rewrite disabled");
+    expect(message).toContain("mode rewrite");
     expect(message).toContain("notify on");
     expect(message).toContain("exclude: git");
     expect(message).toContain("matched command rewrite off");
@@ -176,5 +247,80 @@ describe("buildStatusMessage", () => {
 
     expect(message.length).toBe(90);
     expect(message.endsWith("...")).toBe(true);
+  });
+});
+
+type TestCommandRegistration = {
+  handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+};
+
+describe("suggest mode", () => {
+  it("notifies with the rewritten command without changing the executed command", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-rtk-rewrite-cwd-");
+    writeGlobalRtkConfig(cwd, {
+      enabled: true,
+      mode: "suggest",
+      notify: true,
+    });
+
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: "rtk git status\n",
+      stderr: "",
+    });
+    rtkRewriteExtension({
+      exec,
+      on: vi.fn(),
+      registerCommand: vi.fn(),
+    } as unknown as ExtensionAPI);
+
+    const ctx = createContext(cwd);
+    const result = await runBashHooks({
+      command: "git status",
+      cwd,
+      ctx,
+      source: "tool",
+    });
+
+    expect(result.command).toBe("git status");
+    expect(result.applied).toEqual([]);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "RTK suggestion: git status → rtk git status",
+      "info",
+    );
+  });
+
+  it("registers a command that switches the rewrite mode", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-rtk-rewrite-cwd-");
+    writeGlobalRtkConfig(cwd, {
+      enabled: true,
+      mode: "rewrite",
+      notify: true,
+    });
+
+    const commands = new Map<string, TestCommandRegistration>();
+    rtkRewriteExtension({
+      exec: vi.fn(),
+      on: vi.fn(),
+      registerCommand: vi.fn((name, registration) => {
+        commands.set(name, registration as TestCommandRegistration);
+      }),
+    } as unknown as ExtensionAPI);
+
+    const ctx = createContext(cwd);
+    const modeCommand = commands.get("rtk-rewrite-mode");
+    expect(modeCommand).toBeDefined();
+    await modeCommand?.handler("suggest", ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("RTK rewrite mode set to suggest."),
+      "info",
+    );
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("mode suggest"),
+      "info",
+    );
   });
 });

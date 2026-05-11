@@ -39,9 +39,6 @@ export const DEFAULT_CONFIG: PlanModeConfig = {
   defaultMode: "act",
   preserveExternalTools: true,
   requireReview: true,
-  approval: {
-    continueAfterApproval: "confirm",
-  },
   guards: {
     cwdOnly: true,
     allowedPaths: [],

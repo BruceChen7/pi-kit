@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { validateArtifactPolicy } from "./artifact-policy.js";
+import {
+  formatArtifactPolicyFailure,
+  validateArtifactPolicy,
+} from "./artifact-policy.js";
 
 const planPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
 const specPath = ".pi/plans/pi-kit/specs/2026-05-08-demo-design.md";
+const reviewDetailsFixSnippet =
+  "最终 review 将记录改动点、验证结果、剩余风险，以及 bug/根因原因。";
 
 const validPlan = `## Context
 - 用户希望实现 Plan Artifact Policy，确保计划文件格式稳定。
@@ -58,6 +63,33 @@ describe("plan artifact policy", () => {
         code: "missing_steps_checkbox",
         section: "Steps",
       }),
+    );
+  });
+
+  it("includes copyable snippets for common plan format issues", () => {
+    const checkboxResult = validateArtifactPolicy({
+      path: planPath,
+      content: validPlan
+        .replace("- [ ] 新增 policy 测试", "- 新增 policy 测试")
+        .replace("- [ ] 实现 policy 模块", "- 实现 policy 模块"),
+    });
+
+    expect(
+      formatArtifactPolicyFailure(planPath, checkboxResult.issues),
+    ).toContain("- [ ] 描述一个可验证的执行步骤");
+  });
+
+  it("includes a copyable Review fix snippet", () => {
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content: validPlan.replace(
+        "- 待实现后记录改动点、验证结果、风险，以及 bug 修复原因。",
+        "- 待实现后补充结果。",
+      ),
+    });
+
+    expect(formatArtifactPolicyFailure(planPath, result.issues)).toContain(
+      reviewDetailsFixSnippet,
     );
   });
 

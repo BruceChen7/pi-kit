@@ -8,6 +8,7 @@ import {
 const activeWorkflow = {
   active: true,
   reason: "workflow-only request",
+  kind: "stateful_git",
 };
 
 const workflowOnlyFeedback = {
@@ -27,7 +28,7 @@ const implementationFeedback = {
 };
 
 describe("workflow bypass policy", () => {
-  it("enables bypass from structured LLM workflow feedback", () => {
+  it("enables stateful bypass from git mutation workflow feedback", () => {
     expect(
       decideWorkflowBypass(
         workflowOnlyFeedback,
@@ -35,6 +36,19 @@ describe("workflow bypass policy", () => {
         false,
       ),
     ).toEqual(activeWorkflow);
+  });
+
+  it("enables read-only bypass from inspection workflow feedback", () => {
+    expect(
+      decideWorkflowBypass(
+        {
+          ...workflowOnlyFeedback,
+          requestedOperations: ["git status", "npm test"],
+        },
+        DEFAULT_WORKFLOW_BYPASS_STATE,
+        false,
+      ),
+    ).toMatchObject({ kind: "read_only" });
   });
 
   it("keeps implementation feedback in normal plan mode", () => {

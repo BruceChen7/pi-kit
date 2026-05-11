@@ -180,6 +180,16 @@ const planModeStateEntry = (data: Record<string, unknown>): CustomEntry => ({
   data,
 });
 
+const lastPersistedPlanModeSnapshot = (
+  harness: ReturnType<typeof buildHarness>,
+): Record<string, unknown> => {
+  const call = harness.api.appendEntry.mock.calls.findLast(
+    ([customType]) => customType === "plan-mode-state",
+  );
+  if (!call) throw new Error("Expected a plan-mode state entry");
+  return call[1] as Record<string, unknown>;
+};
+
 const createTempCtx = (): { ctx: TestCtx; cleanup: () => void } => {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "plan-mode-policy-"));
   return {
@@ -229,6 +239,8 @@ const sendAgentPrompt = async (
     ctx,
   );
 
+const commitWithoutBranchPrompt = "commit and no extra branch";
+
 const workflowOnlyIntentFeedback = {
   kind: "workflow_only",
   confidence: 0.9,
@@ -270,6 +282,18 @@ const mockPluginClassifierFeedback = (
     content: [{ type: "text", text: JSON.stringify(feedback) }],
     stopReason: "stop",
   });
+};
+
+type ClassifierRequest = { systemPrompt?: unknown };
+
+const lastClassifierSystemPrompt = (): string => {
+  const call = mockComplete.mock.calls.at(-1);
+  if (!call) throw new Error("Expected classifier to be called");
+  const request = call[1] as ClassifierRequest;
+  if (typeof request.systemPrompt !== "string") {
+    throw new Error("Expected classifier system prompt");
+  }
+  return request.systemPrompt;
 };
 
 const validPlanContent = `## Context
@@ -994,6 +1018,29 @@ describe("plan-mode extension", () => {
     );
   });
 
+  it("guides commit-only and repo inspection prompts as workflow-only", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+    mockPluginClassifierFeedback(ctx, workflowOnlyIntentFeedback);
+
+    await sendAgentPrompt(harness, ctx, commitWithoutBranchPrompt);
+
+    const systemPrompt = lastClassifierSystemPrompt();
+    const expectedGuidanceSnippets = [
+      "commit and no extra branch",
+      "no extra branch",
+      "workflow-only constraint",
+      "analyze this repo",
+      "repo inspection",
+      "searching, reading, listing",
+      "git diff/log/grep",
+      "fix lint and commit",
+      "refactor then commit",
+    ];
+    for (const snippet of expectedGuidanceSnippets) {
+      expect(systemPrompt).toContain(snippet);
+    }
+  });
+
   it("enters auto act with direct workflow guard from plugin classifier feedback", async () => {
     const { harness, ctx } = await startPlanModeSession();
     mockPluginClassifierFeedback(ctx, workflowOnlyIntentFeedback);
@@ -1011,6 +1058,47 @@ describe("plan-mode extension", () => {
     ).resolves.toBeUndefined();
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
+    ).resolves.toMatchObject({ block: true });
+  });
+
+  it("diagnoses exact commit prompt with plugin workflow feedback", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+    const exactWorkflowFeedback = {
+      ...workflowOnlyIntentFeedback,
+      evidence: [commitWithoutBranchPrompt],
+      requestedOperations: ["git commit"],
+    };
+    mockPluginClassifierFeedback(ctx, exactWorkflowFeedback);
+
+    await sendAgentPrompt(harness, ctx, commitWithoutBranchPrompt);
+
+    expect(mockComplete).toHaveBeenCalledOnce();
+    expect(JSON.stringify(mockComplete.mock.calls[0])).toContain(
+      commitWithoutBranchPrompt,
+    );
+    expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+      mode: "auto",
+      phase: "act",
+      workflowBypass: { active: true },
+    });
+  });
+
+  it("documents exact commit prompt failing closed without classifier feedback", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    const result = await sendAgentPrompt(
+      harness,
+      ctx,
+      commitWithoutBranchPrompt,
+    );
+
+    expect(mockComplete).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      systemPrompt: expect.stringContaining("Current mode: auto:plan."),
+    });
+    expect(JSON.stringify(result)).not.toContain("Direct workflow is active");
+    await expect(
+      harness.runToolCall("bash", { command: "git status --short" }, ctx),
     ).resolves.toMatchObject({ block: true });
   });
 

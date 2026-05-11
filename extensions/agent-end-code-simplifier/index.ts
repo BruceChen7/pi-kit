@@ -75,6 +75,7 @@ export const DEFAULT_PROMPT_TEMPLATE = [
 
 const SETTINGS_KEY = "agentEndCodeSimplifier";
 const EXTENSION_SOURCE_TAG = "agent-end-code-simplifier";
+const RUNNING_WIDGET_KEY = "agent-end-code-simplifier";
 const MANUAL_TRIGGER_SHORTCUT = "ctrl+alt+y";
 const AUTO_RUN_COMMAND = "agent-end-code-simplifier-auto";
 const CONFIRM_BEFORE_RUN_COMMAND = "agent-end-code-simplifier-confirm";
@@ -258,6 +259,14 @@ type NotificationContext = {
   ui: { notify: (message: string, type: string) => void };
 };
 
+type WidgetContext = {
+  hasUI?: boolean;
+  ui?: {
+    setWidget?: (key: string, content?: unknown) => void;
+    theme?: { fg?: (tone: string, text: string) => string };
+  };
+};
+
 const waitForApprovalDecision = async ({
   localDecision,
   remoteDecisions,
@@ -362,7 +371,32 @@ export default function agentEndCodeSimplifierExtension(
     modifiedPaths: [...modifiedPaths].sort(),
   });
 
-  const sendCodeSimplifierPrompt = (supportedPaths: string[]) => {
+  const showRunningWidget = (
+    ctx: WidgetContext,
+    supportedPaths: readonly string[],
+  ): void => {
+    if (!ctx.hasUI || typeof ctx.ui?.setWidget !== "function") {
+      return;
+    }
+
+    const message = `🧹 me-code-simplifier running for ${supportedPaths.length} file(s)...`;
+    const line = ctx.ui.theme?.fg?.("accent", message) ?? message;
+    ctx.ui.setWidget(RUNNING_WIDGET_KEY, [line]);
+  };
+
+  const clearRunningWidget = (ctx: WidgetContext): void => {
+    if (!ctx.hasUI || typeof ctx.ui?.setWidget !== "function") {
+      return;
+    }
+
+    ctx.ui.setWidget(RUNNING_WIDGET_KEY, undefined);
+  };
+
+  const sendCodeSimplifierPrompt = (
+    ctx: WidgetContext,
+    supportedPaths: string[],
+  ) => {
+    showRunningWidget(ctx, supportedPaths);
     suppressNextPrompt = true;
     pi.sendUserMessage(
       `${buildCodeSimplifierPrompt(supportedPaths, config.promptTemplate)}\n\n[${EXTENSION_SOURCE_TAG}]`,
@@ -371,14 +405,14 @@ export default function agentEndCodeSimplifierExtension(
   };
 
   const sendLoggedCodeSimplifierPrompt = (
-    ctx: { cwd?: string; hasUI?: boolean },
+    ctx: { cwd?: string; hasUI?: boolean } & WidgetContext,
     supportedPaths: string[],
   ) => {
     log.info("agent_end_sending_code_simplifier_prompt", {
       ...diagnostics(ctx),
       supportedPaths,
     });
-    sendCodeSimplifierPrompt(supportedPaths);
+    sendCodeSimplifierPrompt(ctx, supportedPaths);
   };
 
   const handleBooleanConfigCommand = (
@@ -451,19 +485,23 @@ export default function agentEndCodeSimplifierExtension(
         ...diagnostics(ctx),
         supportedPaths,
       });
-      sendCodeSimplifierPrompt(supportedPaths);
+      sendCodeSimplifierPrompt(ctx, supportedPaths);
     },
   });
 
   pi.on("session_start", async (_event, ctx) => {
     refreshConfig(ctx.cwd);
     modifiedPaths = new Set();
+    clearRunningWidget(ctx);
     log.debug("session_start_reset", diagnostics(ctx));
   });
 
   pi.on("agent_start", async (_event, ctx) => {
     refreshConfig(ctx.cwd);
     modifiedPaths = new Set();
+    if (!suppressNextPrompt) {
+      clearRunningWidget(ctx);
+    }
     log.debug("agent_start_reset", diagnostics(ctx));
   });
 
@@ -502,11 +540,13 @@ export default function agentEndCodeSimplifierExtension(
 
     if (suppressNextPrompt) {
       suppressNextPrompt = false;
+      clearRunningWidget(ctx);
       log.debug("agent_end_skipped_suppressed_next_prompt", diagnostics(ctx));
       return;
     }
 
     if (lastUserMessageLooksAutoTriggered(event.messages ?? [])) {
+      clearRunningWidget(ctx);
       log.debug("agent_end_skipped_auto_triggered_message", diagnostics(ctx));
       return;
     }

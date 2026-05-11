@@ -17,6 +17,7 @@ import {
 export type CommandRegistry = string[];
 
 type CommandAction = "add" | "remove" | "clear" | "list";
+type RtkRewriteMode = "rewrite" | "suggest";
 
 type ParsedCommandRegistryArgs = {
   action: CommandAction;
@@ -29,6 +30,7 @@ type ParseCommandRegistryArgsResult =
 
 type RtkRewriteConfig = {
   enabled: boolean;
+  mode: RtkRewriteMode;
   notify: boolean;
   exclude: string[];
   outputFiltering: boolean;
@@ -40,6 +42,7 @@ type RtkRewriteConfig = {
 
 type RtkRewriteSettings = {
   enabled?: unknown;
+  mode?: unknown;
   notify?: unknown;
   exclude?: unknown;
   outputFiltering?: unknown;
@@ -53,6 +56,7 @@ const DEFAULT_COMMAND_REGISTRY: CommandRegistry = [];
 
 const DEFAULT_CONFIG: RtkRewriteConfig = {
   enabled: true,
+  mode: "rewrite",
   notify: true,
   exclude: [],
   outputFiltering: true,
@@ -91,6 +95,12 @@ const sanitizePositiveInteger = (value: unknown, fallback: number): number => {
   return Math.floor(value);
 };
 
+const isRtkRewriteMode = (value: unknown): value is RtkRewriteMode =>
+  value === "rewrite" || value === "suggest";
+
+const sanitizeMode = (value: unknown): RtkRewriteMode =>
+  isRtkRewriteMode(value) ? value : DEFAULT_CONFIG.mode;
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -106,6 +116,7 @@ const sanitizeConfig = (value: unknown): RtkRewriteConfig => {
   const raw = isRecord(value) ? (value as RtkRewriteSettings) : {};
   const enabled =
     typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_CONFIG.enabled;
+  const mode = sanitizeMode(raw.mode);
   const notify =
     typeof raw.notify === "boolean" ? raw.notify : DEFAULT_CONFIG.notify;
   const outputFiltering =
@@ -129,6 +140,7 @@ const sanitizeConfig = (value: unknown): RtkRewriteConfig => {
 
   return {
     enabled,
+    mode,
     notify,
     exclude,
     outputFiltering,
@@ -165,6 +177,7 @@ const updateConfig = (
       ...settings,
       rtkRewrite: {
         enabled: next.enabled,
+        mode: next.mode,
         notify: next.notify,
         exclude: [...next.exclude],
         outputFiltering: next.outputFiltering,
@@ -384,23 +397,33 @@ const resolveRtkRewrite = async (
   }
 
   const rewritten = await runRtkRewrite(command, ctx);
-  if (rewritten && rewritten !== command) {
-    log?.info("rtk rewrite applied", { source, command, rewritten });
-
-    if (config.notify && ctx.hasUI) {
-      ctx.ui.notify(`RTK rewrite: ${command} → ${rewritten}`, "info");
-    }
-
-    return rewritten;
-  }
-
   if (!rewritten) {
     log?.debug("rtk rewrite empty result", { source, command });
-  } else if (rewritten === command) {
-    log?.debug("rtk rewrite no-op", { source, command });
+    return null;
   }
 
-  return null;
+  if (rewritten === command) {
+    log?.debug("rtk rewrite no-op", { source, command });
+    return null;
+  }
+
+  if (config.mode === "suggest") {
+    log?.info("rtk rewrite suggested", { source, command, rewritten });
+
+    if (config.notify && ctx.hasUI) {
+      ctx.ui.notify(`RTK suggestion: ${command} → ${rewritten}`, "info");
+    }
+
+    return null;
+  }
+
+  log?.info("rtk rewrite applied", { source, command, rewritten });
+
+  if (config.notify && ctx.hasUI) {
+    ctx.ui.notify(`RTK rewrite: ${command} → ${rewritten}`, "info");
+  }
+
+  return rewritten;
 };
 
 const resolveOriginalCommand = (
@@ -452,7 +475,15 @@ const formatStatus = (config: RtkRewriteConfig): string => {
     },
   )})`;
   const tailCaps = `lines ${config.outputTailMaxLines}, chars ${config.outputTailMaxChars}`;
-  return `RTK rewrite ${status} | notify ${notify} | exclude: ${exclude} | matched command rewrite ${matchedCommandRewrite} | output filter ${outputFilter} | tail caps: ${tailCaps}`;
+  return [
+    `RTK rewrite ${status}`,
+    `mode ${config.mode}`,
+    `notify ${notify}`,
+    `exclude: ${exclude}`,
+    `matched command rewrite ${matchedCommandRewrite}`,
+    `output filter ${outputFilter}`,
+    `tail caps: ${tailCaps}`,
+  ].join(" | ");
 };
 
 const truncateMessage = (message: string, maxLength: number): string => {
@@ -500,6 +531,20 @@ const handleToggle = (ctx: ExtensionCommandContext): void => {
     config,
     `RTK rewrite ${config.enabled ? "enabled" : "disabled"}.`,
   );
+};
+
+const handleMode = (ctx: ExtensionCommandContext, rawMode: string): void => {
+  const mode = rawMode.trim();
+  if (!isRtkRewriteMode(mode)) {
+    ctx.ui.notify("Usage: /rtk-rewrite-mode <rewrite|suggest>", "warning");
+    return;
+  }
+
+  const config = updateConfig(ctx.cwd, (current) => ({
+    ...current,
+    mode,
+  }));
+  notifyStatus(ctx, config, `RTK rewrite mode set to ${mode}.`);
 };
 
 const handleMatchedCommandRewriteToggle = (
@@ -662,6 +707,14 @@ export default function (pi: ExtensionAPI) {
     description: "Toggle RTK rewrite for matched registered commands",
     handler: async (_args, ctx) => {
       handleMatchedCommandRewriteToggle(ctx);
+    },
+  });
+
+  pi.registerCommand("rtk-rewrite-mode", {
+    description:
+      "Set RTK rewrite mode. Usage: /rtk-rewrite-mode <rewrite|suggest>",
+    handler: async (args, ctx) => {
+      handleMode(ctx, args);
     },
   });
 

@@ -94,13 +94,14 @@ const formatCompletedTodoWidgetLines = (
   const modePrefix = `【${state.phase}:completed】`;
   const deliverySummary = `${done}/${total} 项任务已交付`;
   const planPath = state.activeRun?.planPath;
-  if (!planPath) {
-    return [`${modePrefix}✅ 任务已完成 · ${deliverySummary}`];
-  }
+  const heading = planPath
+    ? `✅ 计划「${formatPlanName(planPath)}」已完成 · ${deliverySummary}`
+    : `✅ 任务已完成 · ${deliverySummary}`;
+  const deliveredLines = state.todos
+    .filter((todo) => todo.status === "done")
+    .map((todo) => `  #${todo.id} ${todo.text}`);
 
-  return [
-    `${modePrefix}✅ 计划「${formatPlanName(planPath)}」已完成 · ${deliverySummary}`,
-  ];
+  return [`${modePrefix}${heading}`, "已交付：", ...deliveredLines];
 };
 
 export const formatTodoWidgetLines = (state: PlanModeState): string[] => {

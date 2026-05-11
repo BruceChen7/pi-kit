@@ -73,6 +73,25 @@ type PlanRun = {
   archivedAt?: string;
 };
 
+type AutoDecisionOutcome =
+  | "direct_answer"
+  | "direct_workflow"
+  | "plan_required";
+
+type AutoDecisionSummary = {
+  outcome: AutoDecisionOutcome;
+  reason: string;
+  classifierStatus?: string;
+  confidence?: number;
+};
+
+type IntentFeedbackSummaryParts = {
+  kind: string | null;
+  reason: string | null;
+  classifierStatus: string | null;
+  confidence?: number;
+};
+
 type PlanModeSnapshot = {
   mode: PlanMode;
   phase: PlanPhase;
@@ -89,6 +108,7 @@ type PlanModeSnapshot = {
   resumableApprovedPlanPath: string | null;
   endConversationRequested: boolean;
   workflowBypass?: WorkflowBypassState;
+  lastAutoDecision?: AutoDecisionSummary | null;
 };
 
 type PlanModeConfig = {
@@ -302,6 +322,51 @@ const todosFromSnapshot = (value: unknown): TodoItem[] =>
       })
     : [];
 
+const isAutoDecisionOutcome = (value: unknown): value is AutoDecisionOutcome =>
+  value === "direct_answer" ||
+  value === "direct_workflow" ||
+  value === "plan_required";
+
+const optionalNumberProperty = (
+  value: Record<string, unknown>,
+  key: string,
+): number | undefined =>
+  typeof value[key] === "number" ? value[key] : undefined;
+
+const readIntentFeedbackSummaryParts = (
+  value: unknown,
+): IntentFeedbackSummaryParts | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return {
+    kind: stringProperty(value, "kind"),
+    reason: stringProperty(value, "reason"),
+    classifierStatus: stringProperty(value, "classifierStatus"),
+    confidence: optionalNumberProperty(value, "confidence"),
+  };
+};
+
+const autoDecisionFromSnapshot = (
+  value: unknown,
+): AutoDecisionSummary | null => {
+  if (!isRecord(value) || !isAutoDecisionOutcome(value.outcome)) {
+    return null;
+  }
+
+  const confidence = optionalNumberProperty(value, "confidence");
+
+  return {
+    outcome: value.outcome,
+    reason: typeof value.reason === "string" ? value.reason : "unknown",
+    ...(typeof value.classifierStatus === "string"
+      ? { classifierStatus: value.classifierStatus }
+      : {}),
+    ...(confidence !== undefined ? { confidence } : {}),
+  };
+};
+
 const runFromSnapshot = (value: unknown): PlanRun | null => {
   if (!isRecord(value) || !isPlanRunStatus(value.status)) {
     return null;
@@ -482,6 +547,7 @@ const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
         : null,
     endConversationRequested: data.endConversationRequested === true,
     workflowBypass: workflowBypassFromSnapshot(data.workflowBypass),
+    lastAutoDecision: autoDecisionFromSnapshot(data.lastAutoDecision),
   };
 };
 
@@ -527,6 +593,7 @@ class PlanModeState {
   resumableApprovedPlanPath: string | null = null;
   endConversationRequested = false;
   workflowBypass: WorkflowBypassState = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
+  lastAutoDecision: AutoDecisionSummary | null = null;
 
   constructor(defaultMode: PlanMode) {
     this.mode = defaultMode;
@@ -549,6 +616,7 @@ class PlanModeState {
     this.resumableApprovedPlanPath = null;
     this.endConversationRequested = false;
     this.workflowBypass = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
+    this.lastAutoDecision = null;
   }
 
   restore(snapshot: PlanModeSnapshot | null, defaultMode: PlanMode): void {
@@ -582,6 +650,7 @@ class PlanModeState {
     this.resumableApprovedPlanPath = snapshot.resumableApprovedPlanPath;
     this.endConversationRequested = snapshot.endConversationRequested;
     this.workflowBypass = workflowBypassFromSnapshot(snapshot.workflowBypass);
+    this.lastAutoDecision = snapshot.lastAutoDecision ?? null;
   }
 
   setMode(mode: PlanMode): void {
@@ -872,6 +941,9 @@ class PlanModeState {
       resumableApprovedPlanPath: this.resumableApprovedPlanPath,
       endConversationRequested: this.endConversationRequested,
       workflowBypass: { ...this.workflowBypass },
+      lastAutoDecision: this.lastAutoDecision
+        ? { ...this.lastAutoDecision }
+        : null,
     };
   }
 }
@@ -910,21 +982,48 @@ const formatPlanName = (planPath: string): string => {
   return withoutExtension.replace(/^\d{4}-\d{2}-\d{2}-/u, "") || "当前计划";
 };
 
+const formatAutoDecision = (
+  decision: AutoDecisionSummary | null,
+): string | null => {
+  if (!decision) {
+    return null;
+  }
+
+  const confidence =
+    typeof decision.confidence === "number"
+      ? `, confidence ${decision.confidence.toFixed(2)}`
+      : "";
+  const status = decision.classifierStatus
+    ? `, classifier ${decision.classifierStatus}`
+    : "";
+  return `${decision.outcome}: ${decision.reason}${status}${confidence}`;
+};
+
 const formatPlanModeStatus = (state: PlanModeState): string => {
-  const mode = getModeLabel(state);
+  const mode =
+    state.mode === "fast"
+      ? "fast ⚠ review guard bypassed"
+      : getModeLabel(state);
+  const decision = formatAutoDecision(state.lastAutoDecision);
   if (!state.activeRun) {
-    return `Plan mode: ${mode} • no active plan run`;
+    return [`Plan mode: ${mode}`, "no active plan run", decision]
+      .filter(Boolean)
+      .join(" • ");
   }
 
   const plan = state.activeRun.planPath ?? "unbound plan";
   const archived = state.recentRuns.length;
+  const done = state.todos.filter((todo) => todo.status === "done").length;
   return [
     `Plan mode: ${mode}`,
     `run: ${state.activeRun.status}`,
     `plan: ${plan}`,
-    `todos: ${state.todos.filter((todo) => todo.status === "done").length}/${state.todos.length} done`,
+    `todos: ${done}/${state.todos.length} done`,
     `archived: ${archived}`,
-  ].join(" • ");
+    decision,
+  ]
+    .filter(Boolean)
+    .join(" • ");
 };
 
 const formatCompletedTodoWidgetLines = (
@@ -1231,7 +1330,7 @@ class PlanModeController {
       TODO_WIDGET_KEY,
       colorTodoWidgetHeading(widgetLines, ctx),
       {
-        placement: "aboveEditor",
+        placement: "belowEditor",
       },
     );
   }
@@ -1259,11 +1358,19 @@ class PlanModeController {
         `${TODO_TOOL_NAME} statuses to in_progress and done so the widget shows the current step.`,
     ];
 
+    if (this.state.mode === "fast") {
+      lines.push(
+        "- Fast mode is active: review workflow guards are bypassed. Use it " +
+          "only for trusted emergency work; prefer auto for normal tasks.",
+      );
+    }
+
     if (this.state.isWorkflowBypassActive()) {
       lines.push(
         "- Direct workflow is active: this turn may use only safe git/npm " +
-          "bash for the requested workflow, and must not implement code or " +
-          "write files.",
+          "bash for the requested workflow. Stateful git operations such as " +
+          "add/commit/push may change repository state, but source writes " +
+          "remain blocked.",
       );
     }
 
@@ -1310,7 +1417,9 @@ class PlanModeController {
       this.buildIntentClassifierInput(prompt),
       this.config.intentClassifier,
     );
-    return result.feedback ?? undefined;
+    return result.feedback
+      ? { ...result.feedback, classifierStatus: result.status }
+      : { classifierStatus: result.status, reason: result.reason };
   }
 
   async handleAgentStart(event: unknown, ctx: ExtensionContext): Promise<void> {
@@ -1345,11 +1454,48 @@ class PlanModeController {
       }
     }
 
+    this.state.lastAutoDecision = this.buildAutoDecisionSummary(
+      intentFeedback,
+      requiresPlanReview,
+    );
     this.autoPlanReviewRequiredForTurn =
       this.state.isAutoPlanPhase() &&
       !this.state.isWorkflowBypassActive() &&
       !this.internalExtensionBypassForTurn &&
       requiresPlanReview;
+  }
+
+  buildAutoDecisionSummary(
+    intentFeedback: unknown,
+    requiresPlanReview: boolean,
+  ): AutoDecisionSummary {
+    const parsed = readIntentFeedbackSummaryParts(intentFeedback);
+
+    if (!parsed?.kind) {
+      return {
+        outcome: "plan_required",
+        reason: parsed?.reason ?? "structured intent feedback unavailable",
+        ...(parsed?.classifierStatus
+          ? { classifierStatus: parsed.classifierStatus }
+          : {}),
+      };
+    }
+
+    const outcome = this.state.isWorkflowBypassActive()
+      ? "direct_workflow"
+      : requiresPlanReview
+        ? "plan_required"
+        : "direct_answer";
+    return {
+      outcome,
+      reason: parsed.reason ?? `classified as ${parsed.kind}`,
+      ...(parsed.classifierStatus
+        ? { classifierStatus: parsed.classifierStatus }
+        : {}),
+      ...(parsed.confidence !== undefined
+        ? { confidence: parsed.confidence }
+        : {}),
+    };
   }
 
   syncAutoPhaseForWorkflowBypass(
@@ -1823,7 +1969,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       pi.sendUserMessage(
         "Plan Mode requires a concrete TODO list before ending this planning turn. " +
           `Call ${TODO_TOOL_NAME} with action "set" or "add", then create and ` +
-          `submit a reviewable plan/spec with ${PLANNOTATOR_SUBMIT_TOOL_NAME}.`,
+          `submit a reviewable plan/spec with ${PLANNOTATOR_SUBMIT_TOOL_NAME}. ` +
+          `Reason: ${formatAutoDecision(controller.state.lastAutoDecision) ?? "plan review required"}.`,
         { deliverAs: "followUp" },
       );
       controller.clearTurnSource();

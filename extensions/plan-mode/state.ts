@@ -3,12 +3,13 @@ import { loadSettings } from "../shared/settings.ts";
 import {
   DEFAULT_CONFIG,
   EXPLICIT_PLAN_MODE_REQUEST_PATTERN,
+  MODE_SELECTION_OPTIONS,
   RECENT_RUN_LIMIT,
   STATE_ENTRY_TYPE,
 } from "./constants.ts";
 import type {
   ApprovalContinuationMode,
-  AutoDecisionSummary,
+  PlanDecisionSummary,
   PlanMode,
   PlanModeConfig,
   PlanModePreset,
@@ -35,7 +36,8 @@ export const stringProperty = (value: unknown, key: string): string | null => {
 };
 
 export const isPlanMode = (value: unknown): value is PlanMode =>
-  value === "plan" || value === "act" || value === "auto" || value === "fast";
+  typeof value === "string" &&
+  MODE_SELECTION_OPTIONS.includes(value as PlanMode);
 
 export const promptRequestsPlanMode = (prompt: string): boolean =>
   EXPLICIT_PLAN_MODE_REQUEST_PATTERN.test(prompt);
@@ -126,9 +128,9 @@ export const todosFromSnapshot = (value: unknown): TodoItem[] =>
       })
     : [];
 
-export const autoDecisionFromSnapshot = (
+export const planDecisionFromSnapshot = (
   value: unknown,
-): AutoDecisionSummary | null => {
+): PlanDecisionSummary | null => {
   if (!isRecord(value) || value.outcome !== "plan_required") {
     return null;
   }
@@ -331,7 +333,7 @@ export const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
         ? data.resumableApprovedPlanPath
         : null,
     endConversationRequested: data.endConversationRequested === true,
-    lastAutoDecision: autoDecisionFromSnapshot(data.lastAutoDecision),
+    lastAutoDecision: planDecisionFromSnapshot(data.lastAutoDecision),
   };
 };
 
@@ -376,7 +378,7 @@ export class PlanModeState {
   confirmedApprovedContinuationPath: string | null = null;
   resumableApprovedPlanPath: string | null = null;
   endConversationRequested = false;
-  lastAutoDecision: AutoDecisionSummary | null = null;
+  lastAutoDecision: PlanDecisionSummary | null = null;
 
   constructor(defaultMode: PlanMode) {
     this.mode = defaultMode;
@@ -450,30 +452,32 @@ export class PlanModeState {
     this.reviewApprovedPlanPaths = new Set();
   }
 
-  switchAutoToAct(): void {
-    if (this.mode === "auto") {
+  switchReviewToAct(): void {
+    if (this.mode === "review") {
       this.phase = "act";
     }
   }
 
-  shouldReturnAutoActToPlan(): boolean {
+  shouldReturnReviewActToPlan(): boolean {
     return (
-      this.mode === "auto" && this.phase === "act" && !this.hasUnfinishedTodos()
+      this.mode === "review" &&
+      this.phase === "act" &&
+      !this.hasUnfinishedTodos()
     );
   }
 
-  returnAutoActToPlan(): void {
+  returnReviewActToPlan(): void {
     this.archiveCompletedActiveRun();
     this.phase = "plan";
     this.clearReviewTracking();
   }
 
-  isAutoPlanPhase(): boolean {
-    return this.mode === "auto" && this.phase === "plan";
+  isReviewPlanPhase(): boolean {
+    return this.mode === "review" && this.phase === "plan";
   }
 
   isPlanPhase(): boolean {
-    return this.mode === "plan" || this.isAutoPlanPhase();
+    return this.mode === "plan" || this.isReviewPlanPhase();
   }
 
   hasUnfinishedTodos(): boolean {
@@ -516,14 +520,14 @@ export class PlanModeState {
   consumeConfirmedApprovedContinuation(): string | null {
     const planPath = this.confirmedApprovedContinuationPath;
     this.confirmedApprovedContinuationPath = null;
-    if (!planPath || this.mode !== "auto") {
+    if (!planPath || this.mode !== "review") {
       return null;
     }
 
     this.activePlanPath = planPath;
     this.latestReviewArtifactPath = planPath;
     this.reviewApprovedPlanPaths.add(planPath);
-    this.switchAutoToAct();
+    this.switchReviewToAct();
     return planPath;
   }
 
@@ -551,9 +555,9 @@ export class PlanModeState {
     return this.activeRun?.planPath ?? null;
   }
 
-  isApprovedCompletedAutoActRun(): boolean {
+  isApprovedCompletedReviewActRun(): boolean {
     return (
-      this.mode === "auto" &&
+      this.mode === "review" &&
       this.phase === "act" &&
       this.activeRun?.status === "completed" &&
       this.activeRun.planPath === this.activePlanPath &&

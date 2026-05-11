@@ -62,7 +62,7 @@ import {
 import type { InputSource, PlanMode, PlanModeConfig } from "./types.ts";
 import {
   colorTodoWidgetHeading,
-  formatAutoDecision,
+  formatPlanDecision,
   formatTodoWidgetLines,
   getModeLabel,
 } from "./ui.ts";
@@ -70,7 +70,7 @@ import {
 export class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
   state = new PlanModeState(DEFAULT_CONFIG.defaultMode);
-  private autoPlanReviewRequiredForTurn = false;
+  private reviewRequiredForTurn = false;
   private inputSourceForTurn: InputSource = "unknown";
   private internalExtensionBypassForTurn = false;
   private approvedPlanContinuationForTurn = false;
@@ -81,7 +81,7 @@ export class PlanModeController {
     this.config = loadPlanModeConfig(ctx.cwd);
     const entries = getSessionStateEntries(ctx);
     this.state.restore(latestSnapshot(entries), this.config.defaultMode);
-    this.autoPlanReviewRequiredForTurn = false;
+    this.reviewRequiredForTurn = false;
     this.inputSourceForTurn = "unknown";
     this.internalExtensionBypassForTurn = false;
     this.approvedPlanContinuationForTurn = false;
@@ -165,13 +165,6 @@ export class PlanModeController {
       lines.push(DIRECT_ACT_TODO_GUIDANCE);
     }
 
-    if (this.state.mode === "fast") {
-      lines.push(
-        "- Fast mode is active: review workflow guards are bypassed. Use it " +
-          "only for trusted emergency work; prefer auto for normal tasks.",
-      );
-    }
-
     return lines.join("\n");
   }
 
@@ -205,19 +198,19 @@ export class PlanModeController {
 
     if (
       !this.internalExtensionBypassForTurn &&
-      this.state.shouldReturnAutoActToPlan() &&
+      this.state.shouldReturnReviewActToPlan() &&
       !continuesApprovedPlan
     ) {
-      this.state.returnAutoActToPlan();
+      this.state.returnReviewActToPlan();
       this.persist();
     }
 
     this.state.lastAutoDecision = {
       outcome: "plan_required",
-      reason: "auto mode requires a reviewed plan/spec",
+      reason: "review mode requires a reviewed plan/spec",
     };
-    this.autoPlanReviewRequiredForTurn =
-      this.state.isAutoPlanPhase() && !this.internalExtensionBypassForTurn;
+    this.reviewRequiredForTurn =
+      this.state.isReviewPlanPhase() && !this.internalExtensionBypassForTurn;
   }
 
   clearTurnSource(): void {
@@ -278,7 +271,7 @@ export class PlanModeController {
       return true;
     }
     return (
-      this.autoPlanReviewRequiredForTurn ||
+      this.reviewRequiredForTurn ||
       this.state.todos.length > 0 ||
       this.state.latestReviewArtifactPath !== null
     );
@@ -432,7 +425,7 @@ export class PlanModeController {
         "Plan Mode requires a concrete TODO list before ending this planning turn. " +
           `Call ${TODO_TOOL_NAME} with action "set" or "add", then create and ` +
           `submit a reviewable plan/spec with ${PLANNOTATOR_SUBMIT_TOOL_NAME}. ` +
-          `Reason: ${formatAutoDecision(this.state.lastAutoDecision) ?? "plan review required"}.`,
+          `Reason: ${formatPlanDecision(this.state.lastAutoDecision) ?? "plan review required"}.`,
         { deliverAs: "followUp" },
       );
       this.clearTurnSource();
@@ -458,7 +451,7 @@ export class PlanModeController {
     const pendingContinuationPath =
       this.state.pendingApprovedPlanContinuationPath;
     if (
-      this.state.mode === "auto" &&
+      this.state.mode === "review" &&
       this.state.phase === "act" &&
       pendingContinuationPath
     ) {
@@ -471,7 +464,7 @@ export class PlanModeController {
 
     if (
       this.config.requireReview &&
-      this.state.mode === "auto" &&
+      this.state.mode === "review" &&
       this.state.phase === "plan" &&
       this.state.todos.length > 0 &&
       !latestReviewArtifactApproved
@@ -574,7 +567,7 @@ export class PlanModeController {
         : "executing";
       this.state.activeRun.approvedAt = new Date().toISOString();
     }
-    this.state.switchAutoToAct();
+    this.state.switchReviewToAct();
     this.applyMode(ctx);
     this.persist();
   }

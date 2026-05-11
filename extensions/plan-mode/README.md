@@ -5,31 +5,30 @@ guards, a TODO widget, and Plannotator approval before implementation.
 
 ## Recommended workflow
 
-Plan Mode defaults to `act` for direct execution. Use `auto` when you want the
+Plan Mode defaults to `act` for direct execution. Use `review` when you want the
 review-first workflow:
 
 1. The session starts in `act` unless configuration overrides `defaultMode`.
 2. For implementation requests, create a concrete TODO list and a reviewable plan/spec.
 3. Submit the plan/spec to Plannotator.
-4. After approval, Plan Mode switches to `auto:act` and implementation can proceed.
+4. After approval, Plan Mode switches to `review:act` and implementation can proceed.
 5. If the planning TODOs are already complete, Plan Mode continues according to
    `approval.continueAfterApproval`: confirm by default, auto-continue for balanced/solo
    presets, or stay ready for manual continuation.
 6. During Act phase, update TODOs from `in_progress` to `done` as work completes.
 
-Auto Mode is intentionally fail-closed: normal user turns stay in `auto:plan` until a
+Review Mode is intentionally fail-closed: normal user turns stay in `review:plan` until a
 reviewable plan/spec is approved. Operational work such as git status, commit, push,
-tests, or lint no longer receives an automatic workflow bypass; use `act` or `fast` when
-you want direct command execution.
+tests, or lint no longer receives an automatic workflow bypass; use `act` when you want
+direct command execution.
 
 ## Modes and commands
 
 ```text
 /plan-mode status
-/plan-mode auto
+/plan-mode review
 /plan-mode plan
 /plan-mode act
-/plan-mode fast
 ```
 
 - `act` is the default mode.
@@ -38,11 +37,9 @@ you want direct command execution.
   `act`.
 - Prompts that explicitly ask to plan first, such as “please plan this”, enter
   `plan` directly without showing the selector.
-- `auto` keeps the review-first workflow for teams that prefer explicit plan/spec review.
+- `review` keeps the review-first workflow for teams that prefer explicit plan/spec review.
 - `plan` keeps the session in read-only planning mode.
-- `act` allows implementation without waiting for auto approval.
-- `fast` is an escape hatch for direct execution; prefer `auto` for normal work.
-  When active, Plan Mode warns that review workflow guards are bypassed.
+- `act` allows implementation without waiting for review approval.
 - `/plan-mode status` reports a user-facing run state such as Planning, Waiting for
   review, Ready to act, Executing, or Done, plus internal details when useful.
 
@@ -95,7 +92,7 @@ revise the same file and submit again. Approval applies to the
 currently submitted artifact; switching to a newer artifact requires a fresh review.
 After an approved plan is complete on the planning side, short continuation prompts keep
 that same approved plan executable. Unrelated new implementation requests still return to
-`auto:plan` and require their own reviewed plan/spec. New TODO runs do not inherit a
+`review:plan` and require their own reviewed plan/spec. New TODO runs do not inherit a
 previous approved plan name unless they are part of that explicit continuation or are
 bound by a fresh review approval.
 
@@ -129,8 +126,8 @@ Runtime guards enforce the selected mode:
 
 - plan-required turns block `bash` and source-code `edit` / `write`, except for writing
   reviewable plan/spec artifacts
-- `auto` no longer classifies prompts or bypasses review for operational workflows
-- use `act` or `fast` for direct command execution without the reviewed-plan workflow
+- `review` no longer classifies prompts or bypasses review for operational workflows
+- use `act` for direct command execution without the reviewed-plan workflow
 
 Plan/spec artifact writes are allowed only for reviewable Plannotator paths:
 

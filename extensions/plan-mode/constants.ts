@@ -27,12 +27,11 @@ export const DEFAULT_MODE_SELECTION_TIMEOUT_MS = 3000;
 export const MODE_SELECTION_TITLE = "Choose Plan Mode for this run";
 export const MODE_SELECTION_MESSAGE =
   "Choose Plan Mode for this run; defaulting to act in 3s.";
-export const MODE_SELECTION_OPTIONS: PlanMode[] = [
-  "act",
-  "plan",
-  "auto",
-  "fast",
-];
+export const MODE_SELECTION_OPTIONS: PlanMode[] = ["act", "plan", "review"];
+export const PLAN_MODE_COMMAND_OPTIONS = [
+  ...MODE_SELECTION_OPTIONS,
+  "status",
+] as const;
 export const EXPLICIT_PLAN_MODE_REQUEST_PATTERN =
   /\b(?:please\s+)?plan\s+(?:this|the|mode|first)|计划模式|规划模式/iu;
 

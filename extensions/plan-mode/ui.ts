@@ -1,11 +1,11 @@
 import path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { PlanModeState } from "./state.ts";
-import type { AutoDecisionSummary, TodoItem, TodoStatus } from "./types.ts";
+import type { PlanDecisionSummary, TodoItem, TodoStatus } from "./types.ts";
 
 export const getModeLabel = (state: PlanModeState): string => {
-  if (state.mode === "auto") {
-    return `auto:${state.phase}`;
+  if (state.mode === "review") {
+    return `review:${state.phase}`;
   }
   return state.mode;
 };
@@ -34,8 +34,8 @@ const formatPlanName = (planPath: string): string => {
   return withoutExtension.replace(/^\d{4}-\d{2}-\d{2}-/u, "") || "当前计划";
 };
 
-export const formatAutoDecision = (
-  decision: AutoDecisionSummary | null,
+export const formatPlanDecision = (
+  decision: PlanDecisionSummary | null,
 ): string | null => {
   if (!decision) {
     return null;
@@ -58,11 +58,8 @@ const getUserRunStatus = (state: PlanModeState): string => {
 };
 
 export const formatPlanModeStatus = (state: PlanModeState): string => {
-  const mode =
-    state.mode === "fast"
-      ? "fast ⚠ review guard bypassed"
-      : getModeLabel(state);
-  const decision = formatAutoDecision(state.lastAutoDecision);
+  const mode = getModeLabel(state);
+  const decision = formatPlanDecision(state.lastAutoDecision);
   if (!state.activeRun) {
     return [
       `Plan mode: ${mode}`,

@@ -17,16 +17,10 @@ review-first workflow:
    presets, or stay ready for manual continuation.
 6. During Act phase, update TODOs from `in_progress` to `done` as work completes.
 
-Auto Mode chooses between three user-visible outcomes: answer directly, run a safe
-workflow directly, or require plan/spec review. Pure operational workflows, such as git
-status, commit, push, tests, or lint, switch the turn to direct workflow execution when
-the Plan Mode plugin classifier produces valid structured intent feedback. Direct
-workflow execution may show `auto:act`, but it is still limited to safe git/npm bash;
-source-code writes remain blocked. Stateful git operations such as `git add`,
-`git commit`, and `git push` may change repository state, so Plan Mode calls this
-out in the injected guidance. Missing, invalid, unavailable, timed-out, or
-low-confidence intent feedback fails closed and requires the safer planning path,
-with the latest decision reason shown in status/follow-up messages.
+Auto Mode is intentionally fail-closed: normal user turns stay in `auto:plan` until a
+reviewable plan/spec is approved. Operational work such as git status, commit, push,
+tests, or lint no longer receives an automatic workflow bypass; use `act` or `fast` when
+you want direct command execution.
 
 ## Modes and commands
 
@@ -44,8 +38,7 @@ with the latest decision reason shown in status/follow-up messages.
   `act`.
 - Prompts that explicitly ask to plan first, such as “please plan this”, enter
   `plan` directly without showing the selector.
-- `auto` keeps the review-first workflow for teams that prefer classifier-driven
-  plan/spec review.
+- `auto` keeps the review-first workflow for teams that prefer explicit plan/spec review.
 - `plan` keeps the session in read-only planning mode.
 - `act` allows implementation without waiting for auto approval.
 - `fast` is an escape hatch for direct execution; prefer `auto` for normal work.
@@ -132,30 +125,12 @@ their own structure.
 
 ## Runtime guards
 
-Runtime guards enforce the selected Auto outcome:
+Runtime guards enforce the selected mode:
 
 - plan-required turns block `bash` and source-code `edit` / `write`, except for writing
   reviewable plan/spec artifacts
-- direct workflow turns allow only the narrow safe git/npm bash allow-list
-- direct workflow turns still block source-code `edit` / `write` even when shown as
-  `auto:act`
-
-Plan Mode starts each normal user turn by asking a plugin-owned classifier for structured
-intent feedback. Event-provided `intentFeedback` is still accepted for compatibility, but
-Plan Mode no longer depends on Pi core injecting it.
-
-Plan Mode consumes structured intent feedback and folds it into three Auto decisions:
-
-- direct answer: no plan/spec obligation for read-only questions
-- direct workflow: safe git/npm workflow execution without plan/spec review; Plan Mode
-  labels it as read-only or stateful git based on requested operations
-- plan required: normal TODO + plan/spec review for implementation, ambiguity, or invalid
-  classifier output
-
-The old keyword/regular-expression intent classifier is not used as a runtime fallback.
-If the plugin classifier cannot run because there is no active model, model auth is
-unavailable, the request times out, or the response is invalid, Plan Mode keeps the safe
-fail-closed behavior.
+- `auto` no longer classifies prompts or bypasses review for operational workflows
+- use `act` or `fast` for direct command execution without the reviewed-plan workflow
 
 Plan/spec artifact writes are allowed only for reviewable Plannotator paths:
 
@@ -204,10 +179,6 @@ Explicit settings override preset defaults.
       "requireSectionOrder": true,
       "requireChinese": true,
       "requireReviewDetails": true
-    },
-    "intentClassifier": {
-      "enabled": true,
-      "timeoutMs": 3000
     }
   }
 }

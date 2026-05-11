@@ -1,6 +1,6 @@
 import type { ArtifactPolicyConfig } from "./artifact-policy.ts";
 
-export type PlanMode = "plan" | "act" | "auto" | "fast";
+export type PlanMode = "plan" | "act" | "review";
 export type PlanPhase = "plan" | "act";
 export type InputSource = "interactive" | "rpc" | "extension" | "unknown";
 export type TodoStatus = "todo" | "in_progress" | "done" | "blocked";
@@ -44,7 +44,7 @@ export type PlanRun = {
   archivedAt?: string;
 };
 
-export type AutoDecisionSummary = {
+export type PlanDecisionSummary = {
   outcome: "plan_required";
   reason: string;
 };
@@ -64,7 +64,7 @@ export type PlanModeSnapshot = {
   confirmedApprovedContinuationPath: string | null;
   resumableApprovedPlanPath: string | null;
   endConversationRequested: boolean;
-  lastAutoDecision?: AutoDecisionSummary | null;
+  lastAutoDecision?: PlanDecisionSummary | null;
 };
 
 export type PlanModePreset = "strict" | "balanced" | "solo";

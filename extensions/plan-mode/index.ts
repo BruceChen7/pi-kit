@@ -1,5 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { STATUS_KEY, TODO_WIDGET_KEY } from "./constants.ts";
+import {
+  PLAN_MODE_COMMAND_OPTIONS,
+  STATUS_KEY,
+  TODO_WIDGET_KEY,
+} from "./constants.ts";
 import { PlanModeController } from "./controller.ts";
 import { isPlanMode } from "./state.ts";
 import { registerTodoTool } from "./todo-tool.ts";
@@ -9,17 +13,17 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   const controller = new PlanModeController(pi);
 
   pi.registerFlag?.("plan-mode", {
-    description: "Start with plan-mode auto workflow enabled",
+    description: "Start with plan-mode review workflow enabled",
     type: "boolean",
     default: false,
   });
 
   pi.registerCommand("plan-mode", {
-    description: "Switch Plan Mode workflow: plan, act, auto, fast, status",
+    description: "Switch Plan Mode workflow: plan, act, review, status",
     getArgumentCompletions: (prefix: string) =>
-      ["plan", "act", "auto", "fast", "status"]
-        .filter((mode) => mode.startsWith(prefix))
-        .map((mode) => ({ label: mode, value: mode })),
+      PLAN_MODE_COMMAND_OPTIONS.filter((mode) => mode.startsWith(prefix)).map(
+        (mode) => ({ label: mode, value: mode }),
+      ),
     handler: async (args, ctx) => {
       const requested = args.trim();
       if (requested === "status" || requested.length === 0) {
@@ -40,7 +44,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     controller.restore(ctx);
     if (pi.getFlag?.("plan-mode") === true) {
-      controller.state.setMode("auto");
+      controller.state.setMode("review");
     }
     controller.applyMode(ctx);
   });

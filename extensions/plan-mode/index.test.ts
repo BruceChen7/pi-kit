@@ -210,7 +210,7 @@ const writeProjectSettings = (
   fs.writeFileSync(settingsPath, JSON.stringify(settings), "utf-8");
 };
 
-const startPlanModeSession = async (mode: "auto" | "act" = "auto") => {
+const startPlanModeSession = async (mode: "review" | "act" = "review") => {
   const harness = buildHarness();
   const ctx = buildCtx();
   planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -368,7 +368,7 @@ describe("plan-mode extension", () => {
     expect(ctx.ui.select).toHaveBeenCalledTimes(1);
     expect(ctx.ui.select).toHaveBeenCalledWith(
       "Choose Plan Mode for this run",
-      ["act", "plan", "auto", "fast"],
+      ["act", "plan", "review"],
       { timeout: 3000 },
     );
     const result = await sendAgentPrompt(harness, ctx, "post-timeout prompt");
@@ -393,17 +393,33 @@ describe("plan-mode extension", () => {
     });
   });
 
+  it("rejects removed auto and fast modes", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    await harness.runCommand("plan-mode", "auto", ctx);
+    await harness.runCommand("plan-mode", "fast", ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Unknown plan-mode: auto",
+      "error",
+    );
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Unknown plan-mode: fast",
+      "error",
+    );
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("blocks source writes during auto plan phase but allows review artifact writes", async () => {
+  it("blocks source writes during review plan phase but allows review artifact writes", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
 
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "auto", ctx);
+    await harness.runCommand("plan-mode", "review", ctx);
 
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
@@ -432,11 +448,6 @@ describe("plan-mode extension", () => {
     await harness.runCommand("plan-mode", "act", ctx);
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
-    ).resolves.toBeUndefined();
-
-    await harness.runCommand("plan-mode", "fast", ctx);
-    await expect(
-      harness.runToolCall("bash", { command: "npm test" }, ctx),
     ).resolves.toBeUndefined();
   });
 
@@ -467,7 +478,7 @@ describe("plan-mode extension", () => {
     planModeExtension(harness.api as unknown as ExtensionAPI);
 
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "auto", ctx);
+    await harness.runCommand("plan-mode", "review", ctx);
 
     const result = await harness.runToolCall(
       "write",
@@ -577,7 +588,7 @@ describe("plan-mode extension", () => {
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("plan-mode", undefined);
     expect(ctx.ui.setStatus).not.toHaveBeenCalledWith(
       "plan-mode",
-      expect.stringContaining("auto:act 3/3"),
+      expect.stringContaining("review:act 3/3"),
     );
     expect(plainWidgetText(ctx)).toBe(actCompletedDemoSummary);
     expect(lastTodoWidgetCall(ctx)[2]).toEqual({ placement: "belowEditor" });
@@ -854,7 +865,7 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("requires a TODO for auto plan turns even when read-only feedback is provided", async () => {
+  it("requires a TODO for review plan turns even when read-only feedback is provided", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendAgentPrompt(
@@ -945,7 +956,7 @@ describe("plan-mode extension", () => {
     });
   });
 
-  it("still requires a TODO for user implementation prompts in auto plan", async () => {
+  it("still requires a TODO for user implementation prompts in review plan", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendInput(harness, ctx, "fix the plan mode guard bug", "interactive");
@@ -957,7 +968,7 @@ describe("plan-mode extension", () => {
       { deliverAs: "followUp" },
     );
     expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
-      expect.stringContaining("auto mode requires a reviewed plan/spec"),
+      expect.stringContaining("review mode requires a reviewed plan/spec"),
       { deliverAs: "followUp" },
     );
   });
@@ -993,7 +1004,7 @@ describe("plan-mode extension", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("explains why auto plan is waiting for approved review", async () => {
+  it("explains why review plan is waiting for approved review", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendAgentPrompt(
@@ -1023,7 +1034,7 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("keeps auto plan guarded even when workflow feedback is provided", async () => {
+  it("keeps review plan guarded even when workflow feedback is provided", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     const result = await sendAgentPrompt(harness, ctx, "提交当前改动", {
@@ -1035,20 +1046,20 @@ describe("plan-mode extension", () => {
     });
 
     expect(result).toMatchObject({
-      systemPrompt: expect.stringContaining("Current mode: auto:plan."),
+      systemPrompt: expect.stringContaining("Current mode: review:plan."),
     });
     await expect(
       harness.runToolCall("bash", { command: "git status --short" }, ctx),
     ).resolves.toMatchObject({ block: true });
   });
 
-  it("keeps commit-only prompts in normal auto plan", async () => {
+  it("keeps commit-only prompts in normal review plan", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendAgentPrompt(harness, ctx, commitWithoutBranchPrompt);
 
     expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-      mode: "auto",
+      mode: "review",
       phase: "plan",
     });
     await expect(
@@ -1096,7 +1107,7 @@ describe("plan-mode extension", () => {
     expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
   });
 
-  it("switches auto plan to act after plannotator approves the submitted plan", async () => {
+  it("switches review plan to act after plannotator approves the submitted plan", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -1110,11 +1121,11 @@ describe("plan-mode extension", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("auto-continues approved plans for balanced preset", async () => {
+  it("review-continues approved plans for balanced preset", async () => {
     const harness = buildHarness();
     const { ctx, cleanup } = createTempCtx();
     writeProjectSettings(ctx.cwd, {
-      planMode: { defaultMode: "auto", preset: "balanced" },
+      planMode: { defaultMode: "review", preset: "balanced" },
     });
     writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
     planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -1193,7 +1204,7 @@ describe("plan-mode extension", () => {
     writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "auto", ctx);
+    await harness.runCommand("plan-mode", "review", ctx);
 
     try {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
@@ -1268,7 +1279,7 @@ describe("plan-mode extension", () => {
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "auto", ctx);
+    await harness.runCommand("plan-mode", "review", ctx);
 
     await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
     await sendAgentPrompt(harness, ctx, "迁移到 Svelte + Vite");
@@ -1279,12 +1290,12 @@ describe("plan-mode extension", () => {
     ).resolves.toMatchObject({ block: true });
   });
 
-  it("returns auto act to plan after a completed run gets a new implementation prompt", async () => {
+  it("returns review act to plan after a completed run gets a new implementation prompt", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "auto", ctx);
+    await harness.runCommand("plan-mode", "review", ctx);
 
     await completeApprovedDemoRun(harness, ctx);
 
@@ -1298,12 +1309,12 @@ describe("plan-mode extension", () => {
     ).resolves.toMatchObject({ block: true });
   });
 
-  it("does not keep auto act from approved continuation prompt matching", async () => {
+  it("does not keep review act from approved continuation prompt matching", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "auto", ctx);
+    await harness.runCommand("plan-mode", "review", ctx);
 
     await completeApprovedDemoRun(harness, ctx, "写入并提交 reviewable plan");
 
@@ -1331,7 +1342,7 @@ describe("plan-mode extension", () => {
     });
   });
 
-  it("keeps auto act for a new prompt while the approved run is unfinished", async () => {
+  it("keeps review act for a new prompt while the approved run is unfinished", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -1436,7 +1447,7 @@ describe("plan-mode extension", () => {
         },
         ctx,
       );
-      await harness.runCommand("plan-mode", "auto", ctx);
+      await harness.runCommand("plan-mode", "review", ctx);
       await harness.runTool(
         "plan_mode_todo",
         {

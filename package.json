@@ -12,6 +12,7 @@
   "pi": {
     "extensions": [
       "./extensions/copyx",
+      "./extensions/multi-edit",
       "./extensions/skill-toggle",
       "./extensions/plugin-toggle",
       "./extensions/bash-hook",
@@ -59,6 +60,7 @@
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.49",
+    "diff": "^8.0.4",
     "glimpseui": "^0.8.0"
   }
 }

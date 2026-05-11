@@ -181,6 +181,11 @@ export class PlanModeController {
     this.internalExtensionBypassForTurn =
       this.inputSourceForTurn === "extension";
 
+    if (!this.internalExtensionBypassForTurn && this.dismissCompletedRun()) {
+      this.updateUi(ctx);
+      this.persist();
+    }
+
     if (promptRequestsPlanMode(prompt)) {
       this.setModeWithoutUserNotification(ctx, "plan");
     } else if (this.shouldPromptModeForTurn(ctx)) {
@@ -218,6 +223,15 @@ export class PlanModeController {
     this.internalExtensionBypassForTurn = false;
     this.approvedPlanContinuationForTurn = false;
     this.modePromptedForTurn = false;
+  }
+
+  private dismissCompletedRun(): boolean {
+    if (this.state.activeRun?.status !== "completed") {
+      return false;
+    }
+    this.state.archiveCompletedActiveRun();
+    this.state.clearTodos();
+    return true;
   }
 
   shouldPromptModeForTurn(ctx: ExtensionContext): boolean {

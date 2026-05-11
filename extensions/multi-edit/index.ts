@@ -21,7 +21,8 @@ import {
   writeFile as fsWriteFile,
 } from "node:fs/promises";
 import { isAbsolute, resolve as resolvePath } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import * as Diff from "diff";
 
@@ -94,6 +95,10 @@ interface EditResult {
   diff?: string;
   firstChangedLine?: number;
 }
+
+type RenderableEditArgs = ClassicEditInput & {
+  patch?: string;
+};
 
 interface UpdateChunk {
   changeContext?: string;
@@ -926,6 +931,48 @@ function formatPatchResult(applied: PatchOpResult[]) {
   };
 }
 
+function getRenderableClassicEditPaths({
+  path,
+  oldText,
+  newText,
+  multi,
+}: ClassicEditInput): string[] {
+  const paths: string[] = [];
+  const inheritedPath = typeof path === "string" ? path : "";
+
+  if (inheritedPath && oldText !== undefined && newText !== undefined) {
+    paths.push(inheritedPath);
+  }
+
+  for (const item of multi ?? []) {
+    paths.push(item.path ?? inheritedPath);
+  }
+
+  return paths.filter(Boolean);
+}
+
+function formatEditCall(args: RenderableEditArgs, theme: Theme): string {
+  let text = theme.fg("toolTitle", theme.bold("edit "));
+  text += theme.fg("muted", "⚡ multi-edit ");
+
+  if (args.patch !== undefined) {
+    return text + theme.fg("muted", "patch");
+  }
+
+  const paths = getRenderableClassicEditPaths(args);
+  if ((args.multi?.length ?? 0) > 0 || paths.length > 1) {
+    const fileCount = new Set(paths).size;
+    return (
+      text +
+      theme.fg("muted", `multi ${paths.length} edits / ${fileCount} files`)
+    );
+  }
+
+  const targetPath =
+    paths[0] ?? (typeof args.path === "string" ? args.path : "...");
+  return text + theme.fg("muted", `single ${targetPath}`);
+}
+
 function formatClassicResult(results: EditResult[]) {
   if (results.length === 1) {
     const r = results[0];
@@ -975,6 +1022,10 @@ export default function (pi: ExtensionAPI) {
       "Use the `patch` parameter for Codex-style multi-file / hunk-based edits",
     ],
     parameters: multiEditSchema,
+
+    renderCall(args, theme) {
+      return new Text(formatEditCall(args, theme), 0, 0);
+    },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const { path, oldText, newText, multi, patch } = params;

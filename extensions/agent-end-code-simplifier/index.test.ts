@@ -32,10 +32,12 @@ const mockExtensionDependencies = (
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.resetModules();
   vi.doUnmock("../shared/logger.ts");
   vi.doUnmock("../shared/settings.ts");
+  vi.doUnmock("../shared/git.ts");
 });
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
@@ -51,6 +53,7 @@ type ExtensionHarnessOptions = {
     registration: ShortcutRegistration,
   ) => void;
   registerCommand?: (name: string, registration: CommandRegistration) => void;
+  sendMessage?: ReturnType<typeof vi.fn>;
   sendUserMessage?: ReturnType<typeof vi.fn>;
 };
 
@@ -94,6 +97,33 @@ const expectRunningWidgetCleared = (ctx: WidgetTestContext): void => {
   expect(ctx.ui.setWidget).toHaveBeenCalledWith(RUNNING_WIDGET_KEY, undefined);
 };
 
+type PromptSendMocks = {
+  sendMessage: ReturnType<typeof vi.fn>;
+  sendUserMessage: ReturnType<typeof vi.fn>;
+};
+
+const expectHiddenSimplifierPromptSent = (
+  mocks: PromptSendMocks,
+  filePath: string,
+): void => {
+  expect(mocks.sendUserMessage).not.toHaveBeenCalled();
+  expect(mocks.sendMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      customType: "agent-end-code-simplifier",
+      content: expect.stringContaining(filePath),
+      display: false,
+    }),
+    {
+      triggerTurn: true,
+      deliverAs: "followUp",
+    },
+  );
+};
+
+const flushDeferredSimplifierPrompt = async (): Promise<void> => {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+};
+
 const createExtensionHarness = async (
   options: ExtensionHarnessOptions = {},
 ) => {
@@ -102,6 +132,7 @@ const createExtensionHarness = async (
   const shortcuts = new Map<string, ShortcutRegistration>();
   const commands = new Map<string, CommandRegistration>();
   const events = options.events ?? { emit: vi.fn() };
+  const sendMessage = options.sendMessage ?? vi.fn();
   const sendUserMessage = options.sendUserMessage ?? vi.fn();
   const registerShortcut =
     options.registerShortcut ??
@@ -121,10 +152,18 @@ const createExtensionHarness = async (
     registerShortcut,
     registerCommand,
     events,
+    sendMessage,
     sendUserMessage,
   } as never);
 
-  return { handlers, shortcuts, commands, events, sendUserMessage };
+  return {
+    handlers,
+    shortcuts,
+    commands,
+    events,
+    sendMessage,
+    sendUserMessage,
+  };
 };
 
 describe("normalizeConfig", () => {
@@ -287,7 +326,7 @@ describe("extension diagnostics", () => {
   it("registers Ctrl+Alt+Y to manually trigger me-code-simplifier", async () => {
     mockExtensionDependencies();
 
-    const { handlers, shortcuts, sendUserMessage } =
+    const { handlers, shortcuts, sendMessage, sendUserMessage } =
       await createExtensionHarness();
 
     const ctx = {
@@ -307,16 +346,56 @@ describe("extension diagnostics", () => {
     );
     await shortcuts.get("ctrl+alt+y")?.handler(ctx);
 
-    expect(sendUserMessage).toHaveBeenCalledWith(
-      expect.stringContaining("src/manual.ts"),
-      { deliverAs: "followUp" },
+    expectHiddenSimplifierPromptSent(
+      { sendMessage, sendUserMessage },
+      "src/manual.ts",
     );
+  });
+
+  it("uses repo dirty code files when manual shortcut has no tracked files", async () => {
+    mockExtensionDependencies();
+    vi.doMock("../shared/git.ts", () => ({
+      DEFAULT_GIT_TIMEOUT_MS: 5000,
+      getRepoRoot: vi.fn(() => "/repo"),
+      checkRepoDirty: vi.fn(() => ({
+        porcelain:
+          "M  src/staged.ts\n M src/unstaged.py\n?? README.md\n?? src/new.ts\n",
+        summary: { staged: 1, unstaged: 1, untracked: 2, dirty: true },
+      })),
+      listDirtyPaths: vi.fn(() => [
+        "src/staged.ts",
+        "src/unstaged.py",
+        "README.md",
+        "src/new.ts",
+      ]),
+    }));
+
+    const { handlers, shortcuts, sendMessage, sendUserMessage } =
+      await createExtensionHarness();
+
+    const ctx = {
+      cwd: "/repo/subdir",
+      hasUI: true,
+      ui: { confirm: vi.fn(), notify: vi.fn() },
+    };
+
+    await handlers.get("session_start")?.({}, ctx);
+    await shortcuts.get("ctrl+alt+y")?.handler(ctx);
+
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    const sentPrompt = String(sendMessage.mock.calls[0]?.[0]?.content);
+    expect(sentPrompt).toContain("src/staged.ts");
+    expect(sentPrompt).toContain("src/unstaged.py");
+    expect(sentPrompt).toContain("src/new.ts");
+    expect(sentPrompt).not.toContain("README.md");
   });
 
   it("automatically runs me-code-simplifier by default without confirmation", async () => {
     mockExtensionDependencies();
 
-    const { handlers, events, sendUserMessage } =
+    const { handlers, events, sendMessage, sendUserMessage } =
       await createExtensionHarness();
 
     const ctx = {
@@ -335,12 +414,48 @@ describe("extension diagnostics", () => {
       ctx,
     );
     await handlers.get("agent_end")?.({ messages: [] }, ctx);
+    await flushDeferredSimplifierPrompt();
 
     expect(ctx.ui.confirm).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
-    expect(sendUserMessage).toHaveBeenCalledWith(
-      expect.stringContaining("src/auto.ts"),
-      { deliverAs: "followUp" },
+    expectHiddenSimplifierPromptSent(
+      { sendMessage, sendUserMessage },
+      "src/auto.ts",
+    );
+  });
+
+  it("defers automatic hidden prompts until after agent_end returns", async () => {
+    vi.useFakeTimers();
+    mockExtensionDependencies();
+
+    const { handlers, sendMessage, sendUserMessage } =
+      await createExtensionHarness();
+
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: { confirm: vi.fn(), notify: vi.fn() },
+    };
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "edit",
+        input: { path: "src/deferred-auto.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
+
+    await vi.runOnlyPendingTimersAsync();
+
+    expectHiddenSimplifierPromptSent(
+      { sendMessage, sendUserMessage },
+      "src/deferred-auto.ts",
     );
   });
 
@@ -362,6 +477,8 @@ describe("extension diagnostics", () => {
     await handlers.get("agent_end")?.({ messages: [] }, ctx);
 
     expectRunningWidgetShown(ctx);
+
+    await flushDeferredSimplifierPrompt();
   });
 
   it("shows a running widget when manual simplifier follow-up starts", async () => {
@@ -400,6 +517,7 @@ describe("extension diagnostics", () => {
       ctx,
     );
     await handlers.get("agent_end")?.({ messages: [] }, ctx);
+    await flushDeferredSimplifierPrompt();
 
     ctx.ui.setWidget.mockClear();
     await handlers.get("agent_start")?.({}, ctx);
@@ -422,7 +540,8 @@ describe("extension diagnostics", () => {
   it("does not require widget support to send automatic follow-ups", async () => {
     mockExtensionDependencies();
 
-    const { handlers, sendUserMessage } = await createExtensionHarness();
+    const { handlers, sendMessage, sendUserMessage } =
+      await createExtensionHarness();
     const ctx = {
       cwd: process.cwd(),
       hasUI: true,
@@ -439,17 +558,18 @@ describe("extension diagnostics", () => {
       ctx,
     );
     await handlers.get("agent_end")?.({ messages: [] }, ctx);
+    await flushDeferredSimplifierPrompt();
 
-    expect(sendUserMessage).toHaveBeenCalledWith(
-      expect.stringContaining("src/no-widget-support.ts"),
-      { deliverAs: "followUp" },
+    expectHiddenSimplifierPromptSent(
+      { sendMessage, sendUserMessage },
+      "src/no-widget-support.ts",
     );
   });
 
   it("skips automatic simplifier approval after an aborted turn by default", async () => {
     mockExtensionDependencies();
 
-    const { handlers, events, sendUserMessage } =
+    const { handlers, events, sendMessage, sendUserMessage } =
       await createExtensionHarness();
 
     const ctx = {
@@ -482,6 +602,7 @@ describe("extension diagnostics", () => {
 
     expect(ctx.ui.confirm).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
     expect(sendUserMessage).not.toHaveBeenCalled();
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining("Skipped me-code-simplifier"),
@@ -497,7 +618,8 @@ describe("extension diagnostics", () => {
       },
     });
 
-    const { handlers, sendUserMessage } = await createExtensionHarness();
+    const { handlers, sendMessage, sendUserMessage } =
+      await createExtensionHarness();
 
     const ctx = {
       cwd: process.cwd(),
@@ -527,16 +649,17 @@ describe("extension diagnostics", () => {
       expect.stringContaining("src/aborted-confirm.ts"),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(sendUserMessage).toHaveBeenCalledWith(
-      expect.stringContaining("src/aborted-confirm.ts"),
-      { deliverAs: "followUp" },
+    await flushDeferredSimplifierPrompt();
+    expectHiddenSimplifierPromptSent(
+      { sendMessage, sendUserMessage },
+      "src/aborted-confirm.ts",
     );
   });
 
   it("keeps manually triggering simplifier for tracked files after an aborted turn", async () => {
     mockExtensionDependencies();
 
-    const { handlers, shortcuts, sendUserMessage } =
+    const { handlers, shortcuts, sendMessage, sendUserMessage } =
       await createExtensionHarness();
 
     const ctx = {
@@ -563,9 +686,9 @@ describe("extension diagnostics", () => {
     );
     await shortcuts.get("ctrl+alt+y")?.handler(ctx);
 
-    expect(sendUserMessage).toHaveBeenCalledWith(
-      expect.stringContaining("src/manual-after-abort.ts"),
-      { deliverAs: "followUp" },
+    expectHiddenSimplifierPromptSent(
+      { sendMessage, sendUserMessage },
+      "src/manual-after-abort.ts",
     );
   });
 
@@ -576,7 +699,7 @@ describe("extension diagnostics", () => {
       },
     });
 
-    const { handlers, shortcuts, sendUserMessage } =
+    const { handlers, shortcuts, sendMessage, sendUserMessage } =
       await createExtensionHarness();
 
     const ctx = {
@@ -598,10 +721,10 @@ describe("extension diagnostics", () => {
     await shortcuts.get("ctrl+alt+y")?.handler(ctx);
 
     expect(ctx.ui.confirm).not.toHaveBeenCalled();
-    expect(sendUserMessage).toHaveBeenCalledTimes(1);
-    expect(sendUserMessage).toHaveBeenCalledWith(
-      expect.stringContaining("src/auto-disabled.ts"),
-      { deliverAs: "followUp" },
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expectHiddenSimplifierPromptSent(
+      { sendMessage, sendUserMessage },
+      "src/auto-disabled.ts",
     );
   });
 
@@ -670,9 +793,10 @@ describe("extension diagnostics", () => {
         },
       ),
     };
-    const { handlers, sendUserMessage } = await createExtensionHarness({
-      events,
-    });
+    const { handlers, sendMessage, sendUserMessage } =
+      await createExtensionHarness({
+        events,
+      });
 
     let abortSignal: AbortSignal | undefined;
     const ctx = {
@@ -718,9 +842,10 @@ describe("extension diagnostics", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(abortSignal?.aborted).toBe(true);
-    expect(sendUserMessage).toHaveBeenCalledWith(
-      expect.stringContaining("src/demo.ts"),
-      { deliverAs: "followUp" },
+    await flushDeferredSimplifierPrompt();
+    expectHiddenSimplifierPromptSent(
+      { sendMessage, sendUserMessage },
+      "src/demo.ts",
     );
   });
 });

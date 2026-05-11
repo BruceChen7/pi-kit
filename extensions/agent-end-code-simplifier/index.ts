@@ -1,6 +1,12 @@
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+  checkRepoDirty,
+  DEFAULT_GIT_TIMEOUT_MS,
+  getRepoRoot,
+  listDirtyPaths,
+} from "../shared/git.ts";
+import {
   AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL,
   type PiKitAgentEndCodeSimplifierApprovalEvent,
 } from "../shared/internal-events.ts";
@@ -254,6 +260,11 @@ type ApprovalRaceInput = {
 
 type BooleanConfigField = "autoRun" | "confirmBeforeRun";
 
+type ManualSupportedPathResolution = {
+  supportedPaths: string[];
+  source: "turn" | "repo" | "none";
+};
+
 type NotificationContext = {
   cwd: string;
   ui: { notify: (message: string, type: string) => void };
@@ -392,16 +403,51 @@ export default function agentEndCodeSimplifierExtension(
     ctx.ui.setWidget(RUNNING_WIDGET_KEY, undefined);
   };
 
+  const sendHiddenCodeSimplifierFollowUp = (content: string) => {
+    // Custom messages stay in LLM/session context but are not repopulated into
+    // the editor input history like role=user messages are.
+    pi.sendMessage(
+      {
+        customType: EXTENSION_SOURCE_TAG,
+        content,
+        display: false,
+      },
+      {
+        triggerTurn: true,
+        deliverAs: "followUp",
+      },
+    );
+  };
+
+  const prepareCodeSimplifierPrompt = (
+    ctx: WidgetContext,
+    supportedPaths: string[],
+  ): string => {
+    const prompt = [
+      buildCodeSimplifierPrompt(supportedPaths, config.promptTemplate),
+      `[${EXTENSION_SOURCE_TAG}]`,
+    ].join("\n\n");
+
+    showRunningWidget(ctx, supportedPaths);
+    suppressNextPrompt = true;
+    return prompt;
+  };
+
   const sendCodeSimplifierPrompt = (
     ctx: WidgetContext,
     supportedPaths: string[],
   ) => {
-    showRunningWidget(ctx, supportedPaths);
-    suppressNextPrompt = true;
-    pi.sendUserMessage(
-      `${buildCodeSimplifierPrompt(supportedPaths, config.promptTemplate)}\n\n[${EXTENSION_SOURCE_TAG}]`,
-      { deliverAs: "followUp" },
+    sendHiddenCodeSimplifierFollowUp(
+      prepareCodeSimplifierPrompt(ctx, supportedPaths),
     );
+  };
+
+  const sendCodeSimplifierPromptAfterIdle = (
+    ctx: WidgetContext,
+    supportedPaths: string[],
+  ) => {
+    const prompt = prepareCodeSimplifierPrompt(ctx, supportedPaths);
+    setTimeout(() => sendHiddenCodeSimplifierFollowUp(prompt), 0);
   };
 
   const sendLoggedCodeSimplifierPrompt = (
@@ -412,7 +458,36 @@ export default function agentEndCodeSimplifierExtension(
       ...diagnostics(ctx),
       supportedPaths,
     });
-    sendCodeSimplifierPrompt(ctx, supportedPaths);
+    sendCodeSimplifierPromptAfterIdle(ctx, supportedPaths);
+  };
+
+  const collectRepoDirtySupportedPaths = (cwd: string): string[] => {
+    const repoRoot = getRepoRoot(cwd, DEFAULT_GIT_TIMEOUT_MS);
+    if (!repoRoot) {
+      return [];
+    }
+
+    const dirty = checkRepoDirty(repoRoot, DEFAULT_GIT_TIMEOUT_MS);
+    if (!dirty) {
+      return [];
+    }
+
+    return collectSupportedPaths(listDirtyPaths(dirty.porcelain), config);
+  };
+
+  const resolveManualSupportedPaths = (
+    cwd: string,
+  ): ManualSupportedPathResolution => {
+    const turnSupportedPaths = collectSupportedPaths(modifiedPaths, config);
+    if (turnSupportedPaths.length > 0) {
+      return { supportedPaths: turnSupportedPaths, source: "turn" };
+    }
+
+    const repoSupportedPaths = collectRepoDirtySupportedPaths(cwd);
+    return {
+      supportedPaths: repoSupportedPaths,
+      source: repoSupportedPaths.length > 0 ? "repo" : "none",
+    };
   };
 
   const handleBooleanConfigCommand = (
@@ -471,11 +546,12 @@ export default function agentEndCodeSimplifierExtension(
       "Manually trigger me-code-simplifier for files changed this turn",
     handler: async (ctx) => {
       refreshConfig(ctx.cwd);
-      const supportedPaths = collectSupportedPaths(modifiedPaths, config);
       if (!config.enabled) {
         ctx.ui.notify("agent-end-code-simplifier is disabled.", "warning");
         return;
       }
+
+      const { supportedPaths, source } = resolveManualSupportedPaths(ctx.cwd);
       if (supportedPaths.length === 0) {
         ctx.ui.notify("No supported modified files to simplify.", "info");
         return;
@@ -484,6 +560,7 @@ export default function agentEndCodeSimplifierExtension(
       log.info("manual_shortcut_sending_code_simplifier_prompt", {
         ...diagnostics(ctx),
         supportedPaths,
+        source,
       });
       sendCodeSimplifierPrompt(ctx, supportedPaths);
     },

@@ -5,8 +5,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import multiEditExtension from "./index.js";
 
+type Renderable = {
+  render: (width: number) => string[];
+};
+
 type RegisteredTool = {
   name: string;
+  renderCall?: (args: Record<string, unknown>, theme: TestTheme) => Renderable;
   execute: (
     toolCallId: string,
     params: Record<string, unknown>,
@@ -18,6 +23,20 @@ type RegisteredTool = {
     details?: Record<string, unknown>;
   }>;
 };
+
+type TestTheme = {
+  fg: (_color: string, text: string) => string;
+  bold: (text: string) => string;
+};
+
+const testTheme: TestTheme = {
+  fg: (_color, text) => text,
+  bold: (text) => text,
+};
+
+function renderText(component: Renderable): string {
+  return component.render(200).join("\n");
+}
 
 const tempDirs: string[] = [];
 
@@ -62,6 +81,38 @@ afterEach(async () => {
 });
 
 describe("multi-edit tool", () => {
+  it("renders plugin identity and edit mode for tool calls", () => {
+    const tool = registerToolForTest();
+    const renderCall = tool.renderCall;
+
+    expect(renderCall).toBeDefined();
+    if (!renderCall) return;
+
+    const cases: Array<{ args: Record<string, unknown>; expected: string }> = [
+      {
+        args: { path: "note.txt" },
+        expected: "edit ⚡ multi-edit single note.txt",
+      },
+      {
+        args: {
+          multi: [
+            { path: "a.txt", oldText: "one", newText: "1" },
+            { path: "b.txt", oldText: "two", newText: "2" },
+          ],
+        },
+        expected: "edit ⚡ multi-edit multi 2 edits / 2 files",
+      },
+      {
+        args: { patch: "*** Begin Patch\n*** End Patch" },
+        expected: "edit ⚡ multi-edit patch",
+      },
+    ];
+
+    for (const { args, expected } of cases) {
+      expect(renderText(renderCall(args, testTheme))).toContain(expected);
+    }
+  });
+
   it("keeps single replacement compatible with the built-in edit parameters", async () => {
     const cwd = await createTempDir();
     await writeFile(join(cwd, "note.txt"), "hello old world\n", "utf8");

@@ -48,10 +48,10 @@ direct command execution.
 
 During Act phase, update a task to `in_progress` before starting it and `done` after
 finishing it. The below-editor widget highlights the current step, shows completion
-counts, and collapses completed runs to a one-line summary until a new run replaces it or
-`clear` hides it. Reviewed plan runs show the approved plan name; ordinary
-manual/workflow runs show a generic task-completed summary so stale plan names do not
-leak into unrelated work.
+counts, and keeps completed runs visible with an `已交付` task list until the next user
+turn, a new run, or `clear` hides it. Reviewed plan runs show the approved plan name;
+ordinary manual/workflow runs show a generic task-completed summary so stale plan names
+do not leak into unrelated work.
 
 ## Plannotator Auto integration
 

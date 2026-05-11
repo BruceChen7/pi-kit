@@ -265,10 +265,23 @@ const validPlanContent = `## Context
 
 const invalidPlanContent = validPlanContent.replace("## Review", "## Notes");
 const oneItemCompletedSummary = "✅ 任务已完成 · 1/1 项任务已交付";
-const actOneItemCompletedSummary = `【act:completed】${oneItemCompletedSummary}`;
-const planOneItemCompletedSummary = `【plan:completed】${oneItemCompletedSummary}`;
+const completedTaskSummary = (heading: string, tasks: string[]): string =>
+  [
+    heading,
+    "已交付：",
+    ...tasks.map((task, index) => `  #${index + 1} ${task}`),
+  ].join("\n");
+const actCompletedTaskSummary = (...tasks: string[]): string =>
+  `【act:completed】${completedTaskSummary(oneItemCompletedSummary, tasks)}`;
+const planCompletedTaskSummary = (...tasks: string[]): string =>
+  `【plan:completed】${completedTaskSummary(oneItemCompletedSummary, tasks)}`;
+const actOneItemCompletedSummary = actCompletedTaskSummary("完成第一批任务");
+const planOneItemCompletedSummary = planCompletedTaskSummary("完成后清理");
 const demoPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
-const demoCompletedSummary = "✅ 计划「demo」已完成 · 3/3 项任务已交付";
+const demoCompletedSummary = completedTaskSummary(
+  "✅ 计划「demo」已完成 · 3/3 项任务已交付",
+  ["编写测试", "实现改动", "验证结果"],
+);
 
 const expectApprovedContinuationFollowUp = (
   harness: ReturnType<typeof buildHarness>,
@@ -373,14 +386,14 @@ describe("plan-mode extension", () => {
     await sendAgentPrompt(harness, ctx, "implement this again");
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("3s"),
+      expect.stringContaining("5s"),
       "info",
     );
     expect(ctx.ui.select).toHaveBeenCalledTimes(1);
     expect(ctx.ui.select).toHaveBeenCalledWith(
       "Choose Plan Mode for this run",
       ["act", "plan", "review"],
-      { timeout: 3000 },
+      { timeout: 5000 },
     );
     const result = await sendAgentPrompt(harness, ctx, "post-timeout prompt");
     expect(result).toMatchObject({
@@ -562,8 +575,7 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("keeps a collapsed completed todo summary below the editor", async () => {
-    vi.useFakeTimers();
+  it("keeps completed todo details below the editor", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -603,9 +615,6 @@ describe("plan-mode extension", () => {
     );
     expect(plainWidgetText(ctx)).toBe(actCompletedDemoSummary);
     expect(lastTodoWidgetCall(ctx)[2]).toEqual({ placement: "belowEditor" });
-
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(plainWidgetText(ctx)).toBe(actCompletedDemoSummary);
   });
 
   it("replaces a completed summary when a new todo list starts", async () => {
@@ -638,6 +647,34 @@ describe("plan-mode extension", () => {
     expect(widget).toContain("已完成 0/1 · 剩余 1 项");
   });
 
+  it("hides a completed summary when the next user turn starts", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+    await harness.runCommand("plan-mode", "act", ctx);
+
+    await harness.runTool(
+      "plan_mode_todo",
+      {
+        action: "set",
+        items: [{ text: "完成第一批任务", status: "done" }],
+      },
+      ctx,
+    );
+    expect(plainWidgetText(ctx)).toBe(actOneItemCompletedSummary);
+
+    await sendInput(harness, ctx, "继续下一个需求", "interactive");
+    await sendAgentPrompt(harness, ctx, "继续下一个需求");
+
+    expect(lastTodoWidgetCall(ctx)).toEqual(["plan-mode-todos", undefined]);
+    expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+      todos: [],
+      activeRun: null,
+      recentRuns: [{ status: "archived" }],
+    });
+  });
+
   it("hides the completed summary when todos are cleared", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
@@ -667,7 +704,9 @@ describe("plan-mode extension", () => {
       },
       ctx,
     );
-    expect(plainWidgetText(ctx)).toBe(planOneItemCompletedSummary);
+    expect(plainWidgetText(ctx)).toBe(
+      planCompletedTaskSummary("完成后关闭 session"),
+    );
 
     await expect(
       harness.emit("session_shutdown", {}, ctx),
@@ -750,7 +789,7 @@ describe("plan-mode extension", () => {
     );
 
     const widget = plainWidgetText(ctx);
-    expect(widget).toBe(actOneItemCompletedSummary);
+    expect(widget).toBe(actCompletedTaskSummary("补测试覆盖新的默认 prompt"));
     expect(widget).not.toContain("demo");
   });
 

@@ -23,10 +23,13 @@ export const REVIEW_ARTIFACT_WRITE_GUIDANCE = [
 export const SPEC_REVIEW_ARTIFACT_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
 export const RECENT_RUN_LIMIT = 5;
 
-export const DEFAULT_MODE_SELECTION_TIMEOUT_MS = 3000;
+const DEFAULT_MODE_SELECTION_TIMEOUT_SECONDS = 5;
+export const DEFAULT_MODE_SELECTION_TIMEOUT_MS =
+  DEFAULT_MODE_SELECTION_TIMEOUT_SECONDS * 1000;
 export const MODE_SELECTION_TITLE = "Choose Plan Mode for this run";
 export const MODE_SELECTION_MESSAGE =
-  "Choose Plan Mode for this run; defaulting to act in 3s.";
+  "Choose Plan Mode for this run; defaulting to act in " +
+  `${DEFAULT_MODE_SELECTION_TIMEOUT_SECONDS}s.`;
 export const MODE_SELECTION_OPTIONS: PlanMode[] = ["act", "plan", "review"];
 export const PLAN_MODE_COMMAND_OPTIONS = [
   ...MODE_SELECTION_OPTIONS,

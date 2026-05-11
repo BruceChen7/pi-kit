@@ -9,8 +9,8 @@
  */
 
 import { execFile } from "node:child_process";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import {
   createHandledState,
   NOTIFY_IDLE_CHANNEL,

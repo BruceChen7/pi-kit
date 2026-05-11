@@ -5,7 +5,7 @@ import type {
   ExtensionContext,
   ToolCallEvent,
   ToolResultEvent,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "@sinclair/typebox";
 import { loadSettings } from "../shared/settings.ts";
 import {

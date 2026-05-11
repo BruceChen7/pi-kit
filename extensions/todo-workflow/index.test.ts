@@ -6,15 +6,15 @@ import path from "node:path";
 import {
   type ExtensionAPI,
   SessionManager,
-} from "@mariozechner/pi-coding-agent";
-import { CombinedAutocompleteProvider } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import { CombinedAutocompleteProvider } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@mariozechner/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai", () => ({
   complete: vi.fn(),
 }));
 
-import { complete } from "@mariozechner/pi-ai";
+import { complete } from "@earendil-works/pi-ai";
 import extension from "./index.js";
 
 const tempDirs: string[] = [];

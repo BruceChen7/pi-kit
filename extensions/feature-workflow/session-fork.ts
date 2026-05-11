@@ -5,7 +5,7 @@ import {
   type SessionEntry,
   type SessionHeader,
   SessionManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 import { trimToNull } from "./utils.js";
 

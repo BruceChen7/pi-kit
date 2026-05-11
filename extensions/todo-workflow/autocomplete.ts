@@ -1,4 +1,4 @@
-import type { AutocompleteItem } from "@mariozechner/pi-tui";
+import type { AutocompleteItem } from "@earendil-works/pi-tui";
 
 import { formatTodoLabel, formatTodoStatus } from "./display.js";
 import type { TodoItem } from "./todo-store.js";

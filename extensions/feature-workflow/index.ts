@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { runFeatureListCommand } from "./commands/feature-list.js";
 import { runFeaturePruneMergedCommand } from "./commands/feature-prune-merged.js";

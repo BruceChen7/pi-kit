@@ -1,5 +1,5 @@
-import type { Model } from "@mariozechner/pi-ai";
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { Model } from "@earendil-works/pi-ai";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type AiCompletionContext = Pick<ExtensionContext, "model" | "modelRegistry">;
 
@@ -23,7 +23,7 @@ export async function generateKebabCaseIdFromDescription(
 
   let mod: unknown;
   try {
-    mod = await import("@mariozechner/pi-ai");
+    mod = await import("@earendil-works/pi-ai");
   } catch {
     return null;
   }

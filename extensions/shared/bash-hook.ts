@@ -3,11 +3,11 @@ import type {
   BashToolDetails,
   BashToolInput,
   ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
   createBashToolDefinition,
   createLocalBashOperations,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { loadSettings } from "./settings.ts";
 
 export type BashHookSource = "tool" | "user_bash";

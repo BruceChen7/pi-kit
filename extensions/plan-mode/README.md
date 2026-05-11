@@ -5,9 +5,10 @@ guards, a TODO widget, and Plannotator approval before implementation.
 
 ## Recommended workflow
 
-Use `auto` for normal work:
+Plan Mode defaults to `act` for direct execution. Use `auto` when you want the
+review-first workflow:
 
-1. The session starts in `auto:plan`.
+1. The session starts in `act` unless configuration overrides `defaultMode`.
 2. For implementation requests, create a concrete TODO list and a reviewable plan/spec.
 3. Submit the plan/spec to Plannotator.
 4. After approval, Plan Mode switches to `auto:act` and implementation can proceed.
@@ -37,7 +38,14 @@ with the latest decision reason shown in status/follow-up messages.
 /plan-mode fast
 ```
 
-- `auto` is the default and recommended mode.
+- `act` is the default mode.
+- Before a normal interactive agent run in default `act`, Plan Mode shows a mode
+  selector and a notification; if there is no choice within 3 seconds, it stays in
+  `act`.
+- Prompts that explicitly ask to plan first, such as “please plan this”, enter
+  `plan` directly without showing the selector.
+- `auto` keeps the review-first workflow for teams that prefer classifier-driven
+  plan/spec review.
 - `plan` keeps the session in read-only planning mode.
 - `act` allows implementation without waiting for auto approval.
 - `fast` is an escape hatch for direct execution; prefer `auto` for normal work.
@@ -177,7 +185,7 @@ Explicit settings override preset defaults.
 ```json
 {
   "planMode": {
-    "defaultMode": "auto",
+    "defaultMode": "act",
     "preserveExternalTools": true,
     "requireReview": true,
     "preset": "strict",

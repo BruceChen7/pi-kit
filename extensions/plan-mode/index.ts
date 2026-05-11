@@ -153,8 +153,16 @@ const SPEC_REVIEW_ARTIFACT_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
 const ENV_ASSIGNMENT_PREFIX_PATTERN = /^(?:[A-Z_][A-Z0-9_]*=\S+\s+)+/u;
 const RECENT_RUN_LIMIT = 5;
 
+const DEFAULT_MODE_SELECTION_TIMEOUT_MS = 3000;
+const MODE_SELECTION_TITLE = "Choose Plan Mode for this run";
+const MODE_SELECTION_MESSAGE =
+  "Choose Plan Mode for this run; defaulting to act in 3s.";
+const MODE_SELECTION_OPTIONS: PlanMode[] = ["act", "plan", "auto", "fast"];
+const EXPLICIT_PLAN_MODE_REQUEST_PATTERN =
+  /\b(?:please\s+)?plan\s+(?:this|the|mode|first)|计划模式|规划模式/iu;
+
 const DEFAULT_CONFIG: PlanModeConfig = {
-  defaultMode: "auto",
+  defaultMode: "act",
   preserveExternalTools: true,
   requireReview: true,
   approval: {
@@ -258,6 +266,9 @@ const stringProperty = (value: unknown, key: string): string | null => {
 
 const isPlanMode = (value: unknown): value is PlanMode =>
   value === "plan" || value === "act" || value === "auto" || value === "fast";
+
+const promptRequestsPlanMode = (prompt: string): boolean =>
+  EXPLICIT_PLAN_MODE_REQUEST_PATTERN.test(prompt);
 
 const isPhaseValue = (value: unknown): value is PlanPhase =>
   value === "plan" || value === "act";
@@ -1346,6 +1357,7 @@ class PlanModeController {
   private inputSourceForTurn: InputSource = "unknown";
   private internalExtensionBypassForTurn = false;
   private approvedPlanContinuationForTurn = false;
+  private modePromptedForTurn = false;
   constructor(private readonly pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext): void {
@@ -1356,6 +1368,7 @@ class PlanModeController {
     this.inputSourceForTurn = "unknown";
     this.internalExtensionBypassForTurn = false;
     this.approvedPlanContinuationForTurn = false;
+    this.modePromptedForTurn = false;
   }
 
   persist(): void {
@@ -1501,6 +1514,13 @@ class PlanModeController {
     const prompt = stringProperty(event, "prompt") ?? "";
     this.internalExtensionBypassForTurn =
       this.inputSourceForTurn === "extension";
+
+    if (promptRequestsPlanMode(prompt)) {
+      this.setModeWithoutUserNotification(ctx, "plan");
+    } else if (this.shouldPromptModeForTurn(ctx)) {
+      await this.promptModeForTurn(ctx);
+    }
+
     const intentFeedback = await this.resolveIntentFeedback(event, ctx, prompt);
     const requiresPlanReview =
       requiresPlanReviewForIntentFeedback(intentFeedback);
@@ -1598,6 +1618,37 @@ class PlanModeController {
     this.inputSourceForTurn = "unknown";
     this.internalExtensionBypassForTurn = false;
     this.approvedPlanContinuationForTurn = false;
+    this.modePromptedForTurn = false;
+  }
+
+  shouldPromptModeForTurn(ctx: ExtensionContext): boolean {
+    return (
+      ctx.hasUI &&
+      this.state.mode === "act" &&
+      !this.modePromptedForTurn &&
+      !this.internalExtensionBypassForTurn &&
+      this.inputSourceForTurn === "interactive"
+    );
+  }
+
+  setModeWithoutUserNotification(ctx: ExtensionContext, mode: PlanMode): void {
+    this.state.setMode(mode);
+    this.applyMode(ctx);
+    this.persist();
+  }
+
+  async promptModeForTurn(ctx: ExtensionContext): Promise<void> {
+    this.modePromptedForTurn = true;
+    ctx.ui.notify(MODE_SELECTION_MESSAGE, "info");
+    const selected = await ctx.ui.select(
+      MODE_SELECTION_TITLE,
+      MODE_SELECTION_OPTIONS,
+      { timeout: DEFAULT_MODE_SELECTION_TIMEOUT_MS },
+    );
+    this.setModeWithoutUserNotification(
+      ctx,
+      isPlanMode(selected) ? selected : "act",
+    );
   }
 
   getPlanPathForNewRun(): string | null {

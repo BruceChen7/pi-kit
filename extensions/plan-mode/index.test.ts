@@ -257,6 +257,8 @@ const sendAgentPrompt = async (
   );
 
 const commitWithoutBranchPrompt = "commit and no extra branch";
+const directActTodoGuidance =
+  "In direct act mode, create concrete TODOs before using tools or making changes.";
 
 const workflowOnlyIntentFeedback = {
   kind: "workflow_only",
@@ -409,6 +411,19 @@ describe("plan-mode extension", () => {
     expect(result).toMatchObject({
       systemPrompt: expect.stringContaining("Current mode: act."),
     });
+  });
+
+  it("requires concrete todos before direct act-mode task execution", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    const result = await sendAgentPrompt(
+      harness,
+      ctx,
+      "commit all the changes",
+      readOnlyIntentFeedback,
+    );
+
+    expect(result.systemPrompt).toContain(directActTodoGuidance);
   });
 
   it("prompts once before non-plan agent execution and defaults to act after timeout", async () => {

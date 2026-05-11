@@ -220,6 +220,8 @@ const KEY_CODE_SKETCH_GUIDANCE = [
   "- 关键代码草案应放在标准 plan 的 ## Context 内，不能新增顶层章节；" +
     "避免粘贴完整实现，只展示能让 reviewer 判断方向的代码。",
 ];
+const DIRECT_ACT_TODO_GUIDANCE =
+  "- In direct act mode, create concrete TODOs before using tools or making changes.";
 
 const todoStatusSchema = Type.Union([
   Type.Literal("todo"),
@@ -1443,6 +1445,10 @@ class PlanModeController {
       "- In act phases, execute the approved plan and update " +
         `${TODO_TOOL_NAME} statuses to in_progress and done so the widget shows the current step.`,
     ];
+
+    if (this.state.mode === "act") {
+      lines.push(DIRECT_ACT_TODO_GUIDANCE);
+    }
 
     if (this.state.mode === "fast") {
       lines.push(

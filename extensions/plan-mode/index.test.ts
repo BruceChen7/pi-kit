@@ -210,6 +210,15 @@ const writePlanArtifact = (
   fs.writeFileSync(absolutePath, content, "utf-8");
 };
 
+const writeProjectSettings = (
+  cwd: string,
+  settings: Record<string, unknown>,
+): void => {
+  const settingsPath = path.join(cwd, ".pi", "third_extension_settings.json");
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  fs.writeFileSync(settingsPath, JSON.stringify(settings), "utf-8");
+};
+
 const startPlanModeSession = async () => {
   const harness = buildHarness();
   const ctx = buildCtx();
@@ -760,7 +769,7 @@ describe("plan-mode extension", () => {
     expect(widget).not.toContain("demo");
   });
 
-  it("shows active run state in plan-mode status", async () => {
+  it("shows user-facing run state in plan-mode status", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await harness.runTool(
@@ -774,7 +783,7 @@ describe("plan-mode extension", () => {
     await harness.runCommand("plan-mode", "status", ctx);
 
     expect(ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("run: draft"),
+      expect.stringContaining("status: Waiting for review"),
       "info",
     );
   });
@@ -982,7 +991,7 @@ describe("plan-mode extension", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("keeps review gating when read-only prompts create planning TODOs", async () => {
+  it("explains why auto plan is waiting for approved review", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendAgentPrompt(
@@ -1003,6 +1012,12 @@ describe("plan-mode extension", () => {
 
     expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
       expect.stringContaining("approved Plannotator plan/spec"),
+      { deliverAs: "followUp" },
+    );
+    expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Reason: active TODO run has no approved plan/spec artifact",
+      ),
       { deliverAs: "followUp" },
     );
   });
@@ -1275,6 +1290,81 @@ describe("plan-mode extension", () => {
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
     ).resolves.toBeUndefined();
+  });
+
+  it("auto-continues approved plans for balanced preset", async () => {
+    const harness = buildHarness();
+    const { ctx, cleanup } = createTempCtx();
+    writeProjectSettings(ctx.cwd, { planMode: { preset: "balanced" } });
+    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    try {
+      await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      expect(ctx.ui.confirm).not.toHaveBeenCalled();
+      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `Continue implementing approved plan: ${demoPlanPath}`,
+        ),
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("manual approval continuation records ready state without follow-up", async () => {
+    const harness = buildHarness();
+    const { ctx, cleanup } = createTempCtx();
+    writeProjectSettings(ctx.cwd, {
+      planMode: { approval: { continueAfterApproval: "manual" } },
+    });
+    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    try {
+      await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      expect(ctx.ui.confirm).not.toHaveBeenCalled();
+      expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        confirmedApprovedContinuationPath: null,
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("solo preset disables review waiting reminders", async () => {
+    const harness = buildHarness();
+    const { ctx, cleanup } = createTempCtx();
+    writeProjectSettings(ctx.cwd, { planMode: { preset: "solo" } });
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    try {
+      await harness.runTool(
+        "plan_mode_todo",
+        {
+          action: "set",
+          items: [{ text: "solo task", status: "todo" }],
+        },
+        ctx,
+      );
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
+        expect.stringContaining("approved Plannotator plan/spec"),
+        expect.anything(),
+      );
+    } finally {
+      cleanup();
+    }
   });
 
   it("injects an implementation follow-up after approved continuation is confirmed", async () => {

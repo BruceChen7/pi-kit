@@ -28,7 +28,8 @@
       "./extensions/session-path-copy",
       "./extensions/remote-approval",
       "./extensions/agent-end-code-simplifier",
-      "./extensions/review-feedback"
+      "./extensions/review-feedback",
+      "./extensions/librarian"
     ]
   },
   "scripts": {

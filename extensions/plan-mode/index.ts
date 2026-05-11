@@ -85,6 +85,7 @@ type PlanModeSnapshot = {
   latestReviewArtifactPath: string | null;
   reviewApprovedPlanPaths: string[];
   pendingApprovedPlanContinuationPath: string | null;
+  confirmedApprovedContinuationPath: string | null;
   resumableApprovedPlanPath: string | null;
   endConversationRequested: boolean;
   workflowBypass?: WorkflowBypassState;
@@ -471,6 +472,10 @@ const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
       typeof data.pendingApprovedPlanContinuationPath === "string"
         ? data.pendingApprovedPlanContinuationPath
         : null,
+    confirmedApprovedContinuationPath:
+      typeof data.confirmedApprovedContinuationPath === "string"
+        ? data.confirmedApprovedContinuationPath
+        : null,
     resumableApprovedPlanPath:
       typeof data.resumableApprovedPlanPath === "string"
         ? data.resumableApprovedPlanPath
@@ -518,6 +523,7 @@ class PlanModeState {
   latestReviewArtifactPath: string | null = null;
   reviewApprovedPlanPaths = new Set<string>();
   pendingApprovedPlanContinuationPath: string | null = null;
+  confirmedApprovedContinuationPath: string | null = null;
   resumableApprovedPlanPath: string | null = null;
   endConversationRequested = false;
   workflowBypass: WorkflowBypassState = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
@@ -539,6 +545,7 @@ class PlanModeState {
     this.latestReviewArtifactPath = null;
     this.reviewApprovedPlanPaths = new Set();
     this.pendingApprovedPlanContinuationPath = null;
+    this.confirmedApprovedContinuationPath = null;
     this.resumableApprovedPlanPath = null;
     this.endConversationRequested = false;
     this.workflowBypass = { ...DEFAULT_WORKFLOW_BYPASS_STATE };
@@ -570,6 +577,8 @@ class PlanModeState {
     this.reviewApprovedPlanPaths = new Set(snapshot.reviewApprovedPlanPaths);
     this.pendingApprovedPlanContinuationPath =
       snapshot.pendingApprovedPlanContinuationPath;
+    this.confirmedApprovedContinuationPath =
+      snapshot.confirmedApprovedContinuationPath;
     this.resumableApprovedPlanPath = snapshot.resumableApprovedPlanPath;
     this.endConversationRequested = snapshot.endConversationRequested;
     this.workflowBypass = workflowBypassFromSnapshot(snapshot.workflowBypass);
@@ -667,31 +676,34 @@ class PlanModeState {
     return this.getApprovedActivePlanPath() !== null;
   }
 
-  hasApprovedPlanContinuation(): boolean {
-    return (
-      this.isApprovedCompletedAutoActRun() ||
-      this.resumableApprovedPlanPath !== null
-    );
-  }
-
   getApprovedContinuationPlanPath(): string | null {
     return this.getApprovedActivePlanPath() ?? this.resumableApprovedPlanPath;
   }
 
-  activateApprovedPlanContinuation(): boolean {
-    const planPath = this.getApprovedContinuationPlanPath();
+  clearPendingApprovedPlanContinuation(): void {
+    this.pendingApprovedPlanContinuationPath = null;
+  }
+
+  confirmApprovedContinuation(planPath: string): void {
+    this.confirmedApprovedContinuationPath = planPath;
+  }
+
+  clearConfirmedApprovedContinuation(): void {
+    this.confirmedApprovedContinuationPath = null;
+  }
+
+  consumeConfirmedApprovedContinuation(): string | null {
+    const planPath = this.confirmedApprovedContinuationPath;
+    this.confirmedApprovedContinuationPath = null;
     if (!planPath || this.mode !== "auto") {
-      return false;
+      return null;
     }
 
     this.activePlanPath = planPath;
     this.latestReviewArtifactPath = planPath;
+    this.reviewApprovedPlanPaths.add(planPath);
     this.switchAutoToAct();
-    return true;
-  }
-
-  clearPendingApprovedPlanContinuation(): void {
-    this.pendingApprovedPlanContinuationPath = null;
+    return planPath;
   }
 
   getLatestReviewArtifactPath(): string | null {
@@ -856,6 +868,7 @@ class PlanModeState {
       reviewApprovedPlanPaths: [...this.reviewApprovedPlanPaths],
       pendingApprovedPlanContinuationPath:
         this.pendingApprovedPlanContinuationPath,
+      confirmedApprovedContinuationPath: this.confirmedApprovedContinuationPath,
       resumableApprovedPlanPath: this.resumableApprovedPlanPath,
       endConversationRequested: this.endConversationRequested,
       workflowBypass: { ...this.workflowBypass },
@@ -914,8 +927,22 @@ const formatPlanModeStatus = (state: PlanModeState): string => {
   ].join(" • ");
 };
 
-const getCompletedWidgetModeLabel = (state: PlanModeState): string =>
-  `${state.phase}:completed`;
+const formatCompletedTodoWidgetLines = (
+  state: PlanModeState,
+  done: number,
+  total: number,
+): string[] => {
+  const modePrefix = `【${state.phase}:completed】`;
+  const deliverySummary = `${done}/${total} 项任务已交付`;
+  const planPath = state.activeRun?.planPath;
+  if (!planPath) {
+    return [`${modePrefix}✅ 任务已完成 · ${deliverySummary}`];
+  }
+
+  return [
+    `${modePrefix}✅ 计划「${formatPlanName(planPath)}」已完成 · ${deliverySummary}`,
+  ];
+};
 
 const formatTodoWidgetLines = (state: PlanModeState): string[] => {
   if (state.todos.length === 0) {
@@ -926,15 +953,7 @@ const formatTodoWidgetLines = (state: PlanModeState): string[] => {
   const done = state.todos.filter((todo) => todo.status === "done").length;
   const current = findCurrentTodo(state.todos);
   if (!current && state.activeRun?.status === "completed") {
-    const modePrefix = `【${getCompletedWidgetModeLabel(state)}】`;
-    if (!state.activeRun.planPath) {
-      return [`${modePrefix}✅ 任务已完成 · ${done}/${total} 项任务已交付`];
-    }
-
-    const planName = formatPlanName(state.activeRun.planPath);
-    return [
-      `${modePrefix}✅ 计划「${planName}」已完成 · ${done}/${total} 项任务已交付`,
-    ];
+    return formatCompletedTodoWidgetLines(state, done, total);
   }
 
   const modePrefix = `【${getModeLabel(state)}】`;
@@ -1126,48 +1145,12 @@ const isSafeWorkflowBashCommand = (command: string): boolean => {
     .every((commandPart) => isSafeWorkflowCommandPart(commandPart));
 };
 
-const APPROVED_PLAN_CONTINUATION_PHRASES = [
-  "approve(?:d)?",
-  "yes|y",
-  "go ahead",
-  "proceed",
-  "continue",
-  "implement(?: it| the plan)?",
-  "impl(?: it| the plan)?",
-  "start implementation",
-  "同意(?:实施)?",
-  "批准",
-  "继续(?:实施)?",
-  "开始(?:实施|吧)",
-  "可以实施",
-  "执行(?:计划)?",
-  "按计划实施",
-];
-
-const APPROVED_PLAN_CONTINUATION_PATTERN = new RegExp(
-  `^(?:${APPROVED_PLAN_CONTINUATION_PHRASES.join("|")})[.!。！?？]*$`,
-  "iu",
-);
-
-const normalizeContinuationPrompt = (prompt: string): string =>
-  prompt.trim().replace(/\s+/gu, " ");
-
-const isApprovedPlanContinuationPrompt = (prompt: string): boolean => {
-  const normalized = normalizeContinuationPrompt(prompt);
-  if (!normalized) {
-    return false;
-  }
-  return APPROVED_PLAN_CONTINUATION_PATTERN.test(normalized);
-};
-
-const isApprovedPlanPolicyFixPrompt = (prompt: string): boolean =>
-  normalizeContinuationPrompt(prompt).startsWith(
-    "Plan Mode artifact policy requires fixes for an already approved plan.",
-  );
-
-const isApprovedPlanContinuationRequest = (prompt: string): boolean =>
-  isApprovedPlanContinuationPrompt(prompt) ||
-  isApprovedPlanPolicyFixPrompt(prompt);
+const formatApprovedContinuationFollowUp = (planPath: string): string =>
+  [
+    `Continue implementing approved plan: ${planPath}`,
+    "Use the approved plan as the source of truth.",
+    "Update plan_mode_todo as each implementation step starts and finishes.",
+  ].join("\n");
 
 const turnWasAborted = (
   event: { messages?: readonly unknown[] },
@@ -1295,17 +1278,6 @@ class PlanModeController {
         : "unknown";
   }
 
-  shouldContinueApprovedPlan(
-    prompt: string,
-    requiresPlanReview: boolean,
-  ): boolean {
-    if (!requiresPlanReview || !isApprovedPlanContinuationRequest(prompt)) {
-      return false;
-    }
-
-    return this.state.hasApprovedPlanContinuation();
-  }
-
   buildIntentClassifierInput(prompt: string): IntentClassifierInput {
     return {
       prompt,
@@ -1349,15 +1321,11 @@ class PlanModeController {
     const requiresPlanReview =
       requiresPlanReviewForIntentFeedback(intentFeedback);
 
-    const continuesApprovedPlan = this.shouldContinueApprovedPlan(
-      prompt,
-      requiresPlanReview,
-    );
+    const confirmedContinuationPath =
+      this.state.consumeConfirmedApprovedContinuation();
+    const continuesApprovedPlan = confirmedContinuationPath !== null;
     this.approvedPlanContinuationForTurn = continuesApprovedPlan;
-    if (
-      continuesApprovedPlan &&
-      this.state.activateApprovedPlanContinuation()
-    ) {
+    if (continuesApprovedPlan) {
       this.applyMode(ctx);
       this.persist();
     }
@@ -1886,14 +1854,27 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       pendingContinuationPath
     ) {
       controller.state.clearPendingApprovedPlanContinuation();
-      controller.persist();
-      pi.sendUserMessage(
-        "Continue implementing the approved plan " +
-          `(${pendingContinuationPath}). Do not rewrite or resubmit the ` +
-          "plan. First create implementation TODOs with plan_mode_todo, " +
-          "then execute the approved plan.",
-        { deliverAs: "followUp" },
+      const ok = await ctx.ui.confirm(
+        "Implement approved plan?",
+        [
+          `Approved plan: ${pendingContinuationPath}`,
+          "Enter next implementation turn now?",
+          "Y / Enter: continue implementation (default)",
+          "N: stay idle; the approved continuation will be cleared.",
+        ].join("\n"),
       );
+      if (ok) {
+        controller.state.confirmApprovedContinuation(pendingContinuationPath);
+      } else {
+        controller.state.clearConfirmedApprovedContinuation();
+      }
+      controller.persist();
+      if (ok) {
+        pi.sendUserMessage(
+          formatApprovedContinuationFollowUp(pendingContinuationPath),
+          { deliverAs: "followUp" },
+        );
+      }
       controller.clearTurnSource();
       return;
     }

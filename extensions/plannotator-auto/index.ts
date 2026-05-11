@@ -107,6 +107,7 @@ const DEFAULT_SPECS_SUBDIR = "specs";
 const DEFAULT_ISSUES_SUBDIR = "issues";
 const DEFAULT_CODE_REVIEW_PROBE_TIMEOUT_MS = 1_500;
 const DEFAULT_CODE_REVIEW_TIMEOUT_MS = 30_000;
+const DEFAULT_CODE_REVIEW_RETRY_DELAY_MS = 1_000;
 const SYNC_PLANNOTATOR_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const SYNC_CODE_REVIEW_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
 const SYNC_ANNOTATE_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
@@ -1081,7 +1082,7 @@ const scheduleReviewRetry = (
   reviewResults: ReturnType<typeof createReviewResultStore>,
   ctx: ExtensionContext,
   reason: string,
-  delay = 180,
+  delayMs = DEFAULT_CODE_REVIEW_RETRY_DELAY_MS,
 ): void => {
   const sessionKey = getSessionKey(ctx);
   const state = getSessionState(ctx);
@@ -1102,7 +1103,7 @@ const scheduleReviewRetry = (
     }
 
     void maybeStartCodeReview(pi, reviewResults, currentCtx, reason);
-  }, delay);
+  }, delayMs);
 };
 
 const isCodeReviewStartResult = (

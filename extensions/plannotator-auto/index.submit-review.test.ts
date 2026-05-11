@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PLANNOTATOR_PENDING_REVIEW_CHANNEL } from "../shared/internal-events.ts";
 import {
+  createDeferredReviewResult,
   createFakePi,
   createTempRepo,
   createTestContext,
   flushMicrotasks,
+  mockPlannotatorApi,
   removeTempRepo,
   writeTestFile,
 } from "./test-helpers.js";
@@ -46,89 +48,6 @@ type PendingReviewEvent = {
   };
 };
 
-type ReviewResult = {
-  reviewId?: string;
-  approved: boolean;
-  feedback?: string;
-};
-
-type CompletedReviewResult = {
-  status: "completed";
-  reviewId: string;
-  approved: true;
-};
-
-function createReviewStoreMock(
-  reviewResultListeners: Array<(result: unknown) => void>,
-) {
-  return {
-    onResult: vi.fn((listener: (result: unknown) => void) => {
-      reviewResultListeners.push(listener);
-      return () => {
-        const index = reviewResultListeners.indexOf(listener);
-        if (index >= 0) {
-          reviewResultListeners.splice(index, 1);
-        }
-      };
-    }),
-    getStatus: vi.fn(() => ({ status: "missing" as const })),
-    markPending: vi.fn(),
-    markCompleted: vi.fn(),
-  };
-}
-
-function mockSubmitReviewApi(
-  options: {
-    waitForReviewResult?: ReturnType<typeof vi.fn>;
-    requestReviewStatus?: ReturnType<typeof vi.fn>;
-  } = {},
-) {
-  const reviewResultListeners: Array<(result: unknown) => void> = [];
-  const startPlanReview = vi.fn(async () => ({
-    status: "handled" as const,
-    result: {
-      status: "pending" as const,
-      reviewId: SUBMITTED_REVIEW_ID,
-    },
-  }));
-
-  vi.doMock("./plannotator-api.ts", () => ({
-    createRequestPlannotator: vi.fn(() => vi.fn()),
-    createReviewResultStore: vi.fn(() =>
-      createReviewStoreMock(reviewResultListeners),
-    ),
-    formatAnnotationMessage: vi.fn(() => ""),
-    formatCodeReviewMessage: vi.fn(() => ""),
-    formatPlanReviewMessage: vi.fn(() => "Plan review approved."),
-    requestAnnotation: vi.fn(),
-    requestCodeReview: vi.fn(),
-    requestReviewStatus:
-      options.requestReviewStatus ??
-      vi.fn(() => ({ status: "missing" as const })),
-    startCodeReview: vi.fn(),
-    startPlanReview,
-    waitForReviewResult:
-      options.waitForReviewResult ??
-      vi.fn(
-        (_store, reviewId: string) =>
-          new Promise((resolve) => {
-            reviewResultListeners.push((result) => {
-              const completed = result as {
-                reviewId?: string;
-                approved?: boolean;
-                feedback?: string;
-              };
-              if (completed.reviewId === reviewId) {
-                resolve({ status: "completed", ...completed });
-              }
-            });
-          }),
-      ),
-  }));
-
-  return { reviewResultListeners, startPlanReview };
-}
-
 async function emitToolWrite(
   emit: (name: string, event: unknown, ctx: unknown) => Promise<unknown>,
   ctx: unknown,
@@ -164,40 +83,6 @@ function attachWidgetSpy(ctx: ReturnType<typeof createTestContext>) {
   return setWidget;
 }
 
-function emitReviewResult(
-  reviewResultListeners: Array<(result: unknown) => void>,
-  result: ReviewResult,
-): void {
-  const event = { reviewId: SUBMITTED_REVIEW_ID, ...result };
-  for (const listener of reviewResultListeners) {
-    listener(event);
-  }
-}
-
-function resolveApprovedReview(
-  resolveReviewResult: ((value: CompletedReviewResult) => void) | undefined,
-): void {
-  resolveReviewResult?.({
-    status: "completed",
-    reviewId: SUBMITTED_REVIEW_ID,
-    approved: true,
-  });
-}
-
-function createDeferredApprovedReview() {
-  let resolveReviewResult: ((value: CompletedReviewResult) => void) | undefined;
-
-  return {
-    waitForReviewResult: vi.fn(
-      () =>
-        new Promise<CompletedReviewResult>((resolve) => {
-          resolveReviewResult = resolve;
-        }),
-    ),
-    resolve: () => resolveApprovedReview(resolveReviewResult),
-  };
-}
-
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -206,7 +91,7 @@ afterEach(() => {
 describe("submit review tool", () => {
   it("submits a pending plan draft and waits for approval", async () => {
     vi.resetModules();
-    const { reviewResultListeners, startPlanReview } = mockSubmitReviewApi();
+    const { emitReviewResult, startPlanReview } = mockPlannotatorApi();
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
@@ -243,7 +128,7 @@ describe("submit review tool", () => {
       expect(startPlanReview).toHaveBeenCalledTimes(1);
       expect(settled).toBe(false);
 
-      emitReviewResult(reviewResultListeners, { approved: true });
+      emitReviewResult({ approved: true });
 
       const result = (await submitPromise) as {
         content?: Array<{ type?: string; text?: string }>;
@@ -261,7 +146,7 @@ describe("submit review tool", () => {
 
   it("blocks invalid standard plan artifacts before starting review", async () => {
     vi.resetModules();
-    const { startPlanReview } = mockSubmitReviewApi();
+    const { startPlanReview } = mockPlannotatorApi();
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
@@ -312,7 +197,7 @@ describe("submit review tool", () => {
 
   it("does not enqueue a stale gate or request another submit while review is active", async () => {
     vi.resetModules();
-    const { reviewResultListeners, startPlanReview } = mockSubmitReviewApi();
+    const { emitReviewResult, startPlanReview } = mockPlannotatorApi();
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
@@ -344,7 +229,7 @@ describe("submit review tool", () => {
       };
       expect(activeGateResult?.message).toBeUndefined();
 
-      emitReviewResult(reviewResultListeners, { approved: true });
+      emitReviewResult({ approved: true });
 
       await submitPromise;
       await emit("agent_end", {}, ctx);
@@ -367,7 +252,7 @@ describe("submit review tool", () => {
 
   it("keeps the pending gate available after a denied review", async () => {
     vi.resetModules();
-    const { reviewResultListeners, startPlanReview } = mockSubmitReviewApi();
+    const { emitReviewResult, startPlanReview } = mockPlannotatorApi();
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
@@ -391,7 +276,7 @@ describe("submit review tool", () => {
       );
       await flushMicrotasks();
 
-      emitReviewResult(reviewResultListeners, {
+      emitReviewResult({
         approved: false,
         feedback: "Please revise.",
       });
@@ -425,8 +310,8 @@ describe("submit review tool", () => {
         status: "missing" as const,
       },
     }));
-    const approvedReview = createDeferredApprovedReview();
-    const { startPlanReview } = mockSubmitReviewApi({
+    const approvedReview = createDeferredReviewResult();
+    const { startPlanReview } = mockPlannotatorApi({
       requestReviewStatus,
       waitForReviewResult: approvedReview.waitForReviewResult,
     });
@@ -469,7 +354,7 @@ describe("submit review tool", () => {
 
   it("does not abort while waiting for a manually submitted review result", async () => {
     vi.resetModules();
-    const { reviewResultListeners } = mockSubmitReviewApi();
+    const { emitReviewResult } = mockPlannotatorApi();
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
@@ -494,7 +379,7 @@ describe("submit review tool", () => {
       );
 
       await flushMicrotasks();
-      emitReviewResult(reviewResultListeners, { approved: true });
+      emitReviewResult({ approved: true });
       await submitPromise;
 
       expect(ctx.abort).not.toHaveBeenCalled();
@@ -507,8 +392,8 @@ describe("submit review tool", () => {
   it("shows the review widget once manual review submission creates an active review", async () => {
     vi.resetModules();
 
-    const approvedReview = createDeferredApprovedReview();
-    mockSubmitReviewApi({
+    const approvedReview = createDeferredReviewResult();
+    mockPlannotatorApi({
       waitForReviewResult: approvedReview.waitForReviewResult,
     });
 
@@ -562,8 +447,8 @@ describe("submit review tool", () => {
         approved: true,
       },
     }));
-    const approvedReview = createDeferredApprovedReview();
-    const { startPlanReview } = mockSubmitReviewApi({
+    const approvedReview = createDeferredReviewResult();
+    const { startPlanReview } = mockPlannotatorApi({
       requestReviewStatus,
       waitForReviewResult: approvedReview.waitForReviewResult,
     });

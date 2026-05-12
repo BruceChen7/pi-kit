@@ -52,10 +52,15 @@ You are executing a git workflow for branching, committing, and pushing.
     propose a fuller message/body and ask for confirmation before committing.
 - Draft the commit message (confirm if not provided).
   - Single purpose: `type(scope): summary`.
-  - Multiple purposes: `type(scope): summary` plus body bullets, e.g.
-    `git commit -m "chore: update workflow support" -m "- Optimize branch commit guidance\n- Add validation docs\n- Refresh tests"`.
-- `git commit -m "<summary>"` for single-purpose commits, or
-  `git commit -m "<summary>" -m "<body>"` for multi-purpose commits.
+  - Multiple purposes: `type(scope): summary` plus body bullets.
+  - Never put literal `\n` sequences in a `git commit -m` argument; GitHub will display them as
+    text instead of line breaks.
+  - Prefer a commit message file/heredoc for multi-line bodies, e.g.
+    `git commit -F /tmp/commit-message.txt`, where the file contains the summary, a blank line,
+    and one bullet per line.
+- `git commit -m "<summary>"` for single-purpose commits.
+- For multi-purpose commits, use a real multi-line body via `git commit -F <message-file>` or
+  multiple `-m` flags, one paragraph per flag; do not encode line breaks as `\n` text.
 
 ## Step 5: Push
 - `git push -u origin <branch>`.

@@ -30,7 +30,7 @@ MANIFEST_FILE="$LIBRARY_DIR/.manifest.json"
 DEFAULT_PLUGINS=(
   "npm:@plannotator/pi-extension"
   "npm:pi-context"
-  "https://github.com/davebcn87/pi-autoresearch@v1.0.1"
+  "https://github.com/davebcn87/pi-autoresearch"
 )
 
 while [[ $# -gt 0 ]]; do

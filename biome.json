@@ -10,7 +10,9 @@
     "includes": [
       "**",
       "!extensions/kanban-worktree/ui-dist",
-      "!extensions/kanban-worktree/ui/**/*.svelte"
+      "!extensions/kanban-worktree/ui/**/*.svelte",
+      "!extensions/cache-graph/ui-dist",
+      "!extensions/cache-graph/ui/**/*.svelte"
     ]
   },
   "formatter": {

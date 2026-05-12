@@ -103,12 +103,13 @@ Use `--url-host` to control what hostname is printed in the returned URL JSON.
 2. **Tell user what to expect and end your turn:**
    - Remind them of the URL (every step, not just first)
    - Give a brief text summary of what's on screen (e.g., "Showing 3 layout options for the homepage")
-   - Ask them to respond in the terminal: "Take a look and let me know what you think. Click to select an option if you'd like."
+   - If the `brainstorm-events` Pi extension is installed, ask them to click an option in the browser; the click will automatically wake the agent and continue the conversation.
+   - Fallback when auto-triggering is unavailable: ask them to respond in the terminal: "Take a look and let me know what you think. Click to select an option if you'd like."
 
-3. **On your next turn** — after the user responds in the terminal:
-   - Read `$SCREEN_DIR/.events` if it exists — this contains the user's browser interactions (clicks, selections) as JSON lines
-   - Merge with the user's terminal text to get the full picture
-   - The terminal message is the primary feedback; `.events` provides structured interaction data
+3. **On your next turn** — after the browser click auto-triggers the agent or the user responds in the terminal:
+   - The `brainstorm-events` extension automatically reads `$SCREEN_DIR/.events` for project-backed sessions under `.pi/brainstorm/` and sends the browser interactions as a user message.
+   - If auto-triggering is unavailable, manually read `$SCREEN_DIR/.events` if it exists — this contains the user's browser interactions (clicks, selections) as JSON lines.
+   - Merge browser events with any terminal text to get the full picture.
 
 4. **Iterate or advance** — if feedback changes current screen, write a new file (e.g., `layout-v2.html`). Only move to the next question when the current step is validated.
 

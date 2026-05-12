@@ -7,6 +7,8 @@ export type ArtifactPolicyConfig = {
   requireReviewDetails: boolean;
 };
 
+export type StandardPlanArtifactExtension = "md" | "html";
+
 export type ArtifactPolicyIssueCode =
   | "missing_section"
   | "section_order"
@@ -90,8 +92,15 @@ export const isStandardPlanArtifactPath = (artifactPath: string): boolean => {
     return false;
   }
 
-  // Standard generated plan files are date-prefixed Markdown files.
-  return /^\d{4}-\d{2}-\d{2}-.+\.md$/.test(fileName);
+  // Standard generated plan files are date-prefixed Markdown or HTML files.
+  return /^\d{4}-\d{2}-\d{2}-.+\.(?:md|html)$/.test(fileName);
+};
+
+export const isStandardMarkdownPlanArtifactPath = (
+  artifactPath: string,
+): boolean => {
+  const normalized = normalizeArtifactPath(artifactPath);
+  return isStandardPlanArtifactPath(normalized) && /^.+\.md$/i.test(normalized);
 };
 
 const parseTopLevelSections = (content: string): MarkdownSection[] => {
@@ -242,7 +251,7 @@ export const validateArtifactPolicy = ({
   config,
 }: ValidateArtifactPolicyInput): ArtifactPolicyResult => {
   const mergedConfig = mergeConfig(config);
-  if (!mergedConfig.enabled || !isStandardPlanArtifactPath(path)) {
+  if (!mergedConfig.enabled || !isStandardMarkdownPlanArtifactPath(path)) {
     return {
       applied: false,
       approved: true,

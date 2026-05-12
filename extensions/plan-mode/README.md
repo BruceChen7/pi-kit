@@ -78,6 +78,7 @@ For reviewed implementation work, write artifacts in one of these paths:
 
 ```text
 .pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md
+.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html
 .pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md
 ```
 
@@ -87,7 +88,7 @@ Then submit the artifact:
 plannotator_auto_submit_review({ path })
 ```
 
-Plan files should use this standard shape:
+Markdown plan files should use this standard shape:
 
 ```markdown
 ## Context
@@ -105,9 +106,22 @@ Plan files should use this standard shape:
   bug/root-cause reasons when relevant.
 ```
 
-For code-changing plans/specs that affect logic, state, data models, control flow, or
-process flow, include before/after diagrams and a small key code sketch. Put extra plan
-details inside the four standard sections instead of adding new top-level `##` sections.
+For code-changing Markdown plans/specs that affect logic, state, data models, control
+flow, or process flow, include before/after diagrams and a small key code sketch. Put
+extra plan details inside the four standard sections instead of adding new top-level
+`##` sections.
+
+HTML plan files are first-class plan artifacts only under `plan/`, not `specs/`. Switch
+the current session with:
+
+```text
+/plan-mode format html
+/plan-mode format markdown
+```
+
+HTML mode requires agents to write a self-contained HTML plan with the
+`plannotator-visual-explainer` Plan path. HTML plan content is not checked by the
+Markdown artifact policy; reviewers judge content in Plannotator.
 
 ## Configuration
 
@@ -119,6 +133,7 @@ Most users only need these options:
 {
   "planMode": {
     "defaultMode": "act",
+    "planArtifactFormat": "markdown",
     "requireReview": true,
     "preset": "strict"
   }

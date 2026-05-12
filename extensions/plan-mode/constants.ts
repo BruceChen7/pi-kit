@@ -7,8 +7,14 @@ export const TODO_WIDGET_KEY = "plan-mode-todos";
 export const TODO_TOOL_NAME = "plan_mode_todo";
 export const ACT_TODO_TOOL_NAME = "act_mode_todo";
 export const PLANNOTATOR_SUBMIT_TOOL_NAME = "plannotator_auto_submit_review";
-export const REVIEW_ARTIFACT_LOCATION =
+export const MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION =
   ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md or " +
+  ".pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md";
+export const HTML_PLAN_REVIEW_ARTIFACT_LOCATION =
+  ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html; " +
+  "specs remain .pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md";
+export const REVIEW_ARTIFACT_LOCATION =
+  ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md|.html or " +
   ".pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md";
 export const REVIEW_ARTIFACT_WRITE_HINT =
   "No mkdir is needed; use write with a standard filename and the tool will " +
@@ -22,6 +28,19 @@ export const REVIEW_ARTIFACT_WRITE_GUIDANCE = [
   REVIEW_ARTIFACT_WRITE_HINT,
 ].join(" ");
 export const SPEC_REVIEW_ARTIFACT_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
+export const HTML_PLAN_FORMAT_GUIDANCE = [
+  "- When planArtifactFormat is html, write implementation plans as " +
+    "self-contained HTML under " +
+    ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html.",
+  "- HTML plan mode is mandatory for implementation plans in this session; " +
+    "do not write a Markdown plan unless the format is switched back to " +
+    "markdown.",
+  "- Use the plannotator-visual-explainer skill Plan path: inline CSS/SVG, " +
+    "Plannotator theme tokens, visual timeline/data-flow/key-code/risk " +
+    "sections when useful, and no time estimates.",
+  "- Specs remain Markdown only under " +
+    ".pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md.",
+];
 export const RECENT_RUN_LIMIT = 5;
 
 const DEFAULT_MODE_SELECTION_TIMEOUT_SECONDS = 5;
@@ -34,6 +53,9 @@ export const MODE_SELECTION_MESSAGE =
 export const MODE_SELECTION_OPTIONS: PlanMode[] = ["act", "plan"];
 export const PLAN_MODE_COMMAND_OPTIONS = [
   ...MODE_SELECTION_OPTIONS,
+  "format",
+  "html",
+  "markdown",
   "status",
 ] as const;
 export const EXPLICIT_PLAN_MODE_REQUEST_PATTERN =
@@ -41,6 +63,8 @@ export const EXPLICIT_PLAN_MODE_REQUEST_PATTERN =
 
 export const DEFAULT_CONFIG: PlanModeConfig = {
   defaultMode: "act",
+  planArtifactFormat: "markdown",
+  planArtifactFormatSource: "default",
   preserveExternalTools: true,
   requireReview: true,
   guards: {

@@ -6,7 +6,7 @@ Auto-detects generated plan/spec files, gates the next agent turn until the agen
 
 Default targets:
 
-- Plans: `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md`
+- Plans: `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` or `.html`
 - Specs: `.pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md`
 - Issues: `.pi/plans/<repo>/issues/<topic-slug>/*.md`
 
@@ -21,8 +21,8 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 
 ## What it does
 
-- `write` / `edit` to a matching **plan** file → queue a pending plan review gate.
-- `write` / `edit` to a matching **spec** file → queue a pending spec review gate.
+- `write` / `edit` to a matching **plan** file (`.md` or `.html`) → queue a pending plan review gate.
+- `write` / `edit` to a matching **spec** file (`.md` only) → queue a pending spec review gate.
 - `write` / `edit` to a matching **issue** file → queue a pending plan review gate.
 - Matching `bash` output redirects are treated the same as `write` / `edit`.
 - When a plan/spec/issue review target is pending, emit a handled pending-review event and use a hidden next-turn gate that requires `plannotator_auto_submit_review`.
@@ -30,7 +30,10 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 - `plannotator_auto_submit_review` is the only plan/spec review runner. While it waits for a result, the same session will not ask for another submit; approval clears the pending target, while denial keeps it pending for a later retry.
 - `write` / `edit` to **non-plan** files → mark code review pending only if `codeReviewAutoTrigger` is `true`.
 - On `agent_end`, if code review is pending, no plan/spec review is pending or active, and the repo is dirty, request code review.
-- `Ctrl+Alt+L` annotates the latest Markdown file modified in the current session.
+- `Ctrl+Alt+L` annotates the latest Markdown or HTML file modified in the current session.
+- HTML plan submissions use Plannotator HTML rendering. If the event bridge cannot render
+  HTML directly, Plannotator Auto falls back to the CLI equivalent of
+  `plannotator annotate <file> --render-html --gate --json`.
 
 ## Configuration
 

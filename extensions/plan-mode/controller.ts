@@ -18,8 +18,10 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_MODE_SELECTION_TIMEOUT_MS,
   DIRECT_ACT_TODO_GUIDANCE,
+  HTML_PLAN_FORMAT_GUIDANCE,
   KEY_CODE_SKETCH_GUIDANCE,
   LOGIC_CHANGE_DIAGRAM_GUIDANCE,
+  MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION,
   MODE_SELECTION_MESSAGE,
   MODE_SELECTION_OPTIONS,
   MODE_SELECTION_TITLE,
@@ -30,7 +32,6 @@ import {
   PLAN_MODE_TOOL_NAMES,
   PLANNOTATOR_SUBMIT_TOOL_NAME,
   REVIEW_ARTIFACT_LOCATION,
-  REVIEW_ARTIFACT_TARGET,
   REVIEW_ARTIFACT_WRITE_GUIDANCE,
   REVIEW_ARTIFACT_WRITE_HINT,
   STATE_ENTRY_TYPE,
@@ -61,7 +62,12 @@ import {
   promptRequestsPlanMode,
   stringProperty,
 } from "./state.ts";
-import type { InputSource, PlanMode, PlanModeConfig } from "./types.ts";
+import type {
+  InputSource,
+  PlanArtifactFormat,
+  PlanMode,
+  PlanModeConfig,
+} from "./types.ts";
 import {
   colorTodoWidgetHeading,
   formatPlanDecision,
@@ -125,6 +131,16 @@ export class PlanModeController {
     ctx.ui.notify(`Plan mode: ${getModeLabel(this.state)}`, "info");
   }
 
+  setPlanArtifactFormat(
+    ctx: ExtensionContext,
+    format: PlanArtifactFormat,
+  ): void {
+    this.state.setPlanArtifactFormatOverride(format);
+    this.applyMode(ctx);
+    this.persist();
+    ctx.ui.notify(`Plan artifact format: ${format} (session override)`, "info");
+  }
+
   updateUi(ctx: ExtensionContext): void {
     if (!ctx.hasUI) {
       return;
@@ -149,20 +165,31 @@ export class PlanModeController {
 
   buildModePrompt(): string {
     const todoToolName = this.getTodoToolNameForCurrentMode();
+    const format = this.state.getPlanArtifactFormat(this.config);
+    const reviewArtifactLocation =
+      format === "html"
+        ? ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html"
+        : MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION;
     const lines = [
       "## Plan Mode Extension",
       "",
       `Current mode: ${getModeLabel(this.state)}.`,
+      `Plan artifact format: ${format} ` +
+        `(${this.state.getPlanArtifactFormatSource(this.config)}).`,
       "",
       `- In plan phases, inspect with ${PLAN_INSPECTION_TOOL_SLASH_LIST}. ` +
         "Runtime guards block bash and source-code edits.",
       `- Use ${todoToolName} to maintain the concrete TODO list.`,
-      "- For implementation tasks, write only " +
-        `${REVIEW_ARTIFACT_TARGET} and submit them with ` +
+      "- For implementation tasks, write only reviewable artifacts under " +
+        `${reviewArtifactLocation} and submit them with ` +
         `${PLANNOTATOR_SUBMIT_TOOL_NAME}.`,
       `- ${REVIEW_ARTIFACT_WRITE_HINT}`,
-      "- Standard plan artifacts must use ## Context, ## Steps, " +
-        "## Verification, and ## Review with Chinese checkbox steps.",
+      ...(format === "html"
+        ? HTML_PLAN_FORMAT_GUIDANCE
+        : [
+            "- Standard plan artifacts must use ## Context, ## Steps, " +
+              "## Verification, and ## Review with Chinese checkbox steps.",
+          ]),
       ARCHITECTURE_TEST_GUIDANCE,
       ...LOGIC_CHANGE_DIAGRAM_GUIDANCE,
       ...KEY_CODE_SKETCH_GUIDANCE,

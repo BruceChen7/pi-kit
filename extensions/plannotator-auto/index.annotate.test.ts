@@ -17,7 +17,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const recordSessionMarkdownWrite = async (
+const recordSessionDocumentWrite = async (
   emit: ReturnType<typeof createFakePi>["emit"],
   ctx: ReturnType<typeof createTestContext>,
   repoRelativePath: string,
@@ -32,7 +32,7 @@ const recordSessionMarkdownWrite = async (
   await emit("tool_execution_end", { ...event, isError: false }, ctx);
 };
 
-describe("annotate latest Markdown shortcut", () => {
+describe("annotate latest document shortcut", () => {
   it("annotates the latest Markdown file modified in the current session", async () => {
     vi.resetModules();
 
@@ -80,8 +80,8 @@ describe("annotate latest Markdown shortcut", () => {
 
     try {
       await emit("session_start", {}, ctx);
-      await recordSessionMarkdownWrite(emit, ctx, "notes/freeform.md");
-      await recordSessionMarkdownWrite(emit, ctx, "drafts/anything-goes.md");
+      await recordSessionDocumentWrite(emit, ctx, "notes/freeform.md");
+      await recordSessionDocumentWrite(emit, ctx, "drafts/anything-goes.md");
       await runShortcut("ctrl+alt+l", ctx);
 
       expect(annotateRequests).toEqual([
@@ -97,6 +97,61 @@ describe("annotate latest Markdown shortcut", () => {
         expect.stringContaining("Please refine the session Markdown."),
         { deliverAs: "followUp" },
       );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("annotates latest HTML document with render-html payload", async () => {
+    vi.resetModules();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit, events, runShortcut } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo(
+      "plannotator-auto-shortcut-session-html-",
+    );
+    const latestPath = await writeTestFile(
+      repoRoot,
+      "plans/visual.html",
+      "<html><body>Plan</body></html>",
+    );
+    const annotateRequests: Array<{ action: string; payload: unknown }> = [];
+
+    events.on("plannotator:request", (data) => {
+      const request = data as {
+        action: string;
+        payload: unknown;
+        respond: (response: unknown) => void;
+      };
+
+      annotateRequests.push({
+        action: request.action,
+        payload: request.payload,
+      });
+      request.respond({ status: "handled", result: { feedback: "" } });
+    });
+
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await recordSessionDocumentWrite(emit, ctx, "plans/visual.html");
+      await runShortcut("ctrl+alt+l", ctx);
+
+      expect(annotateRequests).toEqual([
+        {
+          action: "annotate",
+          payload: {
+            filePath: latestPath,
+            mode: "annotate",
+            renderHtml: true,
+            contentType: "html",
+          },
+        },
+      ]);
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);
@@ -131,7 +186,7 @@ describe("annotate latest Markdown shortcut", () => {
 
     try {
       await emit("session_start", {}, ctx);
-      await recordSessionMarkdownWrite(emit, ctx, "notes/latest.md");
+      await recordSessionDocumentWrite(emit, ctx, "notes/latest.md");
 
       let settled = false;
       const shortcutPromise = runShortcut("ctrl+alt+l", ctx).then(() => {
@@ -189,7 +244,7 @@ describe("annotate latest Markdown shortcut", () => {
 
     try {
       await emit("session_start", {}, ctx);
-      await recordSessionMarkdownWrite(emit, ctx, "notes/latest.md");
+      await recordSessionDocumentWrite(emit, ctx, "notes/latest.md");
       await runShortcut("ctrl+alt+l", ctx);
 
       expect(api.sendUserMessage).toHaveBeenCalledWith(
@@ -232,7 +287,7 @@ describe("annotate latest Markdown shortcut", () => {
 
     try {
       await emit("session_start", {}, ctx);
-      await recordSessionMarkdownWrite(emit, ctx, "notes/latest.md");
+      await recordSessionDocumentWrite(emit, ctx, "notes/latest.md");
       await runShortcut("ctrl+alt+l", ctx);
 
       expect(ctx.ui.notify).toHaveBeenCalledWith(

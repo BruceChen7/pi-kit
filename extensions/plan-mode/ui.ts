@@ -1,7 +1,12 @@
 import path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { PlanModeState } from "./state.ts";
-import type { PlanDecisionSummary, TodoItem, TodoStatus } from "./types.ts";
+import type {
+  PlanDecisionSummary,
+  PlanModeConfig,
+  TodoItem,
+  TodoStatus,
+} from "./types.ts";
 
 export const getModeLabel = (state: PlanModeState): string => {
   return state.mode;
@@ -27,7 +32,7 @@ const findCurrentTodo = (todos: TodoItem[]): TodoItem | undefined =>
 
 const formatPlanName = (planPath: string): string => {
   const filename = path.basename(planPath);
-  const withoutExtension = filename.replace(/\.md$/u, "");
+  const withoutExtension = filename.replace(/\.(?:md|html)$/u, "");
   return withoutExtension.replace(/^\d{4}-\d{2}-\d{2}-/u, "") || "当前计划";
 };
 
@@ -54,13 +59,27 @@ const getUserRunStatus = (state: PlanModeState): string => {
   return "Planning";
 };
 
-export const formatPlanModeStatus = (state: PlanModeState): string => {
+export const formatPlanModeStatus = (
+  state: PlanModeState,
+  config?: PlanModeConfig,
+): string => {
   const mode = getModeLabel(state);
   const decision = formatPlanDecision(state.lastAutoDecision);
+  const formatParts = config
+    ? [
+        `planArtifactFormat: ${state.getPlanArtifactFormat(config)}`,
+        `formatSource: ${state.getPlanArtifactFormatSource(config)}`,
+        state.getPlanArtifactFormat(config) === "html"
+          ? "planTarget: .pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html"
+          : "planTarget: .pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md",
+        "specs: markdown only",
+      ]
+    : [];
   if (!state.activeRun) {
     return [
       `Plan mode: ${mode}`,
       `status: ${getUserRunStatus(state)}`,
+      ...formatParts,
       decision,
     ]
       .filter(Boolean)
@@ -75,6 +94,7 @@ export const formatPlanModeStatus = (state: PlanModeState): string => {
     `status: ${getUserRunStatus(state)}`,
     `run: ${state.activeRun.status}`,
     `plan: ${plan}`,
+    ...formatParts,
     `todos: ${done}/${state.todos.length} done`,
     `archived: ${archived}`,
     decision,

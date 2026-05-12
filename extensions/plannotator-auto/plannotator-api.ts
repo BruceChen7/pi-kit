@@ -42,6 +42,7 @@ export type PlanReviewDecision = {
 export type PlanReviewStartResult = {
   status: "pending";
   reviewId: string;
+  renderHtml?: boolean;
 };
 
 export type CodeReviewStartResult = {
@@ -210,6 +211,8 @@ export const startPlanReview = async (
     planContent: string;
     planFilePath?: string;
     origin?: string;
+    renderHtml?: boolean;
+    contentType?: "html";
   },
 ): Promise<PlannotatorResponseMap["plan-review"]> => {
   const response = await requestPlannotator("plan-review", payload);
@@ -271,6 +274,8 @@ export const requestAnnotation = (
     markdown?: string;
     mode?: "annotate" | "annotate-folder";
     folderPath?: string;
+    renderHtml?: boolean;
+    contentType?: "html";
   },
 ): Promise<PlannotatorResponseMap["annotate"]> =>
   requestPlannotator("annotate", payload);

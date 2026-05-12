@@ -2,6 +2,8 @@ import type { ArtifactPolicyConfig } from "./artifact-policy.ts";
 
 export type PlanMode = "plan" | "act";
 export type PlanPhase = "plan" | "act";
+export type PlanArtifactFormat = "markdown" | "html";
+export type PlanArtifactFormatSource = "session" | "config" | "default";
 export type InputSource = "interactive" | "rpc" | "extension" | "unknown";
 export type TodoStatus = "todo" | "in_progress" | "done" | "blocked";
 export type TodoStatusInput = TodoStatus | "pending";
@@ -64,11 +66,14 @@ export type PlanModeSnapshot = {
   confirmedApprovedContinuationPath: string | null;
   resumableApprovedPlanPath: string | null;
   endConversationRequested: boolean;
+  planArtifactFormatOverride?: PlanArtifactFormat | null;
   lastAutoDecision?: PlanDecisionSummary | null;
 };
 
 export type PlanModeConfig = {
   defaultMode: PlanMode;
+  planArtifactFormat: PlanArtifactFormat;
+  planArtifactFormatSource: Exclude<PlanArtifactFormatSource, "session">;
   preserveExternalTools: boolean;
   requireReview: boolean;
   guards: {

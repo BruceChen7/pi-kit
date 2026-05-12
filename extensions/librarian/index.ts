@@ -5,7 +5,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentToolResult,
+  AgentToolUpdateCallback,
+  ExtensionAPI,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 
 const MAX_FILE_BYTES = 128 * 1024;
@@ -32,6 +36,8 @@ const MAX_SUBAGENT_STDERR_BUFFER = 512 * 1024;
 const GITHUB_SEARCH_PATH_UNSAFE_CHARS = /[\s:"'`]/;
 
 type LibrarianPhase = "booting" | "exploring" | "writing";
+
+type ToolErrorResult = AgentToolResult<unknown> & { isError: true };
 
 type LibrarianProgressState = {
   startedAt: number;
@@ -434,10 +440,20 @@ export async function ghApi(
   }
 }
 
-function asTextResult(data: unknown) {
+function asTextResult(data: unknown): AgentToolResult<unknown> {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
     details: data,
+  };
+}
+
+function toolErrorResult(toolName: string, error: unknown): ToolErrorResult {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return {
+    content: [{ type: "text" as const, text: `${toolName} error: ${message}` }],
+    details: { error: message },
+    isError: true,
   };
 }
 
@@ -517,12 +533,7 @@ export async function runLibrarianSubagent(
   cwd: string,
   prompt: string,
   signal: AbortSignal | undefined,
-  onUpdate:
-    | ((partial: {
-        content?: Array<{ type: "text"; text: string }>;
-        details?: Record<string, unknown>;
-      }) => void)
-    | undefined,
+  onUpdate: AgentToolUpdateCallback<Record<string, unknown>> | undefined,
 ): Promise<{ finalText: string; stderr: string }> {
   const systemPrompt = `You are the Librarian, a specialized codebase understanding agent that helps answer questions about large, complex codebases across repositories.
 
@@ -901,15 +912,7 @@ export default function (pi: ExtensionAPI) {
           content: numbered,
         });
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `read_github error: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-          isError: true,
-        };
+        return toolErrorResult("read_github", error);
       }
     },
   });
@@ -966,15 +969,7 @@ export default function (pi: ExtensionAPI) {
 
         return asTextResult(entries);
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `list_directory_github error: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-          isError: true,
-        };
+        return toolErrorResult("list_directory_github", error);
       }
     },
   });
@@ -1043,15 +1038,7 @@ export default function (pi: ExtensionAPI) {
         const limit = params.limit ?? 100;
         return asTextResult(all.slice(offset, offset + limit));
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `glob_github error: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-          isError: true,
-        };
+        return toolErrorResult("glob_github", error);
       }
     },
   });
@@ -1136,15 +1123,7 @@ export default function (pi: ExtensionAPI) {
           totalCount: Number(data?.total_count ?? 0),
         });
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `search_github error: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-          isError: true,
-        };
+        return toolErrorResult("search_github", error);
       }
     },
   });
@@ -1266,15 +1245,7 @@ export default function (pi: ExtensionAPI) {
 
         return asTextResult({ commits: mapped, totalCount });
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `commit_search error: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-          isError: true,
-        };
+        return toolErrorResult("commit_search", error);
       }
     },
   });
@@ -1345,15 +1316,7 @@ export default function (pi: ExtensionAPI) {
           total_commits: Number(data?.total_commits ?? 0),
         });
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `diff error: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-          isError: true,
-        };
+        return toolErrorResult("diff", error);
       }
     },
   });
@@ -1525,15 +1488,7 @@ export default function (pi: ExtensionAPI) {
           totalCount,
         });
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `list_repositories error: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-          isError: true,
-        };
+        return toolErrorResult("list_repositories", error);
       }
     },
   });
@@ -1609,15 +1564,7 @@ export default function (pi: ExtensionAPI) {
           },
         };
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `librarian error: ${error instanceof Error ? error.message : String(error)}`,
-            },
-          ],
-          isError: true,
-        };
+        return toolErrorResult("librarian", error);
       }
     },
   });

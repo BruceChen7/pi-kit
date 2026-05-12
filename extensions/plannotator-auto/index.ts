@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
@@ -7,7 +8,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
   formatArtifactPolicyFailure,
-  isStandardPlanArtifactPath,
+  isStandardMarkdownPlanArtifactPath,
   validateArtifactPolicy,
 } from "../plan-mode/artifact-policy.ts";
 import {
@@ -73,7 +74,7 @@ type PlanReviewSubmitToolParams = {
   path?: unknown;
 };
 
-type SessionMarkdownFile = {
+type SessionReviewDocument = {
   absolutePath: string;
   mtimeMs: number;
   updatedAt: number;
@@ -81,6 +82,11 @@ type SessionMarkdownFile = {
 
 type PendingPlanReviewEventHandle = {
   markHandled: () => void;
+};
+
+type PlanReviewDecisionLike = {
+  approved?: boolean;
+  feedback?: string;
 };
 
 type SessionRuntimeState = {
@@ -94,7 +100,7 @@ type SessionRuntimeState = {
   pendingPlanReviewGateKeysByCwd: Map<string, string>;
   pendingPlanReviewTargetsByCwd: Map<string, Map<string, PendingPlanReview>>;
   toolArgsByCallId: Map<string, unknown>;
-  markdownFilesByCwd: Map<string, Map<string, SessionMarkdownFile>>;
+  reviewDocumentsByCwd: Map<string, Map<string, SessionReviewDocument>>;
   pendingReviewByCwd: Set<string>;
   activeCodeReviewByCwd: Map<string, ActiveCodeReview>;
   processedCodeReviewIds: Set<string>;
@@ -111,12 +117,12 @@ const DEFAULT_CODE_REVIEW_RETRY_DELAY_MS = 1_000;
 const SYNC_PLANNOTATOR_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const SYNC_CODE_REVIEW_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
 const SYNC_ANNOTATE_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
-const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
+const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.(?:md|html)$/;
 const SPEC_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
 // Issue files intentionally allow any Markdown basename under a topic slug.
 const ISSUE_FILE_PATTERN = /^.+\.md$/;
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
-const ANNOTATE_LATEST_MARKDOWN_SHORTCUT = "ctrl+alt+l";
+const ANNOTATE_LATEST_DOCUMENT_SHORTCUT = "ctrl+alt+l";
 const PLAN_REVIEW_SUBMIT_TOOL = "plannotator_auto_submit_review";
 const planReviewSubmitToolParameters = Type.Object({
   path: Type.String({ description: "Pending review target path" }),
@@ -148,7 +154,7 @@ const formatPendingPlanArtifactPolicyFailure = (
   pendingPlanReview: PendingPlanReview,
   planContent: string,
 ): string | null => {
-  if (!isStandardPlanArtifactPath(pendingPlanReview.planFile)) {
+  if (!isStandardMarkdownPlanArtifactPath(pendingPlanReview.planFile)) {
     return null;
   }
 
@@ -442,7 +448,7 @@ const createSessionRuntimeState = (): SessionRuntimeState => ({
   pendingPlanReviewGateKeysByCwd: new Map(),
   pendingPlanReviewTargetsByCwd: new Map(),
   toolArgsByCallId: new Map<string, unknown>(),
-  markdownFilesByCwd: new Map(),
+  reviewDocumentsByCwd: new Map(),
   activePlanReviewByCwd: new Map(),
   settledPlanReviewPaths: new Set(),
   plannotatorUnavailableNotified: false,
@@ -827,8 +833,64 @@ export const shouldQueueReviewForToolPath = (
   );
 };
 
-const isMarkdownPath = (targetPath: string): boolean =>
-  path.extname(targetPath).toLowerCase() === ".md";
+const isReviewDocumentPath = (targetPath: string): boolean =>
+  [".md", ".html"].includes(path.extname(targetPath).toLowerCase());
+
+const isHtmlPath = (targetPath: string): boolean =>
+  path.extname(targetPath).toLowerCase() === ".html";
+
+type HtmlCliResult =
+  | { status: "handled"; approved?: boolean; feedback: string }
+  | { status: "error"; error: string };
+
+const parseHtmlCliResult = (stdout: string): HtmlCliResult => {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return { status: "handled", approved: false, feedback: "" };
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      decision?: string;
+      feedback?: string;
+    };
+    if (parsed.decision === "approved") {
+      return { status: "handled", approved: true, feedback: "" };
+    }
+    return {
+      status: "handled",
+      approved: false,
+      feedback: parsed.feedback ?? "",
+    };
+  } catch {
+    if (/The user approved\./i.test(trimmed)) {
+      return { status: "handled", approved: true, feedback: "" };
+    }
+    return { status: "handled", approved: false, feedback: trimmed };
+  }
+};
+
+const runHtmlAnnotateCli = (filePath: string): HtmlCliResult => {
+  const result = spawnSync(
+    "plannotator",
+    ["annotate", filePath, "--render-html", "--gate", "--json"],
+    {
+      encoding: "utf-8",
+      timeout: SYNC_ANNOTATE_TIMEOUT_MS,
+    },
+  );
+
+  if (result.error) {
+    return { status: "error", error: result.error.message };
+  }
+  if (result.status !== 0) {
+    return {
+      status: "error",
+      error: result.stderr || `plannotator exited with ${result.status}`,
+    };
+  }
+  return parseHtmlCliResult(result.stdout ?? "");
+};
 
 const isPathWithinCwd = (
   ctx: Pick<ExtensionContext, "cwd">,
@@ -841,26 +903,29 @@ const isPathWithinCwd = (
   );
 };
 
-const getSessionMarkdownFiles = (
+const getSessionReviewDocuments = (
   state: SessionRuntimeState,
   cwd: string,
-): Map<string, SessionMarkdownFile> => {
-  const existing = state.markdownFilesByCwd.get(cwd);
+): Map<string, SessionReviewDocument> => {
+  const existing = state.reviewDocumentsByCwd.get(cwd);
   if (existing) {
     return existing;
   }
 
-  const next = new Map<string, SessionMarkdownFile>();
-  state.markdownFilesByCwd.set(cwd, next);
+  const next = new Map<string, SessionReviewDocument>();
+  state.reviewDocumentsByCwd.set(cwd, next);
   return next;
 };
 
-const recordSessionMarkdownPath = (
+const recordSessionReviewDocumentPath = (
   ctx: ExtensionContext,
   toolPath: string,
 ): void => {
   const absolutePath = path.resolve(ctx.cwd, toolPath);
-  if (!isMarkdownPath(absolutePath) || !isPathWithinCwd(ctx, absolutePath)) {
+  if (
+    !isReviewDocumentPath(absolutePath) ||
+    !isPathWithinCwd(ctx, absolutePath)
+  ) {
     return;
   }
 
@@ -875,46 +940,49 @@ const recordSessionMarkdownPath = (
     return;
   }
 
-  getSessionMarkdownFiles(getSessionState(ctx), ctx.cwd).set(absolutePath, {
+  getSessionReviewDocuments(getSessionState(ctx), ctx.cwd).set(absolutePath, {
     absolutePath,
     mtimeMs: stats.mtimeMs,
     updatedAt: Date.now(),
   });
 };
 
-const recordSessionMarkdownWrites = (
+const recordSessionReviewDocumentWrites = (
   ctx: ExtensionContext,
   toolName: string,
   args: unknown,
 ): void => {
   if (toolName === "bash") {
     for (const toolPath of extractBashPathCandidates(args)) {
-      recordSessionMarkdownPath(ctx, toolPath);
+      recordSessionReviewDocumentPath(ctx, toolPath);
     }
     return;
   }
 
   const toolPath = resolveToolPath(args);
   if (toolPath) {
-    recordSessionMarkdownPath(ctx, toolPath);
+    recordSessionReviewDocumentPath(ctx, toolPath);
   }
 };
 
-const findLatestSessionMarkdownFile = (
+const findLatestSessionReviewDocument = (
   ctx: ExtensionContext,
 ): {
   absolutePath: string;
   repoRelativePath: string;
 } | null => {
-  const markdownFiles = getSessionState(ctx).markdownFilesByCwd.get(ctx.cwd);
-  if (!markdownFiles || markdownFiles.size === 0) {
+  const documents = getSessionState(ctx).reviewDocumentsByCwd.get(ctx.cwd);
+  if (!documents || documents.size === 0) {
     return null;
   }
 
-  let latest: SessionMarkdownFile | null = null;
-  for (const [absolutePath, candidate] of markdownFiles) {
-    if (!isMarkdownPath(absolutePath) || !isPathWithinCwd(ctx, absolutePath)) {
-      markdownFiles.delete(absolutePath);
+  let latest: SessionReviewDocument | null = null;
+  for (const [absolutePath, candidate] of documents) {
+    if (
+      !isReviewDocumentPath(absolutePath) ||
+      !isPathWithinCwd(ctx, absolutePath)
+    ) {
+      documents.delete(absolutePath);
       continue;
     }
 
@@ -922,12 +990,12 @@ const findLatestSessionMarkdownFile = (
     try {
       stats = fs.statSync(absolutePath);
     } catch {
-      markdownFiles.delete(absolutePath);
+      documents.delete(absolutePath);
       continue;
     }
 
     if (!stats.isFile()) {
-      markdownFiles.delete(absolutePath);
+      documents.delete(absolutePath);
       continue;
     }
 
@@ -935,7 +1003,7 @@ const findLatestSessionMarkdownFile = (
       ...candidate,
       mtimeMs: stats.mtimeMs,
     };
-    markdownFiles.set(absolutePath, refreshed);
+    documents.set(absolutePath, refreshed);
 
     if (
       !latest ||
@@ -957,19 +1025,19 @@ const findLatestSessionMarkdownFile = (
   };
 };
 
-const annotateLatestMarkdownFile = async (
+const annotateLatestReviewDocument = async (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> => {
   if (!ctx.hasUI) {
-    ctx.ui.notify("Latest Markdown annotation requires UI mode.", "warning");
+    ctx.ui.notify("Latest document annotation requires UI mode.", "warning");
     return;
   }
 
-  const latestMarkdown = findLatestSessionMarkdownFile(ctx);
-  if (!latestMarkdown) {
+  const latestDocument = findLatestSessionReviewDocument(ctx);
+  if (!latestDocument) {
     ctx.ui.notify(
-      "No Markdown files have been modified in this session.",
+      "No Markdown or HTML files have been modified in this session.",
       "warning",
     );
     return;
@@ -978,23 +1046,26 @@ const annotateLatestMarkdownFile = async (
   const requestPlannotator = createRequestPlannotator(pi.events, {
     timeoutMs: SYNC_ANNOTATE_TIMEOUT_MS,
   });
+  const renderHtml = isHtmlPath(latestDocument.absolutePath);
 
-  log?.info("plannotator-auto annotating latest session Markdown", {
+  log?.info("plannotator-auto annotating latest session document", {
     cwd: ctx.cwd,
-    markdownFile: latestMarkdown.repoRelativePath,
+    documentFile: latestDocument.repoRelativePath,
+    renderHtml,
     sessionKey: getSessionKey(ctx),
-    shortcut: ANNOTATE_LATEST_MARKDOWN_SHORTCUT,
+    shortcut: ANNOTATE_LATEST_DOCUMENT_SHORTCUT,
   });
 
   try {
     const response = await requestAnnotation(requestPlannotator, {
-      filePath: latestMarkdown.absolutePath,
+      filePath: latestDocument.absolutePath,
       mode: "annotate",
+      ...(renderHtml ? { renderHtml: true, contentType: "html" } : {}),
     });
 
     if (response.status === "handled") {
       const message = formatAnnotationMessage({
-        filePath: latestMarkdown.repoRelativePath,
+        filePath: latestDocument.repoRelativePath,
         feedback: response.result.feedback,
         annotations: response.result.annotations,
       });
@@ -1002,15 +1073,29 @@ const annotateLatestMarkdownFile = async (
       if (message) {
         pi.sendUserMessage(message, { deliverAs: "followUp" });
       } else {
-        ctx.ui.notify("Markdown annotation closed (no feedback).", "info");
+        ctx.ui.notify("Document annotation closed (no feedback).", "info");
       }
       return;
+    }
+
+    if (response.status === "unavailable" && renderHtml) {
+      const fallback = runHtmlAnnotateCli(latestDocument.absolutePath);
+      if (fallback.status === "handled") {
+        const message = formatAnnotationMessage({
+          filePath: latestDocument.repoRelativePath,
+          feedback: fallback.feedback,
+        });
+        if (message) {
+          pi.sendUserMessage(message, { deliverAs: "followUp" });
+        }
+        return;
+      }
     }
 
     if (response.status === "unavailable") {
       ctx.ui.notify(
         response.error ??
-          "Plannotator is not loaded. Install/enable the Plannotator extension to annotate Markdown.",
+          "Plannotator is not loaded. Install/enable Plannotator to annotate documents.",
         "warning",
       );
       return;
@@ -1607,6 +1692,67 @@ const clearPendingPlanReviewTarget = (
   state.pendingPlanReviewTargetsByCwd.delete(cwd);
 };
 
+const approvePendingPlanReview = (
+  state: SessionRuntimeState,
+  cwd: string,
+  pendingPlanReviews: Map<string, PendingPlanReview>,
+  pendingPlanReview: PendingPlanReview,
+) => {
+  state.settledPlanReviewPaths.add(pendingPlanReview.resolvedPlanPath);
+  clearPendingPlanReviewTarget(
+    state,
+    cwd,
+    pendingPlanReviews,
+    pendingPlanReview.resolvedPlanPath,
+  );
+  markPendingPlanReviewEventsHandled(state, cwd, [
+    pendingPlanReview.resolvedPlanPath,
+  ]);
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `Review approved for ${pendingPlanReview.planFile}.`,
+      },
+    ],
+    details: { status: "approved" },
+  };
+};
+
+const denyPendingPlanReview = (
+  pendingPlanReview: PendingPlanReview,
+  feedback?: string,
+) => ({
+  content: [
+    {
+      type: "text",
+      text: `YOUR REVIEW WAS NOT APPROVED. Revise ${pendingPlanReview.planFile} and call ${PLAN_REVIEW_SUBMIT_TOOL} again after addressing this feedback.\n\n${feedback || "Review changes requested."}`,
+    },
+  ],
+  details: { status: "denied" },
+});
+
+const completePendingPlanReview = (
+  ctx: ExtensionContext,
+  state: SessionRuntimeState,
+  pendingPlanReviews: Map<string, PendingPlanReview>,
+  pendingPlanReview: PendingPlanReview,
+  result: PlanReviewDecisionLike,
+) => {
+  setReviewWidget(ctx);
+  if (result.approved) {
+    return approvePendingPlanReview(
+      state,
+      ctx.cwd,
+      pendingPlanReviews,
+      pendingPlanReview,
+    );
+  }
+
+  return denyPendingPlanReview(pendingPlanReview, result.feedback);
+};
+
 const isReviewTrackedToolName = (toolName: string): boolean =>
   toolName === "write" || toolName === "edit" || toolName === "bash";
 
@@ -1709,6 +1855,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       const requestPlannotator = createRequestPlannotator(pi.events, {
         timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
       });
+      const renderHtml = isHtmlPath(pendingPlanReview.resolvedPlanPath);
       const response = await startPlanReview(
         requestPlannotator,
         reviewResults,
@@ -1716,8 +1863,35 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
           planContent,
           planFilePath: pendingPlanReview.planFile,
           origin: "plannotator-auto",
+          ...(renderHtml ? { renderHtml: true, contentType: "html" } : {}),
         },
       );
+
+      if (
+        renderHtml &&
+        (response.status !== "handled" || response.result.renderHtml !== true)
+      ) {
+        const result = runHtmlAnnotateCli(pendingPlanReview.resolvedPlanPath);
+        if (result.status === "error") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: result.error,
+              },
+            ],
+            details: { status: "error" },
+          };
+        }
+
+        return completePendingPlanReview(
+          ctx,
+          state,
+          pendingPlanReviews,
+          pendingPlanReview,
+          result,
+        );
+      }
 
       if (response.status !== "handled") {
         return {
@@ -1749,46 +1923,20 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       );
 
       state.activePlanReviewByCwd.delete(ctx.cwd);
-      if (result.approved) {
-        state.settledPlanReviewPaths.add(pendingPlanReview.resolvedPlanPath);
-        clearPendingPlanReviewTarget(
-          state,
-          ctx.cwd,
-          pendingPlanReviews,
-          pendingPlanReview.resolvedPlanPath,
-        );
-        markPendingPlanReviewEventsHandled(state, ctx.cwd, [
-          pendingPlanReview.resolvedPlanPath,
-        ]);
-        setReviewWidget(ctx);
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Review approved for ${pendingPlanReview.planFile}.`,
-            },
-          ],
-          details: { status: "approved" },
-        };
-      }
-
-      setReviewWidget(ctx);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `YOUR REVIEW WAS NOT APPROVED. Revise ${pendingPlanReview.planFile} and call ${PLAN_REVIEW_SUBMIT_TOOL} again after addressing this feedback.\n\n${result.feedback || "Review changes requested."}`,
-          },
-        ],
-        details: { status: "denied" },
-      };
+      return completePendingPlanReview(
+        ctx,
+        state,
+        pendingPlanReviews,
+        pendingPlanReview,
+        result,
+      );
     },
   });
 
-  pi.registerShortcut(ANNOTATE_LATEST_MARKDOWN_SHORTCUT, {
-    description: "Annotate latest session Markdown (Ctrl+Alt+L)",
+  pi.registerShortcut(ANNOTATE_LATEST_DOCUMENT_SHORTCUT, {
+    description: "Annotate latest session document (Ctrl+Alt+L)",
     handler: async (ctx) => {
-      await annotateLatestMarkdownFile(pi, ctx);
+      await annotateLatestReviewDocument(pi, ctx);
     },
   });
 
@@ -1915,7 +2063,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       return;
     }
 
-    recordSessionMarkdownWrites(ctx, event.toolName, args);
+    recordSessionReviewDocumentWrites(ctx, event.toolName, args);
 
     const toolPath = resolveToolPath(args);
     const planConfig = getPlanFileConfig(ctx);

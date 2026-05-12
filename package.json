@@ -31,6 +31,8 @@
       "./extensions/codex-web-search",
       "./extensions/agent-end-code-simplifier",
       "./extensions/review-feedback",
+      "./extensions/brainstorm-events",
+      "./extensions/cache-graph",
       "./extensions/librarian"
     ]
   },
@@ -43,7 +45,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "kanban-worktree:ui:build": "vite build --config extensions/kanban-worktree/vite.config.mts",
-    "prepack": "npm run kanban-worktree:ui:build",
+    "cache-graph:ui:build": "vite build --config extensions/cache-graph/vite.config.mts",
+    "prepack": "npm run kanban-worktree:ui:build && npm run cache-graph:ui:build",
     "prepare": "husky"
   },
   "lint-staged": {

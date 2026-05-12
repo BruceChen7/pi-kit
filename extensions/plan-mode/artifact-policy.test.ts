@@ -93,6 +93,16 @@ describe("plan artifact policy", () => {
     );
   });
 
+  it("does not apply standard markdown plan policy to HTML plan artifacts", () => {
+    const result = validateArtifactPolicy({
+      path: ".pi/plans/pi-kit/plan/2026-05-08-demo.html",
+      content: "<html><body><h1>视觉计划</h1></body></html>",
+    });
+
+    expect(result.applied).toBe(false);
+    expect(result.approved).toBe(true);
+  });
+
   it("does not apply standard plan policy to spec artifacts", () => {
     const result = validateArtifactPolicy({
       path: specPath,

@@ -8,6 +8,7 @@ import {
   STATE_ENTRY_TYPE,
 } from "./constants.ts";
 import type {
+  PlanArtifactFormat,
   PlanDecisionSummary,
   PlanMode,
   PlanModeConfig,
@@ -36,6 +37,10 @@ export const stringProperty = (value: unknown, key: string): string | null => {
 export const isPlanMode = (value: unknown): value is PlanMode =>
   typeof value === "string" &&
   MODE_SELECTION_OPTIONS.includes(value as PlanMode);
+
+export const isPlanArtifactFormat = (
+  value: unknown,
+): value is PlanArtifactFormat => value === "markdown" || value === "html";
 
 export const promptRequestsPlanMode = (prompt: string): boolean =>
   EXPLICIT_PLAN_MODE_REQUEST_PATTERN.test(prompt);
@@ -179,6 +184,8 @@ export const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
   const raw = isRecord(merged.planMode) ? merged.planMode : {};
   const config: PlanModeConfig = {
     defaultMode: DEFAULT_CONFIG.defaultMode,
+    planArtifactFormat: DEFAULT_CONFIG.planArtifactFormat,
+    planArtifactFormatSource: DEFAULT_CONFIG.planArtifactFormatSource,
     preserveExternalTools: DEFAULT_CONFIG.preserveExternalTools,
     requireReview: DEFAULT_CONFIG.requireReview,
     guards: { ...DEFAULT_CONFIG.guards },
@@ -190,6 +197,10 @@ export const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
   }
   if (isPlanMode(raw.defaultMode)) {
     config.defaultMode = raw.defaultMode;
+  }
+  if (isPlanArtifactFormat(raw.planArtifactFormat)) {
+    config.planArtifactFormat = raw.planArtifactFormat;
+    config.planArtifactFormatSource = "config";
   }
   if (typeof raw.preserveExternalTools === "boolean") {
     config.preserveExternalTools = raw.preserveExternalTools;
@@ -299,6 +310,11 @@ export const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
         ? data.resumableApprovedPlanPath
         : null,
     endConversationRequested: data.endConversationRequested === true,
+    planArtifactFormatOverride: isPlanArtifactFormat(
+      data.planArtifactFormatOverride,
+    )
+      ? data.planArtifactFormatOverride
+      : null,
     lastAutoDecision: planDecisionFromSnapshot(data.lastAutoDecision),
   };
 };
@@ -344,6 +360,7 @@ export class PlanModeState {
   confirmedApprovedContinuationPath: string | null = null;
   resumableApprovedPlanPath: string | null = null;
   endConversationRequested = false;
+  planArtifactFormatOverride: PlanArtifactFormat | null = null;
   lastAutoDecision: PlanDecisionSummary | null = null;
 
   constructor(defaultMode: PlanMode) {
@@ -366,6 +383,7 @@ export class PlanModeState {
     this.confirmedApprovedContinuationPath = null;
     this.resumableApprovedPlanPath = null;
     this.endConversationRequested = false;
+    this.planArtifactFormatOverride = null;
     this.lastAutoDecision = null;
   }
 
@@ -399,6 +417,8 @@ export class PlanModeState {
       snapshot.confirmedApprovedContinuationPath;
     this.resumableApprovedPlanPath = snapshot.resumableApprovedPlanPath;
     this.endConversationRequested = snapshot.endConversationRequested;
+    this.planArtifactFormatOverride =
+      snapshot.planArtifactFormatOverride ?? null;
     this.lastAutoDecision = snapshot.lastAutoDecision ?? null;
   }
 
@@ -410,6 +430,23 @@ export class PlanModeState {
     if (previousPhase === "act" && this.phase === "plan") {
       this.clearReviewTracking();
     }
+  }
+
+  setPlanArtifactFormatOverride(format: PlanArtifactFormat): void {
+    this.planArtifactFormatOverride = format;
+  }
+
+  getPlanArtifactFormat(config: PlanModeConfig): PlanArtifactFormat {
+    return this.planArtifactFormatOverride ?? config.planArtifactFormat;
+  }
+
+  getPlanArtifactFormatSource(
+    config: PlanModeConfig,
+  ): "session" | "config" | "default" {
+    if (this.planArtifactFormatOverride) {
+      return "session";
+    }
+    return config.planArtifactFormatSource;
   }
 
   clearReviewTracking(): void {
@@ -655,6 +692,7 @@ export class PlanModeState {
       confirmedApprovedContinuationPath: this.confirmedApprovedContinuationPath,
       resumableApprovedPlanPath: this.resumableApprovedPlanPath,
       endConversationRequested: this.endConversationRequested,
+      planArtifactFormatOverride: this.planArtifactFormatOverride,
       lastAutoDecision: this.lastAutoDecision
         ? { ...this.lastAutoDecision }
         : null,

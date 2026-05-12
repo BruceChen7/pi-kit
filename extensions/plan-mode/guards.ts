@@ -170,7 +170,7 @@ export const extractTextContent = (event: ToolResultEvent): string => {
 };
 
 export const extractApprovedPath = (text: string): string | null => {
-  const match = text.match(/Review approved for\s+(.+?\.md)\.?/i);
+  const match = text.match(/Review approved for\s+(.+?\.(?:md|html))\.?/i);
   return match?.[1]?.trim() ?? null;
 };
 

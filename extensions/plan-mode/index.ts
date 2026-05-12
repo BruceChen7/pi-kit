@@ -7,7 +7,7 @@ import {
   TODO_WIDGET_KEY,
 } from "./constants.ts";
 import { PlanModeController } from "./controller.ts";
-import { isPlanMode } from "./state.ts";
+import { isPlanArtifactFormat, isPlanMode } from "./state.ts";
 import { registerTodoTool } from "./todo-tool.ts";
 import { formatPlanModeStatus } from "./ui.ts";
 
@@ -29,10 +29,24 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const requested = args.trim();
       if (requested === "status" || requested.length === 0) {
-        ctx.ui.notify(formatPlanModeStatus(controller.state), "info");
+        ctx.ui.notify(
+          formatPlanModeStatus(controller.state, controller.config),
+          "info",
+        );
         controller.updateUi(ctx);
         return;
       }
+
+      const [command, value] = requested.split(/\s+/u);
+      if (command === "format") {
+        if (!isPlanArtifactFormat(value)) {
+          ctx.ui.notify("Usage: /plan-mode format html|markdown", "error");
+          return;
+        }
+        controller.setPlanArtifactFormat(ctx, value);
+        return;
+      }
+
       if (!isPlanMode(requested)) {
         ctx.ui.notify(`Unknown plan-mode: ${requested}`, "error");
         return;

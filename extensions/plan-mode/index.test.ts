@@ -545,7 +545,13 @@ describe("plan-mode extension", () => {
       path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md",
     });
     await expectToolAllowed(harness, ctx, "write", {
+      path: ".pi/plans/pi-kit/plan/2026-05-08-demo.html",
+    });
+    await expectToolAllowed(harness, ctx, "write", {
       path: ".pi/plans/pi-kit/specs/2026-05-08-demo-design.md",
+    });
+    await expectToolBlocked(harness, ctx, "write", {
+      path: ".pi/plans/pi-kit/specs/2026-05-08-demo-design.html",
     });
 
     await harness.runCommand("plan-mode", "act", ctx);
@@ -1055,6 +1061,25 @@ describe("plan-mode extension", () => {
       expect.stringContaining("status: Waiting for review"),
       "info",
     );
+  });
+
+  it("toggles plan artifact format for the current session", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await harness.runCommand("plan-mode", "format html", ctx);
+    await harness.runCommand("plan-mode", "status", ctx);
+
+    expect(ctx.ui.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("planArtifactFormat: html"),
+      "info",
+    );
+    expect(ctx.ui.notify).toHaveBeenLastCalledWith(
+      expect.stringContaining("formatSource: session"),
+      "info",
+    );
+    expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+      planArtifactFormatOverride: "html",
+    });
   });
 
   it("normalizes pending todo input to todo", async () => {

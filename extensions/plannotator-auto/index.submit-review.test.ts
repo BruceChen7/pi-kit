@@ -1,12 +1,11 @@
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PLANNOTATOR_PENDING_REVIEW_CHANNEL } from "../shared/internal-events.ts";
 import {
-  createDeferredReviewResult,
   createFakePi,
   createTempRepo,
   createTestContext,
   flushMicrotasks,
-  mockPlannotatorApi,
   removeTempRepo,
   writeTestFile,
 } from "./test-helpers.js";
@@ -15,7 +14,21 @@ async function importPlannotatorAuto() {
   return (await import("./index.js")).default;
 }
 
-const SUBMITTED_REVIEW_ID = "review-submit-plan";
+type SpawnSyncMockResult = {
+  status: number;
+  stdout?: string;
+  stderr?: string;
+  error?: Error;
+};
+
+function mockSpawnSync(result: SpawnSyncMockResult) {
+  const spawnSync = vi.fn(() => result);
+  vi.doMock("node:child_process", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("node:child_process")>()),
+    spawnSync,
+  }));
+  return spawnSync;
+}
 const PLAN_DRAFT_CONTENT = `# Plan
 
 ## Context
@@ -89,10 +102,13 @@ afterEach(() => {
 });
 
 describe("submit review tool", () => {
-  it("submits a pending plan draft and waits for approval", async () => {
+  it("submits a pending plan draft through the Plannotator CLI", async () => {
     vi.resetModules();
-    const { emitReviewResult, startPlanReview } = mockPlannotatorApi();
-
+    const spawnSync = mockSpawnSync({
+      status: 0,
+      stdout: JSON.stringify({ decision: "approved" }),
+      stderr: "",
+    });
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
@@ -112,28 +128,23 @@ describe("submit review tool", () => {
       await emitToolWrite(emit, ctx, planFileRelative);
       expect(emitted[0]?.handled?.isHandled()).toBe(false);
 
-      let settled = false;
-      const submitPromise = Promise.resolve(
-        runTool(
-          "plannotator_auto_submit_review",
-          { path: planFileRelative },
-          ctx,
-        ),
-      ).then((result) => {
-        settled = true;
-        return result;
-      });
-
-      await flushMicrotasks();
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
-      expect(settled).toBe(false);
-
-      emitReviewResult({ approved: true });
-
-      const result = (await submitPromise) as {
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
+      )) as {
         content?: Array<{ type?: string; text?: string }>;
         details?: { status?: string };
       };
+      expect(spawnSync).toHaveBeenCalledWith(
+        "plannotator",
+        ["annotate", path.join(repoRoot, planFileRelative), "--gate", "--json"],
+        expect.objectContaining({
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: expect.objectContaining({ PLANNOTATOR_CWD: repoRoot }),
+        }),
+      );
       expect(result.details?.status).toBe("approved");
       expect(result.content?.[0]?.text ?? "").toContain("approved");
       expect(emitted[0]?.handled?.isHandled()).toBe(true);
@@ -146,7 +157,7 @@ describe("submit review tool", () => {
 
   it("blocks invalid standard plan artifacts before starting review", async () => {
     vi.resetModules();
-    const { startPlanReview } = mockPlannotatorApi();
+    const spawnSync = mockSpawnSync({ status: 0, stdout: "", stderr: "" });
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
@@ -186,7 +197,11 @@ describe("submit review tool", () => {
       expect(result.content?.[0]?.text ?? "").toContain(
         "Plan Mode artifact policy blocked review submission",
       );
-      expect(startPlanReview).not.toHaveBeenCalled();
+      expect(spawnSync).not.toHaveBeenCalledWith(
+        "plannotator",
+        expect.anything(),
+        expect.anything(),
+      );
       expect(emitted[0]?.handled?.isHandled()).toBe(false);
       expect(gateResult.message?.content ?? "").toContain(planFileRelative);
     } finally {
@@ -195,10 +210,13 @@ describe("submit review tool", () => {
     }
   });
 
-  it("does not enqueue a stale gate or request another submit while review is active", async () => {
+  it("does not enqueue a stale gate after CLI approval", async () => {
     vi.resetModules();
-    const { emitReviewResult, startPlanReview } = mockPlannotatorApi();
-
+    const spawnSync = mockSpawnSync({
+      status: 0,
+      stdout: JSON.stringify({ decision: "approved" }),
+      stderr: "",
+    });
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
@@ -221,15 +239,12 @@ describe("submit review tool", () => {
       );
 
       await flushMicrotasks();
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
+      expect(spawnSync).toHaveBeenCalledWith(
+        "plannotator",
+        ["annotate", path.join(repoRoot, planFileRelative), "--gate", "--json"],
+        expect.objectContaining({ cwd: repoRoot }),
+      );
       expect(api.sendUserMessage).not.toHaveBeenCalled();
-
-      const activeGateResult = (await emit("before_agent_start", {}, ctx)) as {
-        message?: { content?: string };
-      };
-      expect(activeGateResult?.message).toBeUndefined();
-
-      emitReviewResult({ approved: true });
 
       await submitPromise;
       await emit("agent_end", {}, ctx);
@@ -242,7 +257,6 @@ describe("submit review tool", () => {
       };
 
       expect(approvedGateResult?.message).toBeUndefined();
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
       expect(api.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
@@ -250,10 +264,16 @@ describe("submit review tool", () => {
     }
   });
 
-  it("keeps the pending gate available after a denied review", async () => {
+  it("keeps the pending gate available after CLI annotation feedback", async () => {
     vi.resetModules();
-    const { emitReviewResult, startPlanReview } = mockPlannotatorApi();
-
+    const spawnSync = mockSpawnSync({
+      status: 0,
+      stdout: JSON.stringify({
+        decision: "annotated",
+        feedback: "Please revise.",
+      }),
+      stderr: "",
+    });
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
@@ -267,33 +287,27 @@ describe("submit review tool", () => {
       await emit("session_start", {}, ctx);
       await emitToolWrite(emit, ctx, planFileRelative);
 
-      const submitPromise = Promise.resolve(
-        runTool(
-          "plannotator_auto_submit_review",
-          { path: planFileRelative },
-          ctx,
-        ),
-      );
-      await flushMicrotasks();
-
-      emitReviewResult({
-        approved: false,
-        feedback: "Please revise.",
-      });
-
-      const result = (await submitPromise) as {
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
+      )) as {
         details?: { status?: string };
       };
       const gateResult = (await emit("before_agent_start", {}, ctx)) as {
         message?: { content?: string };
       };
 
+      expect(spawnSync).toHaveBeenCalledWith(
+        "plannotator",
+        ["annotate", path.join(repoRoot, planFileRelative), "--gate", "--json"],
+        expect.objectContaining({ cwd: repoRoot }),
+      );
       expect(result.details?.status).toBe("denied");
       expect(gateResult.message?.content ?? "").toContain(
         "plannotator_auto_submit_review",
       );
       expect(gateResult.message?.content ?? "").toContain(planFileRelative);
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
       expect(api.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
@@ -301,21 +315,14 @@ describe("submit review tool", () => {
     }
   });
 
-  it("does not poll review-status on agent_end while a manual submit is active", async () => {
+  it("does not poll review-status after CLI manual submit", async () => {
     vi.resetModules();
 
-    const requestReviewStatus = vi.fn(async () => ({
-      status: "handled" as const,
-      result: {
-        status: "missing" as const,
-      },
-    }));
-    const approvedReview = createDeferredReviewResult();
-    const { startPlanReview } = mockPlannotatorApi({
-      requestReviewStatus,
-      waitForReviewResult: approvedReview.waitForReviewResult,
+    const spawnSync = mockSpawnSync({
+      status: 0,
+      stdout: JSON.stringify({ decision: "approved" }),
+      stderr: "",
     });
-
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
@@ -329,33 +336,28 @@ describe("submit review tool", () => {
       await emit("session_start", {}, ctx);
       await emitToolWrite(emit, ctx, planFileRelative);
 
-      const submitPromise = Promise.resolve(
-        runTool(
-          "plannotator_auto_submit_review",
-          { path: planFileRelative },
-          ctx,
-        ),
+      await runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
       );
-      await flushMicrotasks();
-
       await emit("agent_end", {}, ctx);
 
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
-      expect(requestReviewStatus).not.toHaveBeenCalled();
+      expect(spawnSync).toHaveBeenCalled();
       expect(api.sendUserMessage).not.toHaveBeenCalled();
-
-      approvedReview.resolve();
-      await submitPromise;
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);
     }
   });
 
-  it("does not abort while waiting for a manually submitted review result", async () => {
+  it("does not abort while running a manually submitted CLI review", async () => {
     vi.resetModules();
-    const { emitReviewResult } = mockPlannotatorApi();
-
+    mockSpawnSync({
+      status: 0,
+      stdout: JSON.stringify({ decision: "approved" }),
+      stderr: "",
+    });
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
@@ -370,17 +372,11 @@ describe("submit review tool", () => {
       await emitToolWrite(emit, ctx, planFileRelative);
       ctx.abort.mockClear();
 
-      const submitPromise = Promise.resolve(
-        runTool(
-          "plannotator_auto_submit_review",
-          { path: planFileRelative },
-          ctx,
-        ),
+      await runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
       );
-
-      await flushMicrotasks();
-      emitReviewResult({ approved: true });
-      await submitPromise;
 
       expect(ctx.abort).not.toHaveBeenCalled();
     } finally {
@@ -389,14 +385,14 @@ describe("submit review tool", () => {
     }
   });
 
-  it("shows the review widget once manual review submission creates an active review", async () => {
+  it("clears the review widget after manual CLI review completes", async () => {
     vi.resetModules();
 
-    const approvedReview = createDeferredReviewResult();
-    mockPlannotatorApi({
-      waitForReviewResult: approvedReview.waitForReviewResult,
+    mockSpawnSync({
+      status: 0,
+      stdout: JSON.stringify({ decision: "approved" }),
+      stderr: "",
     });
-
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
@@ -412,45 +408,29 @@ describe("submit review tool", () => {
       await emitToolWrite(emit, ctx, planFileRelative);
       setWidget.mockClear();
 
-      const submitPromise = Promise.resolve(
-        runTool(
-          "plannotator_auto_submit_review",
-          { path: planFileRelative },
-          ctx,
-        ),
+      await runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
       );
-      await flushMicrotasks();
 
-      expect(setWidget).toHaveBeenCalledWith(
+      expect(setWidget).toHaveBeenLastCalledWith(
         "plannotator-auto-review",
-        ["Plan/Spec review is active"],
-        { placement: "belowEditor" },
+        undefined,
       );
-
-      approvedReview.resolve();
-      await submitPromise;
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);
     }
   });
 
-  it("waits for the submitted review result event without polling review-status", async () => {
-    vi.useFakeTimers();
+  it("returns the submitted CLI review result", async () => {
     vi.resetModules();
 
-    const requestReviewStatus = vi.fn(async () => ({
-      status: "handled" as const,
-      result: {
-        status: "completed" as const,
-        reviewId: SUBMITTED_REVIEW_ID,
-        approved: true,
-      },
-    }));
-    const approvedReview = createDeferredReviewResult();
-    const { startPlanReview } = mockPlannotatorApi({
-      requestReviewStatus,
-      waitForReviewResult: approvedReview.waitForReviewResult,
+    mockSpawnSync({
+      status: 0,
+      stdout: JSON.stringify({ decision: "approved" }),
+      stderr: "",
     });
 
     const plannotatorAuto = await importPlannotatorAuto();
@@ -466,27 +446,13 @@ describe("submit review tool", () => {
       await emit("session_start", {}, ctx);
       await emitToolWrite(emit, ctx, planFileRelative);
 
-      let settled = false;
-      const submitPromise = Promise.resolve(
-        runTool(
-          "plannotator_auto_submit_review",
-          { path: planFileRelative },
-          ctx,
-        ),
-      ).then(() => {
-        settled = true;
-      });
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
+      )) as { details?: { status?: string } };
 
-      await vi.advanceTimersByTimeAsync(2_000);
-      await flushMicrotasks();
-
-      expect(startPlanReview).toHaveBeenCalledTimes(1);
-      expect(requestReviewStatus).not.toHaveBeenCalled();
-      expect(settled).toBe(false);
-
-      approvedReview.resolve();
-      await submitPromise;
-      expect(settled).toBe(true);
+      expect(result.details?.status).toBe("approved");
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

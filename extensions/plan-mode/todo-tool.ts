@@ -64,6 +64,8 @@ export const registerTodoTool = (
     promptSnippet: "Manage the Plan Mode TODO list and current execution step",
     promptGuidelines: [
       `Use ${TODO_TOOL_NAME} to create concrete TODOs during Plan phase before implementation.`,
+      'Use action "set" to replace the TODO list, or action "add" to append ' +
+        'one TODO. Do not use action "create"; it is not supported.',
       "In Act phase, update " +
         `${TODO_TOOL_NAME} items to in_progress before starting a step and done after ` +
         "finishing it so the widget shows the current step.",

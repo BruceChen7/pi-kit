@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -6,6 +6,10 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { createTodo } from "../todo-workflow/todo-store.js";
+import {
+  KANBAN_DAEMON_PROTOCOL_VERSION,
+  readDaemonMetadata,
+} from "./daemon-runtime.js";
 import { sendJsonLineRequest } from "./protocol.js";
 
 let dir: string;
@@ -62,6 +66,42 @@ test("daemon entrypoint uses explicit repo root for todo source", async () => {
   }
 });
 
+test("daemon entrypoint writes metadata and shuts down through RPC", async () => {
+  const socketPath = path.join(dir, "daemon.sock");
+  const metadataPath = path.join(dir, "daemon.json");
+  const repoRoot = path.join(dir, "repo");
+  const child = spawnDaemon([
+    "--socket",
+    socketPath,
+    "--metadata",
+    metadataPath,
+    "--repo-root",
+    repoRoot,
+  ]);
+
+  await waitForSocket(socketPath, 2000);
+  await waitForMetadata(metadataPath, 2000);
+  await expect(readDaemonMetadata(metadataPath)).resolves.toEqual(
+    expect.objectContaining({
+      pid: child.pid,
+      repoRoot,
+      socketPath,
+      protocolVersion: KANBAN_DAEMON_PROTOCOL_VERSION,
+    }),
+  );
+  await expect(
+    sendJsonLineRequest(socketPath, {
+      id: "shutdown",
+      method: "daemon.shutdown",
+    }),
+  ).resolves.toEqual({
+    id: "shutdown",
+    result: { shuttingDown: true },
+  });
+  await waitForProcessExit(child, 2000);
+  await expect(readDaemonMetadata(metadataPath)).resolves.toBeNull();
+});
+
 test("daemon entrypoint starts from source checkout", async () => {
   const socketPath = path.join(dir, "daemon.sock");
   const child = spawnDaemon([socketPath]);
@@ -79,6 +119,18 @@ test("daemon entrypoint starts from source checkout", async () => {
   expect(stderr).not.toContain("ERR_MODULE_NOT_FOUND");
 });
 
+async function waitForMetadata(
+  metadataPath: string,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await readDaemonMetadata(metadataPath)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`metadata did not become ready: ${metadataPath}`);
+}
+
 async function waitForSocket(
   socketPath: string,
   timeoutMs: number,
@@ -90,6 +142,22 @@ async function waitForSocket(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`socket did not become ready: ${socketPath}`);
+}
+
+function waitForProcessExit(
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("process did not exit")),
+      timeoutMs,
+    );
+    child.once("exit", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
 }
 
 function canConnect(socketPath: string): Promise<boolean> {

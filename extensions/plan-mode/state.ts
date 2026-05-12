@@ -418,32 +418,25 @@ export class PlanModeState {
     this.reviewApprovedPlanPaths = new Set();
   }
 
-  switchReviewToAct(): void {
-    if (this.mode === "review") {
-      this.phase = "act";
-    }
+  switchApprovedPlanToAct(): void {
+    this.mode = "plan";
+    this.phase = "act";
   }
 
-  shouldReturnReviewActToPlan(): boolean {
+  shouldReturnPlanActToPlan(): boolean {
     return (
-      this.mode === "review" &&
-      this.phase === "act" &&
-      !this.hasUnfinishedTodos()
+      this.mode === "plan" && this.phase === "act" && !this.hasUnfinishedTodos()
     );
   }
 
-  returnReviewActToPlan(): void {
+  returnPlanActToPlan(): void {
     this.archiveCompletedActiveRun();
     this.phase = "plan";
     this.clearReviewTracking();
   }
 
-  isReviewPlanPhase(): boolean {
-    return this.mode === "review" && this.phase === "plan";
-  }
-
   isPlanPhase(): boolean {
-    return this.mode === "plan" || this.isReviewPlanPhase();
+    return this.mode === "plan" && this.phase === "plan";
   }
 
   hasUnfinishedTodos(): boolean {
@@ -486,14 +479,14 @@ export class PlanModeState {
   consumeConfirmedApprovedContinuation(): string | null {
     const planPath = this.confirmedApprovedContinuationPath;
     this.confirmedApprovedContinuationPath = null;
-    if (!planPath || this.mode !== "review") {
+    if (!planPath || this.mode !== "plan") {
       return null;
     }
 
     this.activePlanPath = planPath;
     this.latestReviewArtifactPath = planPath;
     this.reviewApprovedPlanPaths.add(planPath);
-    this.switchReviewToAct();
+    this.switchApprovedPlanToAct();
     return planPath;
   }
 
@@ -521,9 +514,9 @@ export class PlanModeState {
     return this.activeRun?.planPath ?? null;
   }
 
-  isApprovedCompletedReviewActRun(): boolean {
+  isApprovedCompletedPlanActRun(): boolean {
     return (
-      this.mode === "review" &&
+      this.mode === "plan" &&
       this.phase === "act" &&
       this.activeRun?.status === "completed" &&
       this.activeRun.planPath === this.activePlanPath &&

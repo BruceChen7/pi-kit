@@ -1,6 +1,10 @@
 import { mkdir, rm } from "node:fs/promises";
-import { createServer, type Socket } from "node:net";
-import os from "node:os";
+import {
+  createConnection,
+  createServer,
+  type Server,
+  type Socket,
+} from "node:net";
 import path from "node:path";
 import {
   createRepoGitRunner,
@@ -8,6 +12,15 @@ import {
   listLocalBranches,
   listRemoteBranches,
 } from "../shared/git.ts";
+import {
+  computeDaemonBuildId,
+  defaultKanbanRoot,
+  defaultMetadataPath,
+  defaultSocketPath,
+  KANBAN_DAEMON_PROTOCOL_VERSION,
+  unlinkDaemonMetadata,
+  writeDaemonMetadata,
+} from "./daemon-runtime.ts";
 import { FeatureWorkflowGateway, TmuxGateway } from "./gateways.ts";
 import { FeatureLaunchService } from "./launch-service.ts";
 import { consoleLogger, type KanbanLogger } from "./logger.ts";
@@ -19,25 +32,30 @@ import {
 } from "./protocol.ts";
 import { TodoWorkflowSource } from "./todo-source.ts";
 
-export function defaultKanbanRoot(): string {
-  return path.join(os.homedir(), ".pi", "agent", "kanban-worktree");
-}
-
-export function defaultSocketPath(repoRoot: string = process.cwd()): string {
-  const repoHash = Buffer.from(repoRoot).toString("base64url").slice(0, 32);
-  return path.join(defaultKanbanRoot(), "run", `${repoHash}.sock`);
-}
+export { defaultKanbanRoot, defaultSocketPath } from "./daemon-runtime.ts";
 
 export type KanbanDaemonOptions = {
   rootDir?: string;
   socketPath?: string;
+  metadataPath?: string;
   repoRoot?: string;
   git?: GitRunner;
 };
 
+const SOCKET_PROBE_MS = 100;
+const SHUTDOWN_DRAIN_MS = 2000;
+
 type BranchListResult = {
   branches: string[];
   defaultBranch: string;
+};
+
+type DaemonIdentity = {
+  pid: number;
+  repoRoot: string;
+  socketPath: string;
+  protocolVersion: number;
+  buildId: string;
 };
 
 function readLaunchRef(params: {
@@ -128,20 +146,42 @@ function listBaseBranches(run: GitRunner): BranchListResult {
   };
 }
 
+function canConnect(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(socketPath);
+    const done = (ok: boolean) => {
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.setTimeout(SOCKET_PROBE_MS);
+    socket.once("connect", () => done(true));
+    socket.once("timeout", () => done(false));
+    socket.once("error", () => done(false));
+  });
+}
+
 export class KanbanDaemon {
   private readonly rootDir: string;
   private readonly socketPath: string;
+  private readonly metadataPath: string;
   private readonly repoRoot: string;
   private readonly issueSource: TodoWorkflowSource;
   private readonly logger: KanbanLogger;
   private readonly git: GitRunner;
+  private readonly activeSockets = new Set<Socket>();
+  private readonly buildIdPromise: Promise<string>;
+  private server: Server | null = null;
+  private shuttingDown = false;
 
   constructor(options: KanbanDaemonOptions = {}) {
     this.rootDir = options.rootDir ?? defaultKanbanRoot();
-    this.socketPath = options.socketPath ?? defaultSocketPath();
     this.repoRoot = options.repoRoot ?? process.cwd();
+    this.socketPath = options.socketPath ?? defaultSocketPath(this.repoRoot);
+    this.metadataPath =
+      options.metadataPath ?? defaultMetadataPath(this.repoRoot);
     this.logger = consoleLogger;
     this.git = options.git ?? createRepoGitRunner(this.repoRoot);
+    this.buildIdPromise = computeDaemonBuildId();
     this.issueSource = new TodoWorkflowSource({
       resolveBaseBranch: () => listBaseBranches(this.git).defaultBranch,
     });
@@ -154,16 +194,53 @@ export class KanbanDaemon {
       repoRoot: this.repoRoot,
     });
     await mkdir(path.dirname(this.socketPath), { recursive: true });
-    await rm(this.socketPath, { force: true });
+    await this.cleanupStaleSocket();
     const server = createServer((socket) => this.handleSocket(socket));
+    this.server = server;
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(this.socketPath, resolve);
     });
+    await writeDaemonMetadata(this.metadataPath, {
+      ...(await this.identity()),
+      startedAt: new Date().toISOString(),
+    });
     this.logger.info("daemon listening", { socketPath: this.socketPath });
   }
 
+  async shutdown(options: { drainMs?: number } = {}): Promise<void> {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+    await new Promise<void>((resolve) => {
+      if (!this.server) return resolve();
+      this.server.close(() => resolve());
+      setTimeout(resolve, options.drainMs ?? SHUTDOWN_DRAIN_MS).unref();
+    });
+    for (const socket of this.activeSockets) socket.destroy();
+    await rm(this.socketPath, { force: true });
+    await unlinkDaemonMetadata(this.metadataPath);
+  }
+
+  private async cleanupStaleSocket(): Promise<void> {
+    if (await canConnect(this.socketPath)) {
+      throw new Error(`socket already has a live daemon: ${this.socketPath}`);
+    }
+    await rm(this.socketPath, { force: true });
+  }
+
+  private async identity(): Promise<DaemonIdentity> {
+    return {
+      pid: process.pid,
+      repoRoot: this.repoRoot,
+      socketPath: this.socketPath,
+      protocolVersion: KANBAN_DAEMON_PROTOCOL_VERSION,
+      buildId: await this.buildIdPromise,
+    };
+  }
+
   private handleSocket(socket: Socket): void {
+    this.activeSockets.add(socket);
+    socket.once("close", () => this.activeSockets.delete(socket));
     const codec = new JsonLineCodec();
     socket.on("data", async (chunk) => {
       for (const raw of codec.push(chunk)) {
@@ -180,6 +257,19 @@ export class KanbanDaemon {
 
   private async dispatch(request: RpcRequest): Promise<unknown> {
     try {
+      if (request.method === "daemon.health") {
+        return createSuccess(request.id ?? null, await this.identity());
+      }
+      if (request.method === "daemon.shutdown") {
+        setTimeout(
+          () => void this.shutdown({ drainMs: SHUTDOWN_DRAIN_MS }),
+          0,
+        ).unref();
+        return createSuccess(request.id ?? null, { shuttingDown: true });
+      }
+      if (this.shuttingDown) {
+        throw new Error("daemon shutting down");
+      }
       if (request.method === "requirements.create") {
         const params = request.params as
           | { title?: string; baseBranch?: string; workBranch?: string }

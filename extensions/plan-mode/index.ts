@@ -13,13 +13,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   const controller = new PlanModeController(pi);
 
   pi.registerFlag?.("plan-mode", {
-    description: "Start with plan-mode review workflow enabled",
+    description: "Start with Plan Mode workflow enabled",
     type: "boolean",
     default: false,
   });
 
   pi.registerCommand("plan-mode", {
-    description: "Switch Plan Mode workflow: plan, act, review, status",
+    description: "Switch Plan Mode workflow: plan, act, status",
     getArgumentCompletions: (prefix: string) =>
       PLAN_MODE_COMMAND_OPTIONS.filter((mode) => mode.startsWith(prefix)).map(
         (mode) => ({ label: mode, value: mode }),
@@ -44,7 +44,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     controller.restore(ctx);
     if (pi.getFlag?.("plan-mode") === true) {
-      controller.state.setMode("review");
+      controller.state.setMode("plan");
     }
     controller.applyMode(ctx);
   });

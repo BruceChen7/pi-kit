@@ -1,6 +1,6 @@
 import type { ArtifactPolicyConfig } from "./artifact-policy.ts";
 
-export type PlanMode = "plan" | "act" | "review";
+export type PlanMode = "plan" | "act";
 export type PlanPhase = "plan" | "act";
 export type InputSource = "interactive" | "rpc" | "extension" | "unknown";
 export type TodoStatus = "todo" | "in_progress" | "done" | "blocked";

@@ -1,7 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+  ACT_TODO_TOOL_NAME,
   PLAN_MODE_COMMAND_OPTIONS,
   STATUS_KEY,
+  TODO_TOOL_NAME,
   TODO_WIDGET_KEY,
 } from "./constants.ts";
 import { PlanModeController } from "./controller.ts";
@@ -39,7 +41,18 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     },
   });
 
-  registerTodoTool(pi, controller);
+  registerTodoTool(pi, controller, {
+    name: TODO_TOOL_NAME,
+    label: "Plan Mode TODO",
+    displayName: "Plan Mode",
+    phaseName: "Plan",
+  });
+  registerTodoTool(pi, controller, {
+    name: ACT_TODO_TOOL_NAME,
+    label: "Act Mode TODO",
+    displayName: "Act Mode",
+    phaseName: "Act",
+  });
 
   pi.on("session_start", async (_event, ctx) => {
     controller.restore(ctx);

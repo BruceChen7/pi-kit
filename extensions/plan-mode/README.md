@@ -58,8 +58,10 @@ exempt from review mode. Switch to `act` when you want direct command execution.
 
 ## TODO progress
 
-Plan Mode uses the `plan_mode_todo` tool to show the active run in the below-editor
-widget.
+Plan Mode uses TODO tools to show the active run in the below-editor widget:
+
+- `act_mode_todo` in `act` mode
+- `plan_mode_todo` in `plan` mode and reviewed planning flows
 
 During implementation, Pi should:
 

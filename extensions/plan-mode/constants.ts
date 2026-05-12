@@ -5,6 +5,7 @@ export const STATE_ENTRY_TYPE = "plan-mode-state";
 export const STATUS_KEY = "plan-mode";
 export const TODO_WIDGET_KEY = "plan-mode-todos";
 export const TODO_TOOL_NAME = "plan_mode_todo";
+export const ACT_TODO_TOOL_NAME = "act_mode_todo";
 export const PLANNOTATOR_SUBMIT_TOOL_NAME = "plannotator_auto_submit_review";
 export const REVIEW_ARTIFACT_LOCATION =
   ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md or " +
@@ -62,6 +63,7 @@ export const BUILTIN_TOOL_NAMES = [
 export const PLAN_MODE_TOOL_NAMES = new Set([
   ...BUILTIN_TOOL_NAMES,
   TODO_TOOL_NAME,
+  ACT_TODO_TOOL_NAME,
 ]);
 export const WRITE_TOOL_NAMES = new Set(["edit", "write"]);
 export const READ_ONLY_PATH_TOOL_NAMES = [

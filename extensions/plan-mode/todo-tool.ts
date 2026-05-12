@@ -1,6 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "@sinclair/typebox";
-import { TODO_TOOL_NAME } from "./constants.ts";
 import type { PlanModeController } from "./controller.ts";
 import type { PlanModeState } from "./state.ts";
 import { clonePlanRun } from "./state.ts";
@@ -37,12 +36,21 @@ const todoParamsSchema = Type.Object({
 });
 
 type TodoParams = Static<typeof todoParamsSchema>;
+type TodoToolOptions = {
+  name: string;
+  label: string;
+  displayName: string;
+  phaseName: "Plan" | "Act";
+};
 
-const formatTodoResult = (state: PlanModeState): string => {
+const formatTodoResult = (
+  state: PlanModeState,
+  displayName: string,
+): string => {
   if (state.todos.length === 0) {
-    return "Current Plan Mode TODO list: empty.";
+    return `Current ${displayName} TODO list: empty.`;
   }
-  return `Current Plan Mode TODO list:\n${state.todos
+  return `Current ${displayName} TODO list:\n${state.todos
     .map((todo) => `#${todo.id} [${symbolForStatus(todo.status)}] ${todo.text}`)
     .join("\n")}`;
 };
@@ -55,20 +63,23 @@ const todoToolError = (text: string) => ({
 export const registerTodoTool = (
   pi: ExtensionAPI,
   controller: PlanModeController,
+  options: TodoToolOptions,
 ): void => {
+  const { name, label, displayName, phaseName } = options;
   pi.registerTool({
-    name: TODO_TOOL_NAME,
-    label: "Plan Mode TODO",
+    name,
+    label,
     description:
-      "Create, list, update, remove, or clear the active Plan Mode TODO list.",
-    promptSnippet: "Manage the Plan Mode TODO list and current execution step",
+      "Create, list, update, remove, or clear the active " +
+      `${displayName} TODO list.`,
+    promptSnippet: `Manage the ${displayName} TODO list and current execution step`,
     promptGuidelines: [
-      `Use ${TODO_TOOL_NAME} to create concrete TODOs during Plan phase before implementation.`,
+      `Use ${name} to create concrete TODOs during ` +
+        `${phaseName} phase before implementation.`,
       'Use action "set" to replace the TODO list, or action "add" to append ' +
         'one TODO. Do not use action "create"; it is not supported.',
-      "In Act phase, update " +
-        `${TODO_TOOL_NAME} items to in_progress before starting a step and done after ` +
-        "finishing it so the widget shows the current step.",
+      `Update ${name} items to in_progress before starting a step and ` +
+        "done after finishing it so the widget shows the current step.",
     ],
     parameters: todoParamsSchema,
     async execute(_toolCallId, params: TodoParams, _signal, _onUpdate, ctx) {
@@ -120,7 +131,12 @@ export const registerTodoTool = (
       controller.updateUi(ctx);
       controller.persist();
       return {
-        content: [{ type: "text", text: formatTodoResult(controller.state) }],
+        content: [
+          {
+            type: "text",
+            text: formatTodoResult(controller.state, displayName),
+          },
+        ],
         details: {
           todos: controller.state.todos.map((todo) => ({ ...todo })),
           activeRun: controller.state.activeRun

@@ -226,6 +226,28 @@ const writeProjectSettings = (
   fs.writeFileSync(settingsPath, JSON.stringify(settings), "utf-8");
 };
 
+const writeSourceFile = (
+  ctx: TestCtx,
+  relativePath: string,
+  content = "export {};\n",
+): void => {
+  const absolutePath = path.join(ctx.cwd, relativePath);
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  fs.writeFileSync(absolutePath, content, "utf-8");
+};
+
+const markFileRead = async (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+  targetPath: string,
+): Promise<void> => {
+  await harness.emit(
+    "tool_result",
+    { toolName: "read", input: { path: targetPath }, isError: false },
+    ctx,
+  );
+};
+
 const startPlanModeSession = async (
   mode: "review" | "act" = "review",
   ctx: TestCtx = buildCtx(),
@@ -548,6 +570,134 @@ describe("plan-mode extension", () => {
         },
       );
     }
+  });
+
+  it("allows act patch edits for existing files that were read first", async () => {
+    await withTempCtx(async (ctx) => {
+      const targetPath = "src/example.ts";
+      writeSourceFile(ctx, targetPath, "export const value = 1;\n");
+
+      const { harness } = await startPlanModeSession("act", ctx);
+      await markFileRead(harness, ctx, targetPath);
+
+      await expectToolAllowed(harness, ctx, "edit", {
+        patch: `*** Begin Patch
+*** Update File: ${targetPath}
+@@
+-export const value = 1;
++export const value = 2;
+*** End Patch`,
+      });
+    });
+  });
+
+  it("requires every existing multi-edit target to be read first", async () => {
+    await withTempCtx(async (ctx) => {
+      const firstPath = "src/first.ts";
+      const secondPath = "src/second.ts";
+      for (const targetPath of [firstPath, secondPath]) {
+        writeSourceFile(ctx, targetPath);
+      }
+
+      const { harness } = await startPlanModeSession("act", ctx);
+      await markFileRead(harness, ctx, firstPath);
+
+      await expectToolBlocked(
+        harness,
+        ctx,
+        "edit",
+        {
+          multi: [
+            { path: firstPath, oldText: "export {};", newText: "export {};" },
+            { path: secondPath, oldText: "export {};", newText: "export {};" },
+          ],
+        },
+        {
+          block: true,
+          reason: expect.stringContaining(secondPath),
+        },
+      );
+    });
+  });
+
+  it("allows patch add-file writes inside cwd without requiring a prior read", async () => {
+    await withTempCtx(async (ctx) => {
+      const { harness } = await startPlanModeSession("act", ctx);
+
+      await expectToolAllowed(harness, ctx, "edit", {
+        patch: `*** Begin Patch
+*** Add File: src/new-file.ts
++export const value = 1;
+*** End Patch`,
+      });
+    });
+  });
+
+  it("blocks patch add-file writes outside cwd", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    await expectToolBlocked(
+      harness,
+      ctx,
+      "edit",
+      {
+        patch: `*** Begin Patch
+*** Add File: /tmp/outside-plan-mode.ts
++export const value = 1;
+*** End Patch`,
+      },
+      {
+        block: true,
+        reason: expect.stringContaining("path is outside cwd"),
+      },
+    );
+  });
+
+  it("requires patch delete-file targets to be read first", async () => {
+    await withTempCtx(async (ctx) => {
+      const targetPath = "src/delete-me.ts";
+      writeSourceFile(ctx, targetPath);
+      const { harness } = await startPlanModeSession("act", ctx);
+
+      await expectToolBlocked(
+        harness,
+        ctx,
+        "edit",
+        {
+          patch: `*** Begin Patch
+*** Delete File: ${targetPath}
+*** End Patch`,
+        },
+        {
+          block: true,
+          reason: expect.stringContaining(targetPath),
+        },
+      );
+    });
+  });
+
+  it("keeps read-only tools using dot as their default path", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    await expectToolAllowed(harness, ctx, "ls", {});
+  });
+
+  it("blocks unresolved write targets without falling back to dot", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    const result = await harness.runToolCall(
+      "edit",
+      { patch: "*** Begin Patch\n*** End Patch" },
+      ctx,
+    );
+
+    expect(result).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("unable to determine target file paths"),
+    });
+    expect(result).not.toMatchObject({
+      reason: expect.stringContaining(": ."),
+    });
   });
 
   it("updates the act widget with the current in-progress step and completion counts", async () => {

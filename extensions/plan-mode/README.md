@@ -1,184 +1,162 @@
 # Plan Mode
 
-Runtime Plan Mode workflow for Pi. It enforces “plan first, then act” with runtime
-guards, a TODO widget, and Plannotator approval before implementation.
+Plan Mode helps Pi follow a safer workflow: plan the work, review the plan when needed,
+then act with visible progress. It is useful when a change needs design review, step-by-step
+execution, or protection from accidental edits during planning.
 
-## Recommended workflow
+Use `act` when you want Pi to execute directly. Use `review` when you want Pi to write a
+plan or spec first and wait for approval before implementation.
 
-Plan Mode defaults to `act` for direct execution. Use `review` when you want the
-review-first workflow:
-
-1. The session starts in `act` unless configuration overrides `defaultMode`.
-2. For implementation requests, create a concrete TODO list and a reviewable plan/spec.
-3. Submit the plan/spec to Plannotator.
-4. After approval, Plan Mode switches to `review:act` and implementation can proceed.
-5. If the planning TODOs are already complete, Plan Mode automatically continues
-   implementation from the approved plan without a second confirmation.
-6. During Act phase, update TODOs from `in_progress` to `done` as work completes.
-
-Review Mode is intentionally fail-closed: normal user turns stay in `review:plan` until a
-reviewable plan/spec is approved. Operational work such as git status, commit, push,
-tests, or lint no longer receives an automatic workflow bypass; use `act` when you want
-direct command execution.
-
-## Modes and commands
+## Quick start
 
 ```text
 /plan-mode status
+/plan-mode act
 /plan-mode review
 /plan-mode plan
-/plan-mode act
 ```
 
-- `act` is the default mode.
-- Before a normal interactive agent run in default `act`, Plan Mode shows a mode
-  selector and a notification; if there is no choice within 3 seconds, it stays in
-  `act`.
-- Prompts that explicitly ask to plan first, such as “please plan this”, enter
-  `plan` directly without showing the selector.
-- `review` keeps the review-first workflow for teams that prefer explicit plan/spec review.
-- `plan` keeps the session in read-only planning mode.
-- `act` allows implementation without waiting for review approval.
-- `/plan-mode status` reports a user-facing run state such as Planning, Waiting for
-  review, Ready to act, Executing, or Done, plus internal details when useful.
+Typical usage:
 
-## TODO tool
+1. Choose the mode you want.
+2. Ask Pi to do the work.
+3. For reviewed work, Pi writes a plan/spec and submits it for review.
+4. After approval, Pi continues with the approved implementation.
+5. Track progress in the TODO widget while Pi works.
 
-`plan_mode_todo` manages the active Plan Run.
+By default, Plan Mode starts in `act`. For normal interactive runs, Pi may show a short
+mode selector; if you do not choose within 3 seconds, it stays in `act`.
 
-During Act phase, update a task to `in_progress` before starting it and `done` after
-finishing it. The below-editor widget highlights the current step, shows completion
-counts, and keeps completed runs visible with an `已交付` task list until the next user
-turn, a new run, or `clear` hides it. Reviewed plan runs show the approved plan name;
-ordinary manual/workflow runs show a generic task-completed summary so stale plan names
-do not leak into unrelated work.
+## Modes
 
-## Plannotator Auto integration
+- `act`: execute directly. Use this for normal coding, tests, git operations, and quick
+  changes.
+- `review`: require a reviewed plan/spec before implementation. Use this for larger or
+  riskier code changes.
+- `plan`: stay in read-only planning mode. Use this when you only want analysis or a plan.
+- `status`: show the current run state, such as Planning, Waiting for review, Ready to
+  act, Executing, or Done.
 
-Plan Mode owns mode state, runtime guards, TODOs, and progress UI. Plannotator Auto owns
-plan/spec detection and review feedback.
+If your prompt clearly asks to plan first, such as “please plan this”, Plan Mode enters
+`plan` directly.
 
-For implementation tasks, create a reviewable artifact under one of the watched paths:
+## Review-first workflow
+
+`review` mode is intentionally strict. Pi writes a reviewable plan/spec, submits it to
+Plannotator, and waits for approval before implementation.
+
+The normal flow is:
+
+1. Pi creates a concrete TODO list.
+2. Pi writes a plan or spec under `.pi/plans/<repo>/...`.
+3. Pi submits it for review.
+4. If review is denied, Pi revises the same file and submits again.
+5. After approval, Pi implements the approved plan and updates TODO progress.
+
+Operational commands such as tests, lint, git status, commit, or push are not automatically
+exempt from review mode. Switch to `act` when you want direct command execution.
+
+## TODO progress
+
+Plan Mode uses the `plan_mode_todo` tool to show the active run in the below-editor
+widget.
+
+During implementation, Pi should:
+
+- mark a task `in_progress` before starting it
+- mark it `done` after finishing it
+- keep the widget aligned with the current step
+
+Completed runs remain visible briefly as an `已交付` task list, then clear on the next run
+or user turn.
+
+## Writing a plan or spec
+
+For reviewed implementation work, write artifacts in one of these paths:
 
 ```text
 .pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md
 .pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md
 ```
 
-Use `write` directly with the standard filename; the write tool creates missing
-`.pi/plans` parent directories.
-
-For code-writing plans/specs that change logic, state, data models, control flow, or
-process flow, include before/after diagrams for the affected data model and flow inside
-the standard plan sections.
-
-Code-changing plans/specs must also include a key code sketch. This is a minimal,
-reviewable snippet for the important types, function signatures, branch conditions,
-state transitions, or test assertions. It is not a full implementation dump. In standard
-plan artifacts, put the sketch inside `## Context`, for example under a lower-level
-`### 关键代码草案` heading, because extra top-level `##` sections are rejected.
-
-After writing the artifact, submit it for review:
+Then submit the artifact:
 
 ```text
 plannotator_auto_submit_review({ path })
 ```
 
-If artifact policy rejects a plan, the error includes a concrete fix suggestion and,
-where possible, a copyable snippet for common missing standard content such as section
-headings, checkbox steps, Chinese content, or Review details. If review is denied,
-revise the same file and submit again. Approval applies to the
-currently submitted artifact; switching to a newer artifact requires a fresh review.
-After an approved plan is complete on the planning side, Plan Mode automatically injects
-an implementation continuation for that same approved plan. Unrelated new implementation
-requests still return to `review:plan` and require their own reviewed plan/spec. New TODO
-runs do not inherit a previous approved plan name unless they are part of that explicit
-continuation or are bound by a fresh review approval.
-
-## Artifact Policy
-
-Plan files under `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` must use this structure:
+Plan files should use this standard shape:
 
 ```markdown
 ## Context
-- Describe the goal, success criteria, constraints, affected files/modules, non-goals,
-  and open questions. Use Chinese by default.
+- Goal, success criteria, constraints, affected files/modules, non-goals, and open
+  questions. Use Chinese by default.
 
 ## Steps
-- [ ] Use outcome-oriented, verifiable checkbox steps.
+- [ ] Outcome-oriented, verifiable checkbox steps.
 
 ## Verification
-- List test commands, manual checks, or skipped checks with reasons.
+- Test commands, manual checks, or skipped checks with reasons.
 
 ## Review
-- State that the final review will record change points, verification results, remaining
-  risks, and bug/root-cause reasons.
+- Final review notes: change points, verification results, remaining risks, and
+  bug/root-cause reasons when relevant.
 ```
 
-Additional top-level `##` sections are rejected by default; put extra details inside one
-of the four standard sections. Spec/PRD files under `.pi/plans/<repo>/specs/` may keep
-their own structure.
-
-## Runtime guards
-
-Runtime guards enforce the selected mode:
-
-- plan-required turns block `bash` and source-code `edit` / `write`, except for writing
-  reviewable plan/spec artifacts
-- `review` no longer classifies prompts or bypasses review for operational workflows
-- use `act` for direct command execution without the reviewed-plan workflow
-
-Plan/spec artifact writes are allowed only for reviewable Plannotator paths:
-
-```text
-.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md
-.pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md
-```
-
-Optional guards are enabled by default:
-
-- `cwdOnly`: path access must stay inside the current cwd or configured allowed paths.
-- `readBeforeWrite`: existing files must be read before `edit` or `write`.
+For code-changing plans/specs that affect logic, state, data models, control flow, or
+process flow, include before/after diagrams and a small key code sketch. Put extra plan
+details inside the four standard sections instead of adding new top-level `##` sections.
 
 ## Configuration
 
-Configuration is read from the shared pi-kit settings namespace `planMode` in
-`third_extension_settings.json`.
+Plan Mode reads settings from `planMode` in `third_extension_settings.json`.
 
-Presets are optional shortcuts:
-
-- `strict`: default review-first behavior.
-- `balanced`: keep review requirements with the same automatic approval continuation.
-- `solo`: disable review waiting reminders with the same automatic approval continuation.
-
-Explicit settings override preset defaults.
+Most users only need these options:
 
 ```json
 {
   "planMode": {
     "defaultMode": "act",
-    "preserveExternalTools": true,
     "requireReview": true,
-    "preset": "strict",
-    "guards": {
-      "cwdOnly": true,
-      "allowedPaths": [],
-      "readBeforeWrite": true
-    },
-    "artifactPolicy": {
-      "enabled": true,
-      "planFormat": "pi-standard",
-      "allowExtraSections": false,
-      "requireSectionOrder": true,
-      "requireChinese": true,
-      "requireReviewDetails": true
-    }
+    "preset": "strict"
   }
 }
 ```
 
+Presets:
+
+- `strict`: review-first defaults.
+- `balanced`: review requirements with automatic continuation after approval.
+- `solo`: fewer review waiting reminders, with the same approved-plan continuation.
+
+Explicit settings override preset defaults.
+
 ## Troubleshooting
 
-If approval does not automatically start implementation, check that the session is still
-in `review` mode, the approved plan path is present in Plan Mode status, and the previous
-turn was not aborted before the approved continuation could be persisted.
+If Pi is not editing files:
+
+- Check `/plan-mode status`.
+- If the session is in `plan` or `review:plan`, switch to `act` or approve the plan.
+- If a plan was rejected, revise the same plan file and submit it again.
+
+If approval does not start implementation:
+
+- Check that the session is still in `review` mode.
+- Check that `/plan-mode status` shows the approved plan path.
+- Ask Pi to continue from the approved plan if the previous turn was interrupted.
+
+If a file write is blocked:
+
+- In planning modes, only reviewable plan/spec files can be written.
+- In `act`, source-code writes are allowed, but safety guards may still require reading an
+  existing file before editing it.
+- Paths must stay inside the current working directory or configured allowed paths.
+
+## Advanced details
+
+Plan Mode owns mode state, runtime guards, TODOs, and progress UI. Plannotator Auto owns
+plan/spec detection and review feedback.
+
+Runtime guards are fail-closed in planning modes: shell commands and source-code writes
+are blocked except for reviewable plan/spec artifacts. Optional guards such as `cwdOnly`
+and `readBeforeWrite` protect path access and existing-file writes even in `act` mode.

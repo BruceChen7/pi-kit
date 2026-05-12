@@ -5,12 +5,91 @@ import type {
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { isStandardPlanArtifactPath } from "./artifact-policy.ts";
-import { SPEC_REVIEW_ARTIFACT_PATTERN } from "./constants.ts";
+import { SPEC_REVIEW_ARTIFACT_PATTERN, WRITE_TOOL_NAMES } from "./constants.ts";
 import type { PlanModeState } from "./state.ts";
 import { isRecord, stringProperty } from "./state.ts";
 
+export type ToolTargetPath = {
+  rawPath: string;
+};
+
+export type ToolTargetPathResult =
+  | { kind: "paths"; paths: ToolTargetPath[] }
+  | { kind: "unresolved-write"; reason: string };
+
 export const pathFromToolCall = (event: ToolCallEvent): string | null =>
   stringProperty(event.input, "path");
+
+const dedupeTargetPaths = (paths: ToolTargetPath[]): ToolTargetPath[] => {
+  const seen = new Set<string>();
+  return paths.filter(({ rawPath }) => {
+    if (seen.has(rawPath)) {
+      return false;
+    }
+    seen.add(rawPath);
+    return true;
+  });
+};
+
+const pathsFromMultiEdit = (multi: unknown[]): ToolTargetPath[] =>
+  multi.flatMap((entry) => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+    const rawPath = stringProperty(entry, "path");
+    return rawPath ? [{ rawPath }] : [];
+  });
+
+const pathsFromPatchHeaders = (patch: string): ToolTargetPath[] => {
+  const paths: ToolTargetPath[] = [];
+  const headerPattern = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/gmu;
+  for (const match of patch.matchAll(headerPattern)) {
+    const rawPath = match[1]?.trim();
+    if (rawPath) {
+      paths.push({ rawPath });
+    }
+  }
+  return paths;
+};
+
+const targetPathResult = (
+  toolName: string,
+  paths: ToolTargetPath[],
+): ToolTargetPathResult => {
+  if (paths.length > 0) {
+    return { kind: "paths", paths: dedupeTargetPaths(paths) };
+  }
+
+  if (WRITE_TOOL_NAMES.has(toolName)) {
+    return {
+      kind: "unresolved-write",
+      reason: "unable to determine target file paths",
+    };
+  }
+
+  return { kind: "paths", paths: [{ rawPath: "." }] };
+};
+
+export const pathsFromToolCall = (
+  event: ToolCallEvent,
+): ToolTargetPathResult => {
+  if (event.toolName === "edit" && typeof event.input.patch === "string") {
+    return targetPathResult(
+      event.toolName,
+      pathsFromPatchHeaders(event.input.patch),
+    );
+  }
+
+  if (event.toolName === "edit" && Array.isArray(event.input.multi)) {
+    return targetPathResult(
+      event.toolName,
+      pathsFromMultiEdit(event.input.multi),
+    );
+  }
+
+  const rawPath = pathFromToolCall(event);
+  return targetPathResult(event.toolName, rawPath ? [{ rawPath }] : []);
+};
 
 export const normalizeToolPath = (cwd: string, rawPath: string): string => {
   const withoutAt = rawPath.startsWith("@") ? rawPath.slice(1) : rawPath;

@@ -46,6 +46,7 @@ import {
   isReviewArtifactPath,
   normalizeToolPath,
   pathFromToolCall,
+  pathsFromToolCall,
   relativeToolPath,
   turnWasAborted,
 } from "./guards.ts";
@@ -392,34 +393,43 @@ export class PlanModeController {
       return undefined;
     }
 
-    const rawPath = pathFromToolCall(event) ?? ".";
-    const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
-
-    if (
-      !OUTSIDE_CWD_ALLOWED_TOOL_NAMES.has(event.toolName) &&
-      this.config.guards.cwdOnly &&
-      !isAllowedPath(absolutePath, ctx.cwd, this.config.guards.allowedPaths)
-    ) {
+    const targetResult = pathsFromToolCall(event);
+    if (targetResult.kind === "unresolved-write") {
       return {
         block: true,
-        reason:
-          `plan-mode blocked ${event.toolName}: path is outside cwd and ` +
-          `allowed paths: ${rawPath}`,
+        reason: `plan-mode blocked ${event.toolName}: ${targetResult.reason}`,
       };
     }
 
-    if (
-      this.config.guards.readBeforeWrite &&
-      WRITE_TOOL_NAMES.has(event.toolName) &&
-      fs.existsSync(absolutePath) &&
-      !this.state.readFiles.has(absolutePath)
-    ) {
-      return {
-        block: true,
-        reason:
-          `plan-mode blocked ${event.toolName}: read the file first before ` +
-          `modifying it: ${rawPath}`,
-      };
+    for (const { rawPath } of targetResult.paths) {
+      const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
+
+      if (
+        !OUTSIDE_CWD_ALLOWED_TOOL_NAMES.has(event.toolName) &&
+        this.config.guards.cwdOnly &&
+        !isAllowedPath(absolutePath, ctx.cwd, this.config.guards.allowedPaths)
+      ) {
+        return {
+          block: true,
+          reason:
+            `plan-mode blocked ${event.toolName}: path is outside cwd and ` +
+            `allowed paths: ${rawPath}`,
+        };
+      }
+
+      if (
+        this.config.guards.readBeforeWrite &&
+        WRITE_TOOL_NAMES.has(event.toolName) &&
+        fs.existsSync(absolutePath) &&
+        !this.state.readFiles.has(absolutePath)
+      ) {
+        return {
+          block: true,
+          reason:
+            `plan-mode blocked ${event.toolName}: read the file first before ` +
+            `modifying it: ${rawPath}`,
+        };
+      }
     }
 
     return undefined;

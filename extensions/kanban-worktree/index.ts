@@ -10,6 +10,10 @@ import {
   stopKanbanDaemon,
 } from "./daemon-supervisor.ts";
 import { openGlimpseKanban } from "./glimpse-host.ts";
+import {
+  requirementsCreateRequest,
+  requirementsListRequest,
+} from "./kanban-rpc.ts";
 import { createKanbanLogger } from "./logger.ts";
 import { sendJsonLineRequest } from "./protocol.ts";
 
@@ -101,16 +105,19 @@ export default function kanbanWorktreeExtension(pi: ExtensionAPI) {
           title,
           socketPath: target.socketPath,
         });
-        const response = await sendJsonLineRequest(target.socketPath, {
-          id: "create",
-          method: "requirements.create",
-          params: {
-            title,
-            repoRoot: ctx.cwd,
-            baseBranch: "main",
-            acceptanceCriteria: [],
-          },
-        });
+        const response = await sendJsonLineRequest(
+          target.socketPath,
+          requirementsCreateRequest(
+            {
+              title,
+              baseBranch: "main",
+              workBranch: null,
+              launch: false,
+              clientRequestId: null,
+            },
+            "create",
+          ),
+        );
         notify(JSON.stringify(response));
         return;
       }
@@ -122,10 +129,10 @@ export default function kanbanWorktreeExtension(pi: ExtensionAPI) {
         });
         notify(
           JSON.stringify(
-            await sendJsonLineRequest(target.socketPath, {
-              id: "list",
-              method: "requirements.list",
-            }),
+            await sendJsonLineRequest(
+              target.socketPath,
+              requirementsListRequest("list"),
+            ),
           ),
         );
         return;

@@ -204,19 +204,19 @@ export class PlanModeController {
 
     if (
       !this.internalExtensionBypassForTurn &&
-      this.state.shouldReturnReviewActToPlan() &&
+      this.state.shouldReturnPlanActToPlan() &&
       !continuesApprovedPlan
     ) {
-      this.state.returnReviewActToPlan();
+      this.state.returnPlanActToPlan();
       this.persist();
     }
 
     this.state.lastAutoDecision = {
       outcome: "plan_required",
-      reason: "review mode requires a reviewed plan/spec",
+      reason: "plan mode requires a reviewed plan/spec",
     };
     this.reviewRequiredForTurn =
-      this.state.isReviewPlanPhase() && !this.internalExtensionBypassForTurn;
+      this.state.isPlanPhase() && !this.internalExtensionBypassForTurn;
   }
 
   clearTurnSource(): void {
@@ -279,6 +279,9 @@ export class PlanModeController {
   }
 
   hasPlanReviewObligation(): boolean {
+    if (this.internalExtensionBypassForTurn) {
+      return false;
+    }
     if (!this.state.isPlanPhase()) {
       return false;
     }
@@ -475,7 +478,7 @@ export class PlanModeController {
     const pendingContinuationPath =
       this.state.pendingApprovedPlanContinuationPath;
     if (
-      this.state.mode === "review" &&
+      this.state.mode === "plan" &&
       this.state.phase === "act" &&
       pendingContinuationPath
     ) {
@@ -485,8 +488,7 @@ export class PlanModeController {
 
     if (
       this.config.requireReview &&
-      this.state.mode === "review" &&
-      this.state.phase === "plan" &&
+      this.state.isPlanPhase() &&
       this.state.todos.length > 0 &&
       !latestReviewArtifactApproved
     ) {
@@ -560,7 +562,7 @@ export class PlanModeController {
         : "executing";
       this.state.activeRun.approvedAt = new Date().toISOString();
     }
-    this.state.switchReviewToAct();
+    this.state.switchApprovedPlanToAct();
     this.applyMode(ctx);
     this.persist();
   }

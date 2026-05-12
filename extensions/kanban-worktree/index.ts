@@ -1,126 +1,89 @@
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { defaultSocketPath } from "./daemon.ts";
+import { defaultMetadataPath, defaultSocketPath } from "./daemon-runtime.ts";
+import {
+  ensureKanbanDaemon,
+  isKanbanDaemonRunning,
+  stopAllKanbanDaemons,
+  stopKanbanDaemon,
+} from "./daemon-supervisor.ts";
 import { openGlimpseKanban } from "./glimpse-host.ts";
 import { createKanbanLogger } from "./logger.ts";
 import { sendJsonLineRequest } from "./protocol.ts";
 
-let child: ChildProcess | null = null;
 const log = createKanbanLogger("extension");
 
 type Notify = (message: string, level?: "info" | "error") => void;
+
+type CommandDaemonTarget = {
+  repoRoot: string;
+  socketPath: string;
+  metadataPath: string;
+};
 
 function splitArgs(args: string): string[] {
   return args.trim().split(/\s+/).filter(Boolean);
 }
 
-function probeSocket(socketPath: string, timeoutMs = 250): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = createConnection(socketPath);
-    const done = (ok: boolean) => {
-      socket.destroy();
-      resolve(ok);
-    };
-    socket.setTimeout(timeoutMs);
-    socket.once("connect", () => done(true));
-    socket.once("timeout", () => done(false));
-    socket.once("error", () => done(false));
-  });
-}
-
-async function waitForSocket(socketPath: string): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < 5000) {
-    if (await probeSocket(socketPath)) return true;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return false;
-}
-
-function daemonArgs(input: {
-  daemonPath: string;
-  repoRoot: string;
-  socketPath: string;
-}): string[] {
-  return [
-    "--experimental-strip-types",
-    input.daemonPath,
-    "--socket",
-    input.socketPath,
-    "--repo-root",
-    input.repoRoot,
-  ];
-}
-
 export default function kanbanWorktreeExtension(pi: ExtensionAPI) {
   const daemonPath = fileURLToPath(new URL("./run-daemon.ts", import.meta.url));
 
-  async function startDaemon(
-    repoRoot: string,
-    socketPath: string,
-    notify: Notify,
-  ) {
-    log.info("start daemon requested", { socketPath, daemonPath, repoRoot });
-    if (await probeSocket(socketPath)) {
-      log.info("daemon already reachable", { socketPath });
+  async function startDaemon(target: CommandDaemonTarget, notify: Notify) {
+    log.info("start daemon requested", {
+      ...target,
+      daemonPath,
+    });
+    if (await ensureKanbanDaemon({ daemonPath, ...target })) {
+      log.info("daemon socket ready", {
+        socketPath: target.socketPath,
+        metadataPath: target.metadataPath,
+      });
       return true;
     }
-    child = spawn(
-      process.execPath,
-      daemonArgs({ daemonPath, repoRoot, socketPath }),
-      {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-      },
-    );
-    log.info("daemon spawned", { pid: child.pid, socketPath, repoRoot });
-    child.unref();
-    if (await waitForSocket(socketPath)) {
-      log.info("daemon socket ready", { socketPath });
-      return true;
-    }
-    log.error("daemon socket wait timed out", { socketPath });
+    log.error("daemon socket wait timed out", target);
     notify("kanban-worktree daemon failed to start", "error");
     return false;
   }
 
   pi.registerCommand("kanban-worktree", {
     description:
-      "Kanban worktree: start | status | open | create <title> | list",
+      "Kanban worktree: start | status | open | create <title> | list | stop | stop-all",
     handler: async (args, ctx) => {
       const [sub = "start", ...rest] = splitArgs(args);
-      const socketPath = defaultSocketPath(ctx.cwd);
-      log.info("command received", { sub, cwd: ctx.cwd, socketPath });
+      const target = {
+        repoRoot: ctx.cwd,
+        socketPath: defaultSocketPath(ctx.cwd),
+        metadataPath: defaultMetadataPath(ctx.cwd),
+      };
+      log.info("command received", {
+        sub,
+        cwd: ctx.cwd,
+        socketPath: target.socketPath,
+        metadataPath: target.metadataPath,
+      });
       const notify: Notify = (message, level = "info") => {
         ctx.ui.notify(message, level);
       };
 
       if (sub === "start") {
-        if (await probeSocket(socketPath)) {
-          notify(`kanban-worktree already running: ${socketPath}`);
-          return;
-        }
-        if (await startDaemon(ctx.cwd, socketPath, notify)) {
-          notify(`kanban-worktree started: ${socketPath}`);
+        if (await startDaemon(target, notify)) {
+          notify(`kanban-worktree started: ${target.socketPath}`);
         }
         return;
       }
 
       if (sub === "open") {
-        if (!(await startDaemon(ctx.cwd, socketPath, notify))) return;
-        await openGlimpseKanban(socketPath);
+        if (!(await startDaemon(target, notify))) return;
+        await openGlimpseKanban(target.socketPath);
         notify("kanban-worktree opened");
         return;
       }
 
       if (sub === "status") {
         notify(
-          (await probeSocket(socketPath))
+          (await isKanbanDaemonRunning(target))
             ? "kanban-worktree running"
             : "not running",
         );
@@ -133,8 +96,12 @@ export default function kanbanWorktreeExtension(pi: ExtensionAPI) {
           notify("Usage: /kanban-worktree create <title>", "error");
           return;
         }
-        log.info("create requirement requested", { title, socketPath });
-        const response = await sendJsonLineRequest(socketPath, {
+        if (!(await startDaemon(target, notify))) return;
+        log.info("create requirement requested", {
+          title,
+          socketPath: target.socketPath,
+        });
+        const response = await sendJsonLineRequest(target.socketPath, {
           id: "create",
           method: "requirements.create",
           params: {
@@ -149,10 +116,13 @@ export default function kanbanWorktreeExtension(pi: ExtensionAPI) {
       }
 
       if (sub === "list") {
-        log.info("list requirements requested", { socketPath });
+        if (!(await startDaemon(target, notify))) return;
+        log.info("list requirements requested", {
+          socketPath: target.socketPath,
+        });
         notify(
           JSON.stringify(
-            await sendJsonLineRequest(socketPath, {
+            await sendJsonLineRequest(target.socketPath, {
               id: "list",
               method: "requirements.list",
             }),
@@ -162,11 +132,16 @@ export default function kanbanWorktreeExtension(pi: ExtensionAPI) {
       }
 
       if (sub === "stop") {
-        log.info("stop requested", { socketPath, pid: child?.pid ?? null });
-        if (child) child.kill("SIGINT");
-        child = null;
-        spawnSync("rm", ["-f", socketPath]);
+        log.info("stop requested", target);
+        await stopKanbanDaemon(target);
         notify("kanban-worktree stopped");
+        return;
+      }
+
+      if (sub === "stop-all") {
+        log.info("stop-all requested", target);
+        await stopAllKanbanDaemons();
+        notify("kanban-worktree daemons stopped");
         return;
       }
 

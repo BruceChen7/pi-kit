@@ -30,7 +30,7 @@ export const MODE_SELECTION_TITLE = "Choose Plan Mode for this run";
 export const MODE_SELECTION_MESSAGE =
   "Choose Plan Mode for this run; defaulting to act in " +
   `${DEFAULT_MODE_SELECTION_TIMEOUT_SECONDS}s.`;
-export const MODE_SELECTION_OPTIONS: PlanMode[] = ["act", "plan", "review"];
+export const MODE_SELECTION_OPTIONS: PlanMode[] = ["act", "plan"];
 export const PLAN_MODE_COMMAND_OPTIONS = [
   ...MODE_SELECTION_OPTIONS,
   "status",

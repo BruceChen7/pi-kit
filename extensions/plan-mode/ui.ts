@@ -4,9 +4,6 @@ import type { PlanModeState } from "./state.ts";
 import type { PlanDecisionSummary, TodoItem, TodoStatus } from "./types.ts";
 
 export const getModeLabel = (state: PlanModeState): string => {
-  if (state.mode === "review") {
-    return `review:${state.phase}`;
-  }
   return state.mode;
 };
 

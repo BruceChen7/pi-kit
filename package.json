@@ -28,6 +28,7 @@
       "./extensions/diffx-review",
       "./extensions/session-path-copy",
       "./extensions/remote-approval",
+      "./extensions/codex-web-search",
       "./extensions/agent-end-code-simplifier",
       "./extensions/review-feedback",
       "./extensions/librarian"
@@ -60,7 +61,9 @@
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.49",
+    "defuddle": "0.14.0",
     "diff": "^8.0.4",
-    "glimpseui": "^0.8.0"
+    "glimpseui": "^0.8.0",
+    "typebox": "^1.1.38"
   }
 }

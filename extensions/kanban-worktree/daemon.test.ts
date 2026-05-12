@@ -1,10 +1,14 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 
 import { createTodo, findTodoById } from "../todo-workflow/todo-store.js";
 import { KanbanDaemon } from "./daemon.js";
+import {
+  KANBAN_DAEMON_PROTOCOL_VERSION,
+  readDaemonMetadata,
+} from "./daemon-runtime.js";
 
 let dir: string;
 let repoRoot: string;
@@ -46,6 +50,46 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
+});
+
+test("daemon.health returns repo identity and build metadata", async () => {
+  const response = await dispatch("daemon.health");
+
+  expect(response).toEqual({
+    id: "daemon.health",
+    result: expect.objectContaining({
+      pid: process.pid,
+      repoRoot,
+      socketPath: expect.stringContaining(".sock"),
+      protocolVersion: KANBAN_DAEMON_PROTOCOL_VERSION,
+      buildId: expect.stringMatching(/^mtime:/),
+    }),
+  });
+});
+
+test("listen writes metadata after socket is ready", async () => {
+  const socketPath = path.join(dir, "daemon.sock");
+  const metadataPath = path.join(dir, "daemon.json");
+  daemon = new KanbanDaemon({
+    rootDir: dir,
+    repoRoot,
+    socketPath,
+    metadataPath,
+  });
+
+  await daemon.listen();
+
+  await expect(readDaemonMetadata(metadataPath)).resolves.toEqual(
+    expect.objectContaining({
+      pid: process.pid,
+      repoRoot,
+      socketPath,
+      protocolVersion: KANBAN_DAEMON_PROTOCOL_VERSION,
+      buildId: expect.stringMatching(/^mtime:/),
+    }),
+  );
+  await expect(stat(socketPath)).resolves.toBeTruthy();
+  await daemon.shutdown({ drainMs: 1 });
 });
 
 test("requirements.list returns todo-workflow todos", async () => {

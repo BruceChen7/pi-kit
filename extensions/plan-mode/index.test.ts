@@ -12,6 +12,8 @@ type CommandRegistration = {
 };
 type ToolRegistration = {
   name: string;
+  description?: string;
+  promptGuidelines?: string[];
   execute: (
     toolCallId: string,
     params: Record<string, unknown>,
@@ -249,7 +251,7 @@ const markFileRead = async (
 };
 
 const startPlanModeSession = async (
-  mode: "review" | "act" = "review",
+  mode: "plan" | "act" = "plan",
   ctx: TestCtx = buildCtx(),
 ) => {
   const harness = buildHarness();
@@ -452,7 +454,7 @@ describe("plan-mode extension", () => {
     expect(ctx.ui.select).toHaveBeenCalledTimes(1);
     expect(ctx.ui.select).toHaveBeenCalledWith(
       "Choose Plan Mode for this run",
-      ["act", "plan", "review"],
+      ["act", "plan"],
       { timeout: 5000 },
     );
     const result = await sendAgentPrompt(harness, ctx, "post-timeout prompt");
@@ -477,11 +479,12 @@ describe("plan-mode extension", () => {
     });
   });
 
-  it("rejects removed auto and fast modes", async () => {
+  it("rejects removed auto, fast, and review modes", async () => {
     const { harness, ctx } = await startPlanModeSession("act");
 
     await harness.runCommand("plan-mode", "auto", ctx);
     await harness.runCommand("plan-mode", "fast", ctx);
+    await harness.runCommand("plan-mode", "review", ctx);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       "Unknown plan-mode: auto",
@@ -491,13 +494,17 @@ describe("plan-mode extension", () => {
       "Unknown plan-mode: fast",
       "error",
     );
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Unknown plan-mode: review",
+      "error",
+    );
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("blocks source writes during review plan phase but allows review artifact writes", async () => {
+  it("blocks source writes during plan mode phase but allows review artifact writes", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await expectToolBlocked(harness, ctx, "write", { path: "x.ts" });
@@ -531,7 +538,7 @@ describe("plan-mode extension", () => {
     planModeExtension(harness.api as unknown as ExtensionAPI);
 
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "review", ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
 
     const result = await harness.runToolCall(
       "write",
@@ -1040,6 +1047,20 @@ describe("plan-mode extension", () => {
     expect(plainWidgetText(ctx)).toContain("#1 [ ] 确认需求");
   });
 
+  it("guides agents to use set or add instead of create for TODOs", () => {
+    const harness = buildHarness();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+
+    const todoTool = harness.api.registerTool.mock.calls
+      .map(([tool]) => tool)
+      .find((tool) => tool.name === PLAN_MODE_TODO_TOOL);
+    const promptGuidance = todoTool?.promptGuidelines?.join("\n") ?? "";
+
+    expect(promptGuidance).toContain('Use action "set"');
+    expect(promptGuidance).toContain('action "add"');
+    expect(promptGuidance).toContain('Do not use action "create"');
+  });
+
   it("restores mode and todos from the latest session snapshot", async () => {
     const restoredEntries: CustomEntry[] = [
       planModeStateEntry({
@@ -1078,7 +1099,7 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("requires a TODO for review plan turns even when read-only feedback is provided", async () => {
+  it("requires a TODO for plan mode turns even when read-only feedback is provided", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendAgentPrompt(
@@ -1169,7 +1190,7 @@ describe("plan-mode extension", () => {
     });
   });
 
-  it("still requires a TODO for user implementation prompts in review plan", async () => {
+  it("still requires a TODO for user implementation prompts in plan mode", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendInput(harness, ctx, "fix the plan mode guard bug", "interactive");
@@ -1181,7 +1202,7 @@ describe("plan-mode extension", () => {
       { deliverAs: "followUp" },
     );
     expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
-      expect.stringContaining("review mode requires a reviewed plan/spec"),
+      expect.stringContaining("plan mode requires a reviewed plan/spec"),
       { deliverAs: "followUp" },
     );
   });
@@ -1217,7 +1238,7 @@ describe("plan-mode extension", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("explains why review plan is waiting for approved review", async () => {
+  it("explains why plan mode is waiting for approved review", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendAgentPrompt(
@@ -1247,7 +1268,7 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("keeps review plan guarded even when workflow feedback is provided", async () => {
+  it("keeps plan mode guarded even when workflow feedback is provided", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     const result = await sendAgentPrompt(harness, ctx, "提交当前改动", {
@@ -1259,20 +1280,20 @@ describe("plan-mode extension", () => {
     });
 
     expect(result).toMatchObject({
-      systemPrompt: expect.stringContaining("Current mode: review:plan."),
+      systemPrompt: expect.stringContaining("Current mode: plan."),
     });
     await expect(
       harness.runToolCall("bash", { command: "git status --short" }, ctx),
     ).resolves.toMatchObject({ block: true });
   });
 
-  it("keeps commit-only prompts in normal review plan", async () => {
+  it("keeps commit-only prompts in normal plan mode", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await sendAgentPrompt(harness, ctx, commitWithoutBranchPrompt);
 
     expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-      mode: "review",
+      mode: "plan",
       phase: "plan",
     });
     await expect(
@@ -1320,11 +1341,12 @@ describe("plan-mode extension", () => {
     expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
   });
 
-  it("switches review plan to act after plannotator approves the submitted plan", async () => {
+  it("switches plan mode to act phase after plannotator approves the submitted plan", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
 
     await approveDemoPlan(harness, ctx);
 
@@ -1334,11 +1356,11 @@ describe("plan-mode extension", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("review-continues approved plans for balanced preset", async () => {
+  it("plan-continues approved plans for balanced preset", async () => {
     const harness = buildHarness();
     const { ctx, cleanup } = createTempCtx();
     writeProjectSettings(ctx.cwd, {
-      planMode: { defaultMode: "review", preset: "balanced" },
+      planMode: { defaultMode: "plan", preset: "balanced" },
     });
     writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
     planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -1364,7 +1386,7 @@ describe("plan-mode extension", () => {
     writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "review", ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
 
     try {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
@@ -1413,7 +1435,7 @@ describe("plan-mode extension", () => {
     writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "review", ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
 
     try {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
@@ -1461,7 +1483,7 @@ describe("plan-mode extension", () => {
     writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "review", ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
 
     try {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
@@ -1482,7 +1504,7 @@ describe("plan-mode extension", () => {
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "review", ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
 
     await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
     await sendAgentPrompt(harness, ctx, "迁移到 Svelte + Vite");
@@ -1493,12 +1515,12 @@ describe("plan-mode extension", () => {
     ).resolves.toMatchObject({ block: true });
   });
 
-  it("returns review act to plan after a completed run gets a new implementation prompt", async () => {
+  it("returns plan act to plan after a completed run gets a new implementation prompt", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "review", ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
 
     await completeApprovedDemoRun(harness, ctx);
 
@@ -1512,12 +1534,12 @@ describe("plan-mode extension", () => {
     ).resolves.toMatchObject({ block: true });
   });
 
-  it("does not keep review act from approved continuation prompt matching", async () => {
+  it("does not keep plan act from approved continuation prompt matching", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "review", ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
 
     await completeApprovedDemoRun(harness, ctx, "写入并提交 reviewable plan");
 
@@ -1545,7 +1567,7 @@ describe("plan-mode extension", () => {
     });
   });
 
-  it("keeps review act for a new prompt while the approved run is unfinished", async () => {
+  it("keeps plan act for a new prompt while the approved run is unfinished", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -1650,7 +1672,7 @@ describe("plan-mode extension", () => {
         },
         ctx,
       );
-      await harness.runCommand("plan-mode", "review", ctx);
+      await harness.runCommand("plan-mode", "plan", ctx);
       await harness.runTool(
         PLAN_MODE_TODO_TOOL,
         {

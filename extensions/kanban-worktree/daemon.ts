@@ -22,6 +22,7 @@ import {
   writeDaemonMetadata,
 } from "./daemon-runtime.ts";
 import { FeatureWorkflowGateway, TmuxGateway } from "./gateways.ts";
+import { KanbanRpcMethod } from "./kanban-rpc.ts";
 import { FeatureLaunchService } from "./launch-service.ts";
 import { consoleLogger, type KanbanLogger } from "./logger.ts";
 import {
@@ -257,10 +258,10 @@ export class KanbanDaemon {
 
   private async dispatch(request: RpcRequest): Promise<unknown> {
     try {
-      if (request.method === "daemon.health") {
+      if (request.method === KanbanRpcMethod.DaemonHealth) {
         return createSuccess(request.id ?? null, await this.identity());
       }
-      if (request.method === "daemon.shutdown") {
+      if (request.method === KanbanRpcMethod.DaemonShutdown) {
         setTimeout(
           () => void this.shutdown({ drainMs: SHUTDOWN_DRAIN_MS }),
           0,
@@ -270,7 +271,7 @@ export class KanbanDaemon {
       if (this.shuttingDown) {
         throw new Error("daemon shutting down");
       }
-      if (request.method === "requirements.create") {
+      if (request.method === KanbanRpcMethod.RequirementsCreate) {
         const params = request.params as
           | { title?: string; baseBranch?: string; workBranch?: string }
           | undefined;
@@ -290,13 +291,13 @@ export class KanbanDaemon {
           }),
         );
       }
-      if (request.method === "requirements.list") {
+      if (request.method === KanbanRpcMethod.RequirementsList) {
         return createSuccess(
           request.id ?? null,
           await this.issueSource.list(this.repoRoot),
         );
       }
-      if (request.method === "requirements.remove") {
+      if (request.method === KanbanRpcMethod.RequirementsRemove) {
         const params = request.params as {
           originProvider?: string;
           originId?: string;
@@ -308,10 +309,10 @@ export class KanbanDaemon {
           await this.issueSource.remove(this.repoRoot, ref.originId),
         );
       }
-      if (request.method === "branches.list") {
+      if (request.method === KanbanRpcMethod.BranchesList) {
         return createSuccess(request.id ?? null, listBaseBranches(this.git));
       }
-      if (request.method === "features.launch") {
+      if (request.method === KanbanRpcMethod.FeaturesLaunch) {
         const params = request.params as {
           originProvider?: "todo-workflow";
           originId?: string;

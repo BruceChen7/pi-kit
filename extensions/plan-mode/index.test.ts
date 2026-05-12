@@ -48,6 +48,11 @@ type TestCtx = {
   };
 };
 
+const PLAN_MODE_STATE_ENTRY = "plan-mode-state";
+const PLAN_MODE_TODOS_WIDGET = "plan-mode-todos";
+const PLAN_MODE_TODO_TOOL = "plan_mode_todo";
+const PLANNOTATOR_REVIEW_TOOL = "plannotator_auto_submit_review";
+
 const buildHarness = () => {
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, CommandRegistration>();
@@ -153,7 +158,7 @@ const buildCtx = (
 
 const lastTodoWidgetCall = (ctx: TestCtx) => {
   const call = ctx.ui.setWidget.mock.calls.findLast(
-    ([key]) => key === "plan-mode-todos",
+    ([key]) => key === PLAN_MODE_TODOS_WIDGET,
   );
   if (!call) throw new Error("Expected a plan-mode TODO widget call");
   return call;
@@ -169,7 +174,7 @@ const plainWidgetText = (ctx: TestCtx): string =>
 
 const planModeStateEntry = (data: Record<string, unknown>): CustomEntry => ({
   type: "custom",
-  customType: "plan-mode-state",
+  customType: PLAN_MODE_STATE_ENTRY,
   data,
 });
 
@@ -177,7 +182,7 @@ const lastPersistedPlanModeSnapshot = (
   harness: ReturnType<typeof buildHarness>,
 ): Record<string, unknown> => {
   const call = harness.api.appendEntry.mock.calls.findLast(
-    ([customType]) => customType === "plan-mode-state",
+    ([customType]) => customType === PLAN_MODE_STATE_ENTRY,
   );
   if (!call) throw new Error("Expected a plan-mode state entry");
   return call[1] as Record<string, unknown>;
@@ -189,6 +194,17 @@ const createTempCtx = (): { ctx: TestCtx; cleanup: () => void } => {
     ctx: { ...buildCtx(), cwd },
     cleanup: () => fs.rmSync(cwd, { recursive: true, force: true }),
   };
+};
+
+const withTempCtx = async (
+  run: (ctx: TestCtx) => Promise<void>,
+): Promise<void> => {
+  const { ctx, cleanup } = createTempCtx();
+  try {
+    await run(ctx);
+  } finally {
+    cleanup();
+  }
 };
 
 const writePlanArtifact = (
@@ -210,9 +226,11 @@ const writeProjectSettings = (
   fs.writeFileSync(settingsPath, JSON.stringify(settings), "utf-8");
 };
 
-const startPlanModeSession = async (mode: "review" | "act" = "review") => {
+const startPlanModeSession = async (
+  mode: "review" | "act" = "review",
+  ctx: TestCtx = buildCtx(),
+) => {
   const harness = buildHarness();
-  const ctx = buildCtx();
   planModeExtension(harness.api as unknown as ExtensionAPI);
   await harness.emit("session_start", {}, ctx);
   if (mode !== "act") {
@@ -220,6 +238,29 @@ const startPlanModeSession = async (mode: "review" | "act" = "review") => {
     ctx.ui.notify.mockClear();
   }
   return { harness, ctx };
+};
+
+const expectToolBlocked = async (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+  toolName: string,
+  input: Record<string, unknown>,
+  expected: Record<string, unknown> = { block: true },
+): Promise<void> => {
+  await expect(
+    harness.runToolCall(toolName, input, ctx),
+  ).resolves.toMatchObject(expected);
+};
+
+const expectToolAllowed = async (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+  toolName: string,
+  input: Record<string, unknown>,
+): Promise<void> => {
+  await expect(
+    harness.runToolCall(toolName, input, ctx),
+  ).resolves.toBeUndefined();
 };
 
 const sendInput = async (
@@ -309,7 +350,7 @@ const approveDemoPlan = async (
   await harness.emit(
     "tool_result",
     {
-      toolName: "plannotator_auto_submit_review",
+      toolName: PLANNOTATOR_REVIEW_TOOL,
       isError: false,
       input: { path: demoPlanPath },
       content: [
@@ -329,7 +370,7 @@ const startApprovedDemoRun = async (
   todoText = "实现已批准任务",
 ): Promise<void> => {
   await harness.runTool(
-    "plan_mode_todo",
+    PLAN_MODE_TODO_TOOL,
     {
       action: "set",
       items: [{ text: todoText, status: "todo" }],
@@ -346,7 +387,7 @@ const completeApprovedDemoRun = async (
 ): Promise<void> => {
   await startApprovedDemoRun(harness, ctx, todoText);
   await harness.runTool(
-    "plan_mode_todo",
+    PLAN_MODE_TODO_TOOL,
     { action: "update", id: 1, status: "done" },
     ctx,
   );
@@ -354,11 +395,8 @@ const completeApprovedDemoRun = async (
 
 describe("plan-mode extension", () => {
   it("defaults new sessions to act mode", async () => {
-    const harness = buildHarness();
-    const ctx = buildCtx();
-    planModeExtension(harness.api as unknown as ExtensionAPI);
+    const { harness, ctx } = await startPlanModeSession("act");
 
-    await harness.emit("session_start", {}, ctx);
     const result = await sendAgentPrompt(harness, ctx, "answer directly");
 
     expect(result).toMatchObject({
@@ -438,62 +476,31 @@ describe("plan-mode extension", () => {
   });
 
   it("blocks source writes during review plan phase but allows review artifact writes", async () => {
-    const harness = buildHarness();
-    const ctx = buildCtx();
-    planModeExtension(harness.api as unknown as ExtensionAPI);
+    const { harness, ctx } = await startPlanModeSession();
 
-    await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "review", ctx);
-
-    await expect(
-      harness.runToolCall("write", { path: "x.ts" }, ctx),
-    ).resolves.toMatchObject({ block: true });
-    await expect(
-      harness.runToolCall("edit", { path: "x.ts" }, ctx),
-    ).resolves.toMatchObject({ block: true });
-    await expect(
-      harness.runToolCall("bash", { command: "npm test" }, ctx),
-    ).resolves.toMatchObject({ block: true });
-    await expect(
-      harness.runToolCall(
-        "write",
-        { path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md" },
-        ctx,
-      ),
-    ).resolves.toBeUndefined();
-    await expect(
-      harness.runToolCall(
-        "write",
-        { path: ".pi/plans/pi-kit/specs/2026-05-08-demo-design.md" },
-        ctx,
-      ),
-    ).resolves.toBeUndefined();
+    await expectToolBlocked(harness, ctx, "write", { path: "x.ts" });
+    await expectToolBlocked(harness, ctx, "edit", { path: "x.ts" });
+    await expectToolBlocked(harness, ctx, "bash", { command: "npm test" });
+    await expectToolAllowed(harness, ctx, "write", {
+      path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md",
+    });
+    await expectToolAllowed(harness, ctx, "write", {
+      path: ".pi/plans/pi-kit/specs/2026-05-08-demo-design.md",
+    });
 
     await harness.runCommand("plan-mode", "act", ctx);
-    await expect(
-      harness.runToolCall("write", { path: "x.ts" }, ctx),
-    ).resolves.toBeUndefined();
+    await expectToolAllowed(harness, ctx, "write", { path: "x.ts" });
   });
 
   it("allows date-prefixed plan writes even when .pi does not exist yet", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await withTempCtx(async (ctx) => {
+      const { harness } = await startPlanModeSession("act", ctx);
 
-    try {
       expect(fs.existsSync(path.join(ctx.cwd, ".pi"))).toBe(false);
-      await harness.emit("session_start", {}, ctx);
-
-      await expect(
-        harness.runToolCall(
-          "write",
-          { path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md" },
-          ctx,
-        ),
-      ).resolves.toBeUndefined();
-    } finally {
-      cleanup();
-    }
+      await expectToolAllowed(harness, ctx, "write", {
+        path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md",
+      });
+    });
   });
 
   it("explains the date-prefixed review artifact filename when blocking plan writes", async () => {
@@ -522,27 +529,24 @@ describe("plan-mode extension", () => {
   });
 
   it("allows read-only tools outside cwd while still blocking writes", async () => {
-    const harness = buildHarness();
-    const ctx = buildCtx();
+    const { harness, ctx } = await startPlanModeSession("act");
     const outsidePath = "/tmp/outside-cwd.txt";
-    planModeExtension(harness.api as unknown as ExtensionAPI);
-
-    await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "act", ctx);
 
     for (const toolName of ["read", "grep", "find", "ls", "rg", "fd"]) {
-      await expect(
-        harness.runToolCall(toolName, { path: outsidePath }, ctx),
-      ).resolves.toBeUndefined();
+      await expectToolAllowed(harness, ctx, toolName, { path: outsidePath });
     }
 
     for (const toolName of ["write", "edit"]) {
-      await expect(
-        harness.runToolCall(toolName, { path: outsidePath }, ctx),
-      ).resolves.toMatchObject({
-        block: true,
-        reason: expect.stringContaining("path is outside cwd"),
-      });
+      await expectToolBlocked(
+        harness,
+        ctx,
+        toolName,
+        { path: outsidePath },
+        {
+          block: true,
+          reason: expect.stringContaining("path is outside cwd"),
+        },
+      );
     }
   });
 
@@ -554,7 +558,7 @@ describe("plan-mode extension", () => {
     await harness.runCommand("plan-mode", "act", ctx);
 
     await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [
@@ -584,7 +588,7 @@ describe("plan-mode extension", () => {
     await harness.emit(
       "tool_result",
       {
-        toolName: "plannotator_auto_submit_review",
+        toolName: PLANNOTATOR_REVIEW_TOOL,
         isError: false,
         content: [
           {
@@ -596,7 +600,7 @@ describe("plan-mode extension", () => {
       ctx,
     );
     await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [
@@ -625,7 +629,7 @@ describe("plan-mode extension", () => {
     await harness.runCommand("plan-mode", "act", ctx);
 
     await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "完成第一批任务", status: "done" }],
@@ -635,7 +639,7 @@ describe("plan-mode extension", () => {
     expect(plainWidgetText(ctx)).toBe(actOneItemCompletedSummary);
 
     await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "继续处理新任务", status: "todo" }],
@@ -655,7 +659,7 @@ describe("plan-mode extension", () => {
     await harness.runCommand("plan-mode", "act", ctx);
 
     await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "完成第一批任务", status: "done" }],
@@ -667,7 +671,10 @@ describe("plan-mode extension", () => {
     await sendInput(harness, ctx, "继续下一个需求", "interactive");
     await sendAgentPrompt(harness, ctx, "继续下一个需求");
 
-    expect(lastTodoWidgetCall(ctx)).toEqual(["plan-mode-todos", undefined]);
+    expect(lastTodoWidgetCall(ctx)).toEqual([
+      PLAN_MODE_TODOS_WIDGET,
+      undefined,
+    ]);
     expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
       todos: [],
       activeRun: null,
@@ -679,7 +686,7 @@ describe("plan-mode extension", () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "完成后清理", status: "done" }],
@@ -688,16 +695,19 @@ describe("plan-mode extension", () => {
     );
     expect(plainWidgetText(ctx)).toBe(planOneItemCompletedSummary);
 
-    await harness.runTool("plan_mode_todo", { action: "clear" }, ctx);
+    await harness.runTool(PLAN_MODE_TODO_TOOL, { action: "clear" }, ctx);
 
-    expect(lastTodoWidgetCall(ctx)).toEqual(["plan-mode-todos", undefined]);
+    expect(lastTodoWidgetCall(ctx)).toEqual([
+      PLAN_MODE_TODOS_WIDGET,
+      undefined,
+    ]);
   });
 
   it("clears plan-mode UI on session shutdown after completed todos", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "完成后关闭 session", status: "done" }],
@@ -713,14 +723,17 @@ describe("plan-mode extension", () => {
     ).resolves.toBeUndefined();
 
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("plan-mode", undefined);
-    expect(lastTodoWidgetCall(ctx)).toEqual(["plan-mode-todos", undefined]);
+    expect(lastTodoWidgetCall(ctx)).toEqual([
+      PLAN_MODE_TODOS_WIDGET,
+      undefined,
+    ]);
   });
 
   it("marks the active plan run completed when all todos are done", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     const result = await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "完成生命周期", status: "done" }],
@@ -738,7 +751,7 @@ describe("plan-mode extension", () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "完成旧计划", status: "done" }],
@@ -746,7 +759,7 @@ describe("plan-mode extension", () => {
       ctx,
     );
     const result = await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "开始新计划", status: "todo" }],
@@ -770,7 +783,7 @@ describe("plan-mode extension", () => {
     await harness.runCommand("plan-mode", "act", ctx);
 
     const started = await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "补测试覆盖新的默认 prompt", status: "in_progress" }],
@@ -783,7 +796,7 @@ describe("plan-mode extension", () => {
     });
 
     await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       { action: "update", id: 1, status: "done" },
       ctx,
     );
@@ -841,7 +854,7 @@ describe("plan-mode extension", () => {
     const { harness, ctx } = await startPlanModeSession();
 
     await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "查看状态", status: "todo" }],
@@ -863,7 +876,7 @@ describe("plan-mode extension", () => {
     await harness.emit("session_start", {}, ctx);
 
     const result = await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "确认需求", status: "pending" }],
@@ -1063,7 +1076,7 @@ describe("plan-mode extension", () => {
       "why is this workflow asking for TODOs?",
     );
     await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "记录诊断结论", status: "todo" }],
@@ -1226,7 +1239,7 @@ describe("plan-mode extension", () => {
 
     try {
       await harness.runTool(
-        "plan_mode_todo",
+        PLAN_MODE_TODO_TOOL,
         {
           action: "set",
           items: [{ text: "solo task", status: "todo" }],
@@ -1365,7 +1378,7 @@ describe("plan-mode extension", () => {
     ).resolves.toMatchObject({ block: true });
 
     const result = await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "实现已批准 plan", status: "todo" }],
@@ -1405,7 +1418,7 @@ describe("plan-mode extension", () => {
     await sendAgentPrompt(harness, ctx, approvedPlanPolicyFixPrompt);
 
     const result = await harness.runTool(
-      "plan_mode_todo",
+      PLAN_MODE_TODO_TOOL,
       {
         action: "set",
         items: [
@@ -1440,7 +1453,7 @@ describe("plan-mode extension", () => {
     await harness.emit(
       "tool_result",
       {
-        toolName: "plannotator_auto_submit_review",
+        toolName: PLANNOTATOR_REVIEW_TOOL,
         isError: false,
         input: { path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md" },
         content: [{ type: "text", text: "Review approved." }],
@@ -1478,7 +1491,7 @@ describe("plan-mode extension", () => {
       await harness.emit(
         "tool_result",
         {
-          toolName: "plannotator_auto_submit_review",
+          toolName: PLANNOTATOR_REVIEW_TOOL,
           isError: false,
           input: { path: firstPlanPath },
           content: [
@@ -1489,7 +1502,7 @@ describe("plan-mode extension", () => {
       );
       await harness.runCommand("plan-mode", "review", ctx);
       await harness.runTool(
-        "plan_mode_todo",
+        PLAN_MODE_TODO_TOOL,
         {
           action: "set",
           items: [{ text: "实现第二个任务", status: "todo" }],
@@ -1518,63 +1531,44 @@ describe("plan-mode extension", () => {
   });
 
   it("blocks review submission when a plan artifact violates the policy", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    const planPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
-    writePlanArtifact(ctx.cwd, planPath, invalidPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await withTempCtx(async (ctx) => {
+      const planPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
+      writePlanArtifact(ctx.cwd, planPath, invalidPlanContent);
+      const { harness } = await startPlanModeSession("act", ctx);
 
-    try {
-      await harness.emit("session_start", {}, ctx);
-
-      await expect(
-        harness.runToolCall(
-          "plannotator_auto_submit_review",
-          { path: planPath },
-          ctx,
-        ),
-      ).resolves.toMatchObject({
-        block: true,
-        reason: expect.stringContaining("Plan Mode artifact policy"),
-      });
-    } finally {
-      cleanup();
-    }
+      await expectToolBlocked(
+        harness,
+        ctx,
+        PLANNOTATOR_REVIEW_TOOL,
+        { path: planPath },
+        {
+          block: true,
+          reason: expect.stringContaining("Plan Mode artifact policy"),
+        },
+      );
+    });
   });
 
   it("allows review submission when a plan artifact satisfies the policy", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    const planPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
-    writePlanArtifact(ctx.cwd, planPath, validPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await withTempCtx(async (ctx) => {
+      const planPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
+      writePlanArtifact(ctx.cwd, planPath, validPlanContent);
+      const { harness } = await startPlanModeSession("act", ctx);
 
-    try {
-      await harness.emit("session_start", {}, ctx);
-
-      await expect(
-        harness.runToolCall(
-          "plannotator_auto_submit_review",
-          { path: planPath },
-          ctx,
-        ),
-      ).resolves.toBeUndefined();
-    } finally {
-      cleanup();
-    }
+      await expectToolAllowed(harness, ctx, PLANNOTATOR_REVIEW_TOOL, {
+        path: planPath,
+      });
+    });
   });
 
   it("reminds the agent to fix the latest invalid plan artifact", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    const planPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
-    writePlanArtifact(ctx.cwd, planPath, invalidPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await withTempCtx(async (ctx) => {
+      const planPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
+      writePlanArtifact(ctx.cwd, planPath, invalidPlanContent);
+      const { harness } = await startPlanModeSession("act", ctx);
 
-    try {
-      await harness.emit("session_start", {}, ctx);
       await harness.runTool(
-        "plan_mode_todo",
+        PLAN_MODE_TODO_TOOL,
         {
           action: "set",
           items: [{ text: "修复 plan 格式", status: "todo" }],
@@ -1601,22 +1595,17 @@ describe("plan-mode extension", () => {
         expect.stringContaining("plannotator_auto_submit_review"),
       );
       expect(options).toEqual({ deliverAs: "followUp" });
-    } finally {
-      cleanup();
-    }
+    });
   });
 
   it("does not ask to resubmit review for an approved invalid plan artifact", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    const planPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
-    writePlanArtifact(ctx.cwd, planPath, invalidPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await withTempCtx(async (ctx) => {
+      const planPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
+      writePlanArtifact(ctx.cwd, planPath, invalidPlanContent);
+      const { harness } = await startPlanModeSession("act", ctx);
 
-    try {
-      await harness.emit("session_start", {}, ctx);
       await harness.runTool(
-        "plan_mode_todo",
+        PLAN_MODE_TODO_TOOL,
         {
           action: "set",
           items: [{ text: "修复已批准 plan 格式", status: "todo" }],
@@ -1626,7 +1615,7 @@ describe("plan-mode extension", () => {
       await harness.emit(
         "tool_result",
         {
-          toolName: "plannotator_auto_submit_review",
+          toolName: PLANNOTATOR_REVIEW_TOOL,
           isError: false,
           input: { path: planPath },
           content: [{ type: "text", text: `Review approved for ${planPath}.` }],
@@ -1642,8 +1631,6 @@ describe("plan-mode extension", () => {
       );
       expect(message).not.toContain("plannotator_auto_submit_review");
       expect(options).toEqual({ deliverAs: "followUp" });
-    } finally {
-      cleanup();
-    }
+    });
   });
 });

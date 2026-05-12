@@ -133,7 +133,7 @@ export const formatTodoWidgetLines = (state: PlanModeState): string[] => {
     return formatCompletedTodoWidgetLines(state, done, total);
   }
 
-  const modePrefix = `【${getModeLabel(state)}】`;
+  const modePrefix = `【${state.phase}】`;
   const heading = current
     ? `进行中 #${current.id}/${total}：${current.text}`
     : `已完成 ${done}/${total}`;

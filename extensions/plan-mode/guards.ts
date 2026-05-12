@@ -5,7 +5,11 @@ import type {
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
 import { isStandardPlanArtifactPath } from "./artifact-policy.ts";
-import { SPEC_REVIEW_ARTIFACT_PATTERN, WRITE_TOOL_NAMES } from "./constants.ts";
+import {
+  ACT_TODO_TOOL_NAME,
+  SPEC_REVIEW_ARTIFACT_PATTERN,
+  WRITE_TOOL_NAMES,
+} from "./constants.ts";
 import type { PlanModeState } from "./state.ts";
 import { isRecord, stringProperty } from "./state.ts";
 
@@ -199,7 +203,7 @@ export const formatApprovedContinuationFollowUp = (planPath: string): string =>
   [
     `Continue implementing approved plan: ${planPath}`,
     "Use the approved plan as the source of truth.",
-    "Update plan_mode_todo as each implementation step starts and finishes.",
+    `Update ${ACT_TODO_TOOL_NAME} as each implementation step starts and finishes.`,
   ].join("\n");
 
 export const formatReviewWaitReason = (state: PlanModeState): string => {

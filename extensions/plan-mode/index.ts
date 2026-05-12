@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   ACT_TODO_TOOL_NAME,
   PLAN_MODE_COMMAND_OPTIONS,
+  PLAN_MODE_FORMAT_OPTIONS,
   STATUS_KEY,
   TODO_TOOL_NAME,
   TODO_WIDGET_KEY,
@@ -10,6 +11,41 @@ import { PlanModeController } from "./controller.ts";
 import { isPlanArtifactFormat, isPlanMode } from "./state.ts";
 import { registerTodoTool } from "./todo-tool.ts";
 import { formatPlanModeStatus } from "./ui.ts";
+
+type CommandCompletion = {
+  label: string;
+  value: string;
+};
+
+const toCompletions = (
+  options: readonly string[],
+  prefix: string,
+  completionValuePrefix = "",
+): CommandCompletion[] =>
+  options
+    .filter((option) => option.startsWith(prefix))
+    .map((option) => ({
+      label: option,
+      value: `${completionValuePrefix}${option}`,
+    }));
+
+const getPlanModeArgumentCompletions = (
+  prefix: string,
+): CommandCompletion[] => {
+  const trimmedPrefix = prefix.trimStart();
+  const firstSeparatorIndex = trimmedPrefix.search(/\s/u);
+  if (firstSeparatorIndex === -1) {
+    return toCompletions(PLAN_MODE_COMMAND_OPTIONS, trimmedPrefix);
+  }
+
+  const command = trimmedPrefix.slice(0, firstSeparatorIndex);
+  const valuePrefix = trimmedPrefix.slice(firstSeparatorIndex).trimStart();
+  if (command === "format") {
+    return toCompletions(PLAN_MODE_FORMAT_OPTIONS, valuePrefix, `${command} `);
+  }
+
+  return toCompletions(PLAN_MODE_COMMAND_OPTIONS, command);
+};
 
 export default function planModeExtension(pi: ExtensionAPI): void {
   const controller = new PlanModeController(pi);
@@ -22,10 +58,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
   pi.registerCommand("plan-mode", {
     description: "Switch Plan Mode workflow: plan, act, status",
-    getArgumentCompletions: (prefix: string) =>
-      PLAN_MODE_COMMAND_OPTIONS.filter((mode) => mode.startsWith(prefix)).map(
-        (mode) => ({ label: mode, value: mode }),
-      ),
+    getArgumentCompletions: getPlanModeArgumentCompletions,
     handler: async (args, ctx) => {
       const requested = args.trim();
       if (requested === "status" || requested.length === 0) {

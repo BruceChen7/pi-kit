@@ -99,6 +99,7 @@ declare global {
     __KANBAN_BOOT__?: BootData;
     glimpse?: {
       send(message: unknown): void;
+      close(): void;
     };
   }
 }
@@ -140,17 +141,26 @@ onMount(() => {
   const launchListener = (event: Event) => handleLaunchResult(event);
   const branchesListener = (event: Event) => handleBranchesResult(event);
   const deleteListener = (event: Event) => handleDeleteResult(event);
+  const keydownListener = (event: KeyboardEvent) => handleCloseShortcut(event);
   window.addEventListener("kanban:create-result", createListener);
   window.addEventListener("kanban:launch-result", launchListener);
   window.addEventListener("kanban:branches-result", branchesListener);
   window.addEventListener("kanban:delete-result", deleteListener);
+  window.addEventListener("keydown", keydownListener);
   return () => {
     window.removeEventListener("kanban:create-result", createListener);
     window.removeEventListener("kanban:launch-result", launchListener);
     window.removeEventListener("kanban:branches-result", branchesListener);
     window.removeEventListener("kanban:delete-result", deleteListener);
+    window.removeEventListener("keydown", keydownListener);
   };
 });
+
+function handleCloseShortcut(event: KeyboardEvent): void {
+  if (!event.metaKey || event.key.toLowerCase() !== "w") return;
+  event.preventDefault();
+  window.glimpse?.close();
+}
 
 function launch(issue: IssueSummary): void {
   if (isLaunching(issue)) return;

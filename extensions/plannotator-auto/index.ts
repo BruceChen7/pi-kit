@@ -32,20 +32,6 @@ import type {
   ReviewTargetKind,
   SessionKeyContext,
 } from "./plan-review/types.ts";
-import {
-  type CodeReviewDecision,
-  type CodeReviewStartResult,
-  createRequestPlannotator,
-  createReviewResultStore,
-  formatAnnotationMessage,
-  formatCodeReviewMessage,
-  type ReviewResultEvent,
-  requestAnnotation,
-  requestCodeReview,
-  requestReviewStatus,
-  startPlanReview,
-  waitForReviewResult,
-} from "./plannotator-api.ts";
 
 type ExtraReviewTargetConfig = {
   dir: string;
@@ -66,7 +52,6 @@ type PlannotatorAutoSettings = {
 
 type ActiveCodeReview = {
   requestKey: string;
-  reviewId?: string;
   startedAt: number;
 };
 
@@ -89,6 +74,12 @@ type PlanReviewDecisionLike = {
   feedback?: string;
 };
 
+type CodeReviewDecision = {
+  approved: boolean;
+  feedback?: string;
+  annotations?: unknown[];
+};
+
 type SessionRuntimeState = {
   activePlanReviewByCwd: Map<string, ActivePlanReview>;
   settledPlanReviewPaths: Set<string>;
@@ -103,7 +94,6 @@ type SessionRuntimeState = {
   reviewDocumentsByCwd: Map<string, Map<string, SessionReviewDocument>>;
   pendingReviewByCwd: Set<string>;
   activeCodeReviewByCwd: Map<string, ActiveCodeReview>;
-  processedCodeReviewIds: Set<string>;
   pendingReviewRetry: ReturnType<typeof setTimeout> | null;
   reviewInFlight: boolean;
 };
@@ -111,8 +101,6 @@ type SessionRuntimeState = {
 const DEFAULT_PLAN_SUBDIR = "plan";
 const DEFAULT_SPECS_SUBDIR = "specs";
 const DEFAULT_ISSUES_SUBDIR = "issues";
-const DEFAULT_CODE_REVIEW_PROBE_TIMEOUT_MS = 1_500;
-const DEFAULT_CODE_REVIEW_TIMEOUT_MS = 30_000;
 const DEFAULT_CODE_REVIEW_RETRY_DELAY_MS = 1_000;
 const SYNC_PLANNOTATOR_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const SYNC_CODE_REVIEW_TIMEOUT_MS = SYNC_PLANNOTATOR_TIMEOUT_MS;
@@ -249,15 +237,6 @@ const clearReviewWidget = (ctx: ExtensionContext): void => {
   }
 
   ui.setWidget(REVIEW_WIDGET_KEY, undefined);
-};
-
-const setReviewWidgetBySessionKey = (sessionKey: string): void => {
-  const ctx = sessionContextByKey.get(sessionKey);
-  if (!ctx) {
-    return;
-  }
-
-  setReviewWidget(ctx);
 };
 
 const formatPendingPlanReviewGateMessage = (planFiles: string[]): string =>
@@ -454,7 +433,6 @@ const createSessionRuntimeState = (): SessionRuntimeState => ({
   plannotatorUnavailableNotified: false,
   pendingReviewByCwd: new Set<string>(),
   activeCodeReviewByCwd: new Map<string, ActiveCodeReview>(),
-  processedCodeReviewIds: new Set<string>(),
   pendingReviewRetry: null,
   reviewInFlight: false,
 });
@@ -839,14 +817,20 @@ const isReviewDocumentPath = (targetPath: string): boolean =>
 const isHtmlPath = (targetPath: string): boolean =>
   path.extname(targetPath).toLowerCase() === ".html";
 
-type HtmlCliResult =
-  | { status: "handled"; approved?: boolean; feedback: string }
+type CliReviewDecision = {
+  approved: boolean;
+  feedback?: string;
+  exit?: boolean;
+};
+
+type CliReviewResult =
+  | { status: "handled"; result: CliReviewDecision }
   | { status: "error"; error: string };
 
-const parseHtmlCliResult = (stdout: string): HtmlCliResult => {
+const parseCliReviewResult = (stdout: string): CliReviewDecision => {
   const trimmed = stdout.trim();
   if (!trimmed) {
-    return { status: "handled", approved: false, feedback: "" };
+    return { approved: false, exit: true };
   }
 
   try {
@@ -855,30 +839,40 @@ const parseHtmlCliResult = (stdout: string): HtmlCliResult => {
       feedback?: string;
     };
     if (parsed.decision === "approved") {
-      return { status: "handled", approved: true, feedback: "" };
+      return { approved: true };
     }
-    return {
-      status: "handled",
-      approved: false,
-      feedback: parsed.feedback ?? "",
-    };
+    if (parsed.decision === "dismissed") {
+      return { approved: false, exit: true };
+    }
+    return { approved: false, feedback: parsed.feedback ?? "" };
   } catch {
     if (/The user approved\./i.test(trimmed)) {
-      return { status: "handled", approved: true, feedback: "" };
+      return { approved: true };
     }
-    return { status: "handled", approved: false, feedback: trimmed };
+    return { approved: false, feedback: trimmed };
   }
 };
 
-const runHtmlAnnotateCli = (filePath: string): HtmlCliResult => {
-  const result = spawnSync(
-    "plannotator",
-    ["annotate", filePath, "--render-html", "--gate", "--json"],
-    {
-      encoding: "utf-8",
-      timeout: SYNC_ANNOTATE_TIMEOUT_MS,
-    },
-  );
+const runPlannotatorAnnotateCli = (
+  ctx: Pick<ExtensionContext, "cwd">,
+  filePath: string,
+  options: { gate?: boolean; renderHtml?: boolean; timeoutMs: number },
+): CliReviewResult => {
+  const args = ["annotate", filePath];
+  if (options.renderHtml) {
+    args.push("--render-html");
+  }
+  if (options.gate) {
+    args.push("--gate");
+  }
+  args.push("--json");
+
+  const result = spawnSync("plannotator", args, {
+    cwd: ctx.cwd,
+    encoding: "utf-8",
+    env: { ...process.env, PLANNOTATOR_CWD: ctx.cwd },
+    timeout: options.timeoutMs,
+  });
 
   if (result.error) {
     return { status: "error", error: result.error.message };
@@ -889,7 +883,37 @@ const runHtmlAnnotateCli = (filePath: string): HtmlCliResult => {
       error: result.stderr || `plannotator exited with ${result.status}`,
     };
   }
-  return parseHtmlCliResult(result.stdout ?? "");
+  return {
+    status: "handled",
+    result: parseCliReviewResult(result.stdout ?? ""),
+  };
+};
+
+const runPlannotatorCodeReviewCli = (
+  ctx: Pick<ExtensionContext, "cwd">,
+): CliReviewResult => {
+  const result = spawnSync("plannotator", ["review"], {
+    cwd: ctx.cwd,
+    encoding: "utf-8",
+    env: { ...process.env, PLANNOTATOR_CWD: ctx.cwd },
+    timeout: SYNC_CODE_REVIEW_TIMEOUT_MS,
+  });
+
+  if (result.error) {
+    return { status: "error", error: result.error.message };
+  }
+  if (result.status !== 0) {
+    return {
+      status: "error",
+      error: result.stderr || `plannotator exited with ${result.status}`,
+    };
+  }
+
+  const stdout = (result.stdout ?? "").trim();
+  if (!stdout || /no changes requested/i.test(stdout)) {
+    return { status: "handled", result: { approved: true } };
+  }
+  return { status: "handled", result: { approved: false, feedback: stdout } };
 };
 
 const isPathWithinCwd = (
@@ -1043,9 +1067,6 @@ const annotateLatestReviewDocument = async (
     return;
   }
 
-  const requestPlannotator = createRequestPlannotator(pi.events, {
-    timeoutMs: SYNC_ANNOTATE_TIMEOUT_MS,
-  });
   const renderHtml = isHtmlPath(latestDocument.absolutePath);
 
   log?.info("plannotator-auto annotating latest session document", {
@@ -1057,17 +1078,19 @@ const annotateLatestReviewDocument = async (
   });
 
   try {
-    const response = await requestAnnotation(requestPlannotator, {
-      filePath: latestDocument.absolutePath,
-      mode: "annotate",
-      ...(renderHtml ? { renderHtml: true, contentType: "html" } : {}),
-    });
+    const response = runPlannotatorAnnotateCli(
+      ctx,
+      latestDocument.absolutePath,
+      {
+        renderHtml,
+        timeoutMs: SYNC_ANNOTATE_TIMEOUT_MS,
+      },
+    );
 
     if (response.status === "handled") {
       const message = formatAnnotationMessage({
         filePath: latestDocument.repoRelativePath,
-        feedback: response.result.feedback,
-        annotations: response.result.annotations,
+        feedback: response.result.feedback ?? "",
       });
 
       if (message) {
@@ -1075,29 +1098,6 @@ const annotateLatestReviewDocument = async (
       } else {
         ctx.ui.notify("Document annotation closed (no feedback).", "info");
       }
-      return;
-    }
-
-    if (response.status === "unavailable" && renderHtml) {
-      const fallback = runHtmlAnnotateCli(latestDocument.absolutePath);
-      if (fallback.status === "handled") {
-        const message = formatAnnotationMessage({
-          filePath: latestDocument.repoRelativePath,
-          feedback: fallback.feedback,
-        });
-        if (message) {
-          pi.sendUserMessage(message, { deliverAs: "followUp" });
-        }
-        return;
-      }
-    }
-
-    if (response.status === "unavailable") {
-      ctx.ui.notify(
-        response.error ??
-          "Plannotator is not loaded. Install/enable Plannotator to annotate documents.",
-        "warning",
-      );
       return;
     }
 
@@ -1115,6 +1115,49 @@ const annotateLatestReviewDocument = async (
   }
 };
 
+const formatCodeReviewMessage = (result: {
+  approved: boolean;
+  feedback?: string;
+  annotations?: unknown[];
+}): string | null => {
+  if (result.approved) {
+    return "# Code Review\n\nCode review completed — no changes requested.";
+  }
+
+  if (!result.feedback?.trim()) {
+    if ((result.annotations?.length ?? 0) > 0) {
+      return "# Code Review\n\nCode review completed with inline annotations. Please address the review comments.";
+    }
+
+    return null;
+  }
+
+  return `${result.feedback}\n\nPlease address this feedback.`;
+};
+
+const formatAnnotationMessage = (options: {
+  filePath: string;
+  feedback: string;
+  annotations?: unknown[];
+  isFolder?: boolean;
+}): string | null => {
+  const feedback = options.feedback.trim();
+  const hasAnnotations = (options.annotations?.length ?? 0) > 0;
+  if (!feedback && !hasAnnotations) {
+    return null;
+  }
+
+  const header = options.isFolder
+    ? `# Markdown Annotations\n\nFolder: ${options.filePath}`
+    : `# Markdown Annotations\n\nFile: ${options.filePath}`;
+
+  const body = feedback
+    ? `${feedback}\n\nPlease address the annotation feedback above.`
+    : "Annotation completed with inline comments. Please address the annotation feedback above.";
+
+  return `${header}\n\n${body}`;
+};
+
 const markReviewPending = (ctx: ExtensionContext): void => {
   const state = getSessionState(ctx);
   state.pendingReviewByCwd.add(ctx.cwd);
@@ -1129,9 +1172,6 @@ const markReviewPending = (ctx: ExtensionContext): void => {
 const clearReviewPending = (ctx: ExtensionContext): void => {
   getSessionState(ctx).pendingReviewByCwd.delete(ctx.cwd);
 };
-
-const getCodeReviewCompletionKey = (active: ActiveCodeReview): string =>
-  active.reviewId ?? active.requestKey;
 
 const createCodeReviewRequestKey = (): string =>
   `sync:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
@@ -1164,7 +1204,6 @@ const notifyCodeReviewUnavailable = (
 
 const scheduleReviewRetry = (
   pi: ExtensionAPI,
-  reviewResults: ReturnType<typeof createReviewResultStore>,
   ctx: ExtensionContext,
   reason: string,
   delayMs = DEFAULT_CODE_REVIEW_RETRY_DELAY_MS,
@@ -1187,14 +1226,9 @@ const scheduleReviewRetry = (
       return;
     }
 
-    void maybeStartCodeReview(pi, reviewResults, currentCtx, reason);
+    void maybeStartCodeReview(pi, currentCtx, reason);
   }, delayMs);
 };
-
-const isCodeReviewStartResult = (
-  result: CodeReviewDecision | CodeReviewStartResult,
-): result is CodeReviewStartResult =>
-  "status" in result && result.status === "pending";
 
 const handleCodeReviewCompletion = (
   pi: ExtensionAPI,
@@ -1204,17 +1238,10 @@ const handleCodeReviewCompletion = (
   state: SessionRuntimeState,
   active: ActiveCodeReview,
   result: CodeReviewDecision,
-  source: "event" | "status" | "direct",
   onStateChanged?: () => void,
 ): void => {
-  const completionKey = getCodeReviewCompletionKey(active);
-  if (state.processedCodeReviewIds.has(completionKey)) {
-    return;
-  }
-
   const superseded = state.pendingReviewByCwd.has(ctx.cwd);
 
-  state.processedCodeReviewIds.add(completionKey);
   state.activeCodeReviewByCwd.delete(ctx.cwd);
   state.plannotatorUnavailableNotified = false;
   onStateChanged?.();
@@ -1222,8 +1249,6 @@ const handleCodeReviewCompletion = (
   if (superseded) {
     log?.info("plannotator-auto suppressed stale code-review completion", {
       cwd: ctx.cwd,
-      source,
-      reviewId: active.reviewId ?? null,
       requestKey: active.requestKey,
       approved: result.approved,
     });
@@ -1249,38 +1274,8 @@ const clearActiveCodeReview = (
   }
 };
 
-const findActiveCodeReviewSession = (
-  reviewId: string,
-): {
-  sessionKey: string;
-  cwd: string;
-  state: SessionRuntimeState;
-} | null => {
-  for (const [sessionKey, state] of sessionRuntimeState.entries()) {
-    for (const [cwd, active] of state.activeCodeReviewByCwd.entries()) {
-      if (active.reviewId === reviewId) {
-        return {
-          sessionKey,
-          cwd,
-          state: sessionRuntimeState.get(sessionKey) ?? state,
-        };
-      }
-    }
-  }
-
-  return null;
-};
-
-const probeCodeReviewAvailability = async (
-  requestPlannotator: ReturnType<typeof createRequestPlannotator>,
-): Promise<Awaited<ReturnType<typeof requestReviewStatus>>> =>
-  requestReviewStatus(requestPlannotator, {
-    reviewId: `probe:${Date.now()}`,
-  });
-
 const maybeStartCodeReview = async (
   pi: ExtensionAPI,
-  reviewResults: ReturnType<typeof createReviewResultStore>,
   ctx: ExtensionContext,
   reason: string,
 ): Promise<void> => {
@@ -1319,7 +1314,7 @@ const maybeStartCodeReview = async (
   }
 
   if (!ctx.isIdle()) {
-    scheduleReviewRetry(pi, reviewResults, ctx, "busy-review");
+    scheduleReviewRetry(pi, ctx, "busy-review");
     return;
   }
 
@@ -1332,7 +1327,7 @@ const maybeStartCodeReview = async (
         sessionKey: getSessionKey(ctx),
       },
     );
-    scheduleReviewRetry(pi, reviewResults, ctx, "review-after-plan-review");
+    scheduleReviewRetry(pi, ctx, "review-after-plan-review");
     return;
   }
 
@@ -1371,201 +1366,38 @@ const maybeStartCodeReview = async (
     return;
   }
 
-  const requestPlannotator = createRequestPlannotator(pi.events, {
-    timeoutMs: DEFAULT_CODE_REVIEW_TIMEOUT_MS,
-  });
   state.reviewInFlight = true;
+  const activeReview: ActiveCodeReview = {
+    requestKey: createCodeReviewRequestKey(),
+    startedAt: Date.now(),
+  };
+  state.activeCodeReviewByCwd.set(ctx.cwd, activeReview);
   setReviewWidget(ctx);
 
   try {
-    if (active) {
-      const statusResponse = await requestReviewStatus(requestPlannotator, {
-        reviewId: active.reviewId,
-      });
-
-      if (statusResponse.status === "handled") {
-        const status = statusResponse.result;
-        if (status.status === "pending") {
-          scheduleReviewRetry(
-            pi,
-            reviewResults,
-            ctx,
-            "pending-code-review-status",
-            1_200,
-          );
-          return;
-        }
-
-        if (status.status === "completed") {
-          handleCodeReviewCompletion(
-            pi,
-            ctx,
-            state,
-            active,
-            {
-              approved: status.approved,
-              feedback: status.feedback,
-              annotations: status.annotations,
-            },
-            "status",
-            () => setReviewWidget(ctx),
-          );
-        } else {
-          clearActiveCodeReview(ctx, state, () => setReviewWidget(ctx));
-        }
-      } else if (statusResponse.status === "unavailable") {
-        notifyCodeReviewUnavailable(
-          ctx,
-          state,
-          statusResponse.error ??
-            "Plannotator is not loaded. Install/enable the Plannotator extension to use shared review flows.",
-        );
-        scheduleReviewRetry(
-          pi,
-          reviewResults,
-          ctx,
-          "code-review-status-unavailable",
-          1_200,
-        );
-        return;
-      } else {
-        ctx.ui.notify(
-          statusResponse.error || "Plannotator review-status request failed.",
-          "warning",
-        );
-        scheduleReviewRetry(
-          pi,
-          reviewResults,
-          ctx,
-          "code-review-status-error",
-          1_200,
-        );
-        return;
-      }
-    }
-
-    if (!state.pendingReviewByCwd.has(ctx.cwd)) {
-      return;
-    }
-
-    const probeRequest = createRequestPlannotator(pi.events, {
-      timeoutMs: DEFAULT_CODE_REVIEW_PROBE_TIMEOUT_MS,
-    });
-    const probeResponse = await probeCodeReviewAvailability(probeRequest);
-    if (probeResponse.status === "unavailable") {
-      notifyCodeReviewUnavailable(
-        ctx,
-        state,
-        probeResponse.error ??
-          "Plannotator is not loaded. Install/enable the Plannotator extension to use shared review flows.",
-      );
-      return;
-    }
-
-    if (probeResponse.status === "error") {
-      ctx.ui.notify(
-        probeResponse.error ||
-          "Plannotator review-status probe failed before code review.",
-        "warning",
-      );
-      return;
-    }
-
-    log?.info("plannotator-auto starting code review via event API", {
+    log?.info("plannotator-auto starting code review via CLI", {
       cwd: ctx.cwd,
       repoRoot,
       reason,
       sessionKey: getSessionKey(ctx),
     });
 
-    const syncActive: ActiveCodeReview = {
-      requestKey: createCodeReviewRequestKey(),
-      startedAt: Date.now(),
-    };
-    state.activeCodeReviewByCwd.set(ctx.cwd, syncActive);
-    setReviewWidget(ctx);
-
-    const syncRequestPlannotator = createRequestPlannotator(pi.events, {
-      timeoutMs: SYNC_CODE_REVIEW_TIMEOUT_MS,
-    });
-    const response = await requestCodeReview(syncRequestPlannotator, {
-      cwd: ctx.cwd,
-    });
-    const currentState = sessionRuntimeState.get(getSessionKey(ctx));
-    if (!currentState) {
+    const response = runPlannotatorCodeReviewCli(ctx);
+    if (response.status === "error") {
+      clearActiveCodeReview(ctx, state, () => setReviewWidget(ctx));
+      notifyCodeReviewUnavailable(ctx, state, response.error);
       return;
     }
 
-    const currentActive = currentState.activeCodeReviewByCwd.get(ctx.cwd);
-    if (!currentActive || currentActive.requestKey !== syncActive.requestKey) {
-      return;
-    }
-
-    if (response.status === "handled") {
-      currentState.plannotatorUnavailableNotified = false;
-      clearReviewPending(ctx);
-
-      const result = response.result;
-      if (isCodeReviewStartResult(result)) {
-        reviewResults.markPending(result.reviewId);
-        currentState.activeCodeReviewByCwd.set(ctx.cwd, {
-          requestKey: syncActive.requestKey,
-          reviewId: result.reviewId,
-          startedAt: Date.now(),
-        });
-        setReviewWidget(ctx);
-        scheduleReviewRetry(
-          pi,
-          reviewResults,
-          ctx,
-          "await-code-review-result",
-          1_200,
-        );
-        return;
-      }
-
-      handleCodeReviewCompletion(
-        pi,
-        ctx,
-        currentState,
-        syncActive,
-        result,
-        "direct",
-        () => setReviewWidget(ctx),
-      );
-      if (currentState.pendingReviewByCwd.has(ctx.cwd)) {
-        scheduleReviewRetry(
-          pi,
-          reviewResults,
-          ctx,
-          "review-after-sync-code-review",
-        );
-      }
-      return;
-    }
-
-    clearActiveCodeReview(ctx, currentState, () => setReviewWidget(ctx));
-
-    if (response.status === "unavailable") {
-      notifyCodeReviewUnavailable(
-        ctx,
-        currentState,
-        response.error ??
-          "Plannotator is not loaded. Install/enable the Plannotator extension to use shared review flows.",
-      );
-      return;
-    }
-
-    ctx.ui.notify(
-      response.error || "Plannotator code review request failed.",
-      "warning",
-    );
-  } catch (error) {
-    ctx.ui.notify(
-      error instanceof Error
-        ? error.message
-        : "Plannotator code review request failed.",
-      "warning",
+    clearReviewPending(ctx);
+    state.plannotatorUnavailableNotified = false;
+    handleCodeReviewCompletion(
+      pi,
+      ctx,
+      state,
+      activeReview,
+      response.result,
+      () => setReviewWidget(ctx),
     );
   } finally {
     state.reviewInFlight = false;
@@ -1758,7 +1590,6 @@ const isReviewTrackedToolName = (toolName: string): boolean =>
 
 export default function plannotatorAuto(pi: ExtensionAPI) {
   log = createLogger("plannotator-auto", { stderr: null });
-  const reviewResults = createReviewResultStore(pi.events);
 
   pi.registerTool({
     name: PLAN_REVIEW_SUBMIT_TOOL,
@@ -1852,32 +1683,34 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
         };
       }
 
-      const requestPlannotator = createRequestPlannotator(pi.events, {
-        timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
-      });
       const renderHtml = isHtmlPath(pendingPlanReview.resolvedPlanPath);
-      const response = await startPlanReview(
-        requestPlannotator,
-        reviewResults,
-        {
-          planContent,
-          planFilePath: pendingPlanReview.planFile,
-          origin: "plannotator-auto",
-          ...(renderHtml ? { renderHtml: true, contentType: "html" } : {}),
-        },
-      );
+      state.activePlanReviewByCwd.set(ctx.cwd, {
+        reviewId: `cli:${Date.now()}`,
+        kind: pendingPlanReview.kind,
+        planFile: pendingPlanReview.planFile,
+        resolvedPlanPath: pendingPlanReview.resolvedPlanPath,
+        startedAt: Date.now(),
+        origin: "manual-submit",
+      });
+      setReviewWidget(ctx);
 
-      if (
-        renderHtml &&
-        (response.status !== "handled" || response.result.renderHtml !== true)
-      ) {
-        const result = runHtmlAnnotateCli(pendingPlanReview.resolvedPlanPath);
-        if (result.status === "error") {
+      try {
+        const cliResult = runPlannotatorAnnotateCli(
+          ctx,
+          pendingPlanReview.resolvedPlanPath,
+          {
+            gate: true,
+            renderHtml,
+            timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+          },
+        );
+
+        if (cliResult.status === "error") {
           return {
             content: [
               {
                 type: "text",
-                text: result.error,
+                text: cliResult.error,
               },
             ],
             details: { status: "error" },
@@ -1889,47 +1722,12 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
           state,
           pendingPlanReviews,
           pendingPlanReview,
-          result,
+          cliResult.result,
         );
+      } finally {
+        state.activePlanReviewByCwd.delete(ctx.cwd);
+        setReviewWidget(ctx);
       }
-
-      if (response.status !== "handled") {
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                response.error ||
-                "Error: Plannotator review could not be started right now.",
-            },
-          ],
-          details: { status: "error" },
-        };
-      }
-
-      state.activePlanReviewByCwd.set(ctx.cwd, {
-        reviewId: response.result.reviewId,
-        kind: pendingPlanReview.kind,
-        planFile: pendingPlanReview.planFile,
-        resolvedPlanPath: pendingPlanReview.resolvedPlanPath,
-        startedAt: Date.now(),
-        origin: "manual-submit",
-      });
-      setReviewWidget(ctx);
-
-      const result = await waitForReviewResult(
-        reviewResults,
-        response.result.reviewId,
-      );
-
-      state.activePlanReviewByCwd.delete(ctx.cwd);
-      return completePendingPlanReview(
-        ctx,
-        state,
-        pendingPlanReviews,
-        pendingPlanReview,
-        result,
-      );
     },
   });
 
@@ -1938,32 +1736,6 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     handler: async (ctx) => {
       await annotateLatestReviewDocument(pi, ctx);
     },
-  });
-
-  reviewResults.onResult((result: ReviewResultEvent) => {
-    const matched = findActiveCodeReviewSession(result.reviewId);
-    if (!matched) {
-      return;
-    }
-
-    const active = matched.state.activeCodeReviewByCwd.get(matched.cwd);
-    if (!active) {
-      return;
-    }
-
-    handleCodeReviewCompletion(
-      pi,
-      { cwd: matched.cwd },
-      matched.state,
-      active,
-      {
-        approved: result.approved,
-        feedback: result.feedback,
-        annotations: result.annotations,
-      },
-      "event",
-      () => setReviewWidgetBySessionKey(matched.sessionKey),
-    );
   });
 
   pi.on("session_start", (_event, ctx) => {
@@ -2138,7 +1910,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       return;
     }
 
-    await maybeStartCodeReview(pi, reviewResults, ctx, "agent_end");
+    await maybeStartCodeReview(pi, ctx, "agent_end");
     setReviewWidget(ctx);
   });
 }

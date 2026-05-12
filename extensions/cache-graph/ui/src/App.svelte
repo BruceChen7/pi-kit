@@ -75,6 +75,7 @@ declare global {
     __CACHE_GRAPH_BOOT__?: BootData;
     glimpse?: {
       send(message: unknown): void;
+      close(): void;
     };
   }
 }
@@ -177,6 +178,17 @@ function clearStatusDismissTimer(): void {
   window.clearTimeout(statusDismissTimer);
   statusDismissTimer = null;
 }
+
+function handleCloseShortcut(event: KeyboardEvent): void {
+  if (!event.metaKey || event.key.toLowerCase() !== "w") return;
+  event.preventDefault();
+  window.glimpse?.close();
+}
+
+$effect(() => {
+  window.addEventListener("keydown", handleCloseShortcut);
+  return () => window.removeEventListener("keydown", handleCloseShortcut);
+});
 
 $effect(() => {
   window.addEventListener("cache-graph:metrics", handleDashboardResult);

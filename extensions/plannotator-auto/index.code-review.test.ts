@@ -1,22 +1,32 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+type SpawnSyncMockResult = {
+  status: number;
+  stdout?: string;
+  stderr?: string;
+  error?: Error;
+};
+
+function mockSpawnSync(result: SpawnSyncMockResult) {
+  const spawnSync = vi.fn(() => result);
+  vi.doMock("node:child_process", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("node:child_process")>()),
+    spawnSync,
+  }));
+  return spawnSync;
+}
+
 import {
   createFakePi,
   createTestContext,
   flushMicrotasks,
-  mockPlannotatorApi,
 } from "./test-helpers.js";
 
 async function importPlannotatorAuto() {
   return (await import("./index.js")).default;
 }
 
-function mockCodeReviewApi(
-  options: {
-    formatCodeReviewMessage?: ReturnType<typeof vi.fn>;
-    requestCodeReview?: ReturnType<typeof vi.fn>;
-    requestReviewStatus?: ReturnType<typeof vi.fn>;
-  } = {},
-) {
+function mockCodeReviewApi() {
   vi.doMock("../shared/settings.ts", () => ({
     loadGlobalSettings: vi.fn(() => ({
       globalPath: "/home/test/.pi/agent/third_extension_settings.json",
@@ -41,8 +51,6 @@ function mockCodeReviewApi(
       },
     })),
   }));
-
-  return mockPlannotatorApi(options);
 }
 
 async function triggerCodeReview(
@@ -75,26 +83,15 @@ afterEach(() => {
 });
 
 describe("code review trigger timing", () => {
-  it("probes plannotator before waiting for a synchronous code review result", async () => {
+  it("starts code review through the Plannotator CLI and delivers feedback", async () => {
     vi.resetModules();
-    let resolveCodeReview:
-      | ((value: {
-          status: "handled";
-          result: {
-            approved: boolean;
-            feedback?: string;
-          };
-        }) => void)
-      | null = null;
-
-    const { requestCodeReview, requestReviewStatus } = mockCodeReviewApi({
-      requestCodeReview: vi.fn(
-        () =>
-          new Promise((resolve) => {
-            resolveCodeReview = resolve;
-          }),
-      ),
+    const spawnSync = mockSpawnSync({
+      status: 0,
+      stdout: "Please add tests.",
+      stderr: "",
     });
+
+    mockCodeReviewApi();
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { api, emit } = createFakePi();
@@ -105,30 +102,21 @@ describe("code review trigger timing", () => {
       await emit("session_start", {}, ctx);
       await triggerCodeReview(emit, ctx);
 
-      const agentEndPromise = emit("agent_end", {}, ctx);
-      await flushMicrotasks();
-      await flushMicrotasks();
-      await flushMicrotasks();
+      await emit("agent_end", {}, ctx);
 
-      expect(requestReviewStatus).toHaveBeenCalledTimes(1);
-      expect(requestCodeReview).toHaveBeenCalledTimes(1);
-      expect(requestReviewStatus.mock.invocationCallOrder[0]).toBeLessThan(
-        requestCodeReview.mock.invocationCallOrder[0],
+      expect(spawnSync).toHaveBeenCalledWith(
+        "plannotator",
+        ["review"],
+        expect.objectContaining({
+          cwd: "/repo",
+          encoding: "utf-8",
+          env: expect.objectContaining({ PLANNOTATOR_CWD: "/repo" }),
+        }),
       );
       expect(ctx.ui.notify).not.toHaveBeenCalledWith(
         "Plannotator request timed out.",
         "warning",
       );
-
-      resolveCodeReview?.({
-        status: "handled",
-        result: {
-          approved: false,
-          feedback: "Please add tests.",
-        },
-      });
-      await agentEndPromise;
-
       expect(api.sendUserMessage).toHaveBeenCalledWith(
         "Please add tests.\n\nPlease address this feedback.",
         { deliverAs: "followUp" },
@@ -138,10 +126,10 @@ describe("code review trigger timing", () => {
     }
   });
 
-  it("delivers code review feedback from async review results", async () => {
+  it("delivers code review feedback from CLI output", async () => {
     vi.resetModules();
-    const { emitReviewResult, requestCodeReview, requestReviewStatus } =
-      mockCodeReviewApi();
+    mockSpawnSync({ status: 0, stdout: "Please add tests.", stderr: "" });
+    mockCodeReviewApi();
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { api, emit } = createFakePi();
@@ -152,16 +140,6 @@ describe("code review trigger timing", () => {
       await emit("session_start", {}, ctx);
       await triggerCodeReview(emit, ctx);
       await emit("agent_end", {}, ctx);
-
-      expect(requestReviewStatus).toHaveBeenCalledTimes(1);
-      expect(requestCodeReview).toHaveBeenCalledTimes(1);
-      expect(api.sendUserMessage).not.toHaveBeenCalled();
-
-      emitReviewResult({
-        reviewId: "code-review-1",
-        approved: false,
-        feedback: "Please add tests.",
-      });
 
       expect(api.sendUserMessage).toHaveBeenCalledWith(
         "Please add tests.\n\nPlease address this feedback.",
@@ -180,7 +158,12 @@ describe("code review trigger timing", () => {
     vi.useFakeTimers();
     vi.resetModules();
 
-    const { requestReviewStatus } = mockCodeReviewApi();
+    const spawnSync = mockSpawnSync({
+      status: 0,
+      stdout: "Please add tests.",
+      stderr: "",
+    });
+    mockCodeReviewApi();
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { api, emit } = createFakePi();
@@ -200,39 +183,40 @@ describe("code review trigger timing", () => {
 
       await vi.advanceTimersByTimeAsync(999);
       await flushMicrotasks();
-      expect(requestReviewStatus).not.toHaveBeenCalled();
+      expect(spawnSync).not.toHaveBeenCalledWith(
+        "plannotator",
+        ["review"],
+        expect.anything(),
+      );
 
       await vi.advanceTimersByTimeAsync(1);
       await flushMicrotasks();
-      expect(requestReviewStatus).toHaveBeenCalledTimes(1);
+      expect(spawnSync).toHaveBeenCalledWith(
+        "plannotator",
+        ["review"],
+        expect.objectContaining({ cwd: "/repo" }),
+      );
     } finally {
       await emit("session_shutdown", {}, idleCtx);
     }
   });
 
-  it("uses the replacement session context for delayed code-review retries", async () => {
+  it("uses the replacement session context for delayed CLI review retries", async () => {
     vi.useFakeTimers();
     vi.resetModules();
 
-    const requestReviewStatus = vi
-      .fn()
-      .mockResolvedValueOnce({
-        status: "handled" as const,
-        result: {
-          status: "missing" as const,
-        },
-      })
-      .mockResolvedValueOnce({
-        status: "error" as const,
-        error: "review-status failed",
-      });
-
-    mockCodeReviewApi({ requestReviewStatus });
+    const spawnSync = mockSpawnSync({
+      status: 1,
+      stdout: "",
+      stderr: "review failed",
+    });
+    mockCodeReviewApi();
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { api, emit } = createFakePi();
     plannotatorAuto(api as never);
     const ctx = createTestContext("/repo", {
+      isIdle: false,
       sessionFile: "/repo/.pi/session.json",
     });
     const replacementCtx = createTestContext("/repo", {
@@ -253,7 +237,11 @@ describe("code review trigger timing", () => {
       await triggerCodeReview(emit, ctx);
       await emit("agent_end", {}, ctx);
 
-      expect(requestReviewStatus).toHaveBeenCalledTimes(1);
+      expect(spawnSync).not.toHaveBeenCalledWith(
+        "plannotator",
+        ["review"],
+        expect.anything(),
+      );
 
       await emit("session_start", {}, replacementCtx);
       stale = true;
@@ -261,9 +249,13 @@ describe("code review trigger timing", () => {
       await vi.advanceTimersByTimeAsync(1_200);
       await flushMicrotasks();
 
-      expect(requestReviewStatus).toHaveBeenCalledTimes(2);
+      expect(spawnSync).toHaveBeenCalledWith(
+        "plannotator",
+        ["review"],
+        expect.objectContaining({ cwd: "/repo" }),
+      );
       expect(replacementCtx.ui.notify).toHaveBeenCalledWith(
-        "review-status failed",
+        "review failed",
         "warning",
       );
     } finally {
@@ -271,28 +263,10 @@ describe("code review trigger timing", () => {
     }
   });
 
-  it("delivers a follow-up when async code review returns annotations without top-level feedback", async () => {
+  it("formats a follow-up when CLI code review returns feedback", async () => {
     vi.resetModules();
-    const annotations = [{ file: "src/app.ts", line: 12, text: "Add a test." }];
-    const { emitReviewResult, formatCodeReviewMessage } = mockCodeReviewApi({
-      formatCodeReviewMessage: vi.fn(
-        (result: {
-          approved?: boolean;
-          feedback?: string;
-          annotations?: unknown[];
-        }) => {
-          if (result.feedback?.trim()) {
-            return `${result.feedback}\n\nPlease address this feedback.`;
-          }
-
-          if ((result.annotations?.length ?? 0) > 0) {
-            return "# Code Review\n\nCode review completed with inline annotations. Please address the review comments.";
-          }
-
-          return null;
-        },
-      ),
-    });
+    mockSpawnSync({ status: 0, stdout: "Please add tests.", stderr: "" });
+    mockCodeReviewApi();
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { api, emit } = createFakePi();
@@ -304,19 +278,8 @@ describe("code review trigger timing", () => {
       await triggerCodeReview(emit, ctx);
       await emit("agent_end", {}, ctx);
 
-      emitReviewResult({
-        reviewId: "code-review-1",
-        approved: false,
-        annotations,
-      });
-
-      expect(formatCodeReviewMessage).toHaveBeenCalledWith({
-        approved: false,
-        feedback: undefined,
-        annotations,
-      });
       expect(api.sendUserMessage).toHaveBeenCalledWith(
-        "# Code Review\n\nCode review completed with inline annotations. Please address the review comments.",
+        "Please add tests.\n\nPlease address this feedback.",
         { deliverAs: "followUp" },
       );
       expect(ctx.ui.notify).not.toHaveBeenCalledWith(

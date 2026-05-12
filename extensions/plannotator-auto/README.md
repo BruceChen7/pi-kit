@@ -29,11 +29,9 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 - Multiple review-target writes before submission are tracked by target path and shown together in the pending gate.
 - `plannotator_auto_submit_review` is the only plan/spec review runner. While it waits for a result, the same session will not ask for another submit; approval clears the pending target, while denial keeps it pending for a later retry.
 - `write` / `edit` to **non-plan** files → mark code review pending only if `codeReviewAutoTrigger` is `true`.
-- On `agent_end`, if code review is pending, no plan/spec review is pending or active, and the repo is dirty, request code review.
-- `Ctrl+Alt+L` annotates the latest Markdown or HTML file modified in the current session.
-- HTML plan submissions use Plannotator HTML rendering. If the event bridge cannot render
-  HTML directly, Plannotator Auto falls back to the CLI equivalent of
-  `plannotator annotate <file> --render-html --gate --json`.
+- On `agent_end`, if code review is pending, no plan/spec review is pending or active, and the repo is dirty, run `plannotator review`.
+- `Ctrl+Alt+L` annotates the latest Markdown or HTML file modified in the current session with `plannotator annotate <file> --json`.
+- Plan/spec/issue submissions use `plannotator annotate <file> --gate --json`; HTML submissions add `--render-html`.
 
 ## Configuration
 
@@ -69,12 +67,15 @@ Notes:
 - Set `planFile: null` to disable plan/spec review auto-trigger.
 - `codeReviewAutoTrigger` is disabled by default.
 
-## Event actions used
+## CLI commands used
 
-- `plan-review`
-- `code-review`
-- `annotate`
-- `review-status`
+Plannotator Auto requires the `plannotator` CLI to be available on `PATH`.
+It does not use the shared `plannotator:request` event API.
+
+- `plannotator annotate <file> --gate --json`
+- `plannotator annotate <file> --render-html --gate --json`
+- `plannotator annotate <file> --json`
+- `plannotator review`
 
 ## Logging
 
@@ -83,5 +84,4 @@ Logs use the shared extension logger (default file: `~/.pi/agent/pi-debug.log`).
 Useful filters:
 
 - `ext:plannotator-auto`
-- `reviewId`
 - `sessionKey`

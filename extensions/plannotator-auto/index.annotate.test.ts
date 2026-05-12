@@ -1,9 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+type SpawnSyncMockResult = {
+  status: number;
+  stdout?: string;
+  stderr?: string;
+  error?: Error;
+};
+
+function mockSpawnSync(result: SpawnSyncMockResult) {
+  const spawnSync = vi.fn(() => result);
+  vi.doMock("node:child_process", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("node:child_process")>()),
+    spawnSync,
+  }));
+  return spawnSync;
+}
+
 import {
   createFakePi,
   createTempRepo,
   createTestContext,
-  flushMicrotasks,
   removeTempRepo,
   writeTestFile,
 } from "./test-helpers.js";
@@ -35,9 +51,17 @@ const recordSessionDocumentWrite = async (
 describe("annotate latest document shortcut", () => {
   it("annotates the latest Markdown file modified in the current session", async () => {
     vi.resetModules();
+    const spawnSync = mockSpawnSync({
+      status: 0,
+      stdout: JSON.stringify({
+        decision: "annotated",
+        feedback: "Please refine the session Markdown.",
+      }),
+      stderr: "",
+    });
 
     const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit, events, runShortcut } = createFakePi();
+    const { api, emit, runShortcut } = createFakePi();
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo(
@@ -55,27 +79,6 @@ describe("annotate latest document shortcut", () => {
       "# Latest session Markdown\n",
       new Date("2026-04-20T00:00:00.000Z"),
     );
-    const annotateRequests: Array<{ action: string; payload: unknown }> = [];
-
-    events.on("plannotator:request", (data) => {
-      const request = data as {
-        action: string;
-        payload: { filePath?: string; mode?: string };
-        respond: (response: unknown) => void;
-      };
-
-      annotateRequests.push({
-        action: request.action,
-        payload: request.payload,
-      });
-      request.respond({
-        status: "handled",
-        result: {
-          feedback: "Please refine the session Markdown.",
-        },
-      });
-    });
-
     const ctx = createTestContext(repoRoot);
 
     try {
@@ -84,15 +87,11 @@ describe("annotate latest document shortcut", () => {
       await recordSessionDocumentWrite(emit, ctx, "drafts/anything-goes.md");
       await runShortcut("ctrl+alt+l", ctx);
 
-      expect(annotateRequests).toEqual([
-        {
-          action: "annotate",
-          payload: {
-            filePath: latestPath,
-            mode: "annotate",
-          },
-        },
-      ]);
+      expect(spawnSync).toHaveBeenCalledWith(
+        "plannotator",
+        ["annotate", latestPath, "--json"],
+        expect.objectContaining({ cwd: repoRoot }),
+      );
       expect(api.sendUserMessage).toHaveBeenCalledWith(
         expect.stringContaining("Please refine the session Markdown."),
         { deliverAs: "followUp" },
@@ -103,11 +102,16 @@ describe("annotate latest document shortcut", () => {
     }
   });
 
-  it("annotates latest HTML document with render-html payload", async () => {
+  it("annotates latest HTML document with render-html CLI flag", async () => {
     vi.resetModules();
+    const spawnSync = mockSpawnSync({
+      status: 0,
+      stdout: JSON.stringify({ decision: "dismissed" }),
+      stderr: "",
+    });
 
     const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit, events, runShortcut } = createFakePi();
+    const { api, emit, runShortcut } = createFakePi();
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo(
@@ -118,22 +122,6 @@ describe("annotate latest document shortcut", () => {
       "plans/visual.html",
       "<html><body>Plan</body></html>",
     );
-    const annotateRequests: Array<{ action: string; payload: unknown }> = [];
-
-    events.on("plannotator:request", (data) => {
-      const request = data as {
-        action: string;
-        payload: unknown;
-        respond: (response: unknown) => void;
-      };
-
-      annotateRequests.push({
-        action: request.action,
-        payload: request.payload,
-      });
-      request.respond({ status: "handled", result: { feedback: "" } });
-    });
-
     const ctx = createTestContext(repoRoot);
 
     try {
@@ -141,46 +129,34 @@ describe("annotate latest document shortcut", () => {
       await recordSessionDocumentWrite(emit, ctx, "plans/visual.html");
       await runShortcut("ctrl+alt+l", ctx);
 
-      expect(annotateRequests).toEqual([
-        {
-          action: "annotate",
-          payload: {
-            filePath: latestPath,
-            mode: "annotate",
-            renderHtml: true,
-            contentType: "html",
-          },
-        },
-      ]);
+      expect(spawnSync).toHaveBeenCalledWith(
+        "plannotator",
+        ["annotate", latestPath, "--render-html", "--json"],
+        expect.objectContaining({ cwd: repoRoot }),
+      );
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);
     }
   });
 
-  it("waits synchronously for slow annotate responses instead of timing out", async () => {
+  it("waits synchronously for CLI annotate output", async () => {
     vi.resetModules();
-    vi.useFakeTimers();
+    mockSpawnSync({
+      status: 0,
+      stdout: JSON.stringify({
+        decision: "annotated",
+        feedback: "Slow annotation completed.",
+      }),
+      stderr: "",
+    });
 
     const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit, events, runShortcut } = createFakePi();
+    const { api, emit, runShortcut } = createFakePi();
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo("plannotator-auto-shortcut-sync-");
     await writeTestFile(repoRoot, "notes/latest.md", "# Latest\n");
-
-    events.on("plannotator:request", (data) => {
-      const request = data as { respond: (response: unknown) => void };
-
-      setTimeout(() => {
-        request.respond({
-          status: "handled",
-          result: {
-            feedback: "Slow annotation completed.",
-          },
-        });
-      }, 6_000);
-    });
 
     const ctx = createTestContext(repoRoot);
 
@@ -188,24 +164,12 @@ describe("annotate latest document shortcut", () => {
       await emit("session_start", {}, ctx);
       await recordSessionDocumentWrite(emit, ctx, "notes/latest.md");
 
-      let settled = false;
-      const shortcutPromise = runShortcut("ctrl+alt+l", ctx).then(() => {
-        settled = true;
-      });
+      await runShortcut("ctrl+alt+l", ctx);
 
-      await flushMicrotasks();
-      expect(settled).toBe(false);
-
-      await vi.advanceTimersByTimeAsync(5_000);
-      await flushMicrotasks();
-      expect(settled).toBe(false);
       expect(ctx.ui.notify).not.toHaveBeenCalledWith(
         "Plannotator request timed out.",
         "warning",
       );
-
-      await vi.advanceTimersByTimeAsync(1_000);
-      await shortcutPromise;
 
       expect(api.sendUserMessage).toHaveBeenCalledWith(
         expect.stringContaining("Slow annotation completed."),
@@ -217,28 +181,25 @@ describe("annotate latest document shortcut", () => {
     }
   });
 
-  it("delivers a follow-up when annotate returns inline comments without top-level feedback", async () => {
+  it("delivers a follow-up when CLI annotate returns feedback", async () => {
     vi.resetModules();
+    mockSpawnSync({
+      status: 0,
+      stdout: JSON.stringify({
+        decision: "annotated",
+        feedback: "Please address this comment.",
+      }),
+      stderr: "",
+    });
 
     const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit, events, runShortcut } = createFakePi();
+    const { api, emit, runShortcut } = createFakePi();
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo(
       "plannotator-auto-shortcut-inline-comments-",
     );
     await writeTestFile(repoRoot, "notes/latest.md", "# Latest\n");
-
-    events.on("plannotator:request", (data) => {
-      const request = data as { respond: (response: unknown) => void };
-      request.respond({
-        status: "handled",
-        result: {
-          feedback: "",
-          annotations: [{ id: "note-1" }],
-        },
-      });
-    });
 
     const ctx = createTestContext(repoRoot);
 
@@ -248,9 +209,7 @@ describe("annotate latest document shortcut", () => {
       await runShortcut("ctrl+alt+l", ctx);
 
       expect(api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "Annotation completed with inline comments. Please address the annotation feedback above.",
-        ),
+        expect.stringContaining("Please address this comment."),
         { deliverAs: "followUp" },
       );
       expect(ctx.ui.notify).not.toHaveBeenCalledWith(
@@ -263,25 +222,22 @@ describe("annotate latest document shortcut", () => {
     }
   });
 
-  it("warns when plannotator is unavailable for annotate requests", async () => {
+  it("warns when plannotator CLI is unavailable for annotate requests", async () => {
     vi.resetModules();
+    mockSpawnSync({
+      status: 1,
+      stdout: "",
+      stderr: "plannotator failed",
+    });
 
     const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit, events, runShortcut } = createFakePi();
+    const { api, emit, runShortcut } = createFakePi();
     plannotatorAuto(api as never);
 
     const repoRoot = await createTempRepo(
       "plannotator-auto-shortcut-unavailable-",
     );
     await writeTestFile(repoRoot, "notes/latest.md", "# Latest\n");
-
-    events.on("plannotator:request", (data) => {
-      const request = data as { respond: (response: unknown) => void };
-      request.respond({
-        status: "unavailable",
-        error: "Plannotator context is not ready yet.",
-      });
-    });
 
     const ctx = createTestContext(repoRoot);
 
@@ -291,7 +247,7 @@ describe("annotate latest document shortcut", () => {
       await runShortcut("ctrl+alt+l", ctx);
 
       expect(ctx.ui.notify).toHaveBeenCalledWith(
-        "Plannotator context is not ready yet.",
+        "plannotator failed",
         "warning",
       );
       expect(api.sendUserMessage).not.toHaveBeenCalled();

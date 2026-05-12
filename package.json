@@ -33,7 +33,8 @@
       "./extensions/review-feedback",
       "./extensions/brainstorm-events",
       "./extensions/cache-graph",
-      "./extensions/librarian"
+      "./extensions/librarian",
+      "./extensions/btw"
     ]
   },
   "scripts": {

@@ -126,9 +126,9 @@ function execInstallCommand(
   args: string[],
   options: childProcess.ExecFileSyncOptions,
   context: InstallCommandContext,
-): Buffer {
+): void {
   try {
-    return childProcess.execFileSync(command, args, options);
+    childProcess.execFileSync(command, args, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(

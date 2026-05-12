@@ -1,0 +1,816 @@
+// # btw — Side Conversations for pi
+//
+// A pi extension that lets you have a separate, parallel conversation
+// with the LLM while the main agent is working. Think of it as
+// whispering to an assistant without interrupting the one doing the
+// actual work.
+//
+// ## Why?
+//
+// When pi is in the middle of a long task, you often want to:
+// - Ask clarifying questions about what it's doing
+// - Think through next steps or plan ahead
+// - Get a quick answer without derailing the main session
+//
+// `/btw` gives you a side channel for all of this. The main agent never
+// sees your side conversation — it keeps working undisturbed.
+//
+// ## Commands
+//
+// | Command | Description |
+// |---------|-------------|
+// | `/btw <message>` | Send a message in the side conversation. Streams
+// the response in a widget above the editor. Works while the agent is
+// running. |
+// | `/btw:new [message]` | Start a fresh side thread. Optionally kick
+// it off with a message. Clears the previous thread. |
+// | `/btw:clear` | Dismiss the widget and clear the current thread. |
+// | `/btw:inject [instructions]` | Inject the full btw thread into the
+// main agent's context as a user message. Optionally add instructions
+// like "implement this plan". Clears the widget after. |
+// | `/btw:summarize [instructions]` | Summarize the btw thread via LLM,
+// then inject the summary into the main agent's context. Lighter weight
+// than full inject. Clears the widget after. |
+//
+// ## How it works
+//
+// ### Side conversation
+//
+// Each `/btw` call builds context from:
+// 1. **Main session messages** — the current branch conversation (user
+// + assistant messages)
+// 2. **Previous btw thread** — all prior btw exchanges in the current
+// thread
+//
+// The btw agent sees everything the main agent has done, plus your
+// ongoing side conversation. A system prompt tells it this is an aside
+// — it won't try to pick up or continue unfinished work from the main
+// session.
+//
+// The response streams in a compact widget above the editor using the
+// strong model profile. The widget shows only the latest exchange by
+// default. When collapsed, it keeps the header and shows the tail of
+// the latest response so streaming progress stays visible; press
+// ctrl+shift+b to expand/collapse it.
+//
+// ### Continuous threads
+//
+// The btw thread is continuous by default. Each `/btw` call sees all
+// prior btw Q&As, so you can have a multi-turn side conversation. Use
+// `/btw:new` to start fresh.
+//
+// ### Bringing context back
+//
+// When you've worked something out in the side conversation and want
+// the main agent to act on it:
+// - `/btw:inject` — sends the full thread verbatim as a user message
+// (delivered as a follow-up after the agent finishes)
+// - `/btw:summarize` — LLM-summarizes the thread first (using the fast
+// model profile), then injects the summary
+// - Both accept optional instructions: `/btw:inject implement the auth
+// plan we discussed`
+// - Both clear the widget and reset the thread after injecting
+//
+// ### Persistence
+//
+// - Btw entries (question, thinking, answer, model) are persisted in
+// the session file via `appendEntry`
+// - These are `custom` entries — invisible to the TUI conversation
+// thread and the main agent's context
+// - Thread reset markers (`btw-reset`) are also persisted, so
+// `/btw:clear`, `/btw:new`, `/btw:inject`, and `/btw:summarize` resets
+// survive restarts
+// - On session restore, the widget reappears with the active thread if
+// one exists
+// - In-memory thread state (`pendingBtwThread`) tracks completed
+// exchanges for continuity between `/btw` calls before they're
+// persisted, so rapid-fire btw calls during a single agent run see each
+// other's results
+//
+// ### Widget
+//
+// - Renders above the editor as a compact left-rail transcript
+// - Shows only the latest exchange by default
+// - Collapsed mode keeps the header plus the tail of long responses
+// - Press ctrl+shift+b to expand/collapse long responses
+// - User messages shown with green `›` prefix
+// - Thinking content shown in dim italic
+// - Streaming cursor `▍` shown while thinking or answering
+// - Status line shown at bottom of widget during `/btw:summarize`
+// - `/btw:clear` to dismiss and reset thread
+//
+// ## Architecture
+//
+// ```
+// ┌─────────────────────────────────────────────┐
+// │ Main pi session                             │
+// │  User ↔ Agent (read, bash, edit, write...)  │
+// │                                             │
+// │  /btw fires a separate streamSimple() call  │
+// │  using the strong model profile,            │
+// │  conversation context + a system prompt     │
+// │  that frames it as an aside conversation    │
+// │                                             │
+// │  btw responses stream into a widget         │
+// │  above the editor — never enter the main    │
+// │  agent's context                            │
+// │                                             │
+// │  /btw:inject or /btw:summarize sends the    │
+// │  btw thread to the main agent via           │
+// │  sendUserMessage (deliverAs: "followUp")    │
+// │  then resets the thread                     │
+// └─────────────────────────────────────────────┘
+// ```
+//
+// ## Session storage
+//
+// Btw uses two custom entry types in the session JSONL:
+// - `btw` — stores `{ question, thinking, answer, model }` for each
+// completed exchange
+// - `btw-reset` — stores `{ timestamp }` to mark thread boundaries
+//
+// These are `custom` entries (not `custom_message`), so they don't
+// appear in the TUI conversation or the agent's LLM context.
+
+import {
+  type Api,
+  completeSimple,
+  type Message,
+  type Model,
+  streamSimple,
+  type ThinkingLevel,
+  type Usage,
+} from "@earendil-works/pi-ai";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+
+interface BtwDetails {
+  question: string;
+  thinking: string;
+  answer: string;
+  model: string;
+}
+
+interface BtwSlot {
+  question: string;
+  model: string;
+  thinking: string;
+  answer: string;
+  done: boolean;
+}
+
+type TextContent = {
+  type: "text";
+  text: string;
+};
+
+type SessionMessage = {
+  role?: string;
+  content?: unknown;
+  model?: string;
+  provider?: string;
+  api?: string;
+  usage?: Usage;
+  timestamp?: number;
+};
+
+type BranchEntry = {
+  type: string;
+  timestamp: string;
+  customType?: string;
+  data?: unknown;
+  message?: SessionMessage;
+};
+
+const BTW_TYPE = "btw";
+
+type ModelProfileName = "fast" | "strong" | "deep";
+
+type ModelProfile = {
+  provider: string;
+  id: string;
+  reasoning: ThinkingLevel;
+};
+
+const MODEL_PROFILES: Record<ModelProfileName, ModelProfile> = {
+  fast: {
+    provider: "google",
+    id: "gemini-flash-lite-latest",
+    reasoning: "low",
+  },
+  strong: {
+    provider: "openai",
+    id: "gpt-5.3-codex",
+    reasoning: "medium",
+  },
+  deep: {
+    provider: "openai",
+    id: "gpt-5.5",
+    reasoning: "xhigh",
+  },
+};
+
+type ModelAuth = {
+  apiKey: string;
+  headers?: Record<string, string>;
+};
+
+type ResolvedModelProfile = {
+  name: ModelProfileName;
+  source: "profile" | "active";
+  model: Model<Api>;
+  auth: ModelAuth;
+  options: ModelAuth & { reasoning?: ThinkingLevel };
+};
+
+function describeModelProfile(profile: ResolvedModelProfile): string {
+  const model = `${profile.model.provider}/${profile.model.id}`;
+  return profile.source === "profile"
+    ? `${profile.name}: ${model}`
+    : `active: ${model}`;
+}
+
+async function getModelProfile(
+  ctx: ExtensionContext,
+  name: ModelProfileName,
+): Promise<ResolvedModelProfile | undefined> {
+  const profile = MODEL_PROFILES[name];
+  const profileModel = ctx.modelRegistry.find(profile.provider, profile.id);
+
+  if (profileModel) {
+    const auth = await getModelAuth(ctx, profileModel);
+    if (auth) {
+      return {
+        name,
+        source: "profile",
+        model: profileModel,
+        auth,
+        options: { ...auth, reasoning: profile.reasoning },
+      };
+    }
+  }
+
+  if (!ctx.model) return undefined;
+
+  const auth = await getModelAuth(ctx, ctx.model);
+  if (!auth) return undefined;
+
+  return {
+    name,
+    source: "active",
+    model: ctx.model,
+    auth,
+    options: auth,
+  };
+}
+
+async function getModelAuth(
+  ctx: ExtensionContext,
+  model: Model<Api>,
+): Promise<ModelAuth | undefined> {
+  const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+  if (!auth.ok || !auth.apiKey) return undefined;
+  return { apiKey: auth.apiKey, headers: auth.headers };
+}
+
+const emptyUsage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+function asBranchEntry(entry: unknown): BranchEntry | undefined {
+  if (!entry || typeof entry !== "object") return undefined;
+  return entry as BranchEntry;
+}
+
+function asBtwDetails(data: unknown): BtwDetails | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const details = data as Partial<BtwDetails>;
+  if (typeof details.question !== "string") return undefined;
+  if (typeof details.answer !== "string") return undefined;
+  return {
+    question: details.question,
+    thinking: typeof details.thinking === "string" ? details.thinking : "",
+    answer: details.answer,
+    model: typeof details.model === "string" ? details.model : "unknown",
+  };
+}
+
+function isTextContent(content: unknown): content is TextContent {
+  if (!content || typeof content !== "object") return false;
+  const textContent = content as TextContent;
+  return textContent.type === "text" && typeof textContent.text === "string";
+}
+
+function extractTextContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter(isTextContent)
+    .map((c) => c.text)
+    .join("\n");
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+/**
+ * /btw <question>      — Side conversation, streams answer in a widget
+ * /btw:new <question>   — Fresh btw thread
+ * /btw:clear            — Dismiss the widget
+ * /btw:inject [msg]     — Inject full btw thread into main agent context
+ * /btw:summarize [msg]  — Summarize btw thread and inject into main agent context
+ */
+export default function (pi: ExtensionAPI) {
+  let btwThreadStart = 0;
+  const pendingBtwThread: BtwDetails[] = [];
+
+  // Active widget slots — each /btw call gets one, streams into it
+  const slots: BtwSlot[] = [];
+  let widgetStatus: string | null = null;
+  let widgetExpanded = false;
+
+  const COLLAPSED_MAX_LINES = 10;
+
+  // ── Restore state from session on reload/restart ─────────────────
+
+  const BTW_RESET_TYPE = "btw-reset";
+
+  pi.on("session_start", async (_event, ctx) => {
+    pendingBtwThread.length = 0;
+    slots.length = 0;
+    btwThreadStart = 0;
+
+    // Find the latest reset marker to know which btw entries are active
+    for (const rawEntry of ctx.sessionManager.getBranch()) {
+      const entry = asBranchEntry(rawEntry);
+      if (entry?.type !== "custom" || entry.customType !== BTW_RESET_TYPE) {
+        continue;
+      }
+      const data = entry.data as { timestamp?: number } | undefined;
+      btwThreadStart = data?.timestamp ?? 0;
+    }
+
+    // Reconstruct thread from entries after the last reset
+    for (const rawEntry of ctx.sessionManager.getBranch()) {
+      const entry = asBranchEntry(rawEntry);
+      if (entry?.type !== "custom" || entry.customType !== BTW_TYPE) continue;
+      const entryTime = Date.parse(entry.timestamp) || 0;
+      if (entryTime <= btwThreadStart) continue;
+      const data = asBtwDetails(entry.data);
+      if (data?.question && data?.answer && !data.answer.startsWith("❌")) {
+        pendingBtwThread.push(data);
+        slots.push({
+          question: data.question,
+          model: data.model,
+          thinking: data.thinking || "",
+          answer: data.answer,
+          done: true,
+        });
+      }
+    }
+
+    if (slots.length > 0) {
+      renderWidget(ctx);
+    }
+  });
+
+  // ── Widget rendering ─────────────────────────────────────────────
+
+  function renderWidget(ctx: ExtensionContext) {
+    if (slots.length === 0) {
+      ctx.ui.setWidget("btw", undefined);
+      return;
+    }
+
+    ctx.ui.setWidget(
+      "btw",
+      (_tui, theme) => {
+        const dim = (s: string) => theme.fg("dim", s);
+        const green = (s: string) => theme.fg("success", s);
+        const italic = (s: string) => theme.fg("dim", theme.italic(s));
+        const yellow = (s: string) => theme.fg("warning", s);
+
+        return {
+          render(width: number) {
+            const rail = dim("│ ");
+            const contentWidth = Math.max(1, width - 2);
+            const toggleHint = widgetExpanded
+              ? "ctrl+shift+b collapse"
+              : "ctrl+shift+b expand";
+            const parts: string[] = [
+              truncateToWidth(
+                dim(`💭 btw ── ${toggleHint} ── /btw:clear to dismiss`),
+                width,
+              ),
+            ];
+
+            const addRailText = (text: string) => {
+              for (const line of wrapTextWithAnsi(text, contentWidth)) {
+                parts.push(rail + line);
+              }
+            };
+
+            const latestSlot = slots[slots.length - 1];
+            if (latestSlot) {
+              addRailText(green("› ") + latestSlot.question);
+              if (latestSlot.thinking) {
+                const cursor =
+                  !latestSlot.answer && !latestSlot.done ? yellow(" ▍") : "";
+                addRailText(italic(latestSlot.thinking) + cursor);
+              }
+              if (latestSlot.answer) {
+                const cursor = !latestSlot.done ? yellow(" ▍") : "";
+                addRailText(latestSlot.answer + cursor);
+              } else if (!latestSlot.thinking && !latestSlot.done) {
+                parts.push(rail + yellow("⏳ thinking..."));
+              }
+            }
+
+            if (widgetStatus) {
+              parts.push(rail + yellow(widgetStatus));
+            }
+
+            if (!widgetExpanded && parts.length > COLLAPSED_MAX_LINES) {
+              return [
+                parts[0],
+                rail + dim("… truncated, ctrl+shift+b to expand"),
+                ...parts.slice(-(COLLAPSED_MAX_LINES - 2)),
+              ];
+            }
+
+            return parts;
+          },
+          invalidate() {},
+        };
+      },
+      { placement: "aboveEditor" },
+    );
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────
+
+  /** Reset the btw thread — clears state and persists a reset marker */
+  function resetThread(ctx: ExtensionContext) {
+    btwThreadStart = Date.now();
+    pendingBtwThread.length = 0;
+    slots.length = 0;
+    widgetStatus = null;
+    pi.appendEntry(BTW_RESET_TYPE, { timestamp: btwThreadStart });
+    renderWidget(ctx);
+  }
+
+  /** Collect btw thread — pendingBtwThread is the source of truth
+   *  (reconstructed from session on startup, appended live during session) */
+  function collectBtwThread(): BtwDetails[] {
+    return pendingBtwThread.filter((d) => !d.answer.startsWith("❌"));
+  }
+
+  function formatThread(thread: BtwDetails[]): string {
+    return thread
+      .map((d) => `User: ${d.question.trim()}\nAssistant: ${d.answer.trim()}`)
+      .join("\n\n---\n\n");
+  }
+
+  function formatInjectedPayload(
+    kind: "thread" | "summary",
+    body: string,
+    instructions: string,
+  ): string {
+    const tag = kind === "thread" ? "btw-thread" : "btw-summary";
+    const intro = getInjectedPayloadIntro(kind, instructions);
+    return `${intro}\n\n<${tag}>\n${body}\n</${tag}>`;
+  }
+
+  function getInjectedPayloadIntro(
+    kind: "thread" | "summary",
+    instructions: string,
+  ): string {
+    if (kind === "thread") {
+      return instructions
+        ? `Here's a side conversation I had. ${instructions}`
+        : "Here's a side conversation I had for additional context:";
+    }
+
+    return instructions
+      ? `Here's a summary of a side conversation I had. ${instructions}`
+      : "Here's a summary of a side conversation I had:";
+  }
+
+  function buildMainMessages(
+    ctx: ExtensionContext,
+    model: Model<Api>,
+  ): Message[] {
+    const messages: Message[] = [];
+    for (const rawEntry of ctx.sessionManager.getBranch()) {
+      const entry = asBranchEntry(rawEntry);
+      if (entry?.type !== "message") continue;
+      const msg = entry.message;
+      if (!msg) continue;
+
+      if (msg.role === "user") {
+        const content = extractTextContent(msg.content);
+        if (content) {
+          messages.push({
+            role: "user",
+            content: [{ type: "text", text: content }],
+            timestamp: msg.timestamp ?? Date.now(),
+          });
+        }
+      } else if (msg.role === "assistant") {
+        const content = extractTextContent(msg.content);
+        if (content) {
+          messages.push({
+            role: "assistant",
+            content: [{ type: "text", text: content }],
+            model: msg.model ?? model.id,
+            provider: msg.provider ?? model.provider,
+            api: msg.api ?? "",
+            usage: msg.usage ?? emptyUsage,
+            stopReason: "stop",
+            timestamp: msg.timestamp ?? Date.now(),
+          });
+        }
+      }
+    }
+    return messages;
+  }
+
+  function buildBtwMessages(
+    ctx: ExtensionContext,
+    model: Model<Api>,
+    question: string,
+  ): Message[] {
+    const mainMessages = buildMainMessages(ctx, model);
+    const thread = collectBtwThread();
+    const all: Message[] = [...mainMessages];
+
+    if (thread.length > 0) {
+      all.push({
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "[The following is a separate side conversation. Continue this thread.]",
+          },
+        ],
+        timestamp: Date.now(),
+      });
+      all.push({
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Understood, continuing our side conversation.",
+          },
+        ],
+        model: model.id,
+        provider: model.provider,
+        api: "",
+        usage: emptyUsage,
+        stopReason: "stop",
+        timestamp: Date.now(),
+      });
+      for (const d of thread) {
+        all.push({
+          role: "user",
+          content: [{ type: "text", text: d.question }],
+          timestamp: Date.now(),
+        });
+        all.push({
+          role: "assistant",
+          content: [{ type: "text", text: d.answer }],
+          model: model.id,
+          provider: model.provider,
+          api: "",
+          usage: emptyUsage,
+          stopReason: "stop",
+          timestamp: Date.now(),
+        });
+      }
+    }
+
+    all.push({
+      role: "user",
+      content: [{ type: "text", text: question }],
+      timestamp: Date.now(),
+    });
+
+    return all;
+  }
+
+  async function fireBtw(ctx: ExtensionContext, question: string) {
+    const profile = await getModelProfile(ctx, "strong");
+    if (!profile) {
+      ctx.ui.notify("No model available for btw chat", "error");
+      return;
+    }
+
+    const modelLabel = describeModelProfile(profile);
+    const allMessages = buildBtwMessages(ctx, profile.model, question);
+
+    // Create a slot for this btw call
+    const slot: BtwSlot = {
+      question,
+      model: modelLabel,
+      thinking: "",
+      answer: "",
+      done: false,
+    };
+    slots.push(slot);
+    renderWidget(ctx);
+
+    (async () => {
+      try {
+        const eventStream = streamSimple(
+          profile.model,
+          {
+            systemPrompt:
+              "You are having an aside conversation with the user, separate from their main working session. The main session messages are provided for context only — that work is being handled by another agent. Focus on answering the user's side questions, helping them think through ideas, or planning next steps. Do not act as if you need to complete or continue the main session's work.",
+            messages: allMessages,
+          },
+          profile.options,
+        );
+
+        for await (const event of eventStream) {
+          if (event.type === "thinking_delta") {
+            slot.thinking += event.delta;
+            renderWidget(ctx);
+          } else if (event.type === "text_delta") {
+            slot.answer += event.delta;
+            renderWidget(ctx);
+          } else if (event.type === "error") {
+            slot.answer += `\n❌ ${event.error.errorMessage ?? "unknown error"}`;
+            slot.done = true;
+            renderWidget(ctx);
+            return;
+          }
+        }
+
+        slot.done = true;
+        renderWidget(ctx);
+
+        const details = {
+          question,
+          thinking: slot.thinking,
+          answer: slot.answer,
+          model: modelLabel,
+        } satisfies BtwDetails;
+        pendingBtwThread.push(details);
+
+        // Persist in session (hidden from TUI, filtered from agent context)
+        pi.appendEntry(BTW_TYPE, details);
+      } catch (err: unknown) {
+        slot.answer = `❌ ${getErrorMessage(err)}`;
+        slot.done = true;
+        renderWidget(ctx);
+      }
+    })();
+  }
+
+  // Note: btw entries are stored via appendEntry (custom type, not in LLM context)
+  // No context filter needed — custom entries don't participate in LLM context
+
+  pi.registerShortcut("ctrl+shift+b", {
+    description: "Toggle btw widget expansion",
+    handler: async (ctx) => {
+      if (slots.length === 0) return;
+      widgetExpanded = !widgetExpanded;
+      renderWidget(ctx);
+    },
+  });
+
+  // ── Commands ─────────────────────────────────────────────────────
+
+  pi.registerCommand("btw", {
+    description:
+      "Ask a side question using current context (doesn't affect main session)",
+    handler: async (args, ctx) => {
+      const question = args.trim();
+      if (!question) {
+        ctx.ui.notify("Usage: /btw <question>", "warning");
+        return;
+      }
+      await fireBtw(ctx, question);
+    },
+  });
+
+  pi.registerCommand("btw:new", {
+    description: "Start a fresh btw thread, optionally with a new question",
+    handler: async (args, ctx) => {
+      resetThread(ctx);
+      const question = args.trim();
+      if (question) {
+        await fireBtw(ctx, question);
+      } else {
+        ctx.ui.notify("💭 btw: started fresh thread", "info");
+      }
+    },
+  });
+
+  pi.registerCommand("btw:clear", {
+    description: "Dismiss the btw widget and clear thread",
+    handler: async (_args, ctx) => {
+      resetThread(ctx);
+    },
+  });
+
+  pi.registerCommand("btw:inject", {
+    description:
+      "Inject btw thread into main agent context [optional instructions]",
+    handler: async (args, ctx) => {
+      const thread = collectBtwThread();
+      if (thread.length === 0 || slots.length === 0) {
+        ctx.ui.notify("No active btw thread to inject", "warning");
+        return;
+      }
+
+      const instructions = args.trim();
+      const threadText = formatThread(thread);
+      const content = formatInjectedPayload("thread", threadText, instructions);
+
+      pi.sendUserMessage(content, { deliverAs: "followUp" });
+      resetThread(ctx);
+      ctx.ui.notify(
+        `💭 btw → main: injected ${thread.length} exchange(s)`,
+        "info",
+      );
+    },
+  });
+
+  pi.registerCommand("btw:summarize", {
+    description:
+      "Summarize btw thread and inject into main agent context [optional instructions]",
+    handler: async (args, ctx) => {
+      const thread = collectBtwThread();
+      if (thread.length === 0 || slots.length === 0) {
+        ctx.ui.notify("No active btw thread to summarize", "warning");
+        return;
+      }
+
+      const profile = await getModelProfile(ctx, "fast");
+      if (!profile) {
+        ctx.ui.notify("No model available for btw summary", "error");
+        return;
+      }
+
+      widgetStatus = `⏳ summarizing (${describeModelProfile(profile)})...`;
+      renderWidget(ctx);
+
+      try {
+        const threadText = formatThread(thread);
+        const response = await completeSimple(
+          profile.model,
+          {
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: [
+                      "Summarize this side conversation concisely. Preserve key decisions, plans, insights, and action items.",
+                      "Output only the summary, no preamble.",
+                      "",
+                      "<btw-thread>",
+                      threadText,
+                      "</btw-thread>",
+                    ].join("\n"),
+                  },
+                ],
+                timestamp: Date.now(),
+              },
+            ],
+          },
+          profile.options,
+        );
+
+        const summary = extractTextContent(response.content);
+
+        const instructions = args.trim();
+        const content = formatInjectedPayload("summary", summary, instructions);
+
+        pi.sendUserMessage(content, { deliverAs: "followUp" });
+
+        resetThread(ctx);
+        ctx.ui.notify(
+          `💭 btw → main: injected summary of ${thread.length} exchange(s)`,
+          "info",
+        );
+      } catch (err: unknown) {
+        widgetStatus = null;
+        renderWidget(ctx);
+        ctx.ui.notify(`btw:summarize error — ${getErrorMessage(err)}`, "error");
+      }
+    },
+  });
+}

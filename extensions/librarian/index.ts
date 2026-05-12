@@ -1,5 +1,6 @@
 /* biome-ignore-all lint/suspicious/noControlCharactersInRegex: sanitizer intentionally detects control characters. */
 /* biome-ignore-all lint/suspicious/noExplicitAny: GitHub API and pi JSON event payloads are intentionally dynamic at this adapter boundary. */
+// https://github.com/jssee/pi-conf.git
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";

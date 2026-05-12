@@ -12,6 +12,7 @@ import {
   validateArtifactPolicy,
 } from "./artifact-policy.ts";
 import {
+  ACT_TODO_TOOL_NAME,
   ARCHITECTURE_TEST_GUIDANCE,
   BUILTIN_TOOL_NAMES,
   DEFAULT_CONFIG,
@@ -98,8 +99,15 @@ export class PlanModeController {
     this.updateUi(ctx);
   }
 
+  getTodoToolNameForCurrentMode(): string {
+    return this.state.mode === "act" ? ACT_TODO_TOOL_NAME : TODO_TOOL_NAME;
+  }
+
   getToolsForCurrentMode(): string[] {
-    const stableTools = [...BUILTIN_TOOL_NAMES, TODO_TOOL_NAME];
+    const stableTools = [
+      ...BUILTIN_TOOL_NAMES,
+      this.getTodoToolNameForCurrentMode(),
+    ];
     if (!this.config.preserveExternalTools) {
       return stableTools;
     }
@@ -140,6 +148,7 @@ export class PlanModeController {
   }
 
   buildModePrompt(): string {
+    const todoToolName = this.getTodoToolNameForCurrentMode();
     const lines = [
       "## Plan Mode Extension",
       "",
@@ -147,7 +156,7 @@ export class PlanModeController {
       "",
       `- In plan phases, inspect with ${PLAN_INSPECTION_TOOL_SLASH_LIST}. ` +
         "Runtime guards block bash and source-code edits.",
-      `- Use ${TODO_TOOL_NAME} to maintain the concrete TODO list.`,
+      `- Use ${todoToolName} to maintain the concrete TODO list.`,
       "- For implementation tasks, write only " +
         `${REVIEW_ARTIFACT_TARGET} and submit them with ` +
         `${PLANNOTATOR_SUBMIT_TOOL_NAME}.`,
@@ -159,7 +168,8 @@ export class PlanModeController {
       ...KEY_CODE_SKETCH_GUIDANCE,
       "- If Plannotator denies the plan, revise the same file and submit again.",
       "- In act phases, execute the approved plan and update " +
-        `${TODO_TOOL_NAME} statuses to in_progress and done so the widget shows the current step.`,
+        `${todoToolName} statuses to in_progress and done so the widget shows ` +
+        "the current step.",
     ];
 
     if (this.state.mode === "act") {
@@ -371,7 +381,8 @@ export class PlanModeController {
         block: true,
         reason:
           `plan-mode blocked ${event.toolName}: current phase is read-only. ` +
-          `Use ${PLAN_INSPECTION_TOOL_COMMA_LIST}, and ${TODO_TOOL_NAME}.`,
+          `Use ${PLAN_INSPECTION_TOOL_COMMA_LIST}, and ` +
+          `${this.getTodoToolNameForCurrentMode()}.`,
       };
     }
 
@@ -448,9 +459,11 @@ export class PlanModeController {
       return;
     }
     if (this.hasPlanReviewObligation() && this.state.todos.length === 0) {
+      const todoToolName = this.getTodoToolNameForCurrentMode();
       this.pi.sendUserMessage(
         "Plan Mode requires a concrete TODO list before ending this planning turn. " +
-          `Call ${TODO_TOOL_NAME} with action "set" or "add", then create and ` +
+          `Call ${todoToolName} with action ` +
+          '"set" or "add", then create and ' +
           `submit a reviewable plan/spec with ${PLANNOTATOR_SUBMIT_TOOL_NAME}. ` +
           `Reason: ${formatPlanDecision(this.state.lastAutoDecision) ?? "plan review required"}.`,
         { deliverAs: "followUp" },

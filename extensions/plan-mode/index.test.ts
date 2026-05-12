@@ -12,6 +12,7 @@ type CommandRegistration = {
 };
 type ToolRegistration = {
   name: string;
+  label?: string;
   description?: string;
   promptGuidelines?: string[];
   execute: (
@@ -53,6 +54,7 @@ type TestCtx = {
 const PLAN_MODE_STATE_ENTRY = "plan-mode-state";
 const PLAN_MODE_TODOS_WIDGET = "plan-mode-todos";
 const PLAN_MODE_TODO_TOOL = "plan_mode_todo";
+const ACT_MODE_TODO_TOOL = "act_mode_todo";
 const PLANNOTATOR_REVIEW_TOOL = "plannotator_auto_submit_review";
 
 const buildHarness = () => {
@@ -188,6 +190,17 @@ const lastPersistedPlanModeSnapshot = (
   );
   if (!call) throw new Error("Expected a plan-mode state entry");
   return call[1] as Record<string, unknown>;
+};
+
+const registeredTool = (
+  harness: ReturnType<typeof buildHarness>,
+  name: string,
+): ToolRegistration => {
+  const tool = harness.api.registerTool.mock.calls
+    .map(([registration]) => registration)
+    .find((registration) => registration.name === name);
+  if (!tool) throw new Error(`Expected registered tool: ${name}`);
+  return tool;
 };
 
 const createTempCtx = (): { ctx: TestCtx; cleanup: () => void } => {
@@ -426,6 +439,24 @@ describe("plan-mode extension", () => {
     expect(result).toMatchObject({
       systemPrompt: expect.stringContaining("Current mode: act."),
     });
+    expect(result.systemPrompt).toContain("Use act_mode_todo");
+    expect(result.systemPrompt).not.toContain("Use plan_mode_todo");
+    expect(harness.api.setActiveTools).toHaveBeenLastCalledWith(
+      expect.arrayContaining([ACT_MODE_TODO_TOOL]),
+    );
+  });
+
+  it("uses plan_mode_todo in plan mode", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    await harness.runCommand("plan-mode", "plan", ctx);
+    const result = await sendAgentPrompt(harness, ctx, "plan this change");
+
+    expect(result.systemPrompt).toContain("Use plan_mode_todo");
+    expect(result.systemPrompt).not.toContain("Use act_mode_todo");
+    expect(harness.api.setActiveTools).toHaveBeenLastCalledWith(
+      expect.arrayContaining([PLAN_MODE_TODO_TOOL]),
+    );
   });
 
   it("requires concrete todos before direct act-mode task execution", async () => {
@@ -1051,14 +1082,36 @@ describe("plan-mode extension", () => {
     const harness = buildHarness();
     planModeExtension(harness.api as unknown as ExtensionAPI);
 
-    const todoTool = harness.api.registerTool.mock.calls
-      .map(([tool]) => tool)
-      .find((tool) => tool.name === PLAN_MODE_TODO_TOOL);
-    const promptGuidance = todoTool?.promptGuidelines?.join("\n") ?? "";
+    const todoTool = registeredTool(harness, PLAN_MODE_TODO_TOOL);
+    const promptGuidance = todoTool.promptGuidelines?.join("\n") ?? "";
 
     expect(promptGuidance).toContain('Use action "set"');
     expect(promptGuidance).toContain('action "add"');
     expect(promptGuidance).toContain('Do not use action "create"');
+  });
+
+  it("registers act_mode_todo with act-specific guidance", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+
+    await harness.emit("session_start", {}, ctx);
+    const result = await harness.runTool(
+      ACT_MODE_TODO_TOOL,
+      {
+        action: "set",
+        items: [{ text: "直接执行", status: "todo" }],
+      },
+      ctx,
+    );
+    const todoTool = registeredTool(harness, ACT_MODE_TODO_TOOL);
+    const promptGuidance = todoTool.promptGuidelines?.join("\n") ?? "";
+
+    expect(todoTool.label).toBe("Act Mode TODO");
+    expect(promptGuidance).toContain("Use act_mode_todo");
+    expect(result.content[0]).toMatchObject({
+      text: expect.stringContaining("Current Act Mode TODO list"),
+    });
   });
 
   it("restores mode and todos from the latest session snapshot", async () => {

@@ -53,11 +53,10 @@ export const MODE_SELECTION_MESSAGE =
 export const MODE_SELECTION_OPTIONS: PlanMode[] = ["act", "plan"];
 export const PLAN_MODE_COMMAND_OPTIONS = [
   ...MODE_SELECTION_OPTIONS,
-  "format",
-  "html",
-  "markdown",
   "status",
+  "format",
 ] as const;
+export const PLAN_MODE_FORMAT_OPTIONS = ["html", "markdown"] as const;
 export const EXPLICIT_PLAN_MODE_REQUEST_PATTERN =
   /\b(?:please\s+)?plan\s+(?:this|the|mode|first)|计划模式|规划模式/iu;
 
@@ -130,5 +129,8 @@ export const KEY_CODE_SKETCH_GUIDANCE = [
   "- 关键代码草案应放在标准 plan 的 ## Context 内，不能新增顶层章节；" +
     "避免粘贴完整实现，只展示能让 reviewer 判断方向的代码。",
 ];
+export const REVIEW_SECTION_DETAILS_GUIDANCE =
+  "- ## Review 占位内容必须说明最终 review 会记录改动点、验证结果、" +
+  "剩余风险，以及 bug/根因原因。";
 export const DIRECT_ACT_TODO_GUIDANCE =
   "- In direct act mode, create concrete TODOs before using tools or making changes.";

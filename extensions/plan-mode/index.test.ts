@@ -6,8 +6,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import planModeExtension from "./index.js";
 
 type Handler = (event: unknown, ctx: TestCtx) => Promise<unknown> | unknown;
+type CommandCompletion = {
+  label: string;
+  value: string;
+};
 type CommandRegistration = {
   description: string;
+  getArgumentCompletions?: (prefix: string) => CommandCompletion[];
   handler: (args: string, ctx: TestCtx) => Promise<unknown> | unknown;
 };
 type ToolRegistration = {
@@ -126,9 +131,18 @@ const buildHarness = () => {
     ctx: TestCtx,
   ) => emit("tool_call", { toolName, input }, ctx);
 
+  const getCommandCompletions = (name: string, prefix: string) => {
+    const command = commands.get(name);
+    if (!command?.getArgumentCompletions) {
+      throw new Error(`Missing command completions: ${name}`);
+    }
+    return command.getArgumentCompletions(prefix);
+  };
+
   return {
     api,
     emit,
+    getCommandCompletions,
     runCommand,
     runTool,
     runToolCall,
@@ -370,6 +384,10 @@ const expectApprovedContinuationFollowUp = (
     ),
     { deliverAs: "followUp" },
   );
+  expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+    expect.stringContaining("Update act_mode_todo"),
+    { deliverAs: "followUp" },
+  );
 };
 const actCompletedDemoSummary = `【act:completed】${demoCompletedSummary}`;
 const approvedPlanPolicyFixPrompt = [
@@ -457,6 +475,40 @@ describe("plan-mode extension", () => {
     expect(harness.api.setActiveTools).toHaveBeenLastCalledWith(
       expect.arrayContaining([PLAN_MODE_TODO_TOOL]),
     );
+  });
+
+  it("explains review placeholder details required by artifact policy", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    await harness.runCommand("plan-mode", "plan", ctx);
+    const result = await sendAgentPrompt(harness, ctx, "plan this change");
+
+    for (const fragment of [
+      "## Review 占位内容必须说明",
+      "改动点",
+      "验证结果",
+      "剩余风险",
+      "根因原因",
+    ]) {
+      expect(result.systemPrompt).toContain(fragment);
+    }
+  });
+
+  it("completes format arguments only after the format command", () => {
+    const harness = buildHarness();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    const completionValues = (prefix: string) =>
+      harness
+        .getCommandCompletions("plan-mode", prefix)
+        .map((completion) => completion.value);
+
+    expect(completionValues("")).toEqual(["act", "plan", "status", "format"]);
+    expect(completionValues("h")).toEqual([]);
+    expect(completionValues("format ")).toEqual([
+      "format html",
+      "format markdown",
+    ]);
+    expect(completionValues("format h")).toEqual(["format html"]);
   });
 
   it("requires concrete todos before direct act-mode task execution", async () => {
@@ -1539,8 +1591,24 @@ describe("plan-mode extension", () => {
     try {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
       await harness.emit("agent_end", { messages: [] }, ctx);
-      await sendAgentPrompt(harness, ctx, "start");
+      const result = await sendAgentPrompt(harness, ctx, "start");
 
+      expect(result.systemPrompt).toContain("Use act_mode_todo");
+      expect(result.systemPrompt).not.toContain("Use plan_mode_todo");
+      expect(harness.api.setActiveTools).toHaveBeenLastCalledWith(
+        expect.arrayContaining([ACT_MODE_TODO_TOOL]),
+      );
+      await harness.runTool(
+        ACT_MODE_TODO_TOOL,
+        {
+          action: "set",
+          items: [{ text: "执行批准计划", status: "in_progress" }],
+        },
+        ctx,
+      );
+      expect(plainWidgetText(ctx)).toContain(
+        "【act】进行中 #1/1：执行批准计划",
+      );
       await expect(
         harness.runToolCall("bash", { command: "npm test" }, ctx),
       ).resolves.toBeUndefined();

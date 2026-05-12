@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import registerLibrarianTools, {
   globMatches,
   normalizePath,
+  parseGitLabProject,
   parseRepository,
   summarizeToolCall,
   validateSearchPattern,
@@ -51,6 +52,32 @@ describe("librarian repository parsing", () => {
   it("rejects non-GitHub repository URLs", () => {
     expect(() => parseRepository("https://gitlab.com/acme/project")).toThrow(
       /Only github\.com repositories/,
+    );
+  });
+});
+
+describe("librarian GitLab project parsing", () => {
+  it("normalizes group/project input against gitlab.com", () => {
+    expect(parseGitLabProject("acme/project")).toEqual({
+      host: "gitlab.com",
+      fullPath: "acme/project",
+      encodedPath: "acme%2Fproject",
+    });
+  });
+
+  it("normalizes self-managed GitLab URLs and strips .git suffix", () => {
+    expect(
+      parseGitLabProject("https://gitlab.example.com/acme/tools/project.git"),
+    ).toEqual({
+      host: "gitlab.example.com",
+      fullPath: "acme/tools/project",
+      encodedPath: "acme%2Ftools%2Fproject",
+    });
+  });
+
+  it("rejects invalid GitLab project identifiers", () => {
+    expect(() => parseGitLabProject("project-only")).toThrow(
+      /expected group\/project/,
     );
   });
 });
@@ -122,6 +149,65 @@ describe("librarian search tool", () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Invalid path");
     expect(pi.exec).not.toHaveBeenCalled();
+  });
+
+  it("registers GitLab tools", () => {
+    const { tools } = registerToolsForTest();
+
+    expect(requireTool(tools, "read_gitlab")).toBeDefined();
+    expect(requireTool(tools, "list_directory_gitlab")).toBeDefined();
+    expect(requireTool(tools, "glob_gitlab")).toBeDefined();
+    expect(requireTool(tools, "search_gitlab")).toBeDefined();
+    expect(requireTool(tools, "commit_search_gitlab")).toBeDefined();
+    expect(requireTool(tools, "diff_gitlab")).toBeDefined();
+    expect(requireTool(tools, "list_gitlab_projects")).toBeDefined();
+  });
+
+  it("rejects path qualifiers that could alter the GitLab search query", async () => {
+    const { pi, tools } = registerToolsForTest();
+    const searchGitlab = requireTool(tools, "search_gitlab");
+
+    const result = await searchGitlab.execute(undefined, {
+      pattern: "registerTool",
+      project: "acme/project",
+      path: "src fork:true",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Invalid path");
+    expect(pi.exec).not.toHaveBeenCalled();
+  });
+
+  it("reads GitLab files through glab and returns numbered content", async () => {
+    const { pi, tools } = registerToolsForTest();
+    pi.exec.mockResolvedValue({
+      code: 0,
+      stdout: "hello\nworld\n",
+      stderr: "",
+    });
+    const readGitlab = requireTool(tools, "read_gitlab");
+
+    const result = await readGitlab.execute(undefined, {
+      project: "https://gitlab.example.com/acme/project",
+      path: "README.md",
+      ref: "main",
+      read_range: [2, 2],
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("2: world");
+    expect(pi.exec).toHaveBeenCalledWith(
+      "glab",
+      [
+        "api",
+        "--hostname",
+        "gitlab.example.com",
+        "projects/acme%2Fproject/repository/files/README.md/raw?ref=main",
+        "--method",
+        "GET",
+      ],
+      expect.objectContaining({ timeout: 90_000 }),
+    );
   });
 });
 

@@ -34,6 +34,7 @@ import {
   REVIEW_ARTIFACT_LOCATION,
   REVIEW_ARTIFACT_WRITE_GUIDANCE,
   REVIEW_ARTIFACT_WRITE_HINT,
+  REVIEW_SECTION_DETAILS_GUIDANCE,
   STATE_ENTRY_TYPE,
   STATUS_KEY,
   TODO_TOOL_NAME,
@@ -106,7 +107,7 @@ export class PlanModeController {
   }
 
   getTodoToolNameForCurrentMode(): string {
-    return this.state.mode === "act" ? ACT_TODO_TOOL_NAME : TODO_TOOL_NAME;
+    return this.state.phase === "act" ? ACT_TODO_TOOL_NAME : TODO_TOOL_NAME;
   }
 
   getToolsForCurrentMode(): string[] {
@@ -193,6 +194,7 @@ export class PlanModeController {
       ARCHITECTURE_TEST_GUIDANCE,
       ...LOGIC_CHANGE_DIAGRAM_GUIDANCE,
       ...KEY_CODE_SKETCH_GUIDANCE,
+      REVIEW_SECTION_DETAILS_GUIDANCE,
       "- If Plannotator denies the plan, revise the same file and submit again.",
       "- In act phases, execute the approved plan and update " +
         `${todoToolName} statuses to in_progress and done so the widget shows ` +

@@ -1581,6 +1581,40 @@ describe("plan-mode extension", () => {
     }
   });
 
+  it("does not emit duplicate implementation follow-ups for a repeated approval result", async () => {
+    const harness = buildHarness();
+    const { ctx, cleanup } = createTempCtx();
+    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
+
+    const followUpCount = () =>
+      harness.api.sendUserMessage.mock.calls.filter(([message, options]) => {
+        const isImplementationFollowUp = String(message).includes(
+          `Continue implementing approved plan: ${demoPlanPath}`,
+        );
+        return isImplementationFollowUp && options?.deliverAs === "followUp";
+      }).length;
+
+    try {
+      await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
+      await harness.emit("agent_end", { messages: [] }, ctx);
+      expect(followUpCount()).toBe(1);
+
+      await approveDemoPlan(harness, ctx);
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      expect(followUpCount()).toBe(1);
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        pendingApprovedPlanContinuationPath: null,
+        confirmedApprovedContinuationPath: demoPlanPath,
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
   it("consumes confirmed continuation and allows act tools without prompt matching", async () => {
     const harness = buildHarness();
     const { ctx, cleanup } = createTempCtx();

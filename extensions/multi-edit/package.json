@@ -1,0 +1,8 @@
+{
+  "name": "pi-kit-multi-edit-extension",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "diff": "^8.0.4"
+  }
+}

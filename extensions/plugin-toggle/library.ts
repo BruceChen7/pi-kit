@@ -230,6 +230,69 @@ function installThirdPartySource(
   installGithubSource(parsedSource, installedPath);
 }
 
+function normalizeDeclaredExtensionPath(
+  packageRoot: string,
+  extensionPath: string,
+): string {
+  if (extensionPath.startsWith("!")) return extensionPath;
+
+  const absolutePath = path.resolve(packageRoot, extensionPath);
+  if (fs.existsSync(path.join(absolutePath, "index.ts"))) {
+    return extensionPath;
+  }
+  if (
+    !fs.existsSync(absolutePath) ||
+    !fs.statSync(absolutePath).isDirectory()
+  ) {
+    return extensionPath;
+  }
+
+  const childExtensionDirs = fs
+    .readdirSync(absolutePath)
+    .filter((entry) =>
+      fs.existsSync(path.join(absolutePath, entry, "index.ts")),
+    );
+  if (childExtensionDirs.length !== 1) return extensionPath;
+
+  return path.posix.join(
+    extensionPath.replaceAll(path.win32.sep, path.posix.sep).replace(/\/$/, ""),
+    childExtensionDirs[0],
+  );
+}
+
+function normalizeDeclaredExtensionPaths(packageRoot: string): void {
+  const packageJsonPath = path.join(packageRoot, "package.json");
+  try {
+    const parsed = JSON.parse(
+      fs.readFileSync(packageJsonPath, "utf-8"),
+    ) as Record<string, unknown>;
+    if (!isRecord(parsed.pi)) return;
+
+    const originalExtensions = toStringList(parsed.pi.extensions);
+    if (originalExtensions.length === 0) return;
+
+    const normalizedExtensions = originalExtensions.map((extensionPath) =>
+      normalizeDeclaredExtensionPath(packageRoot, extensionPath),
+    );
+    if (
+      normalizedExtensions.every(
+        (extensionPath, index) => extensionPath === originalExtensions[index],
+      )
+    ) {
+      return;
+    }
+
+    parsed.pi.extensions = normalizedExtensions;
+    fs.writeFileSync(
+      packageJsonPath,
+      `${JSON.stringify(parsed, null, 2)}\n`,
+      "utf-8",
+    );
+  } catch {
+    return;
+  }
+}
+
 export function installThirdPartyPluginToLibrary(
   source: string,
   options: ThirdPartyInstallOptions = {},
@@ -239,6 +302,7 @@ export function installThirdPartyPluginToLibrary(
   const installedPath = path.join(libraryDir, parsedSource.name);
 
   installThirdPartySource(parsedSource, installedPath, options);
+  normalizeDeclaredExtensionPaths(installedPath);
 
   const manifest = readPluginLibraryManifest(libraryDir);
   manifest.plugins[parsedSource.name] = {

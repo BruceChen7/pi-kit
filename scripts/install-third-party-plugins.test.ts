@@ -34,6 +34,16 @@ const runBash = (script: string, env: NodeJS.ProcessEnv = {}): string =>
 
 const bashString = (value: string): string => JSON.stringify(value);
 
+const runIsInstalled = (
+  source: string,
+  settingsPath: string,
+  env: NodeJS.ProcessEnv = {},
+): string =>
+  runBash(
+    `source ${bashString(libPath)}; if is_installed ${bashString(source)} ${bashString(settingsPath)}; then echo yes; else echo no; fi`,
+    env,
+  );
+
 const writeSettings = (filePath: string, packages: string[]): void => {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(
@@ -43,20 +53,48 @@ const writeSettings = (filePath: string, packages: string[]): void => {
   );
 };
 
+const writeExecutable = (filePath: string, content: string): void => {
+  fs.writeFileSync(filePath, content, "utf8");
+  fs.chmodSync(filePath, 0o755);
+};
+
 const createFakeInstallTools = (binDir: string): void => {
   fs.mkdirSync(binDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(binDir, "npm"),
-    `#!/bin/sh\nset -eu\nif [ "\${1:-}" = "install" ]; then\n  mkdir -p node_modules\n  echo installed > node_modules/.prod-deps-installed\n  exit 0\nfi\ndest=""\nprev=""\nfor arg in "$@"; do\n  if [ "$prev" = "--pack-destination" ]; then dest="$arg"; fi\n  prev="$arg"\ndone\nmkdir -p "$dest/package"\necho 'export default function() {}' > "$dest/package/index.ts"\necho '{"dependencies":{"left-pad":"1.0.0"}}' > "$dest/package/package.json"\ntar -czf "$dest/fake.tgz" -C "$dest" package\n`,
-    "utf8",
-  );
-  fs.writeFileSync(
-    path.join(binDir, "git"),
-    `#!/bin/sh\nset -eu\ntarget=""\nfor arg in "$@"; do target="$arg"; done\nmkdir -p "$target"\necho 'export default function() {}' > "$target/index.ts"\n`,
-    "utf8",
-  );
-  fs.chmodSync(path.join(binDir, "npm"), 0o755);
-  fs.chmodSync(path.join(binDir, "git"), 0o755);
+
+  const npmScript = `#!/bin/sh
+set -eu
+if [ "\${1:-}" = "install" ]; then
+  mkdir -p node_modules
+  echo installed > node_modules/.prod-deps-installed
+  exit 0
+fi
+
+dest=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--pack-destination" ]; then dest="$arg"; fi
+  prev="$arg"
+done
+
+mkdir -p "$dest/package"
+echo 'export default function() {}' > "$dest/package/index.ts"
+echo '{"dependencies":{"left-pad":"1.0.0"}}' > "$dest/package/package.json"
+tar -czf "$dest/fake.tgz" -C "$dest" package
+`;
+
+  const gitScript = `#!/bin/sh
+set -eu
+target=""
+for arg in "$@"; do target="$arg"; done
+
+name="$(basename "$target")"
+mkdir -p "$target/extensions/$name"
+echo '{"pi":{"extensions":["./extensions"]}}' > "$target/package.json"
+echo 'export default function() {}' > "$target/extensions/$name/index.ts"
+`;
+
+  writeExecutable(path.join(binDir, "npm"), npmScript);
+  writeExecutable(path.join(binDir, "git"), gitScript);
 };
 
 afterEach(() => {
@@ -117,8 +155,9 @@ describe("is_installed", () => {
     const settingsPath = path.join(tempDir, "settings.json");
     writeSettings(settingsPath, ["npm:@plannotator/pi-extension"]);
 
-    const result = runBash(
-      `source ${bashString(libPath)}; if is_installed ${bashString("npm:@plannotator/pi-extension")} ${bashString(settingsPath)}; then echo yes; else echo no; fi`,
+    const result = runIsInstalled(
+      "npm:@plannotator/pi-extension",
+      settingsPath,
     );
 
     expect(result).toBe("yes");
@@ -137,21 +176,11 @@ describe("is_installed", () => {
     fs.chmodSync(path.join(binDir, "python3"), 0o755);
     writeSettings(settingsPath, ["npm:@plannotator/pi-extension"]);
 
-    const result = execFileSync(
-      "bash",
-      [
-        "-c",
-        `source ${bashString(libPath)}; if is_installed ${bashString("npm:@plannotator/pi-extension")} ${bashString(settingsPath)}; then echo yes; else echo no; fi`,
-      ],
-      {
-        cwd: repoRoot,
-        env: {
-          ...process.env,
-          PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
-        },
-        encoding: "utf8",
-      },
-    ).trim();
+    const result = runIsInstalled(
+      "npm:@plannotator/pi-extension",
+      settingsPath,
+      { PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}` },
+    );
 
     expect(result).toBe("yes");
   });
@@ -161,9 +190,7 @@ describe("is_installed", () => {
     const settingsPath = path.join(tempDir, "settings.json");
     writeSettings(settingsPath, ["https://github.com/owner/repo.git"]);
 
-    const result = runBash(
-      `source ${bashString(libPath)}; if is_installed ${bashString("github:owner/repo")} ${bashString(settingsPath)}; then echo yes; else echo no; fi`,
-    );
+    const result = runIsInstalled("github:owner/repo", settingsPath);
 
     expect(result).toBe("yes");
   });
@@ -173,9 +200,7 @@ describe("is_installed", () => {
     const settingsPath = path.join(tempDir, "settings.json");
     writeSettings(settingsPath, ["git:github.com/owner/repo"]);
 
-    const result = runBash(
-      `source ${bashString(libPath)}; if is_installed ${bashString("github:owner/repo@v1.2.3")} ${bashString(settingsPath)}; then echo yes; else echo no; fi`,
-    );
+    const result = runIsInstalled("github:owner/repo@v1.2.3", settingsPath);
 
     expect(result).toBe("no");
   });
@@ -214,11 +239,20 @@ describe("install-third-party-plugins.sh", () => {
     });
     expect(manifest.plugins["pi-autoresearch"]).toMatchObject({
       kind: "github",
-      source: "https://github.com/davebcn87/pi-autoresearch@v1.0.1",
+      source: "https://github.com/davebcn87/pi-autoresearch",
     });
     expect(fs.existsSync(path.join(library, "pi-context", "index.ts"))).toBe(
       true,
     );
+    const autoresearchPackageJson = JSON.parse(
+      fs.readFileSync(
+        path.join(library, "pi-autoresearch", "package.json"),
+        "utf8",
+      ),
+    );
+    expect(autoresearchPackageJson.pi.extensions).toEqual([
+      "extensions/pi-autoresearch",
+    ]);
     expect(
       fs.existsSync(
         path.join(

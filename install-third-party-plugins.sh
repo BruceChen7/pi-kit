@@ -135,6 +135,57 @@ install_github_plugin() {
   fi
 }
 
+normalize_declared_extension_paths() {
+  local target="$1"
+  local package_json="$target/package.json"
+  [ -f "$package_json" ] || return 0
+
+  node - "$package_json" <<'JS'
+const fs = require("node:fs");
+const path = require("node:path");
+
+const [, , packageJsonPath] = process.argv;
+const packageRoot = path.dirname(packageJsonPath);
+let parsed;
+try {
+  parsed = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+} catch {
+  process.exit(0);
+}
+
+const extensions = parsed?.pi?.extensions;
+if (!Array.isArray(extensions)) process.exit(0);
+
+let changed = false;
+const normalized = extensions.map((extensionPath) => {
+  if (typeof extensionPath !== "string" || extensionPath.startsWith("!")) {
+    return extensionPath;
+  }
+
+  const absolutePath = path.resolve(packageRoot, extensionPath);
+  if (fs.existsSync(path.join(absolutePath, "index.ts"))) return extensionPath;
+  if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isDirectory()) {
+    return extensionPath;
+  }
+
+  const childExtensionDirs = fs
+    .readdirSync(absolutePath)
+    .filter((entry) => fs.existsSync(path.join(absolutePath, entry, "index.ts")));
+  if (childExtensionDirs.length !== 1) return extensionPath;
+
+  changed = true;
+  return path.posix.join(
+    extensionPath.replace(/\\/g, "/").replace(/\/$/, ""),
+    childExtensionDirs[0],
+  );
+});
+
+if (!changed) process.exit(0);
+parsed.pi.extensions = normalized;
+fs.writeFileSync(packageJsonPath, `${JSON.stringify(parsed, null, 2)}\n`);
+JS
+}
+
 write_manifest_entry() {
   local name="$1"
   local kind="$2"
@@ -187,6 +238,7 @@ for source in "${DEFAULT_PLUGINS[@]}"; do
   else
     install_github_plugin "$source" "$target"
   fi
+  normalize_declared_extension_paths "$target"
   write_manifest_entry "$name" "$kind" "$source" "$target"
   echo -e "  ${GREEN}✓${NC} Installed to $target"
   if [ "$MODE" = "enable-defaults" ]; then

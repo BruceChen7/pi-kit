@@ -375,18 +375,18 @@ const demoCompletedSummary = completedTaskSummary(
   ["编写测试", "实现改动", "验证结果"],
 );
 
-const expectApprovedContinuationFollowUp = (
+const expectNoApprovedContinuationFollowUp = (
   harness: ReturnType<typeof buildHarness>,
 ): void => {
-  expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+  expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
     expect.stringContaining(
       `Continue implementing approved plan: ${demoPlanPath}`,
     ),
-    { deliverAs: "followUp" },
+    expect.anything(),
   );
-  expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+  expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
     expect.stringContaining("Update act_mode_todo"),
-    { deliverAs: "followUp" },
+    expect.anything(),
   );
 };
 const actCompletedDemoSummary = `【act:completed】${demoCompletedSummary}`;
@@ -1501,7 +1501,7 @@ describe("plan-mode extension", () => {
       await harness.emit("agent_end", { messages: [] }, ctx);
 
       expect(ctx.ui.confirm).not.toHaveBeenCalled();
-      expectApprovedContinuationFollowUp(harness);
+      expectNoApprovedContinuationFollowUp(harness);
     } finally {
       cleanup();
     }
@@ -1523,9 +1523,11 @@ describe("plan-mode extension", () => {
       await harness.emit("agent_end", { messages: [] }, ctx);
 
       expect(ctx.ui.confirm).not.toHaveBeenCalled();
-      expectApprovedContinuationFollowUp(harness);
+      expectNoApprovedContinuationFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-        confirmedApprovedContinuationPath: demoPlanPath,
+        activePlanPath: demoPlanPath,
+        pendingApprovedPlanContinuationPath: null,
+        confirmedApprovedContinuationPath: null,
       });
     } finally {
       cleanup();
@@ -1559,7 +1561,7 @@ describe("plan-mode extension", () => {
     }
   });
 
-  it("injects an implementation follow-up after approved continuation is confirmed", async () => {
+  it("does not inject an implementation follow-up after approval", async () => {
     const harness = buildHarness();
     const { ctx, cleanup } = createTempCtx();
     writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
@@ -1572,16 +1574,18 @@ describe("plan-mode extension", () => {
       await harness.emit("agent_end", { messages: [] }, ctx);
 
       expect(ctx.ui.confirm).not.toHaveBeenCalled();
-      expectApprovedContinuationFollowUp(harness);
+      expectNoApprovedContinuationFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-        confirmedApprovedContinuationPath: demoPlanPath,
+        activePlanPath: demoPlanPath,
+        pendingApprovedPlanContinuationPath: null,
+        confirmedApprovedContinuationPath: null,
       });
     } finally {
       cleanup();
     }
   });
 
-  it("does not emit duplicate implementation follow-ups for a repeated approval result", async () => {
+  it("does not emit implementation follow-ups for repeated approval results", async () => {
     const harness = buildHarness();
     const { ctx, cleanup } = createTempCtx();
     writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
@@ -1600,22 +1604,23 @@ describe("plan-mode extension", () => {
     try {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
       await harness.emit("agent_end", { messages: [] }, ctx);
-      expect(followUpCount()).toBe(1);
+      expect(followUpCount()).toBe(0);
 
       await approveDemoPlan(harness, ctx);
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      expect(followUpCount()).toBe(1);
+      expect(followUpCount()).toBe(0);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        activePlanPath: demoPlanPath,
         pendingApprovedPlanContinuationPath: null,
-        confirmedApprovedContinuationPath: demoPlanPath,
+        confirmedApprovedContinuationPath: null,
       });
     } finally {
       cleanup();
     }
   });
 
-  it("consumes confirmed continuation and allows act tools without prompt matching", async () => {
+  it("keeps approved act context without prompt matching", async () => {
     const harness = buildHarness();
     const { ctx, cleanup } = createTempCtx();
     writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
@@ -1623,7 +1628,7 @@ describe("plan-mode extension", () => {
     await harness.emit("session_start", {}, ctx);
 
     try {
-      await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
+      await startApprovedDemoRun(harness, ctx, "执行批准计划");
       await harness.emit("agent_end", { messages: [] }, ctx);
       const result = await sendAgentPrompt(harness, ctx, "start");
 
@@ -1670,9 +1675,11 @@ describe("plan-mode extension", () => {
       await harness.emit("agent_end", { messages: [] }, ctx);
 
       expect(ctx.ui.confirm).not.toHaveBeenCalled();
-      expectApprovedContinuationFollowUp(harness);
+      expectNoApprovedContinuationFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-        confirmedApprovedContinuationPath: demoPlanPath,
+        activePlanPath: demoPlanPath,
+        pendingApprovedPlanContinuationPath: null,
+        confirmedApprovedContinuationPath: null,
       });
     } finally {
       cleanup();

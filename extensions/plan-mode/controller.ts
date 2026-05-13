@@ -592,6 +592,16 @@ export class PlanModeController {
       return;
     }
 
+    const approvalAlreadyQueued =
+      this.state.isApprovedReviewArtifactPath(approvedPath) &&
+      (this.state.pendingApprovedPlanContinuationPath === approvedPath ||
+        this.state.confirmedApprovedContinuationPath === approvedPath ||
+        (this.state.phase === "act" &&
+          this.state.activePlanPath === approvedPath));
+    if (approvalAlreadyQueued) {
+      return;
+    }
+
     this.state.activePlanPath = approvedPath;
     this.state.latestReviewArtifactPath = approvedPath;
     this.state.reviewApprovedPlanPaths.add(approvedPath);

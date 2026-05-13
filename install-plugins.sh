@@ -142,6 +142,25 @@ install_shared_symlink() {
     fi
 }
 
+install_plugin_dependencies() {
+    local source_path="$1"
+    local source_name="$2"
+
+    if [ ! -d "$source_path" ] || [ ! -f "$source_path/package.json" ]; then
+        return 0
+    fi
+
+    echo "Installing runtime dependencies for $source_name..."
+    if (cd "$source_path" && npm install --omit=dev --ignore-scripts >/dev/null); then
+        echo -e "${GREEN}✓${NC} Dependencies ready: $source_name"
+        return 0
+    fi
+
+    mark_failed_item "$source_name dependencies"
+    echo -e "${RED}✗${NC} Failed to install dependencies: $source_name"
+    return 1
+}
+
 is_bootstrap_global_entry() {
     local name="$1"
     [ "$name" = "plugin-toggle" ] || [ "$name" = "shared" ]
@@ -251,6 +270,7 @@ install_plugin_sources() {
             fi
 
             if [ -f "$dir/index.ts" ]; then
+                install_plugin_dependencies "$dir" "$dir_name"
                 if install_symlink "$dir" "$dir_name" "$target_dir"; then
                     mark_installed "$dir_name"
                 fi

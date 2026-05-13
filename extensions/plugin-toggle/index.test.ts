@@ -233,8 +233,17 @@ describe("third-party plugin library", () => {
   it("records github plugins in the library manifest and discovers the installed plugin", async () => {
     const home = createTempHome();
     const library = pluginLibraryDir(home);
-    const repoRoot = createInstallablePluginRoot(
-      "pi-kit-plugin-toggle-github-repo-",
+    const repoRoot = createTempDir("pi-kit-plugin-toggle-github-repo-");
+    fs.mkdirSync(path.join(repoRoot, "extensions", "repo"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(repoRoot, "package.json"),
+      JSON.stringify({ pi: { extensions: ["./extensions"] } }),
+    );
+    fs.writeFileSync(
+      path.join(repoRoot, "extensions", "repo", "index.ts"),
+      "export default function() {}\n",
     );
 
     const {
@@ -252,6 +261,10 @@ describe("third-party plugin library", () => {
       kind: "github",
       source: "github:owner/repo@v1",
     });
+    const packageJson = JSON.parse(
+      fs.readFileSync(path.join(library, "repo", "package.json"), "utf8"),
+    );
+    expect(packageJson.pi.extensions).toEqual(["extensions/repo"]);
     expect(discoverPlugins(library).map((plugin) => plugin.name)).toContain(
       "repo",
     );

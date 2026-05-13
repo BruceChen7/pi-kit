@@ -42,7 +42,6 @@ import {
   WRITE_TOOL_NAMES,
 } from "./constants.ts";
 import {
-  formatApprovedContinuationFollowUp,
   formatReviewWaitReason,
   getApprovedReviewPath,
   isAllowedPath,
@@ -517,14 +516,14 @@ export class PlanModeController {
       }
     }
 
-    const pendingContinuationPath =
-      this.state.pendingApprovedPlanContinuationPath;
     if (
       this.state.mode === "plan" &&
       this.state.phase === "act" &&
-      pendingContinuationPath
+      this.state.pendingApprovedPlanContinuationPath
     ) {
-      this.handlePendingApprovedContinuation(pendingContinuationPath);
+      this.state.clearPendingApprovedPlanContinuation();
+      this.persist();
+      this.clearTurnSource();
       return;
     }
 
@@ -542,17 +541,6 @@ export class PlanModeController {
         { deliverAs: "followUp" },
       );
     }
-    this.clearTurnSource();
-  }
-
-  handlePendingApprovedContinuation(pendingContinuationPath: string): void {
-    this.state.clearPendingApprovedPlanContinuation();
-    this.state.confirmApprovedContinuation(pendingContinuationPath);
-    this.persist();
-    this.pi.sendUserMessage(
-      formatApprovedContinuationFollowUp(pendingContinuationPath),
-      { deliverAs: "followUp" },
-    );
     this.clearTurnSource();
   }
 

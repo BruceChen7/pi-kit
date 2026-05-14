@@ -1,7 +1,73 @@
+import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { vi } from "vitest";
+
+type MockPlannotatorCliResult = {
+  status: number;
+  stdout?: string;
+  stderr?: string;
+  error?: Error;
+};
+
+type MockPlannotatorChild = EventEmitter & {
+  kill: ReturnType<typeof vi.fn>;
+  stderr: PassThrough;
+  stdin: { end: ReturnType<typeof vi.fn> };
+  stdout: PassThrough;
+};
+
+export function createMockPlannotatorChild(): MockPlannotatorChild {
+  const child = new EventEmitter() as MockPlannotatorChild;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdin = { end: vi.fn() };
+  child.kill = vi.fn(() => {
+    queueMicrotask(() => child.emit("close", null));
+    return true;
+  });
+  return child;
+}
+
+export function mockPlannotatorSpawn(result: MockPlannotatorCliResult) {
+  const spawn = vi.fn(() => {
+    const child = createMockPlannotatorChild();
+    queueMicrotask(() => {
+      if (result.error) {
+        child.emit("error", result.error);
+        return;
+      }
+      if (result.stdout) {
+        child.stdout.emit("data", result.stdout);
+      }
+      if (result.stderr) {
+        child.stderr.emit("data", result.stderr);
+      }
+      child.emit("close", result.status);
+    });
+    return child;
+  });
+  vi.doMock("node:child_process", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("node:child_process")>()),
+    spawn,
+  }));
+  return spawn;
+}
+
+export function mockHangingPlannotatorSpawn() {
+  let child: MockPlannotatorChild | null = null;
+  const spawn = vi.fn(() => {
+    child = createMockPlannotatorChild();
+    return child;
+  });
+  vi.doMock("node:child_process", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("node:child_process")>()),
+    spawn,
+  }));
+  return { spawn, getChild: () => child };
+}
 
 export type TestCtx = {
   cwd: string;
@@ -24,10 +90,16 @@ export type FakeEventBus = {
 };
 
 export type ShortcutHandler = (ctx: TestCtx) => unknown;
+export type CommandHandler = (args: string, ctx: TestCtx) => unknown;
 
 export type ShortcutRegistration = {
   description: string;
   handler: ShortcutHandler;
+};
+
+export type CommandRegistration = {
+  description: string;
+  handler: CommandHandler;
 };
 
 export type ToolRegistration = {
@@ -231,10 +303,23 @@ export function mockPlannotatorApi(
   };
 }
 
+const getRegistered = <T>(
+  registrations: Map<string, T>,
+  kind: string,
+  name: string,
+): T => {
+  const registration = registrations.get(name);
+  if (!registration) {
+    throw new Error(`${kind} not registered: ${name}`);
+  }
+  return registration;
+};
+
 export function createFakePi() {
   const handlers = new Map<string, PiEventHandler[]>();
   const events = createFakeEventBus();
   const shortcuts = new Map<string, ShortcutRegistration>();
+  const commands = new Map<string, CommandRegistration>();
   const tools = new Map<string, ToolRegistration>();
 
   return {
@@ -247,6 +332,11 @@ export function createFakePi() {
       registerShortcut: vi.fn(
         (shortcut: unknown, registration: ShortcutRegistration) => {
           shortcuts.set(String(shortcut), registration);
+        },
+      ),
+      registerCommand: vi.fn(
+        (name: string, registration: CommandRegistration) => {
+          commands.set(name, registration);
         },
       ),
       registerTool: vi.fn((tool: ToolRegistration) => {
@@ -268,31 +358,26 @@ export function createFakePi() {
       }
       return result;
     },
+    runCommand: async (
+      name: string,
+      args: string,
+      ctx: TestCtx,
+    ): Promise<void> => {
+      const registration = getRegistered(commands, "Command", name);
+      await registration.handler(args, ctx);
+    },
     runShortcut: async (shortcut: string, ctx: TestCtx): Promise<void> => {
-      const registration = shortcuts.get(shortcut);
-      if (!registration) {
-        throw new Error(`Shortcut not registered: ${shortcut}`);
-      }
-
+      const registration = getRegistered(shortcuts, "Shortcut", shortcut);
       await registration.handler(ctx);
     },
     runTool: async (
       name: string,
       params: Record<string, unknown>,
       ctx: TestCtx,
+      signal: AbortSignal = new AbortController().signal,
     ): Promise<unknown> => {
-      const tool = tools.get(name);
-      if (!tool) {
-        throw new Error(`Tool not registered: ${name}`);
-      }
-
-      return tool.execute(
-        "tool-call-1",
-        params,
-        new AbortController().signal,
-        async () => {},
-        ctx,
-      );
+      const tool = getRegistered(tools, "Tool", name);
+      return tool.execute("tool-call-1", params, signal, async () => {}, ctx);
     },
   };
 }

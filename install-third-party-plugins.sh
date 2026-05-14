@@ -30,7 +30,6 @@ PLANNOTATOR_CLI_INSTALL_DIR="${PLANNOTATOR_CLI_INSTALL_DIR:-$HOME/.local/bin}"
 PLANNOTATOR_REPO="${PLANNOTATOR_REPO:-backnotprop/plannotator}"
 
 DEFAULT_PLUGINS=(
-  "npm:@plannotator/pi-extension"
   "npm:pi-context"
   "https://github.com/davebcn87/pi-autoresearch"
 )

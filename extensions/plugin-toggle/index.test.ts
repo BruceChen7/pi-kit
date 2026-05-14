@@ -16,6 +16,12 @@ const originalHome = process.env.HOME;
 const originalCwd = process.cwd();
 const DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE =
   "同步插件成功，请重启 Pi 以加载新插件。";
+const PROJECT_DEFAULT_PLUGIN_NAMES = [
+  "cwd-history",
+  "pi-context",
+  "plan-mode",
+  "plannotator-auto",
+];
 const ARROW_DOWN = "\u001b[B";
 const ARROW_UP = "\u001b[A";
 
@@ -422,7 +428,11 @@ describe("project symlink management", () => {
 describe("default project bootstrap", () => {
   it("enables every library plugin except default-disabled plugins for a new cwd", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = createPluginLibrary("alpha", "dirty-git-status");
+    const library = createPluginLibrary(
+      "alpha",
+      "cwd-history",
+      "dirty-git-status",
+    );
 
     const { bootstrapDefaultManagedPlugins, discoverPlugins } =
       await importPluginToggle();
@@ -430,9 +440,10 @@ describe("default project bootstrap", () => {
 
     const result = bootstrapDefaultManagedPlugins(cwd, plugins);
 
-    expect(result.enabled).toEqual(["alpha"]);
+    expect(result.enabled).toEqual(["alpha", "cwd-history"]);
     expect(result.skippedDefaultDisabled).toEqual(["dirty-git-status"]);
     expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(true);
+    expect(fs.existsSync(projectPluginPath(cwd, "cwd-history"))).toBe(true);
     expect(fs.existsSync(projectPluginPath(cwd, "dirty-git-status"))).toBe(
       false,
     );
@@ -566,12 +577,10 @@ describe("default project bootstrap", () => {
 
   it("enables project defaults even after the cwd was configured", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const defaultPluginsToBackfill = [
-      "plan-mode",
-      "plannotator-auto",
-      "plannotator-pi-extension",
-    ];
-    const library = createPluginLibrary("alpha", ...defaultPluginsToBackfill);
+    const library = createPluginLibrary(
+      "alpha",
+      ...PROJECT_DEFAULT_PLUGIN_NAMES,
+    );
     const { bootstrapDefaultManagedPlugins, discoverPlugins } =
       await importPluginToggle();
     const plugins = discoverPlugins(library);
@@ -583,12 +592,12 @@ describe("default project bootstrap", () => {
     const result = bootstrapDefaultManagedPlugins(cwd, plugins);
 
     expect(result.status).toBe("bootstrapped");
-    expect(result.enabled).toEqual(defaultPluginsToBackfill);
+    expect(result.enabled).toEqual(PROJECT_DEFAULT_PLUGIN_NAMES);
     expect(readManagedPluginNames(cwd)).toEqual([
       "alpha",
-      ...defaultPluginsToBackfill,
+      ...PROJECT_DEFAULT_PLUGIN_NAMES,
     ]);
-    for (const pluginName of defaultPluginsToBackfill) {
+    for (const pluginName of PROJECT_DEFAULT_PLUGIN_NAMES) {
       expect(
         fs.lstatSync(projectPluginPath(cwd, pluginName)).isSymbolicLink(),
       ).toBe(true);

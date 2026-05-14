@@ -1,4 +1,4 @@
-import { type SpawnSyncReturns, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
@@ -110,6 +110,8 @@ const SPEC_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
 // Issue files intentionally allow any Markdown basename under a topic slug.
 const ISSUE_FILE_PATTERN = /^.+\.md$/;
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
+const MANUAL_CODE_REVIEW_COMMAND = "plannotator-review";
+const MANUAL_CODE_REVIEW_SHORTCUT = "ctrl+shift+r";
 const ANNOTATE_LATEST_DOCUMENT_SHORTCUT = "ctrl+alt+l";
 const PLAN_REVIEW_SUBMIT_TOOL = "plannotator_auto_submit_review";
 const KEEP_PLAN_HEADING_GUIDANCE =
@@ -828,26 +830,91 @@ type CliReviewDecision = {
 
 type CliReviewResult =
   | { status: "handled"; result: CliReviewDecision }
-  | { status: "error"; error: string };
+  | { status: "error"; error: string }
+  | { status: "aborted" };
 
-const toCliReviewResult = (
-  result: SpawnSyncReturns<string>,
-  parseStdout: (stdout: string) => CliReviewDecision,
-): CliReviewResult => {
-  if (result.error) {
-    return { status: "error", error: result.error.message };
-  }
-  if (result.status !== 0) {
-    return {
-      status: "error",
-      error: result.stderr || `plannotator exited with ${result.status}`,
-    };
-  }
-  return {
-    status: "handled",
-    result: parseStdout(result.stdout ?? ""),
-  };
+type RunPlannotatorCliOptions = {
+  input?: string;
+  parseStdout: (stdout: string) => CliReviewDecision;
+  signal?: AbortSignal;
+  timeoutMs: number;
 };
+
+const runPlannotatorCli = async (
+  ctx: Pick<ExtensionContext, "cwd">,
+  args: string[],
+  options: RunPlannotatorCliOptions,
+): Promise<CliReviewResult> =>
+  new Promise((resolve) => {
+    const child = spawn("plannotator", args, {
+      cwd: ctx.cwd,
+      env: { ...process.env, PLANNOTATOR_CWD: ctx.cwd },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let aborted = Boolean(options.signal?.aborted);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      options.signal?.removeEventListener("abort", abort);
+    };
+    const finish = (result: CliReviewResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+    const abort = () => {
+      aborted = true;
+      child.kill();
+    };
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish({ status: "error", error: "plannotator timed out" });
+    }, options.timeoutMs);
+
+    child.stdout.setEncoding("utf-8");
+    child.stderr.setEncoding("utf-8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      finish({ status: "error", error: error.message });
+    });
+    child.on("close", (code) => {
+      if (aborted) {
+        finish({ status: "aborted" });
+        return;
+      }
+      if (code !== 0) {
+        finish({
+          status: "error",
+          error: stderr || `plannotator exited with ${code}`,
+        });
+        return;
+      }
+      finish({
+        status: "handled",
+        result: options.parseStdout(stdout),
+      });
+    });
+
+    if (options.signal) {
+      options.signal.addEventListener("abort", abort, { once: true });
+    }
+    if (aborted) {
+      abort();
+    }
+
+    child.stdin.end(options.input ?? "");
+  });
 
 const parseCliReviewResult = (stdout: string): CliReviewDecision => {
   const trimmed = stdout.trim();
@@ -915,32 +982,35 @@ const parseCliPlanReviewResult = (stdout: string): CliReviewDecision => {
   return { approved: false, feedback: trimmed };
 };
 
-const runPlannotatorPlanReviewCli = (
+const runPlannotatorPlanReviewCli = async (
   ctx: Pick<ExtensionContext, "cwd">,
   planContent: string,
-  options: { timeoutMs: number },
-): CliReviewResult => {
+  options: { signal?: AbortSignal; timeoutMs: number },
+): Promise<CliReviewResult> => {
   const hookEvent = {
     hook_event_name: "PermissionRequest",
     tool_input: { plan: planContent },
     permission_mode: "default",
   };
-  const result = spawnSync("plannotator", [], {
-    cwd: ctx.cwd,
-    encoding: "utf-8",
-    env: { ...process.env, PLANNOTATOR_CWD: ctx.cwd },
-    input: `${JSON.stringify(hookEvent)}\n`,
-    timeout: options.timeoutMs,
-  });
 
-  return toCliReviewResult(result, parseCliPlanReviewResult);
+  return runPlannotatorCli(ctx, [], {
+    input: `${JSON.stringify(hookEvent)}\n`,
+    parseStdout: parseCliPlanReviewResult,
+    signal: options.signal,
+    timeoutMs: options.timeoutMs,
+  });
 };
 
-const runPlannotatorAnnotateCli = (
+const runPlannotatorAnnotateCli = async (
   ctx: Pick<ExtensionContext, "cwd">,
   filePath: string,
-  options: { gate?: boolean; renderHtml?: boolean; timeoutMs: number },
-): CliReviewResult => {
+  options: {
+    gate?: boolean;
+    renderHtml?: boolean;
+    signal?: AbortSignal;
+    timeoutMs: number;
+  },
+): Promise<CliReviewResult> => {
   const args = ["annotate", filePath];
   if (options.renderHtml) {
     args.push("--render-html");
@@ -950,14 +1020,11 @@ const runPlannotatorAnnotateCli = (
   }
   args.push("--json");
 
-  const result = spawnSync("plannotator", args, {
-    cwd: ctx.cwd,
-    encoding: "utf-8",
-    env: { ...process.env, PLANNOTATOR_CWD: ctx.cwd },
-    timeout: options.timeoutMs,
+  return runPlannotatorCli(ctx, args, {
+    parseStdout: parseCliReviewResult,
+    signal: options.signal,
+    timeoutMs: options.timeoutMs,
   });
-
-  return toCliReviewResult(result, parseCliReviewResult);
 };
 
 const parseCliCodeReviewResult = (stdout: string): CliReviewDecision => {
@@ -968,18 +1035,14 @@ const parseCliCodeReviewResult = (stdout: string): CliReviewDecision => {
   return { approved: false, feedback: trimmed };
 };
 
-const runPlannotatorCodeReviewCli = (
-  ctx: Pick<ExtensionContext, "cwd">,
-): CliReviewResult => {
-  const result = spawnSync("plannotator", ["review"], {
-    cwd: ctx.cwd,
-    encoding: "utf-8",
-    env: { ...process.env, PLANNOTATOR_CWD: ctx.cwd },
-    timeout: SYNC_CODE_REVIEW_TIMEOUT_MS,
+const runPlannotatorCodeReviewCli = async (
+  ctx: Pick<ExtensionContext, "cwd" | "signal">,
+): Promise<CliReviewResult> =>
+  runPlannotatorCli(ctx, ["review"], {
+    parseStdout: parseCliCodeReviewResult,
+    signal: ctx.signal,
+    timeoutMs: SYNC_CODE_REVIEW_TIMEOUT_MS,
   });
-
-  return toCliReviewResult(result, parseCliCodeReviewResult);
-};
 
 const isPathWithinCwd = (
   ctx: Pick<ExtensionContext, "cwd">,
@@ -1143,11 +1206,12 @@ const annotateLatestReviewDocument = async (
   });
 
   try {
-    const response = runPlannotatorAnnotateCli(
+    const response = await runPlannotatorAnnotateCli(
       ctx,
       latestDocument.absolutePath,
       {
         renderHtml,
+        signal: ctx.signal,
         timeoutMs: SYNC_ANNOTATE_TIMEOUT_MS,
       },
     );
@@ -1166,10 +1230,12 @@ const annotateLatestReviewDocument = async (
       return;
     }
 
-    ctx.ui.notify(
-      response.error || "Plannotator annotation request failed.",
-      "warning",
-    );
+    if (response.status === "aborted") {
+      ctx.ui.notify("Plannotator annotation interrupted.", "info");
+      return;
+    }
+
+    ctx.ui.notify(response.error, "warning");
   } catch (error) {
     ctx.ui.notify(
       error instanceof Error
@@ -1343,13 +1409,15 @@ const maybeStartCodeReview = async (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   reason: string,
+  options: { force?: boolean } = {},
 ): Promise<void> => {
   const state = getSessionState(ctx);
   const hasPending = state.pendingReviewByCwd.has(ctx.cwd);
   const active = state.activeCodeReviewByCwd.get(ctx.cwd);
+  const isManualReview = options.force === true;
   const codeReviewAutoTriggerEnabled = isCodeReviewAutoTriggerEnabled(ctx);
 
-  if (!codeReviewAutoTriggerEnabled && !active) {
+  if (!isManualReview && !codeReviewAutoTriggerEnabled && !active) {
     if (hasPending) {
       log?.debug(
         "plannotator-auto skipped review (code-review auto trigger disabled)",
@@ -1364,7 +1432,8 @@ const maybeStartCodeReview = async (
     return;
   }
 
-  if ((!hasPending && !active) || state.reviewInFlight) {
+  const hasReviewCandidate = isManualReview || hasPending || Boolean(active);
+  if (!hasReviewCandidate || state.reviewInFlight) {
     return;
   }
 
@@ -1447,10 +1516,14 @@ const maybeStartCodeReview = async (
       sessionKey: getSessionKey(ctx),
     });
 
-    const response = runPlannotatorCodeReviewCli(ctx);
+    const response = await runPlannotatorCodeReviewCli(ctx);
     if (response.status === "error") {
       clearActiveCodeReview(ctx, state, () => setReviewWidget(ctx));
       notifyCodeReviewUnavailable(ctx, state, response.error);
+      return;
+    }
+    if (response.status === "aborted") {
+      clearActiveCodeReview(ctx, state, () => setReviewWidget(ctx));
       return;
     }
 
@@ -1662,7 +1735,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
     description:
       "Submit a pending plan/spec/extra review target to Plannotator and wait for approval or feedback.",
     parameters: planReviewSubmitToolParameters,
-    async execute(_toolCallId, rawParams, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, rawParams, signal, _onUpdate, ctx) {
       const params = rawParams as PlanReviewSubmitToolParams;
       const state = getSessionState(ctx);
       const pendingPlanReviews = findPendingPlanReviewTargets(state, ctx.cwd);
@@ -1761,12 +1834,18 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
 
       try {
         const cliResult = renderHtml
-          ? runPlannotatorAnnotateCli(ctx, pendingPlanReview.resolvedPlanPath, {
-              gate: true,
-              renderHtml,
-              timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
-            })
-          : runPlannotatorPlanReviewCli(ctx, planContent, {
+          ? await runPlannotatorAnnotateCli(
+              ctx,
+              pendingPlanReview.resolvedPlanPath,
+              {
+                gate: true,
+                renderHtml,
+                signal,
+                timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+              },
+            )
+          : await runPlannotatorPlanReviewCli(ctx, planContent, {
+              signal,
               timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
             });
 
@@ -1781,6 +1860,17 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
             details: { status: "error" },
           };
         }
+        if (cliResult.status === "aborted") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Plannotator review interrupted.",
+              },
+            ],
+            details: { status: "aborted" },
+          };
+        }
 
         return completePendingPlanReview(
           ctx,
@@ -1793,6 +1883,27 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
         state.activePlanReviewByCwd.delete(ctx.cwd);
         setReviewWidget(ctx);
       }
+    },
+  });
+
+  const runManualCodeReview = async (
+    ctx: ExtensionContext,
+    reason: string,
+  ): Promise<void> => {
+    await maybeStartCodeReview(pi, ctx, reason, { force: true });
+  };
+
+  pi.registerCommand(MANUAL_CODE_REVIEW_COMMAND, {
+    description: "Run plannotator CLI review for uncommitted changes",
+    handler: async (_args, ctx) => {
+      await runManualCodeReview(ctx, "manual-command");
+    },
+  });
+
+  pi.registerShortcut(MANUAL_CODE_REVIEW_SHORTCUT, {
+    description: "Run plannotator CLI review for uncommitted changes",
+    handler: async (ctx) => {
+      await runManualCodeReview(ctx, "manual-shortcut");
     },
   });
 

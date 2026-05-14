@@ -263,12 +263,7 @@ describe("install-third-party-plugins.sh", () => {
     expect(Object.keys(manifest.plugins).sort()).toEqual([
       "pi-autoresearch",
       "pi-context",
-      "plannotator-pi-extension",
     ]);
-    expect(manifest.plugins["plannotator-pi-extension"]).toMatchObject({
-      kind: "npm",
-      source: "npm:@plannotator/pi-extension",
-    });
     expect(manifest.plugins["pi-autoresearch"]).toMatchObject({
       kind: "github",
       source: "https://github.com/davebcn87/pi-autoresearch",
@@ -285,16 +280,6 @@ describe("install-third-party-plugins.sh", () => {
     expect(autoresearchPackageJson.pi.extensions).toEqual([
       "extensions/pi-autoresearch",
     ]);
-    expect(
-      fs.existsSync(
-        path.join(
-          library,
-          "plannotator-pi-extension",
-          "node_modules",
-          ".prod-deps-installed",
-        ),
-      ),
-    ).toBe(true);
     expect(
       fs.readFileSync(path.join(cliInstallDir, "plannotator"), "utf8"),
     ).toBe("fake plannotator binary\n");

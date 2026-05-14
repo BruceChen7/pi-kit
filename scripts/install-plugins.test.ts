@@ -24,7 +24,7 @@ function createPluginDir(baseDir: string, name: string): string {
 function runInstall(home: string, args: string[] = []): string {
   return execFileSync("bash", [scriptPath, ...args], {
     cwd: repoRoot,
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, PI_KIT_SKIP_PLUGIN_DEP_INSTALL: "1" },
     encoding: "utf8",
   });
 }

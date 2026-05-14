@@ -7,7 +7,11 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  matchesKey,
+  truncateToWidth,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 
 /**
  * Extension that seeds the prompt editor history with recent prompts from the
@@ -77,8 +81,7 @@ class HistoryEditor extends CustomEditor {
   }
 
   override handleInput(data: string): void {
-    // Ctrl+R (0x12) enters search mode
-    if (data === "\x12" && !this.searchMode) {
+    if (matchesKey(data, "ctrl+r") && !this.searchMode) {
       this.enterSearchMode();
       return;
     }
@@ -101,43 +104,33 @@ class HistoryEditor extends CustomEditor {
   }
 
   private handleSearchInput(data: string): void {
-    const tui = (this as { _tui?: { requestRender?: () => void } })._tui;
-
-    // Escape: exit search, restore original text
-    if (data === "\x1b") {
+    if (matchesKey(data, "escape") || matchesKey(data, "ctrl+g")) {
       this.exitSearchMode(false);
-      tui?.requestRender();
+      this.requestRender();
       return;
     }
 
     // Enter: accept current match, exit search
-    if (data === "\r" || data === "\n") {
+    if (matchesKey(data, "enter")) {
       this.exitSearchMode(true);
-      tui?.requestRender();
+      this.requestRender();
       return;
     }
 
-    // Ctrl+G (0x07): cancel search, restore original text (like bash)
-    if (data === "\x07") {
-      this.exitSearchMode(false);
-      tui?.requestRender();
-      return;
-    }
-
-    // Ctrl+R (0x12): search for next match
-    if (data === "\x12") {
+    // Ctrl+R: search for next match
+    if (matchesKey(data, "ctrl+r")) {
       this.searchNext();
-      tui?.requestRender();
+      this.requestRender();
       return;
     }
 
     // Backspace: delete search character
-    if (data === "\x7f" || data === "\x08") {
+    if (matchesKey(data, "backspace")) {
       if (this.searchQuery.length > 0) {
         this.searchQuery = this.searchQuery.slice(0, -1);
         this.performSearch();
       }
-      tui?.requestRender();
+      this.requestRender();
       return;
     }
 
@@ -145,12 +138,17 @@ class HistoryEditor extends CustomEditor {
     if (data.length === 1 && data.charCodeAt(0) >= 32) {
       this.searchQuery += data;
       this.performSearch();
-      tui?.requestRender();
+      this.requestRender();
       return;
     }
 
     // Other keys: pass to default handler
     super.handleInput(data);
+  }
+
+  private requestRender(): void {
+    const tui = (this as { _tui?: { requestRender?: () => void } })._tui;
+    tui?.requestRender();
   }
 
   private performSearch(): void {
@@ -207,38 +205,35 @@ class HistoryEditor extends CustomEditor {
   override render(width: number): string[] {
     const lines = super.render(width);
 
-    if (this.searchMode && lines.length > 0) {
-      const searchPrompt = `(reverse-i-search)\`${this.searchQuery}': `;
-      const match =
-        this.searchIndex >= 0 ? this.searchResults[this.searchIndex] : null;
-
-      if (match) {
-        const highlighted = this.highlightMatch(match.text);
-        const promptWidth = visibleWidth(searchPrompt);
-        const maxContentWidth = Math.max(0, width - promptWidth);
-        const truncated = truncateToWidth(
-          highlighted,
-          maxContentWidth,
-          "...",
-          false,
-        );
-        lines[lines.length - 1] = searchPrompt + truncated;
-      } else {
-        lines[lines.length - 1] = `${searchPrompt}(no match)`;
-      }
-
-      // Add status line
-      if (this.searchResults.length > 0) {
-        const count = this.searchResults.length;
-        lines.push(
-          `[${this.searchIndex + 1}/${count}] hit Enter to select, Ctrl+G to cancel`,
-        );
-      } else if (this.searchQuery) {
-        lines.push("(failed)");
-      }
+    if (this.searchMode && lines.length > 1) {
+      const searchLineIndex = lines.length - 2;
+      lines[searchLineIndex] = this.renderSearchLine(width);
     }
 
     return lines;
+  }
+
+  private renderSearchLine(width: number): string {
+    const searchPrompt = `(reverse-i-search)\`${this.searchQuery}': `;
+    const match =
+      this.searchIndex >= 0 ? this.searchResults[this.searchIndex] : null;
+    const matchText = match ? this.highlightMatch(match.text) : "(no match)";
+    const status =
+      this.searchResults.length > 0
+        ? ` [${this.searchIndex + 1}/${this.searchResults.length}]`
+        : "";
+    const availableWidth = Math.max(
+      0,
+      width - visibleWidth(searchPrompt) - visibleWidth(status),
+    );
+    const truncatedMatch = truncateToWidth(
+      matchText,
+      availableWidth,
+      "...",
+      false,
+    );
+    const line = `${searchPrompt}${truncatedMatch}${status}`;
+    return line + " ".repeat(Math.max(0, width - visibleWidth(line)));
   }
 }
 

@@ -31,6 +31,11 @@ Read when relevant:
 
 Do not create root `CONTEXT.md`, `docs/adr/`, or product docs in source directories from this skill.
 
+Treat `.pi/contexts/**/CONTEXT.md` as a domain glossary only. Do not put PRD content,
+implementation plans, file-path-level designs, temporary notes, or technical decisions there.
+Put feature requirements in `.pi/plans/<repo>/specs/**`, implementation plans in
+`.pi/plans/<repo>/plan/**`, and hard-to-reverse decisions in ADRs.
+
 ## Process
 
 1. **Explore enough context**

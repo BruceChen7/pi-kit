@@ -30,6 +30,8 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 - `plannotator_auto_submit_review` is the only plan/spec review runner. While it waits for a result, the same session will not ask for another submit; approval clears the pending target, while denial keeps it pending for a later retry. Denied retries should revise the same file and preserve the first `#` heading so Plannotator can show version diffs.
 - `write` / `edit` to **non-plan** files → mark code review pending only if `codeReviewAutoTrigger` is `true`.
 - On `agent_end`, if code review is pending, no plan/spec review is pending or active, and the repo is dirty, run `plannotator review`.
+- `/plannotator-review` runs `plannotator review` manually for the dirty repo.
+- `Ctrl+Shift+R` runs the same manual code review shortcut.
 - `Ctrl+Alt+L` annotates the latest Markdown or HTML file modified in the current session with `plannotator annotate <file> --json`.
 - Markdown plan/spec/issue submissions use Plannotator's plan-review hook mode so version history and plan diffs are available. HTML submissions use `plannotator annotate <file> --render-html --gate --json`.
 
@@ -70,7 +72,6 @@ Notes:
 ## CLI commands used
 
 Plannotator Auto requires the `plannotator` CLI to be available on `PATH`.
-It does not use the shared `plannotator:request` event API.
 
 - `plannotator` with a PermissionRequest hook payload on stdin for Markdown plan/spec/issue review
 - `plannotator annotate <file> --render-html --gate --json`

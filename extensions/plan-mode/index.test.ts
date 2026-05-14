@@ -716,6 +716,21 @@ describe("plan-mode extension", () => {
     });
   });
 
+  it("allows multi-edit entries to inherit the top-level path", async () => {
+    await withTempCtx(async (ctx) => {
+      const targetPath = "src/inherited.ts";
+      writeSourceFile(ctx, targetPath);
+
+      const { harness } = await startPlanModeSession("act", ctx);
+      await markFileRead(harness, ctx, targetPath);
+
+      await expectToolAllowed(harness, ctx, "edit", {
+        path: targetPath,
+        multi: [{ oldText: "export {};", newText: "export {};" }],
+      });
+    });
+  });
+
   it("allows patch add-file writes inside cwd without requiring a prior read", async () => {
     await withTempCtx(async (ctx) => {
       const { harness } = await startPlanModeSession("act", ctx);
@@ -1481,9 +1496,7 @@ describe("plan-mode extension", () => {
     await approveDemoPlan(harness, ctx);
 
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("plan-mode", undefined);
-    await expect(
-      harness.runToolCall("write", { path: "x.ts" }, ctx),
-    ).resolves.toBeUndefined();
+    await expectToolAllowed(harness, ctx, "write", { path: "x.ts" });
   });
 
   it("plan-continues approved plans for balanced preset", async () => {
@@ -1686,7 +1699,7 @@ describe("plan-mode extension", () => {
     }
   });
 
-  it("does not recover approved act context from prompt matching alone", async () => {
+  it("keeps completed approved runs in act despite prompt matching", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -1697,12 +1710,16 @@ describe("plan-mode extension", () => {
     await sendAgentPrompt(harness, ctx, "迁移到 Svelte + Vite");
     await sendAgentPrompt(harness, ctx, "impl it");
 
+    expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+      mode: "act",
+      phase: "act",
+    });
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
-    ).resolves.toMatchObject({ block: true });
+    ).resolves.toBeUndefined();
   });
 
-  it("returns plan act to plan after a completed run gets a new implementation prompt", async () => {
+  it("returns completed approved plan runs to act for unrelated work", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -1713,15 +1730,19 @@ describe("plan-mode extension", () => {
 
     await sendAgentPrompt(harness, ctx, "迁移到 Svelte + Vite");
 
-    await expect(
-      harness.runToolCall("write", { path: "x.ts" }, ctx),
-    ).resolves.toMatchObject({ block: true });
-    await expect(
-      harness.runToolCall("bash", { command: "npm test" }, ctx),
-    ).resolves.toMatchObject({ block: true });
+    expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+      mode: "act",
+      phase: "act",
+      activePlanPath: null,
+      pendingApprovedPlanContinuationPath: null,
+      confirmedApprovedContinuationPath: null,
+      resumableApprovedPlanPath: null,
+    });
+    await expectToolAllowed(harness, ctx, "write", { path: "x.ts" });
+    await expectToolAllowed(harness, ctx, "bash", { command: "npm test" });
   });
 
-  it("does not keep plan act from approved continuation prompt matching", async () => {
+  it("returns completed approved runs to act after continuation-like prompt matching", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();
     planModeExtension(harness.api as unknown as ExtensionAPI);
@@ -1732,9 +1753,11 @@ describe("plan-mode extension", () => {
 
     await sendAgentPrompt(harness, ctx, "impl the plan");
 
-    await expect(
-      harness.runToolCall("write", { path: "x.ts" }, ctx),
-    ).resolves.toMatchObject({ block: true });
+    expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+      mode: "act",
+      phase: "act",
+    });
+    await expectToolAllowed(harness, ctx, "write", { path: "x.ts" });
 
     const result = await harness.runTool(
       PLAN_MODE_TODO_TOOL,

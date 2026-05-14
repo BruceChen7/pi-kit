@@ -26,6 +26,8 @@ NC='\033[0m'
 MODE="install-only"
 LIBRARY_DIR="${PI_PLUGIN_LIBRARY_DIR:-$HOME/.agents/pi-plugins}"
 MANIFEST_FILE="$LIBRARY_DIR/.manifest.json"
+PLANNOTATOR_CLI_INSTALL_DIR="${PLANNOTATOR_CLI_INSTALL_DIR:-$HOME/.local/bin}"
+PLANNOTATOR_REPO="${PLANNOTATOR_REPO:-backnotprop/plannotator}"
 
 DEFAULT_PLUGINS=(
   "npm:@plannotator/pi-extension"
@@ -135,6 +137,72 @@ install_github_plugin() {
   fi
 }
 
+plannotator_platform() {
+  local os
+  local arch
+
+  case "$(uname -s)" in
+    Darwin) os="darwin" ;;
+    Linux) os="linux" ;;
+    *) echo "Unsupported OS for plannotator CLI install: $(uname -s)" >&2; return 1 ;;
+  esac
+
+  case "$(uname -m)" in
+    x86_64|amd64) arch="x64" ;;
+    arm64|aarch64) arch="arm64" ;;
+    *) echo "Unsupported architecture for plannotator CLI install: $(uname -m)" >&2; return 1 ;;
+  esac
+
+  printf '%s-%s\n' "$os" "$arch"
+}
+
+install_plannotator_cli() {
+  local platform
+  local binary_name
+  local latest_tag
+  local binary_url
+  local checksum_url
+  local tmp_file
+  local expected_checksum
+  local actual_checksum
+
+  platform="$(plannotator_platform)"
+  binary_name="plannotator-${platform}"
+
+  echo -e "${BLUE}Installing:${NC} plannotator CLI"
+  latest_tag="$(curl -fsSL "https://api.github.com/repos/${PLANNOTATOR_REPO}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)"
+  if [ -z "$latest_tag" ]; then
+    echo "Failed to fetch latest plannotator CLI version" >&2
+    return 1
+  fi
+
+  binary_url="https://github.com/${PLANNOTATOR_REPO}/releases/download/${latest_tag}/${binary_name}"
+  checksum_url="${binary_url}.sha256"
+
+  mkdir -p "$PLANNOTATOR_CLI_INSTALL_DIR"
+  tmp_file="$(mktemp)"
+  curl -fsSL -o "$tmp_file" "$binary_url"
+  expected_checksum="$(curl -fsSL "$checksum_url" | cut -d' ' -f1)"
+
+  if [ "$(uname -s)" = "Darwin" ]; then
+    actual_checksum="$(shasum -a 256 "$tmp_file" | cut -d' ' -f1)"
+  else
+    actual_checksum="$(sha256sum "$tmp_file" | cut -d' ' -f1)"
+  fi
+
+  if [ "$actual_checksum" != "$expected_checksum" ]; then
+    echo "Checksum verification failed for plannotator CLI ${latest_tag}" >&2
+    rm -f "$tmp_file"
+    return 1
+  fi
+
+  rm -f "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator" "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator.exe" 2>/dev/null || true
+  mv "$tmp_file" "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator"
+  chmod +x "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator"
+  echo -e "  ${GREEN}✓${NC} Installed plannotator ${latest_tag} to $PLANNOTATOR_CLI_INSTALL_DIR/plannotator"
+  echo ""
+}
+
 normalize_declared_extension_paths() {
   local target="$1"
   local package_json="$target/package.json"
@@ -227,6 +295,8 @@ echo "=========================================="
 echo "Library: $LIBRARY_DIR"
 echo "Mode: $MODE"
 echo ""
+
+install_plannotator_cli
 
 for source in "${DEFAULT_PLUGINS[@]}"; do
   kind="$(plugin_kind "$source")"

@@ -4,17 +4,41 @@ import { describe, expect, it, vi } from "vitest";
 import cwdHistoryExtension from "./cwd-history.js";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<void> | void;
+type EditorHarness = {
+  render(width: number): string[];
+  setText(text: string): void;
+  getText(): string;
+  handleInput(data: string): void;
+};
+
 type EditorFactory = (
   tui: unknown,
   theme: unknown,
   keybindings: unknown,
-) => {
-  render(width: number): string[];
-  setText(text: string): void;
+) => EditorHarness;
+
+type SessionEntry = {
+  type: "message";
+  message: {
+    role: "user";
+    content: Array<{ type: "text"; text: string }>;
+    timestamp: number;
+  };
 };
 
 const STALE_MESSAGE =
   "This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.";
+
+function userPromptEntry(text: string): SessionEntry {
+  return {
+    type: "message",
+    message: {
+      role: "user",
+      content: [{ type: "text", text }],
+      timestamp: Date.now(),
+    },
+  };
+}
 
 function buildPiHarness(options?: {
   throwThemeOnStale?: boolean;
@@ -64,12 +88,13 @@ function buildPiHarness(options?: {
     }),
   };
 
+  let branch: unknown[] = [];
   const ctx = {
     hasUI: true,
-    cwd: "/repo",
+    cwd: "/repo-cwd-history-test-nonexistent",
     sessionManager: {
       getSessionFile: vi.fn(() => undefined),
-      getBranch: vi.fn(() => []),
+      getBranch: vi.fn(() => branch),
     },
     ui,
   };
@@ -106,6 +131,9 @@ function buildPiHarness(options?: {
     ctx,
     emit,
     createEditor,
+    setBranch(nextBranch: unknown[]) {
+      branch = nextBranch;
+    },
     makeStale() {
       stale = true;
     },
@@ -137,5 +165,23 @@ describe("cwd-history extension", () => {
 
     expect(() => editor.render(12)).not.toThrow();
     expect(editor.render(12)[0]).toContain("<thinking:medium>");
+  });
+
+  it("keeps prompts submitted while previous-session history loads", async () => {
+    const harness = buildPiHarness();
+
+    cwdHistoryExtension(harness.api as ExtensionAPI);
+    await harness.emit("session_start");
+    harness.setBranch([userPromptEntry("first prompt after startup")]);
+
+    await vi.waitFor(() => {
+      expect(harness.ctx.ui.setEditorComponent).toHaveBeenCalledTimes(2);
+    });
+
+    const editor = harness.createEditor();
+
+    editor.handleInput("\x1b[A");
+
+    expect(editor.getText()).toBe("first prompt after startup");
   });
 });

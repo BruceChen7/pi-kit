@@ -464,7 +464,7 @@ function setEditorHistory(
     );
     editor.lockBorderColor();
     for (const prompt of history) {
-      editor.addToHistory?.(prompt.text);
+      editor.addToHistory(prompt.text);
     }
     editor.setHistory(history);
     return editor;
@@ -475,9 +475,10 @@ function applyEditorWithHistory(pi: ExtensionAPI, ctx: ExtensionContext) {
   if (!ctx.hasUI) return;
 
   const sessionFile = ctx.sessionManager.getSessionFile();
-  const currentEntries = ctx.sessionManager.getBranch();
-  const currentPrompts = collectUserPromptsFromEntries(currentEntries);
-  const immediateHistory = buildHistoryList(currentPrompts, []);
+  const initialPrompts = collectUserPromptsFromEntries(
+    ctx.sessionManager.getBranch(),
+  );
+  const immediateHistory = buildHistoryList(initialPrompts, []);
 
   const currentLoad = ++loadCounter;
   const initialText = ctx.ui.getEditorText();
@@ -490,7 +491,11 @@ function applyEditorWithHistory(pi: ExtensionAPI, ctx: ExtensionContext) {
     );
     if (currentLoad !== loadCounter) return;
     if (ctx.ui.getEditorText() !== initialText) return;
-    const history = buildHistoryList(currentPrompts, previousPrompts);
+
+    const latestPrompts = collectUserPromptsFromEntries(
+      ctx.sessionManager.getBranch(),
+    );
+    const history = buildHistoryList(latestPrompts, previousPrompts);
     if (historiesMatch(history, immediateHistory)) return;
     setEditorHistory(pi, ctx, history);
   })();

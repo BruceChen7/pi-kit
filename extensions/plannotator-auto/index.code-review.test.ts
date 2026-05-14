@@ -1,26 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-type SpawnSyncMockResult = {
-  status: number;
-  stdout?: string;
-  stderr?: string;
-  error?: Error;
-};
-
-function mockSpawnSync(result: SpawnSyncMockResult) {
-  const spawnSync = vi.fn(() => result);
-  vi.doMock("node:child_process", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("node:child_process")>()),
-    spawnSync,
-  }));
-  return spawnSync;
-}
-
 import {
   createFakePi,
   createTestContext,
   flushMicrotasks,
+  mockPlannotatorSpawn,
 } from "./test-helpers.js";
+
+const mockSpawn = mockPlannotatorSpawn;
 
 async function importPlannotatorAuto() {
   return (await import("./index.js")).default;
@@ -85,7 +72,7 @@ afterEach(() => {
 describe("code review trigger timing", () => {
   it("starts code review through the Plannotator CLI and delivers feedback", async () => {
     vi.resetModules();
-    const spawnSync = mockSpawnSync({
+    const spawn = mockSpawn({
       status: 0,
       stdout: "Please add tests.",
       stderr: "",
@@ -104,13 +91,13 @@ describe("code review trigger timing", () => {
 
       await emit("agent_end", {}, ctx);
 
-      expect(spawnSync).toHaveBeenCalledWith(
+      expect(spawn).toHaveBeenCalledWith(
         "plannotator",
         ["review"],
         expect.objectContaining({
           cwd: "/repo",
-          encoding: "utf-8",
           env: expect.objectContaining({ PLANNOTATOR_CWD: "/repo" }),
+          stdio: ["pipe", "pipe", "pipe"],
         }),
       );
       expect(ctx.ui.notify).not.toHaveBeenCalledWith(
@@ -128,7 +115,7 @@ describe("code review trigger timing", () => {
 
   it("delivers code review feedback from CLI output", async () => {
     vi.resetModules();
-    mockSpawnSync({ status: 0, stdout: "Please add tests.", stderr: "" });
+    mockSpawn({ status: 0, stdout: "Please add tests.", stderr: "" });
     mockCodeReviewApi();
 
     const plannotatorAuto = await importPlannotatorAuto();
@@ -158,7 +145,7 @@ describe("code review trigger timing", () => {
     vi.useFakeTimers();
     vi.resetModules();
 
-    const spawnSync = mockSpawnSync({
+    const spawn = mockSpawn({
       status: 0,
       stdout: "Please add tests.",
       stderr: "",
@@ -183,7 +170,7 @@ describe("code review trigger timing", () => {
 
       await vi.advanceTimersByTimeAsync(999);
       await flushMicrotasks();
-      expect(spawnSync).not.toHaveBeenCalledWith(
+      expect(spawn).not.toHaveBeenCalledWith(
         "plannotator",
         ["review"],
         expect.anything(),
@@ -191,7 +178,7 @@ describe("code review trigger timing", () => {
 
       await vi.advanceTimersByTimeAsync(1);
       await flushMicrotasks();
-      expect(spawnSync).toHaveBeenCalledWith(
+      expect(spawn).toHaveBeenCalledWith(
         "plannotator",
         ["review"],
         expect.objectContaining({ cwd: "/repo" }),
@@ -205,7 +192,7 @@ describe("code review trigger timing", () => {
     vi.useFakeTimers();
     vi.resetModules();
 
-    const spawnSync = mockSpawnSync({
+    const spawn = mockSpawn({
       status: 1,
       stdout: "",
       stderr: "review failed",
@@ -237,7 +224,7 @@ describe("code review trigger timing", () => {
       await triggerCodeReview(emit, ctx);
       await emit("agent_end", {}, ctx);
 
-      expect(spawnSync).not.toHaveBeenCalledWith(
+      expect(spawn).not.toHaveBeenCalledWith(
         "plannotator",
         ["review"],
         expect.anything(),
@@ -249,7 +236,7 @@ describe("code review trigger timing", () => {
       await vi.advanceTimersByTimeAsync(1_200);
       await flushMicrotasks();
 
-      expect(spawnSync).toHaveBeenCalledWith(
+      expect(spawn).toHaveBeenCalledWith(
         "plannotator",
         ["review"],
         expect.objectContaining({ cwd: "/repo" }),
@@ -263,9 +250,70 @@ describe("code review trigger timing", () => {
     }
   });
 
+  it("runs CLI code review from the manual command", async () => {
+    vi.resetModules();
+    const spawn = mockSpawn({
+      status: 0,
+      stdout: "Manual feedback.",
+      stderr: "",
+    });
+    mockCodeReviewApi();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit, runCommand } = createFakePi();
+    plannotatorAuto(api as never);
+    const ctx = createTestContext("/repo");
+
+    try {
+      await emit("session_start", {}, ctx);
+      await runCommand("plannotator-review", "", ctx);
+
+      expect(spawn).toHaveBeenCalledWith(
+        "plannotator",
+        ["review"],
+        expect.objectContaining({ cwd: "/repo" }),
+      );
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        "Manual feedback.\n\nPlease address this feedback.",
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+    }
+  });
+
+  it("runs CLI code review from the manual shortcut", async () => {
+    vi.resetModules();
+    const spawn = mockSpawn({ status: 0, stdout: "", stderr: "" });
+    mockCodeReviewApi();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit, runShortcut } = createFakePi();
+    plannotatorAuto(api as never);
+    const ctx = createTestContext("/repo");
+
+    try {
+      await emit("session_start", {}, ctx);
+      await runShortcut("ctrl+shift+r", ctx);
+      await flushMicrotasks();
+
+      expect(spawn).toHaveBeenCalledWith(
+        "plannotator",
+        ["review"],
+        expect.objectContaining({ cwd: "/repo" }),
+      );
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        "# Code Review\n\nCode review completed — no changes requested.",
+        { deliverAs: "followUp" },
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+    }
+  });
+
   it("formats a follow-up when CLI code review returns feedback", async () => {
     vi.resetModules();
-    mockSpawnSync({ status: 0, stdout: "Please add tests.", stderr: "" });
+    mockSpawn({ status: 0, stdout: "Please add tests.", stderr: "" });
     mockCodeReviewApi();
 
     const plannotatorAuto = await importPlannotatorAuto();

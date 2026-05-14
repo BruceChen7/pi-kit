@@ -18,13 +18,12 @@ export const GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES = new Set([
   "shared",
 ]);
 export const PROJECT_DEFAULT_ENABLED_PLUGINS = new Set([
+  "cwd-history",
   "plan-mode",
   "plannotator-auto",
-  "plannotator-pi-extension",
   "pi-context",
 ]);
 export const DEFAULT_DISABLED_PLUGINS = [
-  "cwd-history",
   "diffx-review",
   "dirty-git-status",
   "remote-approval",

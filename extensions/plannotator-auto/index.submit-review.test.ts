@@ -5,6 +5,8 @@ import {
   createTempRepo,
   createTestContext,
   flushMicrotasks,
+  mockHangingPlannotatorSpawn,
+  mockPlannotatorSpawn,
   removeTempRepo,
   writeTestFile,
 } from "./test-helpers.js";
@@ -13,21 +15,7 @@ async function importPlannotatorAuto() {
   return (await import("./index.js")).default;
 }
 
-type SpawnSyncMockResult = {
-  status: number;
-  stdout?: string;
-  stderr?: string;
-  error?: Error;
-};
-
-function mockSpawnSync(result: SpawnSyncMockResult) {
-  const spawnSync = vi.fn(() => result);
-  vi.doMock("node:child_process", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("node:child_process")>()),
-    spawnSync,
-  }));
-  return spawnSync;
-}
+const mockSpawn = mockPlannotatorSpawn;
 const PLAN_DRAFT_CONTENT = `# Plan
 
 ## Context
@@ -118,7 +106,7 @@ afterEach(() => {
 describe("submit review tool", () => {
   it("submits a pending plan draft through the Plannotator CLI", async () => {
     vi.resetModules();
-    const spawnSync = mockSpawnSync({
+    const spawn = mockSpawn({
       status: 0,
       stdout: cliPlanApprovedStdout,
       stderr: "",
@@ -150,16 +138,13 @@ describe("submit review tool", () => {
         content?: Array<{ type?: string; text?: string }>;
         details?: { status?: string };
       };
-      expect(spawnSync).toHaveBeenCalledWith(
+      expect(spawn).toHaveBeenCalledWith(
         "plannotator",
         [],
         expect.objectContaining({
           cwd: repoRoot,
-          encoding: "utf-8",
           env: expect.objectContaining({ PLANNOTATOR_CWD: repoRoot }),
-          input: expect.stringContaining(
-            '"hook_event_name":"PermissionRequest"',
-          ),
+          stdio: ["pipe", "pipe", "pipe"],
         }),
       );
       expect(result.details?.status).toBe("approved");
@@ -174,7 +159,7 @@ describe("submit review tool", () => {
 
   it("blocks invalid standard plan artifacts before starting review", async () => {
     vi.resetModules();
-    const spawnSync = mockSpawnSync({ status: 0, stdout: "", stderr: "" });
+    const spawn = mockSpawn({ status: 0, stdout: "", stderr: "" });
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
@@ -214,7 +199,7 @@ describe("submit review tool", () => {
       expect(result.content?.[0]?.text ?? "").toContain(
         "Plan Mode artifact policy blocked review submission",
       );
-      expect(spawnSync).not.toHaveBeenCalledWith(
+      expect(spawn).not.toHaveBeenCalledWith(
         "plannotator",
         expect.anything(),
         expect.anything(),
@@ -229,7 +214,7 @@ describe("submit review tool", () => {
 
   it("does not enqueue a stale gate after CLI approval", async () => {
     vi.resetModules();
-    const spawnSync = mockSpawnSync({
+    const spawn = mockSpawn({
       status: 0,
       stdout: cliPlanApprovedStdout,
       stderr: "",
@@ -256,7 +241,7 @@ describe("submit review tool", () => {
       );
 
       await flushMicrotasks();
-      expect(spawnSync).toHaveBeenCalledWith(
+      expect(spawn).toHaveBeenCalledWith(
         "plannotator",
         [],
         expect.objectContaining({ cwd: repoRoot }),
@@ -283,7 +268,7 @@ describe("submit review tool", () => {
 
   it("keeps the pending gate available after CLI annotation feedback", async () => {
     vi.resetModules();
-    const spawnSync = mockSpawnSync({
+    const spawn = mockSpawn({
       status: 0,
       stdout: cliPlanDeniedStdout("Please revise."),
       stderr: "",
@@ -312,7 +297,7 @@ describe("submit review tool", () => {
         message?: { content?: string };
       };
 
-      expect(spawnSync).toHaveBeenCalledWith(
+      expect(spawn).toHaveBeenCalledWith(
         "plannotator",
         [],
         expect.objectContaining({ cwd: repoRoot }),
@@ -332,7 +317,7 @@ describe("submit review tool", () => {
   it("does not poll review-status after CLI manual submit", async () => {
     vi.resetModules();
 
-    const spawnSync = mockSpawnSync({
+    const spawn = mockSpawn({
       status: 0,
       stdout: cliPlanApprovedStdout,
       stderr: "",
@@ -357,7 +342,7 @@ describe("submit review tool", () => {
       );
       await emit("agent_end", {}, ctx);
 
-      expect(spawnSync).toHaveBeenCalled();
+      expect(spawn).toHaveBeenCalled();
       expect(api.sendUserMessage).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
@@ -367,7 +352,7 @@ describe("submit review tool", () => {
 
   it("does not abort while running a manually submitted CLI review", async () => {
     vi.resetModules();
-    mockSpawnSync({
+    mockSpawn({
       status: 0,
       stdout: cliPlanApprovedStdout,
       stderr: "",
@@ -399,10 +384,45 @@ describe("submit review tool", () => {
     }
   });
 
+  it("kills the Plannotator CLI when manual review is aborted", async () => {
+    vi.resetModules();
+    const { getChild } = mockHangingPlannotatorSpawn();
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-submit-abort-");
+    const planFileRelative = getPlanFileRelative(repoRoot);
+    await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
+    const ctx = createTestContext(repoRoot);
+    const abortController = new AbortController();
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      const resultPromise = runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
+        abortController.signal,
+      ) as Promise<{ details?: { status?: string } }>;
+      await flushMicrotasks();
+      abortController.abort();
+      const result = await resultPromise;
+
+      expect(getChild()?.kill).toHaveBeenCalled();
+      expect(result.details?.status).toBe("aborted");
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
   it("clears the review widget after manual CLI review completes", async () => {
     vi.resetModules();
 
-    mockSpawnSync({
+    mockSpawn({
       status: 0,
       stdout: cliPlanApprovedStdout,
       stderr: "",
@@ -441,7 +461,7 @@ describe("submit review tool", () => {
   it("returns the submitted CLI review result", async () => {
     vi.resetModules();
 
-    mockSpawnSync({
+    mockSpawn({
       status: 0,
       stdout: cliPlanApprovedStdout,
       stderr: "",

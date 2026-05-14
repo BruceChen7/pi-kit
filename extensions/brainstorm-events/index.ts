@@ -351,6 +351,7 @@ function startRuntime(
   }
 
   discoverSessionDirs(runtime, pi, ctx, config, brainstormRoot, false);
+  scheduleDiscovery(runtime, pi, ctx, config, brainstormRoot);
   log.debug("brainstorm events watcher started", { brainstormRoot, config });
   return runtime;
 }

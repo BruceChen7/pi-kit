@@ -150,6 +150,11 @@ install_plugin_dependencies() {
         return 0
     fi
 
+    if [ "${PI_KIT_SKIP_PLUGIN_DEP_INSTALL:-}" = "1" ]; then
+        echo "Skipping runtime dependencies for $source_name."
+        return 0
+    fi
+
     echo "Installing runtime dependencies for $source_name..."
     if (cd "$source_path" && npm install --omit=dev --ignore-scripts >/dev/null); then
         echo -e "${GREEN}✓${NC} Dependencies ready: $source_name"

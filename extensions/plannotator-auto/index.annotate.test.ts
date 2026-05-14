@@ -1,3 +1,5 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 type SpawnSyncMockResult = {
@@ -8,10 +10,38 @@ type SpawnSyncMockResult = {
 };
 
 function mockSpawnSync(result: SpawnSyncMockResult) {
-  const spawnSync = vi.fn(() => result);
+  const spawnSync = vi.fn(() => {
+    const child = new EventEmitter() as EventEmitter & {
+      kill: ReturnType<typeof vi.fn>;
+      stderr: PassThrough;
+      stdin: { end: ReturnType<typeof vi.fn> };
+      stdout: PassThrough;
+    };
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = { end: vi.fn() };
+    child.kill = vi.fn(() => {
+      queueMicrotask(() => child.emit("close", null));
+      return true;
+    });
+    queueMicrotask(() => {
+      if (result.error) {
+        child.emit("error", result.error);
+        return;
+      }
+      if (result.stdout) {
+        child.stdout.emit("data", result.stdout);
+      }
+      if (result.stderr) {
+        child.stderr.emit("data", result.stderr);
+      }
+      child.emit("close", result.status);
+    });
+    return child;
+  });
   vi.doMock("node:child_process", async (importOriginal) => ({
     ...(await importOriginal<typeof import("node:child_process")>()),
-    spawnSync,
+    spawn: spawnSync,
   }));
   return spawnSync;
 }

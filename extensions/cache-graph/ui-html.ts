@@ -1,10 +1,9 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CacheSessionMetrics, DashboardInitialView } from "./types.ts";
+import type { CacheSessionMetrics } from "./types.ts";
 
 export type CacheGraphBootData = {
-  initialView: DashboardInitialView;
   metrics: CacheSessionMetrics;
 };
 

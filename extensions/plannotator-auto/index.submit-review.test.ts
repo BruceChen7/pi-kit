@@ -1,4 +1,3 @@
-import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PLANNOTATOR_PENDING_REVIEW_CHANNEL } from "../shared/internal-events.ts";
 import {
@@ -49,6 +48,21 @@ const PLAN_DRAFT_CONTENT = `# Plan
 `;
 
 const INVALID_STANDARD_PLAN_CONTENT = "# Plan\n\n- [ ] test\n";
+
+const cliPlanApprovedStdout = JSON.stringify({
+  hookSpecificOutput: {
+    hookEventName: "PermissionRequest",
+    decision: { behavior: "allow" },
+  },
+});
+
+const cliPlanDeniedStdout = (message: string) =>
+  JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "PermissionRequest",
+      decision: { behavior: "deny", message },
+    },
+  });
 
 const getPlanFileRelative = (repoRoot: string): string => {
   const repoName = repoRoot.split("/").pop() ?? "repo";
@@ -106,7 +120,7 @@ describe("submit review tool", () => {
     vi.resetModules();
     const spawnSync = mockSpawnSync({
       status: 0,
-      stdout: JSON.stringify({ decision: "approved" }),
+      stdout: cliPlanApprovedStdout,
       stderr: "",
     });
     const plannotatorAuto = await importPlannotatorAuto();
@@ -138,11 +152,14 @@ describe("submit review tool", () => {
       };
       expect(spawnSync).toHaveBeenCalledWith(
         "plannotator",
-        ["annotate", path.join(repoRoot, planFileRelative), "--gate", "--json"],
+        [],
         expect.objectContaining({
           cwd: repoRoot,
           encoding: "utf-8",
           env: expect.objectContaining({ PLANNOTATOR_CWD: repoRoot }),
+          input: expect.stringContaining(
+            '"hook_event_name":"PermissionRequest"',
+          ),
         }),
       );
       expect(result.details?.status).toBe("approved");
@@ -214,7 +231,7 @@ describe("submit review tool", () => {
     vi.resetModules();
     const spawnSync = mockSpawnSync({
       status: 0,
-      stdout: JSON.stringify({ decision: "approved" }),
+      stdout: cliPlanApprovedStdout,
       stderr: "",
     });
     const plannotatorAuto = await importPlannotatorAuto();
@@ -241,7 +258,7 @@ describe("submit review tool", () => {
       await flushMicrotasks();
       expect(spawnSync).toHaveBeenCalledWith(
         "plannotator",
-        ["annotate", path.join(repoRoot, planFileRelative), "--gate", "--json"],
+        [],
         expect.objectContaining({ cwd: repoRoot }),
       );
       expect(api.sendUserMessage).not.toHaveBeenCalled();
@@ -268,10 +285,7 @@ describe("submit review tool", () => {
     vi.resetModules();
     const spawnSync = mockSpawnSync({
       status: 0,
-      stdout: JSON.stringify({
-        decision: "annotated",
-        feedback: "Please revise.",
-      }),
+      stdout: cliPlanDeniedStdout("Please revise."),
       stderr: "",
     });
     const plannotatorAuto = await importPlannotatorAuto();
@@ -300,7 +314,7 @@ describe("submit review tool", () => {
 
       expect(spawnSync).toHaveBeenCalledWith(
         "plannotator",
-        ["annotate", path.join(repoRoot, planFileRelative), "--gate", "--json"],
+        [],
         expect.objectContaining({ cwd: repoRoot }),
       );
       expect(result.details?.status).toBe("denied");
@@ -320,7 +334,7 @@ describe("submit review tool", () => {
 
     const spawnSync = mockSpawnSync({
       status: 0,
-      stdout: JSON.stringify({ decision: "approved" }),
+      stdout: cliPlanApprovedStdout,
       stderr: "",
     });
     const plannotatorAuto = await importPlannotatorAuto();
@@ -355,7 +369,7 @@ describe("submit review tool", () => {
     vi.resetModules();
     mockSpawnSync({
       status: 0,
-      stdout: JSON.stringify({ decision: "approved" }),
+      stdout: cliPlanApprovedStdout,
       stderr: "",
     });
     const plannotatorAuto = await importPlannotatorAuto();
@@ -390,7 +404,7 @@ describe("submit review tool", () => {
 
     mockSpawnSync({
       status: 0,
-      stdout: JSON.stringify({ decision: "approved" }),
+      stdout: cliPlanApprovedStdout,
       stderr: "",
     });
     const plannotatorAuto = await importPlannotatorAuto();
@@ -429,7 +443,7 @@ describe("submit review tool", () => {
 
     mockSpawnSync({
       status: 0,
-      stdout: JSON.stringify({ decision: "approved" }),
+      stdout: cliPlanApprovedStdout,
       stderr: "",
     });
 

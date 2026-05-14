@@ -1,4 +1,13 @@
 <script lang="ts">
+import {
+  buildRepoOptions,
+  filterRowsForGraph,
+  formatDateInputValue,
+  totalsForRows,
+  type ChartRange,
+  type RepoFilter,
+} from "../../chart-filters.ts";
+
 type CacheUsageTotals = {
   input: number;
   output: number;
@@ -12,6 +21,7 @@ type AssistantUsageMetric = {
   sequence: number;
   activeBranchSequence?: number;
   entryId: string;
+  repoSlug: string;
   timestamp: string;
   provider: string;
   model: string;
@@ -31,14 +41,16 @@ type CacheSessionMetrics = {
   activeBranchTotals: CacheUsageTotals;
 };
 
-type DashboardInitialView = "graph" | "stats";
 type ChartView = "per-turn" | "cumulative-percent" | "cumulative-total";
 type Status = "idle" | "loading" | "error" | "success";
 
 type ChartPoint = {
   x: number;
   y: number;
+  width: number;
   value: number;
+  sourceStart: number;
+  sourceEnd: number;
 };
 
 type ChartScale = {
@@ -53,8 +65,12 @@ type ChartTick = {
   label: string;
 };
 
+type ChartTimeLabels = {
+  start: string;
+  end: string;
+};
+
 type BootData = {
-  initialView: DashboardInitialView;
   metrics: CacheSessionMetrics;
 };
 
@@ -64,11 +80,27 @@ type DashboardResult =
   | { type: "error"; ok: false; action: "refresh" | "export"; message: string };
 
 const CHART_WIDTH = 640;
-const CHART_HEIGHT = 220;
+const CHART_HEIGHT = 236;
 const CHART_TOP = 22;
 const CHART_RIGHT = 618;
 const CHART_BOTTOM = 192;
 const CHART_LEFT = 62;
+const CHART_TIME_LABEL_Y = 210;
+const MAX_CHART_BARS = 72;
+const CHART_MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 declare global {
   interface Window {
@@ -81,14 +113,15 @@ declare global {
 }
 
 const boot = window.__CACHE_GRAPH_BOOT__ ?? {
-  initialView: "graph",
   metrics: emptyMetrics(),
 };
 const bootRows = boot.metrics.allMessages.length;
 
 let metrics = $state<CacheSessionMetrics>(boot.metrics);
-let initialView = $state<DashboardInitialView>(boot.initialView);
 let chartView = $state<ChartView>("per-turn");
+let chartRange = $state<ChartRange>("today");
+let selectedRepo = $state<RepoFilter>("all");
+let selectedDate = $state(formatDateInputValue(new Date()));
 let status = $state<Status>("idle");
 let statusMessage = $state("");
 let lastUpdated = $state(new Date().toLocaleTimeString());
@@ -99,23 +132,22 @@ let bridgeReady = $state(typeof window.glimpse?.send === "function");
 let refreshAttempts = $state(0);
 let refreshResponses = $state(0);
 
+const repoOptions = $derived(buildRepoOptions(metrics.allMessages));
 const chartRows = $derived(
-  metrics.activeBranchMessages.length > 0
-    ? metrics.activeBranchMessages
-    : metrics.allMessages,
+  filterRowsForGraph(metrics.allMessages, {
+    repo: selectedRepo,
+    anchorDate: selectedDate,
+    range: chartRange,
+  }),
 );
+const selectedTotals = $derived(totalsForRows(chartRows));
 const chartValuesForView = $derived(chartValues(chartRows, chartView));
 const chartScale = $derived(chartValueScale(chartValuesForView, chartView));
 const chartTicks = $derived(buildChartTicks(chartScale, chartView));
-const chartData = $derived(buildChartData(chartValuesForView, chartScale));
-const hasOtherPaths = $derived(
-  metrics.allMessages.some((row) => !row.isOnActiveBranch),
+const chartData = $derived(
+  buildChartData(chartValuesForView, chartScale, chartView),
 );
-const chartPolyline = $derived(
-  chartData
-    .map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`)
-    .join(" "),
-);
+const chartTimeLabels = $derived(buildChartTimeLabels(chartRows));
 
 function refresh(): void {
   showStatus("loading", "Refreshing metrics...");
@@ -269,17 +301,64 @@ function formatPercent(value: number): string {
 function buildChartData(
   values: number[],
   scale: ChartScale,
+  view: ChartView,
 ): ChartPoint[] {
   if (values.length === 0) return [];
-  return values.map((value, index) => ({
-    x:
-      values.length === 1
-        ? (CHART_LEFT + CHART_RIGHT) / 2
-        : CHART_LEFT +
-          (index / (values.length - 1)) * (CHART_RIGHT - CHART_LEFT),
-    y: chartY(value, scale),
-    value,
-  }));
+  const barCount = Math.min(values.length, MAX_CHART_BARS);
+  const slotWidth = (CHART_RIGHT - CHART_LEFT) / barCount;
+  const gap = slotWidth < 4 ? 0.75 : slotWidth < 8 ? 1.25 : 2;
+  const width = Math.max(1, slotWidth - gap);
+
+  return Array.from({ length: barCount }, (_, index) => {
+    const sourceStart = Math.floor((index * values.length) / barCount);
+    const sourceEnd = Math.max(
+      sourceStart,
+      Math.floor(((index + 1) * values.length) / barCount) - 1,
+    );
+    const sourceValues = values.slice(sourceStart, sourceEnd + 1);
+    const value =
+      view === "per-turn"
+        ? average(sourceValues)
+        : (sourceValues[sourceValues.length - 1] ?? 0);
+
+    return {
+      x: CHART_LEFT + slotWidth * index + gap / 2,
+      y: chartY(value, scale),
+      width,
+      value,
+      sourceStart,
+      sourceEnd,
+    };
+  });
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function chartBarHeight(point: ChartPoint): number {
+  if (point.value <= 0) return 0;
+  return Math.max(1, CHART_BOTTOM - point.y);
+}
+
+function chartBarY(point: ChartPoint): number {
+  return CHART_BOTTOM - chartBarHeight(point);
+}
+
+function chartBarTitle(
+  point: ChartPoint,
+  rows: AssistantUsageMetric[],
+  view: ChartView,
+): string {
+  const first = rows[point.sourceStart];
+  const last = rows[point.sourceEnd] ?? first;
+  if (!first) return formatChartValue(point.value, view);
+  const turnLabel =
+    first === last
+      ? `Turn ${first.sequence}`
+      : `Turns ${first.sequence}-${last.sequence}`;
+  return `${first.repoSlug} · ${turnLabel}: ${formatChartValue(point.value, view)}`;
 }
 
 function chartValueScale(values: number[], view: ChartView): ChartScale {
@@ -348,8 +427,38 @@ function formatChartValue(value: number, view: ChartView): string {
   return `${Math.round(value)}%`;
 }
 
-function sessionPathLabel(row: AssistantUsageMetric): string {
-  return row.isOnActiveBranch ? "current path" : "other path";
+function buildChartTimeLabels(
+  rows: AssistantUsageMetric[],
+): ChartTimeLabels | null {
+  if (rows.length === 0) return null;
+
+  const first = rows[0];
+  const last = rows[rows.length - 1] ?? first;
+  return {
+    start: formatChartTimestamp(first.timestamp),
+    end: formatChartTimestamp(last.timestamp),
+  };
+}
+
+function formatChartTimestamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return timestamp.slice(0, 19);
+  }
+
+  const month = CHART_MONTH_LABELS[date.getMonth()] ?? "";
+  const time = [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map(formatClockPart)
+    .join(":");
+  return `${month} ${date.getDate()} ${time}`;
+}
+
+function formatClockPart(value: number): string {
+  return value.toString().padStart(2, "0");
+}
+
+function selectedRepoLabel(repo: RepoFilter): string {
+  return repo === "all" ? "All repos" : repo;
 }
 
 function chartLabel(view: ChartView): string {
@@ -373,22 +482,22 @@ function chartLabel(view: ChartView): string {
 
 <section class="cards">
   <article class="card primary">
-    <span>Current path hit rate</span>
-    <strong>{formatPercent(hitRate(metrics.activeBranchTotals))}</strong>
-    <small>{formatInt(metrics.activeBranchTotals.assistantMessages)} turns</small>
+    <span>Selected hit rate</span>
+    <strong>{formatPercent(hitRate(selectedTotals))}</strong>
+    <small>{formatInt(selectedTotals.assistantMessages)} turns · {selectedRepoLabel(selectedRepo)}</small>
   </article>
   <article class="card">
-    <span>Current path tokens</span>
-    <strong>{formatInt(promptTokens(metrics.activeBranchTotals))}</strong>
-    <small>{formatInt(metrics.activeBranchTotals.cacheRead)} cache read</small>
+    <span>Selected prompt tokens</span>
+    <strong>{formatInt(promptTokens(selectedTotals))}</strong>
+    <small>{formatInt(selectedTotals.cacheRead)} cache read</small>
   </article>
   <article class="card">
-    <span>All paths hit rate</span>
+    <span>All repos hit rate</span>
     <strong>{formatPercent(hitRate(metrics.treeTotals))}</strong>
     <small>{formatInt(metrics.treeTotals.assistantMessages)} turns</small>
   </article>
   <article class="card">
-    <span>Total tokens</span>
+    <span>All repos tokens</span>
     <strong>{formatInt(metrics.treeTotals.totalTokens)}</strong>
     <small>{formatInt(metrics.treeTotals.output)} output</small>
   </article>
@@ -400,25 +509,49 @@ function chartLabel(view: ChartView): string {
   </div>
 {/if}
 
-<main class:stats-focused={initialView === "stats"} class="dashboard">
+<main class="dashboard">
   <section class="panel chart-panel">
     <div class="panel-header">
-      <div>
+      <div class="panel-title">
         <p class="eyebrow">Trend</p>
         <h2>{chartLabel(chartView)}</h2>
       </div>
-      <div class="select-wrap">
-        <select aria-label="Chart metric" bind:value={chartView}>
-          <option value="per-turn">Per-turn %</option>
-          <option value="cumulative-percent">Cumulative %</option>
-          <option value="cumulative-total">Token totals</option>
-        </select>
+      <div class="filter-bar">
+        <label>
+          <span>Repo</span>
+          <select aria-label="Repository" bind:value={selectedRepo}>
+            <option value="all">All repos</option>
+            {#each repoOptions as repo}
+              <option value={repo}>{repo}</option>
+            {/each}
+          </select>
+        </label>
+        <label>
+          <span>Date</span>
+          <input aria-label="Chart date" type="date" bind:value={selectedDate} />
+        </label>
+        <label>
+          <span>Range</span>
+          <select aria-label="Date range" bind:value={chartRange}>
+            <option value="today">Today</option>
+            <option value="7d">7 days</option>
+            <option value="1m">1 month</option>
+          </select>
+        </label>
+        <label>
+          <span>Metric</span>
+          <select aria-label="Chart metric" bind:value={chartView}>
+            <option value="per-turn">Per-turn %</option>
+            <option value="cumulative-percent">Cumulative %</option>
+            <option value="cumulative-total">Token totals</option>
+          </select>
+        </label>
       </div>
     </div>
 
     {#if chartRows.length === 0}
       <div class="empty">
-        <span>No assistant usage metrics yet.</span>
+        <span>No assistant usage metrics for this repo/date range.</span>
         <small>
           boot {bootRows} · bridge {bridgeReady ? "ready" : "missing"} · refresh {refreshAttempts}/{refreshResponses}
         </small>
@@ -433,68 +566,36 @@ function chartLabel(view: ChartView): string {
         {/each}
         <line x1={CHART_LEFT} y1={CHART_BOTTOM} x2={CHART_RIGHT} y2={CHART_BOTTOM} class="axis" />
         <line x1={CHART_LEFT} y1={CHART_TOP} x2={CHART_LEFT} y2={CHART_BOTTOM} class="axis" />
-        <polyline points={chartPolyline} class="line" />
-        {#each chartData as point, index}
-          <circle
-            class="point"
-            cx={point.x}
-            cy={point.y}
-            r="4"
+        {#if chartTimeLabels}
+          <text
+            x={CHART_LEFT}
+            y={CHART_TIME_LABEL_Y}
+            class="x-time-label x-time-label-start"
           >
-            <title>Turn {chartRows[index].sequence}: {formatChartValue(point.value, chartView)}</title>
-          </circle>
+            {chartTimeLabels.start}
+          </text>
+          <text
+            x={CHART_RIGHT}
+            y={CHART_TIME_LABEL_Y}
+            class="x-time-label x-time-label-end"
+          >
+            {chartTimeLabels.end}
+          </text>
+        {/if}
+        {#each chartData as point, index}
+          <rect
+            class:last-bar={index === chartData.length - 1}
+            class="bar"
+            x={point.x}
+            y={chartBarY(point)}
+            width={point.width}
+            height={chartBarHeight(point)}
+            rx="1.5"
+          >
+            <title>{chartBarTitle(point, chartRows, chartView)}</title>
+          </rect>
         {/each}
       </svg>
     {/if}
-  </section>
-
-  <section class="panel table-panel">
-    <div class="panel-header">
-      <div>
-        <p class="eyebrow">Stats</p>
-        <h2>Assistant messages</h2>
-      </div>
-      <span>{metrics.allMessages.length} rows</span>
-    </div>
-    <div class="table-wrap">
-      <table class:has-other-paths={hasOtherPaths}>
-        <thead>
-          <tr>
-            <th>#</th>
-            {#if hasOtherPaths}
-              <th>Path</th>
-            {/if}
-            <th>Model</th>
-            <th>Prompt</th>
-            <th>Cache read</th>
-            <th>Cache write</th>
-            <th>Hit %</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each metrics.allMessages as row}
-            <tr class:muted={!row.isOnActiveBranch}>
-              <td>{row.sequence}</td>
-              {#if hasOtherPaths}
-                <td>{sessionPathLabel(row)}</td>
-              {/if}
-              <td>{row.provider}/{row.model}</td>
-              <td>{formatInt(row.input + row.cacheRead + row.cacheWrite)}</td>
-              <td>{formatInt(row.cacheRead)}</td>
-              <td>{formatInt(row.cacheWrite)}</td>
-              <td>{formatPercent(row.cacheHitPercent)}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      {#if metrics.allMessages.length === 0}
-        <div class="empty table-empty">
-          <span>No rows to display.</span>
-          <small>
-            boot {bootRows} · bridge {bridgeReady ? "ready" : "missing"} · refresh {refreshAttempts}/{refreshResponses}
-          </small>
-        </div>
-      {/if}
-    </div>
   </section>
 </main>

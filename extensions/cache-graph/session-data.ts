@@ -40,6 +40,7 @@ type MessageEntry = Extract<SessionEntry, { type: "message" }> & {
 
 export function collectCacheSessionMetrics(
   sessionManager: SessionReader,
+  repoSlug = "current repo",
 ): CacheSessionMetrics {
   const allEntries = sessionManager.getEntries();
   const activeBranchIds = new Set(
@@ -63,6 +64,7 @@ export function collectCacheSessionMetrics(
       sequence,
       activeBranchSequence: undefined,
       entryId: entry.id,
+      repoSlug,
       timestamp: readTimestamp(entry.timestamp),
       provider: readString(entry.message.provider, "unknown"),
       model: readString(entry.message.model, "unknown"),

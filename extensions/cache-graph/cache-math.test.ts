@@ -5,6 +5,7 @@ import { computeCumulativeSeries } from "./cumulative.ts";
 const message = (input: number, cacheRead: number, cacheWrite: number) => ({
   sequence: 1,
   entryId: "entry",
+  repoSlug: "repo",
   timestamp: "2026-05-12T00:00:00.000Z",
   provider: "provider",
   model: "model",

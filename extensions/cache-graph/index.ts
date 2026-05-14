@@ -4,22 +4,22 @@ import {
   SessionManager as PiSessionManager,
   type SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import { collectAllRepoCacheMetrics } from "./all-repo-metrics.ts";
 import { exportStatsCsv } from "./export.ts";
 import { openCacheGraphDashboard } from "./glimpse-host.ts";
 import { collectCacheSessionMetrics } from "./session-data.ts";
 import type { CacheSessionMetrics } from "./types.ts";
 
-type CacheSubcommand = "graph" | "stats" | "export";
+type CacheSubcommand = "graph" | "export";
 
 const cacheSubcommands = [
   { value: "graph", label: "graph", description: "Open cache dashboard" },
-  { value: "stats", label: "stats", description: "Open cache stats view" },
   { value: "export", label: "export", description: "Export cache CSV" },
 ];
 
 export function normalizeCacheSubcommand(args: string): CacheSubcommand | null {
   const command = args.trim().toLowerCase();
-  if (command === "graph" || command === "stats" || command === "export") {
+  if (command === "graph" || command === "export") {
     return command;
   }
   return null;
@@ -38,15 +38,11 @@ export default function cacheGraphExtension(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const subcommand = normalizeCacheSubcommand(args);
       if (!subcommand) {
-        ctx.ui.notify(
-          "Usage: /cache graph | /cache stats | /cache export",
-          "info",
-        );
+        ctx.ui.notify("Usage: /cache graph | /cache export", "info");
         return;
       }
 
-      const getMetrics = () =>
-        collectMetricsWithPersistedFallback(ctx.sessionManager, ctx.cwd);
+      const getMetrics = () => collectAllRepoCacheMetrics();
       const exportCsv = () =>
         exportStatsCsv(ctx.cwd, ctx.sessionManager, getMetrics());
 
@@ -58,7 +54,7 @@ export default function cacheGraphExtension(pi: ExtensionAPI): void {
 
       if (!ctx.hasUI) {
         ctx.ui.notify(
-          "/cache graph and /cache stats require interactive UI. Use /cache export in non-interactive mode.",
+          "/cache graph requires interactive UI. Use /cache export in non-interactive mode.",
           "info",
         );
         return;
@@ -66,7 +62,6 @@ export default function cacheGraphExtension(pi: ExtensionAPI): void {
 
       try {
         await openCacheGraphDashboard({
-          initialView: subcommand === "stats" ? "stats" : "graph",
           getMetrics,
           exportCsv,
         });

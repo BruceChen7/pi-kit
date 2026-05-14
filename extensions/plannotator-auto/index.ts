@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
@@ -112,6 +112,9 @@ const ISSUE_FILE_PATTERN = /^.+\.md$/;
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
 const ANNOTATE_LATEST_DOCUMENT_SHORTCUT = "ctrl+alt+l";
 const PLAN_REVIEW_SUBMIT_TOOL = "plannotator_auto_submit_review";
+const KEEP_PLAN_HEADING_GUIDANCE =
+  "Keep the first # heading unchanged unless the reviewer explicitly asks you " +
+  "to rename the plan; Plannotator uses that heading to show version diffs.";
 const planReviewSubmitToolParameters = Type.Object({
   path: Type.String({ description: "Pending review target path" }),
 });
@@ -243,7 +246,7 @@ const formatPendingPlanReviewGateMessage = (planFiles: string[]): string =>
   `You still have pending Plannotator review drafts:\n- ${planFiles.join("\n- ")}\n\nCall ${PLAN_REVIEW_SUBMIT_TOOL} with one of these paths before continuing.`;
 
 const formatPendingPlanReviewPrompt = (planFiles: string[]): string =>
-  `[PLANNOTATOR AUTO - PENDING REVIEW]\nPending review targets:\n- ${planFiles.join("\n- ")}\n\nYour next required action is calling ${PLAN_REVIEW_SUBMIT_TOOL} with one pending path. If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`;
+  `[PLANNOTATOR AUTO - PENDING REVIEW]\nPending review targets:\n- ${planFiles.join("\n- ")}\n\nYour next required action is calling ${PLAN_REVIEW_SUBMIT_TOOL} with one pending path. If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again. ${KEEP_PLAN_HEADING_GUIDANCE}`;
 
 const getPendingPlanReviewEvents = (
   state: SessionRuntimeState,
@@ -827,6 +830,25 @@ type CliReviewResult =
   | { status: "handled"; result: CliReviewDecision }
   | { status: "error"; error: string };
 
+const toCliReviewResult = (
+  result: SpawnSyncReturns<string>,
+  parseStdout: (stdout: string) => CliReviewDecision,
+): CliReviewResult => {
+  if (result.error) {
+    return { status: "error", error: result.error.message };
+  }
+  if (result.status !== 0) {
+    return {
+      status: "error",
+      error: result.stderr || `plannotator exited with ${result.status}`,
+    };
+  }
+  return {
+    status: "handled",
+    result: parseStdout(result.stdout ?? ""),
+  };
+};
+
 const parseCliReviewResult = (stdout: string): CliReviewDecision => {
   const trimmed = stdout.trim();
   if (!trimmed) {
@@ -853,6 +875,67 @@ const parseCliReviewResult = (stdout: string): CliReviewDecision => {
   }
 };
 
+const parseCliPlanReviewResult = (stdout: string): CliReviewDecision => {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return { approved: false, exit: true };
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      hookSpecificOutput?: {
+        decision?: {
+          behavior?: string;
+          message?: string;
+        };
+      };
+      decision?: string;
+      feedback?: string;
+    };
+    const hookDecision = parsed.hookSpecificOutput?.decision;
+    if (hookDecision?.behavior === "allow") {
+      return { approved: true };
+    }
+    if (hookDecision?.behavior === "deny") {
+      return { approved: false, feedback: hookDecision.message ?? "" };
+    }
+    if (parsed.decision === "approved") {
+      return { approved: true };
+    }
+    if (parsed.decision === "dismissed") {
+      return { approved: false, exit: true };
+    }
+    if (parsed.decision === "annotated") {
+      return { approved: false, feedback: parsed.feedback ?? "" };
+    }
+  } catch {
+    // Fall through to plaintext handling.
+  }
+
+  return { approved: false, feedback: trimmed };
+};
+
+const runPlannotatorPlanReviewCli = (
+  ctx: Pick<ExtensionContext, "cwd">,
+  planContent: string,
+  options: { timeoutMs: number },
+): CliReviewResult => {
+  const hookEvent = {
+    hook_event_name: "PermissionRequest",
+    tool_input: { plan: planContent },
+    permission_mode: "default",
+  };
+  const result = spawnSync("plannotator", [], {
+    cwd: ctx.cwd,
+    encoding: "utf-8",
+    env: { ...process.env, PLANNOTATOR_CWD: ctx.cwd },
+    input: `${JSON.stringify(hookEvent)}\n`,
+    timeout: options.timeoutMs,
+  });
+
+  return toCliReviewResult(result, parseCliPlanReviewResult);
+};
+
 const runPlannotatorAnnotateCli = (
   ctx: Pick<ExtensionContext, "cwd">,
   filePath: string,
@@ -874,19 +957,15 @@ const runPlannotatorAnnotateCli = (
     timeout: options.timeoutMs,
   });
 
-  if (result.error) {
-    return { status: "error", error: result.error.message };
+  return toCliReviewResult(result, parseCliReviewResult);
+};
+
+const parseCliCodeReviewResult = (stdout: string): CliReviewDecision => {
+  const trimmed = stdout.trim();
+  if (!trimmed || /no changes requested/i.test(trimmed)) {
+    return { approved: true };
   }
-  if (result.status !== 0) {
-    return {
-      status: "error",
-      error: result.stderr || `plannotator exited with ${result.status}`,
-    };
-  }
-  return {
-    status: "handled",
-    result: parseCliReviewResult(result.stdout ?? ""),
-  };
+  return { approved: false, feedback: trimmed };
 };
 
 const runPlannotatorCodeReviewCli = (
@@ -899,21 +978,7 @@ const runPlannotatorCodeReviewCli = (
     timeout: SYNC_CODE_REVIEW_TIMEOUT_MS,
   });
 
-  if (result.error) {
-    return { status: "error", error: result.error.message };
-  }
-  if (result.status !== 0) {
-    return {
-      status: "error",
-      error: result.stderr || `plannotator exited with ${result.status}`,
-    };
-  }
-
-  const stdout = (result.stdout ?? "").trim();
-  if (!stdout || /no changes requested/i.test(stdout)) {
-    return { status: "handled", result: { approved: true } };
-  }
-  return { status: "handled", result: { approved: false, feedback: stdout } };
+  return toCliReviewResult(result, parseCliCodeReviewResult);
 };
 
 const isPathWithinCwd = (
@@ -1544,7 +1609,7 @@ const approvePendingPlanReview = (
   return {
     content: [
       {
-        type: "text",
+        type: "text" as const,
         text: `Review approved for ${pendingPlanReview.planFile}.`,
       },
     ],
@@ -1558,8 +1623,8 @@ const denyPendingPlanReview = (
 ) => ({
   content: [
     {
-      type: "text",
-      text: `YOUR REVIEW WAS NOT APPROVED. Revise ${pendingPlanReview.planFile} and call ${PLAN_REVIEW_SUBMIT_TOOL} again after addressing this feedback.\n\n${feedback || "Review changes requested."}`,
+      type: "text" as const,
+      text: `YOUR REVIEW WAS NOT APPROVED. Revise ${pendingPlanReview.planFile} and call ${PLAN_REVIEW_SUBMIT_TOOL} again after addressing this feedback. ${KEEP_PLAN_HEADING_GUIDANCE}\n\n${feedback || "Review changes requested."}`,
     },
   ],
   details: { status: "denied" },
@@ -1695,15 +1760,15 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       setReviewWidget(ctx);
 
       try {
-        const cliResult = runPlannotatorAnnotateCli(
-          ctx,
-          pendingPlanReview.resolvedPlanPath,
-          {
-            gate: true,
-            renderHtml,
-            timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
-          },
-        );
+        const cliResult = renderHtml
+          ? runPlannotatorAnnotateCli(ctx, pendingPlanReview.resolvedPlanPath, {
+              gate: true,
+              renderHtml,
+              timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+            })
+          : runPlannotatorPlanReviewCli(ctx, planContent, {
+              timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+            });
 
         if (cliResult.status === "error") {
           return {

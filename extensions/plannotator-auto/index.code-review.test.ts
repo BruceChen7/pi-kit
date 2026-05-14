@@ -8,12 +8,15 @@ import {
 } from "./test-helpers.js";
 
 const mockSpawn = mockPlannotatorSpawn;
+const CLEAN_REVIEW_NOTIFICATION = "No uncommitted changes to review.";
 
 async function importPlannotatorAuto() {
   return (await import("./index.js")).default;
 }
 
-function mockCodeReviewApi() {
+function mockCodeReviewApi(options: { repoDirty?: boolean } = {}) {
+  const repoDirty = options.repoDirty ?? true;
+
   vi.doMock("../shared/settings.ts", () => ({
     loadGlobalSettings: vi.fn(() => ({
       globalPath: "/home/test/.pi/agent/third_extension_settings.json",
@@ -34,10 +37,18 @@ function mockCodeReviewApi() {
     getGitCommonDir: vi.fn(() => "/repo/.git"),
     checkRepoDirty: vi.fn(() => ({
       summary: {
-        dirty: true,
+        dirty: repoDirty,
       },
     })),
   }));
+}
+
+function expectCodeReviewCliNotStarted(spawn: ReturnType<typeof mockSpawn>) {
+  expect(spawn).not.toHaveBeenCalledWith(
+    "plannotator",
+    ["review"],
+    expect.anything(),
+  );
 }
 
 async function triggerCodeReview(
@@ -306,6 +317,57 @@ describe("code review trigger timing", () => {
         "# Code Review\n\nCode review completed — no changes requested.",
         { deliverAs: "followUp" },
       );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+    }
+  });
+
+  it("notifies when manual shortcut review has no uncommitted changes", async () => {
+    vi.resetModules();
+    const spawn = mockSpawn({ status: 0, stdout: "", stderr: "" });
+    mockCodeReviewApi({ repoDirty: false });
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit, runShortcut } = createFakePi();
+    plannotatorAuto(api as never);
+    const ctx = createTestContext("/repo");
+
+    try {
+      await emit("session_start", {}, ctx);
+      await runShortcut("ctrl+shift+r", ctx);
+      await flushMicrotasks();
+
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        CLEAN_REVIEW_NOTIFICATION,
+        "info",
+      );
+      expectCodeReviewCliNotStarted(spawn);
+      expect(api.sendUserMessage).not.toHaveBeenCalled();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+    }
+  });
+
+  it("keeps automatic clean repo review silent", async () => {
+    vi.resetModules();
+    const spawn = mockSpawn({ status: 0, stdout: "", stderr: "" });
+    mockCodeReviewApi({ repoDirty: false });
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit } = createFakePi();
+    plannotatorAuto(api as never);
+    const ctx = createTestContext("/repo");
+
+    try {
+      await emit("session_start", {}, ctx);
+      await triggerCodeReview(emit, ctx);
+      await emit("agent_end", {}, ctx);
+
+      expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+        CLEAN_REVIEW_NOTIFICATION,
+        "info",
+      );
+      expectCodeReviewCliNotStarted(spawn);
     } finally {
       await emit("session_shutdown", {}, ctx);
     }

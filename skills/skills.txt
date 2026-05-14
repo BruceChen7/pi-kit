@@ -30,6 +30,8 @@ me-code-simplifier|local|skills/me-code-simplifier
 me-tdd|local|skills/me_tdd
 push-ifs-up-fors-down|local|skills/push-ifs-up-fors-down
 debug-pi-coding-agent|local|skills/debug-pi-coding-agent
+plan-code-review|local|skills/review
+handoff|local|skills/handoff
 # https://github.com/mattpocock/skills
 grill-with-docs|local|skills/grill-with-docs
 grill-me|local|skills/grill-me

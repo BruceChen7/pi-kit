@@ -20,6 +20,8 @@ Default to Chinese for questions, specs, plans, and summaries unless the user ex
 - Do not start implementation from this skill. End by producing reviewed planning artifacts when the user wants to proceed.
 - Keep pure interview sessions lightweight: if there are no file edits, code changes, or architectural commitments, the `AGENTS.md` skill-only exception applies and no plan file is required.
 - Store domain docs under `.pi/contexts/`; do not create `CONTEXT.md` or ADR files in application source directories.
+- Treat `.pi/contexts/**/CONTEXT.md` as a domain glossary only, not a wiki, spec,
+  implementation plan, scratchpad, or repository for technical decisions.
 - The moment you will edit repository files (`.pi/contexts/**`, specs, plans, or code), enter the Pi plan workflow.
 
 ## Pi Workflow Integration
@@ -99,8 +101,11 @@ Use `CONTEXT-FORMAT.md` for structure and rules. Key constraints:
 - pick one canonical term and list avoided aliases when useful
 - keep definitions to one sentence
 - document relationships and flagged ambiguities
+- do not include implementation steps, file-path-level designs, feature specs, temporary notes, or technical decisions
 
-Create `.pi/contexts/CONTEXT.md` or `.pi/contexts/<context-id>/CONTEXT.md` lazily only when there is a real resolved term to record.
+Create `.pi/contexts/CONTEXT.md` or `.pi/contexts/<context-id>/CONTEXT.md` lazily only
+when there is a real resolved term to record. Put implementation decisions in `.pi/plans/**`
+or ADRs, not in `CONTEXT.md`.
 
 ### 4. Offer ADRs sparingly
 

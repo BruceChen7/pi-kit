@@ -1497,6 +1497,9 @@ const maybeStartCodeReview = async (
       sessionKey: getSessionKey(ctx),
     });
     clearReviewPending(ctx);
+    if (isManualReview) {
+      ctx.ui.notify("No uncommitted changes to review.", "info");
+    }
     return;
   }
 

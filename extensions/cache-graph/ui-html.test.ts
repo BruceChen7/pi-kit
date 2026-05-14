@@ -38,7 +38,7 @@ describe("createCacheGraphHtml", () => {
     await writeFile(path.join(dir, "assets", "app.css"), "body{color:red}");
 
     const html = await createCacheGraphHtml(
-      { initialView: "stats", metrics: emptyMetrics },
+      { metrics: emptyMetrics },
       { uiDistDir: dir },
     );
 

@@ -7,11 +7,6 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
-import {
-  matchesKey,
-  truncateToWidth,
-  visibleWidth,
-} from "@earendil-works/pi-tui";
 
 /**
  * Extension that seeds the prompt editor history with recent prompts from the
@@ -45,14 +40,6 @@ type SessionEntry = {
 class HistoryEditor extends CustomEditor {
   private lockedBorder = false;
   private _borderColor?: (text: string) => string;
-  private promptHistory: PromptEntry[] = [];
-
-  // Search mode state
-  private searchMode = false;
-  private searchQuery = "";
-  private searchResults: PromptEntry[] = [];
-  private searchIndex = -1;
-  private originalText = "";
 
   constructor(
     tui: ConstructorParameters<typeof CustomEditor>[0],
@@ -74,166 +61,6 @@ class HistoryEditor extends CustomEditor {
 
   lockBorderColor() {
     this.lockedBorder = true;
-  }
-
-  public setHistory(history: PromptEntry[]): void {
-    this.promptHistory = history;
-  }
-
-  override handleInput(data: string): void {
-    if (matchesKey(data, "ctrl+r") && !this.searchMode) {
-      this.enterSearchMode();
-      return;
-    }
-
-    if (this.searchMode) {
-      this.handleSearchInput(data);
-      return;
-    }
-
-    // Default behavior
-    super.handleInput(data);
-  }
-
-  private enterSearchMode(): void {
-    this.searchMode = true;
-    this.searchQuery = "";
-    this.searchResults = [];
-    this.searchIndex = -1;
-    this.originalText = this.getText();
-  }
-
-  private handleSearchInput(data: string): void {
-    if (matchesKey(data, "escape") || matchesKey(data, "ctrl+g")) {
-      this.exitSearchMode(false);
-      this.requestRender();
-      return;
-    }
-
-    // Enter: accept current match, exit search
-    if (matchesKey(data, "enter")) {
-      this.exitSearchMode(true);
-      this.requestRender();
-      return;
-    }
-
-    // Ctrl+R: search for next match
-    if (matchesKey(data, "ctrl+r")) {
-      this.searchNext();
-      this.requestRender();
-      return;
-    }
-
-    // Backspace: delete search character
-    if (matchesKey(data, "backspace")) {
-      if (this.searchQuery.length > 0) {
-        this.searchQuery = this.searchQuery.slice(0, -1);
-        this.performSearch();
-      }
-      this.requestRender();
-      return;
-    }
-
-    // Regular character: add to search query
-    if (data.length === 1 && data.charCodeAt(0) >= 32) {
-      this.searchQuery += data;
-      this.performSearch();
-      this.requestRender();
-      return;
-    }
-
-    // Other keys: pass to default handler
-    super.handleInput(data);
-  }
-
-  private requestRender(): void {
-    const tui = (this as { _tui?: { requestRender?: () => void } })._tui;
-    tui?.requestRender();
-  }
-
-  private performSearch(): void {
-    if (!this.searchQuery) {
-      this.searchResults = [];
-      this.searchIndex = -1;
-      return;
-    }
-
-    // Regex + case insensitive (fd style)
-    try {
-      const regex = new RegExp(this.searchQuery, "i");
-      this.searchResults = this.promptHistory.filter((entry) =>
-        regex.test(entry.text),
-      );
-      this.searchIndex = this.searchResults.length > 0 ? 0 : -1;
-    } catch {
-      this.searchResults = [];
-      this.searchIndex = -1;
-    }
-  }
-
-  private searchNext(): void {
-    if (this.searchResults.length === 0) return;
-    this.searchIndex = (this.searchIndex + 1) % this.searchResults.length;
-  }
-
-  private exitSearchMode(accept: boolean): void {
-    this.searchMode = false;
-
-    if (accept && this.searchIndex >= 0) {
-      const matched = this.searchResults[this.searchIndex];
-      this.setText(matched.text);
-    } else {
-      this.setText(this.originalText);
-    }
-
-    this.searchQuery = "";
-    this.searchResults = [];
-    this.searchIndex = -1;
-    this.originalText = "";
-  }
-
-  private highlightMatch(text: string): string {
-    if (!this.searchQuery) return text;
-    try {
-      const regex = new RegExp(`(${this.searchQuery})`, "gi");
-      return text.replace(regex, "\x1b[7m$1\x1b[27m");
-    } catch {
-      return text;
-    }
-  }
-
-  override render(width: number): string[] {
-    const lines = super.render(width);
-
-    if (this.searchMode && lines.length > 1) {
-      const searchLineIndex = lines.length - 2;
-      lines[searchLineIndex] = this.renderSearchLine(width);
-    }
-
-    return lines;
-  }
-
-  private renderSearchLine(width: number): string {
-    const searchPrompt = `(reverse-i-search)\`${this.searchQuery}': `;
-    const match =
-      this.searchIndex >= 0 ? this.searchResults[this.searchIndex] : null;
-    const matchText = match ? this.highlightMatch(match.text) : "(no match)";
-    const status =
-      this.searchResults.length > 0
-        ? ` [${this.searchIndex + 1}/${this.searchResults.length}]`
-        : "";
-    const availableWidth = Math.max(
-      0,
-      width - visibleWidth(searchPrompt) - visibleWidth(status),
-    );
-    const truncatedMatch = truncateToWidth(
-      matchText,
-      availableWidth,
-      "...",
-      false,
-    );
-    const line = `${searchPrompt}${truncatedMatch}${status}`;
-    return line + " ".repeat(Math.max(0, width - visibleWidth(line)));
   }
 }
 
@@ -461,7 +288,6 @@ function setEditorHistory(
     for (const prompt of history) {
       editor.addToHistory(prompt.text);
     }
-    editor.setHistory(history);
     return editor;
   });
 }

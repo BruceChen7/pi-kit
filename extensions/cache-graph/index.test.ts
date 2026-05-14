@@ -22,10 +22,10 @@ const createPi = () => {
 };
 
 describe("cache command", () => {
-  it("normalizes supported subcommands", () => {
+  it("normalizes graph and export subcommands only", () => {
     expect(normalizeCacheSubcommand(" graph ")).toBe("graph");
-    expect(normalizeCacheSubcommand("stats")).toBe("stats");
     expect(normalizeCacheSubcommand("export")).toBe("export");
+    expect(normalizeCacheSubcommand("stats")).toBeNull();
     expect(normalizeCacheSubcommand("unknown")).toBeNull();
   });
 
@@ -39,7 +39,7 @@ describe("cache command", () => {
     });
 
     expect(notify).toHaveBeenCalledWith(
-      "Usage: /cache graph | /cache stats | /cache export",
+      "Usage: /cache graph | /cache export",
       "info",
     );
   });

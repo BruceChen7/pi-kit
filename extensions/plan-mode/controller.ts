@@ -75,6 +75,11 @@ import {
   getModeLabel,
 } from "./ui.ts";
 
+const PLAN_HEADING_REVIEW_GUIDANCE =
+  "Keep the plan's first # heading unchanged across denied revisions unless " +
+  "the reviewer explicitly asks for a rename; Plannotator uses that heading " +
+  "to group version diffs.";
+
 export class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
   state = new PlanModeState(DEFAULT_CONFIG.defaultMode);
@@ -195,6 +200,7 @@ export class PlanModeController {
       ...KEY_CODE_SKETCH_GUIDANCE,
       REVIEW_SECTION_DETAILS_GUIDANCE,
       "- If Plannotator denies the plan, revise the same file and submit again.",
+      `- ${PLAN_HEADING_REVIEW_GUIDANCE}`,
       "- In act phases, execute the approved plan and update " +
         `${todoToolName} statuses to in_progress and done so the widget shows ` +
         "the current step.",

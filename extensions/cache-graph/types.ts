@@ -11,6 +11,7 @@ export interface AssistantUsageMetric {
   sequence: number;
   activeBranchSequence?: number;
   entryId: string;
+  repoSlug: string;
   timestamp: string;
   provider: string;
   model: string;
@@ -29,5 +30,3 @@ export interface CacheSessionMetrics {
   treeTotals: CacheUsageTotals;
   activeBranchTotals: CacheUsageTotals;
 }
-
-export type DashboardInitialView = "graph" | "stats";

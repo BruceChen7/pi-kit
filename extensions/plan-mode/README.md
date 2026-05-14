@@ -51,6 +51,8 @@ The normal flow is:
 2. Pi writes a plan or spec under `.pi/plans/<repo>/...`.
 3. Pi submits it for review.
 4. If review is denied, Pi revises the same file and submits again.
+   Keep the first `#` heading unchanged across denied revisions unless the
+   reviewer explicitly asks for a rename so Plannotator can show version diffs.
 5. After approval, Pi implements the approved plan and updates TODO progress.
 
 Operational commands such as tests, lint, git status, commit, or push are not automatically
@@ -154,7 +156,9 @@ If Pi is not editing files:
 
 - Check `/plan-mode status`.
 - If the session is in `plan` or `review:plan`, switch to `act` or approve the plan.
-- If a plan was rejected, revise the same plan file and submit it again.
+- If a plan was rejected, revise the same plan file and submit it again. Keep
+  the first `#` heading unchanged unless the reviewer explicitly asked for a
+  rename; Plannotator keys plan-version diffs from that heading.
 
 If approval does not start implementation:
 

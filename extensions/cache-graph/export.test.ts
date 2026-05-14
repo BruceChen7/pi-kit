@@ -11,6 +11,7 @@ const metrics: CacheSessionMetrics = {
       sequence: 1,
       activeBranchSequence: 1,
       entryId: "entry,1",
+      repoSlug: "repo-a",
       timestamp: "2026-05-12T00:00:00.000Z",
       provider: "provider",
       model: "model",
@@ -50,7 +51,9 @@ describe("cache CSV export", () => {
   it("builds escaped CSV rows", () => {
     const csv = buildCsv(metrics);
     expect(csv).toContain("row_type,scope");
+    expect(csv).toContain("repo_slug");
     expect(csv).toContain('"entry,1"');
+    expect(csv).toContain("repo-a");
   });
 
   it("writes CSV using the session name", async () => {

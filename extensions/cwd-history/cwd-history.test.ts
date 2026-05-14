@@ -144,7 +144,7 @@ describe("cwd-history extension", () => {
   it("keeps rendering when the old session theme context becomes stale", async () => {
     const harness = buildPiHarness({ throwThemeOnStale: true });
 
-    cwdHistoryExtension(harness.api as ExtensionAPI);
+    cwdHistoryExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start");
 
     const editor = harness.createEditor();
@@ -157,7 +157,7 @@ describe("cwd-history extension", () => {
   it("falls back to the cached thinking border color when thinking-level access becomes stale", async () => {
     const harness = buildPiHarness({ throwThinkingLevelOnStale: true });
 
-    cwdHistoryExtension(harness.api as ExtensionAPI);
+    cwdHistoryExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start");
 
     const editor = harness.createEditor();
@@ -170,7 +170,7 @@ describe("cwd-history extension", () => {
   it("keeps prompts submitted while previous-session history loads", async () => {
     const harness = buildPiHarness();
 
-    cwdHistoryExtension(harness.api as ExtensionAPI);
+    cwdHistoryExtension(harness.api as unknown as ExtensionAPI);
     await harness.emit("session_start");
     harness.setBranch([userPromptEntry("first prompt after startup")]);
 
@@ -183,45 +183,5 @@ describe("cwd-history extension", () => {
     editor.handleInput("\x1b[A");
 
     expect(editor.getText()).toBe("first prompt after startup");
-  });
-
-  it("opens reverse search from CSI-u Ctrl+R input", async () => {
-    const harness = buildPiHarness();
-    harness.setBranch([userPromptEntry("first prompt after startup")]);
-
-    cwdHistoryExtension(harness.api as ExtensionAPI);
-    await harness.emit("session_start");
-
-    const editor = harness.createEditor();
-    editor.setText("draft prompt");
-
-    editor.handleInput("\x1b[114;5u");
-    for (const char of "startup") {
-      editor.handleInput(char);
-    }
-    editor.handleInput("\r");
-
-    expect(editor.getText()).toBe("first prompt after startup");
-  });
-
-  it("keeps reverse search render height stable", async () => {
-    const harness = buildPiHarness();
-    harness.setBranch([userPromptEntry("first prompt after startup")]);
-
-    cwdHistoryExtension(harness.api as ExtensionAPI);
-    await harness.emit("session_start");
-
-    const editor = harness.createEditor();
-    editor.setText("draft prompt");
-    const normalLines = editor.render(80);
-
-    editor.handleInput("\x1b[114;5u");
-    for (const char of "startup") {
-      editor.handleInput(char);
-    }
-    const searchLines = editor.render(80);
-
-    expect(searchLines).toHaveLength(normalLines.length);
-    expect(searchLines.at(-1)).toBe(normalLines.at(-1));
   });
 });

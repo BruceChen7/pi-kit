@@ -226,7 +226,10 @@ export class PlanModeController {
     this.internalExtensionBypassForTurn =
       this.inputSourceForTurn === "extension";
 
-    if (!this.internalExtensionBypassForTurn && this.dismissCompletedRun()) {
+    if (
+      !this.internalExtensionBypassForTurn &&
+      this.dismissCompletedNonApprovedRun()
+    ) {
       this.updateUi(ctx);
       this.persist();
     }
@@ -247,6 +250,14 @@ export class PlanModeController {
     }
 
     if (
+      !this.internalExtensionBypassForTurn &&
+      this.state.isApprovedCompletedPlanActRun() &&
+      !continuesApprovedPlan
+    ) {
+      this.state.completePlanActRun();
+      this.applyMode(ctx);
+      this.persist();
+    } else if (
       !this.internalExtensionBypassForTurn &&
       this.state.shouldReturnPlanActToPlan() &&
       !continuesApprovedPlan
@@ -270,8 +281,11 @@ export class PlanModeController {
     this.modePromptedForTurn = false;
   }
 
-  private dismissCompletedRun(): boolean {
+  private dismissCompletedNonApprovedRun(): boolean {
     if (this.state.activeRun?.status !== "completed") {
+      return false;
+    }
+    if (this.state.isApprovedCompletedPlanActRun()) {
       return false;
     }
     this.state.archiveCompletedActiveRun();

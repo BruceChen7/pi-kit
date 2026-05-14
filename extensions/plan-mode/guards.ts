@@ -31,12 +31,15 @@ const dedupeTargetPaths = (paths: ToolTargetPath[]): ToolTargetPath[] => {
   });
 };
 
-const pathsFromMultiEdit = (multi: unknown[]): ToolTargetPath[] =>
+const pathsFromMultiEdit = (
+  multi: unknown[],
+  inheritedPath: string | null,
+): ToolTargetPath[] =>
   multi.flatMap((entry) => {
     if (!isRecord(entry)) {
       return [];
     }
-    const rawPath = stringProperty(entry, "path");
+    const rawPath = stringProperty(entry, "path") ?? inheritedPath;
     return rawPath ? [{ rawPath }] : [];
   });
 
@@ -73,6 +76,8 @@ const targetPathResult = (
 export const pathsFromToolCall = (
   event: ToolCallEvent,
 ): ToolTargetPathResult => {
+  const rawPath = pathFromToolCall(event);
+
   if (event.toolName === "edit" && typeof event.input.patch === "string") {
     return targetPathResult(
       event.toolName,
@@ -83,11 +88,10 @@ export const pathsFromToolCall = (
   if (event.toolName === "edit" && Array.isArray(event.input.multi)) {
     return targetPathResult(
       event.toolName,
-      pathsFromMultiEdit(event.input.multi),
+      pathsFromMultiEdit(event.input.multi, rawPath),
     );
   }
 
-  const rawPath = pathFromToolCall(event);
   return targetPathResult(event.toolName, rawPath ? [{ rawPath }] : []);
 };
 

@@ -472,6 +472,17 @@ export class PlanModeState {
     this.clearReviewTracking();
   }
 
+  completePlanActRun(): void {
+    this.archiveCompletedActiveRun();
+    this.clearTodos();
+    this.clearReviewTracking();
+    this.pendingApprovedPlanContinuationPath = null;
+    this.confirmedApprovedContinuationPath = null;
+    this.resumableApprovedPlanPath = null;
+    this.mode = "act";
+    this.phase = "act";
+  }
+
   isPlanPhase(): boolean {
     return this.mode === "plan" && this.phase === "plan";
   }

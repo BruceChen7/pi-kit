@@ -35,11 +35,23 @@ type AgentEndCodeSimplifierSettings = {
 };
 
 export const DEFAULT_SUPPORTED_EXTENSIONS = [
+  ".c",
+  ".cc",
+  ".cpp",
+  ".h",
+  ".hh",
+  ".hpp",
+  ".hxx",
+  ".cs",
   ".go",
+  ".java",
   ".js",
   ".jsx",
+  ".kt",
+  ".kts",
   ".mjs",
   ".cjs",
+  ".php",
   ".ts",
   ".tsx",
   ".mts",
@@ -47,6 +59,10 @@ export const DEFAULT_SUPPORTED_EXTENSIONS = [
   ".zig",
   ".rs",
   ".py",
+  ".rb",
+  ".sh",
+  ".swift",
+  ".lua",
 ] as const;
 
 const DEFAULT_PROMPT_REQUIREMENTS = [
@@ -515,6 +531,18 @@ export default function agentEndCodeSimplifierExtension(
     ctx.ui.notify(`${label} is now ${config[field] ? "on" : "off"}.`, "info");
   };
 
+  const notifyManualRunAvailable = (
+    ctx: NotificationContext,
+    reason: string,
+    supportedPathCount: number,
+  ): void => {
+    const message = [
+      `Skipped me-code-simplifier because ${reason}.`,
+      `Press Ctrl+Alt+Y to run it for ${supportedPathCount} modified file(s).`,
+    ].join(" ");
+    ctx.ui.notify(message, "info");
+  };
+
   pi.registerCommand(AUTO_RUN_COMMAND, {
     description:
       "Toggle automatic me-code-simplifier follow-ups after agent turns",
@@ -639,9 +667,10 @@ export default function agentEndCodeSimplifierExtension(
         ...diagnostics(ctx),
         supportedPaths,
       });
-      ctx.ui.notify(
-        `Skipped me-code-simplifier because this turn was aborted. Press Ctrl+Alt+Y to run it for ${supportedPaths.length} modified file(s).`,
-        "info",
+      notifyManualRunAvailable(
+        ctx,
+        "this turn was aborted",
+        supportedPaths.length,
       );
       return;
     }
@@ -651,9 +680,10 @@ export default function agentEndCodeSimplifierExtension(
         ...diagnostics(ctx),
         supportedPaths,
       });
-      ctx.ui.notify(
-        `Skipped me-code-simplifier because automatic runs are disabled. Press Ctrl+Alt+Y to run it for ${supportedPaths.length} modified file(s).`,
-        "info",
+      notifyManualRunAvailable(
+        ctx,
+        "automatic runs are disabled",
+        supportedPaths.length,
       );
       return;
     }

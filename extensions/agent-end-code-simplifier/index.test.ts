@@ -234,6 +234,15 @@ describe("isSupportedCodePath", () => {
       false,
     );
   });
+
+  it("supports common language extensions by default", () => {
+    const config = { extensions: [...DEFAULT_SUPPORTED_EXTENSIONS] };
+
+    expect(isSupportedCodePath("src/main.cpp", config)).toBe(true);
+    expect(isSupportedCodePath("src/Main.java", config)).toBe(true);
+    expect(isSupportedCodePath("src/app.rb", config)).toBe(true);
+    expect(isSupportedCodePath("src/plugin.lua", config)).toBe(true);
+  });
 });
 
 describe("collectSupportedPaths", () => {

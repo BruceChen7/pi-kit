@@ -1,12 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  clearSettingsCache,
-  getSettingsPaths,
-  readSettingsFile,
-} from "../shared/settings.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { getSettingsPaths, readSettingsFile } from "../shared/settings.js";
 import type { Skill, SkillTogglePicker } from "./index.js";
 
 const tempDirs: string[] = [];
@@ -14,6 +10,13 @@ const originalHome = process.env.HOME;
 const originalCwd = process.cwd();
 const ARROW_DOWN = "\x1b[B";
 const ARROW_UP = "\x1b[A";
+
+// ANSI escape helpers for assertion readability
+const ansi = (code: string, text: string) => `\x1b[${code}m${text}\x1b[0m`;
+const ENABLED = (text: string) => ansi("32", text);
+const SELECTED_TEXT = (text: string) => ansi("1;96", text);
+const RED = (text: string) => ansi("31", text);
+const MAGENTA = (text: string) => ansi("35", text);
 
 const registerTempDir = (dir: string): string => {
   tempDirs.push(dir);
@@ -23,10 +26,9 @@ const registerTempDir = (dir: string): string => {
 const createTempDir = (prefix: string): string =>
   registerTempDir(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 
-const createTempHome = (): string => {
+const createTempHome = (): void => {
   const dir = createTempDir("pi-kit-skill-toggle-home-");
   process.env.HOME = dir;
-  return dir;
 };
 
 const restoreHome = (): void => {
@@ -108,33 +110,19 @@ function namedPickerSkills(...names: string[]): Skill[] {
 
 async function createTestPicker(
   skills: Skill[] = namedPickerSkills("alpha", "jira"),
+  enabledNames: string[] = [],
 ): Promise<{ picker: SkillTogglePicker; toggled: string[] }> {
   const { SkillTogglePicker } = await importSkillToggle();
   const toggled: string[] = [];
   const picker = new SkillTogglePicker(
     skills,
-    new Set(),
+    new Set(enabledNames),
     new Set(),
     (skill) => toggled.push(skill.name),
     () => undefined,
     () => undefined,
   );
   return { picker, toggled };
-}
-
-async function createRenderPicker(
-  skills: Skill[],
-  enabledNames: string[] = [],
-): Promise<SkillTogglePicker> {
-  const { SkillTogglePicker } = await importSkillToggle();
-  return new SkillTogglePicker(
-    skills,
-    new Set(enabledNames),
-    new Set(),
-    () => undefined,
-    () => undefined,
-    () => undefined,
-  );
 }
 
 function writeSkillToggleTheme(
@@ -154,18 +142,19 @@ function writeSkillToggleTheme(
 }
 
 afterEach(() => {
-  clearSettingsCache();
   restoreHome();
   process.chdir(originalCwd);
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  vi.resetModules();
+});
+
+beforeEach(() => {
+  createTempHome();
 });
 
 describe("createLoggerReady", () => {
   it("waits for logger initialization to complete", async () => {
-    createTempHome();
     const { createLoggerReady } = await importSkillToggle();
 
     let resolveInit: (() => void) | null = null;
@@ -194,7 +183,6 @@ describe("createLoggerReady", () => {
   });
 
   it("swallows logger initialization failures", async () => {
-    createTempHome();
     const { createLoggerReady } = await importSkillToggle();
 
     const init = vi.fn(async () => {
@@ -210,7 +198,6 @@ describe("createLoggerReady", () => {
 
 describe("settings integration", () => {
   it("uses primary repo cwd when running from a worktree cwd", async () => {
-    createTempHome();
     const primaryRepoCwd = createTempDir("pi-kit-skill-toggle-primary-");
     const worktreeCwd = createTempDir("pi-kit-skill-toggle-worktree-");
     const { globalPath } = getSettingsPaths(worktreeCwd);
@@ -240,7 +227,6 @@ describe("settings integration", () => {
   });
 
   it("derives enabled skills from the toggle-owned .pi directory", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const sourceSkillDir = path.join(
       createTempDir("pi-kit-skill-toggle-source-"),
@@ -259,7 +245,6 @@ describe("settings integration", () => {
   });
 
   it("does not persist enabled skills to global settings", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const { globalPath } = getSettingsPaths(cwd);
     fs.mkdirSync(path.dirname(globalPath), { recursive: true });
@@ -277,7 +262,6 @@ describe("settings integration", () => {
 
 describe("project managed skill symlinks", () => {
   it("enables a library skill by creating a managed .pi symlink and recording state", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const sourceSkillDir = path.join(
       createTempDir("pi-kit-skill-toggle-source-"),
@@ -304,7 +288,6 @@ describe("project managed skill symlinks", () => {
   });
 
   it("uses the skill frontmatter name for managed symlink directories", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const sourceSkillDir = path.join(
       createTempDir("pi-kit-skill-toggle-source-"),
@@ -332,7 +315,6 @@ describe("project managed skill symlinks", () => {
   });
 
   it("disables only managed .pi skill symlinks", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const sourceSkillDir = path.join(
       createTempDir("pi-kit-skill-toggle-source-"),
@@ -353,7 +335,6 @@ describe("project managed skill symlinks", () => {
   });
 
   it("does not overwrite an existing project skill directory", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const sourceSkillDir = path.join(
       createTempDir("pi-kit-skill-toggle-source-"),
@@ -377,7 +358,6 @@ describe("project managed skill symlinks", () => {
   });
 
   it("coexists with different existing project skills", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const sourceSkillDir = path.join(
       createTempDir("pi-kit-skill-toggle-source-"),
@@ -402,7 +382,6 @@ describe("project managed skill symlinks", () => {
   });
 
   it("treats same-skill project symlinks as already discoverable", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const sourceSkillDir = path.join(
       createTempDir("pi-kit-skill-toggle-source-"),
@@ -428,7 +407,6 @@ describe("project managed skill symlinks", () => {
   });
 
   it("does not delete same-skill project symlinks on disable", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const sourceSkillDir = path.join(
       createTempDir("pi-kit-skill-toggle-source-"),
@@ -456,7 +434,7 @@ describe("project managed skill symlinks", () => {
 
 describe("skill library discovery", () => {
   it("discovers skills from ~/.agents/git-skills and ~/.agents/me-skills", async () => {
-    const home = createTempHome();
+    const home = os.homedir();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const gitSkillDir = path.join(home, ".agents", "git-skills", "review");
     const meSkillFile = path.join(home, ".agents", "me-skills", "direct.md");
@@ -487,7 +465,7 @@ describe("skill library discovery", () => {
   });
 
   it("does not recurse below a discovered SKILL.md skill root", async () => {
-    const home = createTempHome();
+    const home = os.homedir();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const rootSkillDir = path.join(home, ".agents", "git-skills", "root-skill");
     writeNamedSkillFile(rootSkillDir, "root-skill", "Root skill");
@@ -505,7 +483,7 @@ describe("skill library discovery", () => {
   });
 
   it("deduplicates skills that resolve to the same real file", async () => {
-    const home = createTempHome();
+    const home = os.homedir();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const sourceSkillDir = path.join(
       createTempDir("pi-kit-skill-toggle-source-"),
@@ -530,7 +508,6 @@ describe("skill library discovery", () => {
   });
 
   it("formats same-name skills with source and path details", async () => {
-    createTempHome();
     const { formatSkillDisplayDetails } = await importSkillToggle();
 
     expect(
@@ -561,7 +538,6 @@ describe("skill library discovery", () => {
   });
 
   it("uses project skills when disabling same-name global skills", async () => {
-    createTempHome();
     const { isSkillDisabledForList } = await importSkillToggle();
     const projectSkill: Skill = {
       name: "me-code-simplifier",
@@ -603,45 +579,43 @@ describe("skill library discovery", () => {
 
 describe("skill picker render", () => {
   it("uses positive status and high-contrast focus colors", async () => {
-    createTempHome();
-    const picker = await createRenderPicker(
+    const { picker } = await createTestPicker(
       namedPickerSkills("alpha", "beta"),
       ["beta"],
     );
 
     const output = picker.render(80).join("\n");
 
-    expect(output).toContain("\x1b[32m✓\x1b[0m");
-    expect(output).toContain("\x1b[32mbeta\x1b[0m");
-    expect(output).toContain("\x1b[1;96malpha\x1b[0m");
-    expect(output).not.toContain("\x1b[31m✓\x1b[0m");
+    expect(output).toContain(ENABLED("✓"));
+    expect(output).toContain(ENABLED("beta"));
+    expect(output).toContain(SELECTED_TEXT("alpha"));
+    expect(output).not.toContain(RED("✓"));
   });
 
   it("uses enabledStatus theme overrides for enabled skill status", async () => {
-    writeSkillToggleTheme(createTempHome(), { enabledStatus: "35" });
-    const picker = await createRenderPicker(namedPickerSkills("alpha"), [
+    writeSkillToggleTheme(os.homedir(), { enabledStatus: "35" });
+    const { picker } = await createTestPicker(namedPickerSkills("alpha"), [
       "alpha",
     ]);
 
-    expect(picker.render(80).join("\n")).toContain("\x1b[35m✓\x1b[0m");
+    expect(picker.render(80).join("\n")).toContain(MAGENTA("✓"));
   });
 
   it("ignores legacy disabled theme overrides", async () => {
-    writeSkillToggleTheme(createTempHome(), { disabled: "35" });
-    const picker = await createRenderPicker(namedPickerSkills("alpha"), [
+    writeSkillToggleTheme(os.homedir(), { disabled: "35" });
+    const { picker } = await createTestPicker(namedPickerSkills("alpha"), [
       "alpha",
     ]);
 
     const output = picker.render(80).join("\n");
 
-    expect(output).toContain("\x1b[32m✓\x1b[0m");
-    expect(output).not.toContain("\x1b[35m✓\x1b[0m");
+    expect(output).toContain(ENABLED("✓"));
+    expect(output).not.toContain(MAGENTA("✓"));
   });
 });
 
 describe("skill picker input", () => {
   it("treats plain j and k as filter text", async () => {
-    createTempHome();
     const { picker, toggled } = await createTestPicker(
       namedPickerSkills("alpha", "jira", "kilo"),
     );
@@ -659,7 +633,6 @@ describe("skill picker input", () => {
   });
 
   it("uses arrow up and arrow down for navigation", async () => {
-    createTempHome();
     const { picker, toggled } = await createTestPicker();
 
     picker.handleInput(ARROW_DOWN);
@@ -673,7 +646,6 @@ describe("skill picker input", () => {
 
 describe("legacy settings cleanup", () => {
   it("removes legacy skillToggle settings", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const skillPath = path.join(cwd, ".agents", "skills", "alpha", "SKILL.md");
     const globalPath = writeGlobalSkillToggleEntry(cwd, {
@@ -689,7 +661,6 @@ describe("legacy settings cleanup", () => {
 
 describe("input interception", () => {
   it("continues non-skill input without loading available skills", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const skillToggle = await importSkillToggle();
     const inputHandlers: Array<(event: unknown, ctx: unknown) => unknown> = [];
@@ -722,7 +693,6 @@ describe("input interception", () => {
   });
 
   it("does not load Pi commands when checking skill commands", async () => {
-    createTempHome();
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const skillPath = path.join(cwd, ".agents", "skills", "alpha", "SKILL.md");
     writeGlobalSkillToggleEntry(cwd, {
@@ -777,7 +747,6 @@ describe("input interception", () => {
   });
 
   it("blocks path-disabled skill commands before reload", async () => {
-    createTempHome();
     const { getDisabledSkillCommandForInput } = await importSkillToggle();
     const skill: Skill = {
       name: "Alpha",
@@ -799,7 +768,6 @@ describe("input interception", () => {
 
 describe("formatDisabledSkillsMessage", () => {
   it("returns an empty-state message when no installed managed skills exist", async () => {
-    createTempHome();
     const { formatDisabledSkillsMessage } = await importSkillToggle();
 
     expect(formatDisabledSkillsMessage(new Set(), [])).toBe(
@@ -808,7 +776,6 @@ describe("formatDisabledSkillsMessage", () => {
   });
 
   it("formats managed skills using canonical skill names", async () => {
-    createTempHome();
     const { formatDisabledSkillsMessage } = await importSkillToggle();
 
     const skills: Skill[] = [
@@ -830,7 +797,6 @@ describe("formatDisabledSkillsMessage", () => {
   });
 
   it("omits stale managed skills that are no longer installed", async () => {
-    createTempHome();
     const { formatDisabledSkillsMessage } = await importSkillToggle();
 
     const skills: Skill[] = [
@@ -849,7 +815,6 @@ describe("formatDisabledSkillsMessage", () => {
 
 describe("parseFrontmatter", () => {
   it("parses multi-line description blocks", async () => {
-    createTempHome();
     const { parseFrontmatter } = await importSkillToggle();
 
     const content = [

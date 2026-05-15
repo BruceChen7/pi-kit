@@ -132,5 +132,12 @@ export const KEY_CODE_SKETCH_GUIDANCE = [
 export const REVIEW_SECTION_DETAILS_GUIDANCE =
   "- ## Review 占位内容必须说明最终 review 会记录改动点、验证结果、" +
   "剩余风险，以及 bug/根因原因。";
+export const PLAN_REVIEW_ARTIFACT_GUIDANCE = [
+  ARCHITECTURE_TEST_GUIDANCE,
+  ...LOGIC_CHANGE_DIAGRAM_GUIDANCE,
+  ...KEY_CODE_SKETCH_GUIDANCE,
+  REVIEW_SECTION_DETAILS_GUIDANCE,
+];
+export const ACT_CODE_WRITING_GUIDANCE = [ARCHITECTURE_TEST_GUIDANCE];
 export const DIRECT_ACT_TODO_GUIDANCE =
   "- In direct act mode, create concrete TODOs before using tools or making changes.";

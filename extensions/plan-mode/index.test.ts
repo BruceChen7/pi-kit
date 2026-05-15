@@ -363,10 +363,10 @@ const completedTaskSummary = (heading: string, tasks: string[]): string =>
     "已交付：",
     ...tasks.map((task, index) => `  #${index + 1} ${task}`),
   ].join("\n");
-const actCompletedTaskSummary = (...tasks: string[]): string =>
-  `【act:completed】${completedTaskSummary(oneItemCompletedSummary, tasks)}`;
-const planCompletedTaskSummary = (...tasks: string[]): string =>
-  `【plan:completed】${completedTaskSummary(oneItemCompletedSummary, tasks)}`;
+const completedTaskSummaryWithoutMode = (...tasks: string[]): string =>
+  `【completed】${completedTaskSummary(oneItemCompletedSummary, tasks)}`;
+const actCompletedTaskSummary = completedTaskSummaryWithoutMode;
+const planCompletedTaskSummary = completedTaskSummaryWithoutMode;
 const actOneItemCompletedSummary = actCompletedTaskSummary("完成第一批任务");
 const planOneItemCompletedSummary = planCompletedTaskSummary("完成后清理");
 const demoPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
@@ -389,7 +389,7 @@ const expectNoApprovedContinuationFollowUp = (
     expect.anything(),
   );
 };
-const actCompletedDemoSummary = `【act:completed】${demoCompletedSummary}`;
+const actCompletedDemoSummary = `【completed, back to Act】${demoCompletedSummary}`;
 const approvedPlanPolicyFixPrompt = [
   "Plan Mode artifact policy requires fixes for an already approved plan.",
   `Path: ${demoPlanPath}`,
@@ -435,6 +435,17 @@ const startApprovedDemoRun = async (
   await approveDemoPlan(harness, ctx);
 };
 
+const emitAbortedAgentEnd = async (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+): Promise<void> => {
+  await harness.emit(
+    "agent_end",
+    { messages: [{ role: "assistant", stopReason: "aborted" }] },
+    ctx,
+  );
+};
+
 const completeApprovedDemoRun = async (
   harness: ReturnType<typeof buildHarness>,
   ctx: TestCtx,
@@ -455,7 +466,7 @@ describe("plan-mode extension", () => {
     const result = await sendAgentPrompt(harness, ctx, "answer directly");
 
     expect(result).toMatchObject({
-      systemPrompt: expect.stringContaining("Current mode: act."),
+      systemPrompt: expect.stringContaining("Current workflow: Act."),
     });
     expect(result.systemPrompt).toContain("Use act_mode_todo");
     expect(result.systemPrompt).not.toContain("Use plan_mode_todo");
@@ -477,7 +488,7 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("explains review placeholder details required by artifact policy", async () => {
+  it("keeps review placeholder details in plan artifact guidance", async () => {
     const { harness, ctx } = await startPlanModeSession("act");
 
     await harness.runCommand("plan-mode", "plan", ctx);
@@ -492,6 +503,17 @@ describe("plan-mode extension", () => {
     ]) {
       expect(result.systemPrompt).toContain(fragment);
     }
+  });
+
+  it("keeps act prompts focused on execution guidance", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    const result = await sendAgentPrompt(harness, ctx, "implement this change");
+
+    expect(result.systemPrompt).toContain("Module 的 Interface");
+    expect(result.systemPrompt).not.toContain("## Review 占位内容必须说明");
+    expect(result.systemPrompt).not.toContain("关键代码草案");
+    expect(result.systemPrompt).not.toContain("必须包含变更前后");
   });
 
   it("completes format arguments only after the format command", () => {
@@ -542,7 +564,7 @@ describe("plan-mode extension", () => {
     );
     const result = await sendAgentPrompt(harness, ctx, "post-timeout prompt");
     expect(result).toMatchObject({
-      systemPrompt: expect.stringContaining("Current mode: act."),
+      systemPrompt: expect.stringContaining("Current workflow: Act."),
     });
   });
 
@@ -558,7 +580,7 @@ describe("plan-mode extension", () => {
 
     expect(ctx.ui.select).not.toHaveBeenCalled();
     expect(result).toMatchObject({
-      systemPrompt: expect.stringContaining("Current mode: plan."),
+      systemPrompt: expect.stringContaining("Current workflow: Plan."),
     });
   });
 
@@ -831,12 +853,12 @@ describe("plan-mode extension", () => {
     );
 
     const [heading, progress, firstTodo] = lastWidgetLines(ctx);
-    expect(heading).toBe("<accent>【act】进行中 #1/2：实现状态机</accent>");
+    expect(heading).toBe("<accent>【Act】进行中 #1/2：实现状态机</accent>");
     expect(progress).toBe("已完成 0/2 · 剩余 2 项");
     expect(firstTodo).toBe("→ #1 [~] 实现状态机");
     expect(ctx.ui.theme.fg).toHaveBeenCalledWith(
       "accent",
-      "【act】进行中 #1/2：实现状态机",
+      "【Act】进行中 #1/2：实现状态机",
     );
   });
 
@@ -1260,13 +1282,13 @@ describe("plan-mode extension", () => {
     );
   });
 
-  it("injects architecture testing guidance into implementation plans", async () => {
-    const { harness, ctx } = await startPlanModeSession();
+  it("injects architecture testing guidance into act prompts", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
 
     const result = await sendAgentPrompt(
       harness,
       ctx,
-      "fix the plan mode guard bug",
+      "implement the guard bug fix",
     );
 
     expect(result).toMatchObject({
@@ -1276,13 +1298,13 @@ describe("plan-mode extension", () => {
     });
   });
 
-  it("injects mandatory diagrams guidance for code logic changes", async () => {
+  it("injects mandatory diagrams guidance into plan prompts", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     const result = await sendAgentPrompt(
       harness,
       ctx,
-      "fix the plan mode guard bug",
+      "implement the guard bug fix",
     );
 
     expect(result).toMatchObject({
@@ -1292,13 +1314,13 @@ describe("plan-mode extension", () => {
     });
   });
 
-  it("requires color-coded diagram changes in implementation plans", async () => {
+  it("requires color-coded diagram changes in plan prompts", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     const result = await sendAgentPrompt(
       harness,
       ctx,
-      "fix the plan mode guard bug",
+      "implement the guard bug fix",
     );
 
     expect(result).toMatchObject({
@@ -1308,7 +1330,7 @@ describe("plan-mode extension", () => {
     });
   });
 
-  it("requires key code sketches in code-changing plans", async () => {
+  it("requires key code sketches in plan prompts", async () => {
     const { harness, ctx } = await startPlanModeSession();
     const keyCodeSketchPattern = [
       "关键代码草案",
@@ -1322,7 +1344,7 @@ describe("plan-mode extension", () => {
     const result = await sendAgentPrompt(
       harness,
       ctx,
-      "fix the plan mode guard bug",
+      "implement the guard bug fix",
     );
 
     expect(result).toMatchObject({
@@ -1425,7 +1447,7 @@ describe("plan-mode extension", () => {
     });
 
     expect(result).toMatchObject({
-      systemPrompt: expect.stringContaining("Current mode: plan."),
+      systemPrompt: expect.stringContaining("Current workflow: Plan."),
     });
     await expect(
       harness.runToolCall("bash", { command: "git status --short" }, ctx),
@@ -1463,11 +1485,7 @@ describe("plan-mode extension", () => {
     await harness.emit("session_start", {}, ctx);
     await harness.runCommand("plan-mode", "plan", ctx);
 
-    await harness.emit(
-      "agent_end",
-      { messages: [{ role: "assistant", stopReason: "aborted" }] },
-      ctx,
-    );
+    await emitAbortedAgentEnd(harness, ctx);
 
     expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
   });
@@ -1511,7 +1529,7 @@ describe("plan-mode extension", () => {
 
     try {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
-      await harness.emit("agent_end", { messages: [] }, ctx);
+      await emitAbortedAgentEnd(harness, ctx);
 
       expect(ctx.ui.confirm).not.toHaveBeenCalled();
       expectNoApprovedContinuationFollowUp(harness);
@@ -1659,7 +1677,7 @@ describe("plan-mode extension", () => {
         ctx,
       );
       expect(plainWidgetText(ctx)).toContain(
-        "【act】进行中 #1/1：执行批准计划",
+        "【Approved, executing】进行中 #1/1：执行批准计划",
       );
       await expect(
         harness.runToolCall("bash", { command: "npm test" }, ctx),
@@ -1847,6 +1865,84 @@ describe("plan-mode extension", () => {
     await expect(
       harness.runToolCall("write", { path: "x.ts" }, ctx),
     ).resolves.toBeUndefined();
+  });
+
+  it("does not require review again after an approved run is aborted without edits", async () => {
+    const harness = buildHarness();
+    const { ctx, cleanup } = createTempCtx();
+    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+
+    try {
+      await harness.emit("session_start", {}, ctx);
+      await harness.runTool(
+        PLAN_MODE_TODO_TOOL,
+        {
+          action: "set",
+          items: [{ text: "实现已批准任务", status: "todo" }],
+        },
+        ctx,
+      );
+      await approveDemoPlan(harness, ctx);
+
+      await emitAbortedAgentEnd(harness, ctx);
+
+      expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
+        expect.stringContaining("approved artifact changed"),
+        expect.anything(),
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("requires review again after an aborted run rewrites an approved artifact", async () => {
+    const harness = buildHarness();
+    const { ctx, cleanup } = createTempCtx();
+    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+
+    try {
+      await harness.emit("session_start", {}, ctx);
+      await harness.runTool(
+        PLAN_MODE_TODO_TOOL,
+        {
+          action: "set",
+          items: [{ text: "实现已批准任务", status: "todo" }],
+        },
+        ctx,
+      );
+      await approveDemoPlan(harness, ctx);
+      await harness.emit(
+        "tool_result",
+        {
+          toolName: "write",
+          isError: false,
+          input: { path: demoPlanPath },
+        },
+        ctx,
+      );
+
+      await emitAbortedAgentEnd(harness, ctx);
+
+      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("approved artifact changed"),
+        { deliverAs: "followUp" },
+      );
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        mode: "plan",
+        phase: "plan",
+        activePlanPath: null,
+        latestReviewArtifactPath: demoPlanPath,
+        reviewApprovedPlanPaths: [],
+        activeRun: {
+          status: "draft",
+          planPath: demoPlanPath,
+        },
+      });
+    } finally {
+      cleanup();
+    }
   });
 
   it("requires review again after a newer plan artifact is written", async () => {

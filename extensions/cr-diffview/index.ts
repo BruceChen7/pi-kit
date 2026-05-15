@@ -20,7 +20,9 @@ const CR_SESSION_ROOT = [".pi", "cr-diffview"];
 const SELECT_LIST_MAX_VISIBLE = 10;
 const SELECT_LIST_HINT = "Enter to select • esc to cancel";
 const CR_TMUX_WINDOW_NAME = "pi-cr";
+const CR_TMUX_NEW_WINDOW_ARGS = ["new-window", "-a", "-n", CR_TMUX_WINDOW_NAME];
 const CR_WIDGET_KEY = "cr-diffview";
+const START_SHORTCUT = "alt+r";
 const START_COMMAND = "cr-neovim-start";
 const STOP_COMMAND = "cr-neovim-stop";
 const CR_PRESETS = [
@@ -513,58 +515,66 @@ const resolveScope = async (
 export default function crDiffviewExtension(pi: ExtensionAPI): void {
   let activeSession: CrSession | null = null;
 
+  const startHandler = async (
+    args: string,
+    ctx: ExtensionCommandContext,
+  ): Promise<void> => {
+    const repoRoot = await getRepoRoot(pi);
+    if (!repoRoot) {
+      ctx.ui.notify(`/${START_COMMAND} requires a git repository`, "error");
+      return;
+    }
+
+    if (!getTmuxEnv(ctx)) {
+      ctx.ui.notify(`/${START_COMMAND} requires tmux`, "error");
+      return;
+    }
+
+    if (!(await execOk(pi, "command", ["-v", "nvim"]))) {
+      ctx.ui.notify(`/${START_COMMAND} requires nvim`, "error");
+      return;
+    }
+
+    const scope = await resolveScope(pi, args, ctx);
+    if (!scope) return;
+
+    const widgetCtx = ctx as WidgetContext;
+    const session = await createSession(pi, repoRoot, scope);
+    const crSocketServer = await startCrSocketServer(session, pi, () => {
+      if (activeSession?.sessionId !== session.sessionId) return;
+      activeSession = null;
+      clearCrWidget(widgetCtx);
+    });
+    const nvimCommand = buildNvimCommand(session);
+    const tmuxResult = (await pi.exec("tmux", [
+      ...CR_TMUX_NEW_WINDOW_ARGS,
+      nvimCommand,
+    ])) as ExecResult;
+
+    if (tmuxResult.code !== 0) {
+      closeCrSocketServer(crSocketServer, session.crSocketPath);
+      clearCrWidget(widgetCtx);
+      ctx.ui.notify(
+        tmuxResult.stderr.trim() || "Failed to open CR Neovim window",
+        "error",
+      );
+      return;
+    }
+
+    activeSession = session;
+    showCrWidget(widgetCtx, session);
+    sendArtifactAnnotationsToPi(pi, session);
+    ctx.ui.notify(`Opened CR diffview for ${session.label}`, "info");
+  };
+
   pi.registerCommand(START_COMMAND, {
     description: "Open a tmux Neovim diffview code review workflow",
-    handler: async (args: string, ctx: ExtensionCommandContext) => {
-      const repoRoot = await getRepoRoot(pi);
-      if (!repoRoot) {
-        ctx.ui.notify(`/${START_COMMAND} requires a git repository`, "error");
-        return;
-      }
+    handler: startHandler,
+  });
 
-      if (!getTmuxEnv(ctx)) {
-        ctx.ui.notify(`/${START_COMMAND} requires tmux`, "error");
-        return;
-      }
-
-      if (!(await execOk(pi, "command", ["-v", "nvim"]))) {
-        ctx.ui.notify(`/${START_COMMAND} requires nvim`, "error");
-        return;
-      }
-
-      const scope = await resolveScope(pi, args, ctx);
-      if (!scope) return;
-
-      const widgetCtx = ctx as WidgetContext;
-      const session = await createSession(pi, repoRoot, scope);
-      const crSocketServer = await startCrSocketServer(session, pi, () => {
-        if (activeSession?.sessionId !== session.sessionId) return;
-        activeSession = null;
-        clearCrWidget(widgetCtx);
-      });
-      const nvimCommand = buildNvimCommand(session);
-      const tmuxResult = (await pi.exec("tmux", [
-        "new-window",
-        "-n",
-        CR_TMUX_WINDOW_NAME,
-        nvimCommand,
-      ])) as ExecResult;
-
-      if (tmuxResult.code !== 0) {
-        closeCrSocketServer(crSocketServer, session.crSocketPath);
-        clearCrWidget(widgetCtx);
-        ctx.ui.notify(
-          tmuxResult.stderr.trim() || "Failed to open CR Neovim window",
-          "error",
-        );
-        return;
-      }
-
-      activeSession = session;
-      showCrWidget(widgetCtx, session);
-      sendArtifactAnnotationsToPi(pi, session);
-      ctx.ui.notify(`Opened CR diffview for ${session.label}`, "info");
-    },
+  pi.registerShortcut(START_SHORTCUT, {
+    description: "Open a tmux Neovim diffview code review workflow (Alt+R)",
+    handler: (ctx) => startHandler("", ctx),
   });
 
   pi.registerCommand(STOP_COMMAND, {
@@ -586,6 +596,9 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
         CR_TMUX_WINDOW_NAME,
       ])) as ExecResult;
 
+      activeSession = null;
+      clearCrWidget(widgetCtx);
+
       if (tmuxResult.code !== 0) {
         ctx.ui.notify(
           tmuxResult.stderr.trim() || "Failed to close CR Neovim window",
@@ -594,8 +607,6 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      activeSession = null;
-      clearCrWidget(widgetCtx);
       ctx.ui.notify("Closed CR Neovim window", "info");
     },
   });

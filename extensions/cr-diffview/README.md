@@ -1,29 +1,30 @@
 # cr-diffview
 
-`/cr` starts a human code-review flow in a right-side tmux pane using Neovim and
-`diffview.nvim`.
+`/cr-neovim-start` starts a human code-review flow in a new tmux window named
+`pi-cr`, using Neovim and `diffview.nvim`. The shortcut `Alt+R` starts the same
+flow with the interactive target picker.
 
 ## Requirements
 
-- tmux
+- A git repository
+- tmux, with Pi running inside a tmux session
 - Neovim on `PATH` as `nvim`
 - A Neovim module available as `require("pi.cr")`
 - `diffview.nvim` configured in Neovim
 
 ## Usage
 
-- `/cr` opens an interactive selector:
-  - staged changes (`DiffviewOpen --staged`)
-  - unstaged changes (`DiffviewOpen`)
-  - base branch diff (`DiffviewOpen <branch>...HEAD`)
-- `/cr main` skips the selector and opens `main...HEAD`.
+- `/cr-neovim-start` opens an interactive selector:
+  - review unstaged changes (`git diff`)
+  - review staged changes (`git diff --cached`)
+  - review against a base branch (`branch...HEAD`)
+- `/cr-neovim-start main` skips the selector and opens `main...HEAD`.
+- `Alt+R` opens the same interactive selector.
+- `/cr-neovim-stop` closes the `pi-cr` tmux window and imports saved annotations.
 
-The Pi side passes review context to Neovim through environment variables:
+While a review window is open, Pi shows a `cr-diffview` widget with the active
+review target.
 
-- `CR_DIFF_TARGET`
-- `CR_DIFF_ARGS`
-- `CR_ANNOTATIONS_PATH`
-- `CR_NVIM_SOCKET`
-
-Neovim writes JSONL annotations to `CR_ANNOTATIONS_PATH`; Pi reads them after the
-pane command returns and sends them back into the current conversation.
+When you finish a review in Neovim or stop the review from Pi, any saved review
+annotations are sent back into the current conversation as a follow-up user
+message.

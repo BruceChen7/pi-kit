@@ -27,6 +27,7 @@ writing-skills|https://github.com/obra/superpowers.git|skills/writing-skills
 x-tweet-fetcher|https://github.com/ythx-101/x-tweet-fetcher.git|
 pre-landing-review|local|skills/planning-suite/pre-landing-review
 me-code-simplifier|local|skills/me-code-simplifier
+zero-tech-debt|local|skills/zero-tech-debt
 me-tdd|local|skills/me_tdd
 push-ifs-up-fors-down|local|skills/push-ifs-up-fors-down
 debug-pi-coding-agent|local|skills/debug-pi-coding-agent
@@ -40,3 +41,7 @@ to-prd|local|skills/to-prd
 to-issues|local|skills/to-issues
 coding-style-line-length/|local|skills/coding-style-line-length
 software-design-philosophy|https://github.com/luoling8192/software-design-philosophy-skill.git|
+opencli-usage|local|skills/opencli-usage
+opencli-browser|local|skills/opencli-browser
+opencli-autofix|local|skills/opencli-autofix
+opencli-adapter-author|local|skills/opencli-adapter-author

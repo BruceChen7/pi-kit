@@ -23,13 +23,14 @@ npm install
 `/kanban-worktree open` 使用 npm 包 `glimpseui` 的 native host 打开本地 Glimpse 窗口。该依赖在根目录
 `package.json` 中声明为普通 npm dependency，运行 `npm install` 会自动安装。
 
-Kanban worktree 通过 `getNativeHostInfo()` 获取 host 路径后自行 spawn，并关闭 native stderr，
-避免 Glimpse 调试输出污染 Pi/TUI。stdin/stdout 仍使用 Glimpse JSON Lines 协议。
+Kanban worktree 通过 `extensions/shared/glimpse-window.ts` 的共享封装调用
+`getNativeHostInfo()` 获取 host 路径后自行 spawn，并关闭 native stderr，避免 Glimpse
+调试输出污染 Pi/TUI。stdin/stdout 仍使用 Glimpse JSON Lines 协议。
 
-当前 `glimpseui` 包没有自带 TypeScript declaration，本插件在
-`extensions/kanban-worktree/glimpseui.d.ts` 中维护最小类型 shim，只描述
-`glimpse-host.ts` 当前用到的 `getNativeHostInfo()`、`window.on("message")` 和 `window.send()`。
-如果未来 `glimpseui` 发布官方类型，可以删除这个本地 shim。
+当前 `glimpseui` 包没有自带 TypeScript declaration，本仓库在
+`extensions/shared/glimpseui.d.ts` 中维护最小类型 shim，只描述共享 Glimpse 封装当前用到的
+`getNativeHostInfo()`、`window.on("message")` 和 `window.send()`。如果未来 `glimpseui`
+发布官方类型，可以删除这个本地 shim。
 
 ## 编译 UI
 

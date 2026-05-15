@@ -1,9 +1,9 @@
-import { attachCacheGraphBridge } from "./glimpse-bridge.ts";
 import {
   type GlimpseWindow,
   type GlimpseWindowOptions,
   openGlimpseWindow,
-} from "./glimpse-window.ts";
+} from "../shared/glimpse-window.ts";
+import { attachCacheGraphBridge } from "./glimpse-bridge.ts";
 import type { CacheSessionMetrics } from "./types.ts";
 import { createCacheGraphHtml } from "./ui-html.ts";
 

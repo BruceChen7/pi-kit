@@ -78,18 +78,18 @@ export const pathsFromToolCall = (
 ): ToolTargetPathResult => {
   const rawPath = pathFromToolCall(event);
 
-  if (event.toolName === "edit" && typeof event.input.patch === "string") {
-    return targetPathResult(
-      event.toolName,
-      pathsFromPatchHeaders(event.input.patch),
-    );
-  }
+  if (event.toolName === "edit") {
+    const patch = stringProperty(event.input, "patch");
+    if (patch) {
+      return targetPathResult(event.toolName, pathsFromPatchHeaders(patch));
+    }
 
-  if (event.toolName === "edit" && Array.isArray(event.input.multi)) {
-    return targetPathResult(
-      event.toolName,
-      pathsFromMultiEdit(event.input.multi, rawPath),
-    );
+    if ("multi" in event.input && Array.isArray(event.input.multi)) {
+      return targetPathResult(
+        event.toolName,
+        pathsFromMultiEdit(event.input.multi, rawPath),
+      );
+    }
   }
 
   return targetPathResult(event.toolName, rawPath ? [{ rawPath }] : []);

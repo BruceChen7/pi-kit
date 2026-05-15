@@ -21,27 +21,39 @@ type CommandHandler = (
   ctx: Record<string, unknown>,
 ) => Promise<void>;
 
+type ShortcutHandler = (ctx: Record<string, unknown>) => Promise<void>;
+
+type ExecResult = { code: number; stdout: string; stderr: string };
+
 const START_COMMAND = "cr-neovim-start";
 const STOP_COMMAND = "cr-neovim-stop";
+const START_SHORTCUT = "alt+r";
 
 const registerCrCommands = (exec: ReturnType<typeof vi.fn>) => {
   const commands = new Map<string, CommandHandler>();
+  const shortcuts = new Map<string, ShortcutHandler>();
   const sendUserMessage = vi.fn();
   crDiffviewExtension({
     exec,
     registerCommand(name, definition) {
       commands.set(name, definition.handler);
     },
+    registerShortcut(shortcut, definition) {
+      shortcuts.set(String(shortcut), definition.handler);
+    },
     sendUserMessage,
   } as unknown as ExtensionAPI);
 
   const startHandler = commands.get(START_COMMAND);
   const stopHandler = commands.get(STOP_COMMAND);
+  const startShortcutHandler = shortcuts.get(START_SHORTCUT);
   expect(startHandler).toBeTypeOf("function");
   expect(stopHandler).toBeTypeOf("function");
+  expect(startShortcutHandler).toBeTypeOf("function");
   return {
     startHandler: startHandler as CommandHandler,
     stopHandler: stopHandler as CommandHandler,
+    startShortcutHandler: startShortcutHandler as ShortcutHandler,
     sendUserMessage,
   };
 };
@@ -92,7 +104,10 @@ const exchangeSocketMessages = (
     client.on("close", () => resolve(responses));
   });
 
-const createCrExec = (repoRoot: string) =>
+const createCrExec = (
+  repoRoot: string,
+  tmuxResult: ExecResult = { code: 0, stdout: "", stderr: "" },
+) =>
   vi.fn(async (command: string, args: string[]) => {
     const joined = args.join(" ");
     if (command === "git" && joined === "rev-parse --show-toplevel") {
@@ -120,7 +135,7 @@ const createCrExec = (repoRoot: string) =>
       return { code: 0, stdout: "origin/main\n", stderr: "" };
     }
     if (command === "tmux") {
-      return { code: 0, stdout: "", stderr: "" };
+      return tmuxResult;
     }
     return { code: 0, stdout: "", stderr: "" };
   });
@@ -179,6 +194,7 @@ describe("cr-diffview command", () => {
 
     expect(exec).toHaveBeenCalledWith("tmux", [
       "new-window",
+      "-a",
       "-n",
       "pi-cr",
       expect.stringContaining("nvim --listen"),
@@ -213,6 +229,27 @@ describe("cr-diffview command", () => {
     expect(setWidget).toHaveBeenCalledWith("cr-diffview", [
       expect.stringContaining("CR diffview open: main...HEAD"),
     ]);
+  });
+
+  it("opens the interactive CR diff target picker from the start shortcut", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
+    const exec = createCrExec(repoRoot);
+    const notify = vi.fn();
+    const custom = vi.fn(async () => "staged");
+    const { startShortcutHandler } = registerCrCommands(exec);
+
+    await startShortcutHandler({
+      cwd: repoRoot,
+      hasUI: true,
+      env: { TMUX: "/tmp/tmux" },
+      ui: { custom, notify },
+    });
+
+    expect(custom).toHaveBeenCalledOnce();
+    expect(notify).toHaveBeenCalledWith(
+      "Opened CR diffview for staged changes",
+      "info",
+    );
   });
 
   it("accepts CR annotations through the CR socket", async () => {
@@ -361,6 +398,27 @@ describe("cr-diffview command", () => {
 
     expect(exec).toHaveBeenCalledWith("tmux", ["kill-window", "-t", "pi-cr"]);
     expect(notify).toHaveBeenCalledWith("Closed CR Neovim window", "info");
+  });
+
+  it("clears the widget even when stopping the CR Neovim window fails", async () => {
+    const exec = createCrExec("/repo", {
+      code: 1,
+      stdout: "",
+      stderr: "can't find window: pi-cr",
+    });
+    const notify = vi.fn();
+    const setWidget = vi.fn();
+    const { stopHandler } = registerCrCommands(exec);
+
+    await stopHandler("", {
+      cwd: "/repo",
+      hasUI: true,
+      env: { TMUX: "/tmp/tmux" },
+      ui: { notify, setWidget },
+    });
+
+    expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
+    expect(notify).toHaveBeenCalledWith("can't find window: pi-cr", "error");
   });
 
   it("sends saved annotations before stopping the CR Neovim window", async () => {

@@ -12,15 +12,13 @@ import {
   validateArtifactPolicy,
 } from "./artifact-policy.ts";
 import {
+  ACT_CODE_WRITING_GUIDANCE,
   ACT_TODO_TOOL_NAME,
-  ARCHITECTURE_TEST_GUIDANCE,
   BUILTIN_TOOL_NAMES,
   DEFAULT_CONFIG,
   DEFAULT_MODE_SELECTION_TIMEOUT_MS,
   DIRECT_ACT_TODO_GUIDANCE,
   HTML_PLAN_FORMAT_GUIDANCE,
-  KEY_CODE_SKETCH_GUIDANCE,
-  LOGIC_CHANGE_DIAGRAM_GUIDANCE,
   MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION,
   MODE_SELECTION_MESSAGE,
   MODE_SELECTION_OPTIONS,
@@ -30,11 +28,11 @@ import {
   PLAN_INSPECTION_TOOL_COMMA_LIST,
   PLAN_INSPECTION_TOOL_SLASH_LIST,
   PLAN_MODE_TOOL_NAMES,
+  PLAN_REVIEW_ARTIFACT_GUIDANCE,
   PLANNOTATOR_SUBMIT_TOOL_NAME,
   REVIEW_ARTIFACT_LOCATION,
   REVIEW_ARTIFACT_WRITE_GUIDANCE,
   REVIEW_ARTIFACT_WRITE_HINT,
-  REVIEW_SECTION_DETAILS_GUIDANCE,
   STATE_ENTRY_TYPE,
   STATUS_KEY,
   TODO_TOOL_NAME,
@@ -79,6 +77,10 @@ const PLAN_HEADING_REVIEW_GUIDANCE =
   "Keep the plan's first # heading unchanged across denied revisions unless " +
   "the reviewer explicitly asks for a rename; Plannotator uses that heading " +
   "to group version diffs.";
+const APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE =
+  "Plan Mode is waiting for an approved Plannotator plan/spec. The " +
+  "approved artifact changed and must be reviewed again before " +
+  "continuing approved execution.";
 
 export class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
@@ -133,7 +135,7 @@ export class PlanModeController {
     this.state.setMode(mode);
     this.applyMode(ctx);
     this.persist();
-    ctx.ui.notify(`Plan mode: ${getModeLabel(this.state)}`, "info");
+    ctx.ui.notify(`Plan Mode: ${getModeLabel(this.state)}`, "info");
   }
 
   setPlanArtifactFormat(
@@ -178,7 +180,7 @@ export class PlanModeController {
     const lines = [
       "## Plan Mode Extension",
       "",
-      `Current mode: ${getModeLabel(this.state)}.`,
+      `Current workflow: ${getModeLabel(this.state)}.`,
       `Plan artifact format: ${format} ` +
         `(${this.state.getPlanArtifactFormatSource(this.config)}).`,
       "",
@@ -195,16 +197,20 @@ export class PlanModeController {
             "- Standard plan artifacts must use ## Context, ## Steps, " +
               "## Verification, and ## Review with Chinese checkbox steps.",
           ]),
-      ARCHITECTURE_TEST_GUIDANCE,
-      ...LOGIC_CHANGE_DIAGRAM_GUIDANCE,
-      ...KEY_CODE_SKETCH_GUIDANCE,
-      REVIEW_SECTION_DETAILS_GUIDANCE,
       "- If Plannotator denies the plan, revise the same file and submit again.",
       `- ${PLAN_HEADING_REVIEW_GUIDANCE}`,
-      "- In act phases, execute the approved plan and update " +
+      "- During approved execution, execute the approved plan and update " +
         `${todoToolName} statuses to in_progress and done so the widget shows ` +
         "the current step.",
     ];
+
+    if (this.state.phase === "plan") {
+      lines.push(...PLAN_REVIEW_ARTIFACT_GUIDANCE);
+    }
+
+    if (this.state.phase === "act" || this.state.mode === "act") {
+      lines.push(...ACT_CODE_WRITING_GUIDANCE);
+    }
 
     if (this.state.mode === "act") {
       lines.push(DIRECT_ACT_TODO_GUIDANCE);
@@ -353,6 +359,15 @@ export class PlanModeController {
     );
   }
 
+  approvedExecutionNeedsReReview(latestArtifactPath: string | null): boolean {
+    return (
+      this.config.requireReview &&
+      latestArtifactPath !== null &&
+      this.state.activeRun?.planPath === latestArtifactPath &&
+      !this.state.isApprovedReviewArtifactPath(latestArtifactPath)
+    );
+  }
+
   validateArtifactPolicyForPath(
     ctx: ExtensionContext,
     rawPath: string,
@@ -497,12 +512,24 @@ export class PlanModeController {
     return undefined;
   }
 
+  sendReviewWaitMessage(message: string): void {
+    this.pi.sendUserMessage(message, { deliverAs: "followUp" });
+    this.clearTurnSource();
+  }
+
   async handleAgentEnd(
     event: { messages?: readonly unknown[] },
     ctx: ExtensionContext,
   ): Promise<void> {
     this.updateUi(ctx);
+    const latestArtifactPath = this.state.getLatestReviewArtifactPath();
+    const latestReviewArtifactApproved =
+      this.state.isApprovedReviewArtifactPath(latestArtifactPath);
     if (turnWasAborted(event, ctx)) {
+      if (this.approvedExecutionNeedsReReview(latestArtifactPath)) {
+        this.sendReviewWaitMessage(APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE);
+        return;
+      }
       this.clearTurnSource();
       return;
     }
@@ -520,9 +547,6 @@ export class PlanModeController {
       return;
     }
 
-    const latestArtifactPath = this.state.getLatestReviewArtifactPath();
-    const latestReviewArtifactApproved =
-      this.state.isApprovedReviewArtifactPath(latestArtifactPath);
     if (latestArtifactPath) {
       const policyFailure = this.validateArtifactPolicyForPath(
         ctx,
@@ -534,6 +558,11 @@ export class PlanModeController {
         this.clearTurnSource();
         return;
       }
+    }
+
+    if (this.approvedExecutionNeedsReReview(latestArtifactPath)) {
+      this.sendReviewWaitMessage(APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE);
+      return;
     }
 
     if (
@@ -577,9 +606,8 @@ export class PlanModeController {
     if (WRITE_TOOL_NAMES.has(event.toolName) && !event.isError) {
       const rawPath = stringProperty(event.input, "path");
       if (rawPath && isReviewArtifactPath(ctx.cwd, rawPath)) {
-        this.state.latestReviewArtifactPath = relativeToolPath(
-          ctx.cwd,
-          rawPath,
+        this.state.markReviewArtifactWritten(
+          relativeToolPath(ctx.cwd, rawPath),
         );
         this.persist();
       }

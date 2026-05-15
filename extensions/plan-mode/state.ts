@@ -179,6 +179,11 @@ export const createPlanRun = (
   createdAt: new Date().toISOString(),
 });
 
+const clearMatchingPath = (
+  currentPath: string | null,
+  invalidatedPath: string,
+): string | null => (currentPath === invalidatedPath ? null : currentPath);
+
 export const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
   const { merged } = loadSettings(cwd);
   const raw = isRecord(merged.planMode) ? merged.planMode : {};
@@ -427,6 +432,10 @@ export class PlanModeState {
     this.mode = mode;
     this.phase = phaseForMode(mode);
     this.endConversationRequested = false;
+    if (mode === "act") {
+      this.clearApprovedPlanTracking();
+      return;
+    }
     if (previousPhase === "act" && this.phase === "plan") {
       this.clearReviewTracking();
     }
@@ -455,6 +464,17 @@ export class PlanModeState {
     this.reviewApprovedPlanPaths = new Set();
   }
 
+  clearContinuationTracking(): void {
+    this.pendingApprovedPlanContinuationPath = null;
+    this.confirmedApprovedContinuationPath = null;
+    this.resumableApprovedPlanPath = null;
+  }
+
+  clearApprovedPlanTracking(): void {
+    this.clearReviewTracking();
+    this.clearContinuationTracking();
+  }
+
   switchApprovedPlanToAct(): void {
     this.mode = "plan";
     this.phase = "act";
@@ -475,10 +495,7 @@ export class PlanModeState {
   completePlanActRun(): void {
     this.archiveCompletedActiveRun();
     this.clearTodos();
-    this.clearReviewTracking();
-    this.pendingApprovedPlanContinuationPath = null;
-    this.confirmedApprovedContinuationPath = null;
-    this.resumableApprovedPlanPath = null;
+    this.clearApprovedPlanTracking();
     this.mode = "act";
     this.phase = "act";
   }
@@ -544,6 +561,34 @@ export class PlanModeState {
 
   isApprovedReviewArtifactPath(planPath: string | null): boolean {
     return planPath !== null && this.reviewApprovedPlanPaths.has(planPath);
+  }
+
+  markReviewArtifactWritten(planPath: string): void {
+    this.latestReviewArtifactPath = planPath;
+    this.reviewApprovedPlanPaths.delete(planPath);
+    this.activePlanPath = clearMatchingPath(this.activePlanPath, planPath);
+    this.pendingApprovedPlanContinuationPath = clearMatchingPath(
+      this.pendingApprovedPlanContinuationPath,
+      planPath,
+    );
+    this.confirmedApprovedContinuationPath = clearMatchingPath(
+      this.confirmedApprovedContinuationPath,
+      planPath,
+    );
+    this.resumableApprovedPlanPath = clearMatchingPath(
+      this.resumableApprovedPlanPath,
+      planPath,
+    );
+    this.returnApprovedRunToDraftForEditedArtifact(planPath);
+  }
+
+  returnApprovedRunToDraftForEditedArtifact(planPath: string): void {
+    if (this.phase !== "act" || this.activeRun?.planPath !== planPath) {
+      return;
+    }
+    this.phase = "plan";
+    this.activeRun.status = "draft";
+    delete this.activeRun.approvedAt;
   }
 
   canStartFirstRunForApprovedPlan(): boolean {

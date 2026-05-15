@@ -8,9 +8,8 @@ import type {
   TodoStatus,
 } from "./types.ts";
 
-export const getModeLabel = (state: PlanModeState): string => {
-  return state.mode;
-};
+export const getModeLabel = (state: PlanModeState): string =>
+  state.mode === "act" ? "Act" : "Plan";
 
 export const symbolForStatus = (status: TodoStatus): string => {
   switch (status) {
@@ -48,15 +47,17 @@ export const formatPlanDecision = (
 
 const getUserRunStatus = (state: PlanModeState): string => {
   if (state.activeRun?.status === "completed") {
-    return "Done";
+    return state.hasApprovedActivePlan()
+      ? "Completed, back to Act"
+      : "Completed";
   }
   if (state.phase === "act") {
-    return state.hasApprovedActivePlan() ? "Executing" : "Ready to act";
+    return state.hasApprovedActivePlan() ? "Approved, executing" : "Act";
   }
   if (state.todos.length > 0 && !state.hasApprovedActivePlan()) {
     return "Waiting for review";
   }
-  return "Planning";
+  return state.mode === "act" ? "Act" : "Planning";
 };
 
 export const formatPlanModeStatus = (
@@ -77,7 +78,7 @@ export const formatPlanModeStatus = (
     : [];
   if (!state.activeRun) {
     return [
-      `Plan mode: ${mode}`,
+      `Plan Mode: ${mode}`,
       `status: ${getUserRunStatus(state)}`,
       ...formatParts,
       decision,
@@ -90,7 +91,7 @@ export const formatPlanModeStatus = (
   const archived = state.recentRuns.length;
   const done = state.todos.filter((todo) => todo.status === "done").length;
   return [
-    `Plan mode: ${mode}`,
+    `Plan Mode: ${mode}`,
     `status: ${getUserRunStatus(state)}`,
     `run: ${state.activeRun.status}`,
     `plan: ${plan}`,
@@ -108,7 +109,9 @@ const formatCompletedTodoWidgetLines = (
   done: number,
   total: number,
 ): string[] => {
-  const modePrefix = `【${state.phase}:completed】`;
+  const modePrefix = state.hasApprovedActivePlan()
+    ? "【completed, back to Act】"
+    : "【completed】";
   const deliverySummary = `${done}/${total} 项任务已交付`;
   const planPath = state.activeRun?.planPath;
   const heading = planPath
@@ -133,7 +136,7 @@ export const formatTodoWidgetLines = (state: PlanModeState): string[] => {
     return formatCompletedTodoWidgetLines(state, done, total);
   }
 
-  const modePrefix = `【${state.phase}】`;
+  const modePrefix = `【${getUserRunStatus(state)}】`;
   const heading = current
     ? `进行中 #${current.id}/${total}：${current.text}`
     : `已完成 ${done}/${total}`;

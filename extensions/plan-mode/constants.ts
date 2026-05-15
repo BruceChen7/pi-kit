@@ -50,7 +50,16 @@ export const MODE_SELECTION_TITLE = "Choose Plan Mode for this run";
 export const MODE_SELECTION_MESSAGE =
   "Choose Plan Mode for this run; defaulting to act in " +
   `${DEFAULT_MODE_SELECTION_TIMEOUT_SECONDS}s.`;
-export const MODE_SELECTION_OPTIONS: PlanMode[] = ["act", "plan"];
+export const PLAN_MODE_ACT = "act";
+export const PLAN_MODE_PLAN = "plan";
+export const PLAN_MODE_LABELS = {
+  [PLAN_MODE_ACT]: "Act",
+  [PLAN_MODE_PLAN]: "Plan",
+} as const satisfies Record<PlanMode, string>;
+export const MODE_SELECTION_OPTIONS: PlanMode[] = [
+  PLAN_MODE_ACT,
+  PLAN_MODE_PLAN,
+];
 export const PLAN_MODE_COMMAND_OPTIONS = [
   ...MODE_SELECTION_OPTIONS,
   "status",
@@ -61,7 +70,7 @@ export const EXPLICIT_PLAN_MODE_REQUEST_PATTERN =
   /\b(?:please\s+)?plan\s+(?:this|the|mode|first)|计划模式|规划模式/iu;
 
 export const DEFAULT_CONFIG: PlanModeConfig = {
-  defaultMode: "act",
+  defaultMode: PLAN_MODE_ACT,
   planArtifactFormat: "markdown",
   planArtifactFormatSource: "default",
   preserveExternalTools: true,

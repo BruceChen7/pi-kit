@@ -4,6 +4,8 @@ import {
   DEFAULT_CONFIG,
   EXPLICIT_PLAN_MODE_REQUEST_PATTERN,
   MODE_SELECTION_OPTIONS,
+  PLAN_MODE_ACT,
+  PLAN_MODE_PLAN,
   RECENT_RUN_LIMIT,
   STATE_ENTRY_TYPE,
 } from "./constants.ts";
@@ -46,7 +48,7 @@ export const promptRequestsPlanMode = (prompt: string): boolean =>
   EXPLICIT_PLAN_MODE_REQUEST_PATTERN.test(prompt);
 
 export const isPhaseValue = (value: unknown): value is PlanPhase =>
-  value === "plan" || value === "act";
+  value === PLAN_MODE_PLAN || value === PLAN_MODE_ACT;
 
 export const isTodoStatus = (value: unknown): value is TodoStatus =>
   value === "todo" ||
@@ -81,7 +83,7 @@ export const finiteNumberOr = (value: unknown, fallback: number): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
 export const phaseForMode = (mode: PlanMode): PlanPhase =>
-  mode === "act" ? "act" : "plan";
+  mode === PLAN_MODE_ACT ? PLAN_MODE_ACT : PLAN_MODE_PLAN;
 
 export const hasCompletedAllTodos = (todos: TodoItem[]): boolean =>
   todos.length > 0 && todos.every((todo) => todo.status === "done");
@@ -352,7 +354,7 @@ export const getSessionStateEntries = (ctx: ExtensionContext): unknown[] => {
 
 export class PlanModeState {
   mode: PlanMode;
-  phase: PlanPhase = "plan";
+  phase: PlanPhase = PLAN_MODE_PLAN;
   todos: TodoItem[] = [];
   nextTodoId = 1;
   activeRun: PlanRun | null = null;
@@ -432,11 +434,11 @@ export class PlanModeState {
     this.mode = mode;
     this.phase = phaseForMode(mode);
     this.endConversationRequested = false;
-    if (mode === "act") {
+    if (mode === PLAN_MODE_ACT) {
       this.clearApprovedPlanTracking();
       return;
     }
-    if (previousPhase === "act" && this.phase === "plan") {
+    if (previousPhase === PLAN_MODE_ACT && this.phase === PLAN_MODE_PLAN) {
       this.clearReviewTracking();
     }
   }
@@ -476,19 +478,21 @@ export class PlanModeState {
   }
 
   switchApprovedPlanToAct(): void {
-    this.mode = "plan";
-    this.phase = "act";
+    this.mode = PLAN_MODE_PLAN;
+    this.phase = PLAN_MODE_ACT;
   }
 
   shouldReturnPlanActToPlan(): boolean {
     return (
-      this.mode === "plan" && this.phase === "act" && !this.hasUnfinishedTodos()
+      this.mode === PLAN_MODE_PLAN &&
+      this.phase === PLAN_MODE_ACT &&
+      !this.hasUnfinishedTodos()
     );
   }
 
   returnPlanActToPlan(): void {
     this.archiveCompletedActiveRun();
-    this.phase = "plan";
+    this.phase = PLAN_MODE_PLAN;
     this.clearReviewTracking();
   }
 
@@ -496,12 +500,12 @@ export class PlanModeState {
     this.archiveCompletedActiveRun();
     this.clearTodos();
     this.clearApprovedPlanTracking();
-    this.mode = "act";
-    this.phase = "act";
+    this.mode = PLAN_MODE_ACT;
+    this.phase = PLAN_MODE_ACT;
   }
 
   isPlanPhase(): boolean {
-    return this.mode === "plan" && this.phase === "plan";
+    return this.mode === PLAN_MODE_PLAN && this.phase === PLAN_MODE_PLAN;
   }
 
   hasUnfinishedTodos(): boolean {
@@ -509,7 +513,9 @@ export class PlanModeState {
   }
 
   getNewRunStatus(hasTodos: boolean, planPath: string | null): PlanRunStatus {
-    return hasTodos && planPath && this.phase === "act" ? "executing" : "draft";
+    return hasTodos && planPath && this.phase === PLAN_MODE_ACT
+      ? "executing"
+      : "draft";
   }
 
   getApprovedActivePlanPath(): string | null {
@@ -544,7 +550,7 @@ export class PlanModeState {
   consumeConfirmedApprovedContinuation(): string | null {
     const planPath = this.confirmedApprovedContinuationPath;
     this.confirmedApprovedContinuationPath = null;
-    if (!planPath || this.mode !== "plan") {
+    if (!planPath || this.mode !== PLAN_MODE_PLAN) {
       return null;
     }
 
@@ -583,10 +589,10 @@ export class PlanModeState {
   }
 
   returnApprovedRunToDraftForEditedArtifact(planPath: string): void {
-    if (this.phase !== "act" || this.activeRun?.planPath !== planPath) {
+    if (this.phase !== PLAN_MODE_ACT || this.activeRun?.planPath !== planPath) {
       return;
     }
-    this.phase = "plan";
+    this.phase = PLAN_MODE_PLAN;
     this.activeRun.status = "draft";
     delete this.activeRun.approvedAt;
   }
@@ -596,7 +602,7 @@ export class PlanModeState {
       !this.activeRun &&
       this.todos.length === 0 &&
       this.recentRuns.length === 0 &&
-      this.phase === "act"
+      this.phase === PLAN_MODE_ACT
     );
   }
 
@@ -609,8 +615,8 @@ export class PlanModeState {
 
   isApprovedCompletedPlanActRun(): boolean {
     return (
-      this.mode === "plan" &&
-      this.phase === "act" &&
+      this.mode === PLAN_MODE_PLAN &&
+      this.phase === PLAN_MODE_ACT &&
       this.activeRun?.status === "completed" &&
       this.activeRun.planPath === this.activePlanPath &&
       this.hasApprovedActivePlan()

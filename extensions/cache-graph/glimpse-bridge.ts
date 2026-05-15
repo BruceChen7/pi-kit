@@ -1,4 +1,4 @@
-import type { GlimpseWindow } from "./glimpse-window.ts";
+import type { GlimpseWindow } from "../shared/glimpse-window.ts";
 import type { CacheSessionMetrics } from "./types.ts";
 
 export type CacheGraphBridgeInput = {

@@ -5,7 +5,7 @@ import {
   type GlimpseWindowOptions,
   openGlimpseWindow,
   withRedirectedOpenWindowStderr,
-} from "./glimpse-window.ts";
+} from "../shared/glimpse-window.ts";
 import { attachKanbanUiBridge } from "./kanban-ui-bridge.ts";
 import { sendJsonLineRequest } from "./protocol.ts";
 import { type CreateKanbanHtmlOptions, createKanbanHtml } from "./ui-html.ts";

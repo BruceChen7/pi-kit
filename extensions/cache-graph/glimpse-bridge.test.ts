@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import type { GlimpseWindow } from "../shared/glimpse-window.ts";
 import { attachCacheGraphBridge } from "./glimpse-bridge.ts";
-import type { GlimpseWindow } from "./glimpse-window.ts";
 import type { CacheSessionMetrics } from "./types.ts";
 
 class FakeGlimpseWindow extends EventEmitter implements GlimpseWindow {

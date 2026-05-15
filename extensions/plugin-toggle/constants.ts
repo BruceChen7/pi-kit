@@ -18,7 +18,6 @@ export const GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES = new Set([
   "shared",
 ]);
 export const DEFAULT_DISABLED_PLUGINS = [
-  "diffx-review",
   "dirty-git-status",
   "remote-approval",
   "copyx",

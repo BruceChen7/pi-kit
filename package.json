@@ -25,7 +25,6 @@
       "./extensions/feature-workflow",
       "./extensions/kanban-worktree",
       "./extensions/todo-workflow",
-      "./extensions/diffx-review",
       "./extensions/cr-diffview",
       "./extensions/session-path-copy",
       "./extensions/remote-approval",

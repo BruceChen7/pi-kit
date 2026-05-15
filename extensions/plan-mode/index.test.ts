@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import planModeExtension from "./index.js";
 
 type Handler = (event: unknown, ctx: TestCtx) => Promise<unknown> | unknown;
@@ -66,7 +66,6 @@ const buildHarness = () => {
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, CommandRegistration>();
   const tools = new Map<string, ToolRegistration>();
-  const entries: CustomEntry[] = [];
   let activeTools = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 
   const api = {
@@ -83,9 +82,7 @@ const buildHarness = () => {
     registerTool: vi.fn((tool: ToolRegistration) => {
       tools.set(tool.name, tool);
     }),
-    appendEntry: vi.fn((customType: string, data: unknown) => {
-      entries.push({ type: "custom", customType, data });
-    }),
+    appendEntry: vi.fn(),
     sendUserMessage: vi.fn(),
     setActiveTools: vi.fn((names: string[]) => {
       activeTools = names;
@@ -363,12 +360,10 @@ const completedTaskSummary = (heading: string, tasks: string[]): string =>
     "已交付：",
     ...tasks.map((task, index) => `  #${index + 1} ${task}`),
   ].join("\n");
-const completedTaskSummaryWithoutMode = (...tasks: string[]): string =>
+const prefixedCompletedSummary = (...tasks: string[]): string =>
   `【completed】${completedTaskSummary(oneItemCompletedSummary, tasks)}`;
-const actCompletedTaskSummary = completedTaskSummaryWithoutMode;
-const planCompletedTaskSummary = completedTaskSummaryWithoutMode;
-const actOneItemCompletedSummary = actCompletedTaskSummary("完成第一批任务");
-const planOneItemCompletedSummary = planCompletedTaskSummary("完成后清理");
+const actOneItemCompletedSummary = prefixedCompletedSummary("完成第一批任务");
+const planOneItemCompletedSummary = prefixedCompletedSummary("完成后清理");
 const demoPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
 const demoCompletedSummary = completedTaskSummary(
   "✅ 计划「demo」已完成 · 3/3 项任务已交付",
@@ -605,9 +600,7 @@ describe("plan-mode extension", () => {
     );
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+  // NOTE: no afterEach needed — no tests use vi.useFakeTimers()
 
   it("blocks source writes during plan mode phase but allows review artifact writes", async () => {
     const { harness, ctx } = await startPlanModeSession();
@@ -998,7 +991,7 @@ describe("plan-mode extension", () => {
       ctx,
     );
     expect(plainWidgetText(ctx)).toBe(
-      planCompletedTaskSummary("完成后关闭 session"),
+      prefixedCompletedSummary("完成后关闭 session"),
     );
 
     await expect(
@@ -1085,7 +1078,7 @@ describe("plan-mode extension", () => {
     );
 
     const widget = plainWidgetText(ctx);
-    expect(widget).toBe(actCompletedTaskSummary("补测试覆盖新的默认 prompt"));
+    expect(widget).toBe(prefixedCompletedSummary("补测试覆盖新的默认 prompt"));
     expect(widget).not.toContain("demo");
   });
 
@@ -1518,38 +1511,32 @@ describe("plan-mode extension", () => {
   });
 
   it("plan-continues approved plans for balanced preset", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    writeProjectSettings(ctx.cwd, {
-      planMode: { defaultMode: "plan", preset: "balanced" },
-    });
-    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
-    await harness.emit("session_start", {}, ctx);
-
-    try {
+    await withTempCtx(async (ctx) => {
+      writeProjectSettings(ctx.cwd, {
+        planMode: { defaultMode: "plan", preset: "balanced" },
+      });
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
       await emitAbortedAgentEnd(harness, ctx);
 
       expect(ctx.ui.confirm).not.toHaveBeenCalled();
       expectNoApprovedContinuationFollowUp(harness);
-    } finally {
-      cleanup();
-    }
+    });
   });
 
   it("ignores legacy manual approval continuation config", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    writeProjectSettings(ctx.cwd, {
-      planMode: { approval: { continueAfterApproval: "manual" } },
-    });
-    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
-    await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "plan", ctx);
-
-    try {
+    await withTempCtx(async (ctx) => {
+      writeProjectSettings(ctx.cwd, {
+        planMode: { approval: { continueAfterApproval: "manual" } },
+      });
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await harness.runCommand("plan-mode", "plan", ctx);
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
       await harness.emit("agent_end", { messages: [] }, ctx);
 
@@ -1560,19 +1547,15 @@ describe("plan-mode extension", () => {
         pendingApprovedPlanContinuationPath: null,
         confirmedApprovedContinuationPath: null,
       });
-    } finally {
-      cleanup();
-    }
+    });
   });
 
   it("solo preset disables review waiting reminders", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    writeProjectSettings(ctx.cwd, { planMode: { preset: "solo" } });
-    planModeExtension(harness.api as unknown as ExtensionAPI);
-    await harness.emit("session_start", {}, ctx);
-
-    try {
+    await withTempCtx(async (ctx) => {
+      writeProjectSettings(ctx.cwd, { planMode: { preset: "solo" } });
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
       await harness.runTool(
         PLAN_MODE_TODO_TOOL,
         {
@@ -1587,20 +1570,16 @@ describe("plan-mode extension", () => {
         expect.stringContaining("approved Plannotator plan/spec"),
         expect.anything(),
       );
-    } finally {
-      cleanup();
-    }
+    });
   });
 
   it("does not inject an implementation follow-up after approval", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
-    await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "plan", ctx);
-
-    try {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await harness.runCommand("plan-mode", "plan", ctx);
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
       await harness.emit("agent_end", { messages: [] }, ctx);
 
@@ -1611,28 +1590,25 @@ describe("plan-mode extension", () => {
         pendingApprovedPlanContinuationPath: null,
         confirmedApprovedContinuationPath: null,
       });
-    } finally {
-      cleanup();
-    }
+    });
   });
 
   it("does not emit implementation follow-ups for repeated approval results", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
-    await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "plan", ctx);
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await harness.runCommand("plan-mode", "plan", ctx);
 
-    const followUpCount = () =>
-      harness.api.sendUserMessage.mock.calls.filter(([message, options]) => {
-        const isImplementationFollowUp = String(message).includes(
-          `Continue implementing approved plan: ${demoPlanPath}`,
-        );
-        return isImplementationFollowUp && options?.deliverAs === "followUp";
-      }).length;
+      const followUpCount = () =>
+        harness.api.sendUserMessage.mock.calls.filter(([message, options]) => {
+          const isImplementationFollowUp = String(message).includes(
+            `Continue implementing approved plan: ${demoPlanPath}`,
+          );
+          return isImplementationFollowUp && options?.deliverAs === "followUp";
+        }).length;
 
-    try {
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
       await harness.emit("agent_end", { messages: [] }, ctx);
       expect(followUpCount()).toBe(0);
@@ -1646,19 +1622,15 @@ describe("plan-mode extension", () => {
         pendingApprovedPlanContinuationPath: null,
         confirmedApprovedContinuationPath: null,
       });
-    } finally {
-      cleanup();
-    }
+    });
   });
 
   it("keeps approved act context without prompt matching", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
-    await harness.emit("session_start", {}, ctx);
-
-    try {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
       await startApprovedDemoRun(harness, ctx, "执行批准计划");
       await harness.emit("agent_end", { messages: [] }, ctx);
       const result = await sendAgentPrompt(harness, ctx, "start");
@@ -1687,21 +1659,17 @@ describe("plan-mode extension", () => {
         activePlanPath: demoPlanPath,
         confirmedApprovedContinuationPath: null,
       });
-    } finally {
-      cleanup();
-    }
+    });
   });
 
   it("does not offer a decline path for approved continuation", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    ctx.ui.confirm.mockResolvedValueOnce(false);
-    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
-    await harness.emit("session_start", {}, ctx);
-    await harness.runCommand("plan-mode", "plan", ctx);
-
-    try {
+    await withTempCtx(async (ctx) => {
+      ctx.ui.confirm.mockResolvedValueOnce(false);
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await harness.runCommand("plan-mode", "plan", ctx);
       await completeApprovedDemoRun(harness, ctx, "提交 reviewable plan");
       await harness.emit("agent_end", { messages: [] }, ctx);
 
@@ -1712,9 +1680,7 @@ describe("plan-mode extension", () => {
         pendingApprovedPlanContinuationPath: null,
         confirmedApprovedContinuationPath: null,
       });
-    } finally {
-      cleanup();
-    }
+    });
   });
 
   it("keeps completed approved runs in act despite prompt matching", async () => {
@@ -1868,12 +1834,10 @@ describe("plan-mode extension", () => {
   });
 
   it("does not require review again after an approved run is aborted without edits", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
-
-    try {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
       await harness.emit("session_start", {}, ctx);
       await harness.runTool(
         PLAN_MODE_TODO_TOOL,
@@ -1891,18 +1855,14 @@ describe("plan-mode extension", () => {
         expect.stringContaining("approved artifact changed"),
         expect.anything(),
       );
-    } finally {
-      cleanup();
-    }
+    });
   });
 
   it("requires review again after an aborted run rewrites an approved artifact", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
-
-    try {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
       await harness.emit("session_start", {}, ctx);
       await harness.runTool(
         PLAN_MODE_TODO_TOOL,
@@ -1940,21 +1900,18 @@ describe("plan-mode extension", () => {
           planPath: demoPlanPath,
         },
       });
-    } finally {
-      cleanup();
-    }
+    });
   });
 
   it("requires review again after a newer plan artifact is written", async () => {
-    const harness = buildHarness();
-    const { ctx, cleanup } = createTempCtx();
-    const firstPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-first.md";
-    const secondPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-second.md";
-    writePlanArtifact(ctx.cwd, firstPlanPath, validPlanContent);
-    writePlanArtifact(ctx.cwd, secondPlanPath, validPlanContent);
-    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await withTempCtx(async (ctx) => {
+      const firstPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-first.md";
+      const secondPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-second.md";
+      writePlanArtifact(ctx.cwd, firstPlanPath, validPlanContent);
+      writePlanArtifact(ctx.cwd, secondPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
 
-    try {
       await harness.emit("session_start", {}, ctx);
 
       await harness.emit(
@@ -2003,9 +1960,7 @@ describe("plan-mode extension", () => {
         expect.stringContaining("approved Plannotator plan/spec"),
         { deliverAs: "followUp" },
       );
-    } finally {
-      cleanup();
-    }
+    });
   });
 
   it("blocks review submission when a plan artifact violates the policy", async () => {

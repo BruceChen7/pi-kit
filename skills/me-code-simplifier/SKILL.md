@@ -40,11 +40,20 @@ Do not use this skill to change product behavior or redesign unrelated areas.
    - Identify what must remain stable: public APIs, data shapes, edge cases, performance constraints.
 2. **Find the complexity hotspot**
    - Look for change amplification, high cognitive load, and unclear safety boundaries.
+   - Watch for repeated magic literals that encode the same domain fact across use sites
+     (`"act"` vs `"Act"`, status strings, labels, command names, option names). These often
+     create change amplification and unknown unknowns because callers must remember spelling,
+     casing, and value/label distinctions.
    - After a constants/enum/label cleanup, check the use sites again for newly visible noise:
      repeated lookups, repeated predicate calls, formatting-only churn, or long imports that
      obscure the simplification.
 3. **Apply the smallest high-leverage change**
    - Clarify names/data flow.
+   - Centralize repeated domain literals behind the narrowest existing seam: constants, a typed
+     literal array, or a label map. Prefer reusing an existing constants/config module over
+     creating a shallow module just to hold one value.
+   - Keep value constants and display labels distinct when casing or wording differs; this hides
+     spelling policy inside the module instead of making every caller remember it.
    - Flatten control flow (guard clauses, early returns).
    - Cache repeated local facts when the same expression answers one conceptual question
      within a function (for example, `hasApprovedPlan` or a selected format). Do this for

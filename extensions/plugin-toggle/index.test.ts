@@ -524,7 +524,7 @@ describe("default project bootstrap", () => {
     expect(result.skippedDefaultDisabled).toEqual([]);
   });
 
-  it("does not bootstrap defaults when the cwd already has an empty managed record", async () => {
+  it("bootstraps missing non-disabled plugins when the cwd already has a managed record", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     const library = createPluginLibrary("alpha");
 
@@ -540,8 +540,9 @@ describe("default project bootstrap", () => {
 
     const result = bootstrapDefaultManagedPlugins(cwd, [plugin]);
 
-    expect(result.status).toBe("already-configured");
-    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(false);
+    expect(result.status).toBe("bootstrapped");
+    expect(result.enabled).toEqual(["alpha"]);
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(true);
   });
 
   it("notifies without queueing reload after bootstrapping newly enabled plugins", async () => {
@@ -575,7 +576,7 @@ describe("default project bootstrap", () => {
     expect(sendUserMessage).not.toHaveBeenCalled();
   });
 
-  it("enables project defaults even after the cwd was configured", async () => {
+  it("enables every missing non-disabled plugin after the cwd was configured", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     const library = createPluginLibrary(
       "alpha",

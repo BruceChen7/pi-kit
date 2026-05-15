@@ -40,13 +40,20 @@ Do not use this skill to change product behavior or redesign unrelated areas.
    - Identify what must remain stable: public APIs, data shapes, edge cases, performance constraints.
 2. **Find the complexity hotspot**
    - Look for change amplification, high cognitive load, and unclear safety boundaries.
+   - After a constants/enum/label cleanup, check the use sites again for newly visible noise:
+     repeated lookups, repeated predicate calls, formatting-only churn, or long imports that
+     obscure the simplification.
 3. **Apply the smallest high-leverage change**
    - Clarify names/data flow.
    - Flatten control flow (guard clauses, early returns).
+   - Cache repeated local facts when the same expression answers one conceptual question
+     within a function (for example, `hasApprovedPlan` or a selected format). Do this for
+     readability and locality, not speculative performance.
    - Use `push-ifs-up-fors-down` when branch/loop placement is the main source of complexity.
    - Split mixed-concern functions by intent.
    - Remove duplication/pass-through abstractions.
    - Isolate special-case handling behind clear helpers.
+   - Run the formatter when imports or line wrapping are the only remaining noise.
 4. **Apply language-specific playbooks**
    - Start with `language-playbooks.md`.
    - Load only the active language file to reduce context usage.

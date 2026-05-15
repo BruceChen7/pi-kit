@@ -1,5 +1,6 @@
 import path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { PLAN_MODE_ACT, PLAN_MODE_LABELS } from "./constants.ts";
 import type { PlanModeState } from "./state.ts";
 import type {
   PlanDecisionSummary,
@@ -9,7 +10,7 @@ import type {
 } from "./types.ts";
 
 export const getModeLabel = (state: PlanModeState): string =>
-  state.mode === "act" ? "Act" : "Plan";
+  PLAN_MODE_LABELS[state.mode];
 
 export const symbolForStatus = (status: TodoStatus): string => {
   switch (status) {
@@ -46,18 +47,22 @@ export const formatPlanDecision = (
 };
 
 const getUserRunStatus = (state: PlanModeState): string => {
+  const hasApprovedPlan = state.hasApprovedActivePlan();
+
   if (state.activeRun?.status === "completed") {
-    return state.hasApprovedActivePlan()
-      ? "Completed, back to Act"
-      : "Completed";
+    return hasApprovedPlan ? "Completed, back to Act" : "Completed";
   }
-  if (state.phase === "act") {
-    return state.hasApprovedActivePlan() ? "Approved, executing" : "Act";
+  if (state.phase === PLAN_MODE_ACT) {
+    return hasApprovedPlan
+      ? "Approved, executing"
+      : PLAN_MODE_LABELS[PLAN_MODE_ACT];
   }
-  if (state.todos.length > 0 && !state.hasApprovedActivePlan()) {
+  if (state.todos.length > 0 && !hasApprovedPlan) {
     return "Waiting for review";
   }
-  return state.mode === "act" ? "Act" : "Planning";
+  return state.mode === PLAN_MODE_ACT
+    ? PLAN_MODE_LABELS[PLAN_MODE_ACT]
+    : "Planning";
 };
 
 export const formatPlanModeStatus = (
@@ -66,11 +71,12 @@ export const formatPlanModeStatus = (
 ): string => {
   const mode = getModeLabel(state);
   const decision = formatPlanDecision(state.lastAutoDecision);
+  const artifactFormat = config ? state.getPlanArtifactFormat(config) : null;
   const formatParts = config
     ? [
-        `planArtifactFormat: ${state.getPlanArtifactFormat(config)}`,
+        `planArtifactFormat: ${artifactFormat}`,
         `formatSource: ${state.getPlanArtifactFormatSource(config)}`,
-        state.getPlanArtifactFormat(config) === "html"
+        artifactFormat === "html"
           ? "planTarget: .pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html"
           : "planTarget: .pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md",
         "specs: markdown only",

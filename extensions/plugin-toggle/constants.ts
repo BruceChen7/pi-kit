@@ -17,12 +17,6 @@ export const GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES = new Set([
   "plugin-toggle",
   "shared",
 ]);
-export const PROJECT_DEFAULT_ENABLED_PLUGINS = new Set([
-  "cwd-history",
-  "plan-mode",
-  "plannotator-auto",
-  "pi-context",
-]);
 export const DEFAULT_DISABLED_PLUGINS = [
   "diffx-review",
   "dirty-git-status",

@@ -1,8 +1,5 @@
 import fs from "node:fs";
-import {
-  GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES,
-  PROJECT_DEFAULT_ENABLED_PLUGINS,
-} from "./constants.ts";
+import { GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES } from "./constants.ts";
 import { enablePlugin } from "./project.ts";
 import { PluginToggleSettingsStore } from "./settings-store.ts";
 import type { DefaultBootstrapResult, PluginEntry } from "./types.ts";
@@ -10,10 +7,6 @@ import { normalizeName, pluginTargetPath } from "./utils.ts";
 
 function isDefaultBootstrapEntry(plugin: PluginEntry): boolean {
   return !GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES.has(normalizeName(plugin.name));
-}
-
-function isProjectDefaultEnabledPlugin(plugin: PluginEntry): boolean {
-  return PROJECT_DEFAULT_ENABLED_PLUGINS.has(normalizeName(plugin.name));
 }
 
 function sortDefaultBootstrapResult(
@@ -65,7 +58,7 @@ export function bootstrapDefaultManagedPlugins(
 
   if (settingsStore.hasManagedPluginsEntry()) {
     const missingProjectDefaults = plugins
-      .filter(isProjectDefaultEnabledPlugin)
+      .filter(isDefaultBootstrapEntry)
       .filter((plugin) => !fs.existsSync(pluginTargetPath(cwd, plugin)));
     const result = bootstrapPlugins(cwd, missingProjectDefaults, disabled);
     result.status =

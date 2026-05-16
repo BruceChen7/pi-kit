@@ -6,7 +6,11 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import crDiffviewExtension from "./index.ts";
+import crDiffviewExtension, {
+  buildCrTmuxKillWindowArgs,
+  buildCrTmuxNewWindowArgs,
+  buildCrTmuxWindowName,
+} from "./index.ts";
 
 beforeEach(() => {
   vi.stubEnv("TMUX", undefined);
@@ -58,10 +62,24 @@ const registerCrCommands = (exec: ReturnType<typeof vi.fn>) => {
   };
 };
 
-const tmuxCommandFromExec = (exec: ReturnType<typeof vi.fn>): string => {
-  const args = exec.mock.calls.find((call) => call[0] === "tmux")?.[1] ?? [];
-  return String(
-    args.find((arg: unknown) => String(arg).includes("nvim --listen")),
+const tmuxArgsFromExec = (exec: ReturnType<typeof vi.fn>): unknown[] =>
+  exec.mock.calls.find((call) => call[0] === "tmux")?.[1] ?? [];
+
+const tmuxCommandFromExec = (exec: ReturnType<typeof vi.fn>): string =>
+  String(
+    tmuxArgsFromExec(exec).find((arg) => String(arg).includes("nvim --listen")),
+  );
+
+const expectTmuxNewWindowStarted = (
+  exec: ReturnType<typeof vi.fn>,
+  repoRoot: string,
+): void => {
+  expect(exec).toHaveBeenCalledWith(
+    "tmux",
+    buildCrTmuxNewWindowArgs(
+      buildCrTmuxWindowName(repoRoot),
+      expect.stringContaining("nvim --listen"),
+    ),
   );
 };
 
@@ -192,13 +210,7 @@ describe("cr-diffview command", () => {
       ui: { notify },
     });
 
-    expect(exec).toHaveBeenCalledWith("tmux", [
-      "new-window",
-      "-a",
-      "-n",
-      "pi-cr",
-      expect.stringContaining("nvim --listen"),
-    ]);
+    expectTmuxNewWindowStarted(exec, repoRoot);
     const tmuxCommand = tmuxCommandFromExec(exec);
     expect(tmuxCommand).toContain("CR_SOCKET='");
     expect(tmuxCommand).not.toContain("CR_DIFF_TARGET=");
@@ -396,7 +408,10 @@ describe("cr-diffview command", () => {
       ui: { notify },
     });
 
-    expect(exec).toHaveBeenCalledWith("tmux", ["kill-window", "-t", "pi-cr"]);
+    expect(exec).toHaveBeenCalledWith(
+      "tmux",
+      buildCrTmuxKillWindowArgs("pi-cr"),
+    );
     expect(notify).toHaveBeenCalledWith("Closed CR Neovim window", "info");
   });
 

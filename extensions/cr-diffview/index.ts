@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import {
   DynamicBorder,
@@ -21,8 +21,7 @@ const CR_SESSION_ROOT = [".pi", "cr-diffview"];
 const SELECT_LIST_MAX_VISIBLE = 10;
 const SELECT_LIST_HINT = "Type to filter • Enter to select • esc to cancel";
 const EMPTY_FILTER_HINT = "type to filter...";
-const CR_TMUX_WINDOW_NAME = "pi-cr";
-const CR_TMUX_NEW_WINDOW_ARGS = ["new-window", "-a", "-n", CR_TMUX_WINDOW_NAME];
+const CR_TMUX_WINDOW_NAME_PREFIX = "pi-cr";
 const CR_WIDGET_KEY = "cr-diffview";
 const START_SHORTCUT = "alt+r";
 const START_COMMAND = "cr-neovim-start";
@@ -65,6 +64,7 @@ type CrSession = {
   diffArgs: string[];
   socketPath: string;
   crSocketPath: string;
+  tmuxWindowName: string;
   artifactPath: string;
   createdAt: string;
 };
@@ -115,6 +115,29 @@ const gitOutput = async (pi: ExtensionAPI, args: string[]): Promise<string> => {
 const getTmuxEnv = (ctx: ExtensionCommandContext): string | undefined =>
   (ctx as { env?: Record<string, string | undefined> }).env?.TMUX ??
   process.env.TMUX;
+
+export const buildCrTmuxWindowName = (repoRoot: string): string =>
+  `${CR_TMUX_WINDOW_NAME_PREFIX}-${basename(repoRoot)}`;
+
+export const buildCrTmuxNewWindowArgs = <CommandArg = string>(
+  tmuxWindowName: string,
+  command: CommandArg,
+): Array<string | CommandArg> => [
+  "new-window",
+  "-a",
+  "-n",
+  tmuxWindowName,
+  command,
+];
+
+export const buildCrTmuxKillWindowArgs = (tmuxWindowName: string): string[] => [
+  "kill-window",
+  "-t",
+  tmuxWindowName,
+];
+
+const getCrTmuxWindowName = (session: CrSession | null): string =>
+  session?.tmuxWindowName ?? CR_TMUX_WINDOW_NAME_PREFIX;
 
 const buildSelectListTheme = (theme: {
   fg: (token: string, text: string) => string;
@@ -320,6 +343,7 @@ const createSession = async (
     diffArgs: scope.diffArgs,
     socketPath: join(sessionDir, "nvim.sock"),
     crSocketPath: join(tmpdir(), `${sessionId}.sock`),
+    tmuxWindowName: buildCrTmuxWindowName(repoRoot),
     artifactPath: join(sessionDir, "annotations.jsonl"),
     createdAt: new Date().toISOString(),
   };
@@ -579,10 +603,10 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
       clearCrWidget(widgetCtx);
     });
     const nvimCommand = buildNvimCommand(session);
-    const tmuxResult = (await pi.exec("tmux", [
-      ...CR_TMUX_NEW_WINDOW_ARGS,
-      nvimCommand,
-    ])) as ExecResult;
+    const tmuxResult = (await pi.exec(
+      "tmux",
+      buildCrTmuxNewWindowArgs(session.tmuxWindowName, nvimCommand),
+    )) as ExecResult;
 
     if (tmuxResult.code !== 0) {
       closeCrSocketServer(crSocketServer, session.crSocketPath);
@@ -623,11 +647,10 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
         sendArtifactAnnotationsToPi(pi, activeSession);
       }
 
-      const tmuxResult = (await pi.exec("tmux", [
-        "kill-window",
-        "-t",
-        CR_TMUX_WINDOW_NAME,
-      ])) as ExecResult;
+      const tmuxResult = (await pi.exec(
+        "tmux",
+        buildCrTmuxKillWindowArgs(getCrTmuxWindowName(activeSession)),
+      )) as ExecResult;
 
       activeSession = null;
       clearCrWidget(widgetCtx);

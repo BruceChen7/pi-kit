@@ -4,10 +4,20 @@ import {
   DEFAULT_CONFIG,
   EXPLICIT_PLAN_MODE_REQUEST_PATTERN,
   MODE_SELECTION_OPTIONS,
+  PLAN_ARTIFACT_FORMAT_VALUES,
   PLAN_MODE_ACT,
   PLAN_MODE_PLAN,
+  PLAN_RUN_STATUS_ARCHIVED,
+  PLAN_RUN_STATUS_COMPLETED,
+  PLAN_RUN_STATUS_DRAFT,
+  PLAN_RUN_STATUS_EXECUTING,
+  PLAN_RUN_STATUS_VALUES,
   RECENT_RUN_LIMIT,
   STATE_ENTRY_TYPE,
+  TODO_STATUS_DONE,
+  TODO_STATUS_PENDING,
+  TODO_STATUS_TODO,
+  TODO_STATUS_VALUES,
 } from "./constants.ts";
 import type {
   PlanArtifactFormat,
@@ -36,13 +46,18 @@ export const stringProperty = (value: unknown, key: string): string | null => {
   return typeof property === "string" ? property : null;
 };
 
+const isStringValue = <T extends string>(
+  values: readonly T[],
+  value: unknown,
+): value is T => typeof value === "string" && values.includes(value as T);
+
 export const isPlanMode = (value: unknown): value is PlanMode =>
-  typeof value === "string" &&
-  MODE_SELECTION_OPTIONS.includes(value as PlanMode);
+  isStringValue(MODE_SELECTION_OPTIONS, value);
 
 export const isPlanArtifactFormat = (
   value: unknown,
-): value is PlanArtifactFormat => value === "markdown" || value === "html";
+): value is PlanArtifactFormat =>
+  isStringValue(PLAN_ARTIFACT_FORMAT_VALUES, value);
 
 export const promptRequestsPlanMode = (prompt: string): boolean =>
   EXPLICIT_PLAN_MODE_REQUEST_PATTERN.test(prompt);
@@ -51,13 +66,10 @@ export const isPhaseValue = (value: unknown): value is PlanPhase =>
   value === PLAN_MODE_PLAN || value === PLAN_MODE_ACT;
 
 export const isTodoStatus = (value: unknown): value is TodoStatus =>
-  value === "todo" ||
-  value === "in_progress" ||
-  value === "done" ||
-  value === "blocked";
+  isStringValue(TODO_STATUS_VALUES, value);
 
 export const normalizeTodoStatus = (status: TodoStatusInput): TodoStatus =>
-  status === "pending" ? "todo" : status;
+  status === TODO_STATUS_PENDING ? TODO_STATUS_TODO : status;
 
 export const sanitizeStringArray = (
   value: unknown,
@@ -86,14 +98,10 @@ export const phaseForMode = (mode: PlanMode): PlanPhase =>
   mode === PLAN_MODE_ACT ? PLAN_MODE_ACT : PLAN_MODE_PLAN;
 
 export const hasCompletedAllTodos = (todos: TodoItem[]): boolean =>
-  todos.length > 0 && todos.every((todo) => todo.status === "done");
+  todos.length > 0 && todos.every((todo) => todo.status === TODO_STATUS_DONE);
 
 export const isPlanRunStatus = (value: unknown): value is PlanRunStatus =>
-  value === "draft" ||
-  value === "approved" ||
-  value === "executing" ||
-  value === "completed" ||
-  value === "archived";
+  isStringValue(PLAN_RUN_STATUS_VALUES, value);
 
 export const todoFromSnapshot = (value: unknown): TodoItem | null => {
   if (
@@ -170,7 +178,7 @@ export const runFromSnapshot = (value: unknown): PlanRun | null => {
 export const createPlanRun = (
   todos: TodoItem[],
   nextTodoId: number,
-  status: PlanRunStatus = "draft",
+  status: PlanRunStatus = PLAN_RUN_STATUS_DRAFT,
   planPath: string | null = null,
 ): PlanRun => ({
   id: `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -269,6 +277,20 @@ export const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
 
   const todos = todosFromSnapshot(data.todos);
   const activeRun = runFromSnapshot(data.activeRun);
+  const nextTodoId = activeRun
+    ? activeRun.nextTodoId
+    : finiteNumberOr(data.nextTodoId, todos.length + 1);
+  const restoredActiveRun =
+    activeRun ??
+    (todos.length > 0
+      ? createPlanRun(
+          todos,
+          nextTodoId,
+          hasCompletedAllTodos(todos)
+            ? PLAN_RUN_STATUS_COMPLETED
+            : PLAN_RUN_STATUS_DRAFT,
+        )
+      : null);
   const recentRuns = Array.isArray(data.recentRuns)
     ? data.recentRuns.flatMap((run): PlanRun[] => {
         const parsed = runFromSnapshot(run);
@@ -279,19 +301,9 @@ export const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
   return {
     mode: data.mode,
     phase: data.phase,
-    todos: activeRun ? activeRun.todos : todos,
-    nextTodoId: activeRun
-      ? activeRun.nextTodoId
-      : finiteNumberOr(data.nextTodoId, todos.length + 1),
-    activeRun:
-      activeRun ??
-      (todos.length > 0
-        ? createPlanRun(
-            todos,
-            finiteNumberOr(data.nextTodoId, todos.length + 1),
-            hasCompletedAllTodos(todos) ? "completed" : "draft",
-          )
-        : null),
+    todos: restoredActiveRun ? restoredActiveRun.todos : todos,
+    nextTodoId,
+    activeRun: restoredActiveRun,
     recentRuns: recentRuns.slice(0, RECENT_RUN_LIMIT),
     readFiles: sanitizeStringArray(data.readFiles, []),
     activePlanPath:
@@ -402,18 +414,17 @@ export class PlanModeState {
 
     this.mode = snapshot.mode;
     this.phase = snapshot.phase;
-    this.activeRun = snapshot.activeRun
+    const activeRun = snapshot.activeRun
       ? clonePlanRun(snapshot.activeRun)
       : null;
+    this.activeRun = activeRun;
     this.recentRuns = snapshot.recentRuns
       .map(clonePlanRun)
       .slice(0, RECENT_RUN_LIMIT);
-    this.todos = this.activeRun
-      ? this.activeRun.todos
+    this.todos = activeRun
+      ? activeRun.todos
       : snapshot.todos.map((todo) => ({ ...todo }));
-    this.nextTodoId = this.activeRun
-      ? this.activeRun.nextTodoId
-      : snapshot.nextTodoId;
+    this.nextTodoId = activeRun ? activeRun.nextTodoId : snapshot.nextTodoId;
     this.readFiles = new Set(snapshot.readFiles);
     this.activePlanPath = snapshot.activePlanPath;
     this.latestReviewArtifactPath = snapshot.latestReviewArtifactPath;
@@ -509,13 +520,13 @@ export class PlanModeState {
   }
 
   hasUnfinishedTodos(): boolean {
-    return this.todos.some((todo) => todo.status !== "done");
+    return this.todos.some((todo) => todo.status !== TODO_STATUS_DONE);
   }
 
   getNewRunStatus(hasTodos: boolean, planPath: string | null): PlanRunStatus {
     return hasTodos && planPath && this.phase === PLAN_MODE_ACT
-      ? "executing"
-      : "draft";
+      ? PLAN_RUN_STATUS_EXECUTING
+      : PLAN_RUN_STATUS_DRAFT;
   }
 
   getApprovedActivePlanPath(): string | null {
@@ -571,6 +582,12 @@ export class PlanModeState {
 
   markReviewArtifactWritten(planPath: string): void {
     this.latestReviewArtifactPath = planPath;
+    // Completed runs no longer use the artifact as future execution input, so
+    // post-run notes should not invalidate the approval that completed them.
+    if (this.isApprovedCompletedActiveRunArtifact(planPath)) {
+      return;
+    }
+
     this.reviewApprovedPlanPaths.delete(planPath);
     this.activePlanPath = clearMatchingPath(this.activePlanPath, planPath);
     this.pendingApprovedPlanContinuationPath = clearMatchingPath(
@@ -593,8 +610,17 @@ export class PlanModeState {
       return;
     }
     this.phase = PLAN_MODE_PLAN;
-    this.activeRun.status = "draft";
+    this.activeRun.status = PLAN_RUN_STATUS_DRAFT;
     delete this.activeRun.approvedAt;
+  }
+
+  isApprovedCompletedActiveRunArtifact(planPath: string): boolean {
+    return (
+      this.phase === PLAN_MODE_ACT &&
+      this.activeRun?.status === PLAN_RUN_STATUS_COMPLETED &&
+      this.activeRun.planPath === planPath &&
+      this.isApprovedReviewArtifactPath(planPath)
+    );
   }
 
   canStartFirstRunForApprovedPlan(): boolean {
@@ -607,7 +633,7 @@ export class PlanModeState {
   }
 
   getUnfinishedRunPlanPath(): string | null {
-    if (this.activeRun?.status === "completed") {
+    if (this.activeRun?.status === PLAN_RUN_STATUS_COMPLETED) {
       return null;
     }
     return this.activeRun?.planPath ?? null;
@@ -617,7 +643,7 @@ export class PlanModeState {
     return (
       this.mode === PLAN_MODE_PLAN &&
       this.phase === PLAN_MODE_ACT &&
-      this.activeRun?.status === "completed" &&
+      this.activeRun?.status === PLAN_RUN_STATUS_COMPLETED &&
       this.activeRun.planPath === this.activePlanPath &&
       this.hasApprovedActivePlan()
     );
@@ -634,14 +660,14 @@ export class PlanModeState {
     this.todos = this.activeRun.todos;
     this.nextTodoId = 1;
     for (const item of items) {
-      this.addTodo(item.text, item.status ?? "todo", item.notes);
+      this.addTodo(item.text, item.status ?? TODO_STATUS_TODO, item.notes);
     }
     this.refreshActiveRunStatus();
   }
 
   addTodo(
     text: string,
-    status: TodoStatusInput = "todo",
+    status: TodoStatusInput = TODO_STATUS_TODO,
     notes?: string,
     newRunPlanPath: string | null = null,
   ): TodoItem {
@@ -651,7 +677,7 @@ export class PlanModeState {
       status: normalizeTodoStatus(status),
       ...(notes ? { notes } : {}),
     };
-    if (!this.activeRun || this.activeRun.status === "archived") {
+    if (!this.activeRun || this.activeRun.status === PLAN_RUN_STATUS_ARCHIVED) {
       this.activeRun = createPlanRun(
         [],
         this.nextTodoId,
@@ -706,12 +732,12 @@ export class PlanModeState {
   }
 
   archiveCompletedActiveRun(): void {
-    if (!this.activeRun || this.activeRun.status !== "completed") {
+    if (this.activeRun?.status !== PLAN_RUN_STATUS_COMPLETED) {
       return;
     }
     const archived = clonePlanRun({
       ...this.activeRun,
-      status: "archived",
+      status: PLAN_RUN_STATUS_ARCHIVED,
       archivedAt: new Date().toISOString(),
     });
     this.recentRuns = [archived, ...this.recentRuns].slice(0, RECENT_RUN_LIMIT);
@@ -725,14 +751,22 @@ export class PlanModeState {
     this.activeRun.todos = this.todos;
     this.activeRun.nextTodoId = this.nextTodoId;
 
-    const completed = hasCompletedAllTodos(this.todos);
-    if (completed && this.activeRun.status !== "completed") {
-      this.activeRun.status = "completed";
+    const allTodosCompleted = hasCompletedAllTodos(this.todos);
+    if (
+      allTodosCompleted &&
+      this.activeRun.status !== PLAN_RUN_STATUS_COMPLETED
+    ) {
+      this.activeRun.status = PLAN_RUN_STATUS_COMPLETED;
       this.activeRun.completedAt = new Date().toISOString();
       return;
     }
-    if (!completed && this.activeRun.status === "completed") {
-      this.activeRun.status = this.activeRun.planPath ? "executing" : "draft";
+    if (
+      !allTodosCompleted &&
+      this.activeRun.status === PLAN_RUN_STATUS_COMPLETED
+    ) {
+      this.activeRun.status = this.activeRun.planPath
+        ? PLAN_RUN_STATUS_EXECUTING
+        : PLAN_RUN_STATUS_DRAFT;
       delete this.activeRun.completedAt;
     }
   }

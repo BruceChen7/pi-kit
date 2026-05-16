@@ -24,7 +24,6 @@ receiving-code-review|https://github.com/obra/superpowers.git|skills/receiving-c
 slidev|https://github.com/slidevjs/slidev.git|skills/slidev
 brainstorming|local|skills/brainstorming
 writing-skills|https://github.com/obra/superpowers.git|skills/writing-skills
-x-tweet-fetcher|https://github.com/ythx-101/x-tweet-fetcher.git|
 pre-landing-review|local|skills/planning-suite/pre-landing-review
 me-code-simplifier|local|skills/me-code-simplifier
 zero-tech-debt|local|skills/zero-tech-debt

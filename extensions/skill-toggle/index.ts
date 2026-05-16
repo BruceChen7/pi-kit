@@ -72,6 +72,18 @@ const DEFAULT_THEME: PaletteTheme = {
 
 const DEFAULT_SKILL_LIBRARY_DIRS = ["git-skills", "me-skills"];
 
+const SKILL_STATUS_ON = "ON";
+const SKILL_STATUS_OFF = "OFF";
+
+const SKILL_SCOPE_USER = "user";
+const SKILL_SCOPE_PROJECT = "project";
+const SKILL_SCOPE_TEMPORARY = "temporary";
+
+const SKILL_SCOPE_MARKER_USER = "u";
+const SKILL_SCOPE_MARKER_PROJECT = "p";
+const SKILL_SCOPE_MARKER_TEMPORARY = "t";
+const SKILL_SCOPE_MARKER_UNKNOWN = "?";
+
 const paletteTheme = loadTheme();
 
 function projectAgentsSkillsDir(cwd: string): string {
@@ -168,6 +180,20 @@ export function isSkillDisabledForList(
 export function formatSkillDisplayDetails(skill: Skill): string {
   const scope = skill.scope ?? "temporary";
   return `[${scope}] ${toPortablePath(getSkillBasePath(skill))}`;
+}
+
+function formatSkillScopeMarker(skill: Skill): string {
+  switch (skill.scope) {
+    case SKILL_SCOPE_USER:
+      return SKILL_SCOPE_MARKER_USER;
+    case SKILL_SCOPE_PROJECT:
+      return SKILL_SCOPE_MARKER_PROJECT;
+    case SKILL_SCOPE_TEMPORARY:
+    case undefined:
+      return SKILL_SCOPE_MARKER_TEMPORARY;
+    default:
+      return SKILL_SCOPE_MARKER_UNKNOWN;
+  }
 }
 
 const HOME_DIR = os.homedir();
@@ -975,22 +1001,28 @@ export class SkillTogglePicker {
         const isEnabled = this.enabled.has(normalizeSkillName(skill.name));
 
         const prefix = isSelected ? selected("▸") : border("·");
-        const enabledBadge = isEnabled ? ` ${enabledStatus("✓")}` : "";
+        const status = isEnabled
+          ? `${enabledStatus(SKILL_STATUS_ON)} `
+          : SKILL_STATUS_OFF;
+        const scopeBadge = `[${formatSkillScopeMarker(skill)}]`;
         const nameStr = isSelected
           ? bold(selectedText(skill.name))
           : isEnabled
             ? enabledStatus(skill.name)
             : skill.name;
-        const maxDescLen = Math.max(0, innerW - visibleWidth(skill.name) - 12);
-        const detailText = [formatSkillDisplayDetails(skill), skill.description]
-          .filter((value) => value.length > 0)
-          .join(" — ");
+        const leadingText = `${prefix} ${status} ${scopeBadge} ${nameStr}`;
+        const detailText = skill.description.trim();
+        const separator = detailText ? `  ${border("—")}  ` : "";
+        const maxDescLen = Math.max(
+          0,
+          innerW - visibleWidth(leadingText) - visibleWidth(separator) - 1,
+        );
         const descStr =
           maxDescLen > 3
             ? description(truncateToWidth(detailText, maxDescLen, "…"))
             : "";
-        const separator = descStr ? `  ${border("—")}  ` : "";
-        const skillLine = `${prefix} ${nameStr}${enabledBadge}${separator}${descStr}`;
+        const renderedSeparator = descStr ? separator : "";
+        const skillLine = `${leadingText}${renderedSeparator}${descStr}`;
         lines.push(row(skillLine));
       }
       lines.push(emptyRow());

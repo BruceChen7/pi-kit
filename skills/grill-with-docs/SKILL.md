@@ -17,6 +17,9 @@ Default to Chinese for questions, specs, plans, and summaries unless the user ex
 - For each question, include your recommended answer and why.
 - If a question can be answered by exploring files, code, docs, or git history, investigate instead of asking.
 - Challenge fuzzy terms, overloaded terms, and contradictions with existing code or docs immediately.
+- Treat glossary and ADR inline updates as core behavior: once a domain term, relationship,
+  avoided alias, ambiguity, or ADR-worthy decision is resolved, update or propose the durable
+  record before moving on to unrelated questions.
 - Do not start implementation from this skill. End by producing reviewed planning artifacts when the user wants to proceed.
 - Keep pure interview sessions lightweight: if there are no file edits, code changes, or architectural commitments, the `AGENTS.md` skill-only exception applies and no plan file is required.
 - Store domain docs under `.pi/contexts/`; do not create `CONTEXT.md` or ADR files in application source directories.
@@ -25,8 +28,6 @@ Default to Chinese for questions, specs, plans, and summaries unless the user ex
 - The moment you will edit repository files (`.pi/contexts/**`, specs, plans, or code), enter the Pi plan workflow.
 
 ## Pi Workflow Integration
-
-Use this workflow in `pi-kit` and repos that use `plannotator-auto`:
 
 1. **Pure grilling only**
    - No plan file is required if the user only wants questions and discussion.
@@ -40,12 +41,10 @@ Use this workflow in `pi-kit` and repos that use `plannotator-auto`:
      - `## Steps`
      - `## Verification`
      - `## Review`
-   - Writing/editing this file should trigger `plannotator-auto` plan review. Address annotations before proceeding.
 
 3. **Design/spec handoff**
    - When the grilling session resolves into a design, write the spec to:
      `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md`
-   - This should trigger `plannotator-auto` spec review. Address annotations before moving to implementation planning.
 
 4. **Implementation plan handoff**
    - If the user approves the spec and wants implementation, write/update:
@@ -53,7 +52,6 @@ Use this workflow in `pi-kit` and repos that use `plannotator-auto`:
    - Keep steps outcome-oriented and verifiable.
    - Wait for plan review feedback before implementation.
 
-If `plannotator-auto` does not appear to trigger, tell the user the expected file path and proceed only after they confirm whether to continue or manually review.
 
 ## Process
 
@@ -132,7 +130,7 @@ The spec should include:
 - verification strategy
 - open questions, if any
 
-Write it to `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md` so `plannotator-auto` can review it.
+Write it to `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md`
 
 ## Dependency Files
 

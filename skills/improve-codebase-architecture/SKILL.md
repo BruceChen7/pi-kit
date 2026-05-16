@@ -14,7 +14,10 @@ Default to Chinese unless the user explicitly asks for another language.
 - Review architecture first; do not implement refactors from this skill.
 - Use `.pi/contexts/` for domain docs and ADRs. Do **not** create root `CONTEXT.md`, root `docs/adr/`, or context docs inside source directories.
 - If the task is only architecture exploration with no file edits, the `AGENTS.md` skill-only exception applies and no plan file is required.
-- Before writing `.pi/contexts/**`, specs, plans, or any code, write a plan file at `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` using the required `AGENTS.md` sections so `plannotator-auto` can review it.
+- Before writing `.pi/contexts/**`, specs, plans, or any code, write a plan file at `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` using the required `AGENTS.md` sections
+- When architecture exploration resolves a domain term, relationship, avoided alias, ambiguity,
+  or durable trade-off, update the relevant `.pi/contexts/**/CONTEXT.md` or propose/create an
+  ADR inline before continuing the review.
 - When producing an architecture review artifact, write it to `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md` so `plannotator-auto` can review it.
 
 ## Required vocabulary
@@ -113,7 +116,6 @@ Include:
 - testing strategy through the new interface
 - risks and open questions
 
-Wait for `plannotator-auto` review feedback before moving to implementation planning.
 
 ## Dependency files
 

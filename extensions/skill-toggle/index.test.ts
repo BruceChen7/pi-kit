@@ -578,18 +578,59 @@ describe("skill library discovery", () => {
 });
 
 describe("skill picker render", () => {
-  it("uses positive status and high-contrast focus colors", async () => {
+  it("shows text status, short scope, and skill details in each row", async () => {
     const { picker } = await createTestPicker(
-      namedPickerSkills("alpha", "beta"),
+      [
+        {
+          name: "alpha",
+          description: "Alpha user skill",
+          filePath: "/repo/.agents/skills/alpha/SKILL.md",
+          scope: "user",
+        },
+        {
+          name: "beta",
+          description: "Beta project skill",
+          filePath: "/repo/.agents/skills/beta/SKILL.md",
+          scope: "project",
+        },
+      ],
       ["beta"],
     );
 
     const output = picker.render(80).join("\n");
 
-    expect(output).toContain(ENABLED("✓"));
+    expect(output).toContain("OFF");
+    expect(output).toContain(ENABLED("ON"));
+    expect(output).toContain("[u]");
+    expect(output).toContain("[p]");
+    expect(output).toContain("Alpha user skill");
+    expect(output).toContain("Beta project skill");
+    expect(output).not.toContain("/repo/.agents/skills/alpha");
     expect(output).toContain(ENABLED("beta"));
     expect(output).toContain(SELECTED_TEXT("alpha"));
-    expect(output).not.toContain(RED("✓"));
+    expect(output).not.toContain(RED("ON"));
+  });
+
+  it("uses fallback scope markers for temporary and unknown skills", async () => {
+    const { picker } = await createTestPicker([
+      {
+        name: "temporary-skill",
+        description: "Temporary skill",
+        filePath: "/repo/.agents/skills/temporary-skill/SKILL.md",
+        scope: "temporary",
+      },
+      {
+        name: "unknown-skill",
+        description: "Unknown skill",
+        filePath: "/repo/.agents/skills/unknown-skill/SKILL.md",
+        scope: "external" as Skill["scope"],
+      },
+    ]);
+
+    const output = picker.render(80).join("\n");
+
+    expect(output).toContain("[t]");
+    expect(output).toContain("[?]");
   });
 
   it("uses enabledStatus theme overrides for enabled skill status", async () => {
@@ -598,7 +639,7 @@ describe("skill picker render", () => {
       "alpha",
     ]);
 
-    expect(picker.render(80).join("\n")).toContain(MAGENTA("✓"));
+    expect(picker.render(80).join("\n")).toContain(MAGENTA("ON"));
   });
 
   it("ignores legacy disabled theme overrides", async () => {
@@ -609,8 +650,8 @@ describe("skill picker render", () => {
 
     const output = picker.render(80).join("\n");
 
-    expect(output).toContain(ENABLED("✓"));
-    expect(output).not.toContain(MAGENTA("✓"));
+    expect(output).toContain(ENABLED("ON"));
+    expect(output).not.toContain(MAGENTA("ON"));
   });
 });
 

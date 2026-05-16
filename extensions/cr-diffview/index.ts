@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   Container,
+  matchesKey,
   type SelectItem,
   SelectList,
   Text,
@@ -18,7 +19,8 @@ import {
 const DEFAULT_NVIM_ENTRYPOINT = "lua require('pi.cr').start()";
 const CR_SESSION_ROOT = [".pi", "cr-diffview"];
 const SELECT_LIST_MAX_VISIBLE = 10;
-const SELECT_LIST_HINT = "Enter to select • esc to cancel";
+const SELECT_LIST_HINT = "Type to filter • Enter to select • esc to cancel";
+const EMPTY_FILTER_HINT = "type to filter...";
 const CR_TMUX_WINDOW_NAME = "pi-cr";
 const CR_TMUX_NEW_WINDOW_ARGS = ["new-window", "-a", "-n", CR_TMUX_WINDOW_NAME];
 const CR_WIDGET_KEY = "cr-diffview";
@@ -197,15 +199,34 @@ const notifyNoBranchCandidates = (
   );
 };
 
+const isBackspaceInput = (data: string): boolean =>
+  data === "backspace" || matchesKey(data, "backspace");
+
+const isPrintableInput = (data: string): boolean => {
+  const chars = Array.from(data);
+  if (chars.length !== 1) return false;
+  const codePoint = chars[0]?.codePointAt(0) ?? 0;
+  return codePoint >= 32 && codePoint !== 127;
+};
+
 const showSelectList = async <T extends string>(
   ctx: ExtensionCommandContext,
   title: string,
   items: SelectItem[],
 ): Promise<T | null> =>
   ctx.ui.custom<T | null>((tui, theme, _kb, done) => {
+    let query = "";
     const container = new Container();
+    const filterText = new Text("");
+    const renderFilter = () => {
+      const value = query || theme.fg("dim", EMPTY_FILTER_HINT);
+      filterText.setText(`Filter: ${value}`);
+    };
+
     container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
     container.addChild(new Text(theme.fg("accent", theme.bold(title))));
+    renderFilter();
+    container.addChild(filterText);
 
     const selectList = new SelectList(
       items,
@@ -220,6 +241,12 @@ const showSelectList = async <T extends string>(
     container.addChild(new Text(theme.fg("dim", SELECT_LIST_HINT)));
     container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
 
+    const updateFilter = (nextQuery: string) => {
+      query = nextQuery;
+      selectList.setFilter(query);
+      renderFilter();
+    };
+
     return {
       render(width: number) {
         return container.render(width);
@@ -228,7 +255,13 @@ const showSelectList = async <T extends string>(
         container.invalidate();
       },
       handleInput(data: string) {
-        selectList.handleInput(data);
+        if (isBackspaceInput(data)) {
+          updateFilter(query.slice(0, -1));
+        } else if (isPrintableInput(data)) {
+          updateFilter(`${query}${data}`);
+        } else {
+          selectList.handleInput(data);
+        }
         tui.requestRender();
       },
     };

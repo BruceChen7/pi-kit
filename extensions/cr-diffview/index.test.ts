@@ -459,14 +459,35 @@ describe("cr-diffview command", () => {
     expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
   });
 
-  it("selects a target branch interactively when no target is provided", async () => {
+  it("selects a target branch by typing to filter interactively", async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
     const exec = createCrExec(repoRoot);
     const notify = vi.fn();
     const custom = vi
       .fn()
       .mockResolvedValueOnce("baseBranch")
-      .mockResolvedValueOnce("main");
+      .mockImplementationOnce(async (renderPicker) => {
+        let selected: string | null = null;
+        const picker = renderPicker(
+          { requestRender: vi.fn() },
+          {
+            bold: (text: string) => text,
+            fg: (_token: string, text: string) => text,
+          },
+          {},
+          (value: string | null) => {
+            selected = value;
+          },
+        );
+
+        expect(picker.render(80).join("\n")).toContain("Filter:");
+        for (const input of ["m", "backspace", "d"]) {
+          picker.handleInput(input);
+        }
+        expect(picker.render(80).join("\n")).toContain("Filter: d");
+        picker.handleInput("\r");
+        return selected;
+      });
     const { startHandler } = registerCrCommands(exec);
 
     await startHandler("", {
@@ -481,7 +502,7 @@ describe("cr-diffview command", () => {
     expect(tmuxCommand).toContain("CR_SOCKET='");
     expect(tmuxCommand).not.toContain("CR_DIFF_TARGET=");
     expect(notify).toHaveBeenCalledWith(
-      "Opened CR diffview for main...HEAD",
+      "Opened CR diffview for dev...HEAD",
       "info",
     );
   });

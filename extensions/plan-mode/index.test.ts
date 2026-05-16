@@ -384,6 +384,16 @@ const expectNoApprovedContinuationFollowUp = (
     expect.anything(),
   );
 };
+
+const expectNoApprovedArtifactChangedFollowUp = (
+  harness: ReturnType<typeof buildHarness>,
+): void => {
+  expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
+    expect.stringContaining("approved artifact changed"),
+    expect.anything(),
+  );
+};
+
 const actCompletedDemoSummary = `【completed, back to Act】${demoCompletedSummary}`;
 const approvedPlanPolicyFixPrompt = [
   "Plan Mode artifact policy requires fixes for an already approved plan.",
@@ -393,25 +403,28 @@ const approvedPlanPolicyFixPrompt = [
   "- ## Review 缺少后续结果记录要求。 (Review)",
 ].join("\n");
 
-const approveDemoPlan = async (
+const emitApprovedReview = async (
   harness: ReturnType<typeof buildHarness>,
   ctx: TestCtx,
+  planPath: string,
 ): Promise<void> => {
   await harness.emit(
     "tool_result",
     {
       toolName: PLANNOTATOR_REVIEW_TOOL,
       isError: false,
-      input: { path: demoPlanPath },
-      content: [
-        {
-          type: "text",
-          text: `Review approved for ${demoPlanPath}.`,
-        },
-      ],
+      input: { path: planPath },
+      content: [{ type: "text", text: `Review approved for ${planPath}.` }],
     },
     ctx,
   );
+};
+
+const approveDemoPlan = async (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+): Promise<void> => {
+  await emitApprovedReview(harness, ctx, demoPlanPath);
 };
 
 const startApprovedDemoRun = async (
@@ -437,6 +450,22 @@ const emitAbortedAgentEnd = async (
   await harness.emit(
     "agent_end",
     { messages: [{ role: "assistant", stopReason: "aborted" }] },
+    ctx,
+  );
+};
+
+const emitReviewArtifactWrite = async (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+  artifactPath: string,
+): Promise<void> => {
+  await harness.emit(
+    "tool_result",
+    {
+      toolName: "write",
+      isError: false,
+      input: { path: artifactPath },
+    },
     ctx,
   );
 };
@@ -1851,10 +1880,33 @@ describe("plan-mode extension", () => {
 
       await emitAbortedAgentEnd(harness, ctx);
 
-      expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
-        expect.stringContaining("approved artifact changed"),
-        expect.anything(),
-      );
+      expectNoApprovedArtifactChangedFollowUp(harness);
+    });
+  });
+
+  it("does not require review again after a completed approved run edits its artifact", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await completeApprovedDemoRun(harness, ctx);
+      await emitReviewArtifactWrite(harness, ctx, demoPlanPath);
+
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      expectNoApprovedArtifactChangedFollowUp(harness);
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        mode: "plan",
+        phase: "act",
+        activePlanPath: demoPlanPath,
+        latestReviewArtifactPath: demoPlanPath,
+        reviewApprovedPlanPaths: [demoPlanPath],
+        activeRun: {
+          status: "completed",
+          planPath: demoPlanPath,
+        },
+      });
     });
   });
 
@@ -1873,15 +1925,7 @@ describe("plan-mode extension", () => {
         ctx,
       );
       await approveDemoPlan(harness, ctx);
-      await harness.emit(
-        "tool_result",
-        {
-          toolName: "write",
-          isError: false,
-          input: { path: demoPlanPath },
-        },
-        ctx,
-      );
+      await emitReviewArtifactWrite(harness, ctx, demoPlanPath);
 
       await emitAbortedAgentEnd(harness, ctx);
 
@@ -1914,27 +1958,8 @@ describe("plan-mode extension", () => {
 
       await harness.emit("session_start", {}, ctx);
 
-      await harness.emit(
-        "tool_result",
-        {
-          toolName: "write",
-          isError: false,
-          input: { path: firstPlanPath },
-        },
-        ctx,
-      );
-      await harness.emit(
-        "tool_result",
-        {
-          toolName: PLANNOTATOR_REVIEW_TOOL,
-          isError: false,
-          input: { path: firstPlanPath },
-          content: [
-            { type: "text", text: `Review approved for ${firstPlanPath}.` },
-          ],
-        },
-        ctx,
-      );
+      await emitReviewArtifactWrite(harness, ctx, firstPlanPath);
+      await emitApprovedReview(harness, ctx, firstPlanPath);
       await harness.runCommand("plan-mode", "plan", ctx);
       await harness.runTool(
         PLAN_MODE_TODO_TOOL,
@@ -1944,15 +1969,7 @@ describe("plan-mode extension", () => {
         },
         ctx,
       );
-      await harness.emit(
-        "tool_result",
-        {
-          toolName: "write",
-          isError: false,
-          input: { path: secondPlanPath },
-        },
-        ctx,
-      );
+      await emitReviewArtifactWrite(harness, ctx, secondPlanPath);
 
       await harness.emit("agent_end", { messages: [] }, ctx);
 
@@ -2008,15 +2025,7 @@ describe("plan-mode extension", () => {
         },
         ctx,
       );
-      await harness.emit(
-        "tool_result",
-        {
-          toolName: "write",
-          isError: false,
-          input: { path: planPath },
-        },
-        ctx,
-      );
+      await emitReviewArtifactWrite(harness, ctx, planPath);
 
       await harness.emit("agent_end", { messages: [] }, ctx);
 
@@ -2045,16 +2054,7 @@ describe("plan-mode extension", () => {
         },
         ctx,
       );
-      await harness.emit(
-        "tool_result",
-        {
-          toolName: PLANNOTATOR_REVIEW_TOOL,
-          isError: false,
-          input: { path: planPath },
-          content: [{ type: "text", text: `Review approved for ${planPath}.` }],
-        },
-        ctx,
-      );
+      await emitApprovedReview(harness, ctx, planPath);
 
       await harness.emit("agent_end", { messages: [] }, ctx);
 

@@ -1,5 +1,12 @@
 import { getDefaultArtifactPolicyConfig } from "./artifact-policy.ts";
-import type { PlanMode, PlanModeConfig } from "./types.ts";
+import type {
+  PlanArtifactFormat,
+  PlanMode,
+  PlanModeConfig,
+  PlanRunStatus,
+  TodoStatus,
+  TodoStatusInput,
+} from "./types.ts";
 
 export const STATE_ENTRY_TYPE = "plan-mode-state";
 export const STATUS_KEY = "plan-mode";
@@ -65,13 +72,46 @@ export const PLAN_MODE_COMMAND_OPTIONS = [
   "status",
   "format",
 ] as const;
-export const PLAN_MODE_FORMAT_OPTIONS = ["html", "markdown"] as const;
+export const PLAN_ARTIFACT_FORMAT_HTML = "html" satisfies PlanArtifactFormat;
+export const PLAN_ARTIFACT_FORMAT_MARKDOWN =
+  "markdown" satisfies PlanArtifactFormat;
+export const PLAN_ARTIFACT_FORMAT_VALUES = [
+  PLAN_ARTIFACT_FORMAT_HTML,
+  PLAN_ARTIFACT_FORMAT_MARKDOWN,
+] as const satisfies readonly PlanArtifactFormat[];
+export const PLAN_MODE_FORMAT_OPTIONS = [
+  PLAN_ARTIFACT_FORMAT_HTML,
+  PLAN_ARTIFACT_FORMAT_MARKDOWN,
+] as const;
+export const TODO_STATUS_TODO = "todo" satisfies TodoStatus;
+export const TODO_STATUS_IN_PROGRESS = "in_progress" satisfies TodoStatus;
+export const TODO_STATUS_DONE = "done" satisfies TodoStatus;
+export const TODO_STATUS_BLOCKED = "blocked" satisfies TodoStatus;
+export const TODO_STATUS_PENDING = "pending" satisfies TodoStatusInput;
+export const TODO_STATUS_VALUES = [
+  TODO_STATUS_TODO,
+  TODO_STATUS_IN_PROGRESS,
+  TODO_STATUS_DONE,
+  TODO_STATUS_BLOCKED,
+] as const satisfies readonly TodoStatus[];
+export const PLAN_RUN_STATUS_DRAFT = "draft" satisfies PlanRunStatus;
+export const PLAN_RUN_STATUS_APPROVED = "approved" satisfies PlanRunStatus;
+export const PLAN_RUN_STATUS_EXECUTING = "executing" satisfies PlanRunStatus;
+export const PLAN_RUN_STATUS_COMPLETED = "completed" satisfies PlanRunStatus;
+export const PLAN_RUN_STATUS_ARCHIVED = "archived" satisfies PlanRunStatus;
+export const PLAN_RUN_STATUS_VALUES = [
+  PLAN_RUN_STATUS_DRAFT,
+  PLAN_RUN_STATUS_APPROVED,
+  PLAN_RUN_STATUS_EXECUTING,
+  PLAN_RUN_STATUS_COMPLETED,
+  PLAN_RUN_STATUS_ARCHIVED,
+] as const satisfies readonly PlanRunStatus[];
 export const EXPLICIT_PLAN_MODE_REQUEST_PATTERN =
   /\b(?:please\s+)?plan\s+(?:this|the|mode|first)|计划模式|规划模式/iu;
 
 export const DEFAULT_CONFIG: PlanModeConfig = {
   defaultMode: PLAN_MODE_ACT,
-  planArtifactFormat: "markdown",
+  planArtifactFormat: PLAN_ARTIFACT_FORMAT_MARKDOWN,
   planArtifactFormatSource: "default",
   preserveExternalTools: true,
   requireReview: true,

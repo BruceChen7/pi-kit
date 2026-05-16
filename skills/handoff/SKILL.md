@@ -17,6 +17,10 @@ Default to Chinese unless the user explicitly asks for another language.
 - Save the document to a path produced by `mktemp -t handoff-XXXXXX.md`.
 - Read the file before writing to it, even though it should normally be empty.
 - Do not duplicate content already captured in durable artifacts. Reference paths or URLs instead.
+- Prefer references to `.pi/plans/**`, `.pi/contexts/**`, commit SHAs, review comments, and issue
+  IDs over copied prose.
+- Do not paste full specs, plans, ADRs, diffs, logs, or command output. Summarize only what the
+  next agent needs and link to the durable source.
 - Do not commit, push, or modify project files unless the user explicitly asks.
 - If the user passed arguments, treat them as the next session's intended focus.
 
@@ -27,7 +31,8 @@ Before writing, gather only enough context to make the next session safe:
 - current user goal and latest explicit instruction
 - relevant `.pi/plans/<repo>/specs/**` or `.pi/plans/<repo>/plan/**` files
 - active review comments, if any
-- changed files and current git status, if relevant
+- changed files and current git status, if relevant; if there are uncommitted changes, include a
+  short `git status --short` summary
 - verification commands already run and their results
 - known blockers, open questions, or remaining risks
 
@@ -52,6 +57,10 @@ Use this template:
 ## Remaining work
 
 - <Next actionable step.>
+
+## Avoid repeating
+
+- <Work already done, investigation already tried, or artifacts already created.>
 
 ## Key files and artifacts
 

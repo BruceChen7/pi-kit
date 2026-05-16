@@ -20,11 +20,14 @@ Default to Chinese unless the user explicitly asks for another language.
 ## Axes
 
 - **Standards** — does the diff follow documented project standards, architecture decisions,
-  domain language, style expectations, and Pi workflow rules?
+  domain language, style expectations, and Pi workflow rules? Only report issues that violate a
+  documented standard or clearly contradict established repo patterns. Cite the source.
 - **Spec** — does the diff faithfully implement the originating issue, PRD, plan, spec, or user
-  request?
+  request? Report missing requirements, partial requirements, scope creep, and behavior that
+  appears implemented but wrong.
 
-Keep the axes separate. Do not merge, average, or rerank the two reports.
+Keep the axes separate. Do not merge, average, or rerank the two reports. A change can pass
+Standards while failing Spec, or pass Spec while failing Standards.
 
 ## Process
 
@@ -46,8 +49,8 @@ git diff --no-ext-diff <fixed-point>...HEAD
 git log <fixed-point>..HEAD --oneline
 ```
 
-Use the three-dot diff so the comparison is against the merge base. Always include
-`--no-ext-diff`.
+Use the three-dot diff so the comparison is against the merge base, not merely the current
+branch tip. Always include `--no-ext-diff`. Do not silently change the user's fixed point.
 
 ### 2. Identify the spec source
 
@@ -59,7 +62,8 @@ Look for the originating requirements in this order:
 4. `.pi/plans/<repo>/plan/**` files matching the branch, feature, or changed area.
 5. `docs/`, `specs/`, `.scratch/`, or `TODOS.md` if the repo uses them.
 6. If nothing is found, ask the user where the spec is. If there is no spec, report
-   `no spec available` under the Spec axis.
+   `no spec available` under the Spec axis. Do not invent implied requirements from the diff;
+   only use observable user intent if it exists in the conversation.
 
 ### 3. Identify standards sources
 

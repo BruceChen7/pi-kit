@@ -33,7 +33,7 @@ Read when relevant:
 
 - `AGENTS.md` or equivalent repo instructions
 - `.pi/plans/<repo>/specs/` and `.pi/plans/<repo>/plan/`
-- `.pi/contexts/**/CONTEXT.md`
+- `.pi/contexts/**/CONTEXT.md` as glossary only, not as issue/spec/implementation storage
 - `.pi/contexts/**/adr/`
 - relevant code paths if needed for dependencies or vertical slicing
 

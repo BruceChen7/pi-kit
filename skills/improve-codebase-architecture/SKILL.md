@@ -13,6 +13,9 @@ Default to Chinese unless the user explicitly asks for another language.
 
 - Review architecture first; do not implement refactors from this skill.
 - Use `.pi/contexts/` for domain docs and ADRs. Do **not** create root `CONTEXT.md`, root `docs/adr/`, or context docs inside source directories.
+- Treat `.pi/contexts/**/CONTEXT.md` as a domain glossary only. Architecture proposals,
+  interface sketches, file paths, rollout notes, implementation plans, and technical decisions
+  belong in `.pi/plans/**` or ADRs, not in the glossary.
 - If the task is only architecture exploration with no file edits, the `AGENTS.md` skill-only exception applies and no plan file is required.
 - Before writing `.pi/contexts/**`, specs, plans, or any code, write a plan file at `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` using the required `AGENTS.md` sections
 - When architecture exploration resolves a domain term, relationship, avoided alias, ambiguity,

@@ -6,19 +6,15 @@ export {
 } from "./paths.ts";
 export { getSessionKey } from "./session.ts";
 
-import path from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../shared/logger.ts";
 import {
-  markReviewPending,
-  maybeStartCodeReviewOnAgentEnd,
   recordSessionReviewDocumentWrites,
   registerCodeReviewHandlers,
 } from "./code-review.ts";
-import { isCodeReviewAutoTriggerEnabled } from "./config.ts";
 import { isRecord, summarizeToolArgs } from "./helpers.ts";
-import { getPlanFileConfig, shouldQueueReviewForToolPath } from "./paths.ts";
+import { getPlanFileConfig } from "./paths.ts";
 import {
   clearReviewWidget,
   createPendingReviewGateMessage,
@@ -147,43 +143,18 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
 
     recordSessionReviewDocumentWrites(ctx, event.toolName, args);
 
-    const toolPath = resolveToolPath(args);
     const planConfig = getPlanFileConfig(ctx);
+    const toolPath = resolveToolPath(args);
     if (toolPath) {
-      const targetPath = path.resolve(ctx.cwd, toolPath);
-      const shouldQueueCodeReview = shouldQueueReviewForToolPath(
-        planConfig,
-        targetPath,
-      );
-
-      log.debug("plannotator-auto evaluated tool path for review queue", {
+      log.debug("plannotator-auto captured tool path for review gating", {
         cwd: ctx.cwd,
         toolName: event.toolName,
         toolPath,
-        targetPath,
-        shouldQueueCodeReview,
         configuredPlanPath: planConfig?.resolvedPlanPath ?? null,
         sessionKey: getSessionKey(ctx),
       });
-
-      if (shouldQueueCodeReview) {
-        if (isCodeReviewAutoTriggerEnabled(ctx)) {
-          markReviewPending(ctx);
-        } else {
-          log.debug(
-            "plannotator-auto skipped review queue (code-review auto trigger disabled)",
-            {
-              cwd: ctx.cwd,
-              toolName: event.toolName,
-              toolPath,
-              targetPath,
-              sessionKey: getSessionKey(ctx),
-            },
-          );
-        }
-      }
     } else if (event.toolName !== "bash") {
-      log.debug("plannotator-auto tool args missing path for review queue", {
+      log.debug("plannotator-auto tool args missing path for review gating", {
         cwd: ctx.cwd,
         toolName: event.toolName,
         ...summarizeToolArgs(args),
@@ -216,7 +187,6 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       return;
     }
 
-    await maybeStartCodeReviewOnAgentEnd(pi, ctx, log);
     setReviewWidget(ctx);
   });
 }

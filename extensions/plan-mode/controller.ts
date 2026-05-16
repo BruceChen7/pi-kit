@@ -81,6 +81,10 @@ const APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE =
   "Plan Mode is waiting for an approved Plannotator plan/spec. The " +
   "approved artifact changed and must be reviewed again before " +
   "continuing approved execution.";
+const APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE =
+  "Plan Mode is waiting for an approved Plannotator plan/spec. The " +
+  "approved execution was aborted by the user and must be reviewed again " +
+  "before continuing.";
 
 export class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
@@ -526,6 +530,13 @@ export class PlanModeController {
     const latestReviewArtifactApproved =
       this.state.isApprovedReviewArtifactPath(latestArtifactPath);
     if (turnWasAborted(event, ctx)) {
+      if (this.state.abortApprovedExecution(latestArtifactPath)) {
+        this.persist();
+        this.sendReviewWaitMessage(APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE);
+        return;
+      }
+      // Aborted turns skip generic plan reminders; still surface this review
+      // gate so the next turn does not appear idle while execution is blocked.
       if (this.approvedExecutionNeedsReReview(latestArtifactPath)) {
         this.sendReviewWaitMessage(APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE);
         return;

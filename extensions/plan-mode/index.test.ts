@@ -1862,25 +1862,57 @@ describe("plan-mode extension", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("does not require review again after an approved run is aborted without edits", async () => {
+  it("requires review again after an approved run is aborted without edits", async () => {
     await withTempCtx(async (ctx) => {
       writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
       const harness = buildHarness();
       planModeExtension(harness.api as unknown as ExtensionAPI);
       await harness.emit("session_start", {}, ctx);
-      await harness.runTool(
-        PLAN_MODE_TODO_TOOL,
-        {
-          action: "set",
-          items: [{ text: "实现已批准任务", status: "todo" }],
-        },
-        ctx,
-      );
-      await approveDemoPlan(harness, ctx);
+      await startApprovedDemoRun(harness, ctx);
 
       await emitAbortedAgentEnd(harness, ctx);
 
+      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("approved execution was aborted"),
+        { deliverAs: "followUp" },
+      );
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        mode: "plan",
+        phase: "plan",
+        activePlanPath: null,
+        latestReviewArtifactPath: demoPlanPath,
+        reviewApprovedPlanPaths: [],
+        activeRun: {
+          status: "draft",
+          planPath: demoPlanPath,
+        },
+      });
+    });
+  });
+
+  it("does not require review again after an executing approved run edits its artifact", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await startApprovedDemoRun(harness, ctx);
+      await emitReviewArtifactWrite(harness, ctx, demoPlanPath);
+
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
       expectNoApprovedArtifactChangedFollowUp(harness);
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        mode: "plan",
+        phase: "act",
+        activePlanPath: demoPlanPath,
+        latestReviewArtifactPath: demoPlanPath,
+        reviewApprovedPlanPaths: [demoPlanPath],
+        activeRun: {
+          status: "executing",
+          planPath: demoPlanPath,
+        },
+      });
     });
   });
 
@@ -1910,27 +1942,19 @@ describe("plan-mode extension", () => {
     });
   });
 
-  it("requires review again after an aborted run rewrites an approved artifact", async () => {
+  it("requires review again after an aborted run even if it rewrites an approved artifact", async () => {
     await withTempCtx(async (ctx) => {
       writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
       const harness = buildHarness();
       planModeExtension(harness.api as unknown as ExtensionAPI);
       await harness.emit("session_start", {}, ctx);
-      await harness.runTool(
-        PLAN_MODE_TODO_TOOL,
-        {
-          action: "set",
-          items: [{ text: "实现已批准任务", status: "todo" }],
-        },
-        ctx,
-      );
-      await approveDemoPlan(harness, ctx);
+      await startApprovedDemoRun(harness, ctx);
       await emitReviewArtifactWrite(harness, ctx, demoPlanPath);
 
       await emitAbortedAgentEnd(harness, ctx);
 
       expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining("approved artifact changed"),
+        expect.stringContaining("approved execution was aborted"),
         { deliverAs: "followUp" },
       );
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({

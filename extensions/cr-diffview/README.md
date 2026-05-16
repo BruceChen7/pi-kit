@@ -1,8 +1,8 @@
 # cr-diffview
 
 `/cr-neovim-start` starts a human code-review flow in a new tmux window named
-`pi-cr`, using Neovim and `diffview.nvim`. The shortcut `Alt+R` starts the same
-flow with the interactive target picker.
+`pi-cr-<repo>`, using Neovim and `diffview.nvim`. The shortcut `Alt+R` starts
+the same flow with the interactive target picker.
 
 ## Requirements
 
@@ -20,7 +20,7 @@ flow with the interactive target picker.
   - review against a base branch (`branch...HEAD`)
 - `/cr-neovim-start main` skips the selector and opens `main...HEAD`.
 - `Alt+R` opens the same interactive selector.
-- `/cr-neovim-stop` closes the `pi-cr` tmux window and imports saved annotations.
+- `/cr-neovim-stop` closes the active CR tmux window and imports saved annotations.
 
 While a review window is open, Pi shows a `cr-diffview` widget with the active
 review target.

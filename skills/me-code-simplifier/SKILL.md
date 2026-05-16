@@ -49,11 +49,14 @@ Do not use this skill to change product behavior or redesign unrelated areas.
      obscure the simplification.
 3. **Apply the smallest high-leverage change**
    - Clarify names/data flow.
-   - Centralize repeated domain literals behind the narrowest existing seam: constants, a typed
-     literal array, or a label map. Prefer reusing an existing constants/config module over
-     creating a shallow module just to hold one value.
-   - Keep value constants and display labels distinct when casing or wording differs; this hides
-     spelling policy inside the module instead of making every caller remember it.
+   - Keep names honest after refactors: constants, helpers, and tests should describe the current
+     role of a value, especially when a literal becomes a prefix, fallback, or derived name.
+   - Centralize repeated domain literals or derived values behind the narrowest existing seam:
+     constants, typed literal arrays, label maps, or small builders. Prefer reusing an existing
+     constants/config module over creating a shallow module just to hold one value.
+   - Keep policy decisions at one level: casing/label choices, fallback defaults, and derived-name
+     construction should live in one helper or map instead of being reimplemented at call sites
+     or in tests.
    - Flatten control flow (guard clauses, early returns).
    - Cache repeated local facts when the same expression answers one conceptual question
      within a function (for example, `hasApprovedPlan` or a selected format). Do this for

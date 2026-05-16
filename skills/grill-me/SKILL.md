@@ -31,6 +31,9 @@ user explicitly asks for another language.
   no plan file is required.
 - The moment the conversation will create or modify repo files, specs, plans, domain docs, or
   implementation, enter the Pi planning/review flow.
+- If grilling resolves domain vocabulary, relationships, avoided aliases, ambiguities, or an
+  ADR-worthy trade-off, switch to or follow `grill-with-docs` immediately so glossary / ADR
+  updates happen inline rather than being buried in the final summary.
 
 ## Pi Repo Flow
 

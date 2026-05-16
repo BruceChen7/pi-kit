@@ -15,7 +15,7 @@ Primary output is a reviewed Pi spec, not an immediate external issue:
 
 `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md`
 
-Use a slug that makes the artifact obviously PRD-related, e.g. `2026-05-06-checkout-prd-design.md`. This path should trigger `plannotator-auto` spec review.
+Use a slug that makes the artifact obviously PRD-related, e.g. `2026-05-06-checkout-prd-design.md`.
 
 Only publish to GitHub/Jira/Linear/etc. when the user explicitly asks or the repo has a clear configured issue tracker workflow. If publishing externally, still create the reviewed Pi spec first unless the user says not to.
 
@@ -48,11 +48,16 @@ Put feature requirements in `.pi/plans/<repo>/specs/**`, implementation plans in
    - Look for opportunities to create deep modules: lots of behavior behind a simple, testable interface.
    - Check with the user that these modules match expectations and ask which modules need tests.
 
-3. **Write the PRD spec**
-   - Write to `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md`.
-   - Wait for `plannotator-auto` review feedback and address annotations.
+3. **Update durable language and decisions inline**
+   - If the PRD crystallizes domain terms, relationships, avoided aliases, or ambiguities, update
+     the relevant `.pi/contexts/**/CONTEXT.md` before writing the final PRD spec.
+   - If the PRD contains a hard-to-reverse, surprising trade-off with real alternatives, propose
+     or create an ADR in `.pi/contexts/**/adr/` rather than only listing it in the PRD.
 
-4. **Optional publish**
+4. **Write the PRD spec**
+   - Write to `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md`.
+
+5. **Optional publish**
    - If the user wants an external issue, publish the approved PRD to the configured tracker.
    - Apply the repo's triage label if one is known; otherwise ask.
 

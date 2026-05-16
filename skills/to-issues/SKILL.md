@@ -72,7 +72,18 @@ Ask:
 
 Iterate until the user approves.
 
-### 4. Write reviewed issue-breakdown spec
+### 4. Update durable language and decisions inline
+
+Before writing the final issue-breakdown spec, handle any durable records that the breakdown
+crystallized:
+
+- update `.pi/contexts/**/CONTEXT.md` for resolved domain terms, relationships, avoided aliases,
+  or ambiguities
+- propose or create an ADR in `.pi/contexts/**/adr/` for hard-to-reverse, surprising trade-offs
+  with real alternatives
+- do not leave confirmed glossary or ADR material only inside issue bodies
+
+### 5. Write reviewed issue-breakdown spec
 
 Write the approved breakdown to:
 
@@ -88,7 +99,7 @@ Include:
 
 Wait for `plannotator-auto` review feedback and address annotations.
 
-### 5. Create local issues or publish externally
+### 6. Create local issues or publish externally
 
 Default local issue path:
 

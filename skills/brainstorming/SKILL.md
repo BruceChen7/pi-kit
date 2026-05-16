@@ -29,7 +29,7 @@ You MUST create a task for each of these items and complete them in order:
 6. **Write design doc** — save to `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md`
 7. **Spec review loop (self-check)** — main agent reviews the spec using the spec-document-reviewer checklist (no subagents/MCP tools); fix issues and re-review until approved (max 3 iterations, then surface to human)
 8. **User reviews written spec** — ask user to review the spec file before proceeding
-9. **Transition to implementation** — write `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` to enter plan mode (plannotator-auto auto-triggers `/plannotator-set-file`, `/plannotator`, `/plannotator-annotate`; run manually if skipped)
+9. **Transition to implementation** — write `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` to enter plan mode
 
 ## Process Flow
 
@@ -66,7 +66,6 @@ digraph brainstorming {
 }
 ```
 
-**The terminal state is: enter plan mode by writing `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md`.** Do NOT invoke frontend-design, any MCP tools, or subagents. Writing the plan file under `.pi/plans/<repo>/plan/` triggers plannotator-auto to set the plan file and enter plan mode; manual fallback steps are in the Implementation section.
 
 ## The Process
 

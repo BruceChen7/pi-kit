@@ -38,8 +38,6 @@ export type SkillLinkToggleResult =
 
 interface ToggleState {
   enabledSkills: Set<string>;
-  disabledSkills: Set<string>;
-  disabledSkillPaths: Set<string>;
   writePath: string;
   writeScope: "global";
   cwdKey: string;
@@ -71,6 +69,13 @@ const DEFAULT_THEME: PaletteTheme = {
 };
 
 const DEFAULT_SKILL_LIBRARY_DIRS = ["git-skills", "me-skills"];
+export const DEFAULT_DISABLED_SKILL_NAMES = new Set([
+  "brainstorming",
+  "opencli-adapter-author",
+  "opencli-autofix",
+  "opencli-browser",
+  "opencli-usage",
+]);
 
 const SKILL_STATUS_ON = "ON";
 const SKILL_STATUS_OFF = "OFF";
@@ -92,6 +97,10 @@ function projectAgentsSkillsDir(cwd: string): string {
 
 function projectManagedSkillsDir(cwd: string): string {
   return path.join(cwd, ".pi", "skills");
+}
+
+function projectDisabledSkillsDir(cwd: string): string {
+  return path.join(cwd, ".pi", "disabled-skills");
 }
 
 function getProjectSkillLinkName(skill: Skill): string {
@@ -249,18 +258,7 @@ function resolveSettingsCwd(cwd: string): string {
   return normalizedRepoRoot !== primaryRepoRoot ? primaryRepoRoot : cwd;
 }
 
-async function initLogger(_cwd: string): Promise<void> {
-  createLogger("skill-toggle", {
-    stderr: null,
-  });
-}
-
-export function createLoggerReady(
-  cwd: string,
-  init: (cwd: string) => Promise<void> = initLogger,
-): Promise<void> {
-  return init(cwd).catch(() => undefined);
-}
+const log = createLogger("skill-toggle", { stderr: null });
 
 function fg(code: string, text: string): string {
   if (!code) return text;
@@ -539,6 +537,15 @@ function filterSkills(skills: Skill[], query: string): Skill[] {
 
 function getEnabledSkillNames(cwd: string): Set<string> {
   const enabled = new Set<string>();
+  const disabled = getDisabledSkillNames(cwd);
+
+  for (const skill of loadSkills(cwd)) {
+    const name = normalizeSkillName(skill.name);
+    if (DEFAULT_DISABLED_SKILL_NAMES.has(name)) continue;
+    if (disabled.has(name)) continue;
+    enabled.add(name);
+  }
+
   const managedDir = projectManagedSkillsDir(cwd);
   if (!fs.existsSync(managedDir)) return enabled;
 
@@ -548,6 +555,36 @@ function getEnabledSkillNames(cwd: string): Set<string> {
   }
 
   return enabled;
+}
+
+function getDisabledSkillNames(cwd: string): Set<string> {
+  const disabled = new Set<string>();
+  const disabledDir = projectDisabledSkillsDir(cwd);
+  if (!fs.existsSync(disabledDir)) return disabled;
+
+  for (const entry of fs.readdirSync(disabledDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    disabled.add(normalizeSkillName(entry.name));
+  }
+
+  return disabled;
+}
+
+function disabledSkillPath(state: ToggleState, skill: Skill): string {
+  return path.join(
+    projectDisabledSkillsDir(state.cwd),
+    normalizeSkillName(skill.name),
+  );
+}
+
+function markSkillPersistentlyEnabled(state: ToggleState, skill: Skill): void {
+  fs.rmSync(disabledSkillPath(state, skill), { force: true });
+}
+
+function markSkillPersistentlyDisabled(state: ToggleState, skill: Skill): void {
+  const disabledPath = disabledSkillPath(state, skill);
+  fs.mkdirSync(path.dirname(disabledPath), { recursive: true });
+  fs.writeFileSync(disabledPath, "", "utf-8");
 }
 
 function removeLegacySkillToggleSettings(filePath: string): void {
@@ -566,19 +603,11 @@ export function loadToggleState(cwd: string): ToggleState {
 
   return {
     enabledSkills: getEnabledSkillNames(settingsCwd),
-    disabledSkills: new Set(),
-    disabledSkillPaths: new Set(),
     writePath: globalPath,
     writeScope: "global",
     cwdKey: toPortablePath(settingsCwd),
     cwd: settingsCwd,
   };
-}
-
-export function saveToggleState(_state: ToggleState): void {
-  // Enabled skill state is represented by symlinks in the toggle-owned
-  // .pi/skills directory. Keep this no-op for compatibility with tests
-  // and any external callers that still call save after mutating state.
 }
 
 function realPathOrNull(filePath: string): string | null {
@@ -686,6 +715,7 @@ export function enableSkill(
     };
   }
 
+  markSkillPersistentlyEnabled(state, skill);
   markSkillEnabled(state, skill);
   return targetAlreadyEnabled || projectSkillStatus === "same-skill"
     ? { status: "already-enabled" }
@@ -705,6 +735,12 @@ export function disableSkill(
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") throw error;
 
+    if (isSkillEnabled(state, skill)) {
+      markSkillPersistentlyDisabled(state, skill);
+      markSkillDisabled(state, skill);
+      return { status: "disabled" };
+    }
+
     markSkillDisabled(state, skill);
     return { status: "already-disabled" };
   }
@@ -718,6 +754,7 @@ export function disableSkill(
   }
 
   fs.unlinkSync(targetPath);
+  markSkillPersistentlyDisabled(state, skill);
   markSkillDisabled(state, skill);
   return { status: "disabled" };
 }
@@ -845,7 +882,6 @@ export class SkillTogglePicker {
   constructor(
     private skills: Skill[],
     private enabled: Set<string>,
-    _disabledPaths: Set<string>,
     private onToggle: (skill: Skill) => void,
     private onClose: () => void,
     private onUpdate: () => void,
@@ -1086,7 +1122,7 @@ export class SkillTogglePicker {
 export default function skillToggleExtension(pi: ExtensionAPI): void {
   let state: ToggleState = loadToggleState(process.cwd());
 
-  void createLoggerReady(process.cwd());
+  log.debug("extension initialized", { pid: process.pid });
 
   const refreshState = (ctx: ExtensionContext, skills: Skill[]) => {
     pruneSettingsFiles(ctx.cwd, skills);
@@ -1116,7 +1152,6 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
           const picker = new SkillTogglePicker(
             skills,
             state.enabledSkills,
-            state.disabledSkillPaths,
             (skill) => {
               const result = toggleSkillLink(state, skill);
               updateStatus(ctx, state, skills);
@@ -1165,9 +1200,6 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
       );
     },
   });
-
-  pi.on("input", async (_event, _ctx) => ({ action: "continue" }));
-
   pi.on("session_start", (_event, ctx) => {
     const skills = loadSkills(ctx.cwd);
     refreshState(ctx, skills);

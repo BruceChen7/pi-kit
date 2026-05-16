@@ -7,6 +7,7 @@ import {
   DynamicBorder,
   type ExtensionAPI,
   type ExtensionCommandContext,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
   Container,
@@ -65,6 +66,7 @@ type CrSession = {
   socketPath: string;
   crSocketPath: string;
   tmuxWindowName: string;
+  originTmuxPane: string;
   artifactPath: string;
   createdAt: string;
 };
@@ -77,8 +79,8 @@ type CrAnnotation = {
   comment: string;
 };
 
-type WidgetContext = ExtensionCommandContext & {
-  ui?: ExtensionCommandContext["ui"] & {
+type WidgetContext = ExtensionContext & {
+  ui?: ExtensionContext["ui"] & {
     setWidget?: (key: string, content?: unknown) => void;
     theme?: { fg?: (token: string, text: string) => string };
   };
@@ -112,9 +114,14 @@ const gitOutput = async (pi: ExtensionAPI, args: string[]): Promise<string> => {
   return code === 0 ? stdout.trim() : "";
 };
 
-const getTmuxEnv = (ctx: ExtensionCommandContext): string | undefined =>
+const getTmuxEnv = (ctx: ExtensionContext): string | undefined =>
   (ctx as { env?: Record<string, string | undefined> }).env?.TMUX ??
   process.env.TMUX;
+
+const getTmuxPaneEnv = (ctx: ExtensionContext): string =>
+  (ctx as { env?: Record<string, string | undefined> }).env?.TMUX_PANE ??
+  process.env.TMUX_PANE ??
+  "";
 
 export const buildCrTmuxWindowName = (repoRoot: string): string =>
   `${CR_TMUX_WINDOW_NAME_PREFIX}-${basename(repoRoot)}`;
@@ -134,6 +141,12 @@ export const buildCrTmuxKillWindowArgs = (tmuxWindowName: string): string[] => [
   "kill-window",
   "-t",
   tmuxWindowName,
+];
+
+export const buildCrTmuxSelectPaneArgs = (tmuxPane: string): string[] => [
+  "select-pane",
+  "-t",
+  tmuxPane,
 ];
 
 const getCrTmuxWindowName = (session: CrSession | null): string =>
@@ -211,7 +224,7 @@ const buildBranchItems = (
     }));
 
 const notifyNoBranchCandidates = (
-  ctx: ExtensionCommandContext,
+  ctx: ExtensionContext,
   currentBranch: string | null,
 ): void => {
   ctx.ui.notify(
@@ -233,7 +246,7 @@ const isPrintableInput = (data: string): boolean => {
 };
 
 const showSelectList = async <T extends string>(
-  ctx: ExtensionCommandContext,
+  ctx: ExtensionContext,
   title: string,
   items: SelectItem[],
 ): Promise<T | null> =>
@@ -290,9 +303,7 @@ const showSelectList = async <T extends string>(
     };
   });
 
-const selectCrPreset = (
-  ctx: ExtensionCommandContext,
-): Promise<CrPresetValue | null> =>
+const selectCrPreset = (ctx: ExtensionContext): Promise<CrPresetValue | null> =>
   showSelectList<CrPresetValue>(
     ctx,
     "Select CR diff target",
@@ -301,7 +312,7 @@ const selectCrPreset = (
 
 const selectTargetBranch = async (
   pi: ExtensionAPI,
-  ctx: ExtensionCommandContext,
+  ctx: ExtensionContext,
 ): Promise<string | null> => {
   const [branches, currentBranch, defaultBranch] = await Promise.all([
     getLocalBranches(pi),
@@ -326,6 +337,7 @@ const createSession = async (
   pi: ExtensionAPI,
   repoRoot: string,
   scope: CrDiffScope,
+  originTmuxPane: string,
 ): Promise<CrSession> => {
   const sessionId = `cr-${Date.now()}`;
   const sessionDir = join(repoRoot, ...CR_SESSION_ROOT, sessionId);
@@ -344,6 +356,7 @@ const createSession = async (
     socketPath: join(sessionDir, "nvim.sock"),
     crSocketPath: join(tmpdir(), `${sessionId}.sock`),
     tmuxWindowName: buildCrTmuxWindowName(repoRoot),
+    originTmuxPane,
     artifactPath: join(sessionDir, "annotations.jsonl"),
     createdAt: new Date().toISOString(),
   };
@@ -496,6 +509,12 @@ const startCrSocketServer = async (
         }
         if (payload?.type === "finish") {
           sendAnnotationsToPi(pi, annotationsFromFinishPayload(payload));
+          if (session.originTmuxPane) {
+            void pi.exec(
+              "tmux",
+              buildCrTmuxSelectPaneArgs(session.originTmuxPane),
+            );
+          }
           onFinish?.();
           closeCrSocketServer(server, session.crSocketPath);
         }
@@ -543,7 +562,7 @@ const branchScope = (target: string): CrDiffScope => ({
 const resolveScope = async (
   pi: ExtensionAPI,
   rawArgs: string,
-  ctx: ExtensionCommandContext,
+  ctx: ExtensionContext,
 ): Promise<CrDiffScope | null> => {
   const target = rawArgs.trim();
   if (target) return branchScope(target);
@@ -574,7 +593,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
 
   const startHandler = async (
     args: string,
-    ctx: ExtensionCommandContext,
+    ctx: ExtensionContext,
   ): Promise<void> => {
     const repoRoot = await getRepoRoot(pi);
     if (!repoRoot) {
@@ -596,7 +615,12 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     if (!scope) return;
 
     const widgetCtx = ctx as WidgetContext;
-    const session = await createSession(pi, repoRoot, scope);
+    const session = await createSession(
+      pi,
+      repoRoot,
+      scope,
+      getTmuxPaneEnv(ctx),
+    );
     const crSocketServer = await startCrSocketServer(session, pi, () => {
       if (activeSession?.sessionId !== session.sessionId) return;
       activeSession = null;

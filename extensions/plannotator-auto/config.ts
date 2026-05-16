@@ -1,4 +1,3 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
 
@@ -10,13 +9,6 @@ export type ExtraReviewTargetConfig = {
 export type PlannotatorAutoConfig = {
   planFile?: string | null;
   extraReviewTargets?: ExtraReviewTargetConfig[];
-  codeReviewAutoTrigger?: boolean;
-};
-
-type PlannotatorAutoSettings = {
-  planFile?: unknown;
-  extraReviewTargets?: unknown;
-  codeReviewAutoTrigger?: unknown;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -52,25 +44,22 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
     return {};
   }
 
-  const raw = value as PlannotatorAutoSettings;
   const next: PlannotatorAutoConfig = {};
 
-  if (raw.planFile === null) {
+  if (value.planFile === null) {
     next.planFile = null;
-  } else if (typeof raw.planFile === "string") {
-    const trimmed = raw.planFile.trim();
+  } else if (typeof value.planFile === "string") {
+    const trimmed = value.planFile.trim();
     if (trimmed.length > 0) {
       next.planFile = trimmed;
     }
   }
 
-  const extraReviewTargets = sanitizeExtraReviewTargets(raw.extraReviewTargets);
+  const extraReviewTargets = sanitizeExtraReviewTargets(
+    value.extraReviewTargets,
+  );
   if (extraReviewTargets) {
     next.extraReviewTargets = extraReviewTargets;
-  }
-
-  if (typeof raw.codeReviewAutoTrigger === "boolean") {
-    next.codeReviewAutoTrigger = raw.codeReviewAutoTrigger;
   }
 
   return next;
@@ -97,11 +86,6 @@ export const loadConfig = (
     cwd,
     planFile: config.planFile,
     extraReviewTargetCount: config.extraReviewTargets?.length ?? 0,
-    codeReviewAutoTrigger: config.codeReviewAutoTrigger ?? false,
   });
   return config;
 };
-
-export const isCodeReviewAutoTriggerEnabled = (
-  ctx: Pick<ExtensionContext, "cwd">,
-): boolean => loadConfig(ctx.cwd).codeReviewAutoTrigger ?? false;

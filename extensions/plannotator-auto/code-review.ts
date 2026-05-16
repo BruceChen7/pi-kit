@@ -4,17 +4,12 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import {
-  checkRepoDirty,
-  DEFAULT_GIT_TIMEOUT_MS,
-  getRepoRoot,
-} from "../shared/git.ts";
+import { DEFAULT_GIT_TIMEOUT_MS, getRepoRoot } from "../shared/git.ts";
 import { createLogger } from "../shared/logger.ts";
 import {
   runPlannotatorAnnotateCli,
   runPlannotatorCodeReviewCli,
 } from "./cli.ts";
-import { isCodeReviewAutoTriggerEnabled } from "./config.ts";
 import { extractBashPathCandidates, resolveToolPath } from "./helpers.ts";
 import {
   isHtmlPath,
@@ -373,18 +368,16 @@ const maybeStartCodeReview = async (
   ctx: ExtensionContext,
   reason: string,
   log: ReturnType<typeof createLogger>,
-  options: { force?: boolean } = {},
+  explicitRequest = false,
 ): Promise<void> => {
   const state = getSessionState(ctx);
   const hasPending = state.pendingReviewByCwd.has(ctx.cwd);
   const active = state.activeCodeReviewByCwd.get(ctx.cwd);
-  const isManualReview = options.force === true;
-  const codeReviewAutoTriggerEnabled = isCodeReviewAutoTriggerEnabled(ctx);
 
-  if (!isManualReview && !codeReviewAutoTriggerEnabled && !active) {
+  if (!explicitRequest && !active) {
     if (hasPending) {
       log.debug(
-        "plannotator-auto skipped review (code-review auto trigger disabled)",
+        "plannotator-auto skipped review (code-review auto trigger removed)",
         {
           cwd: ctx.cwd,
           reason,
@@ -396,8 +389,7 @@ const maybeStartCodeReview = async (
     return;
   }
 
-  const hasReviewCandidate = isManualReview || hasPending || Boolean(active);
-  if (!hasReviewCandidate || state.reviewInFlight) {
+  if (state.reviewInFlight) {
     return;
   }
 
@@ -412,7 +404,7 @@ const maybeStartCodeReview = async (
   }
 
   if (!ctx.isIdle()) {
-    scheduleReviewRetry(pi, ctx, "busy-review", log);
+    scheduleReviewRetry(pi, ctx, "busy-review", log, explicitRequest);
     return;
   }
 
@@ -425,7 +417,13 @@ const maybeStartCodeReview = async (
         sessionKey: getSessionKey(ctx),
       },
     );
-    scheduleReviewRetry(pi, ctx, "review-after-plan-review", log);
+    scheduleReviewRetry(
+      pi,
+      ctx,
+      "review-after-plan-review",
+      log,
+      explicitRequest,
+    );
     return;
   }
 
@@ -437,33 +435,6 @@ const maybeStartCodeReview = async (
       sessionKey: getSessionKey(ctx),
     });
     clearReviewPending(ctx);
-    return;
-  }
-
-  const dirty = checkRepoDirty(repoRoot, DEFAULT_GIT_TIMEOUT_MS);
-  if (!dirty) {
-    log.warn("plannotator-auto failed to check git status", {
-      cwd: ctx.cwd,
-      repoRoot,
-      reason,
-      sessionKey: getSessionKey(ctx),
-    });
-    clearReviewPending(ctx);
-    return;
-  }
-
-  if (!dirty.summary.dirty) {
-    log.debug("plannotator-auto skipped review (repo clean)", {
-      cwd: ctx.cwd,
-      repoRoot,
-      summary: dirty.summary,
-      reason,
-      sessionKey: getSessionKey(ctx),
-    });
-    clearReviewPending(ctx);
-    if (isManualReview) {
-      ctx.ui.notify("No uncommitted changes to review.", "info");
-    }
     return;
   }
 
@@ -519,6 +490,7 @@ const scheduleReviewRetry = (
   ctx: ExtensionContext,
   reason: string,
   log: ReturnType<typeof createLogger>,
+  explicitRequest: boolean,
   delayMs = DEFAULT_CODE_REVIEW_RETRY_DELAY_MS,
 ): void => {
   const sessionKey = getSessionKey(ctx);
@@ -539,7 +511,13 @@ const scheduleReviewRetry = (
     }
 
     currentState.pendingReviewRetry = null;
-    void maybeStartCodeReview(pi, currentCtx as ExtensionContext, reason, log);
+    void maybeStartCodeReview(
+      pi,
+      currentCtx as ExtensionContext,
+      reason,
+      log,
+      explicitRequest,
+    );
   }, delayMs);
 };
 
@@ -551,18 +529,18 @@ export const registerCodeReviewHandlers = (
     ctx: ExtensionContext,
     reason: string,
   ): Promise<void> => {
-    await maybeStartCodeReview(pi, ctx, reason, log, { force: true });
+    await maybeStartCodeReview(pi, ctx, reason, log, true);
   };
 
   pi.registerCommand(MANUAL_CODE_REVIEW_COMMAND, {
-    description: "Run plannotator CLI review for uncommitted changes",
+    description: "Run plannotator CLI review",
     handler: async (_args, ctx) => {
       await runManualCodeReview(ctx, "manual-command");
     },
   });
 
   pi.registerShortcut(MANUAL_CODE_REVIEW_SHORTCUT, {
-    description: "Run plannotator CLI review for uncommitted changes",
+    description: "Run plannotator CLI review",
     handler: async (ctx) => {
       await runManualCodeReview(ctx, "manual-shortcut");
     },

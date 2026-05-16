@@ -1,6 +1,6 @@
 # Plannotator Auto
 
-Auto-detects generated plan/spec files, gates the next agent turn until the agent explicitly submits the pending draft to Plannotator, supports configurable extra review targets, and can optionally auto-trigger code review for non-plan edits.
+Auto-detects generated plan/spec files, gates the next agent turn until the agent explicitly submits the pending draft to Plannotator, and supports configurable extra review targets.
 
 ## What it watches
 
@@ -28,10 +28,8 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 - When a plan/spec/issue review target is pending, emit a handled pending-review event and use a hidden next-turn gate that requires `plannotator_auto_submit_review`.
 - Multiple review-target writes before submission are tracked by target path and shown together in the pending gate.
 - `plannotator_auto_submit_review` is the only plan/spec review runner. While it waits for a result, the same session will not ask for another submit; approval clears the pending target, while denial keeps it pending for a later retry. Denied retries should revise the same file and preserve the first `#` heading so Plannotator can show version diffs.
-- `write` / `edit` to **non-plan** files → mark code review pending only if `codeReviewAutoTrigger` is `true`.
-- On `agent_end`, if code review is pending, no plan/spec review is pending or active, and the repo is dirty, run `plannotator review`.
-- `/plannotator-review` runs `plannotator review` manually for the dirty repo.
-- `Ctrl+Shift+R` runs the same manual code review shortcut.
+- `/plannotator-review` runs `plannotator review` manually; change selection is handled by the Plannotator CLI.
+- `Ctrl+Shift+R` runs `plannotator review`; branch selection is handled by the Plannotator CLI.
 - `Ctrl+Alt+L` annotates the latest Markdown or HTML file modified in the current session with `plannotator annotate <file> --json`.
 - Markdown plan/spec/issue submissions use Plannotator's plan-review hook mode so version history and plan diffs are available. HTML submissions use `plannotator annotate <file> --render-html --gate --json`.
 
@@ -56,8 +54,7 @@ Example:
         "dir": ".pi/plans/my-repo/plan-eng-review",
         "filePattern": "^[^/]+-test-plan-\\d{8}-\\d{6}\\.md$"
       }
-    ],
-    "codeReviewAutoTrigger": false
+    ]
   }
 }
 ```
@@ -67,7 +64,6 @@ Notes:
 - `planFile` supports **directory path only**.
 - `extraReviewTargets` entries use `{ dir, filePattern }`, where `filePattern` is a basename regex applied to direct child files only.
 - Set `planFile: null` to disable plan/spec review auto-trigger.
-- `codeReviewAutoTrigger` is disabled by default.
 
 ## CLI commands used
 

@@ -77,6 +77,12 @@ function writeNamedSkillFile(
   );
 }
 
+function writeLibrarySkill(name: string, description: string): string {
+  const skillDir = path.join(os.homedir(), ".agents", "me-skills", name);
+  writeNamedSkillFile(skillDir, name, description);
+  return skillDir;
+}
+
 function writeGlobalSkillToggleEntry(
   cwd: string,
   entry: Record<string, unknown>,
@@ -117,7 +123,6 @@ async function createTestPicker(
   const picker = new SkillTogglePicker(
     skills,
     new Set(enabledNames),
-    new Set(),
     (skill) => toggled.push(skill.name),
     () => undefined,
     () => undefined,
@@ -153,49 +158,6 @@ beforeEach(() => {
   createTempHome();
 });
 
-describe("createLoggerReady", () => {
-  it("waits for logger initialization to complete", async () => {
-    const { createLoggerReady } = await importSkillToggle();
-
-    let resolveInit: (() => void) | null = null;
-    const init = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveInit = resolve;
-        }),
-    );
-
-    const ready = createLoggerReady("/tmp/pi-kit", init);
-
-    expect(init).toHaveBeenCalledWith("/tmp/pi-kit");
-
-    let settled = false;
-    void ready.then(() => {
-      settled = true;
-    });
-
-    await Promise.resolve();
-    expect(settled).toBe(false);
-
-    resolveInit?.();
-    await ready;
-    expect(settled).toBe(true);
-  });
-
-  it("swallows logger initialization failures", async () => {
-    const { createLoggerReady } = await importSkillToggle();
-
-    const init = vi.fn(async () => {
-      throw new Error("boom");
-    });
-
-    await expect(
-      createLoggerReady("/tmp/pi-kit", init),
-    ).resolves.toBeUndefined();
-    expect(init).toHaveBeenCalledWith("/tmp/pi-kit");
-  });
-});
-
 describe("settings integration", () => {
   it("uses primary repo cwd when running from a worktree cwd", async () => {
     const primaryRepoCwd = createTempDir("pi-kit-skill-toggle-primary-");
@@ -226,12 +188,13 @@ describe("settings integration", () => {
     }
   });
 
-  it("derives enabled skills from the toggle-owned .pi directory", async () => {
+  it("derives enabled skills from discovered libraries plus .pi links", async () => {
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const sourceSkillDir = path.join(
       createTempDir("pi-kit-skill-toggle-source-"),
       "alpha",
     );
+    writeLibrarySkill("Beta", "Beta skill");
     writeSkillFile(sourceSkillDir);
     fs.mkdirSync(path.dirname(getManagedSkillDir(cwd, "alpha")), {
       recursive: true,
@@ -242,21 +205,42 @@ describe("settings integration", () => {
     const state = loadToggleState(cwd);
 
     expect(state.enabledSkills.has("alpha")).toBe(true);
+    expect(state.enabledSkills.has("beta")).toBe(true);
   });
 
-  it("does not persist enabled skills to global settings", async () => {
+  it("defaults brainstorming and opencli skills to disabled", async () => {
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
-    const { globalPath } = getSettingsPaths(cwd);
-    fs.mkdirSync(path.dirname(globalPath), { recursive: true });
-    fs.writeFileSync(globalPath, "{}", "utf-8");
+    const { DEFAULT_DISABLED_SKILL_NAMES, loadToggleState } =
+      await importSkillToggle();
+    const defaultDisabledSkills = Array.from(DEFAULT_DISABLED_SKILL_NAMES);
+    for (const name of defaultDisabledSkills) {
+      writeLibrarySkill(name, `${name} skill`);
+    }
+    writeLibrarySkill("alpha", "Alpha skill");
 
-    const { loadToggleState, saveToggleState } = await importSkillToggle();
     const state = loadToggleState(cwd);
 
-    state.enabledSkills.add("beta");
-    saveToggleState(state);
+    expect(state.enabledSkills.has("alpha")).toBe(true);
+    for (const name of defaultDisabledSkills) {
+      expect(state.enabledSkills.has(name)).toBe(false);
+    }
+  });
 
-    expect(readSettingsFile(globalPath).skillToggle).toBeUndefined();
+  it("persists disabling a default-enabled library skill", async () => {
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const skillDir = writeLibrarySkill("alpha", "Alpha skill");
+
+    const { loadToggleState, toggleSkillLink } = await importSkillToggle();
+    const state = loadToggleState(cwd);
+    const result = toggleSkillLink(state, {
+      name: "alpha",
+      description: "Alpha skill",
+      filePath: path.join(skillDir, "SKILL.md"),
+      scope: "user",
+    });
+
+    expect(result.status).toBe("disabled");
+    expect(loadToggleState(cwd).enabledSkills.has("alpha")).toBe(false);
   });
 });
 
@@ -701,46 +685,13 @@ describe("legacy settings cleanup", () => {
 });
 
 describe("input interception", () => {
-  it("continues non-skill input without loading available skills", async () => {
-    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
-    const skillToggle = await importSkillToggle();
-    const inputHandlers: Array<(event: unknown, ctx: unknown) => unknown> = [];
-    const pi = {
-      getCommands: vi.fn(() => []),
-      registerCommand: vi.fn(),
-      on: vi.fn(
-        (name: string, handler: (event: unknown, ctx: unknown) => unknown) => {
-          if (name === "input") inputHandlers.push(handler);
-        },
-      ),
-    };
-    const ctx = {
-      cwd,
-      hasUI: false,
-      ui: {
-        notify: vi.fn(),
-        setStatus: vi.fn(),
-      },
-    };
-
-    skillToggle.default(pi as never);
-    expect(inputHandlers).toHaveLength(1);
-    const handleInput = inputHandlers[0];
-
-    await expect(
-      handleInput({ source: "user", text: "hello" }, ctx),
-    ).resolves.toEqual({ action: "continue" });
-    expect(pi.getCommands).not.toHaveBeenCalled();
-  });
-
-  it("does not load Pi commands when checking skill commands", async () => {
+  it("does not register input interception", async () => {
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const skillPath = path.join(cwd, ".agents", "skills", "alpha", "SKILL.md");
     writeGlobalSkillToggleEntry(cwd, {
       managedSkills: ["alpha"],
     });
     const skillToggle = await importSkillToggle();
-    const inputHandlers: Array<(event: unknown, ctx: unknown) => unknown> = [];
     const sessionStartHandlers: Array<
       (event: unknown, ctx: unknown) => unknown
     > = [];
@@ -756,7 +707,6 @@ describe("input interception", () => {
       registerCommand: vi.fn(),
       on: vi.fn(
         (name: string, handler: (event: unknown, ctx: unknown) => unknown) => {
-          if (name === "input") inputHandlers.push(handler);
           if (name === "session_start") sessionStartHandlers.push(handler);
         },
       ),
@@ -771,19 +721,12 @@ describe("input interception", () => {
     };
 
     skillToggle.default(pi as never);
-    expect(inputHandlers).toHaveLength(1);
     expect(sessionStartHandlers).toHaveLength(1);
-    const handleInput = inputHandlers[0];
     const handleSessionStart = sessionStartHandlers[0];
 
     await handleSessionStart({}, ctx);
 
-    await expect(
-      handleInput({ source: "user", text: "/skill:Alpha" }, ctx),
-    ).resolves.toEqual({ action: "continue" });
-    await expect(
-      handleInput({ source: "user", text: "/skill:Alpha" }, ctx),
-    ).resolves.toEqual({ action: "continue" });
+    expect(pi.on).not.toHaveBeenCalledWith("input", expect.any(Function));
     expect(pi.getCommands).not.toHaveBeenCalled();
   });
 

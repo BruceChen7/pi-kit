@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import crDiffviewExtension, {
   buildCrTmuxKillWindowArgs,
   buildCrTmuxNewWindowArgs,
+  buildCrTmuxSelectPaneArgs,
   buildCrTmuxWindowName,
 } from "./index.ts";
 
@@ -341,6 +342,32 @@ describe("cr-diffview command", () => {
 
     await vi.waitFor(() => {
       expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
+    });
+  });
+
+  it("returns focus to the tmux pane that started the CR review", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
+    const exec = createCrExec(repoRoot);
+    const notify = vi.fn();
+    const { startHandler } = registerCrCommands(exec);
+
+    await startHandler("main", {
+      cwd: repoRoot,
+      hasUI: true,
+      env: { TMUX: "/tmp/tmux", TMUX_PANE: "%42" },
+      ui: { notify },
+    });
+
+    await exchangeSocketMessages(socketFromTmuxCommand(exec), [
+      { type: "hello" },
+      { type: "finish", annotations: [] },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(exec).toHaveBeenCalledWith(
+        "tmux",
+        buildCrTmuxSelectPaneArgs("%42"),
+      );
     });
   });
 

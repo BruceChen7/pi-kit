@@ -101,6 +101,18 @@ describe("index path helpers", () => {
         expected: ".pi/plans/other-worktree/specs/2026-04-20-auth-design.md",
       },
       {
+        name: "matches shaping markdown files with any filename",
+        config: createPlanConfig(),
+        targetPath: "/repo/.pi/plans/repo/shaping/current-notes.md",
+        expected: ".pi/plans/repo/shaping/current-notes.md",
+      },
+      {
+        name: "matches wildcard shaping markdown files",
+        config: createPlanConfig(),
+        targetPath: "/repo/.pi/plans/other-worktree/shaping/breadboard.md",
+        expected: ".pi/plans/other-worktree/shaping/breadboard.md",
+      },
+      {
         name: "matches issue markdown files under a topic directory",
         config: createPlanConfig(),
         targetPath:
@@ -198,6 +210,18 @@ describe("index path helpers", () => {
         config: createPlanConfig(),
         targetPath:
           "/repo/.pi/plans/other-worktree/specs/2026-04-20-auth-design.md",
+        expected: false,
+      },
+      {
+        name: "skips shaping markdown files with any filename",
+        config: createPlanConfig(),
+        targetPath: "/repo/.pi/plans/repo/shaping/current-notes.md",
+        expected: false,
+      },
+      {
+        name: "skips wildcard shaping markdown files",
+        config: createPlanConfig(),
+        targetPath: "/repo/.pi/plans/other-worktree/shaping/breadboard.md",
         expected: false,
       },
       {

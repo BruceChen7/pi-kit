@@ -10,10 +10,11 @@ import type {
 
 const DEFAULT_PLAN_SUBDIR = "plan";
 const DEFAULT_SPECS_SUBDIR = "specs";
+const DEFAULT_SHAPING_SUBDIR = "shaping";
 const DEFAULT_ISSUES_SUBDIR = "issues";
 const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.(?:md|html)$/;
 const SPEC_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
-const ISSUE_FILE_PATTERN = /^.+\.md$/;
+const REVIEW_MARKDOWN_FILE_PATTERN = /^.+\.md$/;
 
 const resolveRepoSlugFromGitCommonDir = (cwd: string): string | null => {
   const commonDir = getGitCommonDir(cwd, DEFAULT_GIT_TIMEOUT_MS);
@@ -136,6 +137,13 @@ const getWildcardReviewTargetKind = (
     ) {
       return "spec";
     }
+
+    if (
+      targetDir === DEFAULT_SHAPING_SUBDIR &&
+      REVIEW_MARKDOWN_FILE_PATTERN.test(fileName)
+    ) {
+      return "spec";
+    }
   }
 
   const topicSlug = fileName;
@@ -143,7 +151,7 @@ const getWildcardReviewTargetKind = (
     parts.length === 4 &&
     targetDir === DEFAULT_ISSUES_SUBDIR &&
     Boolean(topicSlug) &&
-    ISSUE_FILE_PATTERN.test(issueFileName)
+    REVIEW_MARKDOWN_FILE_PATTERN.test(issueFileName)
   ) {
     return "plan";
   }

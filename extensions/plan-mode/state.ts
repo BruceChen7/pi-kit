@@ -582,12 +582,17 @@ export class PlanModeState {
 
   markReviewArtifactWritten(planPath: string): void {
     this.latestReviewArtifactPath = planPath;
-    // Completed runs no longer use the artifact as future execution input, so
-    // post-run notes should not invalidate the approval that completed them.
-    if (this.isApprovedCompletedActiveRunArtifact(planPath)) {
+    // Approval is an execution permission, not a content hash lock. Once a
+    // plan/spec is approved, later execution notes and checkbox updates should
+    // not force another review; only an explicit user abort does that.
+    if (this.isApprovedReviewArtifactPath(planPath)) {
       return;
     }
 
+    this.clearApprovalForPlanPath(planPath);
+  }
+
+  clearApprovalForPlanPath(planPath: string): void {
     this.reviewApprovedPlanPaths.delete(planPath);
     this.activePlanPath = clearMatchingPath(this.activePlanPath, planPath);
     this.pendingApprovedPlanContinuationPath = clearMatchingPath(
@@ -614,13 +619,19 @@ export class PlanModeState {
     delete this.activeRun.approvedAt;
   }
 
-  isApprovedCompletedActiveRunArtifact(planPath: string): boolean {
-    return (
-      this.phase === PLAN_MODE_ACT &&
-      this.activeRun?.status === PLAN_RUN_STATUS_COMPLETED &&
-      this.activeRun.planPath === planPath &&
-      this.isApprovedReviewArtifactPath(planPath)
-    );
+  abortApprovedExecution(planPath: string | null): boolean {
+    if (
+      !planPath ||
+      this.phase !== PLAN_MODE_ACT ||
+      this.activeRun?.status !== PLAN_RUN_STATUS_EXECUTING ||
+      this.activeRun.planPath !== planPath ||
+      !this.isApprovedReviewArtifactPath(planPath)
+    ) {
+      return false;
+    }
+
+    this.clearApprovalForPlanPath(planPath);
+    return true;
   }
 
   canStartFirstRunForApprovedPlan(): boolean {

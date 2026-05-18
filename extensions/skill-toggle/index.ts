@@ -570,6 +570,41 @@ function getDisabledSkillNames(cwd: string): Set<string> {
   return disabled;
 }
 
+function ensureManagedSkillLinks(cwd: string, skills: Skill[]): void {
+  for (const skill of skills) {
+    const name = normalizeSkillName(skill.name);
+    if (DEFAULT_DISABLED_SKILL_NAMES.has(name)) continue;
+
+    const disabledPath = path.join(projectDisabledSkillsDir(cwd), name);
+    if (fs.existsSync(disabledPath)) continue;
+
+    const targetPath = projectSkillTargetPath(cwd, skill);
+    try {
+      const stat = fs.lstatSync(targetPath);
+      if (
+        !stat.isSymbolicLink() ||
+        !symlinkReferencesSkill(targetPath, skill)
+      ) {
+        continue;
+      }
+      continue;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") continue;
+    }
+
+    const status = getProjectSkillStatus(cwd, skill);
+    if (status === "conflict") continue;
+
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    try {
+      fs.symlinkSync(getSkillBasePath(skill), targetPath);
+    } catch {
+      // Best-effort initialization for fresh cwd
+    }
+  }
+}
+
 function disabledSkillPath(state: ToggleState, skill: Skill): string {
   return path.join(
     projectDisabledSkillsDir(state.cwd),
@@ -600,6 +635,8 @@ function removeLegacySkillToggleSettings(filePath: string): void {
 export function loadToggleState(cwd: string): ToggleState {
   const settingsCwd = resolveSettingsCwd(cwd);
   const { globalPath } = loadSettings(cwd, { forceReload: true });
+  const skills = loadSkills(settingsCwd);
+  ensureManagedSkillLinks(settingsCwd, skills);
 
   return {
     enabledSkills: getEnabledSkillNames(settingsCwd),

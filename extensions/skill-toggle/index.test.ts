@@ -226,6 +226,18 @@ describe("settings integration", () => {
     }
   });
 
+  it("auto-links non-default-disabled library skills for a fresh cwd", async () => {
+    const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
+    const alphaDir = writeLibrarySkill("alpha", "Alpha skill");
+    writeLibrarySkill("brainstorming", "brainstorming skill");
+
+    const { loadToggleState } = await importSkillToggle();
+    loadToggleState(cwd);
+
+    expectSymlinkTarget(getManagedSkillDir(cwd, "alpha"), alphaDir);
+    expect(fs.existsSync(getManagedSkillDir(cwd, "brainstorming"))).toBe(false);
+  });
+
   it("persists disabling a default-enabled library skill", async () => {
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const skillDir = writeLibrarySkill("alpha", "Alpha skill");

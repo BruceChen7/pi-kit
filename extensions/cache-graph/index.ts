@@ -4,25 +4,42 @@ import {
   SessionManager as PiSessionManager,
   type SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { collectAllRepoCacheMetrics } from "./all-repo-metrics.ts";
-import { exportStatsCsv } from "./export.ts";
+import {
+  createCacheStatsActions,
+  formatExportSuccess,
+} from "./cache-actions.ts";
 import { openCacheGraphDashboard } from "./glimpse-host.ts";
 import { collectCacheSessionMetrics } from "./session-data.ts";
 import type { CacheSessionMetrics } from "./types.ts";
 
-type CacheSubcommand = "graph" | "export";
+const CACHE_SUBCOMMANDS = {
+  graph: "graph",
+  export: "export",
+} as const;
+
+type CacheSubcommand =
+  (typeof CACHE_SUBCOMMANDS)[keyof typeof CACHE_SUBCOMMANDS];
 
 const cacheSubcommands = [
-  { value: "graph", label: "graph", description: "Open cache dashboard" },
-  { value: "export", label: "export", description: "Export cache CSV" },
+  {
+    value: CACHE_SUBCOMMANDS.graph,
+    label: CACHE_SUBCOMMANDS.graph,
+    description: "Open cache dashboard",
+  },
+  {
+    value: CACHE_SUBCOMMANDS.export,
+    label: CACHE_SUBCOMMANDS.export,
+    description: "Export cache CSV",
+  },
 ];
 
 export function normalizeCacheSubcommand(args: string): CacheSubcommand | null {
   const command = args.trim().toLowerCase();
-  if (command === "graph" || command === "export") {
-    return command;
-  }
-  return null;
+  return isCacheSubcommand(command) ? command : null;
+}
+
+function isCacheSubcommand(command: string): command is CacheSubcommand {
+  return Object.values(CACHE_SUBCOMMANDS).includes(command as CacheSubcommand);
 }
 
 export default function cacheGraphExtension(pi: ExtensionAPI): void {
@@ -42,13 +59,14 @@ export default function cacheGraphExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      const getMetrics = () => collectAllRepoCacheMetrics();
-      const exportCsv = () =>
-        exportStatsCsv(ctx.cwd, ctx.sessionManager, getMetrics());
+      const actions = createCacheStatsActions({
+        cwd: ctx.cwd,
+        sessionManager: ctx.sessionManager,
+      });
 
-      if (subcommand === "export") {
-        const filePath = await exportCsv();
-        ctx.ui.notify(`Exported cache stats CSV to ${filePath}`, "info");
+      if (subcommand === CACHE_SUBCOMMANDS.export) {
+        const filePath = await actions.exportCsv();
+        ctx.ui.notify(formatExportSuccess(filePath), "info");
         return;
       }
 
@@ -61,10 +79,7 @@ export default function cacheGraphExtension(pi: ExtensionAPI): void {
       }
 
       try {
-        await openCacheGraphDashboard({
-          getMetrics,
-          exportCsv,
-        });
+        await openCacheGraphDashboard(actions);
       } catch (error) {
         ctx.ui.notify(
           `Failed to open cache graph dashboard: ${errorMessage(error)}`,

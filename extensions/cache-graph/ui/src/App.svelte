@@ -76,7 +76,7 @@ type BootData = {
 
 type DashboardResult =
   | { type: "metrics"; ok: true; metrics: CacheSessionMetrics }
-  | { type: "export-result"; ok: true; filePath: string }
+  | { type: "export-result"; ok: true; filePath: string; message: string }
   | { type: "error"; ok: false; action: "refresh" | "export"; message: string };
 
 const CHART_WIDTH = 640;
@@ -174,7 +174,7 @@ function handleDashboardResult(event: Event): void {
     return;
   }
   if (result.type === "export-result") {
-    showStatus("success", `Exported CSV to ${result.filePath}`, true);
+    showStatus("success", result.message, true);
     return;
   }
   showStatus("error", `${result.action} failed: ${result.message}`);

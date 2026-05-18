@@ -12,14 +12,11 @@ type RegisteredCommand = {
   handler: (args: string, ctx: unknown) => Promise<void>;
 };
 
-const createPi = () => {
+function registerCacheCommand(): RegisteredCommand {
   const registerCommand = vi.fn();
-  return {
-    pi: { registerCommand },
-    registeredCommand: () =>
-      registerCommand.mock.calls[0][1] as RegisteredCommand,
-  };
-};
+  cacheGraphExtension({ registerCommand } as never);
+  return registerCommand.mock.calls[0][1] as RegisteredCommand;
+}
 
 describe("cache command", () => {
   it("normalizes graph and export subcommands only", () => {
@@ -30,16 +27,36 @@ describe("cache command", () => {
   });
 
   it("shows usage for unknown subcommands", async () => {
-    const { pi, registeredCommand } = createPi();
-    cacheGraphExtension(pi as never);
+    const command = registerCacheCommand();
     const notify = vi.fn();
 
-    await registeredCommand().handler("wat", {
+    await command.handler("wat", {
       ui: { notify },
     });
 
     expect(notify).toHaveBeenCalledWith(
       "Usage: /cache graph | /cache export",
+      "info",
+    );
+  });
+
+  it("exports cache stats from the command handler", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "cache-graph-export-"));
+    const command = registerCacheCommand();
+    const notify = vi.fn();
+
+    await command.handler("export", {
+      cwd: dir,
+      sessionManager: {
+        getSessionName: () => "Test Session",
+        getSessionFile: () => null,
+      },
+      ui: { notify },
+    });
+
+    const filePath = path.join(dir, "Test-Session.csv");
+    expect(notify).toHaveBeenCalledWith(
+      `Exported cache stats CSV to ${filePath}`,
       "info",
     );
   });

@@ -1,4 +1,5 @@
 import type { GlimpseWindow } from "../shared/glimpse-window.ts";
+import { formatExportSuccess } from "./cache-actions.ts";
 import type { CacheSessionMetrics } from "./types.ts";
 
 export type CacheGraphBridgeInput = {
@@ -9,7 +10,7 @@ export type CacheGraphBridgeInput = {
 
 type DashboardResult =
   | { type: "metrics"; ok: true; metrics: CacheSessionMetrics }
-  | { type: "export-result"; ok: true; filePath: string }
+  | { type: "export-result"; ok: true; filePath: string; message: string }
   | { type: "error"; ok: false; action: "refresh" | "export"; message: string };
 
 export function attachCacheGraphBridge(input: CacheGraphBridgeInput): void {
@@ -26,11 +27,15 @@ export function attachCacheGraphBridge(input: CacheGraphBridgeInput): void {
     }
 
     if (message.type === "export") {
-      await sendActionResult(input.window, "export", async () => ({
-        type: "export-result",
-        ok: true,
-        filePath: await input.exportCsv(),
-      }));
+      await sendActionResult(input.window, "export", async () => {
+        const filePath = await input.exportCsv();
+        return {
+          type: "export-result",
+          ok: true,
+          filePath,
+          message: formatExportSuccess(filePath),
+        };
+      });
     }
   });
 }

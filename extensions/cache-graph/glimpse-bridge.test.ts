@@ -71,4 +71,21 @@ describe("attachCacheGraphBridge", () => {
     expect(window.sent[0]).toContain("cache-graph:error");
     expect(window.sent[0]).toContain("disk full");
   });
+
+  it("sends the shared export success message", async () => {
+    const window = new FakeGlimpseWindow();
+    attachCacheGraphBridge({
+      window,
+      getMetrics: () => emptyMetrics,
+      exportCsv: async () => "/tmp/session.csv",
+    });
+
+    window.emitMessage({ type: "export" });
+    await waitForBridge();
+
+    expect(window.sent[0]).toContain("cache-graph:export-result");
+    expect(window.sent[0]).toContain(
+      "Exported cache stats CSV to /tmp/session.csv",
+    );
+  });
 });

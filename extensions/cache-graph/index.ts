@@ -8,6 +8,7 @@ import {
   createCacheStatsActions,
   formatExportSuccess,
 } from "./cache-actions.ts";
+import { exportStatsCsv } from "./export.ts";
 import { openCacheGraphDashboard } from "./glimpse-host.ts";
 import { collectCacheSessionMetrics } from "./session-data.ts";
 import type { CacheSessionMetrics } from "./types.ts";
@@ -65,7 +66,14 @@ export default function cacheGraphExtension(pi: ExtensionAPI): void {
       });
 
       if (subcommand === CACHE_SUBCOMMANDS.export) {
-        const filePath = await actions.exportCsv();
+        const metrics = hasSessionReader(ctx.sessionManager)
+          ? collectMetricsWithPersistedFallback(ctx.sessionManager, ctx.cwd)
+          : emptyMetrics();
+        const filePath = await exportStatsCsv(
+          ctx.cwd,
+          ctx.sessionManager,
+          metrics,
+        );
         ctx.ui.notify(formatExportSuccess(filePath), "info");
         return;
       }
@@ -94,6 +102,36 @@ type SessionReader = Pick<
   SessionManager,
   "getEntries" | "getBranch" | "getSessionFile"
 >;
+
+function hasSessionReader(value: unknown): value is SessionReader {
+  if (!value || typeof value !== "object") return false;
+  const session = value as Record<string, unknown>;
+  return (
+    typeof session.getEntries === "function" &&
+    typeof session.getBranch === "function" &&
+    typeof session.getSessionFile === "function"
+  );
+}
+
+function zeroTotals(): CacheSessionMetrics["treeTotals"] {
+  return {
+    assistantMessages: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+  };
+}
+
+function emptyMetrics(): CacheSessionMetrics {
+  return {
+    allMessages: [],
+    activeBranchMessages: [],
+    activeBranchTotals: zeroTotals(),
+    treeTotals: zeroTotals(),
+  };
+}
 
 export function collectMetricsWithPersistedFallback(
   sessionManager: SessionReader,

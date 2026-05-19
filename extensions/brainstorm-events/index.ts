@@ -251,9 +251,15 @@ function watchSessionDir(
 
   try {
     state.watcher = fs.watch(dirPath, (_eventType, filename) => {
-      if (runtime.disposed || filename !== EVENTS_FILE_NAME) {
+      if (runtime.disposed) {
         return;
       }
+
+      const changed = filename?.toString();
+      if (changed && changed !== EVENTS_FILE_NAME) {
+        return;
+      }
+
       scheduleEventRead(pi, ctx, config, state);
     });
   } catch (error) {
@@ -291,14 +297,19 @@ function discoverSessionDirs(
   }
 
   for (const entry of entries) {
-    watchSessionDir(
-      runtime,
-      pi,
-      ctx,
-      config,
-      path.join(brainstormRoot, entry),
-      replayExistingEvents,
-    );
+    const dirPath = path.join(brainstormRoot, entry);
+    const hadWatch = runtime.watches.has(dirPath);
+
+    watchSessionDir(runtime, pi, ctx, config, dirPath, replayExistingEvents);
+
+    if (!replayExistingEvents || !hadWatch) {
+      continue;
+    }
+
+    const existingWatch = runtime.watches.get(dirPath);
+    if (existingWatch) {
+      scheduleEventRead(pi, ctx, config, existingWatch);
+    }
   }
 }
 

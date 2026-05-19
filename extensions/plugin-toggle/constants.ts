@@ -21,6 +21,7 @@ export const DEFAULT_DISABLED_PLUGINS = [
   "dirty-git-status",
   "remote-approval",
   "copyx",
+  "pi-autosearch",
 ];
 export const PROJECT_EXTENSION_DIR = path.join(".pi", "extensions");
 export const PICKER_PAGE_SIZE = 8;

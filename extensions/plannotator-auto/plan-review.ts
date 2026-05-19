@@ -26,6 +26,8 @@ import { getSessionState, type SessionRuntimeState } from "./session.ts";
 const KEEP_PLAN_HEADING_GUIDANCE =
   "Keep the first # heading unchanged unless the reviewer explicitly asks you " +
   "to rename the plan; Plannotator uses that heading to show version diffs.";
+const MERMAID_RENDERING_GUIDANCE =
+  "If the document contains Mermaid, use only ```mermaid fenced blocks (never ~~~), keep fences paired and non-empty, use language tag 'mermaid' only (not mmd/mermaidjs), prefer simple graph/flowchart syntax, and if correctness is uncertain, replace the diagram with plain Markdown bullets before submitting.";
 const PLAN_REVIEW_SUBMIT_TOOL = "plannotator_auto_submit_review";
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
 const SYNC_PLANNOTATOR_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
@@ -88,6 +90,42 @@ const formatPendingPlanArtifactPolicyFailure = (
   }
 
   return formatArtifactPolicyFailure(pendingPlanReview.planFile, result.issues);
+};
+
+export const preprocessPlanMarkdown = (markdown: string): string =>
+  markdown.replace(
+    /(^|\n)~~~\s*mermaid([^\n]*)\n([\s\S]*?)\n~~~(?=\n|$)/gi,
+    (_m, prefix: string, suffix: string, body: string) =>
+      `${prefix}\n\`\`\`mermaid${suffix}\n${body}\n\`\`\``,
+  );
+
+export const validateMermaidFences = (markdown: string): string | null => {
+  const lines = markdown.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const open = lines[i]?.match(/^\s*```\s*mermaid\b/i);
+    if (!open) continue;
+
+    let j = i + 1;
+    while (j < lines.length && !/^\s*```\s*$/.test(lines[j] ?? "")) {
+      j += 1;
+    }
+
+    if (j >= lines.length) {
+      return `Mermaid block starting at line ${i + 1} is missing a closing \`\`\` fence.`;
+    }
+
+    const body = lines
+      .slice(i + 1, j)
+      .join("\n")
+      .trim();
+    if (!body) {
+      return `Mermaid block starting at line ${i + 1} is empty.`;
+    }
+
+    i = j;
+  }
+
+  return null;
 };
 
 const getReviewWidgetMessage = (
@@ -164,11 +202,32 @@ export const clearReviewWidget = (ctx: ExtensionContext): void => {
   ui.setWidget(REVIEW_WIDGET_KEY, undefined);
 };
 
-const formatPendingPlanReviewGateMessage = (planFiles: string[]): string =>
-  `You still have pending Plannotator review drafts:\n- ${planFiles.join("\n- ")}\n\nCall ${PLAN_REVIEW_SUBMIT_TOOL} with one of these paths before continuing.`;
+const formatPlanFileBulletList = (planFiles: string[]): string =>
+  `- ${planFiles.join("\n- ")}`;
 
-const formatPendingPlanReviewPrompt = (planFiles: string[]): string =>
-  `[PLANNOTATOR AUTO - PENDING REVIEW]\nPending review targets:\n- ${planFiles.join("\n- ")}\n\nYour next required action is calling ${PLAN_REVIEW_SUBMIT_TOOL} with one pending path. If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again. ${KEEP_PLAN_HEADING_GUIDANCE}`;
+const formatPendingPlanReviewGateMessage = (planFiles: string[]): string => {
+  const targets = formatPlanFileBulletList(planFiles);
+  return [
+    "You still have pending Plannotator review drafts:",
+    targets,
+    `Call ${PLAN_REVIEW_SUBMIT_TOOL} with one of these paths before continuing.`,
+  ].join("\n\n");
+};
+
+const formatPendingPlanReviewPrompt = (planFiles: string[]): string => {
+  const targets = formatPlanFileBulletList(planFiles);
+  const nextAction =
+    `Your next required action is calling ${PLAN_REVIEW_SUBMIT_TOOL} ` +
+    "with one pending path.";
+  const deniedAction = `If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`;
+
+  return [
+    "[PLANNOTATOR AUTO - PENDING REVIEW]",
+    "Pending review targets:",
+    targets,
+    `${nextAction} ${deniedAction} ${KEEP_PLAN_HEADING_GUIDANCE} ${MERMAID_RENDERING_GUIDANCE}`,
+  ].join("\n\n");
+};
 
 const getPendingPlanReviewEvents = (
   state: SessionRuntimeState,
@@ -562,6 +621,24 @@ export const registerPlanReviewSubmitTool = (
       }
 
       const renderHtml = isHtmlPath(pendingPlanReview.resolvedPlanPath);
+      const normalizedPlanContent = renderHtml
+        ? planContent
+        : preprocessPlanMarkdown(planContent);
+
+      if (!renderHtml) {
+        const mermaidValidationFailure = validateMermaidFences(
+          normalizedPlanContent,
+        );
+        if (mermaidValidationFailure) {
+          return {
+            content: [
+              { type: "text", text: `Error: ${mermaidValidationFailure}` },
+            ],
+            details: { status: "error", reason: "mermaid-validation" },
+          };
+        }
+      }
+
       state.activePlanReviewByCwd.set(ctx.cwd, {
         reviewId: `cli:${Date.now()}`,
         kind: pendingPlanReview.kind,
@@ -584,7 +661,7 @@ export const registerPlanReviewSubmitTool = (
                 timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
               },
             )
-          : await runPlannotatorPlanReviewCli(ctx, planContent, {
+          : await runPlannotatorPlanReviewCli(ctx, normalizedPlanContent, {
               signal,
               timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
             });

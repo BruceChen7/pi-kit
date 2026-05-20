@@ -156,5 +156,8 @@ function defaultSessionsRoot(): string {
 
 function formatRepoSlug(directoryName: string): string {
   const trimmed = directoryName.replace(/^--|--$/g, "");
-  return trimmed || directoryName;
+  if (!trimmed) return directoryName;
+
+  const homePathMatch = /^Users-[^-]+-(.+)$/.exec(trimmed);
+  return homePathMatch?.[1] || trimmed;
 }

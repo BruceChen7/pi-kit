@@ -1,5 +1,12 @@
 import path from "node:path";
 import { DEFAULT_GIT_TIMEOUT_MS, getGitCommonDir } from "../shared/git.ts";
+import {
+  defaultReviewTargetKindFromAbsolutePath,
+  PLAN_REVIEW_FILE_PATTERN,
+  REVIEW_TARGET_PLAN_DIR,
+  REVIEW_TARGET_SPECS_DIR,
+  SPEC_REVIEW_FILE_PATTERN,
+} from "../shared/review-targets.ts";
 import type { ExtraReviewTargetConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
 import type {
@@ -7,14 +14,6 @@ import type {
   PlanFileConfig,
   ReviewTargetKind,
 } from "./plan-review/types.ts";
-
-const DEFAULT_PLAN_SUBDIR = "plan";
-const DEFAULT_SPECS_SUBDIR = "specs";
-const DEFAULT_SHAPING_SUBDIR = "shaping";
-const DEFAULT_ISSUES_SUBDIR = "issues";
-const PLAN_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.(?:md|html)$/;
-const SPEC_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
-const REVIEW_MARKDOWN_FILE_PATTERN = /^.+\.md$/;
 
 const resolveRepoSlugFromGitCommonDir = (cwd: string): string | null => {
   const commonDir = getGitCommonDir(cwd, DEFAULT_GIT_TIMEOUT_MS);
@@ -41,12 +40,12 @@ const getDefaultReviewRoots = (cwd: string): string[] => {
 
 export const getDefaultPlanDirs = (cwd: string): string[] =>
   getDefaultReviewRoots(cwd).map((root) =>
-    path.join(root, DEFAULT_PLAN_SUBDIR),
+    path.join(root, REVIEW_TARGET_PLAN_DIR),
   );
 
 export const getDefaultSpecDirs = (cwd: string): string[] =>
   getDefaultReviewRoots(cwd).map((root) =>
-    path.join(root, DEFAULT_SPECS_SUBDIR),
+    path.join(root, REVIEW_TARGET_SPECS_DIR),
   );
 
 export const resolveExtraReviewTargets = (
@@ -95,13 +94,13 @@ export const isDirectChildFileMatch = (
 };
 
 const isPlanFileMatch = (planDir: string, targetPath: string): boolean =>
-  isDirectChildFileMatch(planDir, PLAN_FILE_PATTERN, targetPath);
+  isDirectChildFileMatch(planDir, PLAN_REVIEW_FILE_PATTERN, targetPath);
 
 const isPlanFileMatchAny = (planDirs: string[], targetPath: string): boolean =>
   planDirs.some((planDir) => isPlanFileMatch(planDir, targetPath));
 
 const isSpecFileMatch = (specDir: string, targetPath: string): boolean =>
-  isDirectChildFileMatch(specDir, SPEC_FILE_PATTERN, targetPath);
+  isDirectChildFileMatch(specDir, SPEC_REVIEW_FILE_PATTERN, targetPath);
 
 const isExtraReviewTargetMatch = (
   target: ExtraReviewTarget,
@@ -111,56 +110,10 @@ const isExtraReviewTargetMatch = (
 const isSpecFileMatchAny = (specDirs: string[], targetPath: string): boolean =>
   specDirs.some((specDir) => isSpecFileMatch(specDir, targetPath));
 
-const getWildcardReviewTargetKind = (
-  plansRoot: string,
-  targetPath: string,
-): ReviewTargetKind | null => {
-  const relative = path.relative(plansRoot, targetPath);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    return null;
-  }
-
-  const parts = relative.split(path.sep);
-  const [repoSlug, targetDir, fileName, issueFileName] = parts;
-  if (!repoSlug || !targetDir) {
-    return null;
-  }
-
-  if (parts.length === 3) {
-    if (targetDir === DEFAULT_PLAN_SUBDIR && PLAN_FILE_PATTERN.test(fileName)) {
-      return "plan";
-    }
-
-    if (
-      targetDir === DEFAULT_SPECS_SUBDIR &&
-      SPEC_FILE_PATTERN.test(fileName)
-    ) {
-      return "spec";
-    }
-
-    if (
-      targetDir === DEFAULT_SHAPING_SUBDIR &&
-      REVIEW_MARKDOWN_FILE_PATTERN.test(fileName)
-    ) {
-      return "spec";
-    }
-  }
-
-  const topicSlug = fileName;
-  if (
-    parts.length === 4 &&
-    targetDir === DEFAULT_ISSUES_SUBDIR &&
-    Boolean(topicSlug) &&
-    REVIEW_MARKDOWN_FILE_PATTERN.test(issueFileName)
-  ) {
-    return "plan";
-  }
-
-  return null;
-};
-
-const getWildcardPlansRootFromConfig = (planConfig: PlanFileConfig): string =>
-  path.dirname(path.dirname(planConfig.resolvedPlanPath));
+const getCwdFromPlanConfig = (planConfig: PlanFileConfig): string =>
+  path.dirname(
+    path.dirname(path.dirname(path.dirname(planConfig.resolvedPlanPath))),
+  );
 
 const isExtraReviewTargetMatchAny = (
   targets: ExtraReviewTarget[] | undefined,
@@ -178,7 +131,7 @@ type ReviewTargetMatch = {
 const getReviewTargetKind = (
   planConfig: PlanFileConfig,
   targetPath: string,
-  wildcardPlansRoot: string,
+  cwd: string,
 ): ReviewTargetKind | null => {
   if (isPlanFileMatchAny(planConfig.resolvedPlanPaths, targetPath)) {
     return "plan";
@@ -188,10 +141,7 @@ const getReviewTargetKind = (
     return "spec";
   }
 
-  const wildcardKind = getWildcardReviewTargetKind(
-    wildcardPlansRoot,
-    targetPath,
-  );
+  const wildcardKind = defaultReviewTargetKindFromAbsolutePath(cwd, targetPath);
   if (wildcardKind) {
     return wildcardKind;
   }
@@ -208,11 +158,7 @@ export const resolveReviewTargetMatch = (
   planConfig: PlanFileConfig,
   targetPath: string,
 ): ReviewTargetMatch | null => {
-  const kind = getReviewTargetKind(
-    planConfig,
-    targetPath,
-    path.resolve(ctx.cwd, ".pi", "plans"),
-  );
+  const kind = getReviewTargetKind(planConfig, targetPath, ctx.cwd);
   if (!kind) {
     return null;
   }
@@ -242,7 +188,7 @@ export const getPlanFileConfig = (ctx: {
     : getDefaultPlanDirs(ctx.cwd);
   const specFiles = config.planFile
     ? planFiles.map((planFile) =>
-        path.join(path.dirname(planFile), DEFAULT_SPECS_SUBDIR),
+        path.join(path.dirname(planFile), REVIEW_TARGET_SPECS_DIR),
       )
     : getDefaultSpecDirs(ctx.cwd);
   const planFile = planFiles[0];
@@ -281,7 +227,7 @@ export const shouldQueueReviewForToolPath = (
   return !getReviewTargetKind(
     planConfig,
     targetPath,
-    getWildcardPlansRootFromConfig(planConfig),
+    getCwdFromPlanConfig(planConfig),
   );
 };
 

@@ -10,7 +10,7 @@ import {
   runPlannotatorAnnotateCli,
   runPlannotatorCodeReviewCli,
 } from "./cli.ts";
-import { extractBashPathCandidates, resolveToolPath } from "./helpers.ts";
+import { extractBashPathCandidates, resolveToolPaths } from "./helpers.ts";
 import {
   isHtmlPath,
   isPathWithinCwd,
@@ -146,8 +146,7 @@ export const recordSessionReviewDocumentWrites = (
     return;
   }
 
-  const toolPath = resolveToolPath(args);
-  if (toolPath) {
+  for (const toolPath of resolveToolPaths(args)) {
     recordSessionReviewDocumentPath(ctx, toolPath);
   }
 };

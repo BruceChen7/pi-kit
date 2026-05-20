@@ -18,7 +18,7 @@ import {
   runPlannotatorAnnotateCli,
   runPlannotatorPlanReviewCli,
 } from "./cli.ts";
-import { extractBashPathCandidates, resolveToolPath } from "./helpers.ts";
+import { extractBashPathCandidates, resolveToolPaths } from "./helpers.ts";
 import { isHtmlPath, resolveReviewTargetMatch } from "./paths.ts";
 import type { PendingPlanReview, PlanFileConfig } from "./plan-review/types.ts";
 import { getSessionState, type SessionRuntimeState } from "./session.ts";
@@ -376,34 +376,17 @@ const queuePlanReviewForToolPath = (
   return true;
 };
 
-export const handlePlanFileWrite = (
+const queuePlanReviewsForToolPaths = (
   ctx: ExtensionContext,
-  args: unknown,
   planConfig: PlanFileConfig | null,
-): boolean => {
-  if (!planConfig) {
-    return false;
-  }
-
-  const toolPath = resolveToolPath(args);
-  if (!toolPath) {
-    return false;
-  }
-
-  return queuePlanReviewForToolPath(ctx, planConfig, toolPath);
-};
-
-export const handleBashPlanFileWrites = (
-  ctx: ExtensionContext,
-  args: unknown,
-  planConfig: PlanFileConfig | null,
+  toolPaths: Iterable<string>,
 ): boolean => {
   if (!planConfig) {
     return false;
   }
 
   let queued = false;
-  for (const toolPath of extractBashPathCandidates(args)) {
+  for (const toolPath of toolPaths) {
     if (queuePlanReviewForToolPath(ctx, planConfig, toolPath)) {
       queued = true;
     }
@@ -411,6 +394,24 @@ export const handleBashPlanFileWrites = (
 
   return queued;
 };
+
+export const handlePlanFileWrite = (
+  ctx: ExtensionContext,
+  args: unknown,
+  planConfig: PlanFileConfig | null,
+): boolean =>
+  queuePlanReviewsForToolPaths(ctx, planConfig, resolveToolPaths(args));
+
+export const handleBashPlanFileWrites = (
+  ctx: ExtensionContext,
+  args: unknown,
+  planConfig: PlanFileConfig | null,
+): boolean =>
+  queuePlanReviewsForToolPaths(
+    ctx,
+    planConfig,
+    extractBashPathCandidates(args),
+  );
 
 const clearPendingPlanReviewTarget = (
   state: SessionRuntimeState,

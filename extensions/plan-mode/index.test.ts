@@ -643,11 +643,28 @@ describe("plan-mode extension", () => {
     await expectToolAllowed(harness, ctx, "write", {
       path: ".pi/plans/pi-kit/plan/2026-05-08-demo.html",
     });
+    await expectToolAllowed(harness, ctx, "edit", {
+      patch: `*** Begin Patch
+*** Update File: .pi/plans/pi-kit/plan/2026-05-08-demo.md
+@@
+-old
++new
+*** End Patch`,
+    });
     await expectToolAllowed(harness, ctx, "write", {
       path: ".pi/plans/pi-kit/specs/2026-05-08-demo-design.md",
     });
+    await expectToolAllowed(harness, ctx, "write", {
+      path: ".pi/plans/pi-kit/issues/session-switch-lifecycle/01-cleanup.md",
+    });
+    await expectToolAllowed(harness, ctx, "write", {
+      path: ".pi/plans/pi-kit/shaping/current-notes.md",
+    });
     await expectToolBlocked(harness, ctx, "write", {
       path: ".pi/plans/pi-kit/specs/2026-05-08-demo-design.html",
+    });
+    await expectToolBlocked(harness, ctx, "write", {
+      path: ".pi/plans/pi-kit/issues/01-root-issue.md",
     });
 
     await harness.runCommand("plan-mode", "act", ctx);

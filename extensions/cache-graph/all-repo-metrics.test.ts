@@ -81,13 +81,53 @@ describe("collectAllRepoCacheMetrics", () => {
     expect(metrics.treeTotals.cacheRead).toBe(50);
   });
 
-  it("shortens home-directory session folder names", async () => {
+  it("shortens macOS home-directory session folder names", async () => {
     const sessionsRoot = await mkdtemp(
       path.join(tmpdir(), "cache-graph-home-repos-"),
     );
     await writeSession({
       sessionsRoot,
       repoSlug: "--Users-ming.chen-work-pi-kit--",
+      fileName: "session.jsonl",
+      timestamp: "2026-05-12T00:00:00.000Z",
+      input: 100,
+      cacheRead: 20,
+    });
+
+    const metrics = collectAllRepoCacheMetrics({ sessionsRoot });
+
+    expect(metrics.allMessages.map((message) => message.repoSlug)).toEqual([
+      "work-pi-kit",
+    ]);
+  });
+
+  it("shortens Linux home-directory session folder names", async () => {
+    const sessionsRoot = await mkdtemp(
+      path.join(tmpdir(), "cache-graph-linux-home-repos-"),
+    );
+    await writeSession({
+      sessionsRoot,
+      repoSlug: "--home-ming-work-pi-kit--",
+      fileName: "session.jsonl",
+      timestamp: "2026-05-12T00:00:00.000Z",
+      input: 100,
+      cacheRead: 20,
+    });
+
+    const metrics = collectAllRepoCacheMetrics({ sessionsRoot });
+
+    expect(metrics.allMessages.map((message) => message.repoSlug)).toEqual([
+      "work-pi-kit",
+    ]);
+  });
+
+  it("shortens Windows home-directory session folder names", async () => {
+    const sessionsRoot = await mkdtemp(
+      path.join(tmpdir(), "cache-graph-windows-home-repos-"),
+    );
+    await writeSession({
+      sessionsRoot,
+      repoSlug: "--C--Users-ming-work-pi-kit--",
       fileName: "session.jsonl",
       timestamp: "2026-05-12T00:00:00.000Z",
       input: 100,

@@ -1,14 +1,10 @@
+import { pathsFromWriteToolInput } from "../shared/tool-targets.ts";
+
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-export const resolveToolPath = (args: unknown): string | null => {
-  if (!isRecord(args)) {
-    return null;
-  }
-
-  const value = args.path;
-  return typeof value === "string" ? value : null;
-};
+export const resolveToolPaths = (args: unknown): string[] =>
+  pathsFromWriteToolInput(args).map(({ rawPath }) => rawPath);
 
 const BASH_OUTPUT_PATH_PATTERN =
   /(?:>>|>|tee\s+(?:-[a-zA-Z]+\s+)*)\s*([^\s;&|]+)/g;

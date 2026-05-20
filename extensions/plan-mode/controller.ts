@@ -5,6 +5,7 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
+import { pathsFromWriteToolInput } from "../shared/tool-targets.ts";
 import {
   formatApprovedArtifactPolicyFailure,
   formatArtifactPolicyFailure,
@@ -454,8 +455,14 @@ export class PlanModeController {
     }
 
     if (this.state.isPlanPhase() && WRITE_TOOL_NAMES.has(event.toolName)) {
-      const rawPath = pathFromToolCall(event);
-      if (rawPath && isReviewArtifactPath(ctx.cwd, rawPath)) {
+      const targetResult = pathsFromToolCall(event);
+      if (
+        targetResult.kind === "paths" &&
+        targetResult.paths.length > 0 &&
+        targetResult.paths.every(({ rawPath }) =>
+          isReviewArtifactPath(ctx.cwd, rawPath),
+        )
+      ) {
         return undefined;
       }
       return {
@@ -615,12 +622,13 @@ export class PlanModeController {
     }
 
     if (WRITE_TOOL_NAMES.has(event.toolName) && !event.isError) {
-      const rawPath = stringProperty(event.input, "path");
-      if (rawPath && isReviewArtifactPath(ctx.cwd, rawPath)) {
-        this.state.markReviewArtifactWritten(
-          relativeToolPath(ctx.cwd, rawPath),
-        );
-        this.persist();
+      for (const { rawPath } of pathsFromWriteToolInput(event.input)) {
+        if (isReviewArtifactPath(ctx.cwd, rawPath)) {
+          this.state.markReviewArtifactWritten(
+            relativeToolPath(ctx.cwd, rawPath),
+          );
+          this.persist();
+        }
       }
       return;
     }

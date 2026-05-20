@@ -71,6 +71,32 @@ async function emitBashCommand(
   );
 }
 
+async function emitToolEdit(
+  emit: Emit,
+  ctx: TestCtx,
+  args: Record<string, unknown>,
+  toolCallId = "edit-call-1",
+): Promise<void> {
+  await emit(
+    "tool_execution_start",
+    {
+      toolName: "edit",
+      toolCallId,
+      args,
+    },
+    ctx,
+  );
+  await emit(
+    "tool_execution_end",
+    {
+      toolName: "edit",
+      toolCallId,
+      isError: false,
+    },
+    ctx,
+  );
+}
+
 function attachWidgetSpy(ctx: ReturnType<typeof createTestContext>) {
   const setWidget = vi.fn();
   (
@@ -185,6 +211,37 @@ describe("plan review trigger timing", () => {
         expect(ctx.abort).not.toHaveBeenCalled();
         expect(ctx.ui.notify).not.toHaveBeenCalled();
         expect(api.sendUserMessage).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  it("queues manual review submission after an edit patch changes a plan file", async () => {
+    await withPlannotatorAutoTest(
+      "plannotator-auto-edit-patch-plan-review-",
+      async ({ emit, repoRoot, repoName, createCtx }) => {
+        const planFileRelative = await writePlanDraft(repoRoot, repoName);
+        const ctx = createCtx();
+
+        await emit("session_start", {}, ctx);
+        await emitToolEdit(emit, ctx, {
+          patch: [
+            "*** Begin Patch",
+            `*** Update File: ${planFileRelative}`,
+            "@@",
+            "-# Plan",
+            "+# Plan",
+            "*** End Patch",
+          ].join("\n"),
+        });
+
+        const result = (await emit("before_agent_start", {}, ctx)) as {
+          message?: { content?: string };
+        };
+
+        expect(result.message?.content ?? "").toContain(
+          "plannotator_auto_submit_review",
+        );
+        expect(result.message?.content ?? "").toContain(planFileRelative);
       },
     );
   });

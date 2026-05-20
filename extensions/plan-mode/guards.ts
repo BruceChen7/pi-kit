@@ -4,14 +4,14 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
-import { isStandardPlanArtifactPath } from "./artifact-policy.ts";
-import { SPEC_REVIEW_ARTIFACT_PATTERN, WRITE_TOOL_NAMES } from "./constants.ts";
+import { defaultReviewTargetKindFromAbsolutePath } from "../shared/review-targets.ts";
+import {
+  pathsFromWriteToolInput,
+  type ToolTargetPath,
+} from "../shared/tool-targets.ts";
+import { WRITE_TOOL_NAMES } from "./constants.ts";
 import type { PlanModeState } from "./state.ts";
 import { isRecord, stringProperty } from "./state.ts";
-
-export type ToolTargetPath = {
-  rawPath: string;
-};
 
 export type ToolTargetPathResult =
   | { kind: "paths"; paths: ToolTargetPath[] }
@@ -20,47 +20,12 @@ export type ToolTargetPathResult =
 export const pathFromToolCall = (event: ToolCallEvent): string | null =>
   stringProperty(event.input, "path");
 
-const dedupeTargetPaths = (paths: ToolTargetPath[]): ToolTargetPath[] => {
-  const seen = new Set<string>();
-  return paths.filter(({ rawPath }) => {
-    if (seen.has(rawPath)) {
-      return false;
-    }
-    seen.add(rawPath);
-    return true;
-  });
-};
-
-const pathsFromMultiEdit = (
-  multi: unknown[],
-  inheritedPath: string | null,
-): ToolTargetPath[] =>
-  multi.flatMap((entry) => {
-    if (!isRecord(entry)) {
-      return [];
-    }
-    const rawPath = stringProperty(entry, "path") ?? inheritedPath;
-    return rawPath ? [{ rawPath }] : [];
-  });
-
-const pathsFromPatchHeaders = (patch: string): ToolTargetPath[] => {
-  const paths: ToolTargetPath[] = [];
-  const headerPattern = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/gmu;
-  for (const match of patch.matchAll(headerPattern)) {
-    const rawPath = match[1]?.trim();
-    if (rawPath) {
-      paths.push({ rawPath });
-    }
-  }
-  return paths;
-};
-
 const targetPathResult = (
   toolName: string,
   paths: ToolTargetPath[],
 ): ToolTargetPathResult => {
   if (paths.length > 0) {
-    return { kind: "paths", paths: dedupeTargetPaths(paths) };
+    return { kind: "paths", paths };
   }
 
   if (WRITE_TOOL_NAMES.has(toolName)) {
@@ -76,23 +41,7 @@ const targetPathResult = (
 export const pathsFromToolCall = (
   event: ToolCallEvent,
 ): ToolTargetPathResult => {
-  const rawPath = pathFromToolCall(event);
-
-  if (event.toolName === "edit") {
-    const patch = stringProperty(event.input, "patch");
-    if (patch) {
-      return targetPathResult(event.toolName, pathsFromPatchHeaders(patch));
-    }
-
-    if ("multi" in event.input && Array.isArray(event.input.multi)) {
-      return targetPathResult(
-        event.toolName,
-        pathsFromMultiEdit(event.input.multi, rawPath),
-      );
-    }
-  }
-
-  return targetPathResult(event.toolName, rawPath ? [{ rawPath }] : []);
+  return targetPathResult(event.toolName, pathsFromWriteToolInput(event.input));
 };
 
 export const normalizeToolPath = (cwd: string, rawPath: string): string => {
@@ -106,32 +55,11 @@ export const relativeToolPath = (cwd: string, rawPath: string): string => {
   return relativePath.split(path.sep).join("/");
 };
 
-export const isReviewArtifactPath = (cwd: string, rawPath: string): boolean => {
-  const absolutePath = normalizeToolPath(cwd, rawPath);
-  const relativePath = path.relative(cwd, absolutePath);
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    return false;
-  }
-
-  const normalizedRelativePath = relativePath.split(path.sep).join("/");
-  if (isStandardPlanArtifactPath(normalizedRelativePath)) {
-    return true;
-  }
-
-  const parts = normalizedRelativePath.split("/");
-  const [dotPi, plans, repoSlug, artifactDir, fileName] = parts;
-  if (
-    parts.length !== 5 ||
-    dotPi !== ".pi" ||
-    plans !== "plans" ||
-    !repoSlug ||
-    !fileName
-  ) {
-    return false;
-  }
-
-  return artifactDir === "specs" && SPEC_REVIEW_ARTIFACT_PATTERN.test(fileName);
-};
+export const isReviewArtifactPath = (cwd: string, rawPath: string): boolean =>
+  defaultReviewTargetKindFromAbsolutePath(
+    cwd,
+    normalizeToolPath(cwd, rawPath),
+  ) !== null;
 
 export const isInsideDir = (targetPath: string, dirPath: string): boolean => {
   const relative = path.relative(

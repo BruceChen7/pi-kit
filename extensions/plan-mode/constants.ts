@@ -21,8 +21,10 @@ export const HTML_PLAN_REVIEW_ARTIFACT_LOCATION =
   ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html; " +
   "specs remain .pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md";
 export const REVIEW_ARTIFACT_LOCATION =
-  ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md|.html or " +
-  ".pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md";
+  ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md|.html, " +
+  ".pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md, " +
+  ".pi/plans/<repo>/shaping/*.md, or " +
+  ".pi/plans/<repo>/issues/<topic>/*.md";
 export const REVIEW_ARTIFACT_WRITE_HINT =
   "No mkdir is needed; use write with a standard filename and the tool will " +
   "create missing .pi/plans parent directories.";
@@ -34,7 +36,6 @@ export const REVIEW_ARTIFACT_WRITE_GUIDANCE = [
   `${REVIEW_ARTIFACT_TARGET}.`,
   REVIEW_ARTIFACT_WRITE_HINT,
 ].join(" ");
-export const SPEC_REVIEW_ARTIFACT_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
 export const HTML_PLAN_FORMAT_GUIDANCE = [
   "- When planArtifactFormat is html, write implementation plans as " +
     "self-contained HTML under " +

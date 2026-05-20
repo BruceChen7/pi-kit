@@ -158,6 +158,18 @@ function formatRepoSlug(directoryName: string): string {
   const trimmed = directoryName.replace(/^--|--$/g, "");
   if (!trimmed) return directoryName;
 
-  const homePathMatch = /^Users-[^-]+-(.+)$/.exec(trimmed);
-  return homePathMatch?.[1] || trimmed;
+  const homeSlugPrefix = slugPath(os.homedir());
+  if (homeSlugPrefix && trimmed.startsWith(`${homeSlugPrefix}-`)) {
+    return trimmed.slice(homeSlugPrefix.length + 1);
+  }
+
+  const unixHomePathMatch = /^(?:Users|home)-[^-]+-(.+)$/.exec(trimmed);
+  if (unixHomePathMatch) return unixHomePathMatch[1];
+
+  const windowsHomePathMatch = /^[A-Za-z]--Users-[^-]+-(.+)$/.exec(trimmed);
+  return windowsHomePathMatch?.[1] || trimmed;
+}
+
+function slugPath(filePath: string): string {
+  return filePath.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-");
 }

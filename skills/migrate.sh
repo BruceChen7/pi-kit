@@ -2,7 +2,7 @@
 
 # Skills Migration Script
 # Usage:
-#   ./migrate.sh import   - Install GitHub skills into ~/.agents/git-skills and local repo skills into ~/.agents/me-skills
+#   ./migrate.sh import   - Install prompts plus GitHub/local skills
 #   ./migrate.sh update   - Update GitHub skill repos in ~/.agents/git-skills
 #   ./migrate.sh export   - Scan ~/.agents/me-skills + ~/.agents/git-skills and update skills/skills.txt
 #
@@ -44,11 +44,12 @@ usage() {
     echo "Usage: $0 {import|export|update}"
     echo ""
     echo "Commands:"
-    echo "  import   Install GitHub skills into ~/.agents/git-skills and local repo skills into ~/.agents/me-skills"
+    echo "  import   Install prompts to ~/.pi/agent/prompts and skills to ~/.agents"
     echo "  update   Update GitHub skill repos in ~/.agents/git-skills"
     echo "  export   Scan ~/.agents/me-skills + ~/.agents/git-skills and update skills/skills.txt"
     echo ""
     echo "Configuration:"
+    echo "  Put Pi prompt templates in ../prompts/*.md; import copies them to ~/.pi/agent/prompts"
     echo "  Edit skills.txt to manage skill list"
     echo "  Format:"
     echo "    skill-name|git-repo-url|repo-path(optional)"
@@ -263,7 +264,11 @@ install_pi_kit_prompts() {
 
 # Import skills: clone GitHub repos and symlink local repo skills into me-skills.
 import_skills() {
-    log_info "Importing GitHub skills to $GIT_CLONE_BASE_DIR and local skills to $ME_SKILLS_DIR..."
+    local import_message
+    import_message="Importing prompts to $PI_PROMPTS_DIR, GitHub skills to $GIT_CLONE_BASE_DIR"
+    import_message="$import_message, and local skills to $ME_SKILLS_DIR..."
+    log_info "$import_message"
+
     ensure_git_clone_dir
     mkdir -p "$ME_SKILLS_DIR"
     install_pi_kit_prompts

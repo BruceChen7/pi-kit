@@ -19,6 +19,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILLS_FILE="$SCRIPT_DIR/skills.txt"
 ME_SKILLS_DIR="$HOME/.agents/me-skills"
 GIT_CLONE_BASE_DIR="$HOME/.agents/git-skills"
+PI_KIT_PROMPTS_DIR="$SCRIPT_DIR/../prompts"
+PI_PROMPTS_DIR="$HOME/.pi/agent/prompts"
 
 # Colors for output
 RED='\033[0;31m'
@@ -230,11 +232,41 @@ is_path_within_root() {
     esac
 }
 
+install_pi_kit_prompts() {
+    if [ ! -d "$PI_KIT_PROMPTS_DIR" ]; then
+        return 0
+    fi
+
+    local prompt_files=("$PI_KIT_PROMPTS_DIR"/*.md)
+    if [ ! -e "${prompt_files[0]}" ]; then
+        return 0
+    fi
+
+    mkdir -p "$PI_PROMPTS_DIR"
+
+    local prompt_file
+    for prompt_file in "${prompt_files[@]}"; do
+        local prompt_name
+        local target_path
+        prompt_name=$(basename "$prompt_file")
+        target_path="$PI_PROMPTS_DIR/$prompt_name"
+
+        if [ -e "$target_path" ] || [ -L "$target_path" ]; then
+            log_warn "Overwriting prompt: $prompt_name from pi-kit"
+        else
+            log_info "Installing prompt: $prompt_name from pi-kit"
+        fi
+
+        cp "$prompt_file" "$target_path"
+    done
+}
+
 # Import skills: clone GitHub repos and symlink local repo skills into me-skills.
 import_skills() {
     log_info "Importing GitHub skills to $GIT_CLONE_BASE_DIR and local skills to $ME_SKILLS_DIR..."
     ensure_git_clone_dir
     mkdir -p "$ME_SKILLS_DIR"
+    install_pi_kit_prompts
 
     local skipped=()
     local local_repo_root

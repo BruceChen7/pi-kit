@@ -80,4 +80,24 @@ describe("collectAllRepoCacheMetrics", () => {
     expect(metrics.treeTotals.input).toBe(300);
     expect(metrics.treeTotals.cacheRead).toBe(50);
   });
+
+  it("shortens home-directory session folder names", async () => {
+    const sessionsRoot = await mkdtemp(
+      path.join(tmpdir(), "cache-graph-home-repos-"),
+    );
+    await writeSession({
+      sessionsRoot,
+      repoSlug: "--Users-ming.chen-work-pi-kit--",
+      fileName: "session.jsonl",
+      timestamp: "2026-05-12T00:00:00.000Z",
+      input: 100,
+      cacheRead: 20,
+    });
+
+    const metrics = collectAllRepoCacheMetrics({ sessionsRoot });
+
+    expect(metrics.allMessages.map((message) => message.repoSlug)).toEqual([
+      "work-pi-kit",
+    ]);
+  });
 });

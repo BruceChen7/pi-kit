@@ -1,9 +1,12 @@
 ---
 description: Generate a visual HTML plan review — current codebase state vs. proposed implementation plan
+skills: [plannotator-visual-explainer, visual-explainer]
 ---
-Load the visual-explainer skill, then generate a comprehensive visual plan review as a self-contained HTML page, comparing the current codebase against a proposed implementation plan.
+Generate a comprehensive visual plan review as a self-contained HTML page, comparing the current codebase against a proposed implementation plan.
 
-Follow the visual-explainer skill workflow. Read the reference template, CSS patterns, and mermaid theming references before generating. Use a blueprint/editorial aesthetic with current-state vs. planned-state panels, but vary fonts and palette from previous diagrams.
+This prompt produces a reviewed visual artifact, not source-code implementation. Write the HTML under the project Plan Mode plan directory so Plannotator Auto can track and review it. Use the `plannotator-visual-explainer` PR/visual path.
+
+Follow the visual-explainer workflow. Read the relevant skill references, CSS/component patterns, and Plannotator theme guidance before generating. Use a blueprint/editorial aesthetic with current-state vs. planned-state panels, but vary fonts and palette from previous diagrams.
 
 **Inputs:**
 - Plan file: `$1` (path to a markdown plan, spec, or RFC document)
@@ -79,7 +82,9 @@ Verify each claim against the code and the plan. If something cannot be verified
 
 **Optional illustrations** — if `surf` CLI is available (`which surf`), consider generating a conceptual illustration of the planned system via `surf gemini --generate-image` when it would help the reader visualize the change. Embed as base64 data URI. See css-patterns.md "Generated Images" for container styles. Skip if surf isn't available or the plan is purely structural.
 
-Include responsive section navigation. Use a current-vs-planned visual language throughout: blue/neutral for current state, green/purple for planned additions, amber for areas of concern, red for gaps or risks. Write to `~/.agent/diagrams/` and open in browser.
+Include responsive section navigation. Use a current-vs-planned visual language throughout: blue/neutral for current state, green/purple for planned additions, amber for areas of concern, red for gaps or risks.
+
+Write the review HTML to `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html` with a descriptive filename, then call `plannotator_auto_submit_review({ path })`. Do not open the browser directly.
 
 Ultrathink.
 

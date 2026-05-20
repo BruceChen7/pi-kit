@@ -1,9 +1,12 @@
 ---
 description: Generate a visual HTML diff review — before/after architecture comparison with code review analysis
+skills: [plannotator-visual-explainer, visual-explainer]
 ---
-Load the visual-explainer skill, then generate a comprehensive visual diff review as a self-contained HTML page.
+Generate a comprehensive visual diff review as a self-contained HTML page.
 
-Follow the visual-explainer skill workflow. Read the reference template, CSS patterns, and mermaid theming references before generating. Use a GitHub-diff-inspired aesthetic with red/green before/after panels, but vary fonts and palette from previous diagrams.
+This prompt produces a reviewed visual artifact, not source-code implementation. Write the HTML under the project Plan Mode plan directory so Plannotator Auto can track and review it.
+
+Use the `plannotator-visual-explainer` PR path when possible; otherwise use its visual explainer path. Read the relevant skill references, component patterns, and Plannotator theme guidance before generating. Use a GitHub-diff-inspired aesthetic with red/green before/after panels, but vary fonts and palette from previous diagrams.
 
 **Scope detection** — determine what to diff based on `$1`:
 - Branch name (e.g. `main`, `develop`): working tree vs that branch
@@ -61,7 +64,9 @@ Verify each claim against the code. If something cannot be verified, mark it as 
 
 **Optional illustrations** — if `surf` CLI is available (`which surf`), consider generating a hero banner or conceptual illustration via `surf gemini --generate-image` when it would enhance the page. Embed as base64 data URI. See css-patterns.md "Generated Images" for container styles. Skip if surf isn't available or the diff is purely structural.
 
-Include responsive section navigation. Use diff-style visual language throughout: red for removed/before, green for added/after, yellow for modified, blue for neutral context. Write to `~/.agent/diagrams/` and open in browser.
+Include responsive section navigation. Use diff-style visual language throughout: red for removed/before, green for added/after, yellow for modified, blue for neutral context.
+
+Write to `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html` with a descriptive filename, then call `plannotator_auto_submit_review({ path })`. Do not open the browser directly.
 
 Ultrathink.
 

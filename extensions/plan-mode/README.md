@@ -122,7 +122,7 @@ HTML plan files are first-class plan artifacts only under `plan/`, not `specs/`.
 /plan-mode format markdown
 ```
 
-HTML mode requires agents to write a self-contained HTML plan with the `plannotator-visual-explainer` Plan path. HTML plan content is not checked by the Markdown artifact policy; reviewers judge content in Plannotator.
+HTML mode requires agents to write a self-contained HTML plan with the `plannotator-visual-explainer` Plan path. When an HTML plan file is specified or requested, agents must explicitly use that skill rather than treating the file as generic HTML. HTML plan content is not checked by the Markdown artifact policy; reviewers judge content in Plannotator.
 
 ## Configuration
 

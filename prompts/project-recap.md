@@ -1,9 +1,12 @@
 ---
 description: Generate a visual HTML project recap — rebuild mental model of a project's current state, recent decisions, and cognitive debt hotspots
+skills: [plannotator-visual-explainer, visual-explainer]
 ---
-Load the visual-explainer skill, then generate a comprehensive visual project recap as a self-contained HTML page.
+Generate a comprehensive visual project recap as a self-contained HTML page.
 
-Follow the visual-explainer skill workflow. Read the reference template, CSS patterns, and mermaid theming references before generating. Use a warm editorial or paper/ink aesthetic with muted blues and greens, but vary fonts and palette from previous diagrams.
+This prompt produces a reviewed visual artifact, not source-code implementation. Write the HTML under the project Plan Mode plan directory so Plannotator Auto can track and review it.
+
+Use the `plannotator-visual-explainer` visual explainer path. Read the relevant skill references, component patterns, and Plannotator theme guidance before generating. Use a warm editorial or paper/ink aesthetic with muted blues and greens, but vary fonts and palette from previous diagrams.
 
 **Time window** — determine the recency window from `$1`:
 - Shorthand like `2w`, `30d`, `3m`: parse to git's `--since` format (`2w` → `"2 weeks ago"`, `30d` → `"30 days ago"`, `3m` → `"3 months ago"`)
@@ -54,7 +57,9 @@ Verify each claim against the code. If something cannot be verified, mark it as 
    - Flag each with a severity and a concrete suggestion (e.g., "add a doc comment to `buildCoordinationInstructions` explaining the 4 coordination levels — this function is called from 3 places and the behavior is non-obvious")
 8. **Next steps** — inferred from recent activity, open TODOs, project trajectory. Not prescriptive — just "here's where the momentum was pointing when you left." Include any explicit next-step notes from progress docs or plan files.
 
-Include responsive section navigation. Use a warm, approachable visual language: muted blues and greens for architecture, amber callouts for cognitive debt hotspots, green/blue/amber/red for state-of-things status. Overflow prevention on any side-by-side or grid-based sections: apply `min-width: 0` on all grid/flex children and `overflow-wrap: break-word`. Never use `display: flex` on `<li>` for marker characters — use absolute positioning instead (see css-patterns.md Overflow Protection). Write to `~/.agent/diagrams/` and open in browser.
+Include responsive section navigation. Use a warm, approachable visual language: muted blues and greens for architecture, amber callouts for cognitive debt hotspots, green/blue/amber/red for state-of-things status. Overflow prevention on any side-by-side or grid-based sections: apply `min-width: 0` on all grid/flex children and `overflow-wrap: break-word`. Never use `display: flex` on `<li>` for marker characters — use absolute positioning instead (see css-patterns.md Overflow Protection).
+
+Write to `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html` with a descriptive filename, then call `plannotator_auto_submit_review({ path })`. Do not open the browser directly.
 
 Ultrathink.
 

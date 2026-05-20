@@ -1,13 +1,16 @@
 ---
 description: Verify the factual accuracy of a document against the actual codebase, correct inaccuracies in place
+skills: [plannotator-visual-explainer, visual-explainer]
 ---
-Load the visual-explainer skill, then verify the factual accuracy of a document that makes claims about a codebase. Read the file, extract every verifiable claim, check each against the actual code and git history, correct inaccuracies in place, and add a verification summary.
+Verify the factual accuracy of a document that makes claims about a codebase. Read the file, extract every verifiable claim, check each against the actual code and git history, correct inaccuracies in place, and add a verification summary.
 
-For HTML files: read `./references/css-patterns.md` to match the existing page's styling when inserting the verification summary.
+This prompt may edit an existing document in place. Prefer targets under `.pi/plans/<repo>/...` so Plan Mode and Plannotator Auto can track reviewable artifacts. If the target is a reviewed Plan Mode artifact, preserve its required format. For Markdown implementation plans under `.pi/plans/<repo>/plan/*.md`, keep only the standard `## Context`, `## Steps`, `## Verification`, and `## Review` top-level sections; put the verification summary inside `## Review` instead of adding a new `## Verification Summary` section. If the edited artifact has a pending or prior Plannotator review, submit it again with `plannotator_auto_submit_review({ path })`.
+
+For HTML files: find the active `visual-explainer` or `plannotator-visual-explainer` skill directory first, then read that skill's `references/css-patterns.md` or equivalent styling reference to match the existing page's styling when inserting the verification summary.
 
 **Target file** — determine what to verify from `$1`:
 - Explicit path: verify that specific file (`.html`, `.md`, or any text document)
-- No argument: verify the most recently modified `.html` file in `~/.agent/diagrams/` (`ls -t ~/.agent/diagrams/*.html | head -1`)
+- No argument: verify the most recently modified `.html` file under `.pi/plans/<repo>/plan/` (for example, `ls -t .pi/plans/*/plan/*.html | head -1`)
 
 Auto-detect the document type and adjust the verification strategy:
 - **HTML review pages** (diff-review, plan-review, project-recap): detect from page content, verify against the git ref or plan file the review was based on
@@ -44,7 +47,8 @@ Classify each claim:
 
 **Phase 4: Add verification summary.**
 - **HTML files**: insert a verification section as a banner at the top or final section, matching the page's existing styling. Use a subtle card with muted colors.
-- **Markdown files**: append a `## Verification Summary` section at the end of the document.
+- **Standard Plan Mode markdown plan files** (`.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md`): put the summary inside the existing `## Review` section so the artifact policy remains valid.
+- **Other markdown files**: append a `## Verification Summary` section at the end of the document.
 
 Include in the summary:
 - Total claims checked
@@ -52,7 +56,7 @@ Include in the summary:
 - Corrections made (with brief list of what was fixed: "Changed `processCleanup` to `runCleanup` to match actual function name in `worker.ts:45`")
 - Unverifiable claims flagged (if any)
 
-**Phase 5: Report.** Tell the user what was checked, what was corrected, and open the file (HTML in browser, markdown path in chat). If nothing needed correction, say so — the verification still has value as confirmation.
+**Phase 5: Report.** Tell the user what was checked, what was corrected, and the file path. For HTML, deliver through Plannotator annotation UI when appropriate; do not open the browser directly. If nothing needed correction, say so — the verification still has value as confirmation.
 
 This is not a re-review. It does not second-guess analysis, opinions, or design judgments. It does not change the document's structure or organization. It is a fact-checker — it verifies that the data presented matches reality, corrects what doesn't, and leaves everything else alone.
 

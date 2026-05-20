@@ -43,7 +43,8 @@ export const HTML_PLAN_FORMAT_GUIDANCE = [
   "- HTML plan mode is mandatory for implementation plans in this session; " +
     "do not write a Markdown plan unless the format is switched back to " +
     "markdown.",
-  "- Use the plannotator-visual-explainer skill Plan path: inline CSS/SVG, " +
+  "- When an HTML plan file is specified or requested, explicitly use the " +
+    "plannotator-visual-explainer skill Plan path: inline CSS/SVG, " +
     "Plannotator theme tokens, visual timeline/data-flow/key-code/risk " +
     "sections when useful, and no time estimates.",
   "- Specs remain Markdown only under " +

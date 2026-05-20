@@ -1,107 +1,84 @@
 ---
-description: Generate a visual HTML implementation plan — detailed feature specification with state machines, code snippets, and edge cases
+description: Generate a reviewed HTML implementation plan that matches Plan Mode and Plannotator Auto
+skills: [plannotator-visual-explainer, visual-explainer]
 ---
-Load the visual-explainer skill, then generate a comprehensive visual implementation plan for `$@` as a self-contained HTML page.
+Generate a comprehensive visual implementation plan for `$@` as a self-contained HTML plan artifact.
 
-Follow the visual-explainer skill workflow. Read the reference template, CSS patterns, and mermaid theming references before generating. Use an editorial or blueprint aesthetic, but vary fonts and palette from previous diagrams.
+This prompt is for Plan Mode / Plannotator Auto review-first workflows. It must produce a reviewable
+plan file, not an informational diagram.
 
-**Data gathering phase** — understand the context before designing:
+## Runtime contract
 
-1. **Parse the feature request.** Extract:
-   - The core problem being solved
-   - Desired user-facing behavior
-   - Any constraints or requirements mentioned
-   - Scope boundaries (what's explicitly out of scope)
+- Use the `plannotator-visual-explainer` skill Plan path, not the generic diagram path.
+- Inspect the codebase with read/search/list tools before designing.
+- Create or update a concrete TODO list before writing the artifact.
+- Write exactly one HTML plan artifact under:
+  `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html`
+- Do not write implementation code while drafting the plan.
+- After writing the HTML file, call:
+  `plannotator_auto_submit_review({ path: ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html" })`
+- If Plannotator denies the review, revise the same HTML file and submit it again.
+- Keep the first `#` / main heading unchanged across denied revisions unless the reviewer explicitly
+  asks for a rename; Plannotator uses that heading for version diffs.
+- After approval, execute only the approved plan and keep TODO status aligned with progress.
 
-2. **Read the relevant codebase.** Identify:
-   - Files that will need modification
-   - Existing patterns to follow (code style, architecture, naming conventions)
-   - Related functionality that the feature should integrate with
-   - Types, interfaces, and APIs the feature must conform to
+## Data gathering
 
-3. **Understand the extension points.** Look for:
-   - Hook points, event systems, or plugin architectures
-   - Configuration options or flags
-   - Public APIs that might need extension
-   - Test patterns used in the codebase
+1. Parse the feature request:
+   - Core problem and desired behavior
+   - User-visible outcome
+   - Constraints, scope boundaries, and non-goals
+   - Explicit output format or review requirements
 
-4. **Check for prior art.** Search for:
+2. Read the relevant codebase:
+   - Files likely to change
+   - Existing patterns for state, commands, config, UI, tests, and error handling
+   - Public APIs, extension points, hooks, and event boundaries
+   - Test seams and adapter boundaries; test module interfaces, not implementation details
+
+3. Check for prior art:
    - Similar features already implemented
-   - Related issues or discussions
-   - Existing code that can be reused or extended
+   - Related plan/spec files under `.pi/plans/<repo>/`
+   - Existing rejected alternatives or documented constraints
 
-**Design phase** — work through the implementation before writing HTML:
+## Design requirements
 
-1. **State design.** What new state variables are needed? What existing state is affected? Draw the state machine if behavior has multiple modes.
+Before writing HTML, reason through and verify:
 
-2. **API design.** What commands, functions, or endpoints are added? What are the signatures? What are the error cases?
+- State design: new state, changed state, transitions, invalid states
+- API design: commands/functions/config/types, signatures, validation, errors
+- Integration design: call paths, hook points, event flow, persistence, UI updates
+- Edge cases: concurrency, interruption, denial/retry, missing files, invalid config, stale state
+- Verification: exact tests, lint/typecheck commands, and manual checks
 
-3. **Integration design.** How does this feature interact with existing functionality? What hooks or events are involved?
+If any claim cannot be verified from the code or docs, mark it as an assumption or open question.
 
-4. **Edge cases.** Walk through unusual scenarios: concurrent operations, error conditions, boundary values, user mistakes.
+## HTML plan content
 
-**Verification checkpoint** — before generating HTML, produce a structured fact sheet:
-- Every state variable (new and modified) with its type and purpose
-- Every function/command/API with its signature
-- Every file that needs modification with the specific changes
-- Every edge case with expected behavior
-- Every assumption about the codebase that the plan relies on
-Verify each against the code. If something cannot be verified, mark it as uncertain. This fact sheet is your source of truth during HTML generation.
+Follow the `plannotator-visual-explainer` Plan path and Plannotator theme tokens. Prefer inline SVG for
+architecture and flow diagrams. Use Mermaid only when it is safer than custom SVG; if using Mermaid,
+use paired non-empty ```mermaid fences and simple `flowchart` syntax.
 
-**Diagram structure** — the page should include:
+Include the sections that fit the task:
 
-1. **Header** — feature name, one-line description, scope summary. *Visual treatment: use a distinctive header with monospace label ("Feature Plan", "Implementation Spec", etc.), large italic title, and muted subtitle. Set the tone for the page.*
+1. Header — title, prompt/brief, scope, non-goals
+2. Summary strip — 3-5 concrete facts such as files/modules/tests affected
+3. Before/after problem framing — current behavior vs. desired behavior
+4. Architecture or data flow — before/after diagrams for logic/state/data/control-flow changes
+5. Milestones / sequencing — dependency order without time estimates
+6. Key code — minimal sketches of important types, function signatures, conditions, or assertions
+7. Test and verification plan — concrete commands and test cases
+8. Risks, mitigations, and open questions — severity and owner/decision point when useful
 
-2. **The Problem** — side-by-side comparison panels showing current behavior vs. desired behavior. Use concrete examples, not abstract descriptions. Show what the user experiences or what the code does, step by step. *Visual treatment: two-column grid with rose-tinted "Before" header and sage-tinted "After" header. Numbered flow steps with arrows between them.*
+For code-changing plans that affect logic, state, data models, control flow, or process flow, include
+before/after diagrams and a small key code sketch. Do not paste a full implementation.
 
-3. **State Machine** — Mermaid flowchart or stateDiagram showing the states and transitions. Label edges with the triggers (commands, events, conditions). *Wrap in `.mermaid-wrap` with zoom controls (+/−/reset/expand) and click-to-expand. Use `flowchart TD` instead of `stateDiagram-v2` if labels need special characters like colons or parentheses. Add explanatory caption below the diagram.*
+## Quality bar
 
-4. **State Variables** — card grid showing new state and existing state (if modified). Use code blocks with proper `white-space: pre-wrap`. *Visual treatment: two cards side-by-side, elevated depth, monospace labels.*
-
-5. **Modified Functions** — for each function that needs changes, show:
-   - Function name and file path
-   - Key code snippet (not full implementation — 10-20 lines showing the pattern)
-   - Explanation of what changed and why
-   *Visual treatment: file path as monospace dim text above code block, code in recessed card with accent-dim background.*
-
-6. **Commands / API** — table with command/function name, parameters, and behavior description. Use `<code>` for technical names. *Visual treatment: bordered table with sticky header, alternating row backgrounds.*
-
-7. **Edge Cases** — table listing scenarios and expected behaviors. Be thorough — include error conditions, concurrent operations, boundary values. *Visual treatment: same table style as Commands section.*
-
-8. **Test Requirements** — table or card grid showing test categories and specific tests to add. Group by: unit tests, integration tests, edge case tests. *Visual treatment: compact table with file references.*
-
-9. **File References** — table mapping files to the changes needed. Include file paths and brief descriptions. *Visual treatment: compact reference table, can use `<details>` if many files.*
-
-10. **Implementation Notes** — callout boxes for:
-    - Backward compatibility considerations (gold border)
-    - Critical implementation warnings (rose border)
-    - Performance considerations if relevant (amber border)
-    *Visual treatment: callout boxes with colored left borders, strong labels.*
-
-**Visual hierarchy:**
-- Sections 1-3 should dominate the viewport on load (hero depth for header, elevated for problem comparison and state machine)
-- Sections 4-6 are core implementation details (elevated cards, readable code blocks)
-- Sections 7-10 are reference material (flat or recessed depth, compact layout)
-
-**Typography and color:**
-- Pick a distinctive font pairing (not Inter/Roboto)
-- Use semantic accent colors: gold for primary accents, sage for "after"/success states, rose for "before"/warning states
-- Both light and dark themes must work
-
-**Optional hero image** — if `surf` CLI is available (`which surf`), consider generating a conceptual illustration that captures the feature's essence. Use for abstract concepts that benefit from visual metaphor. Skip for purely structural changes. Embed as base64 data URI using the `.hero-img-wrap` pattern from css-patterns.md.
-
-**Code block requirements:**
-- Always use `white-space: pre-wrap` and `word-break: break-word`
-- Include file path headers where relevant
-- Use syntax-appropriate highlighting via CSS classes if desired
-- Keep snippets focused — show the pattern, not the full implementation
-
-**Overflow prevention:**
-- Apply `min-width: 0` on all grid/flex children
-- Use `overflow-wrap: break-word` on all text containers
-- Never use `display: flex` on `<li>` for markers — use absolute positioning
-- Test tables with wide content don't overflow their container
-
-Write to `~/.agent/diagrams/` with a descriptive filename (e.g., `feature-name-plan.html`). Open the result in the browser. Tell the user the file path.
+- The plan answers “what, why, and how” within 30 seconds.
+- One idea per viewport; generous whitespace; no boilerplate filler.
+- No time estimates.
+- Do not invent file names, functions, or behavior. Cite uncertainty explicitly.
+- The final answer to the user should report the artifact path and review status.
 
 Ultrathink.

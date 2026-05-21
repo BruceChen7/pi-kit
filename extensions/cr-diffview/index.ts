@@ -369,39 +369,8 @@ const createSession = async (
 
 const luaString = (value: string): string => JSON.stringify(value);
 
-const buildCodeDiffVisibleGroupsLua = (
-  staged: boolean,
-  unstaged: boolean,
-): string =>
-  [
-    "require('codediff.config').options.explorer.visible_groups = {",
-    `staged = ${staged},`,
-    `unstaged = ${unstaged},`,
-    "conflicts = true }",
-  ].join(" ");
-
-const buildCodeDiffCommandLua = (args: string[]): string => {
-  const luaArgs = args.map(luaString).join(", ");
-  return `vim.cmd({ cmd = 'CodeDiff', args = { ${luaArgs} } })`;
-};
-
-const buildNvimEntrypoint = (session: CrSession): string => {
-  if (session.diffArgs[0] === "--cached") {
-    return [
-      `lua ${buildCodeDiffVisibleGroupsLua(true, false)}`,
-      buildCodeDiffCommandLua([]),
-    ].join("; ");
-  }
-
-  if (session.diffArgs.length === 0) {
-    return [
-      `lua ${buildCodeDiffVisibleGroupsLua(false, true)}`,
-      buildCodeDiffCommandLua([]),
-    ].join("; ");
-  }
-
-  return ["lua", buildCodeDiffCommandLua(session.diffArgs)].join(" ");
-};
+const buildNvimEntrypoint = (): string =>
+  ["lua", `require(${luaString("pi.cr")}).start()`].join(" ");
 
 const buildNvimCommand = (session: CrSession): string => {
   const env = `CR_SOCKET=${shellQuote(session.crSocketPath)}`;
@@ -414,7 +383,7 @@ const buildNvimCommand = (session: CrSession): string => {
     "--listen",
     shellQuote(session.socketPath),
     "-c",
-    shellQuote(buildNvimEntrypoint(session)),
+    shellQuote(buildNvimEntrypoint()),
   ].join(" ");
 };
 

@@ -77,8 +77,6 @@ export type PlanModeConfig = {
   preserveExternalTools: boolean;
   requireReview: boolean;
   guards: {
-    cwdOnly: boolean;
-    allowedPaths: string[];
     readBeforeWrite: boolean;
   };
   artifactPolicy: ArtifactPolicyConfig;

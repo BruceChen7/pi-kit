@@ -216,9 +216,10 @@ describe("cr-diffview command", () => {
     expect(tmuxCommand).toContain("CR_SOCKET='");
     expect(tmuxCommand).not.toContain("CR_DIFF_TARGET=");
     expect(tmuxCommand).not.toContain("CR_DIFF_ARGS=");
-    expect(tmuxCommand).toContain("require(");
-    expect(tmuxCommand).toContain("pi.cr");
-    expect(tmuxCommand).toContain(".start()");
+    expect(tmuxCommand).toContain("CodeDiff");
+    expect(tmuxCommand).toContain("main...HEAD");
+    expect(tmuxCommand).not.toContain("pi.cr");
+    expect(tmuxCommand).not.toContain(".start()");
     expect(notify).toHaveBeenCalledWith(
       "Opened CR diffview for main...HEAD",
       "info",
@@ -417,8 +418,35 @@ describe("cr-diffview command", () => {
     const tmuxCommand = tmuxCommandFromExec(exec);
     expect(tmuxCommand).toContain("CR_SOCKET='");
     expect(tmuxCommand).not.toContain("CR_DIFF_ARGS=");
+    expect(tmuxCommand).toContain("CodeDiff");
+    expect(tmuxCommand).toContain("staged = true");
+    expect(tmuxCommand).toContain("unstaged = false");
     expect(notify).toHaveBeenCalledWith(
       "Opened CR diffview for staged changes",
+      "info",
+    );
+  });
+
+  it("selects unstaged changes interactively when no target is provided", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
+    const exec = createCrExec(repoRoot);
+    const notify = vi.fn();
+    const custom = vi.fn(async () => "unstaged");
+    const { startHandler } = registerCrCommands(exec);
+
+    await startHandler("", {
+      cwd: repoRoot,
+      hasUI: true,
+      env: { TMUX: "/tmp/tmux" },
+      ui: { custom, notify },
+    });
+
+    const tmuxCommand = tmuxCommandFromExec(exec);
+    expect(tmuxCommand).toContain("CodeDiff");
+    expect(tmuxCommand).toContain("staged = false");
+    expect(tmuxCommand).toContain("unstaged = true");
+    expect(notify).toHaveBeenCalledWith(
+      "Opened CR diffview for unstaged changes",
       "info",
     );
   });
@@ -543,6 +571,8 @@ describe("cr-diffview command", () => {
     const tmuxCommand = tmuxCommandFromExec(exec);
     expect(tmuxCommand).toContain("CR_SOCKET='");
     expect(tmuxCommand).not.toContain("CR_DIFF_TARGET=");
+    expect(tmuxCommand).toContain("CodeDiff");
+    expect(tmuxCommand).toContain("dev...HEAD");
     expect(notify).toHaveBeenCalledWith(
       "Opened CR diffview for dev...HEAD",
       "info",

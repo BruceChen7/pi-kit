@@ -17,13 +17,10 @@ import {
   ACT_TODO_TOOL_NAME,
   BUILTIN_TOOL_NAMES,
   DEFAULT_CONFIG,
-  DEFAULT_MODE_SELECTION_TIMEOUT_MS,
   DIRECT_ACT_TODO_GUIDANCE,
   HTML_PLAN_FORMAT_GUIDANCE,
   MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION,
-  MODE_SELECTION_MESSAGE,
-  MODE_SELECTION_OPTIONS,
-  MODE_SELECTION_TITLE,
+  MODE_WIDGET_KEY,
   OUTSIDE_CWD_ALLOWED_TOOL_NAMES,
   PATH_GUARDED_TOOL_NAMES,
   PLAN_INSPECTION_TOOL_COMMA_LIST,
@@ -54,7 +51,6 @@ import {
 import {
   getSessionStateEntries,
   hasCompletedAllTodos,
-  isPlanMode,
   latestSnapshot,
   loadPlanModeConfig,
   PlanModeState,
@@ -68,7 +64,9 @@ import type {
   PlanModeConfig,
 } from "./types.ts";
 import {
+  colorModeWidgetLines,
   colorTodoWidgetHeading,
+  formatModeWidgetLines,
   formatPlanDecision,
   formatTodoWidgetLines,
   getModeLabel,
@@ -94,7 +92,6 @@ export class PlanModeController {
   private inputSourceForTurn: InputSource = "unknown";
   private internalExtensionBypassForTurn = false;
   private approvedPlanContinuationForTurn = false;
-  private modePromptedForTurn = false;
   constructor(private readonly pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext): void {
@@ -105,7 +102,6 @@ export class PlanModeController {
     this.inputSourceForTurn = "unknown";
     this.internalExtensionBypassForTurn = false;
     this.approvedPlanContinuationForTurn = false;
-    this.modePromptedForTurn = false;
   }
 
   persist(): void {
@@ -140,7 +136,10 @@ export class PlanModeController {
     this.state.setMode(mode);
     this.applyMode(ctx);
     this.persist();
-    ctx.ui.notify(`Plan Mode: ${getModeLabel(this.state)}`, "info");
+  }
+
+  toggleMode(ctx: ExtensionContext): void {
+    this.setMode(ctx, this.state.mode === "act" ? "plan" : "act");
   }
 
   setPlanArtifactFormat(
@@ -159,6 +158,11 @@ export class PlanModeController {
     }
 
     ctx.ui.setStatus(STATUS_KEY, undefined);
+    ctx.ui.setWidget(
+      MODE_WIDGET_KEY,
+      colorModeWidgetLines(formatModeWidgetLines(this.state), ctx),
+      { placement: "aboveEditor" },
+    );
 
     const widgetLines = formatTodoWidgetLines(this.state);
     if (widgetLines.length === 0) {
@@ -247,8 +251,6 @@ export class PlanModeController {
 
     if (promptRequestsPlanMode(prompt)) {
       this.setModeWithoutUserNotification(ctx, "plan");
-    } else if (this.shouldPromptModeForTurn(ctx)) {
-      await this.promptModeForTurn(ctx);
     }
 
     const confirmedContinuationPath =
@@ -289,7 +291,6 @@ export class PlanModeController {
     this.inputSourceForTurn = "unknown";
     this.internalExtensionBypassForTurn = false;
     this.approvedPlanContinuationForTurn = false;
-    this.modePromptedForTurn = false;
   }
 
   private dismissCompletedNonApprovedRun(): boolean {
@@ -304,34 +305,10 @@ export class PlanModeController {
     return true;
   }
 
-  shouldPromptModeForTurn(ctx: ExtensionContext): boolean {
-    return (
-      ctx.hasUI &&
-      this.state.mode === "act" &&
-      !this.modePromptedForTurn &&
-      !this.internalExtensionBypassForTurn &&
-      this.inputSourceForTurn === "interactive"
-    );
-  }
-
   setModeWithoutUserNotification(ctx: ExtensionContext, mode: PlanMode): void {
     this.state.setMode(mode);
     this.applyMode(ctx);
     this.persist();
-  }
-
-  async promptModeForTurn(ctx: ExtensionContext): Promise<void> {
-    this.modePromptedForTurn = true;
-    ctx.ui.notify(MODE_SELECTION_MESSAGE, "info");
-    const selected = await ctx.ui.select(
-      MODE_SELECTION_TITLE,
-      MODE_SELECTION_OPTIONS,
-      { timeout: DEFAULT_MODE_SELECTION_TIMEOUT_MS },
-    );
-    this.setModeWithoutUserNotification(
-      ctx,
-      isPlanMode(selected) ? selected : "act",
-    );
   }
 
   getPlanPathForNewRun(): string | null {

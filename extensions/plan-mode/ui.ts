@@ -1,6 +1,10 @@
 import path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { PLAN_MODE_ACT, PLAN_MODE_LABELS } from "./constants.ts";
+import {
+  PLAN_MODE_ACT,
+  PLAN_MODE_LABELS,
+  PLAN_MODE_TOGGLE_SHORTCUT_LABEL,
+} from "./constants.ts";
 import type { PlanModeState } from "./state.ts";
 import type {
   PlanDecisionSummary,
@@ -109,6 +113,16 @@ export const formatPlanModeStatus = (
     .filter(Boolean)
     .join(" • ");
 };
+
+export const formatModeWidgetLines = (state: PlanModeState): string[] => [
+  `Plan Mode: ${getModeLabel(state)} · ${getUserRunStatus(state)} · ` +
+    `${PLAN_MODE_TOGGLE_SHORTCUT_LABEL} toggles`,
+];
+
+export const colorModeWidgetLines = (
+  lines: string[],
+  ctx: ExtensionContext,
+): string[] => lines.map((line) => ctx.ui.theme.fg("accent", line));
 
 const formatCompletedTodoWidgetLines = (
   state: PlanModeState,

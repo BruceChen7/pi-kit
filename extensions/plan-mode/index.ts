@@ -1,8 +1,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   ACT_TODO_TOOL_NAME,
+  MODE_WIDGET_KEY,
   PLAN_MODE_COMMAND_OPTIONS,
   PLAN_MODE_FORMAT_OPTIONS,
+  PLAN_MODE_TOGGLE_SHORTCUT,
   STATUS_KEY,
   TODO_TOOL_NAME,
   TODO_WIDGET_KEY,
@@ -10,12 +12,20 @@ import {
 import { PlanModeController } from "./controller.ts";
 import { isPlanArtifactFormat, isPlanMode } from "./state.ts";
 import { registerTodoTool } from "./todo-tool.ts";
+import type { PlanArtifactFormat, PlanMode } from "./types.ts";
 import { formatPlanModeStatus } from "./ui.ts";
 
-type CommandCompletion = {
+export type CommandCompletion = {
   label: string;
   value: string;
 };
+
+export type PlanModeCommandDecision =
+  | { kind: "status" }
+  | { kind: "format"; value: PlanArtifactFormat }
+  | { kind: "mode"; value: PlanMode }
+  | { kind: "invalid-format" }
+  | { kind: "invalid-mode"; value: string };
 
 const toCompletions = (
   options: readonly string[],
@@ -29,7 +39,7 @@ const toCompletions = (
       value: `${completionValuePrefix}${option}`,
     }));
 
-const getPlanModeArgumentCompletions = (
+export const getPlanModeArgumentCompletions = (
   prefix: string,
 ): CommandCompletion[] => {
   const trimmedPrefix = prefix.trimStart();
@@ -47,6 +57,24 @@ const getPlanModeArgumentCompletions = (
   return toCompletions(PLAN_MODE_COMMAND_OPTIONS, command);
 };
 
+export const parsePlanModeCommand = (args: string): PlanModeCommandDecision => {
+  const requested = args.trim();
+  if (requested === "status" || requested.length === 0) {
+    return { kind: "status" };
+  }
+
+  const [command, value] = requested.split(/\s+/u);
+  if (command === "format") {
+    return isPlanArtifactFormat(value)
+      ? { kind: "format", value }
+      : { kind: "invalid-format" };
+  }
+
+  return isPlanMode(requested)
+    ? { kind: "mode", value: requested }
+    : { kind: "invalid-mode", value: requested };
+};
+
 export default function planModeExtension(pi: ExtensionAPI): void {
   const controller = new PlanModeController(pi);
 
@@ -60,31 +88,35 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     description: "Switch Plan Mode workflow: plan, act, status",
     getArgumentCompletions: getPlanModeArgumentCompletions,
     handler: async (args, ctx) => {
-      const requested = args.trim();
-      if (requested === "status" || requested.length === 0) {
-        ctx.ui.notify(
-          formatPlanModeStatus(controller.state, controller.config),
-          "info",
-        );
-        controller.updateUi(ctx);
-        return;
-      }
-
-      const [command, value] = requested.split(/\s+/u);
-      if (command === "format") {
-        if (!isPlanArtifactFormat(value)) {
+      const decision = parsePlanModeCommand(args);
+      switch (decision.kind) {
+        case "status":
+          ctx.ui.notify(
+            formatPlanModeStatus(controller.state, controller.config),
+            "info",
+          );
+          controller.updateUi(ctx);
+          return;
+        case "format":
+          controller.setPlanArtifactFormat(ctx, decision.value);
+          return;
+        case "mode":
+          controller.setMode(ctx, decision.value);
+          return;
+        case "invalid-format":
           ctx.ui.notify("Usage: /plan-mode format html|markdown", "error");
           return;
-        }
-        controller.setPlanArtifactFormat(ctx, value);
-        return;
+        case "invalid-mode":
+          ctx.ui.notify(`Unknown plan-mode: ${decision.value}`, "error");
+          return;
       }
+    },
+  });
 
-      if (!isPlanMode(requested)) {
-        ctx.ui.notify(`Unknown plan-mode: ${requested}`, "error");
-        return;
-      }
-      controller.setMode(ctx, requested);
+  pi.registerShortcut?.(PLAN_MODE_TOGGLE_SHORTCUT, {
+    description: "Toggle Plan Mode between Act and Plan",
+    handler: (ctx) => {
+      controller.toggleMode(ctx);
     },
   });
 
@@ -119,6 +151,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       return;
     }
     ctx.ui.setStatus(STATUS_KEY, undefined);
+    ctx.ui.setWidget(MODE_WIDGET_KEY, undefined);
     ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
   });
 

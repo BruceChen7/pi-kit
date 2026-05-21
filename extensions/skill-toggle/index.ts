@@ -634,7 +634,7 @@ function removeLegacySkillToggleSettings(filePath: string): void {
 
 export function loadToggleState(cwd: string): ToggleState {
   const settingsCwd = resolveSettingsCwd(cwd);
-  const { globalPath } = loadSettings(cwd, { forceReload: true });
+  const { globalPath } = loadSettings(cwd, { forceReload: false });
   const skills = loadSkills(settingsCwd);
   ensureManagedSkillLinks(settingsCwd, skills);
 

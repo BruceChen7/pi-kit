@@ -30,6 +30,7 @@
       "./extensions/session-path-copy",
       "./extensions/remote-approval",
       "./extensions/codex-web-search",
+      "./extensions/file-watcher",
       "./extensions/agent-end-code-simplifier",
       "./extensions/review-feedback",
       "./extensions/brainstorm-events",

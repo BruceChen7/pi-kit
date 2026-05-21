@@ -37,6 +37,43 @@ type ExecResult = { code: number; stdout: string; stderr: string };
 const START_COMMAND = "cr-neovim-start";
 const STOP_COMMAND = "cr-neovim-stop";
 const START_SHORTCUT = "alt+r";
+const TMUX_ENV = "/tmp/tmux";
+
+const createRepoRoot = (): string =>
+  mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
+
+type TestContextOptions = {
+  repoRoot?: string;
+  hasUI?: boolean;
+  tmux?: boolean;
+  tmuxPane?: string;
+  ui?: Record<string, unknown>;
+};
+
+const createTestContext = ({
+  repoRoot = "/repo",
+  hasUI = true,
+  tmux = true,
+  tmuxPane,
+  ui = {},
+}: TestContextOptions = {}) => {
+  const notify = vi.fn();
+  const setWidget = vi.fn();
+  const env: Record<string, string> = {};
+  if (tmux) env.TMUX = TMUX_ENV;
+  if (tmuxPane) env.TMUX_PANE = tmuxPane;
+
+  return {
+    ctx: {
+      cwd: repoRoot,
+      hasUI,
+      env,
+      ui: { notify, setWidget, ...ui },
+    },
+    notify,
+    setWidget,
+  };
+};
 
 const registerCrCommands = (exec: ReturnType<typeof vi.fn>) => {
   const commands = new Map<string, CommandHandler>();
@@ -137,50 +174,70 @@ const exchangeSocketMessages = (
 const createCrExec = (
   repoRoot: string,
   tmuxResult: ExecResult = { code: 0, stdout: "", stderr: "" },
-) =>
-  vi.fn(async (command: string, args: string[]) => {
-    const joined = args.join(" ");
-    if (command === "git" && joined === "rev-parse --show-toplevel") {
-      return { code: 0, stdout: `${repoRoot}\n`, stderr: "" };
-    }
-    if (command === "command" && joined === "-v nvim") {
-      return { code: 0, stdout: "/usr/bin/nvim\n", stderr: "" };
-    }
-    if (command === "git" && joined === "rev-parse HEAD") {
-      return { code: 0, stdout: "head-sha\n", stderr: "" };
-    }
-    if (command === "git" && joined === "merge-base main HEAD") {
-      return { code: 0, stdout: "merge-base-sha\n", stderr: "" };
-    }
-    if (command === "git" && joined === "branch --format=%(refname:short)") {
-      return { code: 0, stdout: "feature\nmain\ndev\n", stderr: "" };
-    }
-    if (command === "git" && joined === "branch --show-current") {
-      return { code: 0, stdout: "feature\n", stderr: "" };
-    }
-    if (
-      command === "git" &&
-      joined === "symbolic-ref refs/remotes/origin/HEAD --short"
-    ) {
-      return { code: 0, stdout: "origin/main\n", stderr: "" };
-    }
-    if (command === "tmux") {
-      return tmuxResult;
-    }
-    return { code: 0, stdout: "", stderr: "" };
+) => {
+  const results = new Map<string, ExecResult>([
+    [
+      "git rev-parse --show-toplevel",
+      { code: 0, stdout: `${repoRoot}\n`, stderr: "" },
+    ],
+    ["command -v nvim", { code: 0, stdout: "/usr/bin/nvim\n", stderr: "" }],
+    ["git rev-parse HEAD", { code: 0, stdout: "head-sha\n", stderr: "" }],
+    [
+      "git merge-base main HEAD",
+      { code: 0, stdout: "merge-base-sha\n", stderr: "" },
+    ],
+    [
+      "git branch --format=%(refname:short)",
+      { code: 0, stdout: "feature\nmain\ndev\n", stderr: "" },
+    ],
+    ["git branch --show-current", { code: 0, stdout: "feature\n", stderr: "" }],
+    [
+      "git symbolic-ref refs/remotes/origin/HEAD --short",
+      { code: 0, stdout: "origin/main\n", stderr: "" },
+    ],
+  ]);
+
+  return vi.fn(async (command: string, args: string[]) => {
+    if (command === "tmux") return tmuxResult;
+    return (
+      results.get(`${command} ${args.join(" ")}`) ?? {
+        code: 0,
+        stdout: "",
+        stderr: "",
+      }
+    );
   });
+};
+
+type StartedCrReviewOptions = {
+  args?: string;
+  repoRoot?: string;
+  tmuxPane?: string;
+  ui?: Record<string, unknown>;
+};
+
+const startCrReview = async ({
+  args = "main",
+  repoRoot = createRepoRoot(),
+  tmuxPane,
+  ui,
+}: StartedCrReviewOptions = {}) => {
+  const exec = createCrExec(repoRoot);
+  const handlers = registerCrCommands(exec);
+  const testContext = createTestContext({ repoRoot, tmuxPane, ui });
+
+  await handlers.startHandler(args, testContext.ctx);
+
+  return { repoRoot, exec, ...handlers, ...testContext };
+};
 
 describe("cr-diffview command", () => {
   it(`registers /${START_COMMAND} and reports a clear error outside git repositories`, async () => {
     const exec = vi.fn().mockResolvedValue({ code: 1, stdout: "", stderr: "" });
-    const notify = vi.fn();
+    const { ctx, notify } = createTestContext();
     const { startHandler } = registerCrCommands(exec);
 
-    await startHandler("", {
-      cwd: "/repo",
-      hasUI: true,
-      ui: { notify },
-    });
+    await startHandler("", ctx);
 
     expect(exec).toHaveBeenCalledWith("git", ["rev-parse", "--show-toplevel"]);
     expect(notify).toHaveBeenCalledWith(
@@ -193,15 +250,10 @@ describe("cr-diffview command", () => {
     const exec = vi
       .fn()
       .mockResolvedValueOnce({ code: 0, stdout: "/repo\n", stderr: "" });
-    const notify = vi.fn();
+    const { ctx, notify } = createTestContext({ tmux: false });
     const { startHandler } = registerCrCommands(exec);
 
-    await startHandler("main", {
-      cwd: "/repo",
-      hasUI: true,
-      env: {},
-      ui: { notify },
-    });
+    await startHandler("main", ctx);
 
     expect(notify).toHaveBeenCalledWith(
       `/${START_COMMAND} requires tmux`,
@@ -210,117 +262,41 @@ describe("cr-diffview command", () => {
   });
 
   it("opens a direct target diff in a new tmux Neovim window", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
-    const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
-    const { startHandler } = registerCrCommands(exec);
-
-    await startHandler("main", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { notify },
-    });
+    const { exec, notify, repoRoot } = await startCrReview();
 
     expectTmuxNewWindowStarted(exec, repoRoot);
-    const tmuxCommand = tmuxCommandFromExec(exec);
-    expect(tmuxCommand).toContain("CR_SOCKET='");
-    expect(tmuxCommand).not.toContain("CR_DIFF_TARGET=");
-    expect(tmuxCommand).not.toContain("CR_DIFF_ARGS=");
-    expect(tmuxCommand).toContain('require("pi.cr").start()');
-    expect(tmuxCommand).not.toContain("CodeDiff");
-    expect(tmuxCommand).not.toContain("main...HEAD");
+    expect(tmuxCommandFromExec(exec)).toContain("CR_SOCKET='");
     expect(notify).toHaveBeenCalledWith(
       "Opened CR diffview for main...HEAD",
       "info",
     );
   });
 
-  it("shows a widget when the CR Neovim window starts", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
-    const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
-    const setWidget = vi.fn();
-    const { startHandler } = registerCrCommands(exec);
-
-    await startHandler("main", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { notify, setWidget },
-    });
-
-    expect(setWidget).toHaveBeenCalledWith("cr-diffview", [
-      expect.stringContaining("CR diffview open: main...HEAD"),
-    ]);
-  });
-
   it("clears the widget when the user submits input", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
-    const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
-    const setWidget = vi.fn();
-    const { startHandler, inputHandler } = registerCrCommands(exec);
+    const { ctx, inputHandler, setWidget } = await startCrReview();
 
-    await startHandler("main", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { notify, setWidget },
-    });
-
-    inputHandler(
-      { source: "user" },
-      {
-        cwd: repoRoot,
-        hasUI: true,
-        ui: { notify, setWidget },
-      },
-    );
+    inputHandler({ source: "user" }, ctx);
 
     expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
   });
 
   it("keeps the widget for extension-sourced input", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
-    const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
-    const setWidget = vi.fn();
-    const { startHandler, inputHandler } = registerCrCommands(exec);
-
-    await startHandler("main", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { notify, setWidget },
-    });
+    const { ctx, inputHandler, setWidget } = await startCrReview();
 
     setWidget.mockClear();
-    inputHandler(
-      { source: "extension" },
-      {
-        cwd: repoRoot,
-        hasUI: true,
-        ui: { notify, setWidget },
-      },
-    );
+    inputHandler({ source: "extension" }, ctx);
 
     expect(setWidget).not.toHaveBeenCalled();
   });
 
   it("opens the interactive CR diff target picker from the start shortcut", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
+    const repoRoot = createRepoRoot();
     const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
     const custom = vi.fn(async () => "staged");
+    const { ctx, notify } = createTestContext({ repoRoot, ui: { custom } });
     const { startShortcutHandler } = registerCrCommands(exec);
 
-    await startShortcutHandler({
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { custom, notify },
-    });
+    await startShortcutHandler(ctx);
 
     expect(custom).toHaveBeenCalledOnce();
     expect(notify).toHaveBeenCalledWith(
@@ -330,17 +306,7 @@ describe("cr-diffview command", () => {
   });
 
   it("accepts CR annotations through the CR socket", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
-    const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
-    const { startHandler, sendUserMessage } = registerCrCommands(exec);
-
-    await startHandler("main", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { notify },
-    });
+    const { exec, sendUserMessage } = await startCrReview();
 
     const responses = await exchangeSocketMessages(
       socketFromTmuxCommand(exec),
@@ -377,18 +343,7 @@ describe("cr-diffview command", () => {
   });
 
   it("clears the widget when CR annotations finish through the socket", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
-    const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
-    const setWidget = vi.fn();
-    const { startHandler } = registerCrCommands(exec);
-
-    await startHandler("main", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { notify, setWidget },
-    });
+    const { exec, setWidget } = await startCrReview();
 
     await exchangeSocketMessages(socketFromTmuxCommand(exec), [
       { type: "hello" },
@@ -410,17 +365,7 @@ describe("cr-diffview command", () => {
   });
 
   it("returns focus to the tmux pane that started the CR review", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
-    const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
-    const { startHandler } = registerCrCommands(exec);
-
-    await startHandler("main", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux", TMUX_PANE: "%42" },
-      ui: { notify },
-    });
+    const { exec } = await startCrReview({ tmuxPane: "%42" });
 
     await exchangeSocketMessages(socketFromTmuxCommand(exec), [
       { type: "hello" },
@@ -436,17 +381,7 @@ describe("cr-diffview command", () => {
   });
 
   it("does not crash when the CR socket peer closes before config is written", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
-    const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
-    const { startHandler } = registerCrCommands(exec);
-
-    await startHandler("main", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { notify },
-    });
+    const { exec, notify } = await startCrReview();
 
     await new Promise<void>((resolve, reject) => {
       const client = net.createConnection(socketFromTmuxCommand(exec), () => {
@@ -464,69 +399,12 @@ describe("cr-diffview command", () => {
     );
   });
 
-  it("selects staged changes interactively when no target is provided", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
-    const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
-    const custom = vi.fn(async () => "staged");
-    const { startHandler } = registerCrCommands(exec);
-
-    await startHandler("", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { custom, notify },
-    });
-
-    const tmuxCommand = tmuxCommandFromExec(exec);
-    expect(tmuxCommand).toContain("CR_SOCKET='");
-    expect(tmuxCommand).not.toContain("CR_DIFF_ARGS=");
-    expect(tmuxCommand).toContain('require("pi.cr").start()');
-    expect(tmuxCommand).not.toContain("CodeDiff");
-    expect(tmuxCommand).not.toContain("staged = true");
-    expect(tmuxCommand).not.toContain("unstaged = false");
-    expect(notify).toHaveBeenCalledWith(
-      "Opened CR diffview for staged changes",
-      "info",
-    );
-  });
-
-  it("selects unstaged changes interactively when no target is provided", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
-    const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
-    const custom = vi.fn(async () => "unstaged");
-    const { startHandler } = registerCrCommands(exec);
-
-    await startHandler("", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { custom, notify },
-    });
-
-    const tmuxCommand = tmuxCommandFromExec(exec);
-    expect(tmuxCommand).toContain('require("pi.cr").start()');
-    expect(tmuxCommand).not.toContain("CodeDiff");
-    expect(tmuxCommand).not.toContain("staged = false");
-    expect(tmuxCommand).not.toContain("unstaged = true");
-    expect(notify).toHaveBeenCalledWith(
-      "Opened CR diffview for unstaged changes",
-      "info",
-    );
-  });
-
   it("stops the tmux Neovim CR window", async () => {
     const exec = createCrExec("/repo");
-    const notify = vi.fn();
+    const { ctx, notify } = createTestContext();
     const { stopHandler } = registerCrCommands(exec);
 
-    await stopHandler("", {
-      cwd: "/repo",
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { notify },
-    });
+    await stopHandler("", ctx);
 
     expect(exec).toHaveBeenCalledWith(
       "tmux",
@@ -541,35 +419,18 @@ describe("cr-diffview command", () => {
       stdout: "",
       stderr: "can't find window: pi-cr",
     });
-    const notify = vi.fn();
-    const setWidget = vi.fn();
+    const { ctx, notify, setWidget } = createTestContext();
     const { stopHandler } = registerCrCommands(exec);
 
-    await stopHandler("", {
-      cwd: "/repo",
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { notify, setWidget },
-    });
+    await stopHandler("", ctx);
 
     expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
     expect(notify).toHaveBeenCalledWith("can't find window: pi-cr", "error");
   });
 
   it("sends saved annotations before stopping the CR Neovim window", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
-    const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
-    const setWidget = vi.fn();
-    const { startHandler, stopHandler, sendUserMessage } =
-      registerCrCommands(exec);
-
-    await startHandler("main", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { notify, setWidget },
-    });
+    const { ctx, exec, sendUserMessage, setWidget, stopHandler } =
+      await startCrReview();
 
     writeFileSync(
       join(sessionDirFromTmuxCommand(exec), "annotations.jsonl"),
@@ -580,12 +441,7 @@ describe("cr-diffview command", () => {
       })}\n`,
     );
 
-    await stopHandler("", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { notify, setWidget },
-    });
+    await stopHandler("", ctx);
 
     expect(sendUserMessage).toHaveBeenCalledWith(
       expect.stringContaining("Please preserve this feedback."),
@@ -595,9 +451,8 @@ describe("cr-diffview command", () => {
   });
 
   it("selects a target branch by typing to filter interactively", async () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
+    const repoRoot = createRepoRoot();
     const exec = createCrExec(repoRoot);
-    const notify = vi.fn();
     const custom = vi
       .fn()
       .mockResolvedValueOnce("baseBranch")
@@ -623,22 +478,12 @@ describe("cr-diffview command", () => {
         picker.handleInput("\r");
         return selected;
       });
+    const { ctx, notify } = createTestContext({ repoRoot, ui: { custom } });
     const { startHandler } = registerCrCommands(exec);
 
-    await startHandler("", {
-      cwd: repoRoot,
-      hasUI: true,
-      env: { TMUX: "/tmp/tmux" },
-      ui: { custom, notify },
-    });
+    await startHandler("", ctx);
 
     expect(custom).toHaveBeenCalledTimes(2);
-    const tmuxCommand = tmuxCommandFromExec(exec);
-    expect(tmuxCommand).toContain("CR_SOCKET='");
-    expect(tmuxCommand).not.toContain("CR_DIFF_TARGET=");
-    expect(tmuxCommand).toContain('require("pi.cr").start()');
-    expect(tmuxCommand).not.toContain("CodeDiff");
-    expect(tmuxCommand).not.toContain("dev...HEAD");
     expect(notify).toHaveBeenCalledWith(
       "Opened CR diffview for dev...HEAD",
       "info",

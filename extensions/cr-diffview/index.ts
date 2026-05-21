@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 
 import {
   DynamicBorder,
@@ -17,66 +17,45 @@ import {
   Text,
 } from "@earendil-works/pi-tui";
 
+import {
+  annotationsFromFinishPayload,
+  branchScope,
+  buildBranchItems,
+  buildCrTmuxKillWindowArgs,
+  buildCrTmuxNewWindowArgs,
+  buildCrTmuxSelectPaneArgs,
+  buildCrTmuxWindowName,
+  buildNoBranchCandidatesMessage,
+  CR_PRESETS,
+  CR_WIDGET_KEY,
+  type CrAnnotation,
+  type CrDiffScope,
+  type CrPresetValue,
+  type CrSession,
+  decideScopeFromPreset,
+  decideScopeResolution,
+  formatAnnotationsPrompt,
+  getBranchCandidates,
+  getCrTmuxWindowName,
+  parseSocketPayload,
+  START_COMMAND,
+  STOP_COMMAND,
+} from "./core.ts";
+
+export {
+  buildCrTmuxKillWindowArgs,
+  buildCrTmuxNewWindowArgs,
+  buildCrTmuxSelectPaneArgs,
+  buildCrTmuxWindowName,
+} from "./core.ts";
+
 const CR_SESSION_ROOT = [".pi", "cr-diffview"];
 const SELECT_LIST_MAX_VISIBLE = 10;
 const SELECT_LIST_HINT = "Type to filter • Enter to select • esc to cancel";
 const EMPTY_FILTER_HINT = "type to filter...";
-const CR_TMUX_WINDOW_NAME_PREFIX = "pi-cr";
-const CR_WIDGET_KEY = "cr-diffview";
 const START_SHORTCUT = "alt+r";
-const START_COMMAND = "cr-neovim-start";
-const STOP_COMMAND = "cr-neovim-stop";
-const CR_PRESETS = [
-  {
-    value: "unstaged",
-    label: "Review unstaged changes",
-    description: "git diff",
-  },
-  {
-    value: "staged",
-    label: "Review staged changes",
-    description: "git diff --cached",
-  },
-  {
-    value: "baseBranch",
-    label: "Review against a base branch",
-    description: "branch...HEAD",
-  },
-] as const;
-
-type CrPresetValue = (typeof CR_PRESETS)[number]["value"];
 
 type ExecResult = { code: number; stdout: string; stderr: string };
-
-type CrDiffScope = {
-  target: string;
-  label: string;
-  diffArgs: string[];
-};
-
-type CrSession = {
-  sessionId: string;
-  repoRoot: string;
-  target: string;
-  label: string;
-  head: string;
-  mergeBase: string;
-  diffArgs: string[];
-  socketPath: string;
-  crSocketPath: string;
-  tmuxWindowName: string;
-  originTmuxPane: string;
-  artifactPath: string;
-  createdAt: string;
-};
-
-type CrAnnotation = {
-  file: string;
-  line: number;
-  side?: string;
-  snippet?: string;
-  comment: string;
-};
 
 type WidgetContext = ExtensionContext & {
   ui?: ExtensionContext["ui"] & {
@@ -121,35 +100,6 @@ const getTmuxPaneEnv = (ctx: ExtensionContext): string =>
   (ctx as { env?: Record<string, string | undefined> }).env?.TMUX_PANE ??
   process.env.TMUX_PANE ??
   "";
-
-export const buildCrTmuxWindowName = (repoRoot: string): string =>
-  `${CR_TMUX_WINDOW_NAME_PREFIX}-${basename(repoRoot)}`;
-
-export const buildCrTmuxNewWindowArgs = <CommandArg = string>(
-  tmuxWindowName: string,
-  command: CommandArg,
-): Array<string | CommandArg> => [
-  "new-window",
-  "-a",
-  "-n",
-  tmuxWindowName,
-  command,
-];
-
-export const buildCrTmuxKillWindowArgs = (tmuxWindowName: string): string[] => [
-  "kill-window",
-  "-t",
-  tmuxWindowName,
-];
-
-export const buildCrTmuxSelectPaneArgs = (tmuxPane: string): string[] => [
-  "select-pane",
-  "-t",
-  tmuxPane,
-];
-
-const getCrTmuxWindowName = (session: CrSession | null): string =>
-  session?.tmuxWindowName ?? CR_TMUX_WINDOW_NAME_PREFIX;
 
 const buildSelectListTheme = (theme: {
   fg: (token: string, text: string) => string;
@@ -196,42 +146,6 @@ const getDefaultBranch = async (pi: ExtensionAPI): Promise<string> => {
   if (branches.includes("main")) return "main";
   if (branches.includes("master")) return "master";
   return "main";
-};
-
-const getBranchCandidates = (
-  branches: string[],
-  currentBranch: string | null,
-): string[] =>
-  currentBranch
-    ? branches.filter((branch) => branch !== currentBranch)
-    : branches;
-
-const buildBranchItems = (
-  branches: string[],
-  defaultBranch: string,
-): SelectItem[] =>
-  [...branches]
-    .sort((left, right) => {
-      if (left === defaultBranch) return -1;
-      if (right === defaultBranch) return 1;
-      return left.localeCompare(right);
-    })
-    .map((branch) => ({
-      value: branch,
-      label: branch,
-      description: branch === defaultBranch ? "(default)" : "",
-    }));
-
-const notifyNoBranchCandidates = (
-  ctx: ExtensionContext,
-  currentBranch: string | null,
-): void => {
-  ctx.ui.notify(
-    currentBranch
-      ? `No other branches found (current branch: ${currentBranch})`
-      : "No branches found",
-    "error",
-  );
 };
 
 const isBackspaceInput = (data: string): boolean =>
@@ -321,7 +235,7 @@ const selectTargetBranch = async (
   const candidateBranches = getBranchCandidates(branches, currentBranch);
 
   if (candidateBranches.length === 0) {
-    notifyNoBranchCandidates(ctx, currentBranch);
+    ctx.ui.notify(buildNoBranchCandidatesMessage(currentBranch), "error");
     return null;
   }
 
@@ -400,30 +314,6 @@ const readArtifactAnnotations = (artifactPath: string): CrAnnotation[] => {
   }
 };
 
-type CrSocketPayload = {
-  type?: string;
-  annotations?: CrAnnotation[];
-};
-
-const isCrAnnotation = (value: unknown): value is CrAnnotation => {
-  if (typeof value !== "object" || value === null) return false;
-  const annotation = value as Partial<CrAnnotation>;
-  return (
-    typeof annotation.file === "string" &&
-    typeof annotation.line === "number" &&
-    typeof annotation.comment === "string" &&
-    annotation.comment.trim().length > 0
-  );
-};
-
-const parseSocketPayload = (line: string): CrSocketPayload | null => {
-  try {
-    return JSON.parse(line) as CrSocketPayload;
-  } catch {
-    return null;
-  }
-};
-
 const writeSocketMessage = (socket: net.Socket, payload: unknown): void => {
   if (socket.destroyed || !socket.writable) return;
   socket.write(`${JSON.stringify(payload)}\n`, (error) => {
@@ -443,15 +333,6 @@ const writeConfigMessage = (socket: net.Socket, session: CrSession): void => {
     annotationsPath: session.artifactPath,
     nvimSocket: session.socketPath,
   });
-};
-
-const annotationsFromFinishPayload = (
-  payload: CrSocketPayload,
-): CrAnnotation[] => {
-  if (payload.type !== "finish" || !Array.isArray(payload.annotations)) {
-    return [];
-  }
-  return payload.annotations.filter(isCrAnnotation);
 };
 
 const sendAnnotationsToPi = (
@@ -537,41 +418,14 @@ const startCrSocketServer = async (
   return server;
 };
 
-const formatAnnotationsPrompt = (annotations: CrAnnotation[]): string => {
-  const lines = [
-    "I annotated the code review diff in Neovim.",
-    "Please analyze these comments and propose or apply fixes as appropriate.",
-    "",
-  ];
-
-  annotations.forEach((annotation, index) => {
-    lines.push(`## CR annotation ${index + 1}`);
-    lines.push(`- File: ${annotation.file}`);
-    lines.push(`- Line: ${annotation.line}`);
-    if (annotation.side) lines.push(`- Side: ${annotation.side}`);
-    if (annotation.snippet) lines.push(`- Snippet: ${annotation.snippet}`);
-    lines.push("- Comment:");
-    lines.push(annotation.comment);
-    lines.push("");
-  });
-
-  return lines.join("\n");
-};
-
-const branchScope = (target: string): CrDiffScope => ({
-  target,
-  label: `${target}...HEAD`,
-  diffArgs: [`${target}...HEAD`],
-});
-
 const resolveScope = async (
   pi: ExtensionAPI,
   rawArgs: string,
   ctx: ExtensionContext,
 ): Promise<CrDiffScope | null> => {
-  const target = rawArgs.trim();
-  if (target) return branchScope(target);
-  if (!ctx.hasUI) {
+  const targetDecision = decideScopeResolution(rawArgs, ctx.hasUI);
+  if (targetDecision.kind === "scope") return targetDecision.scope;
+  if (targetDecision.kind === "requiresInteractiveMode") {
     ctx.ui.notify(
       `/${START_COMMAND} requires interactive mode when no target is provided`,
       "error",
@@ -579,14 +433,9 @@ const resolveScope = async (
     return null;
   }
 
-  const preset = await selectCrPreset(ctx);
-  if (preset === "staged") {
-    return { target: "", label: "staged changes", diffArgs: ["--cached"] };
-  }
-  if (preset === "unstaged") {
-    return { target: "", label: "unstaged changes", diffArgs: [] };
-  }
-  if (preset === "baseBranch") {
+  const presetDecision = decideScopeFromPreset(await selectCrPreset(ctx));
+  if (presetDecision.kind === "scope") return presetDecision.scope;
+  if (presetDecision.kind === "needsBranchSelection") {
     const branch = await selectTargetBranch(pi, ctx);
     return branch ? branchScope(branch) : null;
   }

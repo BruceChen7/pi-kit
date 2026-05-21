@@ -471,12 +471,13 @@ const sendArtifactAnnotationsToPi = (
   sendAnnotationsToPi(pi, readArtifactAnnotations(session.artifactPath));
 };
 
-const showCrWidget = (ctx: WidgetContext, session: CrSession): void => {
-  if (!ctx.hasUI || typeof ctx.ui?.setWidget !== "function") return;
+const showCrWidget = (ctx: WidgetContext, session: CrSession): boolean => {
+  if (!ctx.hasUI || typeof ctx.ui?.setWidget !== "function") return false;
 
   const message = `🔎 CR diffview open: ${session.label} — /${STOP_COMMAND} to close`;
   const line = ctx.ui.theme?.fg?.("accent", message) ?? message;
   ctx.ui.setWidget(CR_WIDGET_KEY, [line]);
+  return true;
 };
 
 const clearCrWidget = (ctx: WidgetContext): void => {
@@ -594,6 +595,12 @@ const resolveScope = async (
 
 export default function crDiffviewExtension(pi: ExtensionAPI): void {
   let activeSession: CrSession | null = null;
+  let crWidgetVisible = false;
+
+  const clearVisibleCrWidget = (ctx: WidgetContext): void => {
+    clearCrWidget(ctx);
+    crWidgetVisible = false;
+  };
 
   const startHandler = async (
     args: string,
@@ -628,7 +635,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     const crSocketServer = await startCrSocketServer(session, pi, () => {
       if (activeSession?.sessionId !== session.sessionId) return;
       activeSession = null;
-      clearCrWidget(widgetCtx);
+      clearVisibleCrWidget(widgetCtx);
     });
     const nvimCommand = buildNvimCommand(session);
     const tmuxResult = (await pi.exec(
@@ -638,7 +645,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
 
     if (tmuxResult.code !== 0) {
       closeCrSocketServer(crSocketServer, session.crSocketPath);
-      clearCrWidget(widgetCtx);
+      clearVisibleCrWidget(widgetCtx);
       ctx.ui.notify(
         tmuxResult.stderr.trim() || "Failed to open CR Neovim window",
         "error",
@@ -647,7 +654,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     }
 
     activeSession = session;
-    showCrWidget(widgetCtx, session);
+    crWidgetVisible = showCrWidget(widgetCtx, session);
     sendArtifactAnnotationsToPi(pi, session);
     ctx.ui.notify(`Opened CR diffview for ${session.label}`, "info");
   };
@@ -660,6 +667,14 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
   pi.registerShortcut(START_SHORTCUT, {
     description: "Open a tmux Neovim diffview code review workflow (Alt+R)",
     handler: (ctx) => startHandler("", ctx),
+  });
+
+  pi.on("input", (event, ctx) => {
+    if (event.source !== "extension" && crWidgetVisible) {
+      clearVisibleCrWidget(ctx as WidgetContext);
+    }
+
+    return { action: "continue" };
   });
 
   pi.registerCommand(STOP_COMMAND, {
@@ -681,7 +696,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
       )) as ExecResult;
 
       activeSession = null;
-      clearCrWidget(widgetCtx);
+      clearVisibleCrWidget(widgetCtx);
 
       if (tmuxResult.code !== 0) {
         ctx.ui.notify(

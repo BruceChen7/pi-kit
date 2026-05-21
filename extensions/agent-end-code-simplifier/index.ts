@@ -98,6 +98,8 @@ export const DEFAULT_PROMPT_TEMPLATE = [
 const SETTINGS_KEY = "agentEndCodeSimplifier";
 const EXTENSION_SOURCE_TAG = "agent-end-code-simplifier";
 const RUNNING_WIDGET_KEY = "agent-end-code-simplifier";
+// Matches the hidden follow-up marker used to invalidate stale simplifier runs.
+const RUN_ID_PATTERN = /\[agent-end-code-simplifier run_id=(\d+)\]/;
 const MANUAL_TRIGGER_SHORTCUT = "ctrl+alt+y";
 const AUTO_RUN_COMMAND = "agent-end-code-simplifier-auto";
 const CONFIRM_BEFORE_RUN_COMMAND = "agent-end-code-simplifier-confirm";
@@ -206,20 +208,81 @@ export const buildCodeSimplifierPrompt = (
   return promptTemplate.replace("{{files}}", files);
 };
 
-const extractToolPath = (toolName: string, input: unknown): string | null => {
-  if (!input || typeof input !== "object") return null;
-  if (toolName !== "edit" && toolName !== "write") return null;
-  const filePath = (input as { path?: unknown }).path;
-  return typeof filePath === "string" && filePath.trim().length > 0
-    ? filePath
-    : null;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const normalizeToolPath = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+
+  const filePath = value.trim();
+  return filePath.length > 0 ? filePath : null;
 };
 
-const containsAutoTriggerMarker = (text: string): boolean =>
-  text.includes("/skill:me-code-simplifier") ||
-  text.includes(EXTENSION_SOURCE_TAG);
+// Matches Codex apply_patch file headers for files whose final content exists.
+const PATCH_PATH_HEADER_PATTERN = /^\*\*\* (?:Add|Update) File: (.+)$/;
 
-const lastUserMessageLooksAutoTriggered = (
+const extractPatchPaths = (patch: unknown): string[] => {
+  if (typeof patch !== "string") return [];
+
+  return patch
+    .split("\n")
+    .map((line) =>
+      normalizeToolPath(line.match(PATCH_PATH_HEADER_PATTERN)?.[1]),
+    )
+    .filter((filePath): filePath is string => Boolean(filePath));
+};
+
+const extractMultiPaths = (multi: unknown): string[] => {
+  if (!Array.isArray(multi)) return [];
+
+  return multi
+    .map((item) => (isRecord(item) ? normalizeToolPath(item.path) : null))
+    .filter((filePath): filePath is string => Boolean(filePath));
+};
+
+const extractToolPaths = (toolName: string, input: unknown): string[] => {
+  if (!isRecord(input)) return [];
+  if (toolName !== "edit" && toolName !== "write") return [];
+
+  const paths = [
+    normalizeToolPath(input.path),
+    ...extractMultiPaths(input.multi),
+    ...extractPatchPaths(input.patch),
+  ].filter((filePath): filePath is string => Boolean(filePath));
+
+  return Array.from(new Set(paths));
+};
+
+export type ToolResultPathInput = {
+  isError: boolean;
+  toolName: string;
+  input: unknown;
+};
+
+export const collectToolResultPaths = ({
+  isError,
+  toolName,
+  input,
+}: ToolResultPathInput): string[] => {
+  if (isError) {
+    return [];
+  }
+
+  return extractToolPaths(toolName, input);
+};
+
+export const containsAutoTriggerMarker = (text: string): boolean =>
+  text.includes("/skill:me-code-simplifier") || RUN_ID_PATTERN.test(text);
+
+export const extractAutoTriggerRunId = (text: string): number | null => {
+  const rawRunId = text.match(RUN_ID_PATTERN)?.[1];
+  if (!rawRunId) return null;
+
+  const runId = Number(rawRunId);
+  return Number.isSafeInteger(runId) ? runId : null;
+};
+
+export const lastUserMessageLooksAutoTriggered = (
   messages: Array<{ role?: string; content?: unknown }>,
 ): boolean => {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -253,7 +316,7 @@ const lastUserMessageLooksAutoTriggered = (
   return false;
 };
 
-const containsAbortedMessage = (messages: readonly unknown[]): boolean =>
+export const containsAbortedMessage = (messages: readonly unknown[]): boolean =>
   messages.some(
     (message) =>
       Boolean(message) &&
@@ -262,11 +325,22 @@ const containsAbortedMessage = (messages: readonly unknown[]): boolean =>
       message.stopReason === "aborted",
   );
 
-const turnWasAborted = (
+export const turnWasAborted = (
   event: { messages?: readonly unknown[] },
   ctx: { signal?: AbortSignal },
 ): boolean =>
   Boolean(ctx.signal?.aborted) || containsAbortedMessage(event.messages ?? []);
+
+const buildApprovalRequestText = (
+  supportedPaths: readonly string[],
+): { title: string; body: string } => {
+  const title = "Run me-code-simplifier?";
+  const body = `本轮检测到以下代码文件被修改：\n${supportedPaths
+    .map((filePath) => `- ${filePath}`)
+    .join("\n")}\n\n是否触发 me-code-simplifier 做一次行为不变的简化？`;
+
+  return { title, body };
+};
 
 type ApprovalRaceInput = {
   localDecision: Promise<boolean>;
@@ -281,6 +355,108 @@ type ManualSupportedPathResolution = {
   source: "turn" | "repo" | "none";
 };
 
+export type AgentEndSimplifierDecisionInput = {
+  enabled: boolean;
+  hasUI: boolean;
+  suppressNextPrompt: boolean;
+  lastUserMessageAutoTriggered: boolean;
+  supportedPaths: string[];
+  abortBehavior: AgentEndCodeSimplifierAbortBehavior;
+  turnAborted: boolean;
+  autoRun: boolean;
+  confirmBeforeRun: boolean;
+};
+
+export type AgentEndSimplifierDecision =
+  | { kind: "skip"; logEvent: string; clearRunningWidget?: boolean }
+  | {
+      kind: "skip_suppressed";
+      logEvent: string;
+      clearRunningWidget: boolean;
+      resetSuppressNextPrompt: boolean;
+    }
+  | {
+      kind: "notify_manual_available";
+      logEvent: string;
+      reason: string;
+      supportedPaths: string[];
+    }
+  | { kind: "send"; supportedPaths: string[] }
+  | {
+      kind: "confirm";
+      supportedPaths: string[];
+      title: string;
+      body: string;
+    };
+
+export const decideAgentEndSimplifierAction = ({
+  enabled,
+  hasUI,
+  suppressNextPrompt,
+  lastUserMessageAutoTriggered,
+  supportedPaths,
+  abortBehavior,
+  turnAborted,
+  autoRun,
+  confirmBeforeRun,
+}: AgentEndSimplifierDecisionInput): AgentEndSimplifierDecision => {
+  if (!enabled) {
+    return { kind: "skip", logEvent: "agent_end_skipped_disabled" };
+  }
+  if (!hasUI) {
+    return { kind: "skip", logEvent: "agent_end_skipped_no_ui" };
+  }
+
+  if (suppressNextPrompt) {
+    return {
+      kind: "skip_suppressed",
+      logEvent: "agent_end_skipped_suppressed_next_prompt",
+      clearRunningWidget: true,
+      resetSuppressNextPrompt: true,
+    };
+  }
+
+  if (lastUserMessageAutoTriggered) {
+    return {
+      kind: "skip",
+      logEvent: "agent_end_skipped_auto_triggered_message",
+      clearRunningWidget: true,
+    };
+  }
+
+  if (supportedPaths.length === 0) {
+    return { kind: "skip", logEvent: "agent_end_skipped_no_supported_paths" };
+  }
+
+  if (abortBehavior === "skip" && turnAborted) {
+    return {
+      kind: "notify_manual_available",
+      logEvent: "agent_end_skipped_aborted_turn",
+      reason: "this turn was aborted",
+      supportedPaths,
+    };
+  }
+
+  if (!autoRun) {
+    return {
+      kind: "notify_manual_available",
+      logEvent: "agent_end_skipped_auto_run_disabled",
+      reason: "automatic runs are disabled",
+      supportedPaths,
+    };
+  }
+
+  if (!confirmBeforeRun) {
+    return { kind: "send", supportedPaths };
+  }
+
+  return {
+    kind: "confirm",
+    supportedPaths,
+    ...buildApprovalRequestText(supportedPaths),
+  };
+};
+
 type NotificationContext = {
   cwd: string;
   ui: { notify: (message: string, type: string) => void };
@@ -288,9 +464,123 @@ type NotificationContext = {
 
 type WidgetContext = {
   hasUI?: boolean;
+  isIdle?: () => boolean;
   ui?: {
     setWidget?: (key: string, content?: unknown) => void;
     theme?: { fg?: (tone: string, text: string) => string };
+  };
+};
+
+type PreparedCodeSimplifierPrompt = {
+  prompt: string;
+  runId: number;
+};
+
+export type AgentEndCodeSimplifierLifecycleState = {
+  modifiedPaths: string[];
+  suppressNextPrompt: boolean;
+  runGeneration: number;
+};
+
+export type AgentEndCodeSimplifierInputEvent = {
+  source?: string;
+  text?: string;
+};
+
+export type AgentEndCodeSimplifierInputTransition = {
+  state: AgentEndCodeSimplifierLifecycleState;
+  action: "continue" | "handled";
+  clearRunningWidget: boolean;
+  logEvent?: string;
+  staleRunId?: number;
+};
+
+export const createAgentEndCodeSimplifierLifecycleState =
+  (): AgentEndCodeSimplifierLifecycleState => ({
+    modifiedPaths: [],
+    suppressNextPrompt: false,
+    runGeneration: 0,
+  });
+
+export const resetLifecycleForNewSession = (
+  state: AgentEndCodeSimplifierLifecycleState,
+): AgentEndCodeSimplifierLifecycleState => ({
+  ...state,
+  modifiedPaths: [],
+  suppressNextPrompt: false,
+});
+
+export const resetLifecycleForAgentStart = (
+  state: AgentEndCodeSimplifierLifecycleState,
+): AgentEndCodeSimplifierLifecycleState => ({
+  ...state,
+  modifiedPaths: [],
+});
+
+export const trackModifiedPaths = (
+  state: AgentEndCodeSimplifierLifecycleState,
+  filePaths: readonly string[],
+): AgentEndCodeSimplifierLifecycleState => ({
+  ...state,
+  modifiedPaths: Array.from(
+    new Set([...state.modifiedPaths, ...filePaths]),
+  ).sort(),
+});
+
+export const startSimplifierRun = (
+  state: AgentEndCodeSimplifierLifecycleState,
+): AgentEndCodeSimplifierLifecycleState => ({
+  ...state,
+  suppressNextPrompt: true,
+  runGeneration: state.runGeneration + 1,
+});
+
+export const markSimplifierPromptStale = (
+  state: AgentEndCodeSimplifierLifecycleState,
+): AgentEndCodeSimplifierLifecycleState => ({
+  ...state,
+  suppressNextPrompt: false,
+});
+
+export const consumeSuppressedAgentEnd = (
+  state: AgentEndCodeSimplifierLifecycleState,
+): AgentEndCodeSimplifierLifecycleState => ({
+  ...state,
+  suppressNextPrompt: false,
+});
+
+export const decideInputLifecycleTransition = (
+  state: AgentEndCodeSimplifierLifecycleState,
+  event: AgentEndCodeSimplifierInputEvent,
+): AgentEndCodeSimplifierInputTransition => {
+  if (event.source === "extension") {
+    const runId = extractAutoTriggerRunId(event.text ?? "");
+    if (runId !== null && runId !== state.runGeneration) {
+      return {
+        state: markSimplifierPromptStale(state),
+        action: "handled",
+        clearRunningWidget: true,
+        logEvent: "input_handled_stale_code_simplifier_prompt",
+        staleRunId: runId,
+      };
+    }
+
+    return {
+      state,
+      action: "continue",
+      clearRunningWidget: false,
+    };
+  }
+
+  return {
+    state: {
+      ...state,
+      suppressNextPrompt: false,
+      runGeneration: state.runGeneration + 1,
+    },
+    action: "continue",
+    clearRunningWidget: true,
+    logEvent: "input_cleared_running_widget",
   };
 };
 
@@ -317,9 +607,6 @@ const waitForApprovalDecision = async ({
 
   return result.decision;
 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 type BooleanCommandAction =
   | { kind: "set"; value: boolean }
@@ -372,8 +659,7 @@ export default function agentEndCodeSimplifierExtension(
   let config = normalizeConfig(
     loadSettings(process.cwd(), { forceReload: true }).merged,
   );
-  let modifiedPaths = new Set<string>();
-  let suppressNextPrompt = false;
+  let lifecycle = createAgentEndCodeSimplifierLifecycleState();
 
   const refreshConfig = (cwd: string) => {
     config = normalizeConfig(loadSettings(cwd, { forceReload: true }).merged);
@@ -395,7 +681,7 @@ export default function agentEndCodeSimplifierExtension(
     abortBehavior: config.abortBehavior,
     autoRun: config.autoRun,
     confirmBeforeRun: config.confirmBeforeRun,
-    modifiedPaths: [...modifiedPaths].sort(),
+    modifiedPaths: lifecycle.modifiedPaths,
   });
 
   const showRunningWidget = (
@@ -419,41 +705,53 @@ export default function agentEndCodeSimplifierExtension(
     ctx.ui.setWidget(RUNNING_WIDGET_KEY, undefined);
   };
 
-  const sendHiddenCodeSimplifierFollowUp = (content: string) => {
-    // Custom messages stay in LLM/session context but are not repopulated into
-    // the editor input history like role=user messages are.
-    pi.sendMessage(
-      {
-        customType: EXTENSION_SOURCE_TAG,
-        content,
-        display: false,
-      },
-      {
-        triggerTurn: true,
-        deliverAs: "followUp",
-      },
-    );
+  const sendCodeSimplifierPromptWhenIdle = (
+    ctx: WidgetContext,
+    preparedPrompt: PreparedCodeSimplifierPrompt,
+  ): void => {
+    if (preparedPrompt.runId !== lifecycle.runGeneration) {
+      lifecycle = markSimplifierPromptStale(lifecycle);
+      clearRunningWidget(ctx);
+      log.debug("code_simplifier_prompt_skipped_stale_before_send", {
+        ...diagnostics(ctx),
+        runId: preparedPrompt.runId,
+        simplifierRunGeneration: lifecycle.runGeneration,
+      });
+      return;
+    }
+
+    if (typeof ctx.isIdle === "function" && !ctx.isIdle()) {
+      setTimeout(
+        () => sendCodeSimplifierPromptWhenIdle(ctx, preparedPrompt),
+        25,
+      );
+      return;
+    }
+
+    pi.sendUserMessage(preparedPrompt.prompt);
   };
 
   const prepareCodeSimplifierPrompt = (
     ctx: WidgetContext,
     supportedPaths: string[],
-  ): string => {
+  ): PreparedCodeSimplifierPrompt => {
+    lifecycle = startSimplifierRun(lifecycle);
+    const runId = lifecycle.runGeneration;
     const prompt = [
       buildCodeSimplifierPrompt(supportedPaths, config.promptTemplate),
-      `[${EXTENSION_SOURCE_TAG}]`,
+      `[${EXTENSION_SOURCE_TAG} run_id=${runId}]`,
     ].join("\n\n");
 
     showRunningWidget(ctx, supportedPaths);
-    suppressNextPrompt = true;
-    return prompt;
+    return { prompt, runId };
   };
 
   const sendCodeSimplifierPrompt = (
     ctx: WidgetContext,
     supportedPaths: string[],
   ) => {
-    sendHiddenCodeSimplifierFollowUp(
+    sendCodeSimplifierPromptWhenIdle(
+      ctx,
       prepareCodeSimplifierPrompt(ctx, supportedPaths),
     );
   };
@@ -462,8 +760,8 @@ export default function agentEndCodeSimplifierExtension(
     ctx: WidgetContext,
     supportedPaths: string[],
   ) => {
-    const prompt = prepareCodeSimplifierPrompt(ctx, supportedPaths);
-    setTimeout(() => sendHiddenCodeSimplifierFollowUp(prompt), 0);
+    const preparedPrompt = prepareCodeSimplifierPrompt(ctx, supportedPaths);
+    setTimeout(() => sendCodeSimplifierPromptWhenIdle(ctx, preparedPrompt), 0);
   };
 
   const sendLoggedCodeSimplifierPrompt = (
@@ -494,7 +792,10 @@ export default function agentEndCodeSimplifierExtension(
   const resolveManualSupportedPaths = (
     cwd: string,
   ): ManualSupportedPathResolution => {
-    const turnSupportedPaths = collectSupportedPaths(modifiedPaths, config);
+    const turnSupportedPaths = collectSupportedPaths(
+      lifecycle.modifiedPaths,
+      config,
+    );
     if (turnSupportedPaths.length > 0) {
       return { supportedPaths: turnSupportedPaths, source: "turn" };
     }
@@ -596,28 +897,38 @@ export default function agentEndCodeSimplifierExtension(
 
   pi.on("session_start", async (_event, ctx) => {
     refreshConfig(ctx.cwd);
-    modifiedPaths = new Set();
+    lifecycle = resetLifecycleForNewSession(lifecycle);
     clearRunningWidget(ctx);
     log.debug("session_start_reset", diagnostics(ctx));
   });
 
   pi.on("agent_start", async (_event, ctx) => {
     refreshConfig(ctx.cwd);
-    modifiedPaths = new Set();
-    if (!suppressNextPrompt) {
+    const shouldClearRunningWidget = !lifecycle.suppressNextPrompt;
+    lifecycle = resetLifecycleForAgentStart(lifecycle);
+    if (shouldClearRunningWidget) {
       clearRunningWidget(ctx);
     }
     log.debug("agent_start_reset", diagnostics(ctx));
   });
 
   pi.on("input", (event, ctx) => {
-    if (event.source !== "extension") {
-      suppressNextPrompt = false;
+    const transition = decideInputLifecycleTransition(lifecycle, event);
+    lifecycle = transition.state;
+
+    if (transition.clearRunningWidget) {
       clearRunningWidget(ctx);
-      log.debug("input_cleared_running_widget", diagnostics(ctx));
     }
 
-    return { action: "continue" };
+    if (transition.logEvent) {
+      log.debug(transition.logEvent, {
+        ...diagnostics(ctx),
+        runId: transition.staleRunId,
+        simplifierRunGeneration: lifecycle.runGeneration,
+      });
+    }
+
+    return { action: transition.action };
   });
 
   pi.on("tool_result", async (event) => {
@@ -627,92 +938,79 @@ export default function agentEndCodeSimplifierExtension(
       });
       return;
     }
-    const filePath = extractToolPath(event.toolName, event.input);
-    if (!filePath) {
+    const filePaths = collectToolResultPaths(event);
+    if (filePaths.length === 0) {
       log.debug("tool_result_skipped_no_supported_input_path", {
         toolName: event.toolName,
       });
       return;
     }
-    modifiedPaths.add(filePath);
-    log.debug("tool_result_tracked_path", {
+    lifecycle = trackModifiedPaths(lifecycle, filePaths);
+    log.debug("tool_result_tracked_paths", {
       toolName: event.toolName,
-      filePath,
-      modifiedPaths: [...modifiedPaths].sort(),
+      filePaths,
+      modifiedPaths: lifecycle.modifiedPaths,
     });
   });
 
   pi.on("agent_end", async (event, ctx) => {
     log.debug("agent_end_received", diagnostics(ctx));
-    if (!config.enabled) {
-      log.debug("agent_end_skipped_disabled", diagnostics(ctx));
-      return;
-    }
-    if (!ctx.hasUI) {
-      log.debug("agent_end_skipped_no_ui", diagnostics(ctx));
-      return;
-    }
 
-    if (suppressNextPrompt) {
-      suppressNextPrompt = false;
+    const decision = decideAgentEndSimplifierAction({
+      enabled: config.enabled,
+      hasUI: Boolean(ctx.hasUI),
+      suppressNextPrompt: lifecycle.suppressNextPrompt,
+      lastUserMessageAutoTriggered: lastUserMessageLooksAutoTriggered(
+        event.messages ?? [],
+      ),
+      supportedPaths: collectSupportedPaths(lifecycle.modifiedPaths, config),
+      abortBehavior: config.abortBehavior,
+      turnAborted: turnWasAborted(event, ctx),
+      autoRun: config.autoRun,
+      confirmBeforeRun: config.confirmBeforeRun,
+    });
+
+    if (decision.kind === "skip_suppressed") {
+      if (decision.resetSuppressNextPrompt) {
+        lifecycle = consumeSuppressedAgentEnd(lifecycle);
+      }
       clearRunningWidget(ctx);
-      log.debug("agent_end_skipped_suppressed_next_prompt", diagnostics(ctx));
+      log.debug(decision.logEvent, diagnostics(ctx));
       return;
     }
 
-    if (lastUserMessageLooksAutoTriggered(event.messages ?? [])) {
-      clearRunningWidget(ctx);
-      log.debug("agent_end_skipped_auto_triggered_message", diagnostics(ctx));
+    if (decision.kind === "skip") {
+      if (decision.clearRunningWidget) {
+        clearRunningWidget(ctx);
+      }
+      log.debug(decision.logEvent, diagnostics(ctx));
       return;
     }
 
-    const supportedPaths = collectSupportedPaths(modifiedPaths, config);
-    if (supportedPaths.length === 0) {
-      log.debug("agent_end_skipped_no_supported_paths", diagnostics(ctx));
-      return;
-    }
-
-    if (config.abortBehavior === "skip" && turnWasAborted(event, ctx)) {
-      log.debug("agent_end_skipped_aborted_turn", {
+    if (decision.kind === "notify_manual_available") {
+      log.debug(decision.logEvent, {
         ...diagnostics(ctx),
-        supportedPaths,
+        supportedPaths: decision.supportedPaths,
       });
       notifyManualRunAvailable(
         ctx,
-        "this turn was aborted",
-        supportedPaths.length,
+        decision.reason,
+        decision.supportedPaths.length,
       );
       return;
     }
 
-    if (!config.autoRun) {
-      log.debug("agent_end_skipped_auto_run_disabled", {
-        ...diagnostics(ctx),
-        supportedPaths,
-      });
-      notifyManualRunAvailable(
-        ctx,
-        "automatic runs are disabled",
-        supportedPaths.length,
-      );
-      return;
-    }
-
-    if (!config.confirmBeforeRun) {
-      sendLoggedCodeSimplifierPrompt(ctx, supportedPaths);
+    if (decision.kind === "send") {
+      sendLoggedCodeSimplifierPrompt(ctx, decision.supportedPaths);
       return;
     }
 
     log.debug("agent_end_confirm_requested", {
       ...diagnostics(ctx),
-      supportedPaths,
+      supportedPaths: decision.supportedPaths,
     });
-    const title = "Run me-code-simplifier?";
-    const body = `本轮检测到以下代码文件被修改：\n${supportedPaths
-      .map((filePath) => `- ${filePath}`)
-      .join("\n")}\n\n是否触发 me-code-simplifier 做一次行为不变的简化？`;
     const localAbortController = new AbortController();
-    const localDecision = ctx.ui.confirm(title, body, {
+    const localDecision = ctx.ui.confirm(decision.title, decision.body, {
       signal: localAbortController.signal,
     });
     const remoteDecisions: Array<Promise<boolean>> = [];
@@ -720,14 +1018,14 @@ export default function agentEndCodeSimplifierExtension(
       type: "agent-end-code-simplifier.approval",
       requestId: `agent_end_code_simplifier_${Date.now()}`,
       createdAt: Date.now(),
-      title,
-      body,
-      filePaths: supportedPaths,
-      contextPreview: [`${title}\n${body}`],
-      fullContextLines: [`${title}\n${body}`],
+      title: decision.title,
+      body: decision.body,
+      filePaths: decision.supportedPaths,
+      contextPreview: [`${decision.title}\n${decision.body}`],
+      fullContextLines: [`${decision.title}\n${decision.body}`],
       localDecision,
-      attachRemoteDecision: (decision: Promise<boolean>) => {
-        remoteDecisions.push(decision);
+      attachRemoteDecision: (remoteDecision: Promise<boolean>) => {
+        remoteDecisions.push(remoteDecision);
       },
       ctx,
     } satisfies PiKitAgentEndCodeSimplifierApprovalEvent);
@@ -739,17 +1037,17 @@ export default function agentEndCodeSimplifierExtension(
     });
     log.debug("agent_end_confirm_resolved", {
       ...diagnostics(ctx),
-      supportedPaths,
+      supportedPaths: decision.supportedPaths,
       ok,
     });
     if (!ok) {
       log.debug("agent_end_skipped_confirm_denied", {
         ...diagnostics(ctx),
-        supportedPaths,
+        supportedPaths: decision.supportedPaths,
       });
       return;
     }
 
-    sendLoggedCodeSimplifierPrompt(ctx, supportedPaths);
+    sendLoggedCodeSimplifierPrompt(ctx, decision.supportedPaths);
   });
 }

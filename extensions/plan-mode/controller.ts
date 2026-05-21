@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -22,13 +23,11 @@ import {
   MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION,
   MODE_WIDGET_KEY,
   PATH_GUARDED_TOOL_NAMES,
-  PLAN_INSPECTION_TOOL_COMMA_LIST,
   PLAN_INSPECTION_TOOL_SLASH_LIST,
   PLAN_MODE_TOOL_NAMES,
   PLAN_REVIEW_ARTIFACT_GUIDANCE,
   PLANNOTATOR_SUBMIT_TOOL_NAME,
   REVIEW_ARTIFACT_LOCATION,
-  REVIEW_ARTIFACT_WRITE_GUIDANCE,
   REVIEW_ARTIFACT_WRITE_HINT,
   STATE_ENTRY_TYPE,
   STATUS_KEY,
@@ -36,6 +35,7 @@ import {
   TODO_WIDGET_KEY,
   WRITE_TOOL_NAMES,
 } from "./constants.ts";
+import { decideToolBlock, type GuardPolicyTarget } from "./guard-policy.ts";
 import {
   formatReviewWaitReason,
   getApprovedReviewPath,
@@ -406,70 +406,37 @@ export class PlanModeController {
       }
     }
 
-    if (this.state.isPlanPhase() && event.toolName === "bash") {
-      return {
-        block: true,
-        reason:
-          `plan-mode blocked ${event.toolName}: current phase is read-only. ` +
-          `Use ${PLAN_INSPECTION_TOOL_COMMA_LIST}, and ` +
-          `${this.getTodoToolNameForCurrentMode()}.`,
-      };
-    }
-
-    if (this.state.isPlanPhase() && WRITE_TOOL_NAMES.has(event.toolName)) {
-      const targetResult = pathsFromToolCall(event);
-      if (
-        targetResult.kind === "paths" &&
-        targetResult.paths.length > 0 &&
-        targetResult.paths.every(({ rawPath }) =>
-          isReviewArtifactPath(ctx.cwd, rawPath),
-        )
-      ) {
-        return undefined;
-      }
-      return {
-        block: true,
-        reason:
-          `plan-mode blocked ${event.toolName}: current phase can only write ` +
-          REVIEW_ARTIFACT_WRITE_GUIDANCE,
-      };
-    }
-
-    if (!this.config.guards.readBeforeWrite) {
-      return undefined;
-    }
-
-    if (!PATH_GUARDED_TOOL_NAMES.has(event.toolName)) {
-      return undefined;
-    }
-
     const targetResult = pathsFromToolCall(event);
-    if (targetResult.kind === "unresolved-write") {
-      return {
-        block: true,
-        reason: `plan-mode blocked ${event.toolName}: ${targetResult.reason}`,
-      };
-    }
+    const targets: GuardPolicyTarget[] =
+      targetResult.kind === "paths"
+        ? targetResult.paths.map(({ rawPath }) => {
+            const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
+            const relativePath = path.relative(ctx.cwd, absolutePath);
+            const isInsideCwd =
+              relativePath === "" ||
+              (!relativePath.startsWith("..") &&
+                !path.isAbsolute(relativePath));
+            return {
+              rawPath,
+              exists: fs.existsSync(absolutePath),
+              isInsideCwd,
+              isReviewArtifact: isReviewArtifactPath(ctx.cwd, rawPath),
+              wasRead: this.state.readFiles.has(absolutePath),
+            };
+          })
+        : [];
 
-    for (const { rawPath } of targetResult.paths) {
-      const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
-
-      if (
-        this.config.guards.readBeforeWrite &&
-        WRITE_TOOL_NAMES.has(event.toolName) &&
-        fs.existsSync(absolutePath) &&
-        !this.state.readFiles.has(absolutePath)
-      ) {
-        return {
-          block: true,
-          reason:
-            `plan-mode blocked ${event.toolName}: read the file first before ` +
-            `modifying it: ${rawPath}`,
-        };
-      }
-    }
-
-    return undefined;
+    return decideToolBlock({
+      internalExtensionBypass: this.internalExtensionBypassForTurn,
+      isPlanPhase: this.state.isPlanPhase(),
+      readBeforeWrite: this.config.guards.readBeforeWrite,
+      toolName: event.toolName,
+      todoToolName: this.getTodoToolNameForCurrentMode(),
+      isWriteTool: WRITE_TOOL_NAMES.has(event.toolName),
+      isPathGuardedTool: PATH_GUARDED_TOOL_NAMES.has(event.toolName),
+      targetResult,
+      targets,
+    });
   }
 
   sendReviewWaitMessage(message: string): void {

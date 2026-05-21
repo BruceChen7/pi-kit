@@ -20,6 +20,7 @@ jira|https://github.com/softaworks/agent-toolkit|skills/jira
 diagram-design|https://github.com/cathrynlavery/diagram-design|
 plan-ceo-review|local|skills/planning-suite/plan-ceo-review
 plan-eng-review|local|skills/planning-suite/plan-eng-review
+boundaries-refactor|local|skills/boundaries-refactor
 office-hours|local|skills/planning-suite/office-hours
 branch-commit-push|local|skills/branch-commit-push
 receiving-code-review|https://github.com/obra/superpowers.git|skills/receiving-code-review

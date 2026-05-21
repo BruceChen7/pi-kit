@@ -3,10 +3,24 @@ import { AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL } from "../shared/internal-e
 import {
   buildCodeSimplifierPrompt,
   collectSupportedPaths,
+  collectToolResultPaths,
+  consumeSuppressedAgentEnd,
+  containsAbortedMessage,
+  containsAutoTriggerMarker,
+  createAgentEndCodeSimplifierLifecycleState,
   DEFAULT_PROMPT_TEMPLATE,
   DEFAULT_SUPPORTED_EXTENSIONS,
+  decideAgentEndSimplifierAction,
+  decideInputLifecycleTransition,
+  extractAutoTriggerRunId,
   isSupportedCodePath,
+  lastUserMessageLooksAutoTriggered,
   normalizeConfig,
+  resetLifecycleForAgentStart,
+  resetLifecycleForNewSession,
+  startSimplifierRun,
+  trackModifiedPaths,
+  turnWasAborted,
 } from "./index.js";
 
 const createMockLogger = () => ({
@@ -57,33 +71,52 @@ type ExtensionHarnessOptions = {
   sendUserMessage?: ReturnType<typeof vi.fn>;
 };
 
-type WidgetTestContext = {
+type BasicTestContext = {
   cwd: string;
   hasUI: true;
+  signal?: AbortSignal;
   ui: {
     confirm: ReturnType<typeof vi.fn>;
     notify: ReturnType<typeof vi.fn>;
+  };
+};
+
+type WidgetTestContext = {
+  cwd: string;
+  hasUI: true;
+  isIdle?: ReturnType<typeof vi.fn>;
+  ui: BasicTestContext["ui"] & {
     setWidget: ReturnType<typeof vi.fn>;
-    theme?: { fg: ReturnType<typeof vi.fn> };
   };
 };
 
 const RUNNING_WIDGET_KEY = "agent-end-code-simplifier";
 
-const createWidgetTestContext = ({
-  withTheme = false,
+const createBasicTestContext = ({
+  cwd = process.cwd(),
+  signal,
 }: {
-  withTheme?: boolean;
+  cwd?: string;
+  signal?: AbortSignal;
+} = {}): BasicTestContext => ({
+  cwd,
+  hasUI: true,
+  ...(signal ? { signal } : {}),
+  ui: { confirm: vi.fn(), notify: vi.fn() },
+});
+
+const createWidgetTestContext = ({
+  isIdle,
+}: {
+  isIdle?: ReturnType<typeof vi.fn>;
 } = {}): WidgetTestContext => ({
   cwd: process.cwd(),
   hasUI: true,
+  ...(isIdle ? { isIdle } : {}),
   ui: {
     confirm: vi.fn(),
     notify: vi.fn(),
     setWidget: vi.fn(),
-    ...(withTheme
-      ? { theme: { fg: vi.fn((_tone: string, text: string) => text) } }
-      : {}),
   },
 });
 
@@ -102,26 +135,34 @@ type PromptSendMocks = {
   sendUserMessage: ReturnType<typeof vi.fn>;
 };
 
-const expectHiddenSimplifierPromptSent = (
+const expectSimplifierPromptSent = (
   mocks: PromptSendMocks,
   filePath: string,
 ): void => {
-  expect(mocks.sendUserMessage).not.toHaveBeenCalled();
-  expect(mocks.sendMessage).toHaveBeenCalledWith(
-    expect.objectContaining({
-      customType: "agent-end-code-simplifier",
-      content: expect.stringContaining(filePath),
-      display: false,
-    }),
-    {
-      triggerTurn: true,
-      deliverAs: "followUp",
-    },
+  expect(mocks.sendMessage).not.toHaveBeenCalled();
+  expect(mocks.sendUserMessage).toHaveBeenCalledWith(
+    expect.stringContaining(filePath),
   );
 };
 
 const flushDeferredSimplifierPrompt = async (): Promise<void> => {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
+};
+
+const trackSuccessfulToolResult = async (
+  handlers: Map<string, Handler>,
+  input: Record<string, unknown>,
+  ctx: unknown,
+  toolName = "edit",
+): Promise<void> => {
+  await handlers.get("tool_result")?.(
+    {
+      isError: false,
+      toolName,
+      input,
+    },
+    ctx,
+  );
 };
 
 const createExtensionHarness = async (
@@ -255,6 +296,273 @@ describe("collectSupportedPaths", () => {
   });
 });
 
+describe("collectToolResultPaths", () => {
+  it.each([
+    [
+      "single edit path",
+      { isError: false, toolName: "edit", input: { path: "src/a.ts" } },
+      ["src/a.ts"],
+    ],
+    [
+      "multi edit input",
+      {
+        isError: false,
+        toolName: "edit",
+        input: {
+          multi: [
+            { path: "src/multi-a.ts", oldText: "a", newText: "b" },
+            { path: "src/multi-b.py", oldText: "a", newText: "b" },
+          ],
+        },
+      },
+      ["src/multi-a.ts", "src/multi-b.py"],
+    ],
+    [
+      "Codex patch with final-content files only",
+      {
+        isError: false,
+        toolName: "edit",
+        input: {
+          patch: [
+            "*** Begin Patch",
+            "*** Update File: src/patched.ts",
+            "*** Add File: src/added.ts",
+            "*** Delete File: src/deleted.ts",
+            "*** End Patch",
+          ].join("\n"),
+        },
+      },
+      ["src/patched.ts", "src/added.ts"],
+    ],
+    [
+      "errored tool result",
+      { isError: true, toolName: "edit", input: { path: "src/a.ts" } },
+      [],
+    ],
+    [
+      "unsupported tool",
+      { isError: false, toolName: "read", input: { path: "src/a.ts" } },
+      [],
+    ],
+  ])("extracts paths from %s", (_label, input, expected) => {
+    expect(collectToolResultPaths(input)).toEqual(expected);
+  });
+});
+
+describe("auto-trigger detection", () => {
+  it.each([
+    ["skill prompt", "/skill:me-code-simplifier", true],
+    ["run marker", "[agent-end-code-simplifier run_id=12]", true],
+    ["ordinary extension path", "extensions/agent-end-code-simplifier", false],
+  ])("detects %s", (_label, text, expected) => {
+    expect(containsAutoTriggerMarker(text)).toBe(expected);
+  });
+
+  it("extracts safe integer run ids from hidden follow-up markers", () => {
+    expect(
+      extractAutoTriggerRunId("[agent-end-code-simplifier run_id=42]"),
+    ).toBe(42);
+    expect(extractAutoTriggerRunId("ordinary message")).toBeNull();
+  });
+
+  it("checks only the latest user message for auto-trigger markers", () => {
+    expect(
+      lastUserMessageLooksAutoTriggered([
+        { role: "user", content: "/skill:me-code-simplifier" },
+        { role: "assistant", content: "done" },
+        { role: "user", content: "next task" },
+      ]),
+    ).toBe(false);
+
+    expect(
+      lastUserMessageLooksAutoTriggered([
+        { role: "assistant", content: "done" },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "[agent-end-code-simplifier run_id=1]" },
+          ],
+        },
+      ]),
+    ).toBe(true);
+  });
+
+  it("detects aborted turns from either signal or assistant messages", () => {
+    expect(containsAbortedMessage([{ stopReason: "aborted" }])).toBe(true);
+    expect(
+      turnWasAborted({ messages: [] }, { signal: AbortSignal.abort() }),
+    ).toBe(true);
+    expect(
+      turnWasAborted(
+        { messages: [{ role: "assistant", stopReason: "aborted" }] },
+        {},
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("agent-end code simplifier lifecycle", () => {
+  it("tracks modified paths as sorted plain values", () => {
+    const state = trackModifiedPaths(
+      createAgentEndCodeSimplifierLifecycleState(),
+      ["src/b.ts", "src/a.ts", "src/b.ts"],
+    );
+
+    expect(state.modifiedPaths).toEqual(["src/a.ts", "src/b.ts"]);
+  });
+
+  it("resets tracked files across sessions and agent starts", () => {
+    const activeState = {
+      modifiedPaths: ["src/a.ts"],
+      suppressNextPrompt: true,
+      runGeneration: 7,
+    };
+
+    expect(resetLifecycleForNewSession(activeState)).toEqual({
+      modifiedPaths: [],
+      suppressNextPrompt: false,
+      runGeneration: 7,
+    });
+    expect(resetLifecycleForAgentStart(activeState)).toEqual({
+      modifiedPaths: [],
+      suppressNextPrompt: true,
+      runGeneration: 7,
+    });
+  });
+
+  it("starts and consumes simplifier suppression as pure state transitions", () => {
+    const runningState = startSimplifierRun(
+      createAgentEndCodeSimplifierLifecycleState(),
+    );
+
+    expect(runningState).toMatchObject({
+      suppressNextPrompt: true,
+      runGeneration: 1,
+    });
+    expect(consumeSuppressedAgentEnd(runningState)).toMatchObject({
+      suppressNextPrompt: false,
+      runGeneration: 1,
+    });
+  });
+
+  it("handles stale extension inputs without shell mocks", () => {
+    const state = startSimplifierRun(
+      createAgentEndCodeSimplifierLifecycleState(),
+    );
+
+    const transition = decideInputLifecycleTransition(state, {
+      source: "extension",
+      text: "[agent-end-code-simplifier run_id=999]",
+    });
+
+    expect(transition).toMatchObject({
+      action: "handled",
+      clearRunningWidget: true,
+      logEvent: "input_handled_stale_code_simplifier_prompt",
+      staleRunId: 999,
+      state: { suppressNextPrompt: false, runGeneration: 1 },
+    });
+  });
+
+  it("invalidates queued simplifier prompts on new user input", () => {
+    const state = startSimplifierRun(
+      createAgentEndCodeSimplifierLifecycleState(),
+    );
+
+    expect(
+      decideInputLifecycleTransition(state, {
+        source: "user",
+        text: "new task",
+      }),
+    ).toMatchObject({
+      action: "continue",
+      clearRunningWidget: true,
+      state: { suppressNextPrompt: false, runGeneration: 2 },
+    });
+  });
+});
+
+describe("decideAgentEndSimplifierAction", () => {
+  const baseInput = {
+    enabled: true,
+    hasUI: true,
+    suppressNextPrompt: false,
+    lastUserMessageAutoTriggered: false,
+    supportedPaths: ["src/a.ts"],
+    abortBehavior: "skip" as const,
+    turnAborted: false,
+    autoRun: true,
+    confirmBeforeRun: false,
+  };
+
+  it.each([
+    [
+      "disabled extension",
+      { enabled: false },
+      { kind: "skip", logEvent: "agent_end_skipped_disabled" },
+    ],
+    [
+      "missing UI",
+      { hasUI: false },
+      { kind: "skip", logEvent: "agent_end_skipped_no_ui" },
+    ],
+    [
+      "no supported files",
+      { supportedPaths: [] },
+      { kind: "skip", logEvent: "agent_end_skipped_no_supported_paths" },
+    ],
+  ])("skips when %s", (_label, input, expected) => {
+    expect(decideAgentEndSimplifierAction({ ...baseInput, ...input })).toEqual(
+      expected,
+    );
+  });
+
+  it("clears and consumes suppression after a simplifier follow-up", () => {
+    expect(
+      decideAgentEndSimplifierAction({
+        ...baseInput,
+        suppressNextPrompt: true,
+      }),
+    ).toMatchObject({
+      kind: "skip_suppressed",
+      clearRunningWidget: true,
+      resetSuppressNextPrompt: true,
+    });
+  });
+
+  it("keeps manual retry available instead of auto-running after aborted turns", () => {
+    expect(
+      decideAgentEndSimplifierAction({ ...baseInput, turnAborted: true }),
+    ).toMatchObject({
+      kind: "notify_manual_available",
+      reason: "this turn was aborted",
+      supportedPaths: ["src/a.ts"],
+    });
+  });
+
+  it("sends directly by default and requests confirmation when configured", () => {
+    expect(decideAgentEndSimplifierAction(baseInput)).toEqual({
+      kind: "send",
+      supportedPaths: ["src/a.ts"],
+    });
+
+    const confirmation = decideAgentEndSimplifierAction({
+      ...baseInput,
+      confirmBeforeRun: true,
+    });
+
+    expect(confirmation).toMatchObject({
+      kind: "confirm",
+      supportedPaths: ["src/a.ts"],
+    });
+    expect(confirmation).toHaveProperty("title");
+    expect(confirmation).toHaveProperty(
+      "body",
+      expect.stringContaining("src/a.ts"),
+    );
+  });
+});
+
 describe("buildCodeSimplifierPrompt", () => {
   it("injects changed file paths as XML into the prompt template", () => {
     expect(
@@ -267,19 +575,16 @@ describe("buildCodeSimplifierPrompt", () => {
     );
   });
 
-  it("uses an XML default prompt payload", () => {
+  it("keeps automatic follow-up requirements in structured XML", () => {
     const prompt = buildCodeSimplifierPrompt(["a.ts"]);
 
-    expect(prompt).toContain("<code_simplifier_request>");
-    expect(prompt).toContain("  <file>a.ts</file>");
-  });
-
-  it("tells automatic me-code-simplifier follow-ups to inspect full file context", () => {
-    const prompt = buildCodeSimplifierPrompt(["a.ts"]);
-
-    expect(prompt).toContain("这是自动后处理任务，不要创建 plan");
-    expect(prompt).toContain("读取 modified_files 中每个文件的完整内容");
-    expect(prompt).toContain("不要只看 diff 或刚改动的片段");
+    expect(prompt).toContain("<scope>");
+    expect(prompt).toContain(
+      "<modified_files>\n  <file>a.ts</file>\n  </modified_files>",
+    );
+    expect(prompt).toContain("<requirements>");
+    expect(prompt).toContain("<requirement>");
+    expect(prompt).toContain("</code_simplifier_request>");
   });
 });
 
@@ -290,24 +595,13 @@ describe("extension diagnostics", () => {
     const { handlers, shortcuts, sendMessage, sendUserMessage } =
       await createExtensionHarness();
 
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: true,
-      ui: { confirm: vi.fn(), notify: vi.fn() },
-    };
+    const ctx = createBasicTestContext();
 
     await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/manual.ts" },
-      },
-      ctx,
-    );
+    await trackSuccessfulToolResult(handlers, { path: "src/manual.ts" }, ctx);
     await shortcuts.get("ctrl+alt+y")?.handler(ctx);
 
-    expectHiddenSimplifierPromptSent(
+    expectSimplifierPromptSent(
       { sendMessage, sendUserMessage },
       "src/manual.ts",
     );
@@ -334,53 +628,19 @@ describe("extension diagnostics", () => {
     const { handlers, shortcuts, sendMessage, sendUserMessage } =
       await createExtensionHarness();
 
-    const ctx = {
-      cwd: "/repo/subdir",
-      hasUI: true,
-      ui: { confirm: vi.fn(), notify: vi.fn() },
-    };
+    const ctx = createBasicTestContext({ cwd: "/repo/subdir" });
 
     await handlers.get("session_start")?.({}, ctx);
     await shortcuts.get("ctrl+alt+y")?.handler(ctx);
 
-    expect(sendUserMessage).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendUserMessage).toHaveBeenCalledTimes(1);
 
-    const sentPrompt = String(sendMessage.mock.calls[0]?.[0]?.content);
+    const sentPrompt = String(sendUserMessage.mock.calls[0]?.[0]);
     expect(sentPrompt).toContain("src/staged.ts");
     expect(sentPrompt).toContain("src/unstaged.py");
     expect(sentPrompt).toContain("src/new.ts");
     expect(sentPrompt).not.toContain("README.md");
-  });
-
-  it("automatically runs me-code-simplifier by default without confirmation", async () => {
-    mockExtensionDependencies();
-
-    const { handlers, sendMessage, sendUserMessage } =
-      await createExtensionHarness();
-
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: true,
-      ui: { confirm: vi.fn(async () => false), notify: vi.fn() },
-    };
-
-    await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/auto.ts" },
-      },
-      ctx,
-    );
-    await handlers.get("agent_end")?.({ messages: [] }, ctx);
-    await flushDeferredSimplifierPrompt();
-
-    expectHiddenSimplifierPromptSent(
-      { sendMessage, sendUserMessage },
-      "src/auto.ts",
-    );
   });
 
   it("defers automatic hidden prompts until after agent_end returns", async () => {
@@ -390,19 +650,12 @@ describe("extension diagnostics", () => {
     const { handlers, sendMessage, sendUserMessage } =
       await createExtensionHarness();
 
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: true,
-      ui: { confirm: vi.fn(), notify: vi.fn() },
-    };
+    const ctx = createBasicTestContext();
 
     await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/deferred-auto.ts" },
-      },
+    await trackSuccessfulToolResult(
+      handlers,
+      { path: "src/deferred-auto.ts" },
       ctx,
     );
     await handlers.get("agent_end")?.({ messages: [] }, ctx);
@@ -412,32 +665,39 @@ describe("extension diagnostics", () => {
 
     await vi.runOnlyPendingTimersAsync();
 
-    expectHiddenSimplifierPromptSent(
+    expectSimplifierPromptSent(
       { sendMessage, sendUserMessage },
       "src/deferred-auto.ts",
     );
   });
 
-  it("shows a running widget when automatic simplifier follow-up starts", async () => {
+  it("waits for idle before sending automatic simplifier prompts", async () => {
+    vi.useFakeTimers();
     mockExtensionDependencies();
 
-    const { handlers } = await createExtensionHarness();
-    const ctx = createWidgetTestContext({ withTheme: true });
+    const { handlers, sendMessage, sendUserMessage } =
+      await createExtensionHarness();
+    const isIdle = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+    const ctx = createWidgetTestContext({ isIdle });
 
     await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/auto-widget.ts" },
-      },
+    await trackSuccessfulToolResult(
+      handlers,
+      { path: "src/wait-for-idle.ts" },
       ctx,
     );
     await handlers.get("agent_end")?.({ messages: [] }, ctx);
 
-    expectRunningWidgetShown(ctx);
+    await vi.advanceTimersByTimeAsync(0);
 
-    await flushDeferredSimplifierPrompt();
+    expect(sendUserMessage).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(25);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining("src/wait-for-idle.ts"),
+    );
   });
 
   it("shows a running widget when manual simplifier follow-up starts", async () => {
@@ -447,12 +707,9 @@ describe("extension diagnostics", () => {
     const ctx = createWidgetTestContext();
 
     await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/manual-widget.ts" },
-      },
+    await trackSuccessfulToolResult(
+      handlers,
+      { path: "src/manual-widget.ts" },
       ctx,
     );
     await shortcuts.get("ctrl+alt+y")?.handler(ctx);
@@ -467,12 +724,9 @@ describe("extension diagnostics", () => {
     const ctx = createWidgetTestContext();
 
     await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/auto-widget-clear.ts" },
-      },
+    await trackSuccessfulToolResult(
+      handlers,
+      { path: "src/auto-widget-clear.ts" },
       ctx,
     );
     await handlers.get("agent_end")?.({ messages: [] }, ctx);
@@ -503,12 +757,9 @@ describe("extension diagnostics", () => {
     const ctx = createWidgetTestContext();
 
     await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/user-new-prompt-widget.ts" },
-      },
+    await trackSuccessfulToolResult(
+      handlers,
+      { path: "src/user-new-prompt-widget.ts" },
       ctx,
     );
     await handlers.get("agent_end")?.({ messages: [] }, ctx);
@@ -520,71 +771,31 @@ describe("extension diagnostics", () => {
     expectRunningWidgetCleared(ctx);
   });
 
-  it("does not let stale simplifier suppression hide the user's new prompt", async () => {
+  it("drops stale queued simplifier follow-ups after a newer user prompt", async () => {
     mockExtensionDependencies();
 
-    const { handlers, sendMessage, sendUserMessage } =
-      await createExtensionHarness();
+    const { handlers, sendUserMessage } = await createExtensionHarness();
     const ctx = createWidgetTestContext();
 
     await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/old-widget.ts" },
-      },
+    await trackSuccessfulToolResult(
+      handlers,
+      { path: "src/stale-follow-up.ts" },
       ctx,
     );
     await handlers.get("agent_end")?.({ messages: [] }, ctx);
     await flushDeferredSimplifierPrompt();
 
-    await handlers.get("input")?.({ source: "user", text: "new prompt" }, ctx);
-    await handlers.get("agent_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/new-prompt-change.ts" },
-      },
+    const queuedPrompt = String(sendUserMessage.mock.calls[0]?.[0]);
+    expect(queuedPrompt).toContain("src/stale-follow-up.ts");
+
+    await handlers.get("input")?.({ source: "user", text: "newer task" }, ctx);
+    const result = await handlers.get("input")?.(
+      { source: "extension", text: queuedPrompt },
       ctx,
     );
-    await handlers.get("agent_end")?.({ messages: [] }, ctx);
-    await flushDeferredSimplifierPrompt();
 
-    expectHiddenSimplifierPromptSent(
-      { sendMessage, sendUserMessage },
-      "src/new-prompt-change.ts",
-    );
-  });
-
-  it("does not require widget support to send automatic follow-ups", async () => {
-    mockExtensionDependencies();
-
-    const { handlers, sendMessage, sendUserMessage } =
-      await createExtensionHarness();
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: true,
-      ui: { confirm: vi.fn(), notify: vi.fn() },
-    };
-
-    await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/no-widget-support.ts" },
-      },
-      ctx,
-    );
-    await handlers.get("agent_end")?.({ messages: [] }, ctx);
-    await flushDeferredSimplifierPrompt();
-
-    expectHiddenSimplifierPromptSent(
-      { sendMessage, sendUserMessage },
-      "src/no-widget-support.ts",
-    );
+    expect(result).toEqual({ action: "handled" });
   });
 
   it("skips automatic simplifier approval after an aborted turn by default", async () => {
@@ -593,22 +804,10 @@ describe("extension diagnostics", () => {
     const { handlers, events, sendMessage, sendUserMessage } =
       await createExtensionHarness();
 
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: true,
-      signal: AbortSignal.abort(),
-      ui: { confirm: vi.fn(), notify: vi.fn() },
-    };
+    const ctx = createBasicTestContext({ signal: AbortSignal.abort() });
 
     await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/aborted.ts" },
-      },
-      ctx,
-    );
+    await trackSuccessfulToolResult(handlers, { path: "src/aborted.ts" }, ctx);
     await handlers.get("agent_end")?.(
       {
         messages: [
@@ -631,73 +830,20 @@ describe("extension diagnostics", () => {
     );
   });
 
-  it("can confirm automatic simplifier approval after an aborted turn when configured", async () => {
-    mockExtensionDependencies(createMockLogger(), {
-      agentEndCodeSimplifier: {
-        abortBehavior: "confirm",
-        confirmBeforeRun: true,
-      },
-    });
-
-    const { handlers, sendMessage, sendUserMessage } =
-      await createExtensionHarness();
-
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: true,
-      signal: AbortSignal.abort(),
-      ui: { confirm: vi.fn(async () => true), notify: vi.fn() },
-    };
-
-    await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "src/aborted-confirm.ts" },
-      },
-      ctx,
-    );
-    await handlers.get("agent_end")?.(
-      {
-        messages: [{ role: "assistant", stopReason: "aborted" }],
-      },
-      ctx,
-    );
-
-    expect(ctx.ui.confirm).toHaveBeenCalledWith(
-      "Run me-code-simplifier?",
-      expect.stringContaining("src/aborted-confirm.ts"),
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    await flushDeferredSimplifierPrompt();
-    expectHiddenSimplifierPromptSent(
-      { sendMessage, sendUserMessage },
-      "src/aborted-confirm.ts",
-    );
-  });
-
   it("keeps manually triggering simplifier for tracked files after an aborted turn", async () => {
     mockExtensionDependencies();
 
     const { handlers, shortcuts, sendMessage, sendUserMessage } =
       await createExtensionHarness();
 
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: true,
-      signal: AbortSignal.abort(),
-      ui: { confirm: vi.fn(), notify: vi.fn() },
-    };
+    const ctx = createBasicTestContext({ signal: AbortSignal.abort() });
 
     await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "write",
-        input: { path: "src/manual-after-abort.ts" },
-      },
+    await trackSuccessfulToolResult(
+      handlers,
+      { path: "src/manual-after-abort.ts" },
       ctx,
+      "write",
     );
     await handlers.get("agent_end")?.(
       {
@@ -707,45 +853,9 @@ describe("extension diagnostics", () => {
     );
     await shortcuts.get("ctrl+alt+y")?.handler(ctx);
 
-    expectHiddenSimplifierPromptSent(
+    expectSimplifierPromptSent(
       { sendMessage, sendUserMessage },
       "src/manual-after-abort.ts",
-    );
-  });
-
-  it("skips automatic runs while keeping the manual shortcut available", async () => {
-    mockExtensionDependencies(createMockLogger(), {
-      agentEndCodeSimplifier: {
-        autoRun: false,
-      },
-    });
-
-    const { handlers, shortcuts, sendMessage, sendUserMessage } =
-      await createExtensionHarness();
-
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: true,
-      ui: { confirm: vi.fn(), notify: vi.fn() },
-    };
-
-    await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "write",
-        input: { path: "src/auto-disabled.ts" },
-      },
-      ctx,
-    );
-    await handlers.get("agent_end")?.({ messages: [] }, ctx);
-    await shortcuts.get("ctrl+alt+y")?.handler(ctx);
-
-    expect(ctx.ui.confirm).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expectHiddenSimplifierPromptSent(
-      { sendMessage, sendUserMessage },
-      "src/auto-disabled.ts",
     );
   });
 
@@ -779,11 +889,7 @@ describe("extension diagnostics", () => {
     );
 
     const { commands } = await createExtensionHarness();
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: true,
-      ui: { notify: vi.fn() },
-    };
+    const ctx = createBasicTestContext();
 
     await commands.get("agent-end-code-simplifier-auto")?.handler("off", ctx);
     await commands.get("agent-end-code-simplifier-confirm")?.handler("on", ctx);
@@ -840,13 +946,11 @@ describe("extension diagnostics", () => {
     };
 
     await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "write",
-        input: { path: "src/demo.ts" },
-      },
+    await trackSuccessfulToolResult(
+      handlers,
+      { path: "src/demo.ts" },
       ctx,
+      "write",
     );
     await handlers.get("agent_end")?.({ messages: [] }, ctx);
 
@@ -864,9 +968,6 @@ describe("extension diagnostics", () => {
     );
     expect(abortSignal?.aborted).toBe(true);
     await flushDeferredSimplifierPrompt();
-    expectHiddenSimplifierPromptSent(
-      { sendMessage, sendUserMessage },
-      "src/demo.ts",
-    );
+    expectSimplifierPromptSent({ sendMessage, sendUserMessage }, "src/demo.ts");
   });
 });

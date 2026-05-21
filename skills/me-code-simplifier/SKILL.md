@@ -18,6 +18,8 @@ Your job is to pull complexity down, make intent obvious, and keep future change
 
 **CONTROL-FLOW SUB-SKILL:** When simplification involves nested conditionals, duplicated guards, optional/null precondition checks, enum/match plumbing, loops with item-independent branches, scalar APIs called repeatedly in loops, or batch API design, consult `push-ifs-up-fors-down` to decide whether branches should move upward and iteration should move downward.
 
+**BOUNDARIES SUB-SKILL:** When simplification touches code where decisions are mixed with IO, framework handlers, repositories, clocks, globals, or mock-heavy tests, consult `boundaries-refactor` to move behavior toward value-in/value-out core logic with effects at the shell.
+
 ## When to Use
 
 Use this skill when:
@@ -63,6 +65,8 @@ Do not use this skill to change product behavior or redesign unrelated areas.
      readability and locality, not speculative performance.
    - Use `push-ifs-up-fors-down` when branch/loop placement is the main source of complexity.
    - Split mixed-concern functions by intent.
+   - Use `boundaries-refactor` when business decisions are tangled with IO, framework calls,
+     repositories, clocks, globals, or mock-heavy tests.
    - Remove duplication/pass-through abstractions.
    - Isolate special-case handling behind clear helpers.
    - Run the formatter when imports or line wrapping are the only remaining noise.
@@ -78,6 +82,7 @@ Do not use this skill to change product behavior or redesign unrelated areas.
 - Language playbooks index: `language-playbooks.md`
 - Design-quality guidance: `software-design-philosophy`
 - Control-flow heuristic: `push-ifs-up-fors-down`
+- Value-boundary refactoring: `boundaries-refactor`
 
 ## Non-goals
 

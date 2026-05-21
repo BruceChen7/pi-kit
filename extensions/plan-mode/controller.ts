@@ -21,7 +21,6 @@ import {
   HTML_PLAN_FORMAT_GUIDANCE,
   MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION,
   MODE_WIDGET_KEY,
-  OUTSIDE_CWD_ALLOWED_TOOL_NAMES,
   PATH_GUARDED_TOOL_NAMES,
   PLAN_INSPECTION_TOOL_COMMA_LIST,
   PLAN_INSPECTION_TOOL_SLASH_LIST,
@@ -40,7 +39,6 @@ import {
 import {
   formatReviewWaitReason,
   getApprovedReviewPath,
-  isAllowedPath,
   isReviewArtifactPath,
   normalizeToolPath,
   pathFromToolCall,
@@ -398,19 +396,6 @@ export class PlanModeController {
     if (event.toolName === PLANNOTATOR_SUBMIT_TOOL_NAME) {
       const rawPath = pathFromToolCall(event);
       if (rawPath) {
-        const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
-        if (
-          this.config.guards.cwdOnly &&
-          !isAllowedPath(absolutePath, ctx.cwd, this.config.guards.allowedPaths)
-        ) {
-          return {
-            block: true,
-            reason:
-              `plan-mode blocked ${event.toolName}: path is outside cwd and ` +
-              `allowed paths: ${rawPath}`,
-          };
-        }
-
         const policyFailure = this.validateArtifactPolicyForPath(ctx, rawPath);
         if (policyFailure) {
           return {
@@ -450,7 +435,7 @@ export class PlanModeController {
       };
     }
 
-    if (!this.config.guards.cwdOnly && !this.config.guards.readBeforeWrite) {
+    if (!this.config.guards.readBeforeWrite) {
       return undefined;
     }
 
@@ -468,19 +453,6 @@ export class PlanModeController {
 
     for (const { rawPath } of targetResult.paths) {
       const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
-
-      if (
-        !OUTSIDE_CWD_ALLOWED_TOOL_NAMES.has(event.toolName) &&
-        this.config.guards.cwdOnly &&
-        !isAllowedPath(absolutePath, ctx.cwd, this.config.guards.allowedPaths)
-      ) {
-        return {
-          block: true,
-          reason:
-            `plan-mode blocked ${event.toolName}: path is outside cwd and ` +
-            `allowed paths: ${rawPath}`,
-        };
-      }
 
       if (
         this.config.guards.readBeforeWrite &&

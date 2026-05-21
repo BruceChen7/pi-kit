@@ -224,12 +224,7 @@ export const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
     config.requireReview = raw.requireReview;
   }
   if (isRecord(raw.guards)) {
-    applyBooleanOverride(config.guards, raw.guards, "cwdOnly");
     applyBooleanOverride(config.guards, raw.guards, "readBeforeWrite");
-    config.guards.allowedPaths = sanitizeStringArray(
-      raw.guards.allowedPaths,
-      config.guards.allowedPaths,
-    );
   }
   if (isRecord(raw.artifactPolicy)) {
     const artifactPolicy = raw.artifactPolicy;

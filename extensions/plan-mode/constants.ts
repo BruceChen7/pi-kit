@@ -114,8 +114,6 @@ export const DEFAULT_CONFIG: PlanModeConfig = {
   preserveExternalTools: true,
   requireReview: true,
   guards: {
-    cwdOnly: true,
-    allowedPaths: [],
     readBeforeWrite: true,
   },
   artifactPolicy: getDefaultArtifactPolicyConfig(),
@@ -148,9 +146,6 @@ export const PATH_GUARDED_TOOL_NAMES = new Set([
   ...READ_ONLY_PATH_TOOL_NAMES,
   ...WRITE_TOOL_NAMES,
 ]);
-export const OUTSIDE_CWD_ALLOWED_TOOL_NAMES = new Set(
-  READ_ONLY_PATH_TOOL_NAMES,
-);
 export const PLAN_INSPECTION_TOOL_NAMES = READ_ONLY_PATH_TOOL_NAMES;
 export const PLAN_INSPECTION_TOOL_SLASH_LIST =
   PLAN_INSPECTION_TOOL_NAMES.join("/");

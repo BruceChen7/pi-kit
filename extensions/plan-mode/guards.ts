@@ -61,27 +61,6 @@ export const isReviewArtifactPath = (cwd: string, rawPath: string): boolean =>
     normalizeToolPath(cwd, rawPath),
   ) !== null;
 
-export const isInsideDir = (targetPath: string, dirPath: string): boolean => {
-  const relative = path.relative(
-    path.resolve(dirPath),
-    path.resolve(targetPath),
-  );
-  return (
-    relative === "" ||
-    (!relative.startsWith("..") && !path.isAbsolute(relative))
-  );
-};
-
-export const isAllowedPath = (
-  targetPath: string,
-  cwd: string,
-  allowedPaths: string[],
-): boolean =>
-  isInsideDir(targetPath, cwd) ||
-  allowedPaths.some((allowedPath) =>
-    isInsideDir(targetPath, path.resolve(cwd, allowedPath)),
-  );
-
 export const extractTextContent = (event: ToolResultEvent): string => {
   const rawContent = (event as { content?: unknown }).content;
   if (!Array.isArray(rawContent)) {

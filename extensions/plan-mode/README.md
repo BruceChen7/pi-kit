@@ -167,10 +167,9 @@ If a file write is blocked:
 
 - While planning or waiting for review, only reviewable plan/spec files can be written.
 - In `act`, source-code writes are allowed, but safety guards may still require reading an existing file before editing it.
-- Paths must stay inside the current working directory or configured allowed paths.
 
 ## Advanced details
 
 Plan Mode owns workflow state, runtime guards, TODOs, and progress UI. Plannotator Auto owns plan/spec detection and review feedback.
 
-Runtime guards are fail-closed while planning or waiting for review: shell commands and source-code writes are blocked except for reviewable plan/spec artifacts. Optional guards such as `cwdOnly` and `readBeforeWrite` protect path access and existing-file writes even in `act`.
+Runtime guards are fail-closed while planning or waiting for review: shell commands and source-code writes are blocked except for reviewable plan/spec artifacts. The optional `readBeforeWrite` guard protects existing-file writes even in `act`.

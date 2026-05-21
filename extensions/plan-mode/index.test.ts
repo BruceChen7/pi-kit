@@ -3,16 +3,22 @@ import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
-import planModeExtension from "./index.js";
+import {
+  ACT_TODO_TOOL_NAME as ACT_MODE_TODO_TOOL,
+  MODE_WIDGET_KEY as PLAN_MODE_CURRENT_MODE_WIDGET,
+  STATE_ENTRY_TYPE as PLAN_MODE_STATE_ENTRY,
+  TODO_TOOL_NAME as PLAN_MODE_TODO_TOOL,
+  TODO_WIDGET_KEY as PLAN_MODE_TODOS_WIDGET,
+  PLANNOTATOR_SUBMIT_TOOL_NAME as PLANNOTATOR_REVIEW_TOOL,
+} from "./constants.js";
+import planModeExtension, {
+  getPlanModeArgumentCompletions,
+  parsePlanModeCommand,
+} from "./index.js";
 
 type Handler = (event: unknown, ctx: TestCtx) => Promise<unknown> | unknown;
-type CommandCompletion = {
-  label: string;
-  value: string;
-};
 type CommandRegistration = {
   description: string;
-  getArgumentCompletions?: (prefix: string) => CommandCompletion[];
   handler: (args: string, ctx: TestCtx) => Promise<unknown> | unknown;
 };
 type ToolRegistration = {
@@ -27,6 +33,10 @@ type ToolRegistration = {
     onUpdate: (update: unknown) => void,
     ctx: TestCtx,
   ) => Promise<unknown> | unknown;
+};
+type ShortcutRegistration = {
+  description?: string;
+  handler: (ctx: TestCtx) => Promise<void> | void;
 };
 type CustomEntry = {
   type: "custom";
@@ -56,15 +66,10 @@ type TestCtx = {
   };
 };
 
-const PLAN_MODE_STATE_ENTRY = "plan-mode-state";
-const PLAN_MODE_TODOS_WIDGET = "plan-mode-todos";
-const PLAN_MODE_TODO_TOOL = "plan_mode_todo";
-const ACT_MODE_TODO_TOOL = "act_mode_todo";
-const PLANNOTATOR_REVIEW_TOOL = "plannotator_auto_submit_review";
-
 const buildHarness = () => {
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, CommandRegistration>();
+  const shortcuts = new Map<string, ShortcutRegistration>();
   const tools = new Map<string, ToolRegistration>();
   let activeTools = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 
@@ -82,6 +87,11 @@ const buildHarness = () => {
     registerTool: vi.fn((tool: ToolRegistration) => {
       tools.set(tool.name, tool);
     }),
+    registerShortcut: vi.fn(
+      (shortcut: string, registration: ShortcutRegistration) => {
+        shortcuts.set(shortcut, registration);
+      },
+    ),
     appendEntry: vi.fn(),
     sendUserMessage: vi.fn(),
     setActiveTools: vi.fn((names: string[]) => {
@@ -106,6 +116,12 @@ const buildHarness = () => {
     return command.handler(args, ctx);
   };
 
+  const runShortcut = async (shortcut: string, ctx: TestCtx) => {
+    const registration = shortcuts.get(shortcut);
+    if (!registration) throw new Error(`Missing shortcut: ${shortcut}`);
+    return registration.handler(ctx);
+  };
+
   const runTool = async (
     name: string,
     params: Record<string, unknown>,
@@ -128,19 +144,11 @@ const buildHarness = () => {
     ctx: TestCtx,
   ) => emit("tool_call", { toolName, input }, ctx);
 
-  const getCommandCompletions = (name: string, prefix: string) => {
-    const command = commands.get(name);
-    if (!command?.getArgumentCompletions) {
-      throw new Error(`Missing command completions: ${name}`);
-    }
-    return command.getArgumentCompletions(prefix);
-  };
-
   return {
     api,
     emit,
-    getCommandCompletions,
     runCommand,
+    runShortcut,
     runTool,
     runToolCall,
   };
@@ -176,6 +184,14 @@ const lastTodoWidgetCall = (ctx: TestCtx) => {
     ([key]) => key === PLAN_MODE_TODOS_WIDGET,
   );
   if (!call) throw new Error("Expected a plan-mode TODO widget call");
+  return call;
+};
+
+const lastModeWidgetCall = (ctx: TestCtx) => {
+  const call = ctx.ui.setWidget.mock.calls.findLast(
+    ([key]) => key === PLAN_MODE_CURRENT_MODE_WIDGET,
+  );
+  if (!call) throw new Error("Expected a plan-mode current mode widget call");
   return call;
 };
 
@@ -540,13 +556,11 @@ describe("plan-mode extension", () => {
     expect(result.systemPrompt).not.toContain("必须包含变更前后");
   });
 
-  it("completes format arguments only after the format command", () => {
-    const harness = buildHarness();
-    planModeExtension(harness.api as unknown as ExtensionAPI);
+  it("completes format arguments from pure command values", () => {
     const completionValues = (prefix: string) =>
-      harness
-        .getCommandCompletions("plan-mode", prefix)
-        .map((completion) => completion.value);
+      getPlanModeArgumentCompletions(prefix).map(
+        (completion) => completion.value,
+      );
 
     expect(completionValues("")).toEqual(["act", "plan", "status", "format"]);
     expect(completionValues("h")).toEqual([]);
@@ -555,6 +569,26 @@ describe("plan-mode extension", () => {
       "format markdown",
     ]);
     expect(completionValues("format h")).toEqual(["format html"]);
+  });
+
+  it("parses plan-mode command arguments as value decisions", () => {
+    expect(parsePlanModeCommand("")).toEqual({ kind: "status" });
+    expect(parsePlanModeCommand("status")).toEqual({ kind: "status" });
+    expect(parsePlanModeCommand("format html")).toEqual({
+      kind: "format",
+      value: "html",
+    });
+    expect(parsePlanModeCommand("plan")).toEqual({
+      kind: "mode",
+      value: "plan",
+    });
+    expect(parsePlanModeCommand("format pdf")).toEqual({
+      kind: "invalid-format",
+    });
+    expect(parsePlanModeCommand("auto")).toEqual({
+      kind: "invalid-mode",
+      value: "auto",
+    });
   });
 
   it("requires concrete todos before direct act-mode task execution", async () => {
@@ -569,27 +603,38 @@ describe("plan-mode extension", () => {
     expect(result.systemPrompt).toContain(directActTodoGuidance);
   });
 
-  it("prompts once before non-plan agent execution and defaults to act after timeout", async () => {
+  it("toggles plan mode with alt zero shortcut", async () => {
     const { harness, ctx } = await startPlanModeSession("act");
 
-    await sendInput(harness, ctx, "implement this", "interactive");
-    await sendAgentPrompt(harness, ctx, "implement this");
-    await sendAgentPrompt(harness, ctx, "implement this again");
-
-    expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("5s"),
-      "info",
-    );
-    expect(ctx.ui.select).toHaveBeenCalledTimes(1);
-    expect(ctx.ui.select).toHaveBeenCalledWith(
-      "Choose Plan Mode for this run",
-      ["act", "plan"],
-      { timeout: 5000 },
-    );
-    const result = await sendAgentPrompt(harness, ctx, "post-timeout prompt");
-    expect(result).toMatchObject({
-      systemPrompt: expect.stringContaining("Current workflow: Act."),
+    await harness.runShortcut("alt+0", ctx);
+    expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+      mode: "plan",
+      phase: "plan",
     });
+
+    await harness.runShortcut("alt+0", ctx);
+    expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+      mode: "act",
+      phase: "act",
+    });
+  });
+
+  it("shows current plan mode in a persistent widget above the editor", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    expect(lastModeWidgetCall(ctx)).toEqual([
+      PLAN_MODE_CURRENT_MODE_WIDGET,
+      ["<accent>Plan Mode: Act · Act · Alt+0 toggles</accent>"],
+      { placement: "aboveEditor" },
+    ]);
+
+    await harness.runShortcut("alt+0", ctx);
+
+    expect(lastModeWidgetCall(ctx)).toEqual([
+      PLAN_MODE_CURRENT_MODE_WIDGET,
+      ["<accent>Plan Mode: Plan · Planning · Alt+0 toggles</accent>"],
+      { placement: "aboveEditor" },
+    ]);
   });
 
   it("enters plan directly without prompting when the prompt explicitly asks for plan", async () => {
@@ -1045,6 +1090,10 @@ describe("plan-mode extension", () => {
     ).resolves.toBeUndefined();
 
     expect(ctx.ui.setStatus).toHaveBeenLastCalledWith("plan-mode", undefined);
+    expect(lastModeWidgetCall(ctx)).toEqual([
+      PLAN_MODE_CURRENT_MODE_WIDGET,
+      undefined,
+    ]);
     expect(lastTodoWidgetCall(ctx)).toEqual([
       PLAN_MODE_TODOS_WIDGET,
       undefined,

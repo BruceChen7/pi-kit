@@ -10,7 +10,10 @@ import type {
 
 export const STATE_ENTRY_TYPE = "plan-mode-state";
 export const STATUS_KEY = "plan-mode";
+export const MODE_WIDGET_KEY = "plan-mode-current-mode";
 export const TODO_WIDGET_KEY = "plan-mode-todos";
+export const PLAN_MODE_TOGGLE_SHORTCUT = "alt+0";
+export const PLAN_MODE_TOGGLE_SHORTCUT_LABEL = "Alt+0";
 export const TODO_TOOL_NAME = "plan_mode_todo";
 export const ACT_TODO_TOOL_NAME = "act_mode_todo";
 export const PLANNOTATOR_SUBMIT_TOOL_NAME = "plannotator_auto_submit_review";
@@ -52,13 +55,6 @@ export const HTML_PLAN_FORMAT_GUIDANCE = [
 ];
 export const RECENT_RUN_LIMIT = 5;
 
-const DEFAULT_MODE_SELECTION_TIMEOUT_SECONDS = 5;
-export const DEFAULT_MODE_SELECTION_TIMEOUT_MS =
-  DEFAULT_MODE_SELECTION_TIMEOUT_SECONDS * 1000;
-export const MODE_SELECTION_TITLE = "Choose Plan Mode for this run";
-export const MODE_SELECTION_MESSAGE =
-  "Choose Plan Mode for this run; defaulting to act in " +
-  `${DEFAULT_MODE_SELECTION_TIMEOUT_SECONDS}s.`;
 export const PLAN_MODE_ACT = "act";
 export const PLAN_MODE_PLAN = "plan";
 export const PLAN_MODE_LABELS = {

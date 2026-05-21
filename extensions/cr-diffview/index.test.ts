@@ -27,6 +27,10 @@ type CommandHandler = (
 ) => Promise<void>;
 
 type ShortcutHandler = (ctx: Record<string, unknown>) => Promise<void>;
+type InputHandler = (
+  event: Record<string, unknown>,
+  ctx: Record<string, unknown>,
+) => { action: string };
 
 type ExecResult = { code: number; stdout: string; stderr: string };
 
@@ -37,6 +41,7 @@ const START_SHORTCUT = "alt+r";
 const registerCrCommands = (exec: ReturnType<typeof vi.fn>) => {
   const commands = new Map<string, CommandHandler>();
   const shortcuts = new Map<string, ShortcutHandler>();
+  const events = new Map<string, InputHandler>();
   const sendUserMessage = vi.fn();
   crDiffviewExtension({
     exec,
@@ -46,19 +51,25 @@ const registerCrCommands = (exec: ReturnType<typeof vi.fn>) => {
     registerShortcut(shortcut, definition) {
       shortcuts.set(String(shortcut), definition.handler);
     },
+    on(name, handler) {
+      events.set(String(name), handler as InputHandler);
+    },
     sendUserMessage,
   } as unknown as ExtensionAPI);
 
   const startHandler = commands.get(START_COMMAND);
   const stopHandler = commands.get(STOP_COMMAND);
   const startShortcutHandler = shortcuts.get(START_SHORTCUT);
+  const inputHandler = events.get("input");
   expect(startHandler).toBeTypeOf("function");
   expect(stopHandler).toBeTypeOf("function");
   expect(startShortcutHandler).toBeTypeOf("function");
+  expect(inputHandler).toBeTypeOf("function");
   return {
     startHandler: startHandler as CommandHandler,
     stopHandler: stopHandler as CommandHandler,
     startShortcutHandler: startShortcutHandler as ShortcutHandler,
+    inputHandler: inputHandler as InputHandler,
     sendUserMessage,
   };
 };
@@ -242,6 +253,59 @@ describe("cr-diffview command", () => {
     expect(setWidget).toHaveBeenCalledWith("cr-diffview", [
       expect.stringContaining("CR diffview open: main...HEAD"),
     ]);
+  });
+
+  it("clears the widget when the user submits input", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
+    const exec = createCrExec(repoRoot);
+    const notify = vi.fn();
+    const setWidget = vi.fn();
+    const { startHandler, inputHandler } = registerCrCommands(exec);
+
+    await startHandler("main", {
+      cwd: repoRoot,
+      hasUI: true,
+      env: { TMUX: "/tmp/tmux" },
+      ui: { notify, setWidget },
+    });
+
+    inputHandler(
+      { source: "user" },
+      {
+        cwd: repoRoot,
+        hasUI: true,
+        ui: { notify, setWidget },
+      },
+    );
+
+    expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
+  });
+
+  it("keeps the widget for extension-sourced input", async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
+    const exec = createCrExec(repoRoot);
+    const notify = vi.fn();
+    const setWidget = vi.fn();
+    const { startHandler, inputHandler } = registerCrCommands(exec);
+
+    await startHandler("main", {
+      cwd: repoRoot,
+      hasUI: true,
+      env: { TMUX: "/tmp/tmux" },
+      ui: { notify, setWidget },
+    });
+
+    setWidget.mockClear();
+    inputHandler(
+      { source: "extension" },
+      {
+        cwd: repoRoot,
+        hasUI: true,
+        ui: { notify, setWidget },
+      },
+    );
+
+    expect(setWidget).not.toHaveBeenCalled();
   });
 
   it("opens the interactive CR diff target picker from the start shortcut", async () => {

@@ -16,7 +16,10 @@ import {
   SelectList,
   Text,
 } from "@earendil-works/pi-tui";
-
+import {
+  FILE_WATCHER_CONTROL_CHANNEL,
+  type PiKitFileWatcherControlEvent,
+} from "../shared/internal-events.ts";
 import {
   annotationsFromFinishPayload,
   branchScope,
@@ -54,6 +57,7 @@ const SELECT_LIST_MAX_VISIBLE = 10;
 const SELECT_LIST_HINT = "Type to filter • Enter to select • esc to cancel";
 const EMPTY_FILTER_HINT = "type to filter...";
 const START_SHORTCUT = "alt+r";
+const CR_FILE_WATCHER_SOURCE = "cr-diffview";
 
 type ExecResult = { code: number; stdout: string; stderr: string };
 
@@ -62,6 +66,10 @@ type WidgetContext = ExtensionContext & {
     setWidget?: (key: string, content?: unknown) => void;
     theme?: { fg?: (token: string, text: string) => string };
   };
+};
+
+type EventBus = {
+  emit?: (channel: string, payload: unknown) => void;
 };
 
 const shellQuote = (value: string): string =>
@@ -352,6 +360,23 @@ const sendArtifactAnnotationsToPi = (
   sendAnnotationsToPi(pi, readArtifactAnnotations(session.artifactPath));
 };
 
+const emitCrFileWatcherControl = (
+  pi: ExtensionAPI,
+  session: CrSession,
+  ctx: ExtensionContext,
+  type: PiKitFileWatcherControlEvent["type"],
+): void => {
+  const eventBus = pi.events as EventBus | undefined;
+  eventBus?.emit?.(FILE_WATCHER_CONTROL_CHANNEL, {
+    type,
+    requestId: `cr_file_watcher_${session.sessionId}`,
+    createdAt: Date.now(),
+    path: session.repoRoot,
+    source: CR_FILE_WATCHER_SOURCE,
+    ctx,
+  });
+};
+
 const showCrWidget = (ctx: WidgetContext, session: CrSession): boolean => {
   if (!ctx.hasUI || typeof ctx.ui?.setWidget !== "function") return false;
 
@@ -445,10 +470,28 @@ const resolveScope = async (
 export default function crDiffviewExtension(pi: ExtensionAPI): void {
   let activeSession: CrSession | null = null;
   let crWidgetVisible = false;
+  let crWatcherSessionId: string | null = null;
 
   const clearVisibleCrWidget = (ctx: WidgetContext): void => {
     clearCrWidget(ctx);
     crWidgetVisible = false;
+  };
+
+  const startCrFileWatcher = (
+    session: CrSession,
+    ctx: ExtensionContext,
+  ): void => {
+    emitCrFileWatcherControl(pi, session, ctx, "file-watcher.start");
+    crWatcherSessionId = session.sessionId;
+  };
+
+  const stopCrFileWatcher = (
+    session: CrSession | null,
+    ctx: ExtensionContext,
+  ): void => {
+    if (!session || crWatcherSessionId !== session.sessionId) return;
+    emitCrFileWatcherControl(pi, session, ctx, "file-watcher.stop");
+    crWatcherSessionId = null;
   };
 
   const startHandler = async (
@@ -483,6 +526,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     );
     const crSocketServer = await startCrSocketServer(session, pi, () => {
       if (activeSession?.sessionId !== session.sessionId) return;
+      stopCrFileWatcher(session, widgetCtx);
       activeSession = null;
       clearVisibleCrWidget(widgetCtx);
     });
@@ -504,6 +548,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
 
     activeSession = session;
     crWidgetVisible = showCrWidget(widgetCtx, session);
+    startCrFileWatcher(session, widgetCtx);
     sendArtifactAnnotationsToPi(pi, session);
     ctx.ui.notify(`Opened CR diffview for ${session.label}`, "info");
   };
@@ -520,6 +565,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
 
   pi.on("input", (event, ctx) => {
     if (event.source !== "extension" && crWidgetVisible) {
+      stopCrFileWatcher(activeSession, ctx as ExtensionContext);
       clearVisibleCrWidget(ctx as WidgetContext);
     }
 
@@ -538,6 +584,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
       if (activeSession) {
         sendArtifactAnnotationsToPi(pi, activeSession);
       }
+      stopCrFileWatcher(activeSession, ctx);
 
       const tmuxResult = (await pi.exec(
         "tmux",

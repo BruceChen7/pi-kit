@@ -657,12 +657,12 @@ export default function agentEndCodeSimplifierExtension(
   pi: ExtensionAPI,
 ): void {
   let config = normalizeConfig(
-    loadSettings(process.cwd(), { forceReload: true }).merged,
+    loadSettings(process.cwd(), { forceReload: false }).merged,
   );
   let lifecycle = createAgentEndCodeSimplifierLifecycleState();
 
   const refreshConfig = (cwd: string) => {
-    config = normalizeConfig(loadSettings(cwd, { forceReload: true }).merged);
+    config = normalizeConfig(loadSettings(cwd, { forceReload: false }).merged);
     log.debug("config_refreshed", {
       cwd,
       enabled: config.enabled,

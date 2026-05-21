@@ -212,7 +212,7 @@ function registerGitDiffHook(): void {
 
 function applyEnvGuard(ctx: ExtensionContext): void {
   const { envMap, gitDiffFlags } = resolveEnvGuardConfig(ctx.cwd, {
-    forceReload: true,
+    forceReload: false,
   });
 
   for (const [key, value] of Object.entries(envMap)) {

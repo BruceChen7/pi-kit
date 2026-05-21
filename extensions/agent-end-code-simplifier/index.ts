@@ -610,6 +610,16 @@ export default function agentEndCodeSimplifierExtension(
     log.debug("agent_start_reset", diagnostics(ctx));
   });
 
+  pi.on("input", (event, ctx) => {
+    if (event.source !== "extension") {
+      suppressNextPrompt = false;
+      clearRunningWidget(ctx);
+      log.debug("input_cleared_running_widget", diagnostics(ctx));
+    }
+
+    return { action: "continue" };
+  });
+
   pi.on("tool_result", async (event) => {
     if (event.isError) {
       log.debug("tool_result_skipped_error", {

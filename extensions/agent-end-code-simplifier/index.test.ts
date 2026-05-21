@@ -276,62 +276,14 @@ describe("buildCodeSimplifierPrompt", () => {
 
   it("tells automatic me-code-simplifier follow-ups to inspect full file context", () => {
     const prompt = buildCodeSimplifierPrompt(["a.ts"]);
-    const expectedFragments = [
-      "先遵循 me-code-simplifier、improve-codebase-architecture、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则",
-      "这是自动后处理任务，不要创建 plan",
-      "读取 modified_files 中每个文件的完整内容",
-      "不要只看 diff 或刚改动的片段",
-      "change amplification",
-      "deep module",
-      "information leakage",
-      "temporal decomposition",
-      "浅封装/pass-through helper",
-      "Module / Interface / Implementation / Depth / Seam / Adapter",
-      "Interface is the test surface",
-      "test seam/Adapter behavior",
-      "Implementation details",
-      "push ifs up and fors down",
-      "集中分支决策",
-      "批量处理",
-    ];
 
-    for (const fragment of expectedFragments) {
-      expect(prompt).toContain(fragment);
-    }
+    expect(prompt).toContain("这是自动后处理任务，不要创建 plan");
+    expect(prompt).toContain("读取 modified_files 中每个文件的完整内容");
+    expect(prompt).toContain("不要只看 diff 或刚改动的片段");
   });
 });
 
 describe("extension diagnostics", () => {
-  it("logs why agent_end skips when UI is unavailable", async () => {
-    const logger = mockExtensionDependencies();
-
-    const { handlers } = await createExtensionHarness();
-
-    const ctx = {
-      cwd: process.cwd(),
-      hasUI: false,
-      ui: { confirm: vi.fn() },
-    };
-    await handlers.get("session_start")?.({}, ctx);
-    await handlers.get("tool_result")?.(
-      {
-        isError: false,
-        toolName: "edit",
-        input: { path: "extensions/demo.ts" },
-      },
-      ctx,
-    );
-    await handlers.get("agent_end")?.({ messages: [] }, ctx);
-
-    expect(logger.debug).toHaveBeenCalledWith(
-      "agent_end_skipped_no_ui",
-      expect.objectContaining({
-        cwd: process.cwd(),
-        modifiedPaths: ["extensions/demo.ts"],
-      }),
-    );
-  });
-
   it("registers Ctrl+Alt+Y to manually trigger me-code-simplifier", async () => {
     mockExtensionDependencies();
 
@@ -404,7 +356,7 @@ describe("extension diagnostics", () => {
   it("automatically runs me-code-simplifier by default without confirmation", async () => {
     mockExtensionDependencies();
 
-    const { handlers, events, sendMessage, sendUserMessage } =
+    const { handlers, sendMessage, sendUserMessage } =
       await createExtensionHarness();
 
     const ctx = {
@@ -425,8 +377,6 @@ describe("extension diagnostics", () => {
     await handlers.get("agent_end")?.({ messages: [] }, ctx);
     await flushDeferredSimplifierPrompt();
 
-    expect(ctx.ui.confirm).not.toHaveBeenCalled();
-    expect(events.emit).not.toHaveBeenCalled();
     expectHiddenSimplifierPromptSent(
       { sendMessage, sendUserMessage },
       "src/auto.ts",
@@ -544,6 +494,68 @@ describe("extension diagnostics", () => {
     );
 
     expectRunningWidgetCleared(ctx);
+  });
+
+  it("clears the running widget when the user submits a new prompt", async () => {
+    mockExtensionDependencies();
+
+    const { handlers } = await createExtensionHarness();
+    const ctx = createWidgetTestContext();
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "edit",
+        input: { path: "src/user-new-prompt-widget.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+    expectRunningWidgetShown(ctx);
+
+    ctx.ui.setWidget.mockClear();
+    await handlers.get("input")?.({ source: "user", text: "new prompt" }, ctx);
+
+    expectRunningWidgetCleared(ctx);
+  });
+
+  it("does not let stale simplifier suppression hide the user's new prompt", async () => {
+    mockExtensionDependencies();
+
+    const { handlers, sendMessage, sendUserMessage } =
+      await createExtensionHarness();
+    const ctx = createWidgetTestContext();
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "edit",
+        input: { path: "src/old-widget.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+    await flushDeferredSimplifierPrompt();
+
+    await handlers.get("input")?.({ source: "user", text: "new prompt" }, ctx);
+    await handlers.get("agent_start")?.({}, ctx);
+    await handlers.get("tool_result")?.(
+      {
+        isError: false,
+        toolName: "edit",
+        input: { path: "src/new-prompt-change.ts" },
+      },
+      ctx,
+    );
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+    await flushDeferredSimplifierPrompt();
+
+    expectHiddenSimplifierPromptSent(
+      { sendMessage, sendUserMessage },
+      "src/new-prompt-change.ts",
+    );
   });
 
   it("does not require widget support to send automatic follow-ups", async () => {

@@ -1,13 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { runFeatureListCommand } from "./commands/feature-list.js";
-import { runFeaturePruneMergedCommand } from "./commands/feature-prune-merged.js";
-import { runFeatureSetupCommand } from "./commands/feature-setup.js";
-import { runFeatureStartCommand } from "./commands/feature-start.js";
-import { runFeatureSwitchCommand } from "./commands/feature-switch.js";
-import { runFeatureValidateCommand } from "./commands/feature-validate.js";
-import { commandLog } from "./commands/shared.js";
+import { createLogger } from "../shared/logger.js";
 import { loadFeatureWorkflowConfig } from "./config.js";
+
+const commandLog = createLogger("feature-workflow", {
+  stderr: null,
+});
 
 function parseCommandArgs(rawArgs: string): string[] {
   const trimmed = rawArgs.trim();
@@ -21,35 +19,62 @@ export default function featureWorkflowExtension(pi: ExtensionAPI): void {
   pi.registerCommand("feature-setup", {
     description:
       "Bootstrap ignored sync defaults + Worktrunk hook/script for this repo",
-    handler: async (args, ctx) =>
-      runFeatureSetupCommand(ctx, parseCommandArgs(args)),
+    handler: async (args, ctx) => {
+      const { runFeatureSetupCommand } = await import(
+        "./commands/feature-setup.js"
+      );
+      return runFeatureSetupCommand(ctx, parseCommandArgs(args));
+    },
   });
 
   pi.registerCommand("feature-start", {
     description: "Create a feature branch + worktree via Worktrunk",
-    handler: async (_args, ctx) => runFeatureStartCommand(pi, ctx),
+    handler: async (_args, ctx) => {
+      const { runFeatureStartCommand } = await import(
+        "./commands/feature-start.js"
+      );
+      return runFeatureStartCommand(pi, ctx);
+    },
   });
 
   pi.registerCommand("feature-list", {
     description: "List feature records for this repo",
-    handler: async (_args, ctx) => runFeatureListCommand(pi, ctx),
+    handler: async (_args, ctx) => {
+      const { runFeatureListCommand } = await import(
+        "./commands/feature-list.js"
+      );
+      return runFeatureListCommand(pi, ctx);
+    },
   });
 
   pi.registerCommand("feature-switch", {
     description: "Prepare switching to an existing feature worktree",
-    handler: async (args, ctx) =>
-      runFeatureSwitchCommand(pi, ctx, parseCommandArgs(args)),
+    handler: async (args, ctx) => {
+      const { runFeatureSwitchCommand } = await import(
+        "./commands/feature-switch.js"
+      );
+      return runFeatureSwitchCommand(pi, ctx, parseCommandArgs(args));
+    },
   });
 
   pi.registerCommand("feature-prune-merged", {
     description: "Delete worktrees that are already merged upstream",
-    handler: async (args, ctx) =>
-      runFeaturePruneMergedCommand(pi, ctx, parseCommandArgs(args)),
+    handler: async (args, ctx) => {
+      const { runFeaturePruneMergedCommand } = await import(
+        "./commands/feature-prune-merged.js"
+      );
+      return runFeaturePruneMergedCommand(pi, ctx, parseCommandArgs(args));
+    },
   });
 
   pi.registerCommand("feature-validate", {
     description: "Run feature preflight checks",
-    handler: async (_args, ctx) => runFeatureValidateCommand(pi, ctx),
+    handler: async (_args, ctx) => {
+      const { runFeatureValidateCommand } = await import(
+        "./commands/feature-validate.js"
+      );
+      return runFeatureValidateCommand(pi, ctx);
+    },
   });
 
   pi.on("session_start", (_event, ctx) => {

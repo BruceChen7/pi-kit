@@ -1157,14 +1157,19 @@ export class SkillTogglePicker {
 }
 
 export default function skillToggleExtension(pi: ExtensionAPI): void {
-  let state: ToggleState = loadToggleState(process.cwd());
+  let state: ToggleState | null = null;
 
   log.debug("extension initialized", { pid: process.pid });
 
-  const refreshState = (ctx: ExtensionContext, skills: Skill[]) => {
+  const refreshState = (
+    ctx: ExtensionContext,
+    skills: Skill[],
+  ): ToggleState => {
     pruneSettingsFiles(ctx.cwd, skills);
-    state = loadToggleState(ctx.cwd);
-    updateStatus(ctx, state, skills);
+    const nextState = loadToggleState(ctx.cwd);
+    state = nextState;
+    updateStatus(ctx, nextState, skills);
+    return nextState;
   };
 
   pi.registerCommand("toggle-skill", {
@@ -1176,7 +1181,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
       }
 
       const skills = loadSkills(ctx.cwd);
-      refreshState(ctx, skills);
+      const activeState = refreshState(ctx, skills);
       if (skills.length === 0) {
         ctx.ui.notify("No skills found", "warning");
         return;
@@ -1188,10 +1193,10 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
         (tui, _theme, _kb, done) => {
           const picker = new SkillTogglePicker(
             skills,
-            state.enabledSkills,
+            activeState.enabledSkills,
             (skill) => {
-              const result = toggleSkillLink(state, skill);
-              updateStatus(ctx, state, skills);
+              const result = toggleSkillLink(activeState, skill);
+              updateStatus(ctx, activeState, skills);
               notifySkillLinkResult(ctx, skill, result);
               didToggle = didToggle || isAppliedSkillLinkToggle(result);
               tui.requestRender();
@@ -1230,9 +1235,10 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
     handler: async (_args: string, ctx: ExtensionContext) => {
       const skills = loadSkills(ctx.cwd);
       state = loadToggleState(ctx.cwd);
-      updateStatus(ctx, state, skills);
+      const activeState = state;
+      updateStatus(ctx, activeState, skills);
       ctx.ui.notify(
-        formatDisabledSkillsMessage(state.enabledSkills, skills),
+        formatDisabledSkillsMessage(activeState.enabledSkills, skills),
         "info",
       );
     },

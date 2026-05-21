@@ -6,8 +6,8 @@
     "pi-package"
   ],
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.74.0",
-    "@earendil-works/pi-tui": "^0.74.0"
+    "@earendil-works/pi-coding-agent": "^0.75.4",
+    "@earendil-works/pi-tui": "^0.75.4"
   },
   "pi": {
     "extensions": [

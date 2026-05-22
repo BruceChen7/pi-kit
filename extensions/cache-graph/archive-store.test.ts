@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -34,6 +34,20 @@ function archiveFixture(
         lastEntryTimestamp: timestamp,
         processedEntryCount: 2,
         status: "complete",
+      },
+    ],
+    summaries: [
+      {
+        sessionFileId: "session-a",
+        repoSlug: "repo-a",
+        firstTimestamp: timestamp,
+        lastTimestamp: timestamp,
+        messageCount: 1,
+        input: 100,
+        output: 10,
+        cacheRead: 20,
+        cacheWrite: 5,
+        totalTokens: 135,
       },
     ],
     rows: [
@@ -95,7 +109,31 @@ describe("cache graph archive store", () => {
       CACHE_GRAPH_ARCHIVE_SCHEMA_VERSION,
     );
     expect(restored.cursors).toEqual(archive.cursors);
+    expect(restored.summaries).toEqual(archive.summaries);
     expect(restored.rows).toEqual(archive.rows);
+  });
+
+  it("writes compact json while preserving archive semantics", async () => {
+    const archivePath = await tempArchivePath();
+    const archive = archiveFixture();
+
+    await writeCacheGraphArchive(archive, archivePath);
+    const text = await readFile(archivePath, "utf8");
+    const restored = expectOkArchive(await readCacheGraphArchive(archivePath));
+
+    expect(text).not.toContain('\n  "');
+    expect(restored).toEqual(archive);
+  });
+
+  it("allows detail rows to be omitted from a summary-first archive", async () => {
+    const archivePath = await tempArchivePath();
+    const archive = archiveFixture({ rows: undefined });
+
+    await writeCacheGraphArchive(archive, archivePath);
+    const restored = expectOkArchive(await readCacheGraphArchive(archivePath));
+
+    expect(restored.summaries).toEqual(archive.summaries);
+    expect(restored.rows).toBeUndefined();
   });
 
   it("returns rebuild when the archive is missing", async () => {

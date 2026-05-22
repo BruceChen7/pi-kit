@@ -11,6 +11,7 @@ import {
 } from "./all-repo-metrics.ts";
 import {
   type ArchivedMetricRow,
+  type ArchiveSummaryRow,
   CACHE_GRAPH_ARCHIVE_SCHEMA_VERSION,
   type CacheGraphArchive,
   readCacheGraphArchive,
@@ -46,6 +47,7 @@ export type CollectArchivedCacheMetricsOptions = {
 
 type ParsedSessionFile = {
   cursor: SessionCursor;
+  summary: ArchiveSummaryRow;
   rows: ArchivedMetricRow[];
   metrics: CacheSessionMetrics;
   loadedRows: number;
@@ -56,12 +58,18 @@ type ParsedSessionFile = {
 type CollectionState = {
   metricsList: CacheSessionMetrics[];
   nextCursors: SessionCursor[];
+  nextSummaries: ArchiveSummaryRow[];
   nextRows: ArchivedMetricRow[];
   diagnostics: CacheGraphArchiveDiagnostics;
 };
 
 type SessionArchiveAction =
-  | { kind: "reuse"; cursor: SessionCursor; rows: ArchivedMetricRow[] }
+  | {
+      kind: "reuse";
+      cursor: SessionCursor;
+      summary: ArchiveSummaryRow;
+      rows: ArchivedMetricRow[];
+    }
   | {
       kind: "scan";
       cursor?: SessionCursor;
@@ -87,7 +95,8 @@ export async function collectAllRepoCacheMetricsWithArchive(
   const sessionFiles = findAllRepoSessionFiles(options);
   const archiveRead = await readUsableArchive(options.archivePath);
   const archive = archiveRead.archive;
-  const archiveRowsBySession = rowsBySessionFileId(archive.rows);
+  const archiveRowsBySession = rowsBySessionFileId(archive.rows ?? []);
+  const archiveSummariesBySession = summariesBySessionFileId(archive.summaries);
   const archiveCursorsBySession = cursorsBySessionFileId(archive.cursors);
   const collection = emptyCollectionState(archiveRead.rebuildReason);
 
@@ -95,10 +104,16 @@ export async function collectAllRepoCacheMetricsWithArchive(
     const sessionFileId = sessionFileIdFor(file);
     const cursor = archiveCursorsBySession.get(sessionFileId);
     const rows = archiveRowsBySession.get(sessionFileId) ?? [];
+    const summary = archiveSummariesBySession.get(sessionFileId);
 
-    const action = planSessionArchiveAction(file, cursor, rows);
+    const action = planSessionArchiveAction(file, cursor, summary, rows);
     if (action.kind === "reuse") {
-      addArchivedSession(collection, action.cursor, action.rows);
+      addArchivedSession(
+        collection,
+        action.cursor,
+        action.summary,
+        action.rows,
+      );
       continue;
     }
 
@@ -118,6 +133,7 @@ export async function collectAllRepoCacheMetricsWithArchive(
   const nextArchive = createArchive(
     lookbackDays,
     collection.nextCursors,
+    collection.nextSummaries,
     collection.nextRows,
     archive,
   );
@@ -132,22 +148,38 @@ export async function collectAllRepoCacheMetricsWithArchive(
 function planSessionArchiveAction(
   file: SessionFileCandidate,
   cursor: SessionCursor | undefined,
+  summary: ArchiveSummaryRow | undefined,
   rows: ArchivedMetricRow[],
 ): SessionArchiveAction {
-  if (cursor && isUnchangedSessionFile(file, cursor)) {
-    return { kind: "reuse", cursor, rows };
+  if (!cursor || !summary) {
+    return { kind: "scan", cursor, archivedRows: rows };
+  }
+  if (!hasCompleteArchivedRows(summary, rows)) {
+    return { kind: "scan", archivedRows: [] };
+  }
+  if (isUnchangedSessionFile(file, cursor)) {
+    return { kind: "reuse", cursor, summary, rows };
   }
   return { kind: "scan", cursor, archivedRows: rows };
+}
+
+function hasCompleteArchivedRows(
+  summary: ArchiveSummaryRow,
+  rows: ArchivedMetricRow[],
+): boolean {
+  return rows.length === summary.messageCount;
 }
 
 function addArchivedSession(
   collection: CollectionState,
   cursor: SessionCursor,
+  summary: ArchiveSummaryRow,
   rows: ArchivedMetricRow[],
 ): void {
   collection.diagnostics.sessionFilesLoadedFromArchive += 1;
   collection.diagnostics.metricsLoadedFromArchive += rows.length;
   collection.nextCursors.push(cursor);
+  collection.nextSummaries.push(summary);
   collection.nextRows.push(...rows);
   collection.metricsList.push(metricsFromRows(rows));
 }
@@ -166,6 +198,7 @@ function addParsedSession(
   collection.diagnostics.metricsParsedFromSessions +=
     parsed.rows.length - parsed.loadedRows;
   collection.nextCursors.push(parsed.cursor);
+  collection.nextSummaries.push(parsed.summary);
   collection.nextRows.push(...parsed.rows);
   collection.metricsList.push(parsed.metrics);
 }
@@ -180,7 +213,7 @@ async function readUsableArchive(
   const result = await readCacheGraphArchive(archivePath);
   if (result.status === "ok") return { archive: result.archive };
   return {
-    archive: createArchive(DEFAULT_LOOKBACK_DAYS, [], []),
+    archive: createArchive(DEFAULT_LOOKBACK_DAYS, [], [], []),
     rebuildReason: result.reason,
   };
 }
@@ -256,6 +289,7 @@ function collectAppendedMetrics(
 
   return {
     cursor: cursorFromSessionFile(file, sessionFileId, entries),
+    summary: summaryFromRows(sessionFileId, file.repoSlug, rows),
     rows,
     metrics: metricsFromRows(rows),
     loadedRows: archivedRows.length,
@@ -280,6 +314,7 @@ function collectFullSessionMetrics(
 
   return {
     cursor: cursorFromSessionFile(file, sessionFileId, entries),
+    summary: summaryFromRows(sessionFileId, file.repoSlug, rows),
     rows,
     metrics,
     loadedRows: 0,
@@ -291,6 +326,7 @@ function collectFullSessionMetrics(
 function createArchive(
   lookbackDays: number,
   cursors: SessionCursor[],
+  summaries: ArchiveSummaryRow[],
   rows: ArchivedMetricRow[],
   previous?: CacheGraphArchive,
 ): CacheGraphArchive {
@@ -303,6 +339,7 @@ function createArchive(
       lookbackDays,
     },
     cursors,
+    summaries,
     rows,
   };
 }
@@ -380,6 +417,40 @@ function cursorsBySessionFileId(
   return new Map(cursors.map((cursor) => [cursor.sessionFileId, cursor]));
 }
 
+function summariesBySessionFileId(
+  summaries: ArchiveSummaryRow[],
+): Map<string, ArchiveSummaryRow> {
+  return new Map(summaries.map((summary) => [summary.sessionFileId, summary]));
+}
+
+function summaryFromRows(
+  sessionFileId: string,
+  repoSlug: string,
+  rows: ArchivedMetricRow[],
+): ArchiveSummaryRow {
+  const first = rows[0];
+  const last = rows.at(-1);
+  return {
+    sessionFileId,
+    repoSlug,
+    firstTimestamp: first?.timestamp ?? "",
+    lastTimestamp: last?.timestamp ?? "",
+    messageCount: rows.length,
+    input: sumRows(rows, "input"),
+    output: sumRows(rows, "output"),
+    cacheRead: sumRows(rows, "cacheRead"),
+    cacheWrite: sumRows(rows, "cacheWrite"),
+    totalTokens: sumRows(rows, "totalTokens"),
+  };
+}
+
+function sumRows(
+  rows: ArchivedMetricRow[],
+  field: "input" | "output" | "cacheRead" | "cacheWrite" | "totalTokens",
+): number {
+  return rows.reduce((sum, row) => sum + row[field], 0);
+}
+
 function archiveRowFromMetric(
   sessionFileId: string,
   metric: AssistantUsageMetric,
@@ -437,6 +508,7 @@ function emptyCollectionState(
   return {
     metricsList: [],
     nextCursors: [],
+    nextSummaries: [],
     nextRows: [],
     diagnostics: {
       filesScanned: 0,

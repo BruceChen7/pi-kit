@@ -360,13 +360,17 @@ export const sendInput = async (
   source: string,
 ) => harness.emit("input", { text, source }, ctx);
 
+export type AgentPromptResult = {
+  systemPrompt: string;
+};
+
 export const sendAgentPrompt = async (
   harness: ReturnType<typeof buildHarness>,
   ctx: TestCtx,
   prompt: string,
   intentFeedback?: unknown,
-) =>
-  harness.emit(
+): Promise<AgentPromptResult> => {
+  const result = await harness.emit(
     "before_agent_start",
     {
       prompt,
@@ -375,6 +379,8 @@ export const sendAgentPrompt = async (
     },
     ctx,
   );
+  return result as AgentPromptResult;
+};
 
 export const commitWithoutBranchPrompt = "commit and no extra branch";
 export const directActTodoGuidance =

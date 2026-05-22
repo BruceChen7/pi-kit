@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { FILE_WATCHER_CONTROL_CHANNEL } from "../shared/internal-events.ts";
 import fileWatcherExtension, {
   buildMarkerRegex,
+  formatPromptMessage,
   isBinary,
   parseDelay,
   parsePrompts,
@@ -14,42 +15,54 @@ import fileWatcherExtension, {
   planFileChange,
 } from "./index.ts";
 
+const MARKER = "#pi!";
+
+function parsedPrompt(text: string, lineNumber: number, delayMs = 0) {
+  return { text, delayMs, lineNumber };
+}
+
 describe("file-watcher prompt parsing", () => {
   it.each([
-    ["// refactor to async #pi!", [{ text: "refactor to async", delayMs: 0 }]],
-    ["# rename variable #pi!", [{ text: "rename variable", delayMs: 0 }]],
-    ["-- optimise query #pi!", [{ text: "optimise query", delayMs: 0 }]],
+    ["// refactor to async #pi!", [parsedPrompt("refactor to async", 1)]],
+    ["# rename variable #pi!", [parsedPrompt("rename variable", 1)]],
+    ["-- optimise query #pi!", [parsedPrompt("optimise query", 1)]],
     ["just a normal line", []],
-    ["// do something #PI!", [{ text: "do something", delayMs: 0 }]],
+    ["// do something #PI!", [parsedPrompt("do something", 1)]],
     [" *   // refactor this #pi!", []],
     [" * fix something #pi!", []],
   ])("parses immediate prompt from %s", (content, expected) => {
-    expect(parsePrompts(content, "#pi!")).toEqual(expected);
+    expect(parsePrompts(content, MARKER)).toEqual(expected);
   });
 
   it("parses multiple prompt lines", () => {
-    expect(parsePrompts("// fix this #pi!\n// also that #pi!", "#pi!")).toEqual(
-      [
-        { text: "fix this", delayMs: 0 },
-        { text: "also that", delayMs: 0 },
-      ],
+    expect(parsePrompts("// fix this #pi!\n// also that #pi!", MARKER)).toEqual(
+      [parsedPrompt("fix this", 1), parsedPrompt("also that", 2)],
     );
   });
 
+  it("preserves source line numbers across skipped lines", () => {
+    expect(
+      parsePrompts(
+        "const a = 1;\n\n// update this #pi!\n * ignored #pi!",
+        MARKER,
+      ),
+    ).toEqual([parsedPrompt("update this", 3)]);
+  });
+
   it.each([
-    ["// refactor #pi! @5m", { text: "refactor", delayMs: 5 * 60_000 }],
-    ["// review #pi! @2h", { text: "review", delayMs: 2 * 3_600_000 }],
-    ["// quick fix #pi! @30s", { text: "quick fix", delayMs: 30_000 }],
-    ["// refactor #pi! @1h30m", { text: "refactor", delayMs: 5_400_000 }],
-    ["// fix #pi! @badspec", { text: "fix", delayMs: 0 }],
+    ["// refactor #pi! @5m", parsedPrompt("refactor", 1, 5 * 60_000)],
+    ["// review #pi! @2h", parsedPrompt("review", 1, 2 * 3_600_000)],
+    ["// quick fix #pi! @30s", parsedPrompt("quick fix", 1, 30_000)],
+    ["// refactor #pi! @1h30m", parsedPrompt("refactor", 1, 5_400_000)],
+    ["// fix #pi! @badspec", parsedPrompt("fix", 1)],
   ])("parses deferred prompt from %s", (content, expected) => {
-    expect(parsePrompts(content, "#pi!")).toEqual([expected]);
+    expect(parsePrompts(content, MARKER)).toEqual([expected]);
   });
 
   it("escapes custom marker text when building marker regex", () => {
     expect("// do it #go?".match(buildMarkerRegex("#go?"))?.[1]).toBe("do it");
     expect(parsePrompts("// do it #go?", "#go?")).toEqual([
-      { text: "do it", delayMs: 0 },
+      parsedPrompt("do it", 1),
     ]);
   });
 });
@@ -87,26 +100,46 @@ describe("file-watcher delay parsing", () => {
 
 describe("file-watcher core planning", () => {
   it("plans immediate and deferred prompts from file content", () => {
-    expect(planFileChange("// now #pi!\n// later #pi! @5m", "#pi!")).toEqual({
-      immediateTexts: ["now"],
-      deferred: [{ text: "later", delayMs: 5 * 60_000 }],
+    expect(planFileChange("// now #pi!\n// later #pi! @5m", MARKER)).toEqual({
+      immediate: [parsedPrompt("now", 1)],
+      deferred: [parsedPrompt("later", 2, 5 * 60_000)],
     });
   });
 
   it("plans deferred prompts to fire together at the longest delay", () => {
     expect(
       planDeferredPrompts(
-        [
-          { text: "soon", delayMs: 30_000 },
-          { text: "later", delayMs: 5 * 60_000 },
-        ],
+        [parsedPrompt("soon", 2, 30_000), parsedPrompt("later", 8, 5 * 60_000)],
         1_000,
       ),
     ).toEqual({
-      texts: ["soon", "later"],
+      prompts: [
+        parsedPrompt("soon", 2, 30_000),
+        parsedPrompt("later", 8, 5 * 60_000),
+      ],
       delayMs: 5 * 60_000,
       fireAt: 301_000,
     });
+  });
+});
+
+describe("file-watcher prompt message formatting", () => {
+  it("includes the file path and each prompt source line", () => {
+    expect(
+      formatPromptMessage(
+        [
+          parsedPrompt("first instruction", 12),
+          parsedPrompt("second instruction", 48),
+        ],
+        "/repo/src/file.ts",
+        MARKER,
+      ),
+    ).toBe(
+      "File: /repo/src/file.ts\n\n" +
+        "Line 12: first instruction\n" +
+        "Line 48: second instruction\n\n" +
+        "After completing the above, remove the `#pi!` comment(s) from the file.",
+    );
   });
 });
 

@@ -67,7 +67,6 @@ export const DEFAULT_SUPPORTED_EXTENSIONS = [
 
 const DEFAULT_PROMPT_REQUIREMENTS = [
   "先遵循 me-code-simplifier、improve-codebase-architecture、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则，再遵循以下附加约束",
-  "这是自动后处理任务，不要创建 plan",
   "仅处理 modified_files 中列出的文件",
   "先读取 modified_files 中每个文件的完整内容；不要只看 diff 或刚改动的片段",
   "用 software-design-philosophy 的复杂度视角审查：降低 change amplification、cognitive load 和 unknown unknowns",

@@ -38,6 +38,7 @@ const DEFAULT_IGNORED_DIRS = new Set([
 export interface ParsedPrompt {
   text: string;
   delayMs: number;
+  lineNumber: number;
 }
 
 type DeferredJob = {
@@ -57,12 +58,12 @@ type WatcherState = {
 };
 
 export type FileChangePlan = {
-  immediateTexts: string[];
+  immediate: ParsedPrompt[];
   deferred: ParsedPrompt[];
 };
 
 export type DeferredPromptPlan = {
-  texts: string[];
+  prompts: ParsedPrompt[];
   delayMs: number;
   fireAt: number;
 };
@@ -149,7 +150,7 @@ export function parsePrompts(content: string, marker: string): ParsedPrompt[] {
   const regex = buildMarkerRegex(marker);
   const results: ParsedPrompt[] = [];
 
-  for (const line of content.split("\n")) {
+  for (const [index, line] of content.split("\n").entries()) {
     if (isJsDocContinuationLine(line)) {
       continue;
     }
@@ -165,7 +166,7 @@ export function parsePrompts(content: string, marker: string): ParsedPrompt[] {
     }
 
     const delayMs = match[2] ? (parseDelay(match[2]) ?? 0) : 0;
-    results.push({ text, delayMs });
+    results.push({ text, delayMs, lineNumber: index + 1 });
   }
 
   return results;
@@ -176,18 +177,18 @@ export function isBinary(buffer: Buffer): boolean {
 }
 
 function groupPromptsBySchedule(prompts: ParsedPrompt[]): FileChangePlan {
-  const immediateTexts: string[] = [];
+  const immediate: ParsedPrompt[] = [];
   const deferred: ParsedPrompt[] = [];
 
   for (const prompt of prompts) {
     if (prompt.delayMs === 0) {
-      immediateTexts.push(prompt.text);
+      immediate.push(prompt);
     } else {
       deferred.push(prompt);
     }
   }
 
-  return { immediateTexts, deferred };
+  return { immediate, deferred };
 }
 
 export function planFileChange(
@@ -203,7 +204,7 @@ export function planDeferredPrompts(
 ): DeferredPromptPlan {
   const delayMs = Math.max(...deferred.map((prompt) => prompt.delayMs));
   return {
-    texts: deferred.map((prompt) => prompt.text),
+    prompts: deferred,
     delayMs,
     fireAt: nowMs + delayMs,
   };
@@ -297,8 +298,28 @@ function closeAllWatchers(state: WatcherState): void {
   state.debounceTimers.clear();
 }
 
+export function formatPromptMessage(
+  prompts: ParsedPrompt[],
+  filePath: string,
+  marker: string,
+): string {
+  const instruction = prompts.map(formatPromptInstruction).join("\n");
+  return (
+    `File: ${filePath}\n\n${instruction}\n\n` +
+    `After completing the above, remove the \`${marker}\` comment(s) from the file.`
+  );
+}
+
+function formatPromptInstruction(prompt: ParsedPrompt): string {
+  return `Line ${prompt.lineNumber}: ${prompt.text}`;
+}
+
+function formatPromptPreview(prompt: ParsedPrompt): string {
+  return prompt.text.slice(0, 60) + (prompt.text.length > 60 ? "…" : "");
+}
+
 function submitPrompts(
-  prompts: string[],
+  prompts: ParsedPrompt[],
   filePath: string,
   state: WatcherState,
   ctx: ExtensionContext | null,
@@ -306,11 +327,8 @@ function submitPrompts(
 ): void {
   closeAllWatchers(state);
 
-  const instruction = prompts.join("\n");
-  const message =
-    `File: ${filePath}\n\n${instruction}\n\n` +
-    `After completing the above, remove the \`${state.activeMarker}\` comment(s) from the file.`;
-  const preview = prompts[0].slice(0, 60) + (prompts[0].length > 60 ? "…" : "");
+  const message = formatPromptMessage(prompts, filePath, state.activeMarker);
+  const preview = formatPromptPreview(prompts[0]);
   const basename = path.basename(filePath);
 
   if (!ctx || ctx.isIdle()) {
@@ -369,12 +387,12 @@ function handleFileChange(
   const plan = planFileChange(buffer.toString("utf-8"), state.activeMarker);
   cancelDeferredJob(filePath, state);
 
-  if (plan.immediateTexts.length === 0 && plan.deferred.length === 0) {
+  if (plan.immediate.length === 0 && plan.deferred.length === 0) {
     return;
   }
 
-  if (plan.immediateTexts.length > 0) {
-    submitPrompts(plan.immediateTexts, filePath, state, ctx, pi);
+  if (plan.immediate.length > 0) {
+    submitPrompts(plan.immediate, filePath, state, ctx, pi);
   }
 
   if (plan.deferred.length === 0) {
@@ -384,7 +402,7 @@ function handleFileChange(
   const deferredPlan = planDeferredPrompts(plan.deferred);
   const timer = setTimeout(() => {
     state.deferredJobs.delete(filePath);
-    submitPrompts(deferredPlan.texts, filePath, state, null, pi);
+    submitPrompts(deferredPlan.prompts, filePath, state, null, pi);
   }, deferredPlan.delayMs);
 
   state.deferredJobs.set(filePath, {

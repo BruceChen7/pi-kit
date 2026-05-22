@@ -216,6 +216,7 @@ describe("normalizeConfig", () => {
       abortBehavior: "skip",
       autoRun: true,
       confirmBeforeRun: false,
+      skipExtensionPrompts: true,
     });
   });
 
@@ -236,6 +237,7 @@ describe("normalizeConfig", () => {
       abortBehavior: "skip",
       autoRun: true,
       confirmBeforeRun: false,
+      skipExtensionPrompts: true,
     });
   });
 
@@ -249,6 +251,15 @@ describe("normalizeConfig", () => {
 
     expect(config.autoRun).toBe(false);
     expect(config.confirmBeforeRun).toBe(true);
+  });
+
+  it("normalizes extension-origin prompt skipping", () => {
+    expect(normalizeConfig({}).skipExtensionPrompts).toBe(true);
+    expect(
+      normalizeConfig({
+        agentEndCodeSimplifier: { skipExtensionPrompts: false },
+      }).skipExtensionPrompts,
+    ).toBe(false);
   });
 
   it("normalizes abort behavior", () => {
@@ -416,17 +427,35 @@ describe("agent-end code simplifier lifecycle", () => {
       modifiedPaths: ["src/a.ts"],
       suppressNextPrompt: true,
       runGeneration: 7,
+      currentInputSource: "extension",
     };
 
     expect(resetLifecycleForNewSession(activeState)).toEqual({
       modifiedPaths: [],
       suppressNextPrompt: false,
       runGeneration: 7,
+      currentInputSource: null,
     });
     expect(resetLifecycleForAgentStart(activeState)).toEqual({
       modifiedPaths: [],
       suppressNextPrompt: true,
       runGeneration: 7,
+      currentInputSource: "extension",
+    });
+  });
+
+  it("records prompt source while preserving it across agent_start", () => {
+    const state = createAgentEndCodeSimplifierLifecycleState();
+    const transition = decideInputLifecycleTransition(state, {
+      source: "extension",
+      text: "plugin prompt",
+    });
+
+    expect(transition.state).toMatchObject({
+      currentInputSource: "extension",
+    });
+    expect(resetLifecycleForAgentStart(transition.state)).toMatchObject({
+      currentInputSource: "extension",
     });
   });
 
@@ -493,6 +522,8 @@ describe("decideAgentEndSimplifierAction", () => {
     turnAborted: false,
     autoRun: true,
     confirmBeforeRun: false,
+    inputSource: "interactive",
+    skipExtensionPrompts: true,
   };
 
   it.each([
@@ -538,6 +569,27 @@ describe("decideAgentEndSimplifierAction", () => {
       reason: "this turn was aborted",
       supportedPaths: ["src/a.ts"],
     });
+  });
+
+  it("keeps manual retry available for extension-origin prompts by default", () => {
+    expect(
+      decideAgentEndSimplifierAction({
+        ...baseInput,
+        inputSource: "extension",
+      }),
+    ).toMatchObject({
+      kind: "notify_manual_available",
+      reason: "this turn was started by an extension prompt",
+      supportedPaths: ["src/a.ts"],
+    });
+
+    expect(
+      decideAgentEndSimplifierAction({
+        ...baseInput,
+        inputSource: "extension",
+        skipExtensionPrompts: false,
+      }),
+    ).toEqual({ kind: "send", supportedPaths: ["src/a.ts"] });
   });
 
   it("sends directly by default and requests confirmation when configured", () => {
@@ -668,6 +720,39 @@ describe("extension diagnostics", () => {
     expectSimplifierPromptSent(
       { sendMessage, sendUserMessage },
       "src/deferred-auto.ts",
+    );
+  });
+
+  it("skips automatic simplifier prompts after extension-origin turns", async () => {
+    mockExtensionDependencies();
+
+    const { handlers, sendMessage, sendUserMessage } =
+      await createExtensionHarness();
+
+    const ctx = createBasicTestContext();
+
+    await handlers.get("session_start")?.({}, ctx);
+    await handlers.get("input")?.(
+      { source: "extension", text: "plugin follow-up" },
+      ctx,
+    );
+    await handlers.get("agent_start")?.({}, ctx);
+    await trackSuccessfulToolResult(
+      handlers,
+      { path: "src/extension-origin.ts" },
+      ctx,
+    );
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Skipped me-code-simplifier"),
+      "info",
+    );
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Ctrl+Alt+Y"),
+      "info",
     );
   });
 

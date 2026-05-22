@@ -67,8 +67,16 @@ export const DEFAULT_SUPPORTED_EXTENSIONS = [
   ".lua",
 ] as const;
 
+const DEFAULT_PROMPT_SKILLS = [
+  "me-code-simplifier",
+  "boundaries-refactor",
+  "improve-codebase-architecture",
+  "software-design-philosophy",
+  "push-ifs-up-fors-down",
+] as const;
+
 const DEFAULT_PROMPT_REQUIREMENTS = [
-  "先遵循 me-code-simplifier、improve-codebase-architecture、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则，再遵循以下任务边界",
+  `先遵循 ${DEFAULT_PROMPT_SKILLS.join("、")} skills 中定义的规则，再遵循以下任务边界`,
   "这是自动后处理任务：直接做行为不变的简化；不要扩大范围",
   "仅处理 modified_files 中列出的文件；先读取每个文件的完整内容，不要只看 diff 或局部片段",
   "用 software-design-philosophy 的复杂度视角审查 change amplification、cognitive load 和 unknown unknowns",

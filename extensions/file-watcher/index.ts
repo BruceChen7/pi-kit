@@ -1,9 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   FILE_WATCHER_CONTROL_CHANNEL,
   type PiKitFileWatcherControlEvent,
@@ -13,6 +10,7 @@ import { createLogger } from "../shared/logger.ts";
 const DEFAULT_MARKER = "#pi!";
 const FILE_SIZE_LIMIT_BYTES = 1_048_576;
 const WATCH_DEBOUNCE_MS = 300;
+const PROMPT_BATCH_MS = 1_000;
 const WATCH_USAGE =
   "Usage: /watch start [path] | stop [path] | status | marker <marker> | cancel [path]";
 const WATCH_MARKER_USAGE = "Usage: /watch marker <marker>";
@@ -48,6 +46,11 @@ type DeferredJob = {
   fireAt: number;
 };
 
+export type QueuedPrompt = {
+  filePath: string;
+  prompt: ParsedPrompt;
+};
+
 type WatcherState = {
   watchedPaths: Map<string, fs.FSWatcher>;
   pendingRestart: Set<string>;
@@ -55,6 +58,9 @@ type WatcherState = {
   debounceTimers: Map<string, ReturnType<typeof setTimeout>>;
   ignoredDirs: Set<string>;
   deferredJobs: Map<string, DeferredJob>;
+  pendingPrompts: Map<string, QueuedPrompt>;
+  processedPromptKeys: Map<string, Set<string>>;
+  batchTimer: ReturnType<typeof setTimeout> | null;
 };
 
 export type FileChangePlan = {
@@ -78,9 +84,66 @@ export type WatchCommand =
 
 type NotifyLevel = "info" | "warning" | "error";
 
+type FileWatcherContext = {
+  cwd: string;
+  hasUI?: boolean;
+  ui: {
+    notify(message: string, level?: NotifyLevel): void;
+  };
+  isIdle(): boolean;
+};
+
 type EventBus = {
   on?: (channel: string, handler: (event: unknown) => void) => void;
 };
+
+type UserMessageOptions = {
+  deliverAs?: "steer" | "followUp";
+};
+
+type WatchCommandHandler = (
+  args: string | undefined,
+  ctx: FileWatcherContext,
+) => Promise<void> | void;
+
+type FlagOptions = {
+  description?: string;
+  type: "boolean" | "string";
+  default?: boolean | string;
+};
+
+type WatchCommandRegistration = {
+  description?: string;
+  handler: WatchCommandHandler;
+};
+
+export type FileWatcherHost = {
+  events?: EventBus;
+  registerFlag(name: string, options: FlagOptions): void;
+  getFlag(name: string): boolean | string | undefined;
+  onAgentEnd(
+    handler: (event: unknown, ctx: FileWatcherContext) => Promise<void> | void,
+  ): void;
+  onSessionShutdown(handler: () => Promise<void> | void): void;
+  registerCommand(name: string, options: WatchCommandRegistration): void;
+  sendUserMessage(content: string, options?: UserMessageOptions): void;
+};
+
+function fileWatcherHostFromExtensionApi(api: ExtensionAPI): FileWatcherHost {
+  return {
+    events: api.events,
+    registerFlag: api.registerFlag.bind(api),
+    getFlag: api.getFlag.bind(api),
+    onAgentEnd(handler) {
+      api.on("agent_end", handler);
+    },
+    onSessionShutdown(handler) {
+      api.on("session_shutdown", handler);
+    },
+    registerCommand: api.registerCommand.bind(api),
+    sendUserMessage: api.sendUserMessage.bind(api),
+  };
+}
 
 let log: ReturnType<typeof createLogger> | null = null;
 
@@ -230,7 +293,7 @@ export function parseWatchCommand(args: string | undefined): WatchCommand {
 }
 
 function notify(
-  ctx: ExtensionContext | null,
+  ctx: FileWatcherContext | null,
   message: string,
   level: NotifyLevel,
 ): void {
@@ -264,6 +327,64 @@ function cancelDeferredJob(filePath: string, state: WatcherState): void {
   state.deferredJobs.delete(filePath);
 }
 
+function promptKey(filePath: string, prompt: ParsedPrompt): string {
+  return `${filePath}\0${prompt.lineNumber}\0${prompt.text}`;
+}
+
+function reconcileProcessedPromptKeys(
+  filePath: string,
+  prompts: ParsedPrompt[],
+  state: WatcherState,
+): void {
+  const currentKeys = new Set(
+    prompts.map((prompt) => promptKey(filePath, prompt)),
+  );
+  const processedKeys = state.processedPromptKeys.get(filePath);
+  if (!processedKeys) {
+    return;
+  }
+
+  for (const key of [...processedKeys]) {
+    if (currentKeys.has(key)) {
+      continue;
+    }
+
+    processedKeys.delete(key);
+    state.pendingPrompts.delete(key);
+  }
+
+  if (processedKeys.size === 0) {
+    state.processedPromptKeys.delete(filePath);
+  }
+}
+
+function hasProcessedPromptKey(
+  filePath: string,
+  prompt: ParsedPrompt,
+  state: WatcherState,
+): boolean {
+  return (
+    state.processedPromptKeys.get(filePath)?.has(promptKey(filePath, prompt)) ??
+    false
+  );
+}
+
+function markPromptProcessedIfNew(
+  filePath: string,
+  prompt: ParsedPrompt,
+  state: WatcherState,
+): string | null {
+  const key = promptKey(filePath, prompt);
+  if (state.processedPromptKeys.get(filePath)?.has(key)) {
+    return null;
+  }
+
+  const processedKeys = state.processedPromptKeys.get(filePath) ?? new Set();
+  processedKeys.add(key);
+  state.processedPromptKeys.set(filePath, processedKeys);
+  return key;
+}
+
 function closeWatchers(watchers: Iterable<fs.FSWatcher>): void {
   for (const watcher of watchers) {
     try {
@@ -286,16 +407,13 @@ function clearDeferredJobs(jobs: Iterable<DeferredJob>): void {
   }
 }
 
-function closeAllWatchers(state: WatcherState): void {
-  for (const watchedPath of state.watchedPaths.keys()) {
-    state.pendingRestart.add(watchedPath);
+function clearBatchTimer(state: WatcherState): void {
+  if (!state.batchTimer) {
+    return;
   }
 
-  closeWatchers(state.watchedPaths.values());
-
-  state.watchedPaths.clear();
-  clearTimers(state.debounceTimers.values());
-  state.debounceTimers.clear();
+  clearTimeout(state.batchTimer);
+  state.batchTimer = null;
 }
 
 export function formatPromptMessage(
@@ -310,6 +428,30 @@ export function formatPromptMessage(
   );
 }
 
+export function formatBatchedPromptMessage(
+  queuedPrompts: QueuedPrompt[],
+  marker: string,
+): string {
+  const promptsByFile = new Map<string, ParsedPrompt[]>();
+  for (const queued of queuedPrompts) {
+    const prompts = promptsByFile.get(queued.filePath) ?? [];
+    prompts.push(queued.prompt);
+    promptsByFile.set(queued.filePath, prompts);
+  }
+
+  const fileBlocks = [...promptsByFile.entries()].map(([filePath, prompts]) => {
+    const instructions = prompts
+      .map((prompt) => `- ${formatPromptInstruction(prompt)}`)
+      .join("\n");
+    return `File: ${filePath}\n${instructions}`;
+  });
+
+  return (
+    `Batched file-watcher prompts:\n\n${fileBlocks.join("\n\n")}\n\n` +
+    `After completing the above, remove the \`${marker}\` comment(s) from the file(s).`
+  );
+}
+
 function formatPromptInstruction(prompt: ParsedPrompt): string {
   return `Line ${prompt.lineNumber}: ${prompt.text}`;
 }
@@ -318,27 +460,75 @@ function formatPromptPreview(prompt: ParsedPrompt): string {
   return prompt.text.slice(0, 60) + (prompt.text.length > 60 ? "…" : "");
 }
 
-function submitPrompts(
-  prompts: ParsedPrompt[],
-  filePath: string,
+function flushPendingPrompts(
   state: WatcherState,
-  ctx: ExtensionContext | null,
-  pi: ExtensionAPI,
+  ctx: FileWatcherContext | null,
+  host: FileWatcherHost,
 ): void {
-  closeAllWatchers(state);
-
-  const message = formatPromptMessage(prompts, filePath, state.activeMarker);
-  const preview = formatPromptPreview(prompts[0]);
-  const basename = path.basename(filePath);
-
-  if (!ctx || ctx.isIdle()) {
-    notify(ctx, `Prompt detected in ${basename}: ${preview}`, "info");
-    pi.sendUserMessage(message);
+  if (state.pendingPrompts.size === 0) {
     return;
   }
 
-  notify(ctx, `Prompt queued (agent is busy): ${preview}`, "info");
-  pi.sendUserMessage(message, { deliverAs: "followUp" });
+  clearBatchTimer(state);
+
+  const queuedPrompts = [...state.pendingPrompts.values()];
+  state.pendingPrompts.clear();
+  const message = formatBatchedPromptMessage(queuedPrompts, state.activeMarker);
+  const preview = formatPromptPreview(queuedPrompts[0].prompt);
+
+  if (!ctx || ctx.isIdle()) {
+    notify(ctx, `Prompt batch detected: ${preview}`, "info");
+    host.sendUserMessage(message);
+    return;
+  }
+
+  notify(ctx, `Prompt batch queued (agent is busy): ${preview}`, "info");
+  host.sendUserMessage(message, { deliverAs: "followUp" });
+}
+
+function schedulePromptBatchFlush(
+  state: WatcherState,
+  ctx: FileWatcherContext | null,
+  host: FileWatcherHost,
+): void {
+  if (ctx && !ctx.isIdle()) {
+    return;
+  }
+
+  clearBatchTimer(state);
+  state.batchTimer = setTimeout(() => {
+    flushPendingPrompts(state, ctx, host);
+  }, PROMPT_BATCH_MS);
+}
+
+function enqueuePrompts(
+  prompts: ParsedPrompt[],
+  filePath: string,
+  state: WatcherState,
+  ctx: FileWatcherContext | null,
+  host: FileWatcherHost,
+): void {
+  let addedCount = 0;
+  for (const prompt of prompts) {
+    const key = markPromptProcessedIfNew(filePath, prompt, state);
+    if (!key) {
+      continue;
+    }
+
+    state.pendingPrompts.set(key, { filePath, prompt });
+    addedCount += 1;
+  }
+
+  if (addedCount === 0) {
+    return;
+  }
+
+  notify(
+    ctx,
+    `${addedCount} prompt(s) queued from ${path.basename(filePath)}`,
+    "info",
+  );
+  schedulePromptBatchFlush(state, ctx, host);
 }
 
 function formatDelay(delayMs: number): string {
@@ -359,8 +549,8 @@ function formatDelay(delayMs: number): string {
 function handleFileChange(
   filePath: string,
   state: WatcherState,
-  ctx: ExtensionContext | null,
-  pi: ExtensionAPI,
+  ctx: FileWatcherContext | null,
+  host: FileWatcherHost,
 ): void {
   let stat: fs.Stats;
   try {
@@ -385,6 +575,8 @@ function handleFileChange(
   }
 
   const plan = planFileChange(buffer.toString("utf-8"), state.activeMarker);
+  const allPrompts = [...plan.immediate, ...plan.deferred];
+  reconcileProcessedPromptKeys(filePath, allPrompts, state);
   cancelDeferredJob(filePath, state);
 
   if (plan.immediate.length === 0 && plan.deferred.length === 0) {
@@ -392,29 +584,32 @@ function handleFileChange(
   }
 
   if (plan.immediate.length > 0) {
-    submitPrompts(plan.immediate, filePath, state, ctx, pi);
+    enqueuePrompts(plan.immediate, filePath, state, ctx, host);
   }
 
-  if (plan.deferred.length === 0) {
+  const deferred = plan.deferred.filter(
+    (prompt) => !hasProcessedPromptKey(filePath, prompt, state),
+  );
+  if (deferred.length === 0) {
     return;
   }
 
-  const deferredPlan = planDeferredPrompts(plan.deferred);
+  const deferredPlan = planDeferredPrompts(deferred);
   const timer = setTimeout(() => {
     state.deferredJobs.delete(filePath);
-    submitPrompts(deferredPlan.prompts, filePath, state, null, pi);
+    enqueuePrompts(deferredPlan.prompts, filePath, state, ctx, host);
   }, deferredPlan.delayMs);
 
   state.deferredJobs.set(filePath, {
     filePath,
     timer,
-    prompts: plan.deferred,
+    prompts: deferred,
     fireAt: deferredPlan.fireAt,
   });
 
   notify(
     ctx,
-    `${plan.deferred.length} prompt(s) in ${path.basename(filePath)} scheduled in ${formatDelay(deferredPlan.delayMs)}`,
+    `${deferred.length} prompt(s) in ${path.basename(filePath)} scheduled in ${formatDelay(deferredPlan.delayMs)}`,
     "info",
   );
 }
@@ -422,8 +617,8 @@ function handleFileChange(
 function openWatcher(
   absPath: string,
   state: WatcherState,
-  ctx: ExtensionContext | null,
-  pi: ExtensionAPI,
+  ctx: FileWatcherContext | null,
+  host: FileWatcherHost,
 ): void {
   const eventHandler = (_eventType: string, filename: string | null) => {
     if (!filename) {
@@ -442,7 +637,7 @@ function openWatcher(
 
     const timer = setTimeout(() => {
       state.debounceTimers.delete(filePath);
-      handleFileChange(filePath, state, ctx, pi);
+      handleFileChange(filePath, state, ctx, host);
     }, WATCH_DEBOUNCE_MS);
 
     state.debounceTimers.set(filePath, timer);
@@ -472,11 +667,11 @@ function openWatcher(
 
 function reopenAllWatchers(
   state: WatcherState,
-  ctx: ExtensionContext,
-  pi: ExtensionAPI,
+  ctx: FileWatcherContext,
+  host: FileWatcherHost,
 ): void {
   for (const absPath of state.pendingRestart) {
-    openWatcher(absPath, state, ctx, pi);
+    openWatcher(absPath, state, ctx, host);
   }
   state.pendingRestart.clear();
 }
@@ -488,8 +683,8 @@ function formatControlSourceSuffix(source: string | undefined): string {
 function startWatching(
   rawPath: string,
   state: WatcherState,
-  ctx: ExtensionContext | null,
-  pi: ExtensionAPI,
+  ctx: FileWatcherContext | null,
+  host: FileWatcherHost,
   source?: string,
 ): void {
   const absPath = resolveWatchPath(rawPath, ctx?.cwd);
@@ -504,7 +699,7 @@ function startWatching(
     return;
   }
 
-  openWatcher(absPath, state, ctx, pi);
+  openWatcher(absPath, state, ctx, host);
   notify(
     ctx,
     `Watching ${absPath} (marker: ${state.activeMarker})${formatControlSourceSuffix(source)}`,
@@ -515,7 +710,7 @@ function startWatching(
 function stopWatching(
   rawPath: string | undefined,
   state: WatcherState,
-  ctx: ExtensionContext | null,
+  ctx: FileWatcherContext | null,
   source?: string,
 ): void {
   if (!rawPath) {
@@ -586,6 +781,9 @@ function createWatcherState(
     debounceTimers: new Map(),
     ignoredDirs,
     deferredJobs: new Map(),
+    pendingPrompts: new Map(),
+    processedPromptKeys: new Map(),
+    batchTimer: null,
   };
 }
 
@@ -616,7 +814,7 @@ function formatDeferredJob(job: DeferredJob): string {
   return `  ${path.basename(job.filePath)} — fires in ${remaining}`;
 }
 
-function notifyStatus(state: WatcherState, ctx: ExtensionContext): void {
+function notifyStatus(state: WatcherState, ctx: FileWatcherContext): void {
   const lines: string[] = [];
   if (state.watchedPaths.size > 0) {
     const paths = [...state.watchedPaths.keys()].join("\n  ");
@@ -643,7 +841,7 @@ function notifyStatus(state: WatcherState, ctx: ExtensionContext): void {
 function cancelDeferredJobs(
   rawPath: string | undefined,
   state: WatcherState,
-  ctx: ExtensionContext,
+  ctx: FileWatcherContext,
 ): void {
   if (!rawPath) {
     if (state.deferredJobs.size === 0) {
@@ -676,10 +874,13 @@ function cleanupState(state: WatcherState): void {
   closeWatchers(state.watchedPaths.values());
   clearTimers(state.debounceTimers.values());
   clearDeferredJobs(state.deferredJobs.values());
+  clearBatchTimer(state);
 
   state.watchedPaths.clear();
   state.debounceTimers.clear();
   state.deferredJobs.clear();
+  state.pendingPrompts.clear();
+  state.processedPromptKeys.clear();
   state.pendingRestart.clear();
 }
 
@@ -696,19 +897,18 @@ function isFileWatcherControlEvent(
 }
 
 function registerFileWatcherControlEvents(
-  pi: ExtensionAPI,
+  host: FileWatcherHost,
   state: WatcherState,
 ): void {
-  const eventBus = pi.events as EventBus | undefined;
-  eventBus?.on?.(FILE_WATCHER_CONTROL_CHANNEL, (event) => {
+  host.events?.on?.(FILE_WATCHER_CONTROL_CHANNEL, (event) => {
     if (!isFileWatcherControlEvent(event)) {
       return;
     }
 
-    const ctx = event.ctx as ExtensionContext | null;
+    const ctx = event.ctx as FileWatcherContext | null;
     if (event.type === "file-watcher.start") {
       state.activeMarker = event.marker ?? state.activeMarker;
-      startWatching(event.path, state, ctx, pi, event.source);
+      startWatching(event.path, state, ctx, host, event.source);
       return;
     }
 
@@ -716,53 +916,54 @@ function registerFileWatcherControlEvents(
   });
 }
 
-export default function (pi: ExtensionAPI) {
+export function registerFileWatcher(host: FileWatcherHost) {
   log = createLogger("file-watcher", { stderr: null });
 
-  pi.registerFlag("marker", {
+  host.registerFlag("marker", {
     description: `Trigger marker for file-watcher (default: "${DEFAULT_MARKER}")`,
     type: "string",
     default: DEFAULT_MARKER,
   });
-  pi.registerFlag("watch", {
+  host.registerFlag("watch", {
     description: "Auto-start watching on launch. Optionally specify a path.",
     type: "string",
   });
-  pi.registerFlag("ignore", {
+  host.registerFlag("ignore", {
     description:
       "Extra directories to ignore, comma-separated and merged with defaults.",
     type: "string",
   });
 
   const marker =
-    (pi.getFlag("--marker") as string | undefined) ?? DEFAULT_MARKER;
-  const extraIgnore = pi.getFlag("--ignore") as string | undefined;
+    (host.getFlag("--marker") as string | undefined) ?? DEFAULT_MARKER;
+  const extraIgnore = host.getFlag("--ignore") as string | undefined;
   const state = createWatcherState(marker, extraIgnore);
-  registerFileWatcherControlEvents(pi, state);
+  registerFileWatcherControlEvents(host, state);
 
   const autoWatchPath = getAutoWatchPath();
   if (autoWatchPath) {
-    startWatching(autoWatchPath, state, null, pi);
+    startWatching(autoWatchPath, state, null, host);
   }
 
-  pi.on("agent_end", async (_event, ctx) => {
+  host.onAgentEnd(async (_event, ctx) => {
     if (state.pendingRestart.size > 0) {
-      reopenAllWatchers(state, ctx, pi);
+      reopenAllWatchers(state, ctx, host);
     }
+    flushPendingPrompts(state, ctx, host);
   });
 
-  pi.on("session_shutdown", async () => {
+  host.onSessionShutdown(async () => {
     cleanupState(state);
   });
 
-  pi.registerCommand("watch", {
+  host.registerCommand("watch", {
     description: `Control file watching. ${WATCH_USAGE}`,
     handler: async (args, ctx) => {
       const command = parseWatchCommand(args);
 
       switch (command.kind) {
         case "start":
-          startWatching(command.path, state, ctx, pi);
+          startWatching(command.path, state, ctx, host);
           break;
         case "stop":
           stopWatching(command.path, state, ctx);
@@ -787,4 +988,8 @@ export default function (pi: ExtensionAPI) {
       }
     },
   });
+}
+
+export default function (pi: ExtensionAPI) {
+  registerFileWatcher(fileWatcherHostFromExtensionApi(pi));
 }

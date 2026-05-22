@@ -44,7 +44,7 @@ describe("attachCacheGraphBridge", () => {
     const window = new FakeGlimpseWindow();
     attachCacheGraphBridge({
       window,
-      getMetrics: () => emptyMetrics,
+      getMetrics: async () => emptyMetrics,
       exportCsv: vi.fn(),
     });
 
@@ -59,7 +59,7 @@ describe("attachCacheGraphBridge", () => {
     const window = new FakeGlimpseWindow();
     attachCacheGraphBridge({
       window,
-      getMetrics: () => emptyMetrics,
+      getMetrics: async () => emptyMetrics,
       exportCsv: async () => {
         throw new Error("disk full");
       },
@@ -76,7 +76,7 @@ describe("attachCacheGraphBridge", () => {
     const window = new FakeGlimpseWindow();
     attachCacheGraphBridge({
       window,
-      getMetrics: () => emptyMetrics,
+      getMetrics: async () => emptyMetrics,
       exportCsv: async () => "/tmp/session.csv",
     });
 

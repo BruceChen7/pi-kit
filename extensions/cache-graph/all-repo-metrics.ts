@@ -8,10 +8,11 @@ import type { AssistantUsageMetric, CacheSessionMetrics } from "./types.ts";
 
 const DEFAULT_LOOKBACK_DAYS = 31;
 
-type SessionFileCandidate = {
+export type SessionFileCandidate = {
   filePath: string;
   repoSlug: string;
   mtimeMs: number;
+  sizeBytes: number;
 };
 
 export type CollectAllRepoCacheMetricsOptions = {
@@ -42,7 +43,7 @@ function collectMetricsForFile(
   }
 }
 
-function findAllRepoSessionFiles(
+export function findAllRepoSessionFiles(
   options: CollectAllRepoCacheMetricsOptions = {},
 ): SessionFileCandidate[] {
   const sessionsRoot = options.sessionsRoot ?? defaultSessionsRoot();
@@ -91,6 +92,7 @@ function sessionFileCandidateForEntry(
         filePath,
         repoSlug: formatRepoSlug(repoDirName),
         mtimeMs: stats.mtimeMs,
+        sizeBytes: stats.size,
       },
     ];
   } catch {
@@ -106,7 +108,7 @@ function listDirents(dirPath: string): fs.Dirent[] {
   }
 }
 
-function mergeCacheSessionMetrics(
+export function mergeCacheSessionMetrics(
   metricsList: CacheSessionMetrics[],
 ): CacheSessionMetrics {
   const allMessages = metricsList
@@ -122,7 +124,7 @@ function mergeCacheSessionMetrics(
   return metricsFromMessages(allMessages);
 }
 
-function metricsFromMessages(
+export function metricsFromMessages(
   allMessages: AssistantUsageMetric[],
 ): CacheSessionMetrics {
   const treeTotals = emptyTotals();

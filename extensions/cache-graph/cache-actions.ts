@@ -1,10 +1,10 @@
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
-import { collectAllRepoCacheMetrics } from "./all-repo-metrics.ts";
+import { collectAllRepoCacheMetricsWithArchive } from "./archive-metrics.ts";
 import { exportStatsCsv } from "./export.ts";
 import type { CacheSessionMetrics } from "./types.ts";
 
 export type CacheStatsActions = {
-  getMetrics: () => CacheSessionMetrics;
+  getMetrics: () => Promise<CacheSessionMetrics>;
   exportCsv: () => Promise<string>;
 };
 
@@ -17,12 +17,18 @@ export function createCacheStatsActions({
   cwd,
   sessionManager,
 }: CacheStatsActionsInput): CacheStatsActions {
-  const getMetrics = () => collectAllRepoCacheMetrics();
+  const getMetrics = collectArchivedMetrics;
 
   return {
     getMetrics,
-    exportCsv: () => exportStatsCsv(cwd, sessionManager, getMetrics()),
+    exportCsv: async () =>
+      exportStatsCsv(cwd, sessionManager, await getMetrics()),
   };
+}
+
+async function collectArchivedMetrics(): Promise<CacheSessionMetrics> {
+  const result = await collectAllRepoCacheMetricsWithArchive();
+  return result.metrics;
 }
 
 export function formatExportSuccess(filePath: string): string {

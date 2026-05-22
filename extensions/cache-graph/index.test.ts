@@ -3,6 +3,42 @@ import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("./archive-metrics.ts", () => ({
+  collectAllRepoCacheMetricsWithArchive: vi.fn(async () => ({
+    metrics: {
+      allMessages: [],
+      activeBranchMessages: [],
+      treeTotals: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        assistantMessages: 0,
+      },
+      activeBranchTotals: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        assistantMessages: 0,
+      },
+    },
+    diagnostics: {
+      filesScanned: 0,
+      entriesParsed: 0,
+      metricsLoadedFromArchive: 0,
+      metricsParsedFromSessions: 0,
+      sessionFilesLoadedFromArchive: 0,
+      sessionFilesParsed: 0,
+      sessionFilesRebuilt: 0,
+      sessionFilesSkipped: 0,
+    },
+  })),
+}));
+
 import cacheGraphExtension, {
   collectMetricsWithPersistedFallback,
   normalizeCacheSubcommand,

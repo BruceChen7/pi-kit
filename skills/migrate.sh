@@ -2,7 +2,7 @@
 
 # Skills Migration Script
 # Usage:
-#   ./migrate.sh import   - Install prompts plus GitHub/local skills
+#   ./migrate.sh import   - Install prompts, GitHub/local skills, and local skill dependencies
 #   ./migrate.sh update   - Update GitHub skill repos in ~/.agents/git-skills
 #   ./migrate.sh export   - Scan ~/.agents/me-skills + ~/.agents/git-skills and update skills/skills.txt
 #
@@ -44,7 +44,7 @@ usage() {
     echo "Usage: $0 {import|export|update}"
     echo ""
     echo "Commands:"
-    echo "  import   Install prompts to ~/.pi/agent/prompts and skills to ~/.agents"
+    echo "  import   Install prompts, skills, and local skill dependencies"
     echo "  update   Update GitHub skill repos in ~/.agents/git-skills"
     echo "  export   Scan ~/.agents/me-skills + ~/.agents/git-skills and update skills/skills.txt"
     echo ""
@@ -262,6 +262,31 @@ install_pi_kit_prompts() {
     done
 }
 
+install_local_skill_dependencies() {
+    local skill_dir="$1"
+    local skill_name="$2"
+
+    if [ "${SKIP_SKILL_DEP_INSTALL:-}" = "1" ]; then
+        return 0
+    fi
+
+    if [ ! -f "$skill_dir/package.json" ]; then
+        return 0
+    fi
+
+    if ! command -v bun >/dev/null 2>&1; then
+        log_warn "Skipping dependencies for $skill_name: bun is not on PATH"
+        return 0
+    fi
+
+    log_info "Installing dependencies for local skill: $skill_name"
+    if (cd "$skill_dir" && bun install --silent); then
+        log_info "Dependencies ready for local skill: $skill_name"
+    else
+        log_warn "Failed to install dependencies for local skill: $skill_name"
+    fi
+}
+
 # Import skills: clone GitHub repos and symlink local repo skills into me-skills.
 import_skills() {
     local import_message
@@ -305,6 +330,8 @@ import_skills() {
             if [ "$skill_name" != "$resolved_name" ]; then
                 log_warn "Local skill name mismatch ($skill_name vs $resolved_name), using $resolved_name"
             fi
+
+            install_local_skill_dependencies "$local_skill_dir" "$resolved_name"
 
             local skill_symlink_path="$ME_SKILLS_DIR/$resolved_name"
             if [ -e "$skill_symlink_path" ] || [ -L "$skill_symlink_path" ]; then

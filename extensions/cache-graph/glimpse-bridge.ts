@@ -4,7 +4,7 @@ import type { CacheSessionMetrics } from "./types.ts";
 
 export type CacheGraphBridgeInput = {
   window: GlimpseWindow;
-  getMetrics: () => CacheSessionMetrics;
+  getMetrics: () => Promise<CacheSessionMetrics>;
   exportCsv: () => Promise<string>;
 };
 
@@ -18,10 +18,10 @@ export function attachCacheGraphBridge(input: CacheGraphBridgeInput): void {
     if (!isRecord(message) || typeof message.type !== "string") return;
 
     if (message.type === "refresh") {
-      await sendActionResult(input.window, "refresh", () => ({
+      await sendActionResult(input.window, "refresh", async () => ({
         type: "metrics",
         ok: true,
-        metrics: input.getMetrics(),
+        metrics: await input.getMetrics(),
       }));
       return;
     }

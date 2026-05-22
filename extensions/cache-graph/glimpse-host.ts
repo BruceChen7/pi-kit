@@ -8,7 +8,7 @@ import type { CacheSessionMetrics } from "./types.ts";
 import { createCacheGraphHtml } from "./ui-html.ts";
 
 export type OpenCacheGraphDashboardInput = {
-  getMetrics: () => CacheSessionMetrics;
+  getMetrics: () => Promise<CacheSessionMetrics>;
   exportCsv: () => Promise<string>;
   openWindow?: (html: string, options: GlimpseWindowOptions) => GlimpseWindow;
   uiDistDir?: string;
@@ -25,7 +25,7 @@ export async function openCacheGraphDashboard(
 ): Promise<void> {
   const openWindow = input.openWindow ?? openGlimpseWindow;
   const html = await createCacheGraphHtml(
-    { metrics: input.getMetrics() },
+    { metrics: await input.getMetrics() },
     { uiDistDir: input.uiDistDir },
   );
   const window = openWindow(html, CACHE_GRAPH_WINDOW_OPTIONS);

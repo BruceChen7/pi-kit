@@ -60,6 +60,7 @@ import type {
   PlanArtifactFormat,
   PlanMode,
   PlanModeConfig,
+  PlanPhase,
 } from "./types.ts";
 import {
   colorModeWidgetLines,
@@ -82,6 +83,65 @@ const APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE =
   "Plan Mode is waiting for an approved Plannotator plan/spec. The " +
   "approved execution was aborted by the user and must be reviewed again " +
   "before continuing.";
+
+type AgentStartPreDecisionInput = {
+  inputSourceForTurn: InputSource;
+  prompt: string;
+  hasCompletedNonApprovedRun: boolean;
+};
+
+type AgentStartPreDecision = {
+  internalExtensionBypass: boolean;
+  shouldDismissCompletedNonApprovedRun: boolean;
+  shouldEnterPlanMode: boolean;
+};
+
+const decideAgentStartPreActions = ({
+  inputSourceForTurn,
+  prompt,
+  hasCompletedNonApprovedRun,
+}: AgentStartPreDecisionInput): AgentStartPreDecision => {
+  const internalExtensionBypass = inputSourceForTurn === "extension";
+  return {
+    internalExtensionBypass,
+    shouldDismissCompletedNonApprovedRun:
+      !internalExtensionBypass && hasCompletedNonApprovedRun,
+    shouldEnterPlanMode:
+      !internalExtensionBypass && promptRequestsPlanMode(prompt),
+  };
+};
+
+type AgentStartPostDecisionInput = {
+  internalExtensionBypass: boolean;
+  continuesApprovedPlan: boolean;
+  isPlanPhase: boolean;
+  isApprovedCompletedPlanActRun: boolean;
+  canReturnPlanActToPlan: boolean;
+};
+
+type AgentStartPostDecision = {
+  reviewRequiredForTurn: boolean;
+  shouldCompleteApprovedRun: boolean;
+  shouldReturnPlanActToPlan: boolean;
+};
+
+const decideAgentStartPostActions = ({
+  internalExtensionBypass,
+  continuesApprovedPlan,
+  isPlanPhase,
+  isApprovedCompletedPlanActRun,
+  canReturnPlanActToPlan,
+}: AgentStartPostDecisionInput): AgentStartPostDecision => ({
+  reviewRequiredForTurn: isPlanPhase && !internalExtensionBypass,
+  shouldCompleteApprovedRun:
+    !internalExtensionBypass &&
+    isApprovedCompletedPlanActRun &&
+    !continuesApprovedPlan,
+  shouldReturnPlanActToPlan:
+    !internalExtensionBypass &&
+    canReturnPlanActToPlan &&
+    !continuesApprovedPlan,
+});
 
 export class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
@@ -112,13 +172,21 @@ export class PlanModeController {
   }
 
   getTodoToolNameForCurrentMode(): string {
-    return this.state.phase === "act" ? ACT_TODO_TOOL_NAME : TODO_TOOL_NAME;
+    return this.getTodoToolNameForPhase(this.state.phase);
+  }
+
+  private getTodoToolNameForPhase(phase: PlanPhase): string {
+    return phase === "act" ? ACT_TODO_TOOL_NAME : TODO_TOOL_NAME;
   }
 
   getToolsForCurrentMode(): string[] {
+    return this.getToolsForPhase(this.state.phase);
+  }
+
+  private getToolsForPhase(phase: PlanPhase): string[] {
     const stableTools = [
       ...BUILTIN_TOOL_NAMES,
-      this.getTodoToolNameForCurrentMode(),
+      this.getTodoToolNameForPhase(phase),
     ];
     if (!this.config.preserveExternalTools) {
       return stableTools;
@@ -178,7 +246,10 @@ export class PlanModeController {
   }
 
   buildModePrompt(): string {
-    const todoToolName = this.getTodoToolNameForCurrentMode();
+    const effectivePhase: PlanPhase = this.internalExtensionBypassForTurn
+      ? "act"
+      : this.state.phase;
+    const todoToolName = this.getTodoToolNameForPhase(effectivePhase);
     const format = this.state.getPlanArtifactFormat(this.config);
     const reviewArtifactLocation =
       format === "html"
@@ -187,7 +258,9 @@ export class PlanModeController {
     const lines = [
       "## Plan Mode Extension",
       "",
-      `Current workflow: ${getModeLabel(this.state)}.`,
+      `Current workflow: ${
+        this.internalExtensionBypassForTurn ? "Act" : getModeLabel(this.state)
+      }.`,
       `Plan artifact format: ${format} ` +
         `(${this.state.getPlanArtifactFormatSource(this.config)}).`,
       "",
@@ -211,15 +284,15 @@ export class PlanModeController {
         "the current step.",
     ];
 
-    if (this.state.phase === "plan") {
+    if (effectivePhase === "plan") {
       lines.push(...PLAN_REVIEW_ARTIFACT_GUIDANCE);
     }
 
-    if (this.state.phase === "act" || this.state.mode === "act") {
+    if (effectivePhase === "act" || this.state.mode === "act") {
       lines.push(...ACT_CODE_WRITING_GUIDANCE);
     }
 
-    if (this.state.mode === "act") {
+    if (this.internalExtensionBypassForTurn || this.state.mode === "act") {
       lines.push(DIRECT_ACT_TODO_GUIDANCE);
     }
 
@@ -235,19 +308,24 @@ export class PlanModeController {
   }
 
   async handleAgentStart(event: unknown, ctx: ExtensionContext): Promise<void> {
-    const prompt = stringProperty(event, "prompt") ?? "";
-    this.internalExtensionBypassForTurn =
-      this.inputSourceForTurn === "extension";
+    const preDecision = decideAgentStartPreActions({
+      inputSourceForTurn: this.inputSourceForTurn,
+      prompt: stringProperty(event, "prompt") ?? "",
+      hasCompletedNonApprovedRun: this.hasCompletedNonApprovedRun(),
+    });
+    this.internalExtensionBypassForTurn = preDecision.internalExtensionBypass;
 
-    if (
-      !this.internalExtensionBypassForTurn &&
-      this.dismissCompletedNonApprovedRun()
-    ) {
+    if (preDecision.internalExtensionBypass) {
+      this.pi.setActiveTools(this.getToolsForPhase("act"));
+    }
+
+    if (preDecision.shouldDismissCompletedNonApprovedRun) {
+      this.dismissCompletedNonApprovedRun();
       this.updateUi(ctx);
       this.persist();
     }
 
-    if (promptRequestsPlanMode(prompt)) {
+    if (preDecision.shouldEnterPlanMode) {
       this.setModeWithoutUserNotification(ctx, "plan");
     }
 
@@ -260,19 +338,19 @@ export class PlanModeController {
       this.persist();
     }
 
-    if (
-      !this.internalExtensionBypassForTurn &&
-      this.state.isApprovedCompletedPlanActRun() &&
-      !continuesApprovedPlan
-    ) {
+    const postDecision = decideAgentStartPostActions({
+      internalExtensionBypass: this.internalExtensionBypassForTurn,
+      continuesApprovedPlan,
+      isPlanPhase: this.state.isPlanPhase(),
+      isApprovedCompletedPlanActRun: this.state.isApprovedCompletedPlanActRun(),
+      canReturnPlanActToPlan: this.state.shouldReturnPlanActToPlan(),
+    });
+
+    if (postDecision.shouldCompleteApprovedRun) {
       this.state.completePlanActRun();
       this.applyMode(ctx);
       this.persist();
-    } else if (
-      !this.internalExtensionBypassForTurn &&
-      this.state.shouldReturnPlanActToPlan() &&
-      !continuesApprovedPlan
-    ) {
+    } else if (postDecision.shouldReturnPlanActToPlan) {
       this.state.returnPlanActToPlan();
       this.persist();
     }
@@ -281,8 +359,7 @@ export class PlanModeController {
       outcome: "plan_required",
       reason: "plan mode requires a reviewed plan/spec",
     };
-    this.reviewRequiredForTurn =
-      this.state.isPlanPhase() && !this.internalExtensionBypassForTurn;
+    this.reviewRequiredForTurn = postDecision.reviewRequiredForTurn;
   }
 
   clearTurnSource(): void {
@@ -291,16 +368,24 @@ export class PlanModeController {
     this.approvedPlanContinuationForTurn = false;
   }
 
-  private dismissCompletedNonApprovedRun(): boolean {
-    if (this.state.activeRun?.status !== "completed") {
-      return false;
+  private finishTurn(ctx: ExtensionContext): void {
+    const restoreTools = this.internalExtensionBypassForTurn;
+    this.clearTurnSource();
+    if (restoreTools) {
+      this.applyMode(ctx);
     }
-    if (this.state.isApprovedCompletedPlanActRun()) {
-      return false;
-    }
+  }
+
+  private hasCompletedNonApprovedRun(): boolean {
+    return (
+      this.state.activeRun?.status === "completed" &&
+      !this.state.isApprovedCompletedPlanActRun()
+    );
+  }
+
+  private dismissCompletedNonApprovedRun(): void {
     this.state.archiveCompletedActiveRun();
     this.state.clearTodos();
-    return true;
   }
 
   setModeWithoutUserNotification(ctx: ExtensionContext, mode: PlanMode): void {
@@ -441,7 +526,6 @@ export class PlanModeController {
 
   sendReviewWaitMessage(message: string): void {
     this.pi.sendUserMessage(message, { deliverAs: "followUp" });
-    this.clearTurnSource();
   }
 
   async handleAgentEnd(
@@ -456,15 +540,17 @@ export class PlanModeController {
       if (this.state.abortApprovedExecution(latestArtifactPath)) {
         this.persist();
         this.sendReviewWaitMessage(APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE);
+        this.finishTurn(ctx);
         return;
       }
       // Aborted turns skip generic plan reminders; still surface this review
       // gate so the next turn does not appear idle while execution is blocked.
       if (this.approvedExecutionNeedsReReview(latestArtifactPath)) {
         this.sendReviewWaitMessage(APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE);
+        this.finishTurn(ctx);
         return;
       }
-      this.clearTurnSource();
+      this.finishTurn(ctx);
       return;
     }
     if (this.hasPlanReviewObligation() && this.state.todos.length === 0) {
@@ -477,7 +563,7 @@ export class PlanModeController {
           `Reason: ${formatPlanDecision(this.state.lastAutoDecision) ?? "plan review required"}.`,
         { deliverAs: "followUp" },
       );
-      this.clearTurnSource();
+      this.finishTurn(ctx);
       return;
     }
 
@@ -489,13 +575,14 @@ export class PlanModeController {
       );
       if (policyFailure) {
         this.pi.sendUserMessage(policyFailure, { deliverAs: "followUp" });
-        this.clearTurnSource();
+        this.finishTurn(ctx);
         return;
       }
     }
 
     if (this.approvedExecutionNeedsReReview(latestArtifactPath)) {
       this.sendReviewWaitMessage(APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE);
+      this.finishTurn(ctx);
       return;
     }
 
@@ -506,7 +593,7 @@ export class PlanModeController {
     ) {
       this.state.clearPendingApprovedPlanContinuation();
       this.persist();
-      this.clearTurnSource();
+      this.finishTurn(ctx);
       return;
     }
 
@@ -524,7 +611,7 @@ export class PlanModeController {
         { deliverAs: "followUp" },
       );
     }
-    this.clearTurnSource();
+    this.finishTurn(ctx);
   }
 
   handleToolResult(event: ToolResultEvent, ctx: ExtensionContext): void {

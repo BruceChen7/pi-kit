@@ -43,6 +43,38 @@ describe("plan-mode extension: commands and prompt basics", () => {
     );
   });
 
+  it("treats extension-injected prompts as direct act turns", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    await harness.runCommand("plan-mode", "plan", ctx);
+    await sendInput(harness, ctx, "extension follow-up", "extension");
+    const result = await sendAgentPrompt(
+      harness,
+      ctx,
+      "please plan this extension follow-up",
+    );
+
+    expect(result.systemPrompt).toContain("Current workflow: Act.");
+    expect(result.systemPrompt).toContain("Use act_mode_todo");
+    expect(result.systemPrompt).not.toContain("Use plan_mode_todo");
+    expect(harness.api.setActiveTools).toHaveBeenLastCalledWith(
+      expect.arrayContaining([ACT_MODE_TODO_TOOL]),
+    );
+  });
+
+  it("restores the selected plan mode tools after extension direct-act turns", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    await harness.runCommand("plan-mode", "plan", ctx);
+    await sendInput(harness, ctx, "extension follow-up", "extension");
+    await sendAgentPrompt(harness, ctx, "continue from extension follow-up");
+    await harness.emit("agent_end", { messages: [] }, ctx);
+
+    expect(harness.api.setActiveTools).toHaveBeenLastCalledWith(
+      expect.arrayContaining([PLAN_MODE_TODO_TOOL]),
+    );
+  });
+
   it("keeps review placeholder details in plan artifact guidance", async () => {
     const { harness, ctx } = await startPlanModeSession("act");
 

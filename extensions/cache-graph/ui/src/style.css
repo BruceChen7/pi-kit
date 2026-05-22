@@ -306,15 +306,87 @@ h2 {
 
 .bar {
   fill: rgba(88, 166, 255, 0.66);
+  cursor: pointer;
   shape-rendering: geometricPrecision;
   transition:
     fill 120ms ease,
-    opacity 120ms ease;
+    opacity 120ms ease,
+    stroke 120ms ease;
 }
 
 .bar:hover,
 .bar.last-bar {
   fill: #79c0ff;
+}
+
+.bar:focus-visible {
+  outline: none;
+  stroke: #d2a8ff;
+  stroke-width: 2;
+}
+
+.bar.selected-bar {
+  fill: #d2a8ff;
+  stroke: #f0d6ff;
+  stroke-width: 1.5;
+}
+
+.bar-detail {
+  display: grid;
+  gap: 0.9rem;
+  margin: 0 1rem 1rem;
+  padding: 1rem;
+  border: 1px solid rgba(210, 168, 255, 0.32);
+  border-radius: 0.85rem;
+  background: rgba(13, 17, 23, 0.58);
+}
+
+.bar-detail h3 {
+  margin: 0.2rem 0 0;
+  font-size: 1.85rem;
+  letter-spacing: -0.04em;
+}
+
+.bar-detail small,
+.detail-note,
+.chart-hint {
+  color: #8b949e;
+}
+
+.bar-detail dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  gap: 0.65rem 0.9rem;
+  margin: 0;
+}
+
+.bar-detail div {
+  min-width: 0;
+}
+
+.bar-detail dt {
+  color: #8b949e;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.bar-detail dd {
+  margin: 0.2rem 0 0;
+  overflow: hidden;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-note,
+.chart-hint {
+  font-size: 0.82rem;
+}
+
+.chart-hint {
+  margin: 0 1rem 1rem;
 }
 
 .table-wrap {

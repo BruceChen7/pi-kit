@@ -66,13 +66,19 @@ Apply the **deletion test** to suspected shallow modules.
 
 ### 2. Present candidates
 
-Present a numbered list of deepening opportunities. For each candidate include:
+Default to a numbered list of deepening opportunities. For each candidate include:
 
 - **Files** — files/modules involved
 - **Problem** — why the current architecture causes friction
 - **Solution** — plain-English change, not final interface design
 - **Benefits** — explain via **locality**, **leverage**, and improved tests
 - **Doc impact** — `.pi/contexts/**` terms or ADRs that may need updates
+
+When the review has multiple candidates, non-trivial call graphs, or before/after structure that
+would benefit from diagrams, write a Pi-native visual report instead. Use `HTML-REPORT.md` and
+write the artifact to:
+
+`.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-architecture-review.html`
 
 Use `.pi/contexts/**/CONTEXT.md` vocabulary for domain names and `LANGUAGE.md` vocabulary for architecture. If a candidate contradicts an existing ADR, surface it only when friction is real enough to justify revisiting the ADR.
 
@@ -127,5 +133,6 @@ This skill depends on:
 - `LANGUAGE.md`
 - `DEEPENING.md`
 - `INTERFACE-DESIGN.md`
+- `HTML-REPORT.md`
 - `../grill-with-docs/CONTEXT-FORMAT.md`
 - `../grill-with-docs/ADR-FORMAT.md`

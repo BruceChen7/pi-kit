@@ -1,11 +1,12 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { FILE_WATCHER_CONTROL_CHANNEL } from "../shared/internal-events.ts";
-import fileWatcherExtension, {
+import type { FileWatcherHost } from "./index.ts";
+import {
   buildMarkerRegex,
+  formatBatchedPromptMessage,
   formatPromptMessage,
   isBinary,
   parseDelay,
@@ -13,12 +14,88 @@ import fileWatcherExtension, {
   parseWatchCommand,
   planDeferredPrompts,
   planFileChange,
+  registerFileWatcher,
 } from "./index.ts";
 
 const MARKER = "#pi!";
 
+type RegisteredWatchCommand = Parameters<FileWatcherHost["registerCommand"]>[1];
+
+type WatchHandler = RegisteredWatchCommand["handler"];
+
+type AgentEndHandler = Parameters<FileWatcherHost["onAgentEnd"]>[0];
+
+type SessionShutdownHandler = Parameters<
+  FileWatcherHost["onSessionShutdown"]
+>[0];
+
+type SentMessage = {
+  text: string;
+  options?: unknown;
+};
+
 function parsedPrompt(text: string, lineNumber: number, delayMs = 0) {
   return { text, delayMs, lineNumber };
+}
+
+function createFileWatcherHarness(initialIdle = true) {
+  const repoRoot = mkdtempSync(join(tmpdir(), "pi-kit-file-watcher-"));
+  const messages: SentMessage[] = [];
+  const notifications: string[] = [];
+  let idle = initialIdle;
+  let watchHandler: WatchHandler | undefined;
+  let agentEndHandler: AgentEndHandler | undefined;
+  let shutdownHandler: SessionShutdownHandler | undefined;
+
+  const host: FileWatcherHost = {
+    events: { on() {} },
+    getFlag: () => undefined,
+    onAgentEnd(handler) {
+      agentEndHandler = handler;
+    },
+    onSessionShutdown(handler) {
+      shutdownHandler = handler;
+    },
+    registerCommand(name, command) {
+      if (name === "watch") {
+        watchHandler = command.handler;
+      }
+    },
+    registerFlag() {},
+    sendUserMessage(text: string, options?: unknown) {
+      messages.push({ text, options });
+    },
+  };
+  registerFileWatcher(host);
+
+  const ctx = {
+    cwd: repoRoot,
+    hasUI: true,
+    ui: {
+      notify(message: string) {
+        notifications.push(message);
+      },
+    },
+    isIdle: () => idle,
+  };
+
+  return {
+    repoRoot,
+    messages,
+    notifications,
+    setIdle(nextIdle: boolean) {
+      idle = nextIdle;
+    },
+    async startWatching() {
+      await watchHandler?.("start .", ctx);
+    },
+    async endAgent() {
+      await agentEndHandler?.({}, ctx);
+    },
+    async shutdown() {
+      await shutdownHandler?.();
+    },
+  };
 }
 
 describe("file-watcher prompt parsing", () => {
@@ -141,6 +218,87 @@ describe("file-watcher prompt message formatting", () => {
         "After completing the above, remove the `#pi!` comment(s) from the file.",
     );
   });
+
+  it("formats batched prompts by file", () => {
+    expect(
+      formatBatchedPromptMessage(
+        [
+          {
+            filePath: "/repo/src/a.ts",
+            prompt: parsedPrompt("first instruction", 12),
+          },
+          {
+            filePath: "/repo/src/b.ts",
+            prompt: parsedPrompt("second instruction", 48),
+          },
+        ],
+        MARKER,
+      ),
+    ).toBe(
+      "Batched file-watcher prompts:\n\n" +
+        "File: /repo/src/a.ts\n" +
+        "- Line 12: first instruction\n\n" +
+        "File: /repo/src/b.ts\n" +
+        "- Line 48: second instruction\n\n" +
+        "After completing the above, remove the `#pi!` comment(s) from the file(s).",
+    );
+  });
+});
+
+describe("file-watcher batched delivery", () => {
+  it("batches multiple prompt lines into one message", async () => {
+    const harness = createFileWatcherHarness();
+    await harness.startWatching();
+
+    writeFileSync(
+      join(harness.repoRoot, "watched.ts"),
+      "// first #pi!\n// second #pi!\n",
+    );
+
+    await vi.waitFor(() => expect(harness.messages).toHaveLength(1), {
+      timeout: 2_500,
+    });
+
+    expect(harness.messages[0].text).toContain("Batched file-watcher prompts:");
+    expect(harness.messages[0].text).toContain("Line 1: first");
+    expect(harness.messages[0].text).toContain("Line 2: second");
+    await harness.shutdown();
+  });
+
+  it("waits for agent_end before flushing prompts collected while busy", async () => {
+    const harness = createFileWatcherHarness(false);
+    await harness.startWatching();
+
+    writeFileSync(join(harness.repoRoot, "busy.ts"), "// later #pi!\n");
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(harness.messages).toHaveLength(0);
+
+    harness.setIdle(true);
+    await harness.endAgent();
+    expect(harness.messages).toHaveLength(1);
+    expect(harness.messages[0].text).toContain("Line 1: later");
+    await harness.shutdown();
+  });
+
+  it("allows the same prompt to fire again after its marker is removed", async () => {
+    const harness = createFileWatcherHarness();
+    const filePath = join(harness.repoRoot, "repeat.ts");
+    await harness.startWatching();
+
+    writeFileSync(filePath, "// repeat #pi!\n");
+    await vi.waitFor(() => expect(harness.messages).toHaveLength(1), {
+      timeout: 2_500,
+    });
+
+    writeFileSync(filePath, "// repeat\n");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    writeFileSync(filePath, "// repeat #pi!\n");
+
+    await vi.waitFor(() => expect(harness.messages).toHaveLength(2), {
+      timeout: 2_500,
+    });
+    await harness.shutdown();
+  });
 });
 
 describe("file-watcher command parsing", () => {
@@ -165,21 +323,22 @@ describe("file-watcher command parsing", () => {
 describe("file-watcher control events", () => {
   it("starts and stops watching from the internal control channel", () => {
     const handlers = new Map<string, (event: unknown) => void>();
-    const notify = vi.fn();
+    const notifications: string[] = [];
     const repoRoot = mkdtempSync(join(tmpdir(), "pi-kit-file-watcher-"));
 
-    fileWatcherExtension({
+    registerFileWatcher({
       events: {
         on(channel: string, handler: (event: unknown) => void) {
           handlers.set(channel, handler);
         },
       },
       getFlag: () => undefined,
-      on: vi.fn(),
-      registerCommand: vi.fn(),
-      registerFlag: vi.fn(),
-      sendUserMessage: vi.fn(),
-    } as unknown as ExtensionAPI);
+      onAgentEnd() {},
+      onSessionShutdown() {},
+      registerCommand() {},
+      registerFlag() {},
+      sendUserMessage() {},
+    });
 
     const handler = handlers.get(FILE_WATCHER_CONTROL_CHANNEL);
     expect(handler).toBeTypeOf("function");
@@ -187,7 +346,11 @@ describe("file-watcher control events", () => {
     const ctx = {
       cwd: repoRoot,
       hasUI: true,
-      ui: { notify },
+      ui: {
+        notify(message: string) {
+          notifications.push(message);
+        },
+      },
       isIdle: () => true,
     };
     const emitControl = (
@@ -207,11 +370,10 @@ describe("file-watcher control events", () => {
     emitControl("file-watcher.start", 1);
     emitControl("file-watcher.stop", 2);
 
-    const infoNotifications = notify.mock.calls.map(([message]) => message);
-    const startNotification = infoNotifications.find((message) =>
+    const startNotification = notifications.find((message) =>
       String(message).startsWith(`Watching ${repoRoot}`),
     );
-    const stopNotification = infoNotifications.find((message) =>
+    const stopNotification = notifications.find((message) =>
       String(message).startsWith(`Stopped watching ${repoRoot}`),
     );
 

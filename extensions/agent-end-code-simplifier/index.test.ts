@@ -636,6 +636,7 @@ describe("buildCodeSimplifierPrompt", () => {
     );
     expect(prompt).toContain("<requirements>");
     expect(prompt).toContain("<requirement>");
+    expect(prompt).toContain("boundaries-refactor");
     expect(prompt).toContain("</code_simplifier_request>");
   });
 });

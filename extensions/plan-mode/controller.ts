@@ -35,6 +35,12 @@ import {
   TODO_WIDGET_KEY,
   WRITE_TOOL_NAMES,
 } from "./constants.ts";
+import {
+  decideAgentStartPostActions,
+  decideAgentStartPreActions,
+  decidePlanReviewObligation,
+  getApprovedReviewPathToQueue,
+} from "./controller-decisions.ts";
 import { decideToolBlock, type GuardPolicyTarget } from "./guard-policy.ts";
 import {
   formatReviewWaitReason,
@@ -52,7 +58,6 @@ import {
   latestSnapshot,
   loadPlanModeConfig,
   PlanModeState,
-  promptRequestsPlanMode,
   stringProperty,
 } from "./state.ts";
 import type {
@@ -83,65 +88,6 @@ const APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE =
   "Plan Mode is waiting for an approved Plannotator plan/spec. The " +
   "approved execution was aborted by the user and must be reviewed again " +
   "before continuing.";
-
-type AgentStartPreDecisionInput = {
-  inputSourceForTurn: InputSource;
-  prompt: string;
-  hasCompletedNonApprovedRun: boolean;
-};
-
-type AgentStartPreDecision = {
-  internalExtensionBypass: boolean;
-  shouldDismissCompletedNonApprovedRun: boolean;
-  shouldEnterPlanMode: boolean;
-};
-
-const decideAgentStartPreActions = ({
-  inputSourceForTurn,
-  prompt,
-  hasCompletedNonApprovedRun,
-}: AgentStartPreDecisionInput): AgentStartPreDecision => {
-  const internalExtensionBypass = inputSourceForTurn === "extension";
-  return {
-    internalExtensionBypass,
-    shouldDismissCompletedNonApprovedRun:
-      !internalExtensionBypass && hasCompletedNonApprovedRun,
-    shouldEnterPlanMode:
-      !internalExtensionBypass && promptRequestsPlanMode(prompt),
-  };
-};
-
-type AgentStartPostDecisionInput = {
-  internalExtensionBypass: boolean;
-  continuesApprovedPlan: boolean;
-  isPlanPhase: boolean;
-  isApprovedCompletedPlanActRun: boolean;
-  canReturnPlanActToPlan: boolean;
-};
-
-type AgentStartPostDecision = {
-  reviewRequiredForTurn: boolean;
-  shouldCompleteApprovedRun: boolean;
-  shouldReturnPlanActToPlan: boolean;
-};
-
-const decideAgentStartPostActions = ({
-  internalExtensionBypass,
-  continuesApprovedPlan,
-  isPlanPhase,
-  isApprovedCompletedPlanActRun,
-  canReturnPlanActToPlan,
-}: AgentStartPostDecisionInput): AgentStartPostDecision => ({
-  reviewRequiredForTurn: isPlanPhase && !internalExtensionBypass,
-  shouldCompleteApprovedRun:
-    !internalExtensionBypass &&
-    isApprovedCompletedPlanActRun &&
-    !continuesApprovedPlan,
-  shouldReturnPlanActToPlan:
-    !internalExtensionBypass &&
-    canReturnPlanActToPlan &&
-    !continuesApprovedPlan,
-});
 
 export class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
@@ -408,20 +354,14 @@ export class PlanModeController {
   }
 
   hasPlanReviewObligation(): boolean {
-    if (this.internalExtensionBypassForTurn) {
-      return false;
-    }
-    if (!this.state.isPlanPhase()) {
-      return false;
-    }
-    if (this.state.mode === "plan") {
-      return true;
-    }
-    return (
-      this.reviewRequiredForTurn ||
-      this.state.todos.length > 0 ||
-      this.state.latestReviewArtifactPath !== null
-    );
+    return decidePlanReviewObligation({
+      internalExtensionBypass: this.internalExtensionBypassForTurn,
+      phase: this.state.phase,
+      mode: this.state.mode,
+      reviewRequiredForTurn: this.reviewRequiredForTurn,
+      todoCount: this.state.todos.length,
+      latestReviewArtifactPath: this.state.latestReviewArtifactPath,
+    });
   }
 
   approvedExecutionNeedsReReview(latestArtifactPath: string | null): boolean {
@@ -641,32 +581,34 @@ export class PlanModeController {
     }
 
     const approvedPath = getApprovedReviewPath(event, ctx);
-    if (!approvedPath || !isReviewArtifactPath(ctx.cwd, approvedPath)) {
+    const reviewArtifactPath =
+      approvedPath && isReviewArtifactPath(ctx.cwd, approvedPath)
+        ? approvedPath
+        : null;
+    const pathToQueue = getApprovedReviewPathToQueue({
+      reviewArtifactPath,
+      latestReviewArtifactPath: this.state.latestReviewArtifactPath,
+      alreadyApproved:
+        reviewArtifactPath !== null &&
+        this.state.isApprovedReviewArtifactPath(reviewArtifactPath),
+      pendingApprovedPlanContinuationPath:
+        this.state.pendingApprovedPlanContinuationPath,
+      confirmedApprovedContinuationPath:
+        this.state.confirmedApprovedContinuationPath,
+      phase: this.state.phase,
+      activePlanPath: this.state.activePlanPath,
+    });
+    if (pathToQueue === null) {
       return;
     }
 
-    const latestPath = this.state.latestReviewArtifactPath;
-    if (latestPath && approvedPath !== latestPath) {
-      return;
-    }
-
-    const approvalAlreadyQueued =
-      this.state.isApprovedReviewArtifactPath(approvedPath) &&
-      (this.state.pendingApprovedPlanContinuationPath === approvedPath ||
-        this.state.confirmedApprovedContinuationPath === approvedPath ||
-        (this.state.phase === "act" &&
-          this.state.activePlanPath === approvedPath));
-    if (approvalAlreadyQueued) {
-      return;
-    }
-
-    this.state.activePlanPath = approvedPath;
-    this.state.latestReviewArtifactPath = approvedPath;
-    this.state.reviewApprovedPlanPaths.add(approvedPath);
-    this.state.pendingApprovedPlanContinuationPath = approvedPath;
-    this.state.resumableApprovedPlanPath = approvedPath;
+    this.state.activePlanPath = pathToQueue;
+    this.state.latestReviewArtifactPath = pathToQueue;
+    this.state.reviewApprovedPlanPaths.add(pathToQueue);
+    this.state.pendingApprovedPlanContinuationPath = pathToQueue;
+    this.state.resumableApprovedPlanPath = pathToQueue;
     if (this.state.activeRun) {
-      this.state.activeRun.planPath = approvedPath;
+      this.state.activeRun.planPath = pathToQueue;
       this.state.activeRun.status = hasCompletedAllTodos(this.state.todos)
         ? "completed"
         : "executing";

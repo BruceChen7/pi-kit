@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-export const CACHE_GRAPH_ARCHIVE_SCHEMA_VERSION = 1;
+export const CACHE_GRAPH_ARCHIVE_SCHEMA_VERSION = 2;
 
 export type ArchiveHeader = {
   schemaVersion: number;
@@ -41,10 +41,24 @@ export type ArchivedMetricRow = {
   cacheHitPercent: number;
 };
 
+export type ArchiveSummaryRow = {
+  sessionFileId: string;
+  repoSlug: string;
+  firstTimestamp: string;
+  lastTimestamp: string;
+  messageCount: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+};
+
 export type CacheGraphArchive = {
   header: ArchiveHeader;
   cursors: SessionCursor[];
-  rows: ArchivedMetricRow[];
+  summaries: ArchiveSummaryRow[];
+  rows?: ArchivedMetricRow[];
 };
 
 export type ReadArchiveResult =
@@ -85,6 +99,20 @@ const archivedMetricNumberFields = [
   "totalTokens",
   "cacheHitPercent",
 ] as const;
+const archiveSummaryStringFields = [
+  "sessionFileId",
+  "repoSlug",
+  "firstTimestamp",
+  "lastTimestamp",
+] as const;
+const archiveSummaryNumberFields = [
+  "messageCount",
+  "input",
+  "output",
+  "cacheRead",
+  "cacheWrite",
+  "totalTokens",
+] as const;
 
 export function defaultArchivePath(homeDir = os.homedir()): string {
   return path.join(
@@ -112,11 +140,14 @@ export async function readCacheGraphArchive(
 
   try {
     const parsed = JSON.parse(text) as unknown;
-    if (!isCacheGraphArchive(parsed)) {
+    if (!hasCompatibleArchiveHeader(parsed)) {
       return { status: "rebuild", reason: "corrupt" };
     }
     if (parsed.header.schemaVersion !== CACHE_GRAPH_ARCHIVE_SCHEMA_VERSION) {
       return { status: "rebuild", reason: "schema_mismatch" };
+    }
+    if (!isCacheGraphArchive(parsed)) {
+      return { status: "rebuild", reason: "corrupt" };
     }
     return { status: "ok", archive: parsed };
   } catch {
@@ -131,7 +162,7 @@ export async function writeCacheGraphArchive(
   await mkdir(path.dirname(archivePath), { recursive: true });
 
   const tempPath = `${archivePath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tempPath, `${JSON.stringify(archive, null, 2)}\n`, "utf8");
+  await writeFile(tempPath, `${JSON.stringify(archive)}\n`, "utf8");
   await rename(tempPath, archivePath);
 }
 
@@ -141,9 +172,17 @@ function isCacheGraphArchive(value: unknown): value is CacheGraphArchive {
     isArchiveHeader(value.header) &&
     Array.isArray(value.cursors) &&
     value.cursors.every(isSessionCursor) &&
-    Array.isArray(value.rows) &&
-    value.rows.every(isArchivedMetricRow)
+    Array.isArray(value.summaries) &&
+    value.summaries.every(isArchiveSummaryRow) &&
+    (value.rows === undefined ||
+      (Array.isArray(value.rows) && value.rows.every(isArchivedMetricRow)))
   );
+}
+
+function hasCompatibleArchiveHeader(
+  value: unknown,
+): value is { header: ArchiveHeader } {
+  return isRecord(value) && isArchiveHeader(value.header);
 }
 
 function isArchiveHeader(value: unknown): value is ArchiveHeader {
@@ -170,6 +209,14 @@ function isArchivedMetricRow(value: unknown): value is ArchivedMetricRow {
   return (
     hasFieldsOfType(value, archivedMetricStringFields, "string") &&
     hasFieldsOfType(value, archivedMetricNumberFields, "number")
+  );
+}
+
+function isArchiveSummaryRow(value: unknown): value is ArchiveSummaryRow {
+  if (!isRecord(value)) return false;
+  return (
+    hasFieldsOfType(value, archiveSummaryStringFields, "string") &&
+    hasFieldsOfType(value, archiveSummaryNumberFields, "number")
   );
 }
 

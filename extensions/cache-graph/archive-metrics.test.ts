@@ -1,4 +1,10 @@
-import { appendFile, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -270,6 +276,7 @@ describe("collectAllRepoCacheMetricsWithArchive", () => {
     const options = { sessionsRoot, archivePath };
 
     const first = await collectAllRepoCacheMetricsWithArchive(options);
+    const archive = JSON.parse(await readFile(archivePath, "utf8"));
     const second = await collectAllRepoCacheMetricsWithArchive(options);
     const fullScan = collectAllRepoCacheMetrics({ sessionsRoot });
 
@@ -282,6 +289,11 @@ describe("collectAllRepoCacheMetricsWithArchive", () => {
         archiveRebuildReason: "missing",
       }),
     );
+    expect(archive.summaries).toHaveLength(2);
+    expect(archive.summaries[0]).toMatchObject({
+      messageCount: 1,
+      totalTokens: 130,
+    });
     expect(second.diagnostics).toEqual(
       expectedDiagnostics({
         metricsLoadedFromArchive: 2,
@@ -289,6 +301,29 @@ describe("collectAllRepoCacheMetricsWithArchive", () => {
       }),
     );
     expect(second.metrics).toEqual(fullScan);
+  });
+
+  it("rebuilds details from sessions when summary-first archive omits rows", async () => {
+    const { sessionsRoot, archivePath } = await createArchiveFixture();
+    const options = { sessionsRoot, archivePath };
+
+    await collectAllRepoCacheMetricsWithArchive(options);
+    const archive = JSON.parse(await readFile(archivePath, "utf8"));
+    delete archive.rows;
+    await writeFile(archivePath, JSON.stringify(archive), "utf8");
+
+    const rebuilt = await collectAllRepoCacheMetricsWithArchive(options);
+    const fullScan = collectAllRepoCacheMetrics({ sessionsRoot });
+
+    expect(rebuilt.diagnostics).toEqual(
+      expectedDiagnostics({
+        filesScanned: 2,
+        entriesParsed: 2,
+        metricsParsedFromSessions: 2,
+        sessionFilesParsed: 2,
+      }),
+    );
+    expect(rebuilt.metrics).toEqual(fullScan);
   });
 
   it("only parses entries appended after the stored cursor", async () => {

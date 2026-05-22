@@ -22,6 +22,7 @@ export type AgentEndCodeSimplifierConfig = {
   abortBehavior: AgentEndCodeSimplifierAbortBehavior;
   autoRun: boolean;
   confirmBeforeRun: boolean;
+  skipExtensionPrompts: boolean;
 };
 
 type AgentEndCodeSimplifierSettings = {
@@ -32,6 +33,7 @@ type AgentEndCodeSimplifierSettings = {
   abortBehavior?: unknown;
   autoRun?: unknown;
   confirmBeforeRun?: unknown;
+  skipExtensionPrompts?: unknown;
 };
 
 export const DEFAULT_SUPPORTED_EXTENSIONS = [
@@ -66,17 +68,15 @@ export const DEFAULT_SUPPORTED_EXTENSIONS = [
 ] as const;
 
 const DEFAULT_PROMPT_REQUIREMENTS = [
-  "先遵循 me-code-simplifier、improve-codebase-architecture、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则，再遵循以下附加约束",
-  "仅处理 modified_files 中列出的文件",
-  "先读取 modified_files 中每个文件的完整内容；不要只看 diff 或刚改动的片段",
-  "用 software-design-philosophy 的复杂度视角审查：降低 change amplification、cognitive load 和 unknown unknowns",
-  "优先保留或形成 deep module、information hiding 和不同层级的不同抽象",
-  "按 improve-codebase-architecture 词汇审查 Module / Interface / Implementation / Depth / Seam / Adapter；测试以 Interface is the test surface 为准，优先 test seam/Adapter behavior，不测试 Implementation details",
-  "检查整个文件内的 shallow module、information leakage、temporal decomposition、浅封装/pass-through helper、无意义转发函数和可直接内联的局部抽象",
-  "将不可避免的复杂度向模块内部下沉；不要把特殊情况或错误处理负担推给调用方",
-  "用 push ifs up and fors down 视角检查控制流：在不改变语义时集中分支决策，并将重复标量处理下沉为批量处理",
-  "保持行为、接口、错误语义和副作用不变",
-  "如果没有必要的简化空间，直接说明无需修改",
+  "先遵循 me-code-simplifier、improve-codebase-architecture、software-design-philosophy 与 push-ifs-up-fors-down skills 中定义的规则，再遵循以下任务边界",
+  "这是自动后处理任务：直接做行为不变的简化；不要扩大范围",
+  "仅处理 modified_files 中列出的文件；先读取每个文件的完整内容，不要只看 diff 或局部片段",
+  "用 software-design-philosophy 的复杂度视角审查 change amplification、cognitive load 和 unknown unknowns",
+  "按 improve-codebase-architecture 词汇审查 Module / Interface / Implementation / Depth / Seam / Adapter；优先保留或形成 deep module、information hiding 和不同层级的不同抽象",
+  "测试以 Interface is the test surface 为准，优先 test seam/Adapter behavior，不测试 Implementation details",
+  "检查并消除不必要的 shallow module、information leakage、temporal decomposition、浅封装/pass-through helper、无意义转发函数和可直接内联的局部抽象",
+  "将不可避免的复杂度向模块内部下沉；用 push ifs up and fors down 视角在不改变语义时集中分支决策、下沉重复标量处理",
+  "保持行为、接口、错误语义和副作用不变；如果没有必要的简化空间，直接说明无需修改",
 ];
 
 export const DEFAULT_PROMPT_TEMPLATE = [
@@ -168,6 +168,7 @@ export const normalizeConfig = (
     abortBehavior: normalizeAbortBehavior(raw?.abortBehavior),
     autoRun: normalizeBoolean(raw?.autoRun, true),
     confirmBeforeRun: normalizeBoolean(raw?.confirmBeforeRun, false),
+    skipExtensionPrompts: normalizeBoolean(raw?.skipExtensionPrompts, true),
   };
 };
 
@@ -364,6 +365,8 @@ export type AgentEndSimplifierDecisionInput = {
   turnAborted: boolean;
   autoRun: boolean;
   confirmBeforeRun: boolean;
+  inputSource: string | null;
+  skipExtensionPrompts: boolean;
 };
 
 export type AgentEndSimplifierDecision =
@@ -398,6 +401,8 @@ export const decideAgentEndSimplifierAction = ({
   turnAborted,
   autoRun,
   confirmBeforeRun,
+  inputSource,
+  skipExtensionPrompts,
 }: AgentEndSimplifierDecisionInput): AgentEndSimplifierDecision => {
   if (!enabled) {
     return { kind: "skip", logEvent: "agent_end_skipped_disabled" };
@@ -425,6 +430,15 @@ export const decideAgentEndSimplifierAction = ({
 
   if (supportedPaths.length === 0) {
     return { kind: "skip", logEvent: "agent_end_skipped_no_supported_paths" };
+  }
+
+  if (skipExtensionPrompts && inputSource === "extension") {
+    return {
+      kind: "notify_manual_available",
+      logEvent: "agent_end_skipped_extension_prompt",
+      reason: "this turn was started by an extension prompt",
+      supportedPaths,
+    };
   }
 
   if (abortBehavior === "skip" && turnAborted) {
@@ -479,6 +493,7 @@ export type AgentEndCodeSimplifierLifecycleState = {
   modifiedPaths: string[];
   suppressNextPrompt: boolean;
   runGeneration: number;
+  currentInputSource: string | null;
 };
 
 export type AgentEndCodeSimplifierInputEvent = {
@@ -499,6 +514,7 @@ export const createAgentEndCodeSimplifierLifecycleState =
     modifiedPaths: [],
     suppressNextPrompt: false,
     runGeneration: 0,
+    currentInputSource: null,
   });
 
 export const resetLifecycleForNewSession = (
@@ -507,6 +523,7 @@ export const resetLifecycleForNewSession = (
   ...state,
   modifiedPaths: [],
   suppressNextPrompt: false,
+  currentInputSource: null,
 });
 
 export const resetLifecycleForAgentStart = (
@@ -552,11 +569,17 @@ export const decideInputLifecycleTransition = (
   state: AgentEndCodeSimplifierLifecycleState,
   event: AgentEndCodeSimplifierInputEvent,
 ): AgentEndCodeSimplifierInputTransition => {
+  const currentInputSource = event.source ?? null;
+  const stateWithInputSource = {
+    ...state,
+    currentInputSource,
+  };
+
   if (event.source === "extension") {
     const runId = extractAutoTriggerRunId(event.text ?? "");
     if (runId !== null && runId !== state.runGeneration) {
       return {
-        state: markSimplifierPromptStale(state),
+        state: markSimplifierPromptStale(stateWithInputSource),
         action: "handled",
         clearRunningWidget: true,
         logEvent: "input_handled_stale_code_simplifier_prompt",
@@ -565,7 +588,7 @@ export const decideInputLifecycleTransition = (
     }
 
     return {
-      state,
+      state: stateWithInputSource,
       action: "continue",
       clearRunningWidget: false,
     };
@@ -573,7 +596,7 @@ export const decideInputLifecycleTransition = (
 
   return {
     state: {
-      ...state,
+      ...stateWithInputSource,
       suppressNextPrompt: false,
       runGeneration: state.runGeneration + 1,
     },
@@ -670,6 +693,7 @@ export default function agentEndCodeSimplifierExtension(
       abortBehavior: config.abortBehavior,
       autoRun: config.autoRun,
       confirmBeforeRun: config.confirmBeforeRun,
+      skipExtensionPrompts: config.skipExtensionPrompts,
     });
   };
 
@@ -680,6 +704,8 @@ export default function agentEndCodeSimplifierExtension(
     abortBehavior: config.abortBehavior,
     autoRun: config.autoRun,
     confirmBeforeRun: config.confirmBeforeRun,
+    skipExtensionPrompts: config.skipExtensionPrompts,
+    currentInputSource: lifecycle.currentInputSource,
     modifiedPaths: lifecycle.modifiedPaths,
   });
 
@@ -967,6 +993,8 @@ export default function agentEndCodeSimplifierExtension(
       turnAborted: turnWasAborted(event, ctx),
       autoRun: config.autoRun,
       confirmBeforeRun: config.confirmBeforeRun,
+      inputSource: lifecycle.currentInputSource,
+      skipExtensionPrompts: config.skipExtensionPrompts,
     });
 
     if (decision.kind === "skip_suppressed") {

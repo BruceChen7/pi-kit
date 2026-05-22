@@ -1,5 +1,10 @@
 <script lang="ts">
 import {
+  type ChartBarDetail,
+  buildChartBarDetail,
+  type ChartView,
+} from "../../chart-details.ts";
+import {
   buildRepoOptions,
   filterRowsForGraph,
   formatDateInputValue,
@@ -41,7 +46,6 @@ type CacheSessionMetrics = {
   activeBranchTotals: CacheUsageTotals;
 };
 
-type ChartView = "per-turn" | "cumulative-percent" | "cumulative-total";
 type Status = "idle" | "loading" | "error" | "success";
 
 type ChartPoint = {
@@ -131,6 +135,7 @@ let statusDismissTimer: ReturnType<typeof window.setTimeout> | null = null;
 let bridgeReady = $state(typeof window.glimpse?.send === "function");
 let refreshAttempts = $state(0);
 let refreshResponses = $state(0);
+let selectedBarIndex = $state<number | null>(null);
 
 const repoOptions = $derived(buildRepoOptions(metrics.allMessages));
 const chartRows = $derived(
@@ -148,6 +153,14 @@ const chartData = $derived(
   buildChartData(chartValuesForView, chartScale, chartView),
 );
 const chartTimeLabels = $derived(buildChartTimeLabels(chartRows));
+const selectedChartPoint = $derived(
+  selectedBarIndex === null ? null : (chartData[selectedBarIndex] ?? null),
+);
+const selectedBarDetail = $derived(
+  selectedChartPoint === null
+    ? null
+    : buildChartBarDetail(selectedChartPoint, chartRows, chartView),
+);
 
 function refresh(): void {
   showStatus("loading", "Refreshing metrics...");
@@ -262,6 +275,12 @@ $effect(() => {
   return () => window.clearInterval(timer);
 });
 
+$effect(() => {
+  if (selectedBarIndex === null) return;
+  if (selectedBarIndex < chartData.length) return;
+  selectedBarIndex = null;
+});
+
 function emptyMetrics(): CacheSessionMetrics {
   const totals = {
     input: 0,
@@ -351,14 +370,23 @@ function chartBarTitle(
   rows: AssistantUsageMetric[],
   view: ChartView,
 ): string {
-  const first = rows[point.sourceStart];
-  const last = rows[point.sourceEnd] ?? first;
-  if (!first) return formatChartValue(point.value, view);
-  const turnLabel =
-    first === last
-      ? `Turn ${first.sequence}`
-      : `Turns ${first.sequence}-${last.sequence}`;
-  return `${first.repoSlug} · ${turnLabel}: ${formatChartValue(point.value, view)}`;
+  const detail = buildChartBarDetail(point, rows, view);
+  if (!detail) return formatChartValue(point.value, view);
+  return `${detail.repoLabel} · ${detail.turnLabel}: ${formatDetailValue(detail)}`;
+}
+
+function selectChartBar(index: number): void {
+  selectedBarIndex = index;
+}
+
+function handleChartBarKeydown(event: KeyboardEvent, index: number): void {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  selectChartBar(index);
+}
+
+function isSelectedBar(index: number): boolean {
+  return selectedBarIndex === index && selectedBarDetail !== null;
 }
 
 function chartValueScale(values: number[], view: ChartView): ChartScale {
@@ -465,6 +493,17 @@ function chartLabel(view: ChartView): string {
   if (view === "per-turn") return "Per-turn cache hit %";
   if (view === "cumulative-percent") return "Cumulative cache hit %";
   return "Cumulative prompt tokens";
+}
+
+function formatDetailValue(detail: ChartBarDetail): string {
+  if (detail.primaryUnit === "tokens") return formatInt(detail.primaryValue);
+  return formatPercent(detail.primaryValue);
+}
+
+function formatDetailTimeRange(detail: ChartBarDetail): string {
+  const start = formatChartTimestamp(detail.firstTimestamp);
+  const end = formatChartTimestamp(detail.lastTimestamp);
+  return start === end ? start : `${start} – ${end}`;
 }
 </script>
 
@@ -584,18 +623,78 @@ function chartLabel(view: ChartView): string {
         {/if}
         {#each chartData as point, index}
           <rect
+            aria-label={chartBarTitle(point, chartRows, chartView)}
             class:last-bar={index === chartData.length - 1}
+            class:selected-bar={isSelectedBar(index)}
             class="bar"
+            role="button"
+            tabindex="0"
             x={point.x}
             y={chartBarY(point)}
             width={point.width}
             height={chartBarHeight(point)}
             rx="1.5"
+            onclick={() => selectChartBar(index)}
+            onkeydown={(event) => handleChartBarKeydown(event, index)}
           >
             <title>{chartBarTitle(point, chartRows, chartView)}</title>
           </rect>
         {/each}
       </svg>
+      {#if selectedBarDetail}
+        <aside class="bar-detail" aria-live="polite">
+          <div>
+            <p class="eyebrow">Selected bar details</p>
+            <h3>{formatDetailValue(selectedBarDetail)}</h3>
+            <small>{selectedBarDetail.primaryLabel}</small>
+          </div>
+          <dl>
+            <div>
+              <dt>Repo</dt>
+              <dd>{selectedBarDetail.repoLabel}</dd>
+            </div>
+            <div>
+              <dt>Turns</dt>
+              <dd>{selectedBarDetail.turnLabel}</dd>
+            </div>
+            <div>
+              <dt>Messages</dt>
+              <dd>{formatInt(selectedBarDetail.messageCount)}</dd>
+            </div>
+            <div>
+              <dt>Time</dt>
+              <dd>{formatDetailTimeRange(selectedBarDetail)}</dd>
+            </div>
+            <div>
+              <dt>Input</dt>
+              <dd>{formatInt(selectedBarDetail.totals.input)}</dd>
+            </div>
+            <div>
+              <dt>Output</dt>
+              <dd>{formatInt(selectedBarDetail.totals.output)}</dd>
+            </div>
+            <div>
+              <dt>Cache read</dt>
+              <dd>{formatInt(selectedBarDetail.totals.cacheRead)}</dd>
+            </div>
+            <div>
+              <dt>Cache write</dt>
+              <dd>{formatInt(selectedBarDetail.totals.cacheWrite)}</dd>
+            </div>
+            <div>
+              <dt>Total tokens</dt>
+              <dd>{formatInt(selectedBarDetail.totals.totalTokens)}</dd>
+            </div>
+            <div>
+              <dt>Range hit rate</dt>
+              <dd>{formatPercent(selectedBarDetail.cacheHitPercent)}</dd>
+            </div>
+          </dl>
+          <p class="detail-note">{selectedBarDetail.aggregationNote}</p>
+        </aside>
+      {:else}
+        <p class="chart-hint">Click a bar, or focus it and press Enter, to pin exact values.</p>
+      {/if}
     {/if}
   </section>
 </main>

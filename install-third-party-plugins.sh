@@ -155,10 +155,20 @@ plannotator_platform() {
   printf '%s-%s\n' "$os" "$arch"
 }
 
+sha256_file() {
+  local file_path="$1"
+
+  if [ "$(uname -s)" = "Darwin" ]; then
+    shasum -a 256 "$file_path" | cut -d' ' -f1
+    return
+  fi
+
+  sha256sum "$file_path" | cut -d' ' -f1
+}
+
 install_plannotator_cli() {
   local platform
   local binary_name
-  local latest_tag
   local binary_url
   local checksum_url
   local tmp_file
@@ -169,28 +179,17 @@ install_plannotator_cli() {
   binary_name="plannotator-${platform}"
 
   echo -e "${BLUE}Installing:${NC} plannotator CLI"
-  latest_tag="$(curl -fsSL "https://api.github.com/repos/${PLANNOTATOR_REPO}/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)"
-  if [ -z "$latest_tag" ]; then
-    echo "Failed to fetch latest plannotator CLI version" >&2
-    return 1
-  fi
-
-  binary_url="https://github.com/${PLANNOTATOR_REPO}/releases/download/${latest_tag}/${binary_name}"
+  binary_url="https://github.com/${PLANNOTATOR_REPO}/releases/latest/download/${binary_name}"
   checksum_url="${binary_url}.sha256"
 
   mkdir -p "$PLANNOTATOR_CLI_INSTALL_DIR"
   tmp_file="$(mktemp)"
   curl -fsSL -o "$tmp_file" "$binary_url"
   expected_checksum="$(curl -fsSL "$checksum_url" | cut -d' ' -f1)"
-
-  if [ "$(uname -s)" = "Darwin" ]; then
-    actual_checksum="$(shasum -a 256 "$tmp_file" | cut -d' ' -f1)"
-  else
-    actual_checksum="$(sha256sum "$tmp_file" | cut -d' ' -f1)"
-  fi
+  actual_checksum="$(sha256_file "$tmp_file")"
 
   if [ "$actual_checksum" != "$expected_checksum" ]; then
-    echo "Checksum verification failed for plannotator CLI ${latest_tag}" >&2
+    echo "Checksum verification failed for plannotator CLI latest release" >&2
     rm -f "$tmp_file"
     return 1
   fi
@@ -198,7 +197,7 @@ install_plannotator_cli() {
   rm -f "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator" "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator.exe" 2>/dev/null || true
   mv "$tmp_file" "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator"
   chmod +x "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator"
-  echo -e "  ${GREEN}✓${NC} Installed plannotator ${latest_tag} to $PLANNOTATOR_CLI_INSTALL_DIR/plannotator"
+  echo -e "  ${GREEN}✓${NC} Installed plannotator to $PLANNOTATOR_CLI_INSTALL_DIR/plannotator"
   echo ""
 }
 

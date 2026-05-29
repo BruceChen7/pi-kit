@@ -28,7 +28,11 @@ vi.mock("node:child_process", () => {
   return { execFile };
 });
 
-import extension from "./index.js";
+import extension, {
+  buildSearchArgs,
+  buildSearchQuery,
+  decideSearchPlan,
+} from "./index.js";
 
 type ExecFileCallback = (
   error: Error | null,
@@ -120,6 +124,40 @@ async function registerAndGetTool(): Promise<RegisteredTool> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("cs-search core decisions", () => {
+  it("builds normalized queries and a fallback plan from plain params", () => {
+    const params = {
+      query: " auth middleware ",
+      kind: "implementation" as const,
+      path: "./src",
+      language: ".TS",
+      max_results: 99,
+    };
+
+    expect(buildSearchQuery(params)).toBe("auth middleware path:src ext:ts");
+    expect(buildSearchArgs(params)).toEqual([
+      "auth middleware path:src ext:ts",
+      "--only-code",
+      "--gravity=brain",
+      "--format",
+      "json",
+    ]);
+    expect(decideSearchPlan(params)).toEqual({
+      maxResults: 10,
+      attempts: [
+        { kind: "initial", params },
+        {
+          kind: "fallback",
+          params: {
+            ...params,
+            path: undefined,
+          },
+        },
+      ],
+    });
+  });
 });
 
 describe("cs-search extension", () => {
@@ -520,6 +558,73 @@ describe("cs-search extension", () => {
         fallback_effective_query: null,
         fallback_total_results: null,
         total_results: 0,
+        results: [],
+      }),
+    );
+  });
+
+  it("returns a structured invalid_output failure when cs emits malformed JSON", async () => {
+    mockExecFileResult((cmd, _args, _options, callback) => {
+      if (cmd === "which") {
+        callback(null, "/usr/local/bin/cs\n", "");
+        return;
+      }
+      callback(null, "{not-json", "");
+    });
+
+    const tool = await registerAndGetTool();
+    const ctx = { cwd: "/repo", signal: undefined } as never;
+    const result = await tool.execute?.(
+      "call-malformed",
+      { query: "broken" },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(result.content[0].text).toContain(
+      "cs_search failed: invalid cs JSON output.",
+    );
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        available: true,
+        query: "broken",
+        outcome: "invalid_output",
+        fallback_applied: false,
+        results: [],
+      }),
+    );
+  });
+
+  it("returns a structured exec_failed outcome when cs execution fails", async () => {
+    mockExecFileResult((cmd, _args, _options, callback) => {
+      if (cmd === "which") {
+        callback(null, "/usr/local/bin/cs\n", "");
+        return;
+      }
+      callback(new Error("cs crashed"));
+    });
+
+    const tool = await registerAndGetTool();
+    const ctx = { cwd: "/repo", signal: undefined } as never;
+    const result = await tool.execute?.(
+      "call-exec-error",
+      { query: "broken" },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(result.content[0].text).toContain(
+      "cs_search failed: cs execution failed.",
+    );
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        available: true,
+        query: "broken",
+        outcome: "exec_failed",
+        error: "cs crashed",
+        fallback_applied: false,
         results: [],
       }),
     );

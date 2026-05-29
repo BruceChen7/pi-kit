@@ -64,6 +64,58 @@ type CsSearchResult = {
   score?: number;
 };
 
+type SearchAttempt = {
+  kind: "initial" | "fallback";
+  params: CsSearchParams;
+};
+
+type SearchExecution = {
+  searchQuery: string;
+  searchArgs: string[];
+  parsedResults: CsSearchResult[];
+};
+
+type SearchFailureKind = "exec_failed" | "invalid_output";
+
+type SearchFailure = {
+  kind: SearchFailureKind;
+  message: string;
+};
+
+type SearchAttemptResult =
+  | {
+      status: "ok";
+      attempt: SearchAttempt;
+      execution: SearchExecution;
+    }
+  | {
+      status: "error";
+      attempt: SearchAttempt;
+      error: SearchFailure;
+    };
+
+type SearchPlanDecision = {
+  attempts: SearchAttempt[];
+  maxResults: number;
+};
+
+type SearchOutcome = {
+  availability: "available" | "unavailable";
+  params: CsSearchParams;
+  plan?: SearchPlanDecision;
+  initialAttempt?: SearchAttemptResult;
+  fallbackAttempt?: SearchAttemptResult | null;
+  finalAttempt?: SearchAttemptResult;
+  topResults?: Array<{
+    path: string;
+    line: number | null;
+    score: number | null;
+    snippet: string;
+    lines: NormalizedLineResult[];
+  }>;
+  finalFailure?: SearchFailure;
+};
+
 const toolParameters = Type.Object({
   query: Type.String({
     minLength: 1,
@@ -138,7 +190,7 @@ function normalizeLanguage(language: string | undefined): string | undefined {
   return language?.trim().replace(/^\./, "").toLowerCase() || undefined;
 }
 
-function buildSearchQuery(params: CsSearchParams): string {
+export function buildSearchQuery(params: CsSearchParams): string {
   const parts = [params.query.trim()];
   const pathFilter = params.path?.trim().replace(/^\.\//, "");
   const languageFilter = normalizeLanguage(params.language);
@@ -154,31 +206,68 @@ function buildSearchQuery(params: CsSearchParams): string {
   return parts.join(" ");
 }
 
-function buildSearchArgs(params: CsSearchParams): string[] {
+export function buildSearchArgs(params: CsSearchParams): string[] {
   const kind = params.kind ?? "auto";
   return [buildSearchQuery(params), ...KIND_FLAGS[kind], "--format", "json"];
+}
+
+export function decideSearchPlan(params: CsSearchParams): SearchPlanDecision {
+  const maxResults = Math.min(params.max_results ?? DEFAULT_MAX_RESULTS, 10);
+  const attempts: SearchAttempt[] = [{ kind: "initial", params }];
+
+  if (params.path) {
+    attempts.push({
+      kind: "fallback",
+      params: { ...params, path: undefined },
+    });
+  }
+
+  return { attempts, maxResults };
 }
 
 async function runSearch(
   csPath: string,
   ctx: ExtensionContext,
-  params: CsSearchParams,
-): Promise<{
-  searchQuery: string;
-  searchArgs: string[];
-  parsedResults: CsSearchResult[];
-}> {
-  const searchQuery = buildSearchQuery(params);
-  const searchArgs = buildSearchArgs(params);
-  const { stdout } = await execFileAsync(csPath, searchArgs, {
-    cwd: ctx.cwd,
-    signal: ctx.signal,
-  });
+  attempt: SearchAttempt,
+): Promise<SearchAttemptResult> {
+  const searchQuery = buildSearchQuery(attempt.params);
+  const searchArgs = buildSearchArgs(attempt.params);
+
+  try {
+    const { stdout } = await execFileAsync(csPath, searchArgs, {
+      cwd: ctx.cwd,
+      signal: ctx.signal,
+    });
+
+    return {
+      status: "ok",
+      attempt,
+      execution: {
+        searchQuery,
+        searchArgs,
+        parsedResults: parseSearchResults(stdout),
+      },
+    };
+  } catch (error) {
+    return {
+      status: "error",
+      attempt,
+      error: translateSearchError(error),
+    };
+  }
+}
+
+function translateSearchError(error: unknown): SearchFailure {
+  if (error instanceof SyntaxError) {
+    return {
+      kind: "invalid_output",
+      message: error.message,
+    };
+  }
 
   return {
-    searchQuery,
-    searchArgs,
-    parsedResults: parseSearchResults(stdout),
+    kind: "exec_failed",
+    message: error instanceof Error ? error.message : String(error),
   };
 }
 
@@ -264,6 +353,164 @@ function formatResults(
   ].join("\n\n");
 }
 
+function buildUnavailableResponse(
+  params: CsSearchParams,
+): AgentToolResult<Record<string, unknown>> {
+  return textResult(
+    "cs_search is unavailable because the cs binary is not installed. Install it with: go install github.com/boyter/cs/v3@latest",
+    {
+      available: false,
+      query: params.query,
+      outcome: "unavailable",
+    },
+  );
+}
+
+export function chooseSearchOutcome(
+  params: CsSearchParams,
+  plan: SearchPlanDecision,
+  attempts: SearchAttemptResult[],
+): SearchOutcome {
+  const [initialAttempt, fallbackAttempt = null] = attempts;
+  const finalAttempt =
+    initialAttempt?.status === "ok" &&
+    initialAttempt.execution.parsedResults.length === 0 &&
+    fallbackAttempt?.status === "ok"
+      ? fallbackAttempt
+      : initialAttempt;
+
+  if (!finalAttempt) {
+    return {
+      availability: "available",
+      params,
+      plan,
+      initialAttempt,
+      fallbackAttempt,
+      finalFailure: {
+        kind: "exec_failed",
+        message: "search did not execute",
+      },
+    };
+  }
+
+  if (finalAttempt.status === "error") {
+    return {
+      availability: "available",
+      params,
+      plan,
+      initialAttempt,
+      fallbackAttempt,
+      finalAttempt,
+      finalFailure: finalAttempt.error,
+    };
+  }
+
+  const topResults = finalAttempt.execution.parsedResults
+    .slice(0, plan.maxResults)
+    .map((result) => ({
+      path: toComparablePath(result),
+      line: getResultLineNumber(result),
+      score: result.score ?? null,
+      snippet: getResultSnippet(result),
+      lines: getResultLines(result),
+    }));
+
+  return {
+    availability: "available",
+    params,
+    plan,
+    initialAttempt,
+    fallbackAttempt,
+    finalAttempt,
+    topResults,
+  };
+}
+
+export function buildSearchResponse(
+  outcome: SearchOutcome,
+): AgentToolResult<Record<string, unknown>> {
+  if (outcome.availability === "unavailable") {
+    return buildUnavailableResponse(outcome.params);
+  }
+
+  if (outcome.finalFailure) {
+    const errorLabel =
+      outcome.finalFailure.kind === "invalid_output"
+        ? "invalid cs JSON output"
+        : "cs execution failed";
+
+    return textResult(
+      `cs_search failed: ${errorLabel}.\nquery: ${outcome.params.query}\nTry a shorter query, a different path filter, or use rg for exact text.`,
+      {
+        available: true,
+        query: outcome.params.query,
+        outcome: outcome.finalFailure.kind,
+        error: outcome.finalFailure.message,
+        kind: outcome.params.kind ?? "auto",
+        path: outcome.params.path ?? null,
+        language: outcome.params.language ?? null,
+        max_results: outcome.plan?.maxResults ?? DEFAULT_MAX_RESULTS,
+        fallback_applied: outcome.fallbackAttempt?.status === "ok",
+        initial_effective_query:
+          outcome.initialAttempt?.status === "ok"
+            ? outcome.initialAttempt.execution.searchQuery
+            : null,
+        initial_total_results:
+          outcome.initialAttempt?.status === "ok"
+            ? outcome.initialAttempt.execution.parsedResults.length
+            : null,
+        fallback_effective_query:
+          outcome.fallbackAttempt?.status === "ok"
+            ? outcome.fallbackAttempt.execution.searchQuery
+            : null,
+        fallback_total_results:
+          outcome.fallbackAttempt?.status === "ok"
+            ? outcome.fallbackAttempt.execution.parsedResults.length
+            : null,
+        results: [],
+      },
+    );
+  }
+
+  const finalAttempt = outcome.finalAttempt;
+  const initialAttempt = outcome.initialAttempt;
+  const fallbackAttempt = outcome.fallbackAttempt;
+  const topResults = outcome.topResults ?? [];
+  const finalExecution =
+    finalAttempt?.status === "ok" ? finalAttempt.execution : null;
+  const initialExecution =
+    initialAttempt?.status === "ok" ? initialAttempt.execution : null;
+  const fallbackExecution =
+    fallbackAttempt?.status === "ok" ? fallbackAttempt.execution : null;
+
+  return textResult(
+    formatResults(
+      outcome.params,
+      finalExecution?.parsedResults.slice(0, outcome.plan?.maxResults) ?? [],
+    ),
+    {
+      available: true,
+      query: outcome.params.query,
+      outcome: "ok",
+      effective_query: finalExecution?.searchQuery ?? null,
+      applied_flags: finalExecution?.searchArgs.slice(1, -2) ?? [],
+      kind: outcome.params.kind ?? "auto",
+      path: outcome.params.path ?? null,
+      language: outcome.params.language ?? null,
+      max_results: outcome.plan?.maxResults ?? DEFAULT_MAX_RESULTS,
+      total_results: finalExecution?.parsedResults.length ?? 0,
+      fallback_applied: Boolean(
+        fallbackExecution && finalAttempt?.attempt.kind === "fallback",
+      ),
+      initial_effective_query: initialExecution?.searchQuery ?? null,
+      initial_total_results: initialExecution?.parsedResults.length ?? null,
+      fallback_effective_query: fallbackExecution?.searchQuery ?? null,
+      fallback_total_results: fallbackExecution?.parsedResults.length ?? null,
+      results: topResults,
+    },
+  );
+}
+
 async function executeSearch(
   ctx: ExtensionContext,
   params: CsSearchParams,
@@ -271,50 +518,32 @@ async function executeSearch(
   const csPath = await findCsBinary();
 
   if (!csPath) {
-    return textResult(
-      "cs_search is unavailable because the cs binary is not installed.",
-      { available: false },
-    );
+    return buildUnavailableResponse(params);
   }
 
-  const initialSearch = await runSearch(csPath, ctx, params);
-  let finalSearch = initialSearch;
-  let fallbackSearch: Awaited<ReturnType<typeof runSearch>> | null = null;
+  const plan = decideSearchPlan(params);
+  const attempts: SearchAttemptResult[] = [];
 
-  if (params.path && initialSearch.parsedResults.length === 0) {
-    fallbackSearch = await runSearch(csPath, ctx, {
-      ...params,
-      path: undefined,
-    });
-    finalSearch = fallbackSearch;
+  for (const attempt of plan.attempts) {
+    const result = await runSearch(csPath, ctx, attempt);
+    attempts.push(result);
+
+    if (result.status === "error") {
+      break;
+    }
+
+    if (
+      result.attempt.kind === "initial" &&
+      result.execution.parsedResults.length === 0 &&
+      plan.attempts.length > 1
+    ) {
+      continue;
+    }
+
+    break;
   }
 
-  const maxResults = Math.min(params.max_results ?? DEFAULT_MAX_RESULTS, 10);
-  const topResults = finalSearch.parsedResults.slice(0, maxResults);
-
-  return textResult(formatResults(params, topResults), {
-    available: true,
-    query: params.query,
-    effective_query: finalSearch.searchQuery,
-    applied_flags: finalSearch.searchArgs.slice(1, -2),
-    kind: params.kind ?? "auto",
-    path: params.path ?? null,
-    language: params.language ?? null,
-    max_results: maxResults,
-    total_results: finalSearch.parsedResults.length,
-    fallback_applied: Boolean(fallbackSearch),
-    initial_effective_query: initialSearch.searchQuery,
-    initial_total_results: initialSearch.parsedResults.length,
-    fallback_effective_query: fallbackSearch?.searchQuery ?? null,
-    fallback_total_results: fallbackSearch?.parsedResults.length ?? null,
-    results: topResults.map((result) => ({
-      path: toComparablePath(result),
-      line: getResultLineNumber(result),
-      score: result.score ?? null,
-      snippet: getResultSnippet(result),
-      lines: getResultLines(result),
-    })),
-  });
+  return buildSearchResponse(chooseSearchOutcome(params, plan, attempts));
 }
 
 export default function csSearchExtension(pi: ExtensionAPI) {

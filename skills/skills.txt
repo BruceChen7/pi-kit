@@ -8,8 +8,8 @@
 #   dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
 #   pre-landing-review|local|skills/planning-suite/pre-landing-review
 #   x-tweet-fetcher|https://github.com/user/x-tweet-fetcher.git|
-using-git-worktrees|https://github.com/obra/superpowers.git|skills/using-git-worktrees
-test-driven-development|https://github.com/obra/superpowers.git|skills/test-driven-development
+# using-git-worktrees|https://github.com/obra/superpowers.git|skills/using-git-worktrees
+# test-driven-development|https://github.com/obra/superpowers.git|skills/test-driven-development
 systematic-debugging|https://github.com/obra/superpowers.git|skills/systematic-debugging
 dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
 # visualise|https://github.com/bentossell/visualise.git|
@@ -24,9 +24,9 @@ plan-eng-review|local|skills/planning-suite/plan-eng-review
 boundaries-refactor|local|skills/boundaries-refactor
 office-hours|local|skills/planning-suite/office-hours
 branch-commit-push|local|skills/branch-commit-push
-receiving-code-review|https://github.com/obra/superpowers.git|skills/receiving-code-review
+# receiving-code-review|https://github.com/obra/superpowers.git|skills/receiving-code-review
 slidev|https://github.com/slidevjs/slidev.git|skills/slidev
-brainstorming|local|skills/brainstorming
+# brainstorming|local|skills/brainstorming
 writing-skills|https://github.com/obra/superpowers.git|skills/writing-skills
 pre-landing-review|local|skills/planning-suite/pre-landing-review
 me-code-simplifier|local|skills/me-code-simplifier

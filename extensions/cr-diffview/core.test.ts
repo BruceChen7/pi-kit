@@ -5,6 +5,7 @@ import {
   branchScope,
   buildBranchItems,
   buildNoBranchCandidatesMessage,
+  CR_PRESETS,
   type CrSession,
   decideScopeFromPreset,
   decideScopeResolution,
@@ -43,6 +44,19 @@ describe("cr-diffview pure decisions", () => {
       kind: "needsBranchSelection",
     });
     expect(decideScopeFromPreset(null)).toEqual({ kind: "cancelled" });
+  });
+
+  it("maps lastNCommits preset to a number input decision", () => {
+    expect(decideScopeFromPreset("lastNCommits")).toEqual({
+      kind: "needsNumberInput",
+    });
+  });
+
+  it("includes the lastNCommits preset with correct structure", () => {
+    const preset = CR_PRESETS.find((p) => p.value === "lastNCommits");
+    expect(preset).toBeDefined();
+    expect(preset?.label).toBe("Review last N commits");
+    expect(preset?.description).toBe("HEAD~N...HEAD");
   });
 
   it("filters the current branch and sorts default branch first", () => {

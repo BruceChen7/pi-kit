@@ -508,6 +508,42 @@ describe("cr-diffview command", () => {
     );
   });
 
+  it("selects last N commits by entering a number N interactively", async () => {
+    const repoRoot = createRepoRoot();
+    const exec = createCrExec(repoRoot);
+    const custom = vi
+      .fn()
+      .mockResolvedValueOnce("lastNCommits")
+      .mockResolvedValueOnce(3);
+    const { ctx, notify } = createTestContext({ repoRoot, ui: { custom } });
+    const { startHandler } = registerCrCommands(exec);
+
+    await startHandler("", ctx);
+
+    expect(custom).toHaveBeenCalledTimes(2);
+    expect(notify).toHaveBeenCalledWith(
+      "Opened CR diffview for HEAD~3...HEAD",
+      "info",
+    );
+  });
+
+  it("cancels last N commits when the number input is dismissed", async () => {
+    const repoRoot = createRepoRoot();
+    const exec = createCrExec(repoRoot);
+    const custom = vi
+      .fn()
+      .mockResolvedValueOnce("lastNCommits")
+      .mockResolvedValueOnce(null);
+    const { ctx, notify } = createTestContext({ repoRoot, ui: { custom } });
+    const { startHandler } = registerCrCommands(exec);
+
+    await startHandler("", ctx);
+
+    expect(custom).toHaveBeenCalledTimes(2);
+    // No notification means the CR start was cancelled gracefully
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it("selects a target branch by typing to filter interactively", async () => {
     const repoRoot = createRepoRoot();
     const exec = createCrExec(repoRoot);

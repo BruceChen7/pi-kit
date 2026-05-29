@@ -254,6 +254,80 @@ const selectTargetBranch = async (
   );
 };
 
+const NUMBER_INPUT_MIN = 1;
+const NUMBER_INPUT_MAX = 100;
+const NUMBER_INPUT_DEFAULT = 1;
+const NUMBER_INPUT_HINT = "Enter to confirm · Esc to cancel";
+
+const showNumberInput = async (ctx: ExtensionContext): Promise<number | null> =>
+  ctx.ui.custom<number | null>((tui, theme, _kb, done) => {
+    let input = String(NUMBER_INPUT_DEFAULT);
+    const container = new Container();
+
+    container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
+    container.addChild(
+      new Text(
+        theme.fg(
+          "accent",
+          theme.bold(
+            `How many commits back? (${NUMBER_INPUT_MIN}-${NUMBER_INPUT_MAX})`,
+          ),
+        ),
+      ),
+    );
+    container.addChild(new Text(""));
+    const inputText = new Text("");
+    const renderInput = () => {
+      inputText.setText(`N: ${input}`);
+    };
+    renderInput();
+    container.addChild(inputText);
+    container.addChild(new Text(""));
+    container.addChild(new Text(theme.fg("dim", NUMBER_INPUT_HINT)));
+    container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
+
+    const confirm = () => {
+      const parsed = Number.parseInt(input, 10);
+      if (
+        Number.isNaN(parsed) ||
+        parsed < NUMBER_INPUT_MIN ||
+        parsed > NUMBER_INPUT_MAX
+      ) {
+        // Keep waiting for valid input
+        return;
+      }
+      done(parsed);
+    };
+
+    return {
+      render(width: number) {
+        return container.render(width);
+      },
+      invalidate() {
+        container.invalidate();
+      },
+      handleInput(data: string) {
+        if (isBackspaceInput(data)) {
+          input = input.slice(0, -1);
+          renderInput();
+        } else if (isPrintableInput(data) && /^[0-9]$/.test(data)) {
+          // Prevent leading zeros: replace "0" with the first digit
+          if (input === "0" && data !== "0") {
+            input = data;
+          } else if (input.length < 3) {
+            input += data;
+          }
+          renderInput();
+        } else if (matchesKey(data, "enter") || data === "\r") {
+          confirm();
+        } else if (matchesKey(data, "escape")) {
+          done(null);
+        }
+        tui.requestRender();
+      },
+    };
+  });
+
 const createSession = async (
   pi: ExtensionAPI,
   repoRoot: string,
@@ -463,6 +537,11 @@ const resolveScope = async (
   if (presetDecision.kind === "needsBranchSelection") {
     const branch = await selectTargetBranch(pi, ctx);
     return branch ? branchScope(branch) : null;
+  }
+  if (presetDecision.kind === "needsNumberInput") {
+    const n = await showNumberInput(ctx);
+    if (n === null) return null;
+    return branchScope(`HEAD~${n}`);
   }
   return null;
 };

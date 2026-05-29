@@ -59,6 +59,7 @@ export type PlanModeSnapshot = {
   activeRun: PlanRun | null;
   recentRuns: PlanRun[];
   readFiles: string[];
+  freshlyWrittenFiles: string[];
   activePlanPath: string | null;
   latestReviewArtifactPath: string | null;
   reviewApprovedPlanPaths: string[];

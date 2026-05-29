@@ -20,6 +20,8 @@ type RegisteredExtension = {
   tools: RegisteredTool[];
 };
 
+type SessionShell = SessionStartContext["shell"];
+
 function registerExtension(): RegisteredExtension {
   const handlers = new Map<string, Function>();
   const tools: RegisteredTool[] = [];
@@ -47,6 +49,18 @@ function createSessionStartContext(
     modelRegistry: {},
     shell,
   };
+}
+
+async function registerToolForShell(
+  shell: SessionShell,
+  cwd = process.cwd(),
+): Promise<{ tool: RegisteredTool; ctx: SessionStartContext }> {
+  const { handlers, tools } = registerExtension();
+  const ctx = createSessionStartContext(shell, cwd);
+
+  await handlers.get("session_start")?.({ reason: "startup" }, ctx);
+
+  return { tool: tools[0], ctx };
 }
 
 describe("cs-search extension", () => {
@@ -83,16 +97,19 @@ describe("cs-search extension", () => {
     expect(tool.promptGuidelines).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          "Use cs_search when you need to find the most relevant implementation",
+          "Use cs_search when you need the most likely implementation",
         ),
         expect.stringContaining(
-          "Use rg instead when you need exact text or regex line matches",
+          "Recommended flow: call cs_search first, then read the top result",
+        ),
+        expect.stringContaining(
+          "Use rg instead when you need exact text, regex matches",
         ),
       ]),
     );
   });
 
-  it("executes cs as a JSON CLI search and formats the top result for Pi", async () => {
+  it("executes cs as a JSON CLI search and returns ranked structured results for Pi", async () => {
     const whichCs = vi.fn().mockResolvedValue("/usr/local/bin/cs");
     const execFile = vi.fn().mockResolvedValue({
       stdout: JSON.stringify([
@@ -103,22 +120,29 @@ describe("cs-search extension", () => {
           score: 4.2,
           snippet: "export function authenticate() {}",
         },
+        {
+          filename: "auth.ts",
+          location: "src/auth.ts",
+          line_number: 28,
+          score: 3.9,
+          snippet: "export const authMiddleware = () => {}",
+        },
       ]),
       stderr: "",
     });
-    const { handlers, tools } = registerExtension();
-
-    const ctx = createSessionStartContext(
+    const { tool, ctx } = await registerToolForShell(
       { which: whichCs, execFile },
       "/repo",
     );
-
-    await handlers.get("session_start")?.({ reason: "startup" }, ctx);
-
-    const tool = tools[0];
     const result = await (tool.execute as Function)(
       "call-1",
-      { query: "authenticate" },
+      {
+        query: "authenticate",
+        kind: "implementation",
+        path: "src",
+        language: "ts",
+        max_results: 2,
+      },
       undefined,
       undefined,
       ctx,
@@ -126,12 +150,88 @@ describe("cs-search extension", () => {
 
     expect(execFile).toHaveBeenCalledWith(
       "/usr/local/bin/cs",
-      ["authenticate", "--format", "json"],
+      [
+        "authenticate implementation concrete logic behavior",
+        "--format",
+        "json",
+      ],
       expect.objectContaining({ cwd: "/repo" }),
     );
-    expect(result.content[0].text).toContain("src/index.ts:12");
+    expect(result.content[0].text).toContain(
+      "Top 2 ranked results for: authenticate",
+    );
+    expect(result.content[0].text).toContain("1. src/index.ts:12 [score: 4.2]");
     expect(result.content[0].text).toContain(
       "export function authenticate() {}",
+    );
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        available: true,
+        query: "authenticate",
+        kind: "implementation",
+        path: "src",
+        language: "ts",
+        max_results: 2,
+        total_results: 2,
+        results: [
+          expect.objectContaining({
+            path: "src/index.ts",
+            line: 12,
+            score: 4.2,
+          }),
+          expect.objectContaining({
+            path: "src/auth.ts",
+            line: 28,
+            score: 3.9,
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("filters ranked results by path and language before returning top candidates", async () => {
+    const whichCs = vi.fn().mockResolvedValue("/usr/local/bin/cs");
+    const execFile = vi.fn().mockResolvedValue({
+      stdout: JSON.stringify([
+        {
+          location: "docs/auth.md",
+          line_number: 5,
+          score: 5.0,
+          snippet: "Authentication overview",
+        },
+        {
+          location: "src/auth.ts",
+          line_number: 28,
+          score: 3.9,
+          snippet: "export const authMiddleware = () => {}",
+        },
+      ]),
+      stderr: "",
+    });
+    const { tool, ctx } = await registerToolForShell(
+      { which: whichCs, execFile },
+      "/repo",
+    );
+    const result = await (tool.execute as Function)(
+      "call-2",
+      { query: "auth", path: "src", language: "ts", max_results: 3 },
+      undefined,
+      undefined,
+      ctx,
+    );
+
+    expect(result.content[0].text).toContain("Top 1 ranked result for: auth");
+    expect(result.content[0].text).toContain("src/auth.ts:28");
+    expect(result.content[0].text).not.toContain("docs/auth.md");
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        total_results: 1,
+        results: [
+          expect.objectContaining({
+            path: "src/auth.ts",
+          }),
+        ],
+      }),
     );
   });
 });

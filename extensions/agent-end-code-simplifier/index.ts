@@ -167,7 +167,7 @@ export const normalizeConfig = (
   );
 
   return {
-    enabled: normalizeBoolean(raw?.enabled, true),
+    enabled: normalizeBoolean(raw?.enabled, false),
     extensions,
     promptTemplate: normalizeString(
       raw?.promptTemplate,

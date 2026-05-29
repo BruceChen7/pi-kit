@@ -19,6 +19,11 @@ export const CR_PRESETS = [
     description: "git diff --cached",
   },
   {
+    value: "lastNCommits",
+    label: "Review last N commits",
+    description: "HEAD~N...HEAD",
+  },
+  {
     value: "baseBranch",
     label: "Review against a base branch",
     description: "branch...HEAD",
@@ -70,6 +75,7 @@ export type ScopeResolutionDecision =
 export type PresetScopeDecision =
   | { kind: "scope"; scope: CrDiffScope }
   | { kind: "needsBranchSelection" }
+  | { kind: "needsNumberInput" }
   | { kind: "cancelled" };
 
 export const branchScope = (target: string): CrDiffScope => ({
@@ -106,6 +112,7 @@ export const decideScopeFromPreset = (
     };
   }
 
+  if (preset === "lastNCommits") return { kind: "needsNumberInput" };
   if (preset === "baseBranch") return { kind: "needsBranchSelection" };
   return { kind: "cancelled" };
 };

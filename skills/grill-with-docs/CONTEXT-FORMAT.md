@@ -21,20 +21,16 @@ _Avoid_: Bill, payment request
 A person or organization that places orders.
 _Avoid_: Client, buyer, account
 
-<!-- Add relationships, flagged ambiguities, or example dialogue only when they are necessary
-     to disambiguate project-specific language. Do not turn CONTEXT.md into a PRD, wiki, or
-     implementation note. -->
+<!-- CONTEXT.md is a glossary only. Do not turn it into a PRD, wiki, spec, or implementation
+     note. -->
 ```
 
 ## Rules
 
-- **Be opinionated.** When multiple words exist for the same concept, pick the best one and list the others as aliases to avoid.
-- **Flag conflicts explicitly.** If a term is used ambiguously, call it out in "Flagged ambiguities" with a clear resolution.
+- **Be opinionated.** When multiple words exist for the same concept, pick the best one and list the others under `_Avoid_`.
 - **Keep definitions tight.** One or two sentences max. Define what it IS, not what it does.
-- **Show relationships only when they disambiguate domain language.** Use bold term names and express cardinality where obvious.
 - **Only include terms specific to this project's context.** General programming concepts (timeouts, error types, utility patterns) don't belong even if the project uses them extensively. Before adding a term, ask: is this a concept unique to this context, or a general programming concept? Only the former belongs.
 - **Group terms under subheadings** when natural clusters emerge. If all terms belong to a single cohesive area, a flat list is fine.
-- **Write example dialogue only when it resolves ambiguity.** Keep it short and focused on language boundaries.
 
 ## Single vs multi-context repos
 

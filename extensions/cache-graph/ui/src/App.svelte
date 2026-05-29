@@ -12,6 +12,10 @@ import {
   type ChartRange,
   type RepoFilter,
 } from "../../chart-filters.ts";
+import {
+  formatShortTimeRange,
+  formatShortTimestamp,
+} from "../../format-utils.ts";
 
 type CacheUsageTotals = {
   input: number;
@@ -91,21 +95,6 @@ const CHART_BOTTOM = 192;
 const CHART_LEFT = 62;
 const CHART_TIME_LABEL_Y = 210;
 const MAX_CHART_BARS = 72;
-const CHART_MONTH_LABELS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-
 declare global {
   interface Window {
     __CACHE_GRAPH_BOOT__?: BootData;
@@ -469,20 +458,7 @@ function buildChartTimeLabels(
 }
 
 function formatChartTimestamp(timestamp: string): string {
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) {
-    return timestamp.slice(0, 19);
-  }
-
-  const month = CHART_MONTH_LABELS[date.getMonth()] ?? "";
-  const time = [date.getHours(), date.getMinutes(), date.getSeconds()]
-    .map(formatClockPart)
-    .join(":");
-  return `${month} ${date.getDate()} ${time}`;
-}
-
-function formatClockPart(value: number): string {
-  return value.toString().padStart(2, "0");
+  return formatShortTimestamp(timestamp);
 }
 
 function selectedRepoLabel(repo: RepoFilter): string {
@@ -501,9 +477,7 @@ function formatDetailValue(detail: ChartBarDetail): string {
 }
 
 function formatDetailTimeRange(detail: ChartBarDetail): string {
-  const start = formatChartTimestamp(detail.firstTimestamp);
-  const end = formatChartTimestamp(detail.lastTimestamp);
-  return start === end ? start : `${start} – ${end}`;
+  return formatShortTimeRange(detail.firstTimestamp, detail.lastTimestamp);
 }
 </script>
 

@@ -447,6 +447,8 @@ export class PlanModeController {
               isInsideCwd,
               isReviewArtifact: isReviewArtifactPath(ctx.cwd, rawPath),
               wasRead: this.state.readFiles.has(absolutePath),
+              wasFreshlyWritten:
+                this.state.freshlyWrittenFiles.has(absolutePath),
             };
           })
         : [];
@@ -565,13 +567,19 @@ export class PlanModeController {
     }
 
     if (WRITE_TOOL_NAMES.has(event.toolName) && !event.isError) {
+      let wroteTrackedPath = false;
       for (const { rawPath } of pathsFromWriteToolInput(event.input)) {
+        const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
+        this.state.freshlyWrittenFiles.add(absolutePath);
+        wroteTrackedPath = true;
         if (isReviewArtifactPath(ctx.cwd, rawPath)) {
           this.state.markReviewArtifactWritten(
             relativeToolPath(ctx.cwd, rawPath),
           );
-          this.persist();
         }
+      }
+      if (wroteTrackedPath) {
+        this.persist();
       }
       return;
     }

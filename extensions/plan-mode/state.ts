@@ -301,6 +301,7 @@ export const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
     activeRun: restoredActiveRun,
     recentRuns: recentRuns.slice(0, RECENT_RUN_LIMIT),
     readFiles: sanitizeStringArray(data.readFiles, []),
+    freshlyWrittenFiles: sanitizeStringArray(data.freshlyWrittenFiles, []),
     activePlanPath:
       typeof data.activePlanPath === "string" ? data.activePlanPath : null,
     latestReviewArtifactPath:
@@ -367,6 +368,7 @@ export class PlanModeState {
   activeRun: PlanRun | null = null;
   recentRuns: PlanRun[] = [];
   readFiles = new Set<string>();
+  freshlyWrittenFiles = new Set<string>();
   activePlanPath: string | null = null;
   latestReviewArtifactPath: string | null = null;
   reviewApprovedPlanPaths = new Set<string>();
@@ -390,6 +392,7 @@ export class PlanModeState {
     this.activeRun = null;
     this.recentRuns = [];
     this.readFiles = new Set();
+    this.freshlyWrittenFiles = new Set();
     this.activePlanPath = null;
     this.latestReviewArtifactPath = null;
     this.reviewApprovedPlanPaths = new Set();
@@ -421,6 +424,7 @@ export class PlanModeState {
       : snapshot.todos.map((todo) => ({ ...todo }));
     this.nextTodoId = activeRun ? activeRun.nextTodoId : snapshot.nextTodoId;
     this.readFiles = new Set(snapshot.readFiles);
+    this.freshlyWrittenFiles = new Set(snapshot.freshlyWrittenFiles);
     this.activePlanPath = snapshot.activePlanPath;
     this.latestReviewArtifactPath = snapshot.latestReviewArtifactPath;
     this.reviewApprovedPlanPaths = new Set(snapshot.reviewApprovedPlanPaths);
@@ -786,6 +790,7 @@ export class PlanModeState {
       activeRun: this.activeRun ? clonePlanRun(this.activeRun) : null,
       recentRuns: this.recentRuns.map(clonePlanRun).slice(0, RECENT_RUN_LIMIT),
       readFiles: [...this.readFiles],
+      freshlyWrittenFiles: [...this.freshlyWrittenFiles],
       activePlanPath: this.activePlanPath,
       latestReviewArtifactPath: this.latestReviewArtifactPath,
       reviewApprovedPlanPaths: [...this.reviewApprovedPlanPaths],

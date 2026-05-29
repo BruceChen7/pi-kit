@@ -13,6 +13,7 @@ const target = (
   isInsideCwd: true,
   isReviewArtifact: false,
   wasRead: false,
+  wasFreshlyWritten: false,
   ...overrides,
 });
 
@@ -42,6 +43,14 @@ describe("plan-mode guard policy", () => {
   it("allows write targets that were read first", () => {
     expect(
       decideToolBlock(input({ targets: [target({ wasRead: true })] })),
+    ).toBe(undefined);
+  });
+
+  it("allows follow-up edits for targets that were freshly written", () => {
+    expect(
+      decideToolBlock(
+        input({ targets: [target({ wasFreshlyWritten: true })] }),
+      ),
     ).toBe(undefined);
   });
 

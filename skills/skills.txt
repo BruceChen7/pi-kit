@@ -34,6 +34,7 @@ zero-tech-debt|local|skills/zero-tech-debt
 me-tdd|local|skills/me_tdd
 push-ifs-up-fors-down|local|skills/push-ifs-up-fors-down
 debug-pi-coding-agent|local|skills/debug-pi-coding-agent
+chao-go-perf|local|skills/chao-go-perf
 plan-code-review|local|skills/review
 handoff|local|skills/handoff
 # https://github.com/mattpocock/skills

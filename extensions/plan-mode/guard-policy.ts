@@ -10,6 +10,7 @@ export type GuardPolicyTarget = {
   isInsideCwd: boolean;
   isReviewArtifact: boolean;
   wasRead: boolean;
+  wasFreshlyWritten: boolean;
 };
 
 export type GuardPolicyInput = {
@@ -87,7 +88,7 @@ export const decideToolBlock = (
       };
     }
 
-    if (target.exists && !target.wasRead) {
+    if (target.exists && !target.wasRead && !target.wasFreshlyWritten) {
       return {
         block: true,
         reason:

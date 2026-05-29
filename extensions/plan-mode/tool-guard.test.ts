@@ -188,6 +188,34 @@ describe("plan-mode extension: tool guards", () => {
     });
   });
 
+  it("allows follow-up edits after a successful fresh write in the same session", async () => {
+    await withTempCtx(async (ctx) => {
+      const targetPath = "src/fresh-write.ts";
+      const { harness } = await startPlanModeSession("act", ctx);
+
+      await expectToolAllowed(harness, ctx, "write", {
+        path: targetPath,
+        content: "export const value = 1;\n",
+      });
+      writeSourceFile(ctx, targetPath, "export const value = 1;\n");
+      await harness.emit(
+        "tool_result",
+        {
+          toolName: "write",
+          input: { path: targetPath, content: "export const value = 1;\n" },
+          isError: false,
+        },
+        ctx,
+      );
+
+      await expectToolAllowed(harness, ctx, "edit", {
+        path: targetPath,
+        oldText: "export const value = 1;\n",
+        newText: "export const value = 2;\n",
+      });
+    });
+  });
+
   it("blocks patch add-file writes outside cwd", async () => {
     const { harness, ctx } = await startPlanModeSession("act");
 

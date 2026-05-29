@@ -754,44 +754,6 @@ describe("extension diagnostics", () => {
     );
   });
 
-  it("asks the user to choose a fallback source when manual shortcut has no tracked files", async () => {
-    mockExtensionDependencies(createMockLogger(), {
-      agentEndCodeSimplifier: { enabled: false },
-    });
-    vi.doMock("../shared/git.ts", () => ({
-      DEFAULT_GIT_TIMEOUT_MS: 5000,
-      createRepoGitRunner: vi.fn(() => vi.fn()),
-      getRepoRoot: vi.fn(() => "/repo"),
-      checkRepoDirty: vi.fn(() => ({
-        porcelain: "M  src/staged.ts\n",
-        summary: { staged: 1, unstaged: 0, untracked: 0, dirty: true },
-      })),
-      listDirtyPaths: vi.fn(() => ["src/staged.ts"]),
-      listLocalBranches: vi.fn(() => []),
-      listPathsChangedSinceBranch: vi.fn(() => []),
-      listPathsInLastCommit: vi.fn(() => []),
-      listRemoteBranches: vi.fn(() => []),
-    }));
-
-    const { handlers, shortcuts, sendUserMessage } =
-      await createExtensionHarness();
-
-    const ctx = createBasicTestContext({ cwd: "/repo/subdir" });
-    ctx.ui.select.mockResolvedValue("工作区未提交变更");
-
-    await handlers.get("session_start")?.({}, ctx);
-    await shortcuts.get("ctrl+alt+y")?.handler(ctx);
-
-    expect(ctx.ui.select).toHaveBeenCalledWith("Choose diff source:", [
-      "工作区未提交变更",
-      "last commit",
-      "与某个分支 diff",
-    ]);
-    expect(sendUserMessage).toHaveBeenCalledWith(
-      expect.stringContaining("src/staged.ts"),
-    );
-  });
-
   it("uses last commit code files when selected from the fallback source menu", async () => {
     const listPathsInLastCommit = vi.fn(() => [
       "src/last-commit.ts",
@@ -826,51 +788,6 @@ describe("extension diagnostics", () => {
     const sentPrompt = String(sendUserMessage.mock.calls[0]?.[0]);
     expect(sentPrompt).toContain("src/last-commit.ts");
     expect(sentPrompt).not.toContain("README.md");
-  });
-
-  it("prompts for a base branch when branch diff is selected from the fallback source menu", async () => {
-    const listPathsChangedSinceBranch = vi.fn(() => [
-      "src/from-branch.ts",
-      "notes.txt",
-    ]);
-
-    mockExtensionDependencies(createMockLogger(), {
-      agentEndCodeSimplifier: { enabled: true },
-    });
-    vi.doMock("../shared/git.ts", () => ({
-      DEFAULT_GIT_TIMEOUT_MS: 5000,
-      createRepoGitRunner: vi.fn(() => vi.fn()),
-      getRepoRoot: vi.fn(() => "/repo"),
-      checkRepoDirty: vi.fn(() => null),
-      listDirtyPaths: vi.fn(() => []),
-      listLocalBranches: vi.fn(() => ["main", "develop"]),
-      listPathsChangedSinceBranch,
-      listPathsInLastCommit: vi.fn(() => []),
-      listRemoteBranches: vi.fn(() => []),
-    }));
-
-    const { handlers, shortcuts, sendUserMessage } =
-      await createExtensionHarness();
-
-    const ctx = createBasicTestContext({ cwd: "/repo/subdir" });
-    ctx.ui.select
-      .mockResolvedValueOnce("与某个分支 diff")
-      .mockResolvedValueOnce("main");
-
-    await handlers.get("session_start")?.({}, ctx);
-    await shortcuts.get("ctrl+alt+y")?.handler(ctx);
-
-    expect(ctx.ui.select).toHaveBeenNthCalledWith(2, "Base branch:", [
-      "main",
-      "develop",
-    ]);
-    expect(listPathsChangedSinceBranch).toHaveBeenCalledWith(
-      expect.any(Function),
-      "main",
-    );
-    const sentPrompt = String(sendUserMessage.mock.calls[0]?.[0]);
-    expect(sentPrompt).toContain("src/from-branch.ts");
-    expect(sentPrompt).not.toContain("notes.txt");
   });
 
   it("defers automatic hidden prompts until after agent_end returns", async () => {

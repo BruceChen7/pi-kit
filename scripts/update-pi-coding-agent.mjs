@@ -3,7 +3,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
+const PI_AI_PACKAGE = "@earendil-works/pi-ai";
 const PI_TUI_PACKAGE = "@earendil-works/pi-tui";
+const PI_RUNTIME_PACKAGES = [
+  PI_AI_PACKAGE,
+  PI_CODING_AGENT_PACKAGE,
+  PI_TUI_PACKAGE,
+];
 const DEFAULT_GLOBAL_PI_BIN = "/opt/homebrew/bin/pi";
 
 const getNpmCommand = () => (process.platform === "win32" ? "npm.cmd" : "npm");
@@ -23,13 +29,15 @@ export const updatePeerDependencies = (packageJson, latestVersion) => {
   }
 
   const targetRange = `^${latestVersion}`;
+  const nextPiPeerDependencies = Object.fromEntries(
+    PI_RUNTIME_PACKAGES.map((packageName) => [packageName, targetRange]),
+  );
 
   return {
     ...packageJson,
     peerDependencies: {
       ...packageJson.peerDependencies,
-      [PI_CODING_AGENT_PACKAGE]: targetRange,
-      [PI_TUI_PACKAGE]: targetRange,
+      ...nextPiPeerDependencies,
     },
   };
 };
@@ -77,14 +85,12 @@ const getPiVersion = () => {
 
 const runInstall = (latestVersion) => {
   const targetRange = `^${latestVersion}`;
+  const installArgs = PI_RUNTIME_PACKAGES.map(
+    (packageName) => `${packageName}@${targetRange}`,
+  );
   const result = spawnSync(
     getNpmCommand(),
-    [
-      "install",
-      `${PI_CODING_AGENT_PACKAGE}@${targetRange}`,
-      `${PI_TUI_PACKAGE}@${targetRange}`,
-      "--save-peer",
-    ],
+    ["install", ...installArgs, "--save-peer"],
     {
       cwd: process.cwd(),
       stdio: "inherit",
@@ -116,11 +122,11 @@ export const main = () => {
   );
   writePackageJson(packageJsonPath, nextPackageJson);
 
-  console.log("Running npm install for pi-coding-agent and pi-tui...");
+  console.log("Running npm install for pi-ai, pi-coding-agent, and pi-tui...");
   runInstall(latestVersion);
 
   console.log(
-    `Updated pi-coding-agent peerDependency from ${previousRange} to ${targetRange}`,
+    `Updated pi peerDependencies from ${previousRange} to ${targetRange}`,
   );
   console.log(`Installed target version ${latestVersion}`);
 };

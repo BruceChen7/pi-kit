@@ -339,6 +339,9 @@ export const clonePlanRun = (run: PlanRun): PlanRun => ({
   todos: run.todos.map((todo) => ({ ...todo })),
 });
 
+const snapshotFileSet = (paths: string[] | undefined): Set<string> =>
+  new Set(paths ?? []);
+
 export const latestSnapshot = (entries: unknown[]): PlanModeSnapshot | null => {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const snapshot = snapshotFromEntry(entries[index]);
@@ -423,8 +426,8 @@ export class PlanModeState {
       ? activeRun.todos
       : snapshot.todos.map((todo) => ({ ...todo }));
     this.nextTodoId = activeRun ? activeRun.nextTodoId : snapshot.nextTodoId;
-    this.readFiles = new Set(snapshot.readFiles);
-    this.freshlyWrittenFiles = new Set(snapshot.freshlyWrittenFiles);
+    this.readFiles = snapshotFileSet(snapshot.readFiles);
+    this.freshlyWrittenFiles = snapshotFileSet(snapshot.freshlyWrittenFiles);
     this.activePlanPath = snapshot.activePlanPath;
     this.latestReviewArtifactPath = snapshot.latestReviewArtifactPath;
     this.reviewApprovedPlanPaths = new Set(snapshot.reviewApprovedPlanPaths);
@@ -455,6 +458,22 @@ export class PlanModeState {
 
   setPlanArtifactFormatOverride(format: PlanArtifactFormat): void {
     this.planArtifactFormatOverride = format;
+  }
+
+  markFileRead(absolutePath: string): void {
+    this.readFiles.add(absolutePath);
+  }
+
+  markFileFreshlyWritten(absolutePath: string): void {
+    this.freshlyWrittenFiles.add(absolutePath);
+  }
+
+  hasReadFile(absolutePath: string): boolean {
+    return this.readFiles.has(absolutePath);
+  }
+
+  wasFileFreshlyWritten(absolutePath: string): boolean {
+    return this.freshlyWrittenFiles.has(absolutePath);
   }
 
   getPlanArtifactFormat(config: PlanModeConfig): PlanArtifactFormat {

@@ -446,9 +446,8 @@ export class PlanModeController {
               exists: fs.existsSync(absolutePath),
               isInsideCwd,
               isReviewArtifact: isReviewArtifactPath(ctx.cwd, rawPath),
-              wasRead: this.state.readFiles.has(absolutePath),
-              wasFreshlyWritten:
-                this.state.freshlyWrittenFiles.has(absolutePath),
+              wasRead: this.state.hasReadFile(absolutePath),
+              wasFreshlyWritten: this.state.wasFileFreshlyWritten(absolutePath),
             };
           })
         : [];
@@ -560,7 +559,7 @@ export class PlanModeController {
     if (event.toolName === "read" && !event.isError) {
       const rawPath = stringProperty(event.input, "path");
       if (rawPath) {
-        this.state.readFiles.add(normalizeToolPath(ctx.cwd, rawPath));
+        this.state.markFileRead(normalizeToolPath(ctx.cwd, rawPath));
         this.persist();
       }
       return;
@@ -570,7 +569,7 @@ export class PlanModeController {
       let wroteTrackedPath = false;
       for (const { rawPath } of pathsFromWriteToolInput(event.input)) {
         const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
-        this.state.freshlyWrittenFiles.add(absolutePath);
+        this.state.markFileFreshlyWritten(absolutePath);
         wroteTrackedPath = true;
         if (isReviewArtifactPath(ctx.cwd, rawPath)) {
           this.state.markReviewArtifactWritten(

@@ -344,6 +344,20 @@ export const turnWasAborted = (
 ): boolean =>
   Boolean(ctx.signal?.aborted) || containsAbortedMessage(event.messages ?? []);
 
+export const normalizeAgentEndInputSource = (
+  value: unknown,
+): AgentEndInputSource => {
+  if (value === "extension") {
+    return "extension";
+  }
+
+  if (value === "user") {
+    return "user";
+  }
+
+  return "unknown";
+};
+
 const buildApprovalRequestText = (
   supportedPaths: readonly string[],
 ): { title: string; body: string } => {
@@ -355,6 +369,67 @@ const buildApprovalRequestText = (
   return { title, body };
 };
 
+export const buildManualFallbackOptions = (
+  branchCandidates: readonly string[],
+): string[] => [
+  ...branchCandidates.slice(0, 12),
+  ...(branchCandidates.length > 12 ? [OTHER_BRANCH_OPTION] : []),
+];
+
+export const decideManualFallbackChoice = (
+  choice: string | undefined,
+): ManualFallbackChoice | "cancelled" => {
+  if (choice === undefined) {
+    return "cancelled";
+  }
+
+  if (choice === MANUAL_FALLBACK_LAST_COMMIT) {
+    return "last_commit";
+  }
+
+  if (choice === MANUAL_FALLBACK_BRANCH_DIFF) {
+    return "branch_diff";
+  }
+
+  return "workspace";
+};
+
+export const resolveManualSupportedPathResolution = (
+  source: ManualPathSource,
+  supportedPaths: string[],
+): ManualSupportedPathResolution =>
+  supportedPaths.length > 0
+    ? { kind: "resolved", source, supportedPaths }
+    : { kind: "empty" };
+
+export const decideBranchBaseSelection = ({
+  selectedOption,
+  typedValue,
+}: {
+  selectedOption?: string;
+  typedValue?: string;
+}): BranchBaseSelection => {
+  if (selectedOption === undefined) {
+    return { kind: "cancelled" };
+  }
+
+  if (selectedOption !== OTHER_BRANCH_OPTION) {
+    const normalized = selectedOption.trim();
+    return normalized.length > 0
+      ? { kind: "selected", baseBranch: normalized }
+      : { kind: "unavailable" };
+  }
+
+  if (typedValue === undefined) {
+    return { kind: "cancelled" };
+  }
+
+  const normalized = typedValue.trim();
+  return normalized.length > 0
+    ? { kind: "selected", baseBranch: normalized }
+    : { kind: "unavailable" };
+};
+
 type ApprovalRaceInput = {
   localDecision: Promise<boolean>;
   remoteDecisions: Array<Promise<boolean>>;
@@ -363,10 +438,26 @@ type ApprovalRaceInput = {
 
 type BooleanConfigField = "autoRun" | "confirmBeforeRun";
 
-type ManualSupportedPathResolution = {
-  supportedPaths: string[];
-  source: "turn" | "workspace" | "last_commit" | "branch_diff" | "none";
-};
+export type ManualPathSource =
+  | "turn"
+  | "workspace"
+  | "last_commit"
+  | "branch_diff";
+
+type ManualSupportedPathResolution =
+  | { kind: "resolved"; source: ManualPathSource; supportedPaths: string[] }
+  | { kind: "empty" }
+  | { kind: "cancelled" }
+  | { kind: "unavailable" };
+
+export type AgentEndInputSource = "extension" | "user" | "unknown";
+
+export type ManualFallbackChoice = "workspace" | "last_commit" | "branch_diff";
+
+export type BranchBaseSelection =
+  | { kind: "selected"; baseBranch: string }
+  | { kind: "cancelled" }
+  | { kind: "unavailable" };
 
 const MANUAL_FALLBACK_WORKSPACE = "工作区未提交变更";
 const MANUAL_FALLBACK_LAST_COMMIT = "last commit";
@@ -405,7 +496,7 @@ export type AgentEndSimplifierDecisionInput = {
   turnAborted: boolean;
   autoRun: boolean;
   confirmBeforeRun: boolean;
-  inputSource: string | null;
+  inputSource: AgentEndInputSource;
   skipExtensionPrompts: boolean;
 };
 
@@ -533,7 +624,7 @@ export type AgentEndCodeSimplifierLifecycleState = {
   modifiedPaths: string[];
   suppressNextPrompt: boolean;
   runGeneration: number;
-  currentInputSource: string | null;
+  currentInputSource: AgentEndInputSource;
 };
 
 export type AgentEndCodeSimplifierInputEvent = {
@@ -554,7 +645,7 @@ export const createAgentEndCodeSimplifierLifecycleState =
     modifiedPaths: [],
     suppressNextPrompt: false,
     runGeneration: 0,
-    currentInputSource: null,
+    currentInputSource: "unknown",
   });
 
 export const resetLifecycleForNewSession = (
@@ -563,7 +654,7 @@ export const resetLifecycleForNewSession = (
   ...state,
   modifiedPaths: [],
   suppressNextPrompt: false,
-  currentInputSource: null,
+  currentInputSource: "unknown",
 });
 
 export const resetLifecycleForAgentStart = (
@@ -609,13 +700,13 @@ export const decideInputLifecycleTransition = (
   state: AgentEndCodeSimplifierLifecycleState,
   event: AgentEndCodeSimplifierInputEvent,
 ): AgentEndCodeSimplifierInputTransition => {
-  const currentInputSource = event.source ?? null;
+  const currentInputSource = normalizeAgentEndInputSource(event.source);
   const stateWithInputSource = {
     ...state,
     currentInputSource,
   };
 
-  if (event.source === "extension") {
+  if (currentInputSource === "extension") {
     const runId = extractAutoTriggerRunId(event.text ?? "");
     if (runId !== null && runId !== state.runGeneration) {
       return {
@@ -875,63 +966,63 @@ export default function agentEndCodeSimplifierExtension(
   const resolveBranchDiffBase = async (
     ctx: ManualShortcutContext,
     cwd: string,
-  ): Promise<string | null> => {
+  ): Promise<BranchBaseSelection> => {
     const runGit = createRepoRunner(cwd);
     if (!runGit) {
-      return null;
+      return { kind: "unavailable" };
     }
 
     const branchCandidates = Array.from(
       new Set([...listLocalBranches(runGit), ...listRemoteBranches(runGit)]),
     );
-    const options = [
-      ...branchCandidates.slice(0, 12),
-      ...(branchCandidates.length > 12 ? [OTHER_BRANCH_OPTION] : []),
-    ];
+    const options = buildManualFallbackOptions(branchCandidates);
 
     if (typeof ctx.ui.select === "function") {
       const choice = await ctx.ui.select("Base branch:", options);
-      if (choice === undefined) {
-        ctx.ui.notify(MANUAL_DIFF_SOURCE_CANCELLED, "info");
-        return null;
-      }
-
       if (choice !== OTHER_BRANCH_OPTION) {
-        return choice.trim().length > 0 ? choice.trim() : null;
+        const selection = decideBranchBaseSelection({ selectedOption: choice });
+        if (selection.kind === "cancelled") {
+          ctx.ui.notify(MANUAL_DIFF_SOURCE_CANCELLED, "info");
+        }
+        return selection;
       }
     }
 
     if (typeof ctx.ui.input !== "function") {
-      return null;
+      return { kind: "unavailable" };
     }
 
     const value = await ctx.ui.input("Base branch:", "main");
-    if (value === undefined) {
+    const selection = decideBranchBaseSelection({
+      selectedOption: OTHER_BRANCH_OPTION,
+      typedValue: value,
+    });
+    if (selection.kind === "cancelled") {
       ctx.ui.notify(MANUAL_DIFF_SOURCE_CANCELLED, "info");
-      return null;
     }
-
-    const normalized = value.trim();
-    return normalized.length > 0 ? normalized : null;
+    return selection;
   };
 
   const collectBranchDiffSupportedPaths = async (
     ctx: ManualShortcutContext,
     cwd: string,
-  ): Promise<string[] | null> => {
+  ): Promise<ManualSupportedPathResolution> => {
     const runGit = createRepoRunner(cwd);
     if (!runGit) {
-      return [];
+      return { kind: "unavailable" };
     }
 
     const baseBranch = await resolveBranchDiffBase(ctx, cwd);
-    if (!baseBranch) {
-      return null;
+    if (baseBranch.kind !== "selected") {
+      return baseBranch;
     }
 
-    return collectSupportedPaths(
-      listPathsChangedSinceBranch(runGit, baseBranch),
-      config,
+    return resolveManualSupportedPathResolution(
+      "branch_diff",
+      collectSupportedPaths(
+        listPathsChangedSinceBranch(runGit, baseBranch.baseBranch),
+        config,
+      ),
     );
   };
 
@@ -940,61 +1031,42 @@ export default function agentEndCodeSimplifierExtension(
     cwd: string,
   ): Promise<ManualSupportedPathResolution> => {
     if (typeof ctx.ui.select !== "function") {
-      const supportedPaths = collectRepoDirtySupportedPaths(cwd);
-      return {
-        supportedPaths,
-        source: supportedPaths.length > 0 ? "workspace" : "none",
-      };
+      return resolveManualSupportedPathResolution(
+        "workspace",
+        collectRepoDirtySupportedPaths(cwd),
+      );
     }
 
-    const choice = await ctx.ui.select("Choose diff source:", [
-      ...MANUAL_FALLBACK_OPTIONS,
-    ]);
-    if (choice === undefined) {
+    const choice = decideManualFallbackChoice(
+      await ctx.ui.select("Choose diff source:", [...MANUAL_FALLBACK_OPTIONS]),
+    );
+    if (choice === "cancelled") {
       ctx.ui.notify(MANUAL_DIFF_SOURCE_CANCELLED, "info");
-      return { supportedPaths: [], source: "none" };
+      return { kind: "cancelled" };
     }
 
-    if (choice === MANUAL_FALLBACK_LAST_COMMIT) {
-      const supportedPaths = collectLastCommitSupportedPaths(cwd);
-      return {
-        supportedPaths,
-        source: supportedPaths.length > 0 ? "last_commit" : "none",
-      };
+    if (choice === "last_commit") {
+      return resolveManualSupportedPathResolution(
+        "last_commit",
+        collectLastCommitSupportedPaths(cwd),
+      );
     }
 
-    if (choice === MANUAL_FALLBACK_BRANCH_DIFF) {
-      const supportedPaths = await collectBranchDiffSupportedPaths(ctx, cwd);
-      if (supportedPaths === null) {
-        return { supportedPaths: [], source: "none" };
-      }
-
-      return {
-        supportedPaths,
-        source: supportedPaths.length > 0 ? "branch_diff" : "none",
-      };
+    if (choice === "branch_diff") {
+      return await collectBranchDiffSupportedPaths(ctx, cwd);
     }
 
-    const supportedPaths = collectRepoDirtySupportedPaths(cwd);
-    return {
-      supportedPaths,
-      source: supportedPaths.length > 0 ? "workspace" : "none",
-    };
+    return resolveManualSupportedPathResolution(
+      "workspace",
+      collectRepoDirtySupportedPaths(cwd),
+    );
   };
 
   const resolveManualSupportedPaths = (): ManualSupportedPathResolution => {
-    const turnSupportedPaths = collectSupportedPaths(
-      lifecycle.modifiedPaths,
-      config,
+    return resolveManualSupportedPathResolution(
+      "turn",
+      collectSupportedPaths(lifecycle.modifiedPaths, config),
     );
-    if (turnSupportedPaths.length > 0) {
-      return { supportedPaths: turnSupportedPaths, source: "turn" };
-    }
-
-    return {
-      supportedPaths: [],
-      source: "none",
-    };
   };
 
   const handleBooleanConfigCommand = (
@@ -1067,17 +1139,23 @@ export default function agentEndCodeSimplifierExtension(
       refreshConfig(ctx.cwd);
 
       const turnResolution = resolveManualSupportedPaths();
-      const { supportedPaths, source } =
-        turnResolution.supportedPaths.length > 0
+      const resolution =
+        turnResolution.kind === "resolved"
           ? turnResolution
           : await resolveManualFallbackSupportedPaths(
               ctx as ManualShortcutContext,
               ctx.cwd,
             );
-      if (supportedPaths.length === 0) {
+      if (resolution.kind === "cancelled") {
+        return;
+      }
+
+      if (resolution.kind !== "resolved") {
         ctx.ui.notify("No supported modified files to simplify.", "info");
         return;
       }
+
+      const { supportedPaths, source } = resolution;
 
       log.info("manual_shortcut_sending_code_simplifier_prompt", {
         ...diagnostics(ctx),

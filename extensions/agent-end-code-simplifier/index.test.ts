@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL } from "../shared/internal-events.ts";
 import {
   buildCodeSimplifierPrompt,
+  buildManualFallbackOptions,
   collectSupportedPaths,
   collectToolResultPaths,
   consumeSuppressedAgentEnd,
@@ -11,13 +12,17 @@ import {
   DEFAULT_PROMPT_TEMPLATE,
   DEFAULT_SUPPORTED_EXTENSIONS,
   decideAgentEndSimplifierAction,
+  decideBranchBaseSelection,
   decideInputLifecycleTransition,
+  decideManualFallbackChoice,
   extractAutoTriggerRunId,
   isSupportedCodePath,
   lastUserMessageLooksAutoTriggered,
+  normalizeAgentEndInputSource,
   normalizeConfig,
   resetLifecycleForAgentStart,
   resetLifecycleForNewSession,
+  resolveManualSupportedPathResolution,
   startSimplifierRun,
   trackModifiedPaths,
   turnWasAborted,
@@ -443,7 +448,7 @@ describe("agent-end code simplifier lifecycle", () => {
       modifiedPaths: [],
       suppressNextPrompt: false,
       runGeneration: 7,
-      currentInputSource: null,
+      currentInputSource: "unknown",
     });
     expect(resetLifecycleForAgentStart(activeState)).toEqual({
       modifiedPaths: [],
@@ -520,6 +525,84 @@ describe("agent-end code simplifier lifecycle", () => {
   });
 });
 
+describe("manual fallback decision helpers", () => {
+  it("normalizes input source values into explicit domain values", () => {
+    expect(normalizeAgentEndInputSource("extension")).toBe("extension");
+    expect(normalizeAgentEndInputSource("user")).toBe("user");
+    expect(normalizeAgentEndInputSource("interactive")).toBe("unknown");
+    expect(normalizeAgentEndInputSource(undefined)).toBe("unknown");
+  });
+
+  it("maps manual fallback menu choices into core decision values", () => {
+    expect(decideManualFallbackChoice("工作区未提交变更")).toBe("workspace");
+    expect(decideManualFallbackChoice("last commit")).toBe("last_commit");
+    expect(decideManualFallbackChoice("与某个分支 diff")).toBe("branch_diff");
+    expect(decideManualFallbackChoice(undefined)).toBe("cancelled");
+  });
+
+  it("builds branch fallback options with Other only when needed", () => {
+    expect(buildManualFallbackOptions(["main", "develop"])).toEqual([
+      "main",
+      "develop",
+    ]);
+    expect(
+      buildManualFallbackOptions(
+        Array.from({ length: 13 }, (_v, i) => `b${i}`),
+      ),
+    ).toEqual([
+      "b0",
+      "b1",
+      "b2",
+      "b3",
+      "b4",
+      "b5",
+      "b6",
+      "b7",
+      "b8",
+      "b9",
+      "b10",
+      "b11",
+      "Other...",
+    ]);
+  });
+
+  it("decides branch base selection without UI mocks", () => {
+    expect(
+      decideBranchBaseSelection({
+        selectedOption: "main",
+      }),
+    ).toEqual({ kind: "selected", baseBranch: "main" });
+    expect(
+      decideBranchBaseSelection({
+        selectedOption: "Other...",
+        typedValue: " feature/base ",
+      }),
+    ).toEqual({ kind: "selected", baseBranch: "feature/base" });
+    expect(
+      decideBranchBaseSelection({
+        selectedOption: undefined,
+      }),
+    ).toEqual({ kind: "cancelled" });
+    expect(
+      decideBranchBaseSelection({
+        selectedOption: "Other...",
+        typedValue: "   ",
+      }),
+    ).toEqual({ kind: "unavailable" });
+  });
+
+  it("models resolved and empty supported path results explicitly", () => {
+    expect(resolveManualSupportedPathResolution("turn", ["src/a.ts"])).toEqual({
+      kind: "resolved",
+      source: "turn",
+      supportedPaths: ["src/a.ts"],
+    });
+    expect(resolveManualSupportedPathResolution("workspace", [])).toEqual({
+      kind: "empty",
+    });
+  });
+});
+
 describe("decideAgentEndSimplifierAction", () => {
   const baseInput = {
     enabled: true,
@@ -531,7 +614,7 @@ describe("decideAgentEndSimplifierAction", () => {
     turnAborted: false,
     autoRun: true,
     confirmBeforeRun: false,
-    inputSource: "interactive",
+    inputSource: "user",
     skipExtensionPrompts: true,
   };
 

@@ -22,6 +22,8 @@ Default to Chinese unless the user explicitly asks for another language.
 - Do not paste full specs, plans, ADRs, diffs, logs, or command output. Summarize only what the
   next agent needs and link to the durable source.
 - Do not commit, push, or modify project files unless the user explicitly asks.
+- Redact any sensitive information, such as API keys, passwords, or personally identifiable
+  information (PII).
 - If the user passed arguments, treat them as the next session's intended focus.
 
 ## What to inspect

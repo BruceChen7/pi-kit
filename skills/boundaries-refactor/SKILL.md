@@ -4,9 +4,10 @@ description: >-
   Use this skill when refactoring code to apply Gary Bernhardt's Boundaries /
   Functional Core, Imperative Shell style: move business decisions into pure
   value-in/value-out functions, keep IO and side effects at the edges, reduce
-  mocks, and improve testability. Especially useful for Go services, handlers,
-  jobs, domain logic, and code tangled with databases, HTTP clients, queues,
-  mailers, clocks, or global state.
+  mocks, improve testability, and trim brittle shell tests after core
+  extraction. Especially useful for Go services, handlers, jobs, domain logic,
+  and code tangled with databases, HTTP clients, queues, mailers, clocks, or
+  global state.
 ---
 
 # Boundaries Refactor
@@ -213,6 +214,8 @@ Before finishing, verify:
 - At least one wiring or integration test still covers the shell when the refactor changes external behavior.
 - Redundant mock-heavy tests were removed or simplified when pure decision tests now cover the branching logic directly.
 - Remaining shell tests assert contracts and outcomes, not fragile UI strings, exact mock call counts, or nth-call sequencing unless that order is itself the contract.
+
+## Test Cleanup and Redundant Mock Trimming
 
 ## Practical Test-Cleanup Pattern
 

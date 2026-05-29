@@ -2,9 +2,14 @@ import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   checkRepoDirty,
+  createRepoGitRunner,
   DEFAULT_GIT_TIMEOUT_MS,
   getRepoRoot,
   listDirtyPaths,
+  listLocalBranches,
+  listPathsChangedSinceBranch,
+  listPathsInLastCommit,
+  listRemoteBranches,
 } from "../shared/git.ts";
 import {
   AGENT_END_CODE_SIMPLIFIER_APPROVAL_CHANNEL,
@@ -360,8 +365,35 @@ type BooleanConfigField = "autoRun" | "confirmBeforeRun";
 
 type ManualSupportedPathResolution = {
   supportedPaths: string[];
-  source: "turn" | "repo" | "none";
+  source: "turn" | "workspace" | "last_commit" | "branch_diff" | "none";
 };
+
+const MANUAL_FALLBACK_WORKSPACE = "工作区未提交变更";
+const MANUAL_FALLBACK_LAST_COMMIT = "last commit";
+const MANUAL_FALLBACK_BRANCH_DIFF = "与某个分支 diff";
+const MANUAL_FALLBACK_OPTIONS = [
+  MANUAL_FALLBACK_WORKSPACE,
+  MANUAL_FALLBACK_LAST_COMMIT,
+  MANUAL_FALLBACK_BRANCH_DIFF,
+] as const;
+const MANUAL_DIFF_SOURCE_CANCELLED =
+  "Cancelled manual simplifier diff source selection.";
+const OTHER_BRANCH_OPTION = "Other...";
+
+type ManualShortcutContext = NotificationContext &
+  WidgetContext & {
+    hasUI: boolean;
+    ui: NotificationContext["ui"] & {
+      input?: (
+        title: string,
+        initialValue?: string,
+      ) => Promise<string | undefined>;
+      select?: (
+        title: string,
+        options: string[],
+      ) => Promise<string | undefined>;
+    } & NonNullable<WidgetContext["ui"]>;
+  };
 
 export type AgentEndSimplifierDecisionInput = {
   enabled: boolean;
@@ -808,6 +840,15 @@ export default function agentEndCodeSimplifierExtension(
     sendCodeSimplifierPromptAfterIdle(ctx, supportedPaths);
   };
 
+  const createRepoRunner = (cwd: string) => {
+    const repoRoot = getRepoRoot(cwd, DEFAULT_GIT_TIMEOUT_MS);
+    if (!repoRoot) {
+      return null;
+    }
+
+    return createRepoGitRunner(repoRoot, DEFAULT_GIT_TIMEOUT_MS);
+  };
+
   const collectRepoDirtySupportedPaths = (cwd: string): string[] => {
     const repoRoot = getRepoRoot(cwd, DEFAULT_GIT_TIMEOUT_MS);
     if (!repoRoot) {
@@ -822,9 +863,126 @@ export default function agentEndCodeSimplifierExtension(
     return collectSupportedPaths(listDirtyPaths(dirty.porcelain), config);
   };
 
-  const resolveManualSupportedPaths = (
+  const collectLastCommitSupportedPaths = (cwd: string): string[] => {
+    const runGit = createRepoRunner(cwd);
+    if (!runGit) {
+      return [];
+    }
+
+    return collectSupportedPaths(listPathsInLastCommit(runGit), config);
+  };
+
+  const resolveBranchDiffBase = async (
+    ctx: ManualShortcutContext,
     cwd: string,
-  ): ManualSupportedPathResolution => {
+  ): Promise<string | null> => {
+    const runGit = createRepoRunner(cwd);
+    if (!runGit) {
+      return null;
+    }
+
+    const branchCandidates = Array.from(
+      new Set([...listLocalBranches(runGit), ...listRemoteBranches(runGit)]),
+    );
+    const options = [
+      ...branchCandidates.slice(0, 12),
+      ...(branchCandidates.length > 12 ? [OTHER_BRANCH_OPTION] : []),
+    ];
+
+    if (typeof ctx.ui.select === "function") {
+      const choice = await ctx.ui.select("Base branch:", options);
+      if (choice === undefined) {
+        ctx.ui.notify(MANUAL_DIFF_SOURCE_CANCELLED, "info");
+        return null;
+      }
+
+      if (choice !== OTHER_BRANCH_OPTION) {
+        return choice.trim().length > 0 ? choice.trim() : null;
+      }
+    }
+
+    if (typeof ctx.ui.input !== "function") {
+      return null;
+    }
+
+    const value = await ctx.ui.input("Base branch:", "main");
+    if (value === undefined) {
+      ctx.ui.notify(MANUAL_DIFF_SOURCE_CANCELLED, "info");
+      return null;
+    }
+
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : null;
+  };
+
+  const collectBranchDiffSupportedPaths = async (
+    ctx: ManualShortcutContext,
+    cwd: string,
+  ): Promise<string[] | null> => {
+    const runGit = createRepoRunner(cwd);
+    if (!runGit) {
+      return [];
+    }
+
+    const baseBranch = await resolveBranchDiffBase(ctx, cwd);
+    if (!baseBranch) {
+      return null;
+    }
+
+    return collectSupportedPaths(
+      listPathsChangedSinceBranch(runGit, baseBranch),
+      config,
+    );
+  };
+
+  const resolveManualFallbackSupportedPaths = async (
+    ctx: ManualShortcutContext,
+    cwd: string,
+  ): Promise<ManualSupportedPathResolution> => {
+    if (typeof ctx.ui.select !== "function") {
+      const supportedPaths = collectRepoDirtySupportedPaths(cwd);
+      return {
+        supportedPaths,
+        source: supportedPaths.length > 0 ? "workspace" : "none",
+      };
+    }
+
+    const choice = await ctx.ui.select("Choose diff source:", [
+      ...MANUAL_FALLBACK_OPTIONS,
+    ]);
+    if (choice === undefined) {
+      ctx.ui.notify(MANUAL_DIFF_SOURCE_CANCELLED, "info");
+      return { supportedPaths: [], source: "none" };
+    }
+
+    if (choice === MANUAL_FALLBACK_LAST_COMMIT) {
+      const supportedPaths = collectLastCommitSupportedPaths(cwd);
+      return {
+        supportedPaths,
+        source: supportedPaths.length > 0 ? "last_commit" : "none",
+      };
+    }
+
+    if (choice === MANUAL_FALLBACK_BRANCH_DIFF) {
+      const supportedPaths = await collectBranchDiffSupportedPaths(ctx, cwd);
+      if (supportedPaths === null) {
+        return { supportedPaths: [], source: "none" };
+      }
+
+      return {
+        supportedPaths,
+        source: supportedPaths.length > 0 ? "branch_diff" : "none",
+      };
+    }
+
+    const supportedPaths = collectRepoDirtySupportedPaths(cwd);
+    return {
+      supportedPaths,
+      source: supportedPaths.length > 0 ? "workspace" : "none",
+    };
+  };
+
+  const resolveManualSupportedPaths = (): ManualSupportedPathResolution => {
     const turnSupportedPaths = collectSupportedPaths(
       lifecycle.modifiedPaths,
       config,
@@ -833,10 +991,9 @@ export default function agentEndCodeSimplifierExtension(
       return { supportedPaths: turnSupportedPaths, source: "turn" };
     }
 
-    const repoSupportedPaths = collectRepoDirtySupportedPaths(cwd);
     return {
-      supportedPaths: repoSupportedPaths,
-      source: repoSupportedPaths.length > 0 ? "repo" : "none",
+      supportedPaths: [],
+      source: "none",
     };
   };
 
@@ -908,12 +1065,15 @@ export default function agentEndCodeSimplifierExtension(
       "Manually trigger me-code-simplifier for files changed this turn",
     handler: async (ctx) => {
       refreshConfig(ctx.cwd);
-      if (!config.enabled) {
-        ctx.ui.notify("agent-end-code-simplifier is disabled.", "warning");
-        return;
-      }
 
-      const { supportedPaths, source } = resolveManualSupportedPaths(ctx.cwd);
+      const turnResolution = resolveManualSupportedPaths();
+      const { supportedPaths, source } =
+        turnResolution.supportedPaths.length > 0
+          ? turnResolution
+          : await resolveManualFallbackSupportedPaths(
+              ctx as ManualShortcutContext,
+              ctx.cwd,
+            );
       if (supportedPaths.length === 0) {
         ctx.ui.notify("No supported modified files to simplify.", "info");
         return;

@@ -9,6 +9,8 @@ import {
   getCurrentBranchName,
   listDirtyPaths,
   listLocalBranches,
+  listPathsChangedSinceBranch,
+  listPathsInLastCommit,
   listRemoteBranches,
 } from "./git.js";
 
@@ -102,6 +104,36 @@ describe("branch helpers", () => {
       "--quiet",
       "refs/heads/feature/main/test",
     ]);
+  });
+
+  it("lists file paths touched by the last commit", () => {
+    const run = vi.fn(() => ({
+      exitCode: 0,
+      stdout: "src/a.ts\nREADME.md\n",
+      stderr: "",
+    }));
+
+    expect(listPathsInLastCommit(run)).toEqual(["src/a.ts", "README.md"]);
+    expect(run).toHaveBeenCalledWith([
+      "show",
+      "--pretty=format:",
+      "--name-only",
+      "HEAD",
+    ]);
+  });
+
+  it("lists file paths changed since a base branch", () => {
+    const run = vi.fn(() => ({
+      exitCode: 0,
+      stdout: "src/a.ts\nsrc/b.py\n",
+      stderr: "",
+    }));
+
+    expect(listPathsChangedSinceBranch(run, "main")).toEqual([
+      "src/a.ts",
+      "src/b.py",
+    ]);
+    expect(run).toHaveBeenCalledWith(["diff", "--name-only", "main...HEAD"]);
   });
 });
 

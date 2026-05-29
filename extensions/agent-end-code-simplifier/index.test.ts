@@ -77,7 +77,9 @@ type BasicTestContext = {
   signal?: AbortSignal;
   ui: {
     confirm: ReturnType<typeof vi.fn>;
+    input: ReturnType<typeof vi.fn>;
     notify: ReturnType<typeof vi.fn>;
+    select: ReturnType<typeof vi.fn>;
   };
 };
 
@@ -102,7 +104,12 @@ const createBasicTestContext = ({
   cwd,
   hasUI: true,
   ...(signal ? { signal } : {}),
-  ui: { confirm: vi.fn(), notify: vi.fn() },
+  ui: {
+    confirm: vi.fn(),
+    input: vi.fn(),
+    notify: vi.fn(),
+    select: vi.fn(),
+  },
 });
 
 const createWidgetTestContext = ({
@@ -115,7 +122,9 @@ const createWidgetTestContext = ({
   ...(isIdle ? { isIdle } : {}),
   ui: {
     confirm: vi.fn(),
+    input: vi.fn(),
     notify: vi.fn(),
+    select: vi.fn(),
     setWidget: vi.fn(),
   },
 });
@@ -643,7 +652,9 @@ describe("buildCodeSimplifierPrompt", () => {
 
 describe("extension diagnostics", () => {
   it("registers Ctrl+Alt+Y to manually trigger me-code-simplifier", async () => {
-    mockExtensionDependencies();
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: false },
+    });
 
     const { handlers, shortcuts, sendMessage, sendUserMessage } =
       await createExtensionHarness();
@@ -660,45 +671,130 @@ describe("extension diagnostics", () => {
     );
   });
 
-  it("uses repo dirty code files when manual shortcut has no tracked files", async () => {
-    mockExtensionDependencies();
+  it("asks the user to choose a fallback source when manual shortcut has no tracked files", async () => {
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: false },
+    });
     vi.doMock("../shared/git.ts", () => ({
       DEFAULT_GIT_TIMEOUT_MS: 5000,
+      createRepoGitRunner: vi.fn(() => vi.fn()),
       getRepoRoot: vi.fn(() => "/repo"),
       checkRepoDirty: vi.fn(() => ({
-        porcelain:
-          "M  src/staged.ts\n M src/unstaged.py\n?? README.md\n?? src/new.ts\n",
-        summary: { staged: 1, unstaged: 1, untracked: 2, dirty: true },
+        porcelain: "M  src/staged.ts\n",
+        summary: { staged: 1, unstaged: 0, untracked: 0, dirty: true },
       })),
-      listDirtyPaths: vi.fn(() => [
-        "src/staged.ts",
-        "src/unstaged.py",
-        "README.md",
-        "src/new.ts",
-      ]),
+      listDirtyPaths: vi.fn(() => ["src/staged.ts"]),
+      listLocalBranches: vi.fn(() => []),
+      listPathsChangedSinceBranch: vi.fn(() => []),
+      listPathsInLastCommit: vi.fn(() => []),
+      listRemoteBranches: vi.fn(() => []),
     }));
 
-    const { handlers, shortcuts, sendMessage, sendUserMessage } =
+    const { handlers, shortcuts, sendUserMessage } =
       await createExtensionHarness();
 
     const ctx = createBasicTestContext({ cwd: "/repo/subdir" });
+    ctx.ui.select.mockResolvedValue("工作区未提交变更");
 
     await handlers.get("session_start")?.({}, ctx);
     await shortcuts.get("ctrl+alt+y")?.handler(ctx);
 
-    expect(sendMessage).not.toHaveBeenCalled();
-    expect(sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(ctx.ui.select).toHaveBeenCalledWith("Choose diff source:", [
+      "工作区未提交变更",
+      "last commit",
+      "与某个分支 diff",
+    ]);
+    expect(sendUserMessage).toHaveBeenCalledWith(
+      expect.stringContaining("src/staged.ts"),
+    );
+  });
 
+  it("uses last commit code files when selected from the fallback source menu", async () => {
+    const listPathsInLastCommit = vi.fn(() => [
+      "src/last-commit.ts",
+      "README.md",
+    ]);
+
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: true },
+    });
+    vi.doMock("../shared/git.ts", () => ({
+      DEFAULT_GIT_TIMEOUT_MS: 5000,
+      createRepoGitRunner: vi.fn(() => vi.fn()),
+      getRepoRoot: vi.fn(() => "/repo"),
+      checkRepoDirty: vi.fn(() => null),
+      listDirtyPaths: vi.fn(() => []),
+      listLocalBranches: vi.fn(() => []),
+      listPathsChangedSinceBranch: vi.fn(() => []),
+      listPathsInLastCommit,
+      listRemoteBranches: vi.fn(() => []),
+    }));
+
+    const { handlers, shortcuts, sendUserMessage } =
+      await createExtensionHarness();
+
+    const ctx = createBasicTestContext({ cwd: "/repo/subdir" });
+    ctx.ui.select.mockResolvedValue("last commit");
+
+    await handlers.get("session_start")?.({}, ctx);
+    await shortcuts.get("ctrl+alt+y")?.handler(ctx);
+
+    expect(listPathsInLastCommit).toHaveBeenCalled();
     const sentPrompt = String(sendUserMessage.mock.calls[0]?.[0]);
-    expect(sentPrompt).toContain("src/staged.ts");
-    expect(sentPrompt).toContain("src/unstaged.py");
-    expect(sentPrompt).toContain("src/new.ts");
+    expect(sentPrompt).toContain("src/last-commit.ts");
     expect(sentPrompt).not.toContain("README.md");
+  });
+
+  it("prompts for a base branch when branch diff is selected from the fallback source menu", async () => {
+    const listPathsChangedSinceBranch = vi.fn(() => [
+      "src/from-branch.ts",
+      "notes.txt",
+    ]);
+
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: true },
+    });
+    vi.doMock("../shared/git.ts", () => ({
+      DEFAULT_GIT_TIMEOUT_MS: 5000,
+      createRepoGitRunner: vi.fn(() => vi.fn()),
+      getRepoRoot: vi.fn(() => "/repo"),
+      checkRepoDirty: vi.fn(() => null),
+      listDirtyPaths: vi.fn(() => []),
+      listLocalBranches: vi.fn(() => ["main", "develop"]),
+      listPathsChangedSinceBranch,
+      listPathsInLastCommit: vi.fn(() => []),
+      listRemoteBranches: vi.fn(() => []),
+    }));
+
+    const { handlers, shortcuts, sendUserMessage } =
+      await createExtensionHarness();
+
+    const ctx = createBasicTestContext({ cwd: "/repo/subdir" });
+    ctx.ui.select
+      .mockResolvedValueOnce("与某个分支 diff")
+      .mockResolvedValueOnce("main");
+
+    await handlers.get("session_start")?.({}, ctx);
+    await shortcuts.get("ctrl+alt+y")?.handler(ctx);
+
+    expect(ctx.ui.select).toHaveBeenNthCalledWith(2, "Base branch:", [
+      "main",
+      "develop",
+    ]);
+    expect(listPathsChangedSinceBranch).toHaveBeenCalledWith(
+      expect.any(Function),
+      "main",
+    );
+    const sentPrompt = String(sendUserMessage.mock.calls[0]?.[0]);
+    expect(sentPrompt).toContain("src/from-branch.ts");
+    expect(sentPrompt).not.toContain("notes.txt");
   });
 
   it("defers automatic hidden prompts until after agent_end returns", async () => {
     vi.useFakeTimers();
-    mockExtensionDependencies();
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: true },
+    });
 
     const { handlers, sendMessage, sendUserMessage } =
       await createExtensionHarness();
@@ -725,7 +821,9 @@ describe("extension diagnostics", () => {
   });
 
   it("skips automatic simplifier prompts after extension-origin turns", async () => {
-    mockExtensionDependencies();
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: true },
+    });
 
     const { handlers, sendMessage, sendUserMessage } =
       await createExtensionHarness();
@@ -759,7 +857,9 @@ describe("extension diagnostics", () => {
 
   it("waits for idle before sending automatic simplifier prompts", async () => {
     vi.useFakeTimers();
-    mockExtensionDependencies();
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: true },
+    });
 
     const { handlers, sendMessage, sendUserMessage } =
       await createExtensionHarness();
@@ -787,7 +887,9 @@ describe("extension diagnostics", () => {
   });
 
   it("shows a running widget when manual simplifier follow-up starts", async () => {
-    mockExtensionDependencies();
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: true },
+    });
 
     const { handlers, shortcuts } = await createExtensionHarness();
     const ctx = createWidgetTestContext();
@@ -804,7 +906,9 @@ describe("extension diagnostics", () => {
   });
 
   it("keeps the running widget until the simplifier follow-up ends", async () => {
-    mockExtensionDependencies();
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: true },
+    });
 
     const { handlers } = await createExtensionHarness();
     const ctx = createWidgetTestContext();
@@ -837,7 +941,9 @@ describe("extension diagnostics", () => {
   });
 
   it("clears the running widget when the user submits a new prompt", async () => {
-    mockExtensionDependencies();
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: true },
+    });
 
     const { handlers } = await createExtensionHarness();
     const ctx = createWidgetTestContext();
@@ -858,7 +964,9 @@ describe("extension diagnostics", () => {
   });
 
   it("drops stale queued simplifier follow-ups after a newer user prompt", async () => {
-    mockExtensionDependencies();
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: true },
+    });
 
     const { handlers, sendUserMessage } = await createExtensionHarness();
     const ctx = createWidgetTestContext();
@@ -885,7 +993,9 @@ describe("extension diagnostics", () => {
   });
 
   it("skips automatic simplifier approval after an aborted turn by default", async () => {
-    mockExtensionDependencies();
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: true },
+    });
 
     const { handlers, events, sendMessage, sendUserMessage } =
       await createExtensionHarness();
@@ -917,7 +1027,9 @@ describe("extension diagnostics", () => {
   });
 
   it("keeps manually triggering simplifier for tracked files after an aborted turn", async () => {
-    mockExtensionDependencies();
+    mockExtensionDependencies(createMockLogger(), {
+      agentEndCodeSimplifier: { enabled: true },
+    });
 
     const { handlers, shortcuts, sendMessage, sendUserMessage } =
       await createExtensionHarness();
@@ -993,6 +1105,7 @@ describe("extension diagnostics", () => {
   it("closes local confirmation when an attached remote allow decision wins", async () => {
     mockExtensionDependencies(createMockLogger(), {
       agentEndCodeSimplifier: {
+        enabled: true,
         confirmBeforeRun: true,
       },
     });

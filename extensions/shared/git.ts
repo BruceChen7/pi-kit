@@ -47,6 +47,14 @@ const parseNonEmptyLines = (value: string): string[] =>
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
 
+const parseCommandPathList = (result: StatusOutput): string[] => {
+  if (result.exitCode !== 0) {
+    return [];
+  }
+
+  return parseNonEmptyLines(result.stdout);
+};
+
 const normalizePorcelainPath = (value: string): string => {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -121,13 +129,9 @@ export const getCurrentBranchName = (run: GitRunner): string | null => {
 };
 
 export const listLocalBranches = (run: GitRunner): string[] => {
-  const result = run([
-    "for-each-ref",
-    "--format=%(refname:short)",
-    "refs/heads",
-  ]);
-  if (result.exitCode !== 0) return [];
-  return parseNonEmptyLines(result.stdout);
+  return parseCommandPathList(
+    run(["for-each-ref", "--format=%(refname:short)", "refs/heads"]),
+  );
 };
 
 export const listRemoteBranches = (
@@ -139,17 +143,18 @@ export const listRemoteBranches = (
     return [];
   }
 
-  const result = run([
-    "for-each-ref",
-    "--format=%(refname:short)",
-    `refs/remotes/${normalizedRemote}`,
-  ]);
-  if (result.exitCode !== 0) return [];
+  const refs = parseCommandPathList(
+    run([
+      "for-each-ref",
+      "--format=%(refname:short)",
+      `refs/remotes/${normalizedRemote}`,
+    ]),
+  );
 
   const branches: string[] = [];
   const seen = new Set<string>();
 
-  for (const ref of parseNonEmptyLines(result.stdout)) {
+  for (const ref of refs) {
     if (!ref.startsWith(`${normalizedRemote}/`)) {
       continue;
     }
@@ -178,6 +183,26 @@ export const branchExists = (run: GitRunner, branch: string): boolean => {
     `refs/heads/${branch}`,
   ]);
   return result.exitCode === 0;
+};
+
+export const listPathsInLastCommit = (run: GitRunner): string[] => {
+  return parseCommandPathList(
+    run(["show", "--pretty=format:", "--name-only", "HEAD"]),
+  );
+};
+
+export const listPathsChangedSinceBranch = (
+  run: GitRunner,
+  baseBranch: string,
+): string[] => {
+  const normalizedBase = baseBranch.trim();
+  if (!normalizedBase) {
+    return [];
+  }
+
+  return parseCommandPathList(
+    run(["diff", "--name-only", `${normalizedBase}...HEAD`]),
+  );
 };
 
 export const getRepoRoot = (

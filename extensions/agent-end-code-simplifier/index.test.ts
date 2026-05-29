@@ -210,7 +210,7 @@ const createExtensionHarness = async (
 describe("normalizeConfig", () => {
   it("uses defaults when settings are missing", () => {
     expect(normalizeConfig({})).toEqual({
-      enabled: true,
+      enabled: false,
       extensions: [...DEFAULT_SUPPORTED_EXTENSIONS],
       promptTemplate: DEFAULT_PROMPT_TEMPLATE,
       abortBehavior: "skip",

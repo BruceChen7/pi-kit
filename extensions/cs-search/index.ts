@@ -349,7 +349,7 @@ function formatResults(
   return [
     `Top ${results.length} ranked result${results.length === 1 ? "" : "s"} for: ${params.query}`,
     ...results.map(summarizeResult),
-    "Next step: read the most relevant file(s) for full context.",
+    "Next step: read the most relevant file(s) around the cited line numbers for full context.",
   ].join("\n\n");
 }
 

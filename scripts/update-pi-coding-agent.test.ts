@@ -4,22 +4,22 @@ import {
   updatePeerDependencies,
 } from "./update-pi-coding-agent.mjs";
 
+const createPiPeerDependencies = (version) => ({
+  "@earendil-works/pi-ai": `^${version}`,
+  "@earendil-works/pi-coding-agent": `^${version}`,
+  "@earendil-works/pi-tui": `^${version}`,
+});
+
 describe("updatePeerDependencies", () => {
-  it("updates both pi-coding-agent and pi-tui peer dependencies to the latest range", () => {
+  it("updates pi-ai, pi-coding-agent, and pi-tui peer dependencies to the latest range", () => {
     const packageJson = {
       name: "pi-kit",
-      peerDependencies: {
-        "@earendil-works/pi-coding-agent": "^0.63.1",
-        "@earendil-works/pi-tui": "^0.63.1",
-      },
+      peerDependencies: createPiPeerDependencies("0.63.1"),
     };
 
     const result = updatePeerDependencies(packageJson, "0.67.3");
 
-    expect(result.peerDependencies).toEqual({
-      "@earendil-works/pi-coding-agent": "^0.67.3",
-      "@earendil-works/pi-tui": "^0.67.3",
-    });
+    expect(result.peerDependencies).toEqual(createPiPeerDependencies("0.67.3"));
   });
 
   it("preserves unrelated package.json fields", () => {
@@ -29,10 +29,7 @@ describe("updatePeerDependencies", () => {
       scripts: {
         test: "vitest run",
       },
-      peerDependencies: {
-        "@earendil-works/pi-coding-agent": "^0.63.1",
-        "@earendil-works/pi-tui": "^0.63.1",
-      },
+      peerDependencies: createPiPeerDependencies("0.63.1"),
       custom: {
         enabled: true,
       },
@@ -53,8 +50,7 @@ describe("updatePeerDependencies", () => {
   it("does not change other peer dependency entries", () => {
     const packageJson = {
       peerDependencies: {
-        "@earendil-works/pi-coding-agent": "^0.63.1",
-        "@earendil-works/pi-tui": "^0.63.1",
+        ...createPiPeerDependencies("0.63.1"),
         react: "^19.0.0",
       },
     };
@@ -62,8 +58,7 @@ describe("updatePeerDependencies", () => {
     const result = updatePeerDependencies(packageJson, "0.67.3");
 
     expect(result.peerDependencies).toEqual({
-      "@earendil-works/pi-coding-agent": "^0.67.3",
-      "@earendil-works/pi-tui": "^0.67.3",
+      ...createPiPeerDependencies("0.67.3"),
       react: "^19.0.0",
     });
   });

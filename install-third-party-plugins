@@ -32,7 +32,7 @@ PLANNOTATOR_REPO="${PLANNOTATOR_REPO:-backnotprop/plannotator}"
 DEFAULT_PLUGINS=(
   "npm:pi-context"
   "https://github.com/davebcn87/pi-autoresearch"
-  # "https://github.com/monotykamary/pi-opencode-go-provider"
+  "https://github.com/monotykamary/pi-opencode-go-provider"
 )
 
 while [[ $# -gt 0 ]]; do

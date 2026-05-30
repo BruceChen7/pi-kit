@@ -37,7 +37,8 @@
       "./extensions/brainstorm-events",
       "./extensions/cache-graph",
       "./extensions/librarian",
-      "./extensions/btw"
+      "./extensions/btw",
+      "./extensions/opencode-go-provider"
     ]
   },
   "scripts": {

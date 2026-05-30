@@ -155,8 +155,14 @@ const CACHE_DIR = path.join(os.homedir(), ".pi", "agent", "cache");
 const CACHE_PATH = path.join(CACHE_DIR, `${PROVIDER_ID}-models.json`);
 const LIVE_FETCH_TIMEOUT_MS = 8000;
 
+/** A model object from the opencode-go /v1/models API. */
+interface ApiModel {
+  id: string;
+  context_length?: number;
+}
+
 /** Transform a model from the opencode-go /v1/models API. Returns minimal data. */
-function transformApiModel(apiModel: any): JsonModel {
+function transformApiModel(apiModel: ApiModel): JsonModel {
   return {
     id: apiModel.id,
     name: apiModel.id,

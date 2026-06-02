@@ -28,7 +28,6 @@ import os from "node:os";
 import path from "node:path";
 import type {
   ExtensionAPI,
-  ModelRegistry,
   ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
 import customModelsData from "./custom-models.json" with { type: "json" };
@@ -150,32 +149,53 @@ function buildModels(
 
 const PROVIDER_ID = "opencode-go";
 const BASE_URL = "https://opencode.ai/zen/go/v1";
-const MODELS_URL = `${BASE_URL}/models`;
+const MODELS_URL = "https://models.dev/api.json";
 const CACHE_DIR = path.join(os.homedir(), ".pi", "agent", "cache");
 const CACHE_PATH = path.join(CACHE_DIR, `${PROVIDER_ID}-models.json`);
 const LIVE_FETCH_TIMEOUT_MS = 8000;
 
-/** A model object from the opencode-go /v1/models API. */
-interface ApiModel {
+/** A model object from the models.dev API. */
+interface ModelsDevModel {
   id: string;
-  context_length?: number;
+  name: string;
+  reasoning?: boolean;
+  modalities?: { input?: string[] };
+  cost?: {
+    input?: number;
+    output?: number;
+    cache_read?: number;
+    cache_write?: number;
+  };
+  limit?: {
+    context?: number;
+    output?: number;
+  };
+  status?: string;
 }
 
-/** Transform a model from the opencode-go /v1/models API. Returns minimal data. */
-function transformApiModel(apiModel: ApiModel): JsonModel {
+/** Transform a model from models.dev into the Pi-native format. */
+function transformApiModel(apiModel: ModelsDevModel): JsonModel {
+  const inputTypes = apiModel.modalities?.input || ["text"];
+  const cost = apiModel.cost || {};
+  const limit = apiModel.limit || {};
   return {
     id: apiModel.id,
-    name: apiModel.id,
-    reasoning: false,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: apiModel.context_length || 131072,
-    maxTokens: 0,
+    name: apiModel.name || apiModel.id,
+    reasoning: apiModel.reasoning || false,
+    input: inputTypes,
+    cost: {
+      input: cost.input || 0,
+      output: cost.output || 0,
+      cacheRead: cost.cache_read || 0,
+      cacheWrite: cost.cache_write || 0,
+    },
+    contextWindow: limit.context || 0,
+    maxTokens: limit.output || 0,
   };
 }
 
 async function fetchLiveModels(
-  apiKey: string,
+  _apiKey: string,
   signal?: AbortSignal,
 ): Promise<JsonModel[] | null> {
   try {
@@ -184,13 +204,16 @@ async function fetchLiveModels(
       ? AbortSignal.any([timeout, signal])
       : timeout;
     const response = await fetch(MODELS_URL, {
-      headers: { Authorization: `Bearer ${apiKey}` },
       signal: combinedSignal,
     });
     if (!response.ok) return null;
     const data = await response.json();
-    const apiModels = Array.isArray(data) ? data : data.data || [];
-    if (!Array.isArray(apiModels) || apiModels.length === 0) return null;
+    const provider = data[PROVIDER_ID];
+    if (!provider?.models) return null;
+    const apiModels = (
+      Object.values(provider.models) as ModelsDevModel[]
+    ).filter((m) => m.status !== "deprecated");
+    if (apiModels.length === 0) return null;
     return apiModels.map(transformApiModel);
   } catch {
     return null;
@@ -227,7 +250,6 @@ function mergeWithEmbedded(
       result.push({
         ...liveModel,
         ...embedded,
-        contextWindow: liveModel.contextWindow || embedded.contextWindow,
       });
     } else {
       result.push(liveModel);
@@ -255,27 +277,20 @@ function loadStaleModels(embeddedModels: JsonModel[]): JsonModel[] {
 }
 
 async function revalidateModels(
-  apiKey: string | undefined,
+  _apiKey: string | undefined,
   embeddedModels: JsonModel[],
   signal?: AbortSignal,
 ): Promise<JsonModel[] | null> {
-  if (!apiKey) return null;
-  const liveModels = await fetchLiveModels(apiKey, signal);
+  const liveModels = await fetchLiveModels("", signal);
   if (!liveModels || liveModels.length === 0) return null;
   const merged = mergeWithEmbedded(liveModels, embeddedModels);
   cacheModels(merged);
   return merged;
 }
 
-// ─── API Key Resolution (via ModelRegistry) ───────────────────────────────
+// ─── Background Revalidation ──────────────────────────────────────────────
 
-let cachedApiKey: string | undefined;
 let revalidateAbort: AbortController | null = null;
-
-async function resolveApiKey(modelRegistry: ModelRegistry): Promise<void> {
-  cachedApiKey =
-    (await modelRegistry.getApiKeyForProvider("opencode-go")) ?? undefined;
-}
 
 // ─── Extension Entry Point ────────────────────────────────────────────────
 
@@ -294,27 +309,23 @@ export default function (pi: ExtensionAPI) {
     models: staleModels as ProviderModelConfig[],
   });
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (_event, _ctx) => {
     revalidateAbort?.abort();
     revalidateAbort = new AbortController();
     const signal = revalidateAbort.signal;
-    resolveApiKey(ctx.modelRegistry).then(() => {
-      revalidateModels(cachedApiKey, embeddedModels, signal).then(
-        (freshBase) => {
-          if (freshBase && !signal.aborted) {
-            pi.registerProvider("opencode-go", {
-              baseUrl: BASE_URL,
-              apiKey: "$OPENCODE_API_KEY",
-              api: "openai-completions",
-              models: buildModels(
-                freshBase,
-                customModels,
-                patches,
-              ) as ProviderModelConfig[],
-            });
-          }
-        },
-      );
+    revalidateModels(undefined, embeddedModels, signal).then((freshBase) => {
+      if (freshBase && !signal.aborted) {
+        pi.registerProvider("opencode-go", {
+          baseUrl: BASE_URL,
+          apiKey: "$OPENCODE_API_KEY",
+          api: "openai-completions",
+          models: buildModels(
+            freshBase,
+            customModels,
+            patches,
+          ) as ProviderModelConfig[],
+        });
+      }
     });
   });
 

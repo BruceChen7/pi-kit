@@ -23,6 +23,10 @@ describe("hasSession", () => {
   it("returns true when tmux has-session succeeds", () => {
     vi.mocked(execSync).mockReturnValue("" as any);
     expect(hasSession("pi-agent")).toBe(true);
+    expect(execSync).toHaveBeenCalledWith(
+      "tmux has-session -t '=pi-agent' 2>/dev/null",
+      expect.anything(),
+    );
   });
 
   it("returns false when tmux has-session fails", () => {
@@ -57,20 +61,24 @@ describe("listSessions", () => {
 });
 
 describe("killSession", () => {
-  it("calls tmux kill-session", () => {
-    vi.mocked(execSync).mockReturnValue("" as any);
-    killSession("pi-agent");
+  it("calls tmux kill-session with exact target and returns true when removed", () => {
+    vi.mocked(execSync)
+      .mockReturnValueOnce("" as any)
+      .mockImplementationOnce(() => {
+        throw new Error("no session");
+      });
+    expect(killSession("pi-agent")).toBe(true);
     expect(execSync).toHaveBeenCalledWith(
-      "tmux kill-session -t pi-agent 2>/dev/null",
+      "tmux kill-session -t '=pi-agent' 2>/dev/null",
       expect.anything(),
     );
   });
 
-  it("does not throw on failure", () => {
+  it("returns false on failure", () => {
     vi.mocked(execSync).mockImplementation(() => {
       throw new Error("no session");
     });
-    expect(() => killSession("pi-agent")).not.toThrow();
+    expect(killSession("pi-agent")).toBe(false);
   });
 });
 
@@ -131,6 +139,7 @@ describe("ensureSession", () => {
         throw new Error("no session");
       }) // hasSession → false
       .mockImplementationOnce(() => "" as any) // new-session
+      .mockImplementationOnce(() => "" as any) // set window-size
       .mockImplementationOnce(() => "" as any) // set status off
       .mockImplementationOnce(() => "" as any); // set history-limit
 
@@ -155,7 +164,7 @@ describe("ensureSession", () => {
     // Only the hasSession check was called
     expect(execSync).toHaveBeenCalledTimes(1);
     expect(execSync).toHaveBeenCalledWith(
-      "tmux has-session -t existing-session 2>/dev/null",
+      "tmux has-session -t '=existing-session' 2>/dev/null",
       expect.anything(),
     );
   });
@@ -181,16 +190,17 @@ describe("ensureSession", () => {
         throw new Error("no session");
       }) // hasSession → false
       .mockImplementationOnce(() => "" as any) // new-session
+      .mockImplementationOnce(() => "" as any) // set window-size
       .mockImplementationOnce(() => "" as any) // set status off
       .mockImplementationOnce(() => "" as any); // set history-limit
 
     ensureSession("pi-agent", "/home/user/project", "pi");
 
-    expect(execSync).toHaveBeenCalledTimes(4);
-    expect(vi.mocked(execSync).mock.calls[2][0]).toContain(
+    expect(execSync).toHaveBeenCalledTimes(5);
+    expect(vi.mocked(execSync).mock.calls[3][0]).toContain(
       "set -t pi-agent status off",
     );
-    expect(vi.mocked(execSync).mock.calls[3][0]).toContain(
+    expect(vi.mocked(execSync).mock.calls[4][0]).toContain(
       "set -t pi-agent history-limit 10000",
     );
   });

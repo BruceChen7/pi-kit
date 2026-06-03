@@ -58,16 +58,50 @@ export function createTerminal(
     options.onData?.(data);
   });
 
-  // Fit terminal to container after opening
-  setTimeout(() => {
+  // ── Initial fit ────────────────────────────────────────────
+  //
+  // `fitAddon.fit()` checks the renderer's character cell dimensions
+  // (`dimensions.actualCellWidth/Height`).  These are calculated by
+  // the renderer AFTER the first frame—**not** when `open()` returns.
+  // If we call `fit()` before the renderer is ready, it silently
+  // returns a no-op and the terminal stays at default (80×24) size.
+  //
+  // The reliable approach: subscribe once to `onRender`, which fires
+  // after the renderer has initialised and measured the font.  At that
+  // point `fit()` will actually resize the terminal.
+  let onRenderDisposable: { dispose: () => void } | null = null;
+  onRenderDisposable = terminal.onRender(() => {
     fitAddon?.fit();
+    if (terminal) {
+      console.log(
+        `[pi-webterm] terminal fit: container=${container.clientWidth}x${container.clientHeight}` +
+          ` cols=${terminal.cols} rows=${terminal.rows}` +
+          ` char=${fitAddon ? "ready" : "no-fit"}`,
+      );
+    }
     terminal?.focus();
     if (terminal) {
       options.onResize?.(terminal.cols, terminal.rows);
     }
-  }, 50);
+    onRenderDisposable?.dispose();
+    onRenderDisposable = null;
+  });
 
-  // Re-fit on resize
+  // Safety fallback: if onRender never fires (extreme edge case), fit
+  // after a generous timeout so the terminal still ends up sized.
+  setTimeout(() => {
+    if (onRenderDisposable) {
+      onRenderDisposable.dispose();
+      onRenderDisposable = null;
+      fitAddon?.fit();
+      terminal?.focus();
+      if (terminal) {
+        options.onResize?.(terminal.cols, terminal.rows);
+      }
+    }
+  }, 2000);
+
+  // ── Re-fit on container resize ─────────────────────────────
   resizeObserver = new ResizeObserver(() => {
     fitAddon?.fit();
     if (terminal) {

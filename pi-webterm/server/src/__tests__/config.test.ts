@@ -82,20 +82,6 @@ describe("loadConfig", () => {
     expect(cfg.password).toBe("cli-pass");
   });
 
-  it("generates tmuxSessionName from cwd basename", () => {
-    const cfg = loadConfig({ cwd: "/Users/test/work/my-project" });
-    expect(cfg.tmuxSessionName).toBe("pw_my-project");
-    expect(cfg.cwd).toBe("/Users/test/work/my-project");
-  });
-
-  it("allows overriding tmuxSessionName explicitly", () => {
-    const cfg = loadConfig({
-      cwd: "/Users/test/work/my-project",
-      tmuxSessionName: "custom-session",
-    });
-    expect(cfg.tmuxSessionName).toBe("custom-session");
-  });
-
   it("auto-generates Ed25519 key pair", () => {
     const cfg = loadConfig({});
     expect(cfg.publicKey).toBeTruthy();

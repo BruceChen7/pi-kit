@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import Fastify from "fastify";
-import { registerRoutes } from "./api.js";
+import { cleanupPtySessions, registerRoutes } from "./api.js";
 import {
   assertSafeBindAuthConfig,
   type CliArgs,
@@ -74,6 +74,29 @@ export async function startServer(
 }
 
 /**
+ * Graceful shutdown handler.
+ */
+async function shutdown(
+  server: FastifyInstance,
+  signal: string,
+): Promise<void> {
+  console.log(`\n  ⏳ Received ${signal}, shutting down gracefully...`);
+
+  try {
+    // 1. Kill all active PTY sessions (detach from tmux)
+    cleanupPtySessions();
+
+    // 2. Close Fastify server (stops accepting connections, unbinds port)
+    await server.close();
+  } catch (err) {
+    console.error("  ⚠️  Error during shutdown:", err);
+  }
+
+  console.log("  ✅ Pi WebTerm stopped");
+  process.exit(0);
+}
+
+/**
  * Main entry point (CLI).
  */
 async function main() {
@@ -89,6 +112,16 @@ async function main() {
   console.log(
     `  💡 Custom credentials: npx tsx src/index.ts --username <user> --password <pass>\n`,
   );
+
+  // ── Graceful shutdown on SIGINT (Ctrl+C) / SIGTERM ─────────
+  // Prevent default Node.js sigint handler (which just exits)
+  // and close Fastify + PTYs cleanly first.
+  process.on("SIGINT", () => void shutdown(server, "SIGINT"));
+  process.on("SIGTERM", () => void shutdown(server, "SIGTERM"));
+
+  // Keep the process alive — Node.js would otherwise exit
+  // after main() resolves since there's no active I/O keeping
+  // the event loop busy (Fastify handles that internally).
 }
 
 function parseArgs(): CliArgs {

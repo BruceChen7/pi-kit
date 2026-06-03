@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import Fastify from "fastify";
 import { registerRoutes } from "./api.js";
-import { type CliArgs, getConfig, loadConfig } from "./config.js";
+import {
+  assertSafeBindAuthConfig,
+  type CliArgs,
+  getConfig,
+  loadConfig,
+} from "./config.js";
 
 export type { CliArgs };
 
@@ -20,6 +25,9 @@ export async function createServer(
 ): Promise<FastifyInstance> {
   loadConfig(args);
   const cfg = getConfig();
+
+  // Security guard: prevent weak passwords on network-reachable bind hosts
+  assertSafeBindAuthConfig(cfg.host, cfg.password);
 
   const fastify = Fastify({
     logger: {
@@ -73,14 +81,14 @@ async function main() {
   const args = parseArgs();
   const server = await createServer(args);
   const url = await startServer(server);
+  const cfg = getConfig();
   console.log(`\n  🔗 Pi WebTerm running at: ${url}\n`);
-  console.log(`  📱 Mobile: http://<your-ip>:${getConfig().port}/`);
-  console.log(`  🔑 Token: ${getConfig().token}\n`);
+  console.log(`  📱 Mobile: http://<your-ip>:${cfg.port}/`);
   console.log(
-    `  💡 Connect: ws://<your-ip>:${getConfig().port}/ws?token=${getConfig().token}`,
+    `  🔑 Login: username="${cfg.username}" password="${cfg.password}"`,
   );
   console.log(
-    `  💡 Or set a custom token: npx tsx src/index.ts --token my-token\n`,
+    `  💡 Custom credentials: npx tsx src/index.ts --username <user> --password <pass>\n`,
   );
 }
 
@@ -97,8 +105,13 @@ function parseArgs(): CliArgs {
       case "--host":
         args.host = argv[++i];
         break;
-      case "--token":
-        args.token = argv[++i];
+      case "--username":
+      case "-u":
+        args.username = argv[++i];
+        break;
+      case "--password":
+      case "-pwd":
+        args.password = argv[++i];
         break;
       case "--agent":
         args.agentCommand = argv[++i];

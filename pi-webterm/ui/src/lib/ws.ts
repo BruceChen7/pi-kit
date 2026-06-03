@@ -1,0 +1,203 @@
+export type ConnectionStatus =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "error";
+
+export interface WsOptions {
+  url: string;
+  token: string;
+  onOpen?: () => void;
+  onClose?: () => void;
+  onError?: (err: Event) => void;
+  onFatalError?: (code: number, reason: string) => void;
+  onOutput?: (data: string) => void;
+  onSnapshot?: (data: string) => void;
+  onStatus?: (status: { connected: boolean; session: string }) => void;
+}
+
+const FRAME_TYPE_BINARY = 0x00;
+const FRAME_TYPE_JSON = 0x01;
+const DEFAULT_SESSION_ID = "pi-agent";
+const FATAL_CLOSE_CODES = new Set([4001, 4002]);
+
+export class WsClient {
+  private ws: WebSocket | null = null;
+  private options: WsOptions;
+  private reconnectAttempts = 0;
+  private maxReconnectDelay = 30000;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private _status: ConnectionStatus = "disconnected";
+  get status(): ConnectionStatus {
+    return this._status;
+  }
+
+  private maxReconnectAttempts = 10;
+
+  constructor(options: WsOptions) {
+    this.options = options;
+  }
+
+  connect(): void {
+    if (this.ws?.readyState === WebSocket.OPEN) return;
+
+    this._status = "connecting";
+    this.options.onOpen?.();
+
+    const wsUrl = `${this.options.url}?token=${encodeURIComponent(this.options.token)}`;
+    this.ws = new WebSocket(wsUrl);
+    this.ws.binaryType = "arraybuffer";
+
+    this.ws.onopen = () => {
+      this._status = "connected";
+      this.reconnectAttempts = 0;
+      this.options.onOpen?.();
+    };
+
+    this.ws.onclose = (event: CloseEvent) => {
+      this._status = "disconnected";
+      this.options.onClose?.();
+
+      // Fatal close codes: don't retry (auth failure, session error)
+      if (FATAL_CLOSE_CODES.has(event.code)) {
+        const reason = event.reason || "Unknown";
+        console.warn(
+          `WebSocket closed with fatal code ${event.code}: ${reason}`,
+        );
+        this.options.onFatalError?.(event.code, reason);
+        return;
+      }
+
+      // Max retries reached
+      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        console.warn(
+          `WebSocket max retries (${this.maxReconnectAttempts}) reached, giving up`,
+        );
+        this.options.onFatalError?.(0, "Max reconnection attempts reached");
+        return;
+      }
+
+      this.scheduleReconnect();
+    };
+
+    this.ws.onerror = (_err: Event) => {
+      this._status = "error";
+      // onerror fires before onclose, so reconnect is handled in onclose
+    };
+
+    this.ws.onmessage = (event: MessageEvent) => {
+      this.handleMessage(event.data);
+    };
+  }
+
+  private handleMessage(data: ArrayBuffer | string): void {
+    if (data instanceof ArrayBuffer) {
+      const buf = new Uint8Array(data);
+      if (buf.length === 0) return;
+
+      const type = buf[0];
+
+      if (type === FRAME_TYPE_BINARY) {
+        // Binary frame: terminal output
+        const nullPos = buf.indexOf(0x00, 1);
+        if (nullPos !== -1) {
+          const outputData = buf.slice(nullPos + 1);
+          const decoder = new TextDecoder("utf-8");
+          this.options.onOutput?.(decoder.decode(outputData));
+        }
+      } else if (type === FRAME_TYPE_JSON) {
+        // JSON control frame
+        const nullPos = buf.indexOf(0x00, 1);
+        if (nullPos !== -1) {
+          const jsonStr = new TextDecoder("utf-8").decode(
+            buf.slice(nullPos + 1),
+          );
+          try {
+            const msg = JSON.parse(jsonStr);
+            this.handleJsonMessage(msg);
+          } catch {
+            // ignore parse errors
+          }
+        }
+      }
+    } else if (typeof data === "string") {
+      // Plain string output (from raw PTY forwarding)
+      this.options.onOutput?.(data);
+    }
+  }
+
+  private handleJsonMessage(msg: Record<string, unknown>): void {
+    switch (msg.type) {
+      case "pong":
+        break;
+      case "snapshot":
+        if (typeof msg.data === "string") {
+          this.options.onSnapshot?.(msg.data);
+        }
+        break;
+      case "status":
+        this.options.onStatus?.(msg as any);
+        break;
+      case "error":
+        console.error("Server error:", msg.message);
+        break;
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
+    const delay = Math.min(
+      1000 * 2 ** this.reconnectAttempts,
+      this.maxReconnectDelay,
+    );
+    this.reconnectAttempts++;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
+  }
+
+  private buildFrame(type: number, payload: string | Uint8Array): ArrayBuffer {
+    const encoder = new TextEncoder();
+    const sessionIdBytes = encoder.encode(DEFAULT_SESSION_ID);
+    const payloadBytes =
+      typeof payload === "string" ? encoder.encode(payload) : payload;
+
+    const frame = new Uint8Array(
+      1 + sessionIdBytes.length + 1 + payloadBytes.length,
+    );
+    frame[0] = type;
+    frame.set(sessionIdBytes, 1);
+    frame[1 + sessionIdBytes.length] = 0x00;
+    frame.set(payloadBytes, 1 + sessionIdBytes.length + 1);
+    return frame.buffer.slice(
+      frame.byteOffset,
+      frame.byteOffset + frame.byteLength,
+    );
+  }
+
+  private sendFrame(type: number, payload: string | Uint8Array): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(this.buildFrame(type, payload));
+  }
+
+  sendInput(data: string): void {
+    this.sendFrame(FRAME_TYPE_BINARY, data);
+  }
+
+  sendResize(cols: number, rows: number): void {
+    const msg = JSON.stringify({ type: "resize", cols, rows });
+    this.sendFrame(FRAME_TYPE_JSON, msg);
+  }
+
+  disconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.ws?.close();
+    this.ws = null;
+    this._status = "disconnected";
+  }
+}

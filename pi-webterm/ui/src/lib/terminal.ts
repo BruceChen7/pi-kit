@@ -121,6 +121,10 @@ export function clearTerminal(): void {
   terminal?.clear();
 }
 
+export function resetTerminal(): void {
+  terminal?.reset();
+}
+
 export function fitTerminal(): void {
   fitAddon?.fit();
 }

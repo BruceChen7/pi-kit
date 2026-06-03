@@ -1,10 +1,15 @@
 <script lang="ts">
 import { onDestroy, onMount, tick } from "svelte";
+import { api, type SessionInfo } from "./lib/api";
 import {
   clearSessionToken,
   getSessionToken,
   setSessionToken,
 } from "./lib/auth";
+import {
+  SessionConnectionManager,
+  type SessionTransportHandlers,
+} from "./lib/session-connection-manager";
 import {
   clearTerminal,
   createTerminal,
@@ -12,10 +17,10 @@ import {
   fitTerminal,
   focusTerminal,
   getTerminal,
+  resetTerminal,
   writeToTerminal,
 } from "./lib/terminal";
-import { type ConnectionStatus, WsClient } from "./lib/ws";
-import { api, type SessionInfo } from "./lib/api";
+import type { ConnectionStatus } from "./lib/ws";
 import "xterm/css/xterm.css";
 import "./app.css";
 
@@ -46,7 +51,7 @@ let _creating = $state(false);
 let _attaching = $state(false); // loading state for session attach
 let _deleteLoading = $state<Set<string>>(new Set()); // set of session names being deleted
 
-let wsClient: WsClient | null = null;
+let sessionManager: SessionConnectionManager | null = null;
 let _restoring = $state(!!getSessionToken()); // loading guard — only active on refresh (token exists)
 let _fitRaf1: number | null = null;
 let _fitRaf2: number | null = null;
@@ -171,8 +176,8 @@ function _scheduleTerminalFit() {
   const runFit = () => {
     fitTerminal();
     const t = getTerminal();
-    if (t && wsClient) {
-      wsClient.sendResize(t.cols, t.rows);
+    if (t && sessionManager) {
+      sessionManager.sendResize(t.cols, t.rows);
     }
   };
 
@@ -246,54 +251,26 @@ function _openCreateForm() {
   _showSessionPicker = false;
 }
 
-// ─── WebSocket ────────────────────────────────────────────────
+function getSessionManager(): SessionConnectionManager {
+  if (sessionManager) {
+    return sessionManager;
+  }
 
-function connectWs() {
-  if (!sessionToken || !activeSessionName) return;
-
-  wsClient?.disconnect();
-
-  // Clear the terminal before connecting to a new session.
-  // This prevents:
-  // 1. Old session's residual content mixing with new session
-  // 2. Snapshot (200 lines of history via capture-pane) overlapping
-  //    with live PTY data from tmux attach-session
-  // 3. Conflicting ANSI escape sequences from two different tmux panes
-  clearTerminal();
-
-  // Re-fit terminal to container. The container might have been resized
-  // since the last connection (e.g., sidebar toggle, orientation change,
-  // or the initial fit ran before the flex layout settled).
-  fitTerminal();
-
-  wsClient = new WsClient({
-    url: `${baseUrl}/ws`,
-    token: sessionToken,
-    sessionId: activeSessionName,
+  const handlers: SessionTransportHandlers = {
     onOpen: () => {
       status = "connected";
       _connected = true;
       _errorMsg = "";
-      // Re-fit the terminal — the container should have its final
-      // dimensions by now (layout settled + WS opened).
       fitTerminal();
-      // Always send the terminal dimensions to the server on connect.
-      // This is critical because:
-      //   1. `onRender` might have already called `fit()` and resized
-      //      the terminal correctly, but the resize message was
-      //      dropped (WebSocket wasn't open yet).
-      //   2. `fitTerminal()` above will NOT fire `onResize` if the
-      //      terminal is already at the correct cols/rows (xterm's
-      //      `resize()` returns early when dimensions match).
-      //   3. Without this explicit send, the server's PTY stays at
-      //      80×24 and all output is formatted for 80 columns.
+
       const t = getTerminal();
       if (t) {
         console.log(
           `[pi-webterm] onOpen resize: cols=${t.cols} rows=${t.rows}`,
         );
-        wsClient?.sendResize(t.cols, t.rows);
+        sessionManager?.sendResize(t.cols, t.rows);
       }
+
       focusTerminal();
       _scheduleTerminalFit();
     },
@@ -333,14 +310,40 @@ function connectWs() {
     onStatus: (s) => {
       console.log("Status:", s);
     },
-  });
+  };
 
-  wsClient.connect();
+  sessionManager = new SessionConnectionManager(handlers);
+  return sessionManager;
+}
+
+// ─── WebSocket ────────────────────────────────────────────────
+
+function connectWs() {
+  if (!sessionToken || !activeSessionName) return;
+
+  // Clear the terminal before connecting to a new session.
+  // This prevents:
+  // 1. Old session's residual content mixing with new session
+  // 2. Snapshot (200 lines of history via capture-pane) overlapping
+  //    with live PTY data from tmux attach-session
+  // 3. Conflicting ANSI escape sequences from two different tmux panes
+  clearTerminal();
+  resetTerminal();
+
+  // Re-fit terminal to container. The container might have been resized
+  // since the last connection (e.g., sidebar toggle, orientation change,
+  // or the initial fit ran before the flex layout settled).
+  fitTerminal();
+
+  getSessionManager().switchSession({
+    url: `${baseUrl}/ws`,
+    token: sessionToken,
+    sessionId: activeSessionName,
+  });
 }
 
 function disconnectWs() {
-  wsClient?.disconnect();
-  wsClient = null;
+  sessionManager?.disconnect();
   _connected = false;
   status = "disconnected";
 }
@@ -379,10 +382,10 @@ $effect(() => {
     createTerminal(terminalContainer, {
       fontSize: 14,
       onData: (data) => {
-        wsClient?.sendInput(data);
+        sessionManager?.sendInput(data);
       },
       onResize: (cols, rows) => {
-        wsClient?.sendResize(cols, rows);
+        sessionManager?.sendResize(cols, rows);
       },
     });
   }
@@ -394,6 +397,7 @@ onDestroy(() => {
   if (_fitTimer) clearTimeout(_fitTimer);
   disposeTerminal();
   disconnectWs();
+  sessionManager = null;
 });
 </script>
 

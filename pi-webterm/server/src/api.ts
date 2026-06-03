@@ -1,4 +1,4 @@
-import { resolve, basename } from "node:path";
+import { basename, resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { IPty } from "node-pty";
 import {
@@ -13,16 +13,23 @@ import {
   verifyWsToken,
 } from "./auth.js";
 import { getConfig } from "./config.js";
-import { attachToSession, capturePane, detachPty, hasSession } from "./tmux.js";
 import {
   createPwSession,
   deletePwSession,
   detectSessionStatus,
-  listPwSessions,
   getGitBranch,
   getTmuxSessionName,
+  listPwSessions,
 } from "./sessions.js";
+import {
+  handleTerminalQueries,
+  stripTerminalResponses,
+  TerminalProtocolAdapter,
+} from "./terminal-protocol-adapter.js";
+import { attachToSession, capturePane, detachPty, hasSession } from "./tmux.js";
 import { decodeFrame, encodeBinaryFrame, encodeJsonFrame } from "./ws.js";
+
+export { handleTerminalQueries, stripTerminalResponses };
 
 // ─── Active PTY sessions ───────────────────────────────────────
 
@@ -30,37 +37,7 @@ const activePtySessions = new Map<string, IPty>();
 
 // Maps WebSocket connection → tmux session name (for multi-session routing)
 const socketSessionMap = new Map<any, string>();
-
-// ─── Terminal Response Filter ──────────────────────────────────
-
-// Regex to match terminal query/response sequences that should NOT
-// be forwarded to the WebSocket client as terminal output.
-//
-// These are responses that the terminal emulator (tmux) sends to the
-// program running inside it. Examples:
-//   - DA response:  \x1b[?1;2c          (Device Attributes)
-//   - CPR response: \x1b[?n;mR          (Cursor Position Report)
-//   - DECRPM:       \x1b[?n;m$y         (Report Mode)
-//   - DECRQM:       \x1b[?n;m$y         (Request Mode Response)
-//   - DECSCA:       \x1b[?n;m"p         (Select Character Attribute)
-//   - DECSCUSR:     \x1b[?n;m$} etc.
-//
-// In pi-webterm, these responses go through pty.onData and would
-// appear as visible "weird characters" (e.g., "?1;2c") in the
-// terminal if forwarded. The pi agent reads them from stdin, so
-// they are expected in the pty data but must be filtered out.
-//
-// Pattern: ESC [ ?digits;digits finalbyte
-// Final bytes identifying RESPONSE (not command) sequences:
-//   c  — DA response     (Device Attributes)
-//   R  — CPR response    (Cursor Position Report)
-//   y  — DECRPM/DECRQM   (Report/Request Mode response)
-//   n  — DSR response    (Device Status Report — rarely used)
-const TERMINAL_RESPONSE_RE = /(?:\x1b|\x9b)\[\?\d+(?:;\d+)*[cRy]/g;
-
-export function stripTerminalResponses(data: string): string {
-  return data.replace(TERMINAL_RESPONSE_RE, "");
-}
+const socketProtocolAdapterMap = new Map<any, TerminalProtocolAdapter>();
 
 // ─── Cleanup (for graceful shutdown) ───────────────────────────
 
@@ -105,6 +82,7 @@ export function getActivePtySessionForTests(
 export function resetRuntimeStateForTests(): void {
   activePtySessions.clear();
   socketSessionMap.clear();
+  socketProtocolAdapterMap.clear();
 }
 
 // ─── Route Registration ────────────────────────────────────────
@@ -405,18 +383,23 @@ async function handleWsConnection(socket: any, sessionName: string) {
     );
   }
 
+  const protocolAdapter = new TerminalProtocolAdapter();
+  socketProtocolAdapterMap.set(socket, protocolAdapter);
+
   // Forward PTY output → WebSocket
   pty.onData((data: string) => {
     try {
-      // Filter out terminal query/response sequences (e.g., DA response
-      // "\x1b[?1;2c") that leak through the pty and would appear as
-      // "weird characters" ("?1;2c") when written to xterm.js.
-      const filtered = stripTerminalResponses(data);
+      const { forward, responses } = protocolAdapter.processPtyOutput(data);
+      for (const response of responses) {
+        try {
+          pty.write(response);
+        } catch {
+          // PTY dead — will be cleaned up on close
+        }
+      }
 
-      // Use binary frames (not raw text frames) for consistent
-      // protocol framing. The client decodes via TextDecoder.
-      if (filtered) {
-        socket.send(encodeBinaryFrame(sessionName, Buffer.from(filtered)));
+      if (forward) {
+        socket.send(encodeBinaryFrame(sessionName, Buffer.from(forward)));
       }
     } catch {
       // socket closed
@@ -425,6 +408,7 @@ async function handleWsConnection(socket: any, sessionName: string) {
 
   // Cleanup on disconnect
   function cleanupPtySession() {
+    socketProtocolAdapterMap.delete(socket);
     cleanupActivePtySession(sessionName, pty, socket);
   }
   socket.on("close", cleanupPtySession);
@@ -439,14 +423,30 @@ function handleWsMessage(socket: any, raw: Buffer): void {
 
   // Route input/resize to the correct PTY for this socket's session
   const sessionName = socketSessionMap.get(socket);
+  const protocolAdapter = socketProtocolAdapterMap.get(socket);
 
   if (frame.type === 0x00) {
     // Binary frame: keyboard input → write to PTY
     const input = frame.data.toString("utf-8");
-    const normalizedInput = input.replace(/\r?\n/g, "\r");
+    const cleanInput = protocolAdapter
+      ? protocolAdapter.processClientInput(input)
+      : handleTerminalQueries(stripTerminalResponses(input)).filtered;
+
+    const normalizedInput = cleanInput.replace(/\r?\n/g, "\r");
     const pty = sessionName ? activePtySessions.get(sessionName) : undefined;
     if (pty) {
-      pty.write(normalizedInput);
+      try {
+        pty.write(normalizedInput);
+      } catch (err) {
+        // PTY process died (EIO) — clean up the session
+        console.error(
+          `[pi-webterm] PTY write error for session "${sessionName}":`,
+          err,
+        );
+        if (sessionName) {
+          cleanupActivePtySession(sessionName, pty, socket);
+        }
+      }
     }
   } else if (frame.type === 0x01) {
     // JSON control frame

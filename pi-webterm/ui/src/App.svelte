@@ -185,7 +185,7 @@ onDestroy(() => {
             {/if}
             <button
                 class="connect-btn"
-                onclick={onLogin}
+                onclick={_onLogin}
                 disabled={_loggingIn || !_username || !_password}
             >
                 {_loggingIn ? "登录中..." : "登录"}
@@ -202,7 +202,7 @@ onDestroy(() => {
             <span class="status-dot {status}"></span>
             <span class="status-text">{_statusText}</span>
             <span class="session-name">pi-agent</span>
-            <button class="logout-btn" onclick={onLogout}>登出</button>
+            <button class="logout-btn" onclick={_onLogout}>登出</button>
         </div>
 
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions, a11y_no_static_element_interactions -->

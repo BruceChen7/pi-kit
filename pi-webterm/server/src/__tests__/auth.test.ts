@@ -8,6 +8,7 @@ import {
   generateSessionToken,
   getBearerToken,
   getSession,
+  getSessionIdFromToken,
   validateCredentials,
   verifySignature,
   verifyWsToken,
@@ -52,23 +53,40 @@ describe("validateCredentials", () => {
 // ─── Session Token ────────────────────────────────────────────
 
 describe("generateSessionToken / getSession", () => {
-  it("generates a session token with embedded expiry", () => {
+  it("generates a master token (no sessionId) with embedded expiry", () => {
     const token = generateSessionToken("admin");
-    // Format: <base36_expiry>.<64_hex_chars>
-    expect(token).toMatch(/^[0-9a-z]+\.[0-9a-f]{64}$/);
+    // Format: <base36_expiry>..<64_hex_chars>    (empty sessionId part)
+    expect(token).toMatch(/^[0-9a-z]+\.[0-9a-f]{0,64}\.[0-9a-f]{64}$/);
+    expect(getSessionIdFromToken(token)).toBeUndefined();
     // Decode the embedded expiry
     const dot = token.indexOf(".");
     const expiresAt = Number.parseInt(token.slice(0, dot), 36);
     expect(expiresAt).toBeGreaterThan(Date.now());
   });
 
-  it("getSession returns session for valid token", () => {
+  it("generates a session-specific token with sessionId", () => {
+    const token = generateSessionToken("admin", "pw__my-app__main");
+    // Format: <base36_expiry>.<sessionId>.<random>
+    expect(token).toMatch(/^[0-9a-z]+\.pw__my-app__main\.[0-9a-f]{64}$/);
+    expect(getSessionIdFromToken(token)).toBe("pw__my-app__main");
+  });
+
+  it("getSession returns session for valid master token", () => {
     const token = generateSessionToken("admin");
     const session = getSession(token);
     expect(session).toBeDefined();
     expect(session?.username).toBe("admin");
+    expect(session?.sessionId).toBeUndefined();
     expect(session?.createdAt).toBeLessThanOrEqual(Date.now());
     expect(session?.expiresAt).toBeGreaterThan(Date.now());
+  });
+
+  it("getSession returns session with sessionId for session token", () => {
+    const token = generateSessionToken("admin", "pw__test__main");
+    const session = getSession(token);
+    expect(session).toBeDefined();
+    expect(session?.username).toBe("admin");
+    expect(session?.sessionId).toBe("pw__test__main");
   });
 
   it("getSession returns undefined for unknown token", () => {
@@ -78,7 +96,7 @@ describe("generateSessionToken / getSession", () => {
   it("getSession returns undefined for expired embedded expiry", () => {
     // Construct a token with an already-expired timestamp
     const expiredTs = Date.now() - 1000;
-    const token = `${expiredTs.toString(36)}.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`;
+    const token = `${expiredTs.toString(36)}..aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`;
     expect(getSession(token)).toBeUndefined();
   });
 
@@ -110,6 +128,31 @@ describe("verifyWsToken", () => {
     const expiredTs = Date.now() - 1;
     const token = `${expiredTs.toString(36)}.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`;
     expect(verifyWsToken(token)).toBe(false);
+  });
+});
+
+// ─── getSessionIdFromToken ─────────────────────────────────────
+
+describe("getSessionIdFromToken", () => {
+  it("returns sessionId from session-specific token", () => {
+    const token = generateSessionToken("admin", "pw__my-app__main");
+    expect(getSessionIdFromToken(token)).toBe("pw__my-app__main");
+  });
+
+  it("returns undefined for master token (no sessionId)", () => {
+    const token = generateSessionToken("admin");
+    expect(getSessionIdFromToken(token)).toBeUndefined();
+  });
+
+  it("returns undefined for invalid token", () => {
+    expect(getSessionIdFromToken("invalid")).toBeUndefined();
+  });
+
+  it("returns undefined for old-format token (no sessionId part)", () => {
+    // Simulate old format: <exp>.<random> only 2 parts
+    const expiredTs = Date.now() + 86400000;
+    const token = `${expiredTs.toString(36)}.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`;
+    expect(getSessionIdFromToken(token)).toBeUndefined();
   });
 });
 

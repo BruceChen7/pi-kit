@@ -1,3 +1,4 @@
+import { resolve, basename } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { IPty } from "node-pty";
 import {
@@ -7,24 +8,104 @@ import {
   destroySession,
   generateSessionToken,
   getBearerToken,
+  getSessionIdFromToken,
   validateCredentials,
   verifyWsToken,
 } from "./auth.js";
 import { getConfig } from "./config.js";
+import { attachToSession, capturePane, detachPty, hasSession } from "./tmux.js";
 import {
-  attachToSession,
-  capturePane,
-  detachPty,
-  ensureSession,
-  hasSession,
-  killSession,
-  listSessions,
-} from "./tmux.js";
-import { decodeFrame, encodeJsonFrame } from "./ws.js";
+  createPwSession,
+  deletePwSession,
+  detectSessionStatus,
+  listPwSessions,
+  getGitBranch,
+  getTmuxSessionName,
+} from "./sessions.js";
+import { decodeFrame, encodeBinaryFrame, encodeJsonFrame } from "./ws.js";
 
 // ─── Active PTY sessions ───────────────────────────────────────
 
 const activePtySessions = new Map<string, IPty>();
+
+// Maps WebSocket connection → tmux session name (for multi-session routing)
+const socketSessionMap = new Map<any, string>();
+
+// ─── Terminal Response Filter ──────────────────────────────────
+
+// Regex to match terminal query/response sequences that should NOT
+// be forwarded to the WebSocket client as terminal output.
+//
+// These are responses that the terminal emulator (tmux) sends to the
+// program running inside it. Examples:
+//   - DA response:  \x1b[?1;2c          (Device Attributes)
+//   - CPR response: \x1b[?n;mR          (Cursor Position Report)
+//   - DECRPM:       \x1b[?n;m$y         (Report Mode)
+//   - DECRQM:       \x1b[?n;m$y         (Request Mode Response)
+//   - DECSCA:       \x1b[?n;m"p         (Select Character Attribute)
+//   - DECSCUSR:     \x1b[?n;m$} etc.
+//
+// In pi-webterm, these responses go through pty.onData and would
+// appear as visible "weird characters" (e.g., "?1;2c") in the
+// terminal if forwarded. The pi agent reads them from stdin, so
+// they are expected in the pty data but must be filtered out.
+//
+// Pattern: ESC [ ?digits;digits finalbyte
+// Final bytes identifying RESPONSE (not command) sequences:
+//   c  — DA response     (Device Attributes)
+//   R  — CPR response    (Cursor Position Report)
+//   y  — DECRPM/DECRQM   (Report/Request Mode response)
+//   n  — DSR response    (Device Status Report — rarely used)
+const TERMINAL_RESPONSE_RE = /(?:\x1b|\x9b)\[\?\d+(?:;\d+)*[cRy]/g;
+
+export function stripTerminalResponses(data: string): string {
+  return data.replace(TERMINAL_RESPONSE_RE, "");
+}
+
+// ─── Cleanup (for graceful shutdown) ───────────────────────────
+
+/**
+ * Kill all active PTY sessions. Called during graceful shutdown.
+ */
+export function cleanupPtySessions(): void {
+  for (const [_name, pty] of activePtySessions.entries()) {
+    detachPty(pty);
+  }
+  activePtySessions.clear();
+}
+
+export function registerActivePtySession(sessionName: string, pty: IPty): void {
+  const existing = activePtySessions.get(sessionName);
+  if (existing && existing !== pty) {
+    detachPty(existing);
+  }
+  activePtySessions.set(sessionName, pty);
+}
+
+export function cleanupActivePtySession(
+  sessionName: string,
+  pty: IPty,
+  socket?: unknown,
+): void {
+  detachPty(pty);
+  if (activePtySessions.get(sessionName) === pty) {
+    activePtySessions.delete(sessionName);
+  }
+  if (socket) {
+    socketSessionMap.delete(socket);
+  }
+}
+
+export function getActivePtySessionForTests(
+  sessionName: string,
+): IPty | undefined {
+  return activePtySessions.get(sessionName);
+}
+
+export function resetRuntimeStateForTests(): void {
+  activePtySessions.clear();
+  socketSessionMap.clear();
+}
 
 // ─── Route Registration ────────────────────────────────────────
 
@@ -60,7 +141,7 @@ export function registerRoutes(
     };
   });
 
-  // Login
+  // Login — returns master token + list of existing pw__ sessions
   fastify.post("/api/login", async (request: any, reply: any) => {
     const { username, password } = request.body || {};
     if (!username || !password) {
@@ -70,8 +151,12 @@ export function registerRoutes(
     }
     const cfg = getConfig();
     if (validateCredentials(cfg.username, cfg.password, username, password)) {
-      const token = generateSessionToken(username);
-      return { token, expiresIn: 86400 };
+      const token = generateSessionToken(username); // master token (no sessionId)
+      const sessions = listPwSessions().map((s) => ({
+        ...s,
+        attached: activePtySessions.has(s.name),
+      }));
+      return { token, expiresIn: 86400, sessions };
     }
     return reply.status(401).send({ error: "Invalid credentials" });
   });
@@ -87,33 +172,53 @@ export function registerRoutes(
 
   // ── Protected routes ────────────────────────────────────────
 
-  // List sessions
+  // List pw__ sessions (pi-webterm managed)
   fastify.get("/api/sessions", { preHandler: authPreHandler }, async () => {
-    const names = listSessions();
-    const sessions = names.map((name) => ({
-      name,
-      attached: activePtySessions.has(name),
+    const sessions = listPwSessions().map((s) => ({
+      ...s,
+      attached: activePtySessions.has(s.name),
     }));
     return { sessions };
   });
 
-  // Create session
+  // Create new pw__ session — returns session-specific token
   fastify.post(
     "/api/sessions",
     { preHandler: authPreHandler },
     async (request: any, reply: any) => {
-      const { name, agentCommand } = request.body || {};
-      if (!name) {
-        return reply.status(400).send({ error: "name is required" });
-      }
+      const cfg = getConfig();
+      const body = request.body || {};
+
+      // Determine dirname, branch, cwd, agentCommand
+      const sessionCwd = body.cwd ? resolve(body.cwd) : resolve(cfg.cwd);
+      const dirname = body.dirname || basename(sessionCwd);
+      const branch = body.branch || getGitBranch(sessionCwd);
+      const agentCommand = body.agentCommand || cfg.agentCommand;
+
+      const name = getTmuxSessionName(dirname, branch);
+
+      // Check for duplicates
       if (hasSession(name)) {
         return reply
           .status(409)
           .send({ error: "Session already exists", name });
       }
-      const cfg = getConfig();
-      ensureSession(name, cfg.cwd, agentCommand || cfg.agentCommand);
-      return reply.status(201).send({ name, status: "created" });
+
+      // Create tmux session
+      createPwSession(dirname, branch, sessionCwd, agentCommand);
+
+      // Generate session-specific token for WS auto-attach
+      const sessionToken = generateSessionToken(cfg.username, name);
+
+      return reply.status(201).send({
+        name,
+        dirname,
+        branch,
+        cwd: sessionCwd,
+        status: detectSessionStatus(name),
+        attached: false,
+        sessionToken,
+      });
     },
   );
 
@@ -128,9 +233,24 @@ export function registerRoutes(
       }
       return {
         name,
+        status: detectSessionStatus(name),
         attached: activePtySessions.has(name),
         recentOutput: capturePane(name, 50),
       };
+    },
+  );
+
+  // Attach to session — returns session-specific token for WS
+  fastify.post(
+    "/api/sessions/:name/attach",
+    { preHandler: authPreHandler },
+    async (request: any, reply: any) => {
+      const { name } = request.params;
+      if (!hasSession(name)) {
+        return reply.status(404).send({ error: "Session not found" });
+      }
+      const sessionToken = generateSessionToken(getConfig().username, name);
+      return { sessionToken, name };
     },
   );
 
@@ -138,14 +258,24 @@ export function registerRoutes(
   fastify.delete(
     "/api/sessions/:name",
     { preHandler: authPreHandler },
-    async (request: any, _reply: any) => {
+    async (request: any, reply: any) => {
       const { name } = request.params;
+      if (!hasSession(name)) {
+        return reply.status(404).send({ error: "Session not found" });
+      }
+
       const pty = activePtySessions.get(name);
       if (pty) {
         detachPty(pty);
         activePtySessions.delete(name);
       }
-      killSession(name);
+
+      try {
+        deletePwSession(name);
+      } catch {
+        return reply.status(500).send({ error: "Failed to delete session" });
+      }
+
       return { deleted: true, name };
     },
   );
@@ -161,7 +291,6 @@ export function registerRoutes(
 // ─── WebSocket Auth ────────────────────────────────────────────
 
 function handleWsAuth(socket: any): void {
-  const cfg = getConfig();
   let authenticated = false;
 
   // Set 5-second auth timeout
@@ -185,10 +314,21 @@ function handleWsAuth(socket: any): void {
         const msg = JSON.parse(jsonStr);
 
         if (authenticateWsMessage(msg) && verifyWsToken(msg.token)) {
+          // Extract sessionId from the session-specific token
+          const sessionId = getSessionIdFromToken(msg.token);
+          if (!sessionId) {
+            socket.close(4001, "Unauthorized - no session in token");
+            return;
+          }
+
           authenticated = true;
           clearTimeout(authTimeout);
-          // Start normal communication
-          handleWsConnection(socket, cfg.tmuxSessionName);
+
+          // Track socket → session mapping for multi-session routing
+          socketSessionMap.set(socket, sessionId);
+
+          // Start normal communication with the requested session
+          handleWsConnection(socket, sessionId);
         } else {
           socket.close(4001, "Unauthorized");
         }
@@ -204,21 +344,28 @@ function handleWsAuth(socket: any): void {
 
   socket.on("close", () => {
     clearTimeout(authTimeout);
+    socketSessionMap.delete(socket);
   });
 
   socket.on("error", () => {
     clearTimeout(authTimeout);
+    socketSessionMap.delete(socket);
   });
 }
 
 // ─── WebSocket Handler (after auth) ────────────────────────────
 
 async function handleWsConnection(socket: any, sessionName: string) {
-  const cfg = getConfig();
-
-  // Ensure tmux session exists
+  // Session must already exist (created via POST /api/sessions or previous run)
   if (!hasSession(sessionName)) {
-    ensureSession(sessionName, cfg.cwd, cfg.agentCommand);
+    socket.send(
+      encodeJsonFrame(sessionName, {
+        type: "error",
+        message: "Session not found",
+      }),
+    );
+    socket.close(4002, "Session not found");
+    return;
   }
 
   // Attach to session via node-pty
@@ -226,7 +373,7 @@ async function handleWsConnection(socket: any, sessionName: string) {
   try {
     const session = await attachToSession(sessionName, 80, 24);
     pty = session.pty;
-    activePtySessions.set(sessionName, pty);
+    registerActivePtySession(sessionName, pty);
   } catch (_err) {
     socket.send(
       encodeJsonFrame(sessionName, {
@@ -248,7 +395,7 @@ async function handleWsConnection(socket: any, sessionName: string) {
   );
 
   // Send recent history
-  const history = capturePane(sessionName, 200);
+  const history = stripTerminalResponses(capturePane(sessionName, 200));
   if (history) {
     socket.send(
       encodeJsonFrame(sessionName, {
@@ -261,7 +408,16 @@ async function handleWsConnection(socket: any, sessionName: string) {
   // Forward PTY output → WebSocket
   pty.onData((data: string) => {
     try {
-      socket.send(data);
+      // Filter out terminal query/response sequences (e.g., DA response
+      // "\x1b[?1;2c") that leak through the pty and would appear as
+      // "weird characters" ("?1;2c") when written to xterm.js.
+      const filtered = stripTerminalResponses(data);
+
+      // Use binary frames (not raw text frames) for consistent
+      // protocol framing. The client decodes via TextDecoder.
+      if (filtered) {
+        socket.send(encodeBinaryFrame(sessionName, Buffer.from(filtered)));
+      }
     } catch {
       // socket closed
     }
@@ -269,8 +425,7 @@ async function handleWsConnection(socket: any, sessionName: string) {
 
   // Cleanup on disconnect
   function cleanupPtySession() {
-    detachPty(pty);
-    activePtySessions.delete(sessionName);
+    cleanupActivePtySession(sessionName, pty, socket);
   }
   socket.on("close", cleanupPtySession);
   socket.on("error", cleanupPtySession);
@@ -282,29 +437,36 @@ function handleWsMessage(socket: any, raw: Buffer): void {
   const frame = decodeFrame(raw);
   if (!frame) return;
 
+  // Route input/resize to the correct PTY for this socket's session
+  const sessionName = socketSessionMap.get(socket);
+
   if (frame.type === 0x00) {
     // Binary frame: keyboard input → write to PTY
     const input = frame.data.toString("utf-8");
     const normalizedInput = input.replace(/\r?\n/g, "\r");
-    // Find the active PTY for this socket
-    for (const [, pty] of activePtySessions) {
+    const pty = sessionName ? activePtySessions.get(sessionName) : undefined;
+    if (pty) {
       pty.write(normalizedInput);
-      break;
     }
   } else if (frame.type === 0x01) {
     // JSON control frame
     switch (frame.json.type) {
       case "ping":
-        socket.send(JSON.stringify({ type: "pong" }));
+        socket.send(encodeJsonFrame(sessionName ?? "pw", { type: "pong" }));
         break;
       case "resize":
         if (
           typeof frame.json.cols === "number" &&
           typeof frame.json.rows === "number"
         ) {
-          for (const [, pty] of activePtySessions) {
+          const pty = sessionName
+            ? activePtySessions.get(sessionName)
+            : undefined;
+          if (pty) {
+            console.log(
+              `[pi-webterm] resize PTY: session=${sessionName} cols=${frame.json.cols} rows=${frame.json.rows}`,
+            );
             pty.resize(frame.json.cols, frame.json.rows);
-            break;
           }
         }
         break;

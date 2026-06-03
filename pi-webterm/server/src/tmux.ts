@@ -3,11 +3,21 @@ import type { IPty } from "node-pty";
 
 // ─── Session Management (sync via execSync) ─────────────────────
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function tmuxTarget(name: string): string {
+  return shellQuote(`=${name}`);
+}
+
 /** Check if a tmux session exists. */
 export function hasSession(name: string): boolean {
   if (!name) return false;
   try {
-    execSync(`tmux has-session -t ${name} 2>/dev/null`, { stdio: "pipe" });
+    execSync(`tmux has-session -t ${tmuxTarget(name)} 2>/dev/null`, {
+      stdio: "pipe",
+    });
     return true;
   } catch {
     return false;
@@ -53,6 +63,16 @@ export function ensureSession(
     { stdio: "pipe", timeout: 10_000 },
   );
 
+  // Ensure the tmux window always resizes to match the attached client's
+  // terminal size. The global default is `window-size latest` (tmux ≥3.3),
+  // but we explicitly set `largest` here so the window follows the PTY
+  // resize triggered by `pty.resize()` even if the user's tmux.conf has
+  // a different setting (`fixed-latest`, `smallest`, `manual`).
+  execSync(`tmux set -t ${name} window-size largest 2>/dev/null`, {
+    stdio: "pipe",
+    timeout: 5_000,
+  });
+
   // Clean output: disable status bar
   execSync(`tmux set -t ${name} status off`, {
     stdio: "pipe",
@@ -64,12 +84,17 @@ export function ensureSession(
   });
 }
 
-/** Kill a tmux session. */
-export function killSession(name: string): void {
+/** Kill a tmux session. Returns true only when the session is gone. */
+export function killSession(name: string): boolean {
+  if (!name) return false;
+
   try {
-    execSync(`tmux kill-session -t ${name} 2>/dev/null`, { stdio: "pipe" });
+    execSync(`tmux kill-session -t ${tmuxTarget(name)} 2>/dev/null`, {
+      stdio: "pipe",
+    });
+    return !hasSession(name);
   } catch {
-    // ignore
+    return false;
   }
 }
 

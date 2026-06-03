@@ -12,15 +12,20 @@ export interface Session {
   username: string;
   createdAt: number;
   expiresAt: number;
+  sessionId?: string;
 }
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const activeSessions = new Map<string, Session>();
 
 /**
- * Generate a session token with embedded expiry.
+ * Generate a session token with embedded expiry and optional sessionId.
  *
- * Token format: <expiresAt_base36>.<random_hex>
+ * Token format: <expiresAt_base36>.<sessionId>.<random_hex>
+ *
+ * Master token (no sessionId): <exp>..<random> — used for REST API calls
+ * Session token (with sessionId): <exp>.<sid>.<random> — used for WS auto-attach
+ *
  * The expiry is encoded directly in the token so that verifyWsToken
  * can validate it without any I/O or state lookup.
  *
@@ -28,14 +33,19 @@ const activeSessions = new Map<string, Session>();
  *   - username lookup in getSession()
  *   - revocation tracking via revokedTokens
  */
-export function generateSessionToken(username: string): string {
+export function generateSessionToken(
+  username: string,
+  sessionId?: string,
+): string {
   const expiresAt = Date.now() + SESSION_TTL_MS;
   const random = randomBytes(32).toString("hex");
-  const token = `${expiresAt.toString(36)}.${random}`;
+  const sid = sessionId ?? "";
+  const token = `${expiresAt.toString(36)}.${sid}.${random}`;
   activeSessions.set(token, {
     username,
     createdAt: Date.now(),
     expiresAt,
+    sessionId: sid || undefined,
   });
   return token;
 }
@@ -48,6 +58,17 @@ function decodeExpiry(token: string): number {
   const dot = token.indexOf(".");
   if (dot === -1) return 0;
   return Number.parseInt(token.slice(0, dot), 36) || 0;
+}
+
+/**
+ * Extract the embedded sessionId from a token.
+ * Returns undefined for master tokens (no sessionId) or invalid tokens.
+ */
+export function getSessionIdFromToken(token: string): string | undefined {
+  const parts = token.split(".");
+  // Format: <exp>.<sessionId>.<random>
+  if (parts.length < 3) return undefined;
+  return parts[1] || undefined;
 }
 
 /**
@@ -91,17 +112,6 @@ export function validateCredentials(
   } catch {
     return false;
   }
-}
-
-/**
- * Shell wrapper: reads expected credentials from global config.
- */
-export function validateCredentialsFromConfig(
-  username: string,
-  password: string,
-): boolean {
-  const cfg = getConfig();
-  return validateCredentials(cfg.username, cfg.password, username, password);
 }
 
 // ─── Bearer Token Helper ──────────────────────────────────────

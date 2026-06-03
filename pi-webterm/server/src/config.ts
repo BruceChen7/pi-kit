@@ -1,13 +1,12 @@
 import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 export interface Config {
   port: number;
   host: string;
   cwd: string;
-  tmuxSessionName: string;
   agentCommand: string;
   autoStartAgent: boolean;
   dataDir: string;
@@ -21,7 +20,6 @@ export interface CliArgs {
   port?: number;
   host?: string;
   cwd?: string;
-  tmuxSessionName?: string;
   agentCommand?: string;
   autoStartAgent?: boolean;
   username?: string;
@@ -138,17 +136,6 @@ export function loadConfig(args: CliArgs = {}): Config {
   const cwd = args.cwd || env("cwd") || process.cwd();
   const resolvedCwd = resolve(cwd);
 
-  // tmux disallows certain characters (e.g. ':') in session names on macOS.
-  // Replace them with '_' to ensure cross-platform compatibility.
-  const sanitizeSessionName = (name: string) =>
-    name.replace(/[^a-zA-Z0-9_.-]/g, "_");
-
-  const tmuxSessionName = sanitizeSessionName(
-    args.tmuxSessionName ||
-      env("tmuxSessionName") ||
-      `pw:${basename(resolvedCwd)}`,
-  );
-
   const agentCommand =
     args.agentCommand || env("agent") || persisted?.agentCommand || "pi";
 
@@ -191,7 +178,6 @@ export function loadConfig(args: CliArgs = {}): Config {
     port,
     host,
     cwd: resolvedCwd,
-    tmuxSessionName,
     agentCommand,
     autoStartAgent,
     dataDir,

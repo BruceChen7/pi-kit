@@ -7,6 +7,7 @@ export type ConnectionStatus =
 export interface WsOptions {
   url: string;
   token: string;
+  sessionId?: string; // tmux session name for frame encoding (from session token)
   onOpen?: () => void;
   onClose?: () => void;
   onError?: (err: Event) => void;
@@ -18,7 +19,6 @@ export interface WsOptions {
 
 const FRAME_TYPE_BINARY = 0x00;
 const FRAME_TYPE_JSON = 0x01;
-const DEFAULT_SESSION_ID = "pi-agent";
 const FATAL_CLOSE_CODES = new Set([4001, 4002]);
 
 export class WsClient {
@@ -43,7 +43,6 @@ export class WsClient {
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
     this._status = "connecting";
-    this.options.onOpen?.();
 
     // Connect without token in URL (first-message auth)
     this.ws = new WebSocket(this.options.url);
@@ -173,7 +172,8 @@ export class WsClient {
 
   private buildFrame(type: number, payload: string | Uint8Array): ArrayBuffer {
     const encoder = new TextEncoder();
-    const sessionIdBytes = encoder.encode(DEFAULT_SESSION_ID);
+    const sessionId = this.options.sessionId || "pw";
+    const sessionIdBytes = encoder.encode(sessionId);
     const payloadBytes =
       typeof payload === "string" ? encoder.encode(payload) : payload;
 

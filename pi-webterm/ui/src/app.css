@@ -1,0 +1,169 @@
+:root {
+  --bg-primary: #1a1a2e;
+  --bg-secondary: #16213e;
+  --bg-status: #0f3460;
+  --text-primary: #e0e0e0;
+  --text-secondary: #a0a0b0;
+  --accent-green: #50fa7b;
+  --accent-red: #ff5555;
+  --accent-yellow: #f1fa8c;
+  --status-dot-size: 10px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  user-select: none;
+  -webkit-user-select: none;
+  flex-shrink: 0;
+}
+
+.status-dot {
+  width: var(--status-dot-size);
+  height: var(--status-dot-size);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.connected {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px var(--accent-green);
+}
+
+.status-dot.disconnected {
+  background: var(--accent-red);
+}
+
+.status-dot.connecting {
+  background: var(--accent-yellow);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.status-text {
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.session-name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.terminal-container {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  background: var(--bg-primary);
+  cursor: text;
+}
+
+.terminal-container .xterm {
+  height: 100%;
+  padding: 4px;
+}
+
+.setup-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  gap: 16px;
+}
+
+.setup-screen h1 {
+  font-size: 24px;
+  color: var(--accent-green);
+}
+
+.setup-screen p {
+  color: var(--text-secondary);
+  max-width: 360px;
+  line-height: 1.5;
+}
+
+.setup-screen input {
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 10px 14px;
+  font-size: 14px;
+  width: 100%;
+  max-width: 320px;
+  outline: none;
+  text-align: center;
+}
+
+.setup-screen input:focus {
+  border-color: var(--accent-green);
+}
+
+.setup-screen .connect-btn {
+  background: var(--accent-green);
+  color: var(--bg-primary);
+  border: none;
+  border-radius: 8px;
+  padding: 12px 32px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.setup-screen .connect-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.setup-screen .error {
+  color: var(--accent-red);
+  font-size: 13px;
+}
+
+/* iOS safe area */
+@supports (padding-top: env(safe-area-inset-top)) {
+  .status-bar {
+    padding-top: calc(6px + env(safe-area-inset-top));
+  }
+}

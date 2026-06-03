@@ -1,4 +1,4 @@
-import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -12,7 +12,9 @@ export interface Config {
   autoStartAgent: boolean;
   dataDir: string;
   publicKey: string;
-  token: string;
+  username: string;
+  password: string;
+  authRequired: boolean;
 }
 
 export interface CliArgs {
@@ -22,13 +24,70 @@ export interface CliArgs {
   tmuxSessionName?: string;
   agentCommand?: string;
   autoStartAgent?: boolean;
-  token?: string;
+  username?: string;
+  password?: string;
 }
 
 let _config: Config | null = null;
 
+// ─── Weak password detection ──────────────────────────────────
+
+const WEAK_PASSWORDS = new Set([
+  "admin",
+  "password",
+  "password123",
+  "changeme",
+  "change-me",
+  "secret",
+  "token",
+  "123456",
+  "12345678",
+  "123456789",
+]);
+
+export function isStrongPassword(password: string): boolean {
+  if (password.length < 8) return false;
+  if (WEAK_PASSWORDS.has(password.trim().toLowerCase())) return false;
+  if (/^(.)\1+$/.test(password)) return false;
+  return true;
+}
+
+// ─── Network bind safety ──────────────────────────────────────
+
+export function isLoopbackHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  if (h === "localhost" || h === "::1" || h.startsWith("127.")) return true;
+  if (h.startsWith("::ffff:127.")) return true;
+  return false;
+}
+
+export function isNetworkHost(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  if (!h) return true;
+  if (h === "0.0.0.0" || h === "::" || h === "*") return true;
+  if (isLoopbackHost(h)) return false;
+  return true;
+}
+
+export function assertSafeBindAuthConfig(
+  bindHost: string,
+  password: string,
+): void {
+  if (!isNetworkHost(bindHost)) return; // loopback is safe
+
+  if (isStrongPassword(password)) return;
+
+  if (password === "admin" || password.length < 8) {
+    throw new Error(
+      `Unsafe configuration: BIND_HOST=${bindHost} is network-reachable, but password is too weak. ` +
+        `Set a strong password (8+ chars, not common words) or use --password or PI_WEBTERM_PASSWORD.`,
+    );
+  }
+}
+
+// ─── Config helpers ───────────────────────────────────────────
+
 function env(key: string): string | undefined {
-  // PI_WEBTERM_PORT → PI_WEBTERM_ prefix
   const prefixed = `PI_WEBTERM_${key.toUpperCase()}`;
   return process.env[prefixed] || process.env[key.toUpperCase()];
 }
@@ -41,10 +100,6 @@ function ensureDataDir(dir: string): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-}
-
-function generateToken(): string {
-  return randomBytes(24).toString("hex");
 }
 
 function generateKeyPair(): { publicKey: string } {
@@ -82,10 +137,16 @@ export function loadConfig(args: CliArgs = {}): Config {
   const cwd = args.cwd || env("cwd") || process.cwd();
   const resolvedCwd = resolve(cwd);
 
-  const tmuxSessionName =
+  // tmux disallows certain characters (e.g. ':') in session names on macOS.
+  // Replace them with '_' to ensure cross-platform compatibility.
+  const sanitizeSessionName = (name: string) =>
+    name.replace(/[^a-zA-Z0-9_.-]/g, "_");
+
+  const tmuxSessionName = sanitizeSessionName(
     args.tmuxSessionName ||
-    env("tmuxSessionName") ||
-    `pw:${basename(resolvedCwd)}`;
+      env("tmuxSessionName") ||
+      `pw:${basename(resolvedCwd)}`,
+  );
 
   const agentCommand =
     args.agentCommand || env("agent") || persisted?.agentCommand || "pi";
@@ -101,21 +162,28 @@ export function loadConfig(args: CliArgs = {}): Config {
   const autoStartAgent =
     args.autoStartAgent ?? env("autoStartAgent") !== "false";
 
-  // Token: CLI > env > persisted > auto-generate
-  let token = args.token || env("token") || persisted?.token || "";
+  // Credentials: CLI > env > persisted > defaults
+  const username =
+    args.username || env("username") || persisted?.username || "admin";
+  const password =
+    args.password || env("password") || persisted?.password || "admin";
+
+  const authRequired = true; // always require auth
 
   // Key pair: persist and reuse, or generate
   let publicKey = persisted?.publicKey || "";
-
-  if (!token) {
-    token = generateToken();
-  }
-
   if (!publicKey) {
     const keyPair = generateKeyPair();
     publicKey = keyPair.publicKey;
 
-    persistConfig(dataDir, { token, publicKey, port, host, agentCommand });
+    persistConfig(dataDir, {
+      username,
+      password,
+      publicKey,
+      port,
+      host,
+      agentCommand,
+    });
   }
 
   _config = {
@@ -127,7 +195,9 @@ export function loadConfig(args: CliArgs = {}): Config {
     autoStartAgent,
     dataDir,
     publicKey,
-    token,
+    username,
+    password,
+    authRequired,
   };
 
   return _config;

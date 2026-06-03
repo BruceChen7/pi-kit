@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { generateSessionToken } from "../auth.js";
 import { resetConfig } from "../config.js";
 import { createServer, startServer } from "../index.js";
 
@@ -9,6 +10,8 @@ vi.mock("node:fs", () => ({
   mkdirSync: vi.fn(),
 }));
 
+const STRONG_PASSWORD = "test-strong-pass-123";
+
 describe("createServer", () => {
   afterEach(() => {
     resetConfig();
@@ -17,7 +20,8 @@ describe("createServer", () => {
   it("creates a Fastify server with config", async () => {
     const server = await createServer({
       port: 0,
-      token: "create-test",
+      username: "admin",
+      password: STRONG_PASSWORD,
     });
     expect(server).toBeDefined();
     expect(server.server).toBeDefined();
@@ -27,7 +31,8 @@ describe("createServer", () => {
   it("registers health endpoint", async () => {
     const server = await createServer({
       port: 0,
-      token: "health-test",
+      username: "admin",
+      password: STRONG_PASSWORD,
     });
     const res = await server.inject({
       method: "GET",
@@ -42,12 +47,15 @@ describe("createServer", () => {
   it("registers sessions endpoint with auth", async () => {
     const server = await createServer({
       port: 0,
-      token: "sess-test",
+      username: "admin",
+      password: STRONG_PASSWORD,
     });
+    // Generate a valid session token
+    const token = generateSessionToken("admin");
     const res = await server.inject({
       method: "GET",
       url: "/api/sessions",
-      headers: { authorization: "Bearer sess-test" },
+      headers: { authorization: `Bearer ${token}` },
     });
     expect(res.statusCode).toBe(200);
     await server.close();
@@ -56,7 +64,8 @@ describe("createServer", () => {
   it("registers WebSocket upgrade path", async () => {
     const server = await createServer({
       port: 0,
-      token: "ws-test",
+      username: "admin",
+      password: STRONG_PASSWORD,
     });
     // WebSocket routes are only reachable via actual WS upgrade,
     // not via HTTP inject. Verify the route is registered by
@@ -73,7 +82,11 @@ describe("startServer", () => {
   });
 
   it("starts and stops the server", async () => {
-    const server = await createServer({ port: 0, token: "start-test" });
+    const server = await createServer({
+      port: 0,
+      username: "admin",
+      password: STRONG_PASSWORD,
+    });
     const url = await startServer(server);
     expect(url).toBeDefined();
     expect(url).toContain("http");

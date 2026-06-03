@@ -45,13 +45,17 @@ export class WsClient {
     this._status = "connecting";
     this.options.onOpen?.();
 
-    const wsUrl = `${this.options.url}?token=${encodeURIComponent(this.options.token)}`;
-    this.ws = new WebSocket(wsUrl);
+    // Connect without token in URL (first-message auth)
+    this.ws = new WebSocket(this.options.url);
     this.ws.binaryType = "arraybuffer";
 
     this.ws.onopen = () => {
       this._status = "connected";
       this.reconnectAttempts = 0;
+
+      // Send auth as first message
+      this.sendAuthMessage();
+
       this.options.onOpen?.();
     };
 
@@ -83,12 +87,24 @@ export class WsClient {
 
     this.ws.onerror = (_err: Event) => {
       this._status = "error";
-      // onerror fires before onclose, so reconnect is handled in onclose
     };
 
     this.ws.onmessage = (event: MessageEvent) => {
       this.handleMessage(event.data);
     };
+  }
+
+  private sendAuthMessage(): void {
+    const authMsg = JSON.stringify({
+      type: "auth",
+      token: this.options.token,
+    });
+    this.sendJsonControl(authMsg);
+  }
+
+  private sendJsonControl(jsonStr: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(this.buildFrame(FRAME_TYPE_JSON, jsonStr));
   }
 
   private handleMessage(data: ArrayBuffer | string): void {
@@ -99,7 +115,6 @@ export class WsClient {
       const type = buf[0];
 
       if (type === FRAME_TYPE_BINARY) {
-        // Binary frame: terminal output
         const nullPos = buf.indexOf(0x00, 1);
         if (nullPos !== -1) {
           const outputData = buf.slice(nullPos + 1);
@@ -107,7 +122,6 @@ export class WsClient {
           this.options.onOutput?.(decoder.decode(outputData));
         }
       } else if (type === FRAME_TYPE_JSON) {
-        // JSON control frame
         const nullPos = buf.indexOf(0x00, 1);
         if (nullPos !== -1) {
           const jsonStr = new TextDecoder("utf-8").decode(
@@ -122,7 +136,6 @@ export class WsClient {
         }
       }
     } else if (typeof data === "string") {
-      // Plain string output (from raw PTY forwarding)
       this.options.onOutput?.(data);
     }
   }

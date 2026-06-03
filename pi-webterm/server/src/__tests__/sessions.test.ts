@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  detectSessionStatus,
   getTmuxSessionName,
   parseTmuxSessionName,
-  detectSessionStatus,
 } from "../sessions.js";
 
 // ─── Naming ───────────────────────────────────────────────────

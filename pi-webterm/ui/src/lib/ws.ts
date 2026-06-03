@@ -27,6 +27,7 @@ export class WsClient {
   private reconnectAttempts = 0;
   private maxReconnectDelay = 30000;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private intentionalClose = false;
 
   private _status: ConnectionStatus = "disconnected";
   get status(): ConnectionStatus {
@@ -42,6 +43,7 @@ export class WsClient {
   connect(): void {
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
+    this.intentionalClose = false;
     this._status = "connecting";
 
     // Connect without token in URL (first-message auth)
@@ -61,6 +63,10 @@ export class WsClient {
     this.ws.onclose = (event: CloseEvent) => {
       this._status = "disconnected";
       this.options.onClose?.();
+
+      if (this.intentionalClose) {
+        return;
+      }
 
       // Fatal close codes: don't retry (auth failure, session error)
       if (FATAL_CLOSE_CODES.has(event.code)) {
@@ -149,7 +155,15 @@ export class WsClient {
         }
         break;
       case "status":
-        this.options.onStatus?.(msg as any);
+        if (
+          typeof msg.connected === "boolean" &&
+          typeof msg.session === "string"
+        ) {
+          this.options.onStatus?.({
+            connected: msg.connected,
+            session: msg.session,
+          });
+        }
         break;
       case "error":
         console.error("Server error:", msg.message);
@@ -205,6 +219,7 @@ export class WsClient {
   }
 
   disconnect(): void {
+    this.intentionalClose = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

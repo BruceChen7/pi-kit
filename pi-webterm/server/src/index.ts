@@ -10,6 +10,7 @@ import {
   getConfig,
   loadConfig,
 } from "./config.js";
+
 export type { CliArgs };
 
 const __filename = fileURLToPath(import.meta.url);

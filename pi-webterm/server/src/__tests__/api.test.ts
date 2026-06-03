@@ -11,6 +11,7 @@ import {
 import {
   cleanupActivePtySession,
   getActivePtySessionForTests,
+  handleTerminalQueries,
   registerActivePtySession,
   registerRoutes,
   resetRuntimeStateForTests,
@@ -284,14 +285,126 @@ describe("API routes", () => {
 });
 
 describe("stripTerminalResponses", () => {
-  it("removes DA responses like '?1;2c' from tmux history", () => {
+  it("removes primary DA responses: \\x1b[?1;2c", () => {
     expect(stripTerminalResponses("before\u001b[?1;2cafter")).toBe(
+      "beforeafter",
+    );
+  });
+
+  it("removes secondary DA responses: \\x1b[>0;0;0c", () => {
+    expect(stripTerminalResponses("before\u001b[>0;0;0cafter")).toBe(
+      "beforeafter",
+    );
+  });
+
+  it("removes CPR responses: \\x1b[1;1R", () => {
+    expect(stripTerminalResponses("before\u001b[1;1Rafter")).toBe(
       "beforeafter",
     );
   });
 
   it("preserves normal terminal output", () => {
     expect(stripTerminalResponses("hello\r\nworld")).toBe("hello\r\nworld");
+  });
+
+  it("preserves DECSET commands like \\x1b[?1049h", () => {
+    expect(stripTerminalResponses("\u001b[?1049h")).toBe("\u001b[?1049h");
+  });
+
+  it("preserves SGR commands like \\x1b[32m", () => {
+    expect(stripTerminalResponses("\u001b[32m")).toBe("\u001b[32m");
+  });
+
+  it("preserves cursor movement like \\x1b[H", () => {
+    expect(stripTerminalResponses("\u001b[H")).toBe("\u001b[H");
+  });
+
+  it("preserves CUU like \\x1b[1A", () => {
+    expect(stripTerminalResponses("\u001b[1A")).toBe("\u001b[1A");
+  });
+
+  it("handles multiple consecutive DA responses", () => {
+    expect(
+      stripTerminalResponses("\u001b[?1;2c\u001b[>0;0;0c\u001b[1;1R"),
+    ).toBe("");
+  });
+});
+
+describe("handleTerminalQueries", () => {
+  it("intercepts primary DA request (\\x1b[c) and responds", () => {
+    const result = handleTerminalQueries("before\u001b[cafter");
+    expect(result.filtered).toBe("beforeafter");
+    expect(result.responses).toEqual(["\u001b[?1;2c"]);
+  });
+
+  it("intercepts primary DA request (\\x1b[?c) variant", () => {
+    const result = handleTerminalQueries("\u001b[?c");
+    expect(result.filtered).toBe("");
+    expect(result.responses).toEqual(["\u001b[?1;2c"]);
+  });
+
+  it("intercepts secondary DA request (\\x1b[>c) and responds", () => {
+    const result = handleTerminalQueries("\u001b[>c");
+    expect(result.filtered).toBe("");
+    expect(result.responses).toEqual(["\u001b[>0;0;0c"]);
+  });
+
+  it("swallows tertiary-looking query (\\x1b[>q) without synthesizing >0;0;0q", () => {
+    const result = handleTerminalQueries("\u001b[>q");
+    expect(result.filtered).toBe("");
+    expect(result.responses).toEqual([]);
+  });
+
+  it("intercepts CPR request (\\x1b[6n) and responds", () => {
+    const result = handleTerminalQueries("\u001b[6n");
+    expect(result.filtered).toBe("");
+    expect(result.responses).toEqual(["\u001b[1;1R"]);
+  });
+
+  it("intercepts DSR request (\\x1b[5n) and responds", () => {
+    const result = handleTerminalQueries("\u001b[5n");
+    expect(result.filtered).toBe("");
+    expect(result.responses).toEqual(["\u001b[0n"]);
+  });
+
+  it("handles multiple queries in a single data chunk", () => {
+    const result = handleTerminalQueries("\u001b[c\u001b[>c\u001b[>q\u001b[6n");
+    expect(result.filtered).toBe("");
+    expect(result.responses).toEqual([
+      "\u001b[?1;2c",
+      "\u001b[>0;0;0c",
+      "\u001b[1;1R",
+    ]);
+  });
+
+  it("preserves normal output that includes query-like text", () => {
+    const result = handleTerminalQueries("hello world");
+    expect(result.filtered).toBe("hello world");
+    expect(result.responses).toEqual([]);
+  });
+
+  it("preserves output intermixed with queries", () => {
+    const result = handleTerminalQueries("start\u001b[cend\u001b[>cmore");
+    expect(result.filtered).toBe("startendmore");
+    expect(result.responses).toHaveLength(2);
+  });
+
+  it("does not intercept terminal responses (only queries)", () => {
+    const result = handleTerminalQueries("\u001b[?1;2c");
+    expect(result.filtered).toBe("\u001b[?1;2c");
+    expect(result.responses).toEqual([]);
+  });
+
+  it("does not intercept CPR responses", () => {
+    const result = handleTerminalQueries("\u001b[1;1R");
+    expect(result.filtered).toBe("\u001b[1;1R");
+    expect(result.responses).toEqual([]);
+  });
+
+  it("does not intercept normal escape sequences like \\x1b[32m", () => {
+    const result = handleTerminalQueries("\u001b[32mgreen");
+    expect(result.filtered).toBe("\u001b[32mgreen");
+    expect(result.responses).toEqual([]);
   });
 });
 

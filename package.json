@@ -51,6 +51,10 @@
     "test:watch": "vitest",
     "kanban-worktree:ui:build": "vite build --config extensions/kanban-worktree/vite.config.mts",
     "cache-graph:ui:build": "vite build --config extensions/cache-graph/vite.config.mts",
+    "pi-webterm:dev": "cd pi-webterm/server && npx tsx watch src/index.ts",
+    "pi-webterm:start": "cd pi-webterm/server && npx tsx src/index.ts -username 123 --password my654321",
+    "pi-webterm:ui:build": "cd pi-webterm/ui && npx vite build",
+    "pi-webterm:install": "cd pi-webterm/server && npm install && cd ../ui && npm install",
     "prepack": "npm run kanban-worktree:ui:build && npm run cache-graph:ui:build",
     "prepare": "husky"
   },

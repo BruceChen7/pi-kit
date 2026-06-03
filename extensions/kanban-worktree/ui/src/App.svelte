@@ -124,8 +124,12 @@ let confirmingDeleteKey = $state<string | null>(null);
 let deletingIssueKeys = $state<string[]>([]);
 let launchingIssueKeys = $state<string[]>([]);
 
-const inboxIssues = $derived(issues.filter((issue) => issue.status === "in-box"));
-const doingIssues = $derived(issues.filter((issue) => issue.status === "doing"));
+const inboxIssues = $derived(
+  issues.filter((issue) => issue.status === "in-box"),
+);
+const doingIssues = $derived(
+  issues.filter((issue) => issue.status === "doing"),
+);
 const doneIssues = $derived(issues.filter((issue) => issue.status === "done"));
 const archivedIssues = $derived(
   issues.filter((issue) => issue.status === "archived"),
@@ -252,7 +256,8 @@ function handleCreateResult(event: Event): void {
   }
 
   const pendingIssue = findPendingIssue(detail.clientRequestId);
-  if (pendingIssue) clearLaunching(pendingIssue.originProvider, pendingIssue.originId);
+  if (pendingIssue)
+    clearLaunching(pendingIssue.originProvider, pendingIssue.originId);
   issues = issues.filter(
     (issue) => issue.pendingCreateId !== detail.clientRequestId,
   );
@@ -323,10 +328,11 @@ function handleBranchesResult(event: Event): void {
   }
 
   branchesError = "";
-  branchOptions = detail.branches.length > 0 ? detail.branches : [detail.defaultBranch];
+  branchOptions =
+    detail.branches.length > 0 ? detail.branches : [detail.defaultBranch];
   newBaseBranch = branchOptions.includes(detail.defaultBranch)
     ? detail.defaultBranch
-    : branchOptions[0] ?? "main";
+    : (branchOptions[0] ?? "main");
 }
 
 function replacePendingIssue(
@@ -341,17 +347,24 @@ function replacePendingIssue(
     replaced = true;
     return createdIssue;
   });
-  if (!replaced && !issues.some((issue) => issue.issueId === createdIssue.issueId)) {
+  if (
+    !replaced &&
+    !issues.some((issue) => issue.issueId === createdIssue.issueId)
+  ) {
     issues = [createdIssue, ...issues];
   }
-  if (wasLaunching && pendingIssue) transferLaunching(pendingIssue, createdIssue);
+  if (wasLaunching && pendingIssue)
+    transferLaunching(pendingIssue, createdIssue);
 }
 
 function findPendingIssue(clientRequestId: string): IssueSummary | undefined {
   return issues.find((issue) => issue.pendingCreateId === clientRequestId);
 }
 
-function launchedIssue(issue: IssueSummary, run: LaunchRun | null): IssueSummary {
+function launchedIssue(
+  issue: IssueSummary,
+  run: LaunchRun | null,
+): IssueSummary {
   return {
     ...issue,
     status: "doing",
@@ -393,7 +406,9 @@ function isBranchesResult(value: unknown): value is BranchesResult {
     return false;
   }
   if (!result.ok) return typeof result.error === "string";
-  return Array.isArray(result.branches) && typeof result.defaultBranch === "string";
+  return (
+    Array.isArray(result.branches) && typeof result.defaultBranch === "string"
+  );
 }
 
 function isDeleteResult(value: unknown): value is DeleteResult {
@@ -497,26 +512,34 @@ function workBranch(issue: IssueSummary): string {
 }
 
 function isLaunching(issue: IssueSummary): boolean {
-  return launchingIssueKeys.includes(launchKey(issue.originProvider, issue.originId));
+  return launchingIssueKeys.includes(
+    launchKey(issue.originProvider, issue.originId),
+  );
 }
 
 function isDeleting(issue: IssueSummary): boolean {
-  return deletingIssueKeys.includes(launchKey(issue.originProvider, issue.originId));
+  return deletingIssueKeys.includes(
+    launchKey(issue.originProvider, issue.originId),
+  );
 }
 
 function markLaunching(issue: IssueSummary): void {
   const key = launchKey(issue.originProvider, issue.originId);
-  if (!launchingIssueKeys.includes(key)) launchingIssueKeys = [...launchingIssueKeys, key];
+  if (!launchingIssueKeys.includes(key))
+    launchingIssueKeys = [...launchingIssueKeys, key];
 }
 
 function clearLaunching(originProvider: string, originId: string): void {
   const key = launchKey(originProvider, originId);
-  launchingIssueKeys = launchingIssueKeys.filter((issueKey) => issueKey !== key);
+  launchingIssueKeys = launchingIssueKeys.filter(
+    (issueKey) => issueKey !== key,
+  );
 }
 
 function markDeleting(issue: IssueSummary): void {
   const key = launchKey(issue.originProvider, issue.originId);
-  if (!deletingIssueKeys.includes(key)) deletingIssueKeys = [...deletingIssueKeys, key];
+  if (!deletingIssueKeys.includes(key))
+    deletingIssueKeys = [...deletingIssueKeys, key];
 }
 
 function clearDeleting(originProvider: string, originId: string): void {
@@ -537,7 +560,10 @@ function matchesOrigin(
   return issue.originProvider === originProvider && issue.originId === originId;
 }
 
-function readString(value: LaunchRun | null, key: keyof LaunchRun): string | undefined {
+function readString(
+  value: LaunchRun | null,
+  key: keyof LaunchRun,
+): string | undefined {
   const field = value?.[key];
   return typeof field === "string" && field.trim() ? field : undefined;
 }

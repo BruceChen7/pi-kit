@@ -138,9 +138,7 @@ describe("ensureSession", () => {
 
     // Verify new-session call uses login-shell wrapper
     const createCall = vi.mocked(execSync).mock.calls[1][0] as string;
-    expect(createCall).toContain(
-      '/bin/zsh -l -i -c "exec pi"',
-    );
+    expect(createCall).toContain('/bin/zsh -l -i -c "exec pi"');
     expect(createCall).toContain("tmux new-session");
     expect(vi.mocked(execSync).mock.calls[1][1]).toMatchObject({
       timeout: 10_000,

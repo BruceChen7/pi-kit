@@ -3,6 +3,7 @@ import {
   attachToSession,
   capturePane,
   detachPty,
+  ensureSession,
   hasSession,
   killSession,
   listSessions,
@@ -110,5 +111,89 @@ describe("detachPty", () => {
       },
     } as any;
     expect(() => detachPty(pty)).not.toThrow();
+  });
+});
+
+describe("ensureSession", () => {
+  beforeEach(() => {
+    // Stub SHELL so the login-shell wrapper is predictable
+    vi.stubEnv("SHELL", "/bin/zsh");
+    // Default: execSync throws → hasSession returns false in most tests
+    vi.mocked(execSync).mockImplementation(() => {
+      throw new Error("no session");
+    });
+  });
+
+  it("creates a new tmux session with login-shell wrapper", () => {
+    // hasSession → false (default throw), then creation commands succeed
+    vi.mocked(execSync)
+      .mockImplementationOnce(() => {
+        throw new Error("no session");
+      }) // hasSession → false
+      .mockImplementationOnce(() => "" as any) // new-session
+      .mockImplementationOnce(() => "" as any) // set status off
+      .mockImplementationOnce(() => "" as any); // set history-limit
+
+    ensureSession("pi-agent", "/home/user/project", "pi");
+
+    // Verify new-session call uses login-shell wrapper
+    const createCall = vi.mocked(execSync).mock.calls[1][0] as string;
+    expect(createCall).toContain(
+      '/bin/zsh -l -i -c "exec pi"',
+    );
+    expect(createCall).toContain("tmux new-session");
+    expect(vi.mocked(execSync).mock.calls[1][1]).toMatchObject({
+      timeout: 10_000,
+    });
+  });
+
+  it("does nothing if session already exists", () => {
+    // Override default: execSync succeeds → hasSession returns true
+    vi.mocked(execSync).mockReset();
+    vi.mocked(execSync).mockReturnValue("" as any);
+
+    ensureSession("existing-session", "/home/user/project", "pi");
+
+    // Only the hasSession check was called
+    expect(execSync).toHaveBeenCalledTimes(1);
+    expect(execSync).toHaveBeenCalledWith(
+      "tmux has-session -t existing-session 2>/dev/null",
+      expect.anything(),
+    );
+  });
+
+  it("throws on empty session name", () => {
+    // hasSession("") returns false immediately (name is empty), no execSync call
+    expect(() => ensureSession("", "/path", "pi")).toThrow(
+      "Invalid session params",
+    );
+  });
+
+  it("throws on empty cwd", () => {
+    // execSync throws (default mock) → hasSession returns false → validation fires
+    expect(() => ensureSession("sess", "", "pi")).toThrow(
+      "Invalid session params",
+    );
+  });
+
+  it("disables status bar and sets history limit after creation", () => {
+    // hasSession → false (default throw), then creation commands succeed
+    vi.mocked(execSync)
+      .mockImplementationOnce(() => {
+        throw new Error("no session");
+      }) // hasSession → false
+      .mockImplementationOnce(() => "" as any) // new-session
+      .mockImplementationOnce(() => "" as any) // set status off
+      .mockImplementationOnce(() => "" as any); // set history-limit
+
+    ensureSession("pi-agent", "/home/user/project", "pi");
+
+    expect(execSync).toHaveBeenCalledTimes(4);
+    expect(vi.mocked(execSync).mock.calls[2][0]).toContain(
+      "set -t pi-agent status off",
+    );
+    expect(vi.mocked(execSync).mock.calls[3][0]).toContain(
+      "set -t pi-agent history-limit 10000",
+    );
   });
 });

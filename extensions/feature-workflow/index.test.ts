@@ -17,6 +17,7 @@ import {
 } from "./setup.js";
 
 const tempDirs: string[] = [];
+const initialCwd = process.cwd();
 
 type LoaderComponent = {
   render: (width: number) => string[];
@@ -89,6 +90,13 @@ const createTempRepoWithMainBranch = (): string => {
 afterEach(() => {
   clearSettingsCache();
   vi.restoreAllMocks();
+  // Restore CWD before cleaning up temp dirs.
+  // Tests that exercise feature-switch/feature-start handlers trigger
+  // syncProcessCwd → process.chdir(worktreePath), which leaves the process
+  // CWD inside a temp directory. If we delete that directory without
+  // restoring CWD first, subsequent process.cwd() calls will crash
+  // with ENOENT (uv_cwd on deleted directory).
+  process.chdir(initialCwd);
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }

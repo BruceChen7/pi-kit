@@ -26,6 +26,7 @@ export interface CliArgs {
   autoStartAgent?: boolean;
   username?: string;
   password?: string;
+  dataDir?: string;
 }
 
 let _config: Config | null = null;
@@ -131,7 +132,7 @@ function persistConfig(dataDir: string, cfg: Partial<Config>): void {
 }
 
 export function loadConfig(args: CliArgs = {}): Config {
-  const dataDir = defaultDataDir();
+  const dataDir = args.dataDir || env("dataDir") || defaultDataDir();
   const persisted = readPersistedConfig(dataDir);
 
   const cwd = args.cwd || env("cwd") || process.cwd();

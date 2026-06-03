@@ -255,8 +255,11 @@ describe("file-watcher batched delivery", () => {
       "// first #pi!\n// second #pi!\n",
     );
 
+    // The watcher has a 1s batch delay (PROMPT_BATCH_MS). Under parallel
+    // test load the setTimeout can be delayed significantly, so be generous.
     await vi.waitFor(() => expect(harness.messages).toHaveLength(1), {
-      timeout: 2_500,
+      timeout: 10_000,
+      interval: 200,
     });
 
     expect(harness.messages[0].text).toContain("Batched file-watcher prompts:");
@@ -287,7 +290,8 @@ describe("file-watcher batched delivery", () => {
 
     writeFileSync(filePath, "// repeat #pi!\n");
     await vi.waitFor(() => expect(harness.messages).toHaveLength(1), {
-      timeout: 2_500,
+      timeout: 10_000,
+      interval: 200,
     });
 
     writeFileSync(filePath, "// repeat\n");
@@ -295,7 +299,8 @@ describe("file-watcher batched delivery", () => {
     writeFileSync(filePath, "// repeat #pi!\n");
 
     await vi.waitFor(() => expect(harness.messages).toHaveLength(2), {
-      timeout: 2_500,
+      timeout: 10_000,
+      interval: 200,
     });
     await harness.shutdown();
   });

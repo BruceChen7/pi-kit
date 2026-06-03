@@ -17,29 +17,60 @@ export interface Session {
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const activeSessions = new Map<string, Session>();
 
+/**
+ * Generate a session token with embedded expiry.
+ *
+ * Token format: <expiresAt_base36>.<random_hex>
+ * The expiry is encoded directly in the token so that verifyWsToken
+ * can validate it without any I/O or state lookup.
+ *
+ * The in-memory activeSessions Map is kept for:
+ *   - username lookup in getSession()
+ *   - revocation tracking via revokedTokens
+ */
 export function generateSessionToken(username: string): string {
-  const token = randomBytes(32).toString("hex");
-  const now = Date.now();
+  const expiresAt = Date.now() + SESSION_TTL_MS;
+  const random = randomBytes(32).toString("hex");
+  const token = `${expiresAt.toString(36)}.${random}`;
   activeSessions.set(token, {
     username,
-    createdAt: now,
-    expiresAt: now + SESSION_TTL_MS,
+    createdAt: Date.now(),
+    expiresAt,
   });
   return token;
 }
 
+/**
+ * Decode the embedded expiry from a token string.
+ * Returns the expiry timestamp, or 0 if the token format is invalid.
+ */
+function decodeExpiry(token: string): number {
+  const dot = token.indexOf(".");
+  if (dot === -1) return 0;
+  return Number.parseInt(token.slice(0, dot), 36) || 0;
+}
+
+/**
+ * Get session info for a token.
+ * Checks embedded expiry first (fast path), then looks up the Map.
+ */
 export function getSession(token: string): Session | undefined {
-  const session = activeSessions.get(token);
-  if (!session) return undefined;
-  if (Date.now() > session.expiresAt) {
+  if (Date.now() > decodeExpiry(token)) {
     activeSessions.delete(token);
     return undefined;
   }
-  return session;
+  return activeSessions.get(token);
 }
 
+// Best-effort revocation tracking (in-memory only, lost on restart)
+const revokedTokens = new Set<string>();
+
+/**
+ * Destroy/revoke a session token (in-memory only, lost on restart).
+ */
 export function destroySession(token: string): void {
   activeSessions.delete(token);
+  revokedTokens.add(token);
 }
 
 // ─── Credential Validation ─────────────────────────────────────
@@ -130,7 +161,15 @@ export function createAuthMiddleware(config?: { publicKey?: string }) {
 
     // 1. Try session token via Bearer header
     const bearerToken = getBearerToken(req.headers.authorization);
-    if (bearerToken && getSession(bearerToken)) {
+    if (bearerToken) {
+      // Check embedded expiry first (stateless — works after restart)
+      if (!verifyWsToken(bearerToken)) {
+        return false;
+      }
+      // Check revocation (best-effort, in-memory only)
+      if (revokedTokens.has(bearerToken)) {
+        return false;
+      }
       return true;
     }
 
@@ -160,5 +199,6 @@ export function authenticateWsMessage(msg: unknown): msg is WsAuthMessage {
 }
 
 export function verifyWsToken(token: string): boolean {
-  return !!getSession(token);
+  // Stateless check — the token carries its own expiry
+  return Date.now() <= decodeExpiry(token);
 }

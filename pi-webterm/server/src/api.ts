@@ -20,7 +20,7 @@ import {
   killSession,
   listSessions,
 } from "./tmux.js";
-import { decodeFrame } from "./ws.js";
+import { decodeFrame, encodeJsonFrame } from "./ws.js";
 
 // ─── Active PTY sessions ───────────────────────────────────────
 
@@ -229,7 +229,10 @@ async function handleWsConnection(socket: any, sessionName: string) {
     activePtySessions.set(sessionName, pty);
   } catch (_err) {
     socket.send(
-      JSON.stringify({ type: "error", message: "Failed to attach to session" }),
+      encodeJsonFrame(sessionName, {
+        type: "error",
+        message: "Failed to attach to session",
+      }),
     );
     socket.close(4002, "Attach failed");
     return;
@@ -237,7 +240,7 @@ async function handleWsConnection(socket: any, sessionName: string) {
 
   // Send status
   socket.send(
-    JSON.stringify({
+    encodeJsonFrame(sessionName, {
       type: "status",
       connected: true,
       session: sessionName,
@@ -248,7 +251,7 @@ async function handleWsConnection(socket: any, sessionName: string) {
   const history = capturePane(sessionName, 200);
   if (history) {
     socket.send(
-      JSON.stringify({
+      encodeJsonFrame(sessionName, {
         type: "snapshot",
         data: Buffer.from(history).toString("base64"),
       }),

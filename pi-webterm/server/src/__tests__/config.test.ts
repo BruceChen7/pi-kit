@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   assertSafeBindAuthConfig,
   getConfig,
@@ -8,6 +11,19 @@ import {
   loadConfig,
   resetConfig,
 } from "../config.js";
+
+let tempDataDir: string;
+
+beforeAll(() => {
+  tempDataDir = mkdtempSync(join(tmpdir(), "pi-webterm-test-"));
+  // env("dataDir") looks up PI_WEBTERM_DATADIR (key.toUpperCase() with prefix)
+  process.env.PI_WEBTERM_DATADIR = tempDataDir;
+});
+
+afterAll(() => {
+  delete process.env.PI_WEBTERM_DATADIR;
+  rmSync(tempDataDir, { recursive: true, force: true });
+});
 
 afterEach(() => {
   resetConfig();
@@ -26,7 +42,8 @@ describe("loadConfig", () => {
     expect(cfg.host).toBe("0.0.0.0");
     expect(cfg.agentCommand).toBe("pi");
     expect(cfg.autoStartAgent).toBe(true);
-    expect(cfg.dataDir).toContain(".pi/pi-webterm");
+    // dataDir comes from PI_WEBTERM_DATA_DIR env (set to temp dir in beforeAll)
+    expect(cfg.dataDir).toBe(tempDataDir);
     expect(cfg.username).toBe("admin");
     expect(cfg.password).toBe("admin");
     expect(cfg.authRequired).toBe(true);

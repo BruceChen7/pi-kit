@@ -10,7 +10,6 @@ import {
   getConfig,
   loadConfig,
 } from "./config.js";
-
 export type { CliArgs };
 
 const __filename = fileURLToPath(import.meta.url);
@@ -118,6 +117,9 @@ function parseArgs(): CliArgs {
         break;
       case "--cwd":
         args.cwd = argv[++i];
+        break;
+      case "--data-dir":
+        args.dataDir = argv[++i];
         break;
       case "--no-auto-start":
         args.autoStartAgent = false;

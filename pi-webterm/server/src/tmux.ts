@@ -43,10 +43,15 @@ export function ensureSession(
     throw new Error(`Invalid session params: name=${name}, cwd=${cwd}`);
   }
 
-  execSync(`tmux new-session -d -s ${name} -c ${cwd} '${agentCommand}'`, {
-    stdio: "pipe",
-    timeout: 10_000,
-  });
+  // Use a login (+interactive) shell so the user's profile/rc files are sourced.
+  // Without this, env vars set in ~/.zshrc / ~/.bash_profile (e.g., OPENCODE_API_KEY)
+  // are invisible to the agent process because `tmux new-session` runs the command
+  // directly without sourcing shell rc files.
+  const shell = process.env.SHELL || "/bin/bash";
+  execSync(
+    `tmux new-session -d -s ${name} -c ${cwd} '${shell} -l -i -c "exec ${agentCommand}"'`,
+    { stdio: "pipe", timeout: 10_000 },
+  );
 
   // Clean output: disable status bar
   execSync(`tmux set -t ${name} status off`, {

@@ -52,10 +52,14 @@ describe("validateCredentials", () => {
 // ─── Session Token ────────────────────────────────────────────
 
 describe("generateSessionToken / getSession", () => {
-  it("generates a valid session token", () => {
+  it("generates a session token with embedded expiry", () => {
     const token = generateSessionToken("admin");
-    expect(token.length).toBe(64); // 32 bytes hex
-    expect(token).toMatch(/^[0-9a-f]+$/);
+    // Format: <base36_expiry>.<64_hex_chars>
+    expect(token).toMatch(/^[0-9a-z]+\.[0-9a-f]{64}$/);
+    // Decode the embedded expiry
+    const dot = token.indexOf(".");
+    const expiresAt = Number.parseInt(token.slice(0, dot), 36);
+    expect(expiresAt).toBeGreaterThan(Date.now());
   });
 
   it("getSession returns session for valid token", () => {
@@ -71,10 +75,23 @@ describe("generateSessionToken / getSession", () => {
     expect(getSession("unknown-token")).toBeUndefined();
   });
 
-  it("destroySession invalidates the token", () => {
-    const token = generateSessionToken("admin");
-    destroySession(token);
+  it("getSession returns undefined for expired embedded expiry", () => {
+    // Construct a token with an already-expired timestamp
+    const expiredTs = Date.now() - 1000;
+    const token = `${expiredTs.toString(36)}.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`;
     expect(getSession(token)).toBeUndefined();
+  });
+
+  it("destroySession removes from in-memory Map", () => {
+    const token = generateSessionToken("admin");
+    // Verify it's in the Map
+    expect(getSession(token)).toBeDefined();
+    // Destroy it
+    destroySession(token);
+    // getSession checks Map — returns undefined
+    expect(getSession(token)).toBeUndefined();
+    // verifyWsToken is stateless — still returns true (not expired)
+    expect(verifyWsToken(token)).toBe(true);
   });
 });
 
@@ -86,6 +103,13 @@ describe("verifyWsToken", () => {
 
   it("returns false for invalid token", () => {
     expect(verifyWsToken("invalid")).toBe(false);
+  });
+
+  it("returns false for expired embedded expiry", () => {
+    // Token with a timestamp 1ms in the past
+    const expiredTs = Date.now() - 1;
+    const token = `${expiredTs.toString(36)}.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`;
+    expect(verifyWsToken(token)).toBe(false);
   });
 });
 
@@ -254,13 +278,14 @@ describe("createAuthMiddleware", () => {
     expect(result).toBe(true);
   });
 
-  it("rejects expired session token", async () => {
-    // Generate a token near expiry by clearing the session first
-    const token = generateSessionToken("admin");
-    destroySession(token);
+  it("rejects expired session token by embedded expiry", async () => {
+    // Construct a token with expired embedded timestamp
+    const expiredTs = Date.now() - 1000;
+    const expiresAt = expiredTs.toString(36);
+    const expiredToken = `${expiresAt}.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`;
     const middleware = createAuthMiddleware();
     const req = {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${expiredToken}` },
       query: {},
     } as any;
     const result = await middleware(req as any);

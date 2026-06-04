@@ -49,7 +49,29 @@ vi.mock("../sessions.js", () => ({
   createPwSession: vi.fn(),
   deletePwSession: vi.fn(),
   getGitBranch: vi.fn(() => "main"),
-  getTmuxSessionName: vi.fn((dir, branch) => `pw__${dir}__${branch}`),
+  getTmuxSessionName: vi.fn((dir, branch, cwd) => {
+    // If cwd provided, append a mock hash
+    const hash = cwd ? `__${cwd.split("/").pop()?.slice(0, 4) ?? "xxxx"}` : "";
+    return `pw__${dir}__${branch}${hash}`;
+  }),
+}));
+
+// Mock workspace module
+vi.mock("../workspace.js", () => ({
+  getWorkspaceCache: vi.fn(() => ({
+    repos: [
+      { path: "/projects/app-a", name: "app-a", branches: ["main", "dev"] },
+      { path: "/projects/app-b", name: "app-b", branches: ["main"] },
+    ],
+    scannedAt: Date.now(),
+    basePath: "/projects",
+  })),
+  refreshWorkspace: vi.fn(() => ({
+    repos: [],
+    scannedAt: Date.now(),
+    basePath: "/projects",
+  })),
+  shortHash: vi.fn((s: string) => s.split("").reverse().join("").slice(0, 4) || "0000"),
 }));
 
 describe("API routes", () => {
@@ -198,7 +220,7 @@ describe("API routes", () => {
     expect(body.sessions[0]).toHaveProperty("status");
   });
 
-  it("POST /api/sessions creates a new session with sessionToken", async () => {
+  it("POST /api/sessions creates a new session with cwd and hashed name", async () => {
     vi.mocked(hasSession).mockReturnValue(false);
 
     const res = await fastify.inject({
@@ -208,13 +230,75 @@ describe("API routes", () => {
         authorization: `Bearer ${sessionToken}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ dirname: "my-app", branch: "main" }),
+      body: JSON.stringify({ cwd: "/projects/my-app", branch: "main" }),
     });
     expect(res.statusCode).toBe(201);
     const body = JSON.parse(res.body);
     expect(body).toHaveProperty("sessionToken");
     expect(typeof body.sessionToken).toBe("string");
-    expect(body.name).toBe("pw__my-app__main");
+    expect(body.name).toMatch(/^pw__my-app__main__/);
+    expect(body.cwd).toBe("/projects/my-app");
+    expect(body.dirname).toBe("my-app");
+  });
+
+  it("POST /api/sessions auto-attaches when session already exists", async () => {
+    vi.mocked(hasSession).mockReturnValue(true);
+
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      headers: {
+        authorization: `Bearer ${sessionToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ cwd: "/projects/my-app", branch: "main" }),
+    });
+    // 200 (not 409) = auto-attach
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body).toHaveProperty("sessionToken");
+    expect(body).toHaveProperty("status");
+    expect(body.attached).toBe(false);
+  });
+
+  it("POST /api/sessions handles baseBranch for new branch creation", async () => {
+    vi.mocked(hasSession).mockReturnValue(false);
+
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      headers: {
+        authorization: `Bearer ${sessionToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        cwd: "/projects/my-app",
+        branch: "new-feature",
+        baseBranch: "main",
+      }),
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body).toHaveProperty("sessionToken");
+    expect(body.name).toMatch(/^pw__my-app__new-feature__/);
+  });
+
+  it("POST /api/sessions without cwd falls back to config cwd", async () => {
+    vi.mocked(hasSession).mockReturnValue(false);
+
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/api/sessions",
+      headers: {
+        authorization: `Bearer ${sessionToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ branch: "main" }),
+    });
+    expect(res.statusCode).toBe(201);
+    const body = JSON.parse(res.body);
+    expect(body).toHaveProperty("sessionToken");
+    expect(body.cwd).toBeTruthy();
   });
 
   it("POST /api/sessions/:name/attach returns sessionToken", async () => {
@@ -281,6 +365,64 @@ describe("API routes", () => {
     });
 
     expect(res.statusCode).toBe(500);
+  });
+
+  // ── Workspace ──────────────────────────────────────────────
+
+  it("GET /api/workspace/directories returns directory list", async () => {
+    const { getWorkspaceCache } = await import("../workspace.js");
+    vi.mocked(getWorkspaceCache).mockReturnValue({
+      repos: [
+        { path: "/projects/app-a", name: "app-a", branches: ["main", "dev"] },
+        { path: "/projects/app-b", name: "app-b", branches: ["main"] },
+      ],
+      scannedAt: 1000,
+      basePath: "/projects",
+    });
+
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/api/workspace/directories",
+      headers: { authorization: `Bearer ${sessionToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body).toHaveProperty("directories");
+    expect(body.directories).toHaveLength(2);
+    expect(body.directories[0]).toHaveProperty("path");
+    expect(body.directories[0]).toHaveProperty("branches");
+    expect(body.basePath).toBe("/projects");
+  });
+
+  it("GET /api/workspace/directories returns 401 without auth", async () => {
+    const res = await fastify.inject({
+      method: "GET",
+      url: "/api/workspace/directories",
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("POST /api/workspace/refresh refreshes the cache", async () => {
+    const { refreshWorkspace } = await import("../workspace.js");
+    vi.mocked(refreshWorkspace).mockReturnValue({
+      repos: [],
+      scannedAt: 2000,
+      basePath: "/projects",
+    });
+
+    const res = await fastify.inject({
+      method: "POST",
+      url: "/api/workspace/refresh",
+      headers: {
+        authorization: `Bearer ${sessionToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(refreshWorkspace).toHaveBeenCalledOnce();
+    expect(body.basePath).toBe("/projects");
   });
 });
 

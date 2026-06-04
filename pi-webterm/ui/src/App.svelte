@@ -1,6 +1,6 @@
 <script lang="ts">
 import { onDestroy, onMount, tick } from "svelte";
-import { api, type SessionInfo } from "./lib/api";
+import { api, type SessionInfo, type DirectoryInfo } from "./lib/api";
 import {
   clearSessionToken,
   getSessionToken,
@@ -46,11 +46,35 @@ let activeSessionName: string | null = $state(null);
 let sessionToken: string | null = $state(null); // session-specific token for WS
 let _showSessionPicker = $state(false);
 let _showCreateForm = $state(false);
-let _createDirname = $state("");
-let _createBranch = $state("");
 let _creating = $state(false);
 let _attaching = $state(false); // loading state for session attach
 let _deleteLoading = $state<Set<string>>(new Set()); // set of session names being deleted
+
+// Workspace / directory discovery
+let _directories: DirectoryInfo[] = $state([]);
+let _loadingDirs = $state(false);
+
+// Create form — directory & branch
+let _directorySearch = $state(""); // search/filter input for directory list
+let _selectedDirectoryPath = $state(""); // selected cwd path
+let _availableBranches: string[] = $state([]);
+let _createBranch = $state("");
+let _createNewBranchMode = $state(false); // show new-branch input
+let _createNewBranchName = $state(""); // new branch name when creating
+let _baseBranch = $state(""); // base branch for new branch creation
+
+const _filteredDirectories = $derived(
+  _directories.filter(
+    (d) =>
+      !_directorySearch ||
+      d.name.toLowerCase().includes(_directorySearch.toLowerCase()) ||
+      d.path.toLowerCase().includes(_directorySearch.toLowerCase()),
+  ),
+);
+
+const _selectedDirectory = $derived(
+  _directories.find((d) => d.path === _selectedDirectoryPath) ?? null,
+);
 
 let sessionManager: SessionConnectionManager | null = null;
 let _restoring = $state(!!getSessionToken()); // loading guard — only active on refresh (token exists)
@@ -71,6 +95,37 @@ const _statusText = $derived(
 const _activeSession = $derived(
   sessions.find((s) => s.name === activeSessionName) ?? null,
 );
+
+// ─── Session Display ──────────────────────────────────────────
+
+/**
+ * Compute the set of (dirname+branch) keys that have multiple sessions.
+ * These sessions need hash suffix to disambiguate.
+ */
+const _ambiguousKeys = $derived.by(() => {
+  const counts = new Map<string, number>();
+  for (const s of sessions) {
+    const key = `${s.dirname}__${s.branch}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const ambiguous = new Set<string>();
+  for (const [key, count] of counts) {
+    if (count > 1) ambiguous.add(key);
+  }
+  return ambiguous;
+});
+
+/**
+ * Format a session's display name.
+ * Shows hash suffix only when multiple sessions share the same dirname+branch.
+ */
+function formatSessionLabel(session: SessionInfo): string {
+  const key = `${session.dirname}__${session.branch}`;
+  const needsHash = _ambiguousKeys.has(key) && session.hash;
+  return needsHash
+    ? `${session.dirname} [${session.hash}] / ${session.branch}`
+    : `${session.dirname} / ${session.branch}`;
+}
 
 // ─── Login ────────────────────────────────────────────────────
 
@@ -121,9 +176,26 @@ async function _onLogout() {
 async function _createAndAttach() {
   try {
     _creating = true;
+
+    // Determine branch: new branch name or selected branch
+    const branch = _createNewBranchMode ? _createNewBranchName.trim() : _createBranch;
+    const baseBranch = _createNewBranchMode ? _baseBranch : undefined;
+
+    if (!_selectedDirectoryPath) {
+      _errorMsg = "请选择或输入工作目录";
+      _creating = false;
+      return;
+    }
+    if (!branch) {
+      _errorMsg = "请选择或输入分支名";
+      _creating = false;
+      return;
+    }
+
     const result = await api.createSession(authToken, {
-      dirname: _createDirname || undefined,
-      branch: _createBranch || undefined,
+      cwd: _selectedDirectoryPath,
+      branch: branch || undefined,
+      baseBranch,
     });
     sessionToken = result.sessionToken;
     activeSessionName = result.name;
@@ -246,10 +318,63 @@ async function _refreshSessions() {
 }
 
 function _openCreateForm() {
-  _createDirname = "";
+  _selectedDirectoryPath = "";
+  _directorySearch = "";
+  _availableBranches = [];
   _createBranch = "";
+  _createNewBranchMode = false;
+  _createNewBranchName = "";
+  _baseBranch = "";
   _showCreateForm = true;
   _showSessionPicker = false;
+  _loadDirectories();
+}
+
+async function _loadDirectories() {
+  _loadingDirs = true;
+  try {
+    const result = await api.listDirectories(authToken);
+    _directories = result.directories;
+  } catch {
+    // silently fail — user can still type a path manually
+  } finally {
+    _loadingDirs = false;
+  }
+}
+
+function _onSelectDirectory(dir: DirectoryInfo) {
+  _selectedDirectoryPath = dir.path;
+  _directorySearch = "";
+  _availableBranches = dir.branches;
+  _createNewBranchMode = false;
+  _createNewBranchName = "";
+  // Auto-select main or first branch
+  if (dir.branches.includes("main")) {
+    _createBranch = "main";
+  } else if (dir.branches.length > 0) {
+    _createBranch = dir.branches[0];
+  } else {
+    _createBranch = "";
+  }
+  _baseBranch = _createBranch;
+}
+
+function _onSelectBranch(branch: string) {
+  if (branch === "__new__") {
+    _createNewBranchMode = true;
+    _createNewBranchName = "";
+    _baseBranch = _createBranch && _createBranch !== "__new__" ? _createBranch : "main";
+    _createBranch = "";
+  } else {
+    _createNewBranchMode = false;
+    _createBranch = branch;
+    _baseBranch = branch;
+  }
+}
+
+function _onBranchSelect(event: Event) {
+  const target = event.currentTarget as HTMLSelectElement;
+  _onSelectBranch(target.value);
 }
 
 function getSessionManager(): SessionConnectionManager {
@@ -490,7 +615,12 @@ onDestroy(() => {
               {/if}
             </div>
             <div class="session-card-body">
-              <div class="session-card-title">{session.dirname}</div>
+              <div class="session-card-title">
+                {session.dirname}
+                {#if _ambiguousKeys.has(`${session.dirname}__${session.branch}`) && session.hash}
+                  <span class="session-card-hash">[{session.hash}]</span>
+                {/if}
+              </div>
               <div class="session-card-meta">
                 <span class="session-card-branch">{session.branch}</span>
                 <span class="session-card-status">{_attaching ? "连接中..." : session.status}</span>
@@ -507,33 +637,144 @@ onDestroy(() => {
 
   {:else if _showCreateForm}
     <!-- ── Create Session Form ── -->
-    <div class="setup-screen">
-      <h1>🔗 Pi WebTerm</h1>
-      <p>创建新的 Session</p>
-      <input
-        type="text"
-        placeholder="目录名（可选，默认自动检测）"
-        bind:value={_createDirname}
-      />
-      <input
-        type="text"
-        placeholder="分支名（可选，默认自动检测）"
-        bind:value={_createBranch}
-      />
-      {#if _errorMsg}
-        <div class="error">{_errorMsg}</div>
-      {/if}
-      <div class="form-actions">
-        <button class="btn-secondary" onclick={() => { _showCreateForm = false; _showSessionPicker = true; }}>
-          取消
-        </button>
-        <button
-          class="connect-btn"
-          onclick={_createAndAttach}
-          disabled={_creating}
-        >
-          {_creating ? "创建中..." : "创建并连接"}
-        </button>
+    <div class="setup-screen setup-screen-create">
+      <div class="setup-shell">
+        <header class="setup-header">
+          <div>
+            <h1>Pi WebTerm</h1>
+            <p>创建新的 Session</p>
+          </div>
+          <button class="btn-secondary setup-header-action" onclick={() => { _showCreateForm = false; _showSessionPicker = true; }}>
+            返回
+          </button>
+        </header>
+
+        {#if _loadingDirs}
+          <div class="loading-hint">正在扫描工作目录...</div>
+        {/if}
+
+        <div class="create-grid">
+          <!-- Directory list: searchable + clickable list -->
+          <section class="create-panel dir-picker" aria-label="工作目录">
+            <div class="panel-heading">
+              <span>工作目录</span>
+              <span>{_filteredDirectories.length} 个仓库</span>
+            </div>
+            <input
+              type="text"
+              class="dir-search"
+              placeholder="搜索名称或路径..."
+              bind:value={_directorySearch}
+            />
+            <div class="dir-list">
+              {#each _filteredDirectories as dir (dir.path)}
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <div
+                  class="dir-item"
+                  class:dir-item-selected={_selectedDirectoryPath === dir.path}
+                  onclick={() => _onSelectDirectory(dir)}
+                  role="button"
+                  tabindex="0"
+                >
+                  <div class="dir-item-top">
+                    <div class="dir-item-name">{dir.name}</div>
+                    <div class="dir-item-branches">{dir.branches.length} 分支</div>
+                  </div>
+                  <div class="dir-item-path">{dir.path}</div>
+                </div>
+              {:else}
+                {#if !_loadingDirs}
+                  <div class="dir-empty">未找到 Git 仓库</div>
+                {/if}
+              {/each}
+            </div>
+          </section>
+
+          <section class="create-panel branch-panel" aria-label="分支设置">
+            <div class="panel-heading">
+              <span>分支设置</span>
+              {#if _selectedDirectory}
+                <span>{_availableBranches.length} 个可选</span>
+              {/if}
+            </div>
+
+            {#if _selectedDirectory}
+              <div class="selected-dir">
+                <span class="selected-dir-name">{_selectedDirectory.name}</span>
+                <span class="selected-dir-path">{_selectedDirectory.path}</span>
+              </div>
+            {:else}
+              <div class="selected-dir selected-dir-empty">
+                <span class="selected-dir-name">先选择一个工作目录</span>
+                <span class="selected-dir-path">左侧列表支持按项目名和路径搜索</span>
+              </div>
+            {/if}
+
+            {#if _selectedDirectory && !_createNewBranchMode}
+              <!-- Branch selector (existing branches) -->
+              <label class="field-label" for="branch-select">使用分支</label>
+              <select
+                id="branch-select"
+                class="branch-select"
+                value={_createBranch}
+                onchange={_onBranchSelect}
+              >
+                <option value="" disabled>选择分支</option>
+                {#each _availableBranches as branch}
+                  <option value={branch}>{branch}</option>
+                {/each}
+                <option value="__new__">创建新分支...</option>
+              </select>
+            {/if}
+
+            {#if _createNewBranchMode}
+              <div class="new-branch-fields">
+                <label class="field-label" for="new-branch-name">新分支名</label>
+                <input
+                  id="new-branch-name"
+                  type="text"
+                  placeholder="feature/your-work"
+                  bind:value={_createNewBranchName}
+                />
+                {#if _availableBranches.length > 0}
+                  <label class="field-label" for="base-branch">基于分支</label>
+                  <select id="base-branch" bind:value={_baseBranch}>
+                    {#each _availableBranches as branch}
+                      <option value={branch}>{branch}</option>
+                    {/each}
+                  </select>
+                {/if}
+              </div>
+            {/if}
+
+            {#if _errorMsg}
+              <div class="error">{_errorMsg}</div>
+            {/if}
+
+            <div class="form-actions">
+              {#if _selectedDirectory && !_createNewBranchMode}
+                <button class="btn-secondary" onclick={() => _onSelectBranch("__new__")}>
+                  新建分支
+                </button>
+              {:else if _createNewBranchMode}
+                <button class="btn-secondary" onclick={() => _onSelectBranch(_baseBranch || _availableBranches[0] || "")}>
+                  使用已有分支
+                </button>
+              {:else}
+                <button class="btn-secondary" onclick={() => { _showCreateForm = false; _showSessionPicker = true; }}>
+                  取消
+                </button>
+              {/if}
+              <button
+                class="connect-btn"
+                onclick={_createAndAttach}
+                disabled={_creating || !_selectedDirectoryPath || (!_createNewBranchMode && !_createBranch) || (_createNewBranchMode && !_createNewBranchName)}
+              >
+                {_creating ? "创建中..." : "创建并连接"}
+              </button>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
 
@@ -581,7 +822,12 @@ onDestroy(() => {
                 {/if}
               </span>
               <div class="sidebar-item-body">
-                <span class="sidebar-item-dir">{session.dirname}</span>
+                <span class="sidebar-item-dir">
+                  {session.dirname}
+                  {#if _ambiguousKeys.has(`${session.dirname}__${session.branch}`) && session.hash}
+                    <span class="sidebar-item-hash">[{session.hash}]</span>
+                  {/if}
+                </span>
                 <span class="sidebar-item-branch">{session.branch}</span>
               </div>
               <button
@@ -605,7 +851,7 @@ onDestroy(() => {
         <div class="sidebar-footer">
           {#if _activeSession}
             <span class="sidebar-footer-status">
-              {_activeSession.dirname}/{_activeSession.branch}
+              {formatSessionLabel(_activeSession)}
             </span>
             <span class="sidebar-footer-attached">{_activeSession.status}</span>
           {/if}

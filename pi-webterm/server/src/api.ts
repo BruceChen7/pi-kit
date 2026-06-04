@@ -23,11 +23,13 @@ import {
 } from "./sessions.js";
 import {
   handleTerminalQueries,
+  processBinaryFrameInput,
   stripTerminalResponses,
   TerminalProtocolAdapter,
 } from "./terminal-protocol-adapter.js";
 import { attachToSession, capturePane, detachPty, hasSession } from "./tmux.js";
 import { decodeFrame, encodeBinaryFrame, encodeJsonFrame } from "./ws.js";
+import { type WorkspaceCache, getWorkspaceCache, refreshWorkspace } from "./workspace.js";
 
 export { handleTerminalQueries, stripTerminalResponses };
 
@@ -83,6 +85,19 @@ export function resetRuntimeStateForTests(): void {
   activePtySessions.clear();
   socketSessionMap.clear();
   socketProtocolAdapterMap.clear();
+}
+
+// ─── Shell escaping helper ─────────────────────────────────────
+
+/**
+ * Shell-safe single-quote escaping for tmux / git commands.
+ * A single quote is replaced by the sequence `'\''` which ends the
+ * current single-quoted string, inserts an escaped literal quote,
+ * and resumes single-quoting.  This is the POSIX-shell way to embed
+ * a single quote inside a single-quoted string.
+ */
+function shellEscape(value: string): string {
+  return value.replace(/'/g, "'\\''");
 }
 
 // ─── Route Registration ────────────────────────────────────────
@@ -167,19 +182,55 @@ export function registerRoutes(
       const cfg = getConfig();
       const body = request.body || {};
 
-      // Determine dirname, branch, cwd, agentCommand
+      // cwd is required from the UI directory picker
       const sessionCwd = body.cwd ? resolve(body.cwd) : resolve(cfg.cwd);
       const dirname = body.dirname || basename(sessionCwd);
       const branch = body.branch || getGitBranch(sessionCwd);
       const agentCommand = body.agentCommand || cfg.agentCommand;
 
-      const name = getTmuxSessionName(dirname, branch);
+      // Create branch from baseBranch if it doesn't exist locally
+      if (body.branch && body.baseBranch) {
+        const { execSync } = await import("node:child_process");
+        try {
+          execSync(
+            `git show-ref --verify --quiet refs/heads/${shellEscape(body.branch)} 2>/dev/null`,
+            { cwd: sessionCwd, stdio: "pipe", timeout: 5000 },
+          );
+        } catch {
+          // Branch doesn't exist — create it from baseBranch
+          try {
+            const safeBranch = shellEscape(body.branch);
+            const safeBase = shellEscape(body.baseBranch);
+            execSync(
+              `git checkout -b ${safeBranch} ${safeBase} 2>/dev/null`,
+              { cwd: sessionCwd, stdio: "pipe", timeout: 10_000 },
+            );
+          } catch {
+            // If branch creation fails, continue anyway — the agent can handle it
+            console.warn(
+              `[pi-webterm] Failed to create branch ${body.branch} from ${body.baseBranch} in ${sessionCwd}`,
+            );
+          }
+        }
+      }
 
-      // Check for duplicates
+      // Session name includes a short hash of cwd for disambiguation
+      const name = getTmuxSessionName(dirname, branch, sessionCwd);
+
+      // Check for duplicates (same dirname + branch + cwd → same hash → same tmux name)
       if (hasSession(name)) {
-        return reply
-          .status(409)
-          .send({ error: "Session already exists", name });
+        // Auto-attach: return session-specific token for the existing session
+        const sessionToken = generateSessionToken(cfg.username, name);
+        const status = detectSessionStatus(name);
+        return reply.status(200).send({
+          name,
+          dirname,
+          branch,
+          cwd: sessionCwd,
+          status,
+          attached: activePtySessions.has(name),
+          sessionToken,
+        });
       }
 
       // Create tmux session
@@ -263,6 +314,40 @@ export function registerRoutes(
     },
   );
 
+  // ── Workspace (git repo directory discovery) ─────────────────
+
+  function toWorkspaceResponse(cache: WorkspaceCache) {
+    return {
+      basePath: cache.basePath,
+      scannedAt: cache.scannedAt,
+      directories: cache.repos.map((r) => ({
+        path: r.path,
+        name: r.name,
+        branches: r.branches,
+      })),
+    };
+  }
+
+  // List discovered git repos (scan from config cwd)
+  fastify.get(
+    "/api/workspace/directories",
+    { preHandler: authPreHandler },
+    async () => {
+      const cfg = getConfig();
+      return toWorkspaceResponse(getWorkspaceCache(cfg.cwd));
+    },
+  );
+
+  // Force-refresh workspace cache
+  fastify.post(
+    "/api/workspace/refresh",
+    { preHandler: authPreHandler },
+    async () => {
+      const cfg = getConfig();
+      return toWorkspaceResponse(refreshWorkspace(cfg.cwd));
+    },
+  );
+
   // ── WebSocket ────────────────────────────────────────────────
 
   fastify.get("/ws", { websocket: true }, (socket, _request) => {
@@ -325,15 +410,12 @@ function handleWsAuth(socket: any): void {
     handleWsMessage(socket, raw);
   });
 
-  socket.on("close", () => {
+  const cleanup = () => {
     clearTimeout(authTimeout);
     socketSessionMap.delete(socket);
-  });
-
-  socket.on("error", () => {
-    clearTimeout(authTimeout);
-    socketSessionMap.delete(socket);
-  });
+  };
+  socket.on("close", cleanup);
+  socket.on("error", cleanup);
 }
 
 // ─── WebSocket Handler (after auth) ────────────────────────────
@@ -411,6 +493,16 @@ async function handleWsConnection(socket: any, sessionName: string) {
     }
   });
 
+  // When the tmux process exits (session killed, tmux crash, etc.),
+  // clean up the maps and close the socket so the client doesn't
+  // hang in a zombie "connected but no data" state.
+  pty.onExit(() => {
+    socketProtocolAdapterMap.delete(socket);
+    cleanupActivePtySession(sessionName, pty, socket);
+    // 4002 is a fatal close code on the client — no reconnect loop
+    socket.close(4002, "Session terminated");
+  });
+
   // Cleanup on disconnect
   function cleanupPtySession() {
     socketProtocolAdapterMap.delete(socket);
@@ -433,15 +525,8 @@ function handleWsMessage(socket: any, raw: Buffer): void {
   if (frame.type === 0x00) {
     // Binary frame: keyboard input → write to PTY
     const input = frame.data.toString("utf-8");
-    const cleanInput = protocolAdapter
-      ? protocolAdapter.processClientInput(input)
-      : handleTerminalQueries(stripTerminalResponses(input)).filtered;
-
-    const normalizedInput = cleanInput.replace(/\r?\n/g, "\r");
-    const shouldDebugCtrlL =
-      input.includes("\f") ||
-      cleanInput.includes("\f") ||
-      normalizedInput.includes("\f");
+    const { cleanInput, normalizedInput, shouldDebugCtrlL } =
+      processBinaryFrameInput(input, protocolAdapter);
     const pty = sessionName ? activePtySessions.get(sessionName) : undefined;
     if (shouldDebugCtrlL) {
       console.log("[pi-webterm-server] ws input ctrl+l", {
@@ -472,7 +557,9 @@ function handleWsMessage(socket: any, raw: Buffer): void {
         }
         pty.write(normalizedInput);
       } catch (err) {
-        // PTY process died (EIO) — clean up the session
+        // PTY process died (EIO) — clean up the session and close the
+        // socket so the client doesn't hang in a zombie "connected
+        // but no data" state.
         console.error(
           `[pi-webterm] PTY write error for session "${sessionName}":`,
           err,
@@ -480,6 +567,7 @@ function handleWsMessage(socket: any, raw: Buffer): void {
         if (sessionName) {
           cleanupActivePtySession(sessionName, pty, socket);
         }
+        socket.close(4002, "Session terminated");
       }
     }
   } else if (frame.type === 0x01) {

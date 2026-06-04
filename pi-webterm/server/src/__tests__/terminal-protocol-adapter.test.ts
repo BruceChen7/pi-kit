@@ -7,7 +7,10 @@ import {
 describe("processBinaryFrameInput", () => {
   describe("with adapter (primary path)", () => {
     it("passes normal text through unchanged", () => {
-      const result = processBinaryFrameInput("hello world", new TerminalProtocolAdapter());
+      const result = processBinaryFrameInput(
+        "hello world",
+        new TerminalProtocolAdapter(),
+      );
       expect(result.cleanInput).toBe("hello world");
       expect(result.normalizedInput).toBe("hello world");
       expect(result.shouldDebugCtrlL).toBe(false);
@@ -93,7 +96,10 @@ describe("processBinaryFrameInput", () => {
 
   describe("Ctrl+L detection", () => {
     it("detects \\f in raw input", () => {
-      const result = processBinaryFrameInput("\fclear", new TerminalProtocolAdapter());
+      const result = processBinaryFrameInput(
+        "\fclear",
+        new TerminalProtocolAdapter(),
+      );
       expect(result.shouldDebugCtrlL).toBe(true);
       expect(result.normalizedInput).toBe("\fclear");
     });

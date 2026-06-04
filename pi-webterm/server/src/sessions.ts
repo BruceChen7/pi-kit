@@ -11,7 +11,12 @@
 
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
-import { ensureSession, hasSession, killSession, listSessions } from "./tmux.js";
+import {
+  ensureSession,
+  hasSession,
+  killSession,
+  listSessions,
+} from "./tmux.js";
 import { shortHash } from "./workspace.js";
 
 // ─── Types ─────────────────────────────────────────────────────

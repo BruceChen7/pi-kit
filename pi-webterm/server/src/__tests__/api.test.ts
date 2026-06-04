@@ -71,7 +71,9 @@ vi.mock("../workspace.js", () => ({
     scannedAt: Date.now(),
     basePath: "/projects",
   })),
-  shortHash: vi.fn((s: string) => s.split("").reverse().join("").slice(0, 4) || "0000"),
+  shortHash: vi.fn(
+    (s: string) => s.split("").reverse().join("").slice(0, 4) || "0000",
+  ),
 }));
 
 describe("API routes", () => {

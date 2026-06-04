@@ -4,7 +4,7 @@
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 
 // ─── Types ─────────────────────────────────────────────────────
 
@@ -55,15 +55,12 @@ function isValidGitRepo(repoPath: string): boolean {
  */
 export function getLocalBranches(repoPath: string): string[] {
   try {
-    const out = execSync(
-      "git branch --format='%(refname:short)' 2>/dev/null",
-      {
-        cwd: repoPath,
-        encoding: "utf-8",
-        stdio: "pipe",
-        timeout: 10_000,
-      },
-    );
+    const out = execSync("git branch --format='%(refname:short)' 2>/dev/null", {
+      cwd: repoPath,
+      encoding: "utf-8",
+      stdio: "pipe",
+      timeout: 10_000,
+    });
     if (!out) return [];
     return out
       .trim()

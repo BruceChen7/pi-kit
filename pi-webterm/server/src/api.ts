@@ -28,8 +28,12 @@ import {
   TerminalProtocolAdapter,
 } from "./terminal-protocol-adapter.js";
 import { attachToSession, capturePane, detachPty, hasSession } from "./tmux.js";
+import {
+  getWorkspaceCache,
+  refreshWorkspace,
+  type WorkspaceCache,
+} from "./workspace.js";
 import { decodeFrame, encodeBinaryFrame, encodeJsonFrame } from "./ws.js";
-import { type WorkspaceCache, getWorkspaceCache, refreshWorkspace } from "./workspace.js";
 
 export { handleTerminalQueries, stripTerminalResponses };
 
@@ -201,10 +205,11 @@ export function registerRoutes(
           try {
             const safeBranch = shellEscape(body.branch);
             const safeBase = shellEscape(body.baseBranch);
-            execSync(
-              `git checkout -b ${safeBranch} ${safeBase} 2>/dev/null`,
-              { cwd: sessionCwd, stdio: "pipe", timeout: 10_000 },
-            );
+            execSync(`git checkout -b ${safeBranch} ${safeBase} 2>/dev/null`, {
+              cwd: sessionCwd,
+              stdio: "pipe",
+              timeout: 10_000,
+            });
           } catch {
             // If branch creation fails, continue anyway — the agent can handle it
             console.warn(

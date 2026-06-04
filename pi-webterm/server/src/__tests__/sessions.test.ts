@@ -126,7 +126,11 @@ describe("parseTmuxSessionName (v2)", () => {
 
   it("parses v2 name with underscores in dirname", () => {
     const result = parseTmuxSessionName("pw__node_fs__main__b1c2");
-    expect(result).toEqual({ dirname: "node_fs", branch: "main", hash: "b1c2" });
+    expect(result).toEqual({
+      dirname: "node_fs",
+      branch: "main",
+      hash: "b1c2",
+    });
   });
 
   it("parses v2 name with sanitized branch", () => {

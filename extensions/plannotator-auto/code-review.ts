@@ -47,7 +47,7 @@ type CodeReviewDecision = {
 const createCodeReviewRequestKey = (): string =>
   `sync:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
 
-const formatCodeReviewMessage = (result: {
+export const formatCodeReviewMessage = (result: {
   approved: boolean;
   feedback?: string;
   annotations?: unknown[];
@@ -522,26 +522,21 @@ const scheduleReviewRetry = (
 
 export const registerCodeReviewHandlers = (
   pi: ExtensionAPI,
-  log: ReturnType<typeof createLogger>,
+  _log: ReturnType<typeof createLogger>,
 ): void => {
-  const runManualCodeReview = async (
-    ctx: ExtensionContext,
-    reason: string,
-  ): Promise<void> => {
-    await maybeStartCodeReview(pi, ctx, reason, log, true);
-  };
-
   pi.registerCommand(MANUAL_CODE_REVIEW_COMMAND, {
-    description: "Run plannotator CLI review",
+    description: "Interactively review code or plan (Ctrl+Shift+R equivalent)",
     handler: async (_args, ctx) => {
-      await runManualCodeReview(ctx, "manual-command");
+      const { showReviewPicker } = await import("./review-picker.ts");
+      await showReviewPicker(pi, ctx);
     },
   });
 
   pi.registerShortcut(MANUAL_CODE_REVIEW_SHORTCUT, {
-    description: "Run plannotator CLI review",
+    description: "Interactively review code or plan",
     handler: async (ctx) => {
-      await runManualCodeReview(ctx, "manual-shortcut");
+      const { showReviewPicker } = await import("./review-picker.ts");
+      await showReviewPicker(pi, ctx);
     },
   });
 

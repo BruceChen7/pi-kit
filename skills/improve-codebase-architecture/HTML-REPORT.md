@@ -115,59 +115,95 @@ Each candidate is one `<article class="candidate">` with sparse prose and strong
 
 Include:
 
-- **Title** — short, names the deepening.
-- **Badge row** — recommendation strength: `Strong`, `Worth exploring`, or `Speculative`.
-- **Dependency category** — use the names from `DEEPENING.md`.
+- **Title** — short, names the deepening (e.g. "Collapse the Order intake pipeline").
+- **Badge row** — recommendation strength (`Strong` = emerald green, `Worth exploring` = amber,
+  `Speculative` = slate grey), plus a tag for the **dependency category** from `DEEPENING.md`
+  (`in-process`, `local-substitutable`, `ports & adapters`, `mock`).
 - **Files** — monospaced list of involved modules/files.
-- **Before / After diagram** — the centrepiece.
-- **Problem** — one sentence explaining the friction.
-- **Solution** — one sentence explaining what changes.
-- **Wins** — short bullets using **locality**, **leverage**, **interface**, and **seam**.
+- **Before / After diagram** — the centrepiece. Two columns, side by side.
+- **Problem** — one sentence. What hurts.
+- **Solution** — one sentence. What changes.
+- **Wins** — short bullets (≤6 words), using **locality**, **leverage**, **interface**, and **seam**.
 - **Doc impact** — `.pi/contexts/**` terms or ADRs that may need updates.
-- **ADR callout** — only when real friction justifies revisiting an ADR.
+- **ADR callout** — only when real friction justifies revisiting an ADR; one line in an
+  amber-tinted box.
 
-If a paragraph is needed to explain the diagram, redraw the diagram.
+No paragraphs of explanation. If the diagram needs a paragraph to be understood, redraw the
+diagram.
+
+## No-paragraph rule (critical)
+
+**If the diagram needs a paragraph to be understood, redraw the diagram.** The diagram is the
+prose. The text labels, arrows, and layout carry the weight. Keep each candidate's prose to
+one sentence each for Problem and Solution, plus ≤6-word wins bullets.
 
 ## Diagram patterns
 
-Pick the shape that communicates the candidate with the least prose.
+Pick the shape that communicates the candidate with the least prose. Mix patterns — don't make
+every diagram look the same; variety is part of the point.
 
-### Mermaid graph
+### Mermaid graph (workhorse for dependencies / call flow)
 
 Use for dependencies, call graphs, and sequences. Fences must use exactly `mermaid` when the
 artifact is Markdown; in HTML, use the renderer supported by the current visual pipeline. If the
 syntax is uncertain, use inline SVG or plain boxes instead.
 
-### Hand-built boxes and arrows
+Wrap Mermaid in a card so it doesn't feel parachuted in. Style with `classDef` to colour leakage
+edges red and the deep module dark. Sequence diagrams work well for "before: 6 round-trips;
+after: 1."
+
+```html
+<div class="diagram">
+  <pre class="mermaid">
+    flowchart LR
+      A[OrderHandler] --> B[OrderValidator]
+      B --> C[OrderRepo]
+      C -.leak.-> D[PricingClient]
+      classDef leak stroke:#dc2626,stroke-width:2px;
+      class C,D leak
+  </pre>
+</div>
+```
+
+### Hand-built boxes and arrows (when Mermaid layout fights you)
 
 Use positioned `<div>` boxes and inline SVG arrows when Mermaid layout hides the point. This is
-best for showing a deep module absorbing shallow wrappers.
+best for showing a deep module absorbing shallow wrappers. Modules as `<div>`s with borders and
+labels; arrows as inline SVG `<line>` or `<path>` elements positioned absolutely over a relative
+container.
 
-### Cross-section
+### Cross-section (good for layered shallowness)
 
 Use stacked horizontal bands to show calls passing through too many thin modules. The after view
 should collapse them into one thicker module with faded internals.
 
-### Mass diagram
+Before: 6 thin layers each doing nothing. After: 1 thick band labelled with the consolidated
+responsibility.
 
-Draw an **interface** rectangle beside an **implementation** rectangle. A shallow module has an
-interface nearly as large as its implementation; a deep module has a small interface over a larger
-implementation.
+### Mass diagram (good for "interface as wide as implementation")
 
-### Call-graph collapse
+Two rectangles per module — one for interface surface area, one for implementation.
 
-Before: nested boxes for a scattered call tree. After: one deep module box, with former helpers
-shown as internal details.
+Before: interface rectangle is nearly as tall as the implementation rectangle (**shallow**).
+After: interface rectangle is short, implementation rectangle is tall (**deep**).
+
+### Call-graph collapse (good for scattered call trees)
+
+Before: a tree of function calls rendered as nested boxes.
+After: the same tree collapsed into one box, with the now-internal calls shown faded inside it.
 
 ## Style guidance
 
-- Lean editorial, not corporate-dashboard. Generous whitespace. Serif optional for headings.
+- Lean editorial, not corporate-dashboard. Generous whitespace. Serif optional for headings
+  (`font-family: Georgia, "Times New Roman", serif` works well with slate/stone palette).
 - Colour sparingly: one accent (emerald or indigo) plus red for leakage and amber for warnings.
 - Keep diagrams ~320px tall so before/after sits comfortably side by side without scrolling.
-- Use compact labels inside diagram boxes — they should read as schematic, not as UI.
+- Use compact, uppercase labels (`font-size: 11px; letter-spacing: 0.06em`) inside diagram boxes
+  — they should read as schematic, not as UI.
 - Prefer inline CSS and inline SVG. Mermaid allowed only when the relationship is graph-shaped
   and the runtime can render it reliably.
-- The report is otherwise static — no app code, no interactivity beyond Mermaid rendering.
+- The only scripts are the Mermaid ESM import (if used). The report is otherwise static — no
+  app code, no interactivity beyond Mermaid's own rendering.
 
 ## Tone
 
@@ -198,12 +234,18 @@ one that is before inventing a new one.
 
 ## Top recommendation
 
-End with one larger card containing:
+One larger card containing:
 
 - candidate name
-- why it should go first
+- why it should go first (one sentence)
 - expected leverage/locality gain
 - key risk or unresolved question
+
+Anchor-link to the candidate's card above. That's it — no additional prose.
+
+Do not propose detailed interfaces in the report. Ask the user which candidate they want to
+explore next.
+esolved question
 
 That's it. Anchor-link to the candidate's card above.
 

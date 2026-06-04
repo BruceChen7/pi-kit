@@ -64,25 +64,41 @@ Then inspect the code organically. Note where you experience friction:
 
 Apply the **deletion test** to suspected shallow modules.
 
-### 2. Present candidates
+### 2. Present candidates as an HTML report
 
-Default to a numbered list of deepening opportunities. For each candidate include:
+For any non-trivial review (multiple candidates, meaningful call graphs, before/after structure,
+or more than one file group), write a Pi-native HTML report using `HTML-REPORT.md`. Write the
+artifact to:
+
+`.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-architecture-review.html`
+
+Submit the artifact for review through `plannotator_auto_submit_review` when the workflow
+requires it.
+
+For trivial reviews (single candidate, no structural change), a numbered list in the
+spec/plan document is sufficient — but lean toward visuals when the architecture trade-offs
+would benefit from a diagram.
+
+Each candidate — whether in HTML or list form — includes:
 
 - **Files** — files/modules involved
 - **Problem** — why the current architecture causes friction
 - **Solution** — plain-English change, not final interface design
 - **Benefits** — explain via **locality**, **leverage**, and improved tests
+- **Before / After diagram** — side-by-side visual illustrating the shallowness and deepening
+- **Recommendation strength** — `Strong`, `Worth exploring`, or `Speculative`
+- **Dependency category** — from `DEEPENING.md` (`in-process`, `local-substitutable`,
+  `ports & adapters`, `mock`)
 - **Doc impact** — `.pi/contexts/**` terms or ADRs that may need updates
 
-When the review has multiple candidates, non-trivial call graphs, or before/after structure that
-would benefit from diagrams, write a Pi-native visual report instead. Use `HTML-REPORT.md` and
-write the artifact to:
+Use `.pi/contexts/**/CONTEXT.md` vocabulary for domain names and `LANGUAGE.md` vocabulary for
+architecture. If a candidate contradicts an existing ADR, surface it only when friction is real
+enough to justify revisiting the ADR.
 
-`.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-architecture-review.html`
+End the report with a **Top recommendation** section: which candidate to tackle first and why.
 
-Use `.pi/contexts/**/CONTEXT.md` vocabulary for domain names and `LANGUAGE.md` vocabulary for architecture. If a candidate contradicts an existing ADR, surface it only when friction is real enough to justify revisiting the ADR.
-
-Do **not** propose detailed interfaces yet. Ask: “Which candidate would you like to explore?”
+Do **not** propose detailed interfaces yet. After the report is written, ask: “Which candidate
+would you like to explore?”
 
 ### 3. Grilling loop
 

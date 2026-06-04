@@ -115,11 +115,15 @@ describe("code review trigger timing", () => {
     const plannotatorAuto = await importPlannotatorAuto();
     const { api, emit, runCommand } = createFakePi();
     plannotatorAuto(api as never);
-    const ctx = createTestContext("/repo");
+    const ctx = createTestContext("/repo", {
+      uiCustom: vi.fn(async () => "code"),
+    });
 
     try {
       await emit("session_start", {}, ctx);
       await runCommand("plannotator-review", "", ctx);
+      // flush for the dynamic import of review-picker
+      await flushMicrotasks();
 
       expect(spawn).toHaveBeenCalledWith(
         "plannotator",
@@ -143,7 +147,9 @@ describe("code review trigger timing", () => {
     const plannotatorAuto = await importPlannotatorAuto();
     const { api, emit, runShortcut } = createFakePi();
     plannotatorAuto(api as never);
-    const ctx = createTestContext("/repo");
+    const ctx = createTestContext("/repo", {
+      uiCustom: vi.fn(async () => "code"),
+    });
 
     try {
       await emit("session_start", {}, ctx);
@@ -174,7 +180,9 @@ describe("code review trigger timing", () => {
     const plannotatorAuto = await importPlannotatorAuto();
     const { api, emit, runShortcut } = createFakePi();
     plannotatorAuto(api as never);
-    const ctx = createTestContext("/repo");
+    const ctx = createTestContext("/repo", {
+      uiCustom: vi.fn(async () => "code"),
+    });
 
     try {
       await emit("session_start", {}, ctx);

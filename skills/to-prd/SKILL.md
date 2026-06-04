@@ -43,10 +43,15 @@ implementation plans in `.pi/plans/<repo>/plan/**`, and hard-to-reverse decision
    - Use `.pi/contexts/**/CONTEXT.md` vocabulary throughout.
    - Respect ADRs under `.pi/contexts/**/adr/`.
 
-2. **Sketch implementation modules**
-   - Identify major **modules** likely to be built or modified.
-   - Look for opportunities to create deep modules: lots of behavior behind a simple, testable interface.
-   - Check with the user that these modules match expectations and ask which modules need tests.
+2. **Sketch test seams**
+   - Identify the **seams** at which the feature will be tested. Existing seams should be preferred
+     to new ones. Use the highest seam possible (closest to the user-facing behavior).
+   - If new seams are needed, propose them at the highest point you can.
+   - Then identify the major **modules** likely to be built or modified behind those seams.
+   - Look for opportunities to create deep modules: lots of behavior behind a simple, testable
+     interface.
+   - Check with the user that these seams and modules match expectations, and ask which modules
+     need tests.
 
 3. **Update durable language and decisions inline**
    - If the PRD crystallizes domain terms, relationships, avoided aliases, or ambiguities, update

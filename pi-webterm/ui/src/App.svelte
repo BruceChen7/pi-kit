@@ -27,7 +27,8 @@ import "./app.css";
 // ─── State ─────────────────────────────────────────────────────
 
 let terminalContainer: HTMLDivElement | undefined = $state();
-let baseUrl = $state(`ws://${window.location.host}`);
+const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+let baseUrl = $state(`${wsProtocol}//${window.location.host}`);
 let status = $state<ConnectionStatus>("disconnected");
 let _errorMsg = $state("");
 let _connected = $state(false);
@@ -314,6 +315,12 @@ function getSessionManager(): SessionConnectionManager {
     },
     onStatus: (s) => {
       console.log("Status:", s);
+      // Server confirms the PTY attachment — ensure connection state reflects this
+      if (s.connected) {
+        status = "connected";
+        _connected = true;
+        _errorMsg = "";
+      }
     },
   };
 

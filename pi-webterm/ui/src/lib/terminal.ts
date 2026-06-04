@@ -243,10 +243,13 @@ export function createTerminal(
       pendingSyntheticCtrlShiftEscSequence &&
       data === pendingSyntheticCtrlShiftEscSequence
     ) {
-      console.log("[pi-webterm] terminal.onData suppressed synthetic follow-up", {
-        data,
-        codePoints: Array.from(data).map((char) => char.charCodeAt(0)),
-      });
+      console.log(
+        "[pi-webterm] terminal.onData suppressed synthetic follow-up",
+        {
+          data,
+          codePoints: Array.from(data).map((char) => char.charCodeAt(0)),
+        },
+      );
       pendingSyntheticCtrlShiftEscSequence = null;
       return;
     }

@@ -27,65 +27,203 @@ relationship is graph-shaped and the runtime can render it reliably.
     <meta charset="utf-8" />
     <title>Architecture review — {{repo name}}</title>
     <style>
+      /* ================================================================
+         Theme — uses Plannotator-injected CSS vars when available
+         (HtmlViewer injects --background, --foreground, --card, --border,
+         --muted, --accent, --font-sans, --font-mono, etc. into the
+         iframe), with prefers-color-scheme fallbacks for standalone
+         viewing.
+         ================================================================ */
       :root {
-        color-scheme: light;
-        --bg: #fafaf9;
-        --card: #ffffff;
-        --ink: #0f172a;
-        --muted: #64748b;
+        color-scheme: light dark;
+        --ink:  #0f172a;
+        --back: #fafaf9;
+        --card-bg: #ffffff;
         --line: #e2e8f0;
-        --accent: #059669;
-        --warn: #d97706;
-        --leak: #dc2626;
+        --dim:  #64748b;
+        --green: #059669;
+        --amber: #d97706;
+        --red:   #dc2626;
+        --diagram-bg: #f1f5f9;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ink:  #e2e8f0;
+          --back: #0b1121;
+          --card-bg: #131c31;
+          --line: #1e2a45;
+          --dim:  #8892a8;
+          --green: #34d399;
+          --amber: #fbbf24;
+          --red:   #f87171;
+          --diagram-bg: #0f1829;
+        }
       }
 
       body {
         margin: 0;
-        background: var(--bg);
-        color: var(--ink);
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-          sans-serif;
+        background: var(--background, var(--back));
+        color: var(--foreground, var(--ink));
+        font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+        font-size: 16px;
+        line-height: 1.6;
       }
 
       main {
         max-width: 1100px;
         margin: 0 auto;
-        padding: 48px 24px;
+        padding: 40px 24px 80px;
       }
 
+      h1 {
+        font-size: 1.75rem;
+        font-weight: 700;
+        line-height: 1.3;
+        margin: 8px 0 4px;
+      }
+
+      h2 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin: 28px 0 8px;
+      }
+
+      p, li {
+        font-size: 0.9375rem;
+        line-height: 1.65;
+      }
+
+      /* ---- Cards ---- */
       .candidate {
-        background: var(--card);
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        padding: 24px;
-        margin-top: 24px;
-        box-shadow: 0 16px 40px rgb(15 23 42 / 0.06);
+        background: var(--card, var(--card-bg));
+        border: 1px solid var(--border, var(--line));
+        border-radius: 16px;
+        padding: 28px;
+        margin-top: 28px;
+        box-shadow: 0 1px 3px oklch(from var(--foreground, #0f172a) l c h / 0.08);
+      }
+
+      /* ---- Badges ---- */
+      .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 12px;
       }
 
       .badge {
         display: inline-flex;
+        align-items: center;
         border-radius: 999px;
-        padding: 4px 10px;
-        background: rgb(5 150 105 / 0.12);
-        color: var(--accent);
-        font-size: 12px;
+        padding: 4px 12px;
+        font-size: 0.75rem;
         font-weight: 700;
         text-transform: uppercase;
         letter-spacing: 0.06em;
+        line-height: 1.4;
       }
 
+      .badge-strong {
+        background: oklch(from var(--green, #059669) l c h / 0.18);
+        color: var(--green);
+      }
+
+      .badge-worth {
+        background: oklch(from var(--amber, #d97706) l c h / 0.18);
+        color: var(--amber);
+      }
+
+      .badge-speculative {
+        background: oklch(from var(--dim, #64748b) l c h / 0.18);
+        color: var(--dim);
+      }
+
+      /* ---- Diagrams ---- */
       .diagrams {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 16px;
+        margin: 16px 0;
       }
 
       .diagram {
         min-height: 280px;
-        border: 1px solid var(--line);
-        border-radius: 14px;
+        border: 1px solid var(--border, var(--line));
+        border-radius: 12px;
         padding: 16px;
-        background: #f8fafc;
+        background: var(--code-bg, var(--diagram-bg));
+        font-size: 0.8125rem;
+        overflow-x: auto;
+      }
+
+      .diagram-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--muted-foreground, var(--dim));
+        margin-bottom: 8px;
+      }
+
+      /* ---- Multi-line file list ---- */
+      .file-list {
+        font-family: var(--font-mono, ui-monospace, "JetBrains Mono", "SF Mono", monospace);
+        font-size: 0.8125rem;
+        line-height: 1.6;
+        color: var(--muted-foreground, var(--dim));
+        padding: 8px 0;
+        margin: 0;
+        list-style: none;
+      }
+
+      .file-list li::before {
+        content: "— ";
+        color: var(--muted-foreground, var(--dim));
+      }
+
+      /* ---- Wins bullets ---- */
+      .wins {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding: 8px 0;
+        margin: 0;
+        list-style: none;
+      }
+
+      .wins li {
+        background: oklch(from var(--accent, #059669) l c h / 0.1);
+        color: var(--accent, var(--green));
+        border-radius: 999px;
+        padding: 2px 12px;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        white-space: nowrap;
+      }
+
+      /* ---- ADR callout ---- */
+      .adr-callout {
+        background: oklch(from var(--amber, #d97706) l c h / 0.12);
+        border-left: 3px solid var(--amber);
+        border-radius: 6px;
+        padding: 10px 14px;
+        margin: 12px 0;
+        font-size: 0.875rem;
+        color: var(--foreground, var(--ink));
+      }
+
+      /* ---- Header / Meta ---- */
+      .meta {
+        color: var(--muted-foreground, var(--dim));
+        font-size: 0.875rem;
+      }
+
+      /* ---- Top recommendation ---- */
+      #top-recommendation .candidate {
+        border-color: var(--accent, var(--green));
+        box-shadow: 0 0 0 1px var(--accent, var(--green));
       }
     </style>
   </head>

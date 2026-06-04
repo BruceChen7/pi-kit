@@ -82,46 +82,6 @@ assert_present \
   "migrate export prunes git metadata and dependencies"
 
 assert_absent \
-  "skills/planning-suite/plan-ceo-review/SKILL.md" \
-  "git for-each-ref --format='%(refname:short)' refs/remotes/origin/HEAD" \
-  "plan-ceo-review avoids brittle origin/HEAD parsing"
-
-assert_absent \
-  "skills/planning-suite/pre-landing-review/SKILL.md" \
-  "git for-each-ref --format='%(refname:short)' refs/remotes/origin/HEAD" \
-  "pre-landing-review avoids brittle origin/HEAD parsing"
-
-assert_present \
-  "skills/planning-suite/plan-ceo-review/SKILL.md" \
-  "git symbolic-ref --quiet --short refs/remotes/origin/HEAD" \
-  "plan-ceo-review uses symbolic-ref base detection"
-
-assert_present \
-  "skills/planning-suite/pre-landing-review/SKILL.md" \
-  "git symbolic-ref --quiet --short refs/remotes/origin/HEAD" \
-  "pre-landing-review uses symbolic-ref base detection"
-
-assert_absent \
-  "skills/planning-suite/office-hours/SKILL.md" \
-  $'REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\nrg -n -i "<k1>|<k2>|<k3>" "$REPO_ROOT/.pi/plans" 2>/dev/null' \
-  "office-hours keyword search does not rely on cross-call shell state"
-
-assert_absent \
-  "skills/planning-suite/plan-eng-review/SKILL.md" \
-  $'REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n   SLUG=$(basename "$REPO_ROOT")\n   ls -t "$REPO_ROOT/.pi/plans/$SLUG/office-hours"/*.md 2>/dev/null | head -1' \
-  "plan-eng-review office-hours lookup does not rely on cross-call shell state"
-
-assert_present \
-  "skills/planning-suite/office-hours/SKILL.md" \
-  'REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); rg -n -i "<k1>|<k2>|<k3>" "$REPO_ROOT/.pi/plans" 2>/dev/null' \
-  "office-hours keyword search recomputes state inline"
-
-assert_present \
-  "skills/planning-suite/plan-eng-review/SKILL.md" \
-  'REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd); SLUG=$(basename "$REPO_ROOT"); ls -t "$REPO_ROOT/.pi/plans/$SLUG/office-hours"/*.md 2>/dev/null | head -1' \
-  "plan-eng-review office-hours lookup recomputes state inline"
-
-assert_absent \
   "skills/brainstorming/scripts/start-server.sh" \
   ".superpowers/brainstorm/" \
   "brainstorming start-server avoids storing sessions at repo root"

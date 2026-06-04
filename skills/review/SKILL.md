@@ -11,9 +11,7 @@ description: >
 
 Run a Pi-native two-axis review of the diff between `HEAD` and a fixed point.
 
-This skill reports findings; it does **not** auto-fix code. Use
-`planning-suite/pre-landing-review` when the user wants a merge-readiness risk pass with safe
-auto-fixes.
+This skill reports findings; it does **not** auto-fix code.
 
 Default to Chinese unless the user explicitly asks for another language.
 

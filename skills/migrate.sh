@@ -554,7 +554,7 @@ export_skills() {
 #
 # Example:
 #   dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
-#   pre-landing-review|local|skills/planning-suite/pre-landing-review
+#   boundaries-refactor|local|skills/boundaries-refactor
 #   x-tweet-fetcher|https://github.com/user/x-tweet-fetcher.git|
 EOF
         for entry in "${entries[@]}"; do

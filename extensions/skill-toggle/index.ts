@@ -622,6 +622,57 @@ function markSkillPersistentlyDisabled(state: ToggleState, skill: Skill): void {
   fs.writeFileSync(disabledPath, "", "utf-8");
 }
 
+export function cleanupOrphanedSkills(cwd: string): {
+  removedSymlinks: string[];
+  removedDisabledMarkers: string[];
+  warnings: string[];
+} {
+  const removedSymlinks: string[] = [];
+  const removedDisabledMarkers: string[] = [];
+  const warnings: string[] = [];
+
+  const managedDir = projectManagedSkillsDir(cwd);
+  if (fs.existsSync(managedDir)) {
+    for (const entry of fs.readdirSync(managedDir, { withFileTypes: true })) {
+      const entryPath = path.join(managedDir, entry.name);
+      if (entry.isSymbolicLink()) {
+        try {
+          const target = fs.realpathSync(entryPath);
+          if (!fs.existsSync(target)) {
+            fs.unlinkSync(entryPath);
+            removedSymlinks.push(entry.name);
+          }
+        } catch {
+          // realpath fails when target doesn't exist — broken symlink
+          fs.unlinkSync(entryPath);
+          removedSymlinks.push(entry.name);
+        }
+      } else if (entry.isFile() || entry.isDirectory()) {
+        warnings.push(`${entryPath} is not a symlink; manual review needed`);
+      }
+    }
+  }
+
+  const disabledDir = projectDisabledSkillsDir(cwd);
+  if (fs.existsSync(disabledDir)) {
+    const knownSkills = new Set<string>();
+    for (const skill of loadSkills(cwd)) {
+      knownSkills.add(normalizeSkillName(skill.name));
+    }
+
+    for (const entry of fs.readdirSync(disabledDir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const name = normalizeSkillName(entry.name);
+      if (!knownSkills.has(name)) {
+        fs.rmSync(path.join(disabledDir, entry.name), { force: true });
+        removedDisabledMarkers.push(entry.name);
+      }
+    }
+  }
+
+  return { removedSymlinks, removedDisabledMarkers, warnings };
+}
+
 function removeLegacySkillToggleSettings(filePath: string): void {
   if (!fs.existsSync(filePath)) return;
 
@@ -1243,6 +1294,33 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
       );
     },
   });
+
+  pi.registerCommand("cleanup-skills", {
+    description: "Remove stale skill symlinks and disabled markers",
+    handler: async (_args: string, ctx: ExtensionContext) => {
+      const result = cleanupOrphanedSkills(ctx.cwd);
+      loadToggleState(ctx.cwd);
+
+      const parts: string[] = [];
+      if (result.removedSymlinks.length) {
+        parts.push(`${result.removedSymlinks.length} symlink(s)`);
+      }
+      if (result.removedDisabledMarkers.length) {
+        parts.push(
+          `${result.removedDisabledMarkers.length} disabled marker(s)`,
+        );
+      }
+      if (result.warnings.length) {
+        parts.push(`${result.warnings.length} warning(s)`);
+      }
+
+      const summary = parts.length
+        ? `Cleaned up: ${parts.join(", ")}`
+        : "Nothing to clean up";
+      ctx.ui.notify(`${summary}. Run /reload to apply.`, "info");
+    },
+  });
+
   pi.on("session_start", (_event, ctx) => {
     const skills = loadSkills(ctx.cwd);
     refreshState(ctx, skills);

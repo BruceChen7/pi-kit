@@ -10,6 +10,7 @@ extensions/kanban-worktree/ui-dist/
 extensions/cache-graph/ui-dist/
 .pi-memory/
 package-lock.json
+pnpm-lock.yaml
 skills/render-markdown/bun.lock
 /.pi
 .config/wt.toml

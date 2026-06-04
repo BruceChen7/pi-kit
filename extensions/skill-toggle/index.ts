@@ -637,13 +637,10 @@ export function cleanupOrphanedSkills(cwd: string): {
       const entryPath = path.join(managedDir, entry.name);
       if (entry.isSymbolicLink()) {
         try {
-          const target = fs.realpathSync(entryPath);
-          if (!fs.existsSync(target)) {
-            fs.unlinkSync(entryPath);
-            removedSymlinks.push(entry.name);
-          }
+          fs.realpathSync(entryPath);
+          // exists — keep
         } catch {
-          // realpath fails when target doesn't exist — broken symlink
+          // realpath throws ENOENT/ELOOP when target is missing or circular
           fs.unlinkSync(entryPath);
           removedSymlinks.push(entry.name);
         }

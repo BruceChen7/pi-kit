@@ -83,6 +83,11 @@ export class SessionConnectionManager {
   }
 
   sendInput(data: string): void {
+    console.log("[pi-webterm] SessionConnectionManager.sendInput", {
+      data,
+      codePoints: Array.from(data).map((char) => char.charCodeAt(0)),
+      hasActiveTransport: Boolean(this.activeTransport),
+    });
     this.activeTransport?.sendInput(data);
   }
 

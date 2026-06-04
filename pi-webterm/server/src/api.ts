@@ -188,12 +188,17 @@ export function registerRoutes(
       // Generate session-specific token for WS auto-attach
       const sessionToken = generateSessionToken(cfg.username, name);
 
+      // Session was just created — always "starting".
+      // The shell wrapper is still sourcing rc files before exec'ing
+      // the agent; detectSessionStatus would see a shell foreground and
+      // (correctly) return "starting" too, but we bypass it entirely
+      // to avoid any edge cases.
       return reply.status(201).send({
         name,
         dirname,
         branch,
         cwd: sessionCwd,
-        status: detectSessionStatus(name),
+        status: "starting" as const,
         attached: false,
         sessionToken,
       });
@@ -433,9 +438,38 @@ function handleWsMessage(socket: any, raw: Buffer): void {
       : handleTerminalQueries(stripTerminalResponses(input)).filtered;
 
     const normalizedInput = cleanInput.replace(/\r?\n/g, "\r");
+    const shouldDebugCtrlL =
+      input.includes("\f")
+      || cleanInput.includes("\f")
+      || normalizedInput.includes("\f");
     const pty = sessionName ? activePtySessions.get(sessionName) : undefined;
+    if (shouldDebugCtrlL) {
+      console.log("[pi-webterm-server] ws input ctrl+l", {
+        sessionName,
+        input,
+        inputCodePoints: Array.from(input).map((char) => char.charCodeAt(0)),
+        cleanInput,
+        cleanCodePoints: Array.from(cleanInput).map((char) =>
+          char.charCodeAt(0),
+        ),
+        normalizedInput,
+        normalizedCodePoints: Array.from(normalizedInput).map((char) =>
+          char.charCodeAt(0),
+        ),
+        hasPty: Boolean(pty),
+      });
+    }
     if (pty) {
       try {
+        if (shouldDebugCtrlL) {
+          console.log("[pi-webterm-server] pty.write ctrl+l", {
+            sessionName,
+            normalizedInput,
+            normalizedCodePoints: Array.from(normalizedInput).map((char) =>
+              char.charCodeAt(0),
+            ),
+          });
+        }
         pty.write(normalizedInput);
       } catch (err) {
         // PTY process died (EIO) — clean up the session

@@ -273,6 +273,11 @@ function getSessionManager(): SessionConnectionManager {
 
       focusTerminal();
       _scheduleTerminalFit();
+
+      // Refresh session status — during creation the server returns
+      // "starting" because the shell wrapper is still sourcing rc files.
+      // By the time the WebSocket attaches, the agent should be running.
+      _refreshSessions();
     },
     onClose: () => {
       status = "disconnected";
@@ -382,6 +387,13 @@ $effect(() => {
     createTerminal(terminalContainer, {
       fontSize: 14,
       onData: (data) => {
+        console.log("[pi-webterm] onData -> sessionManager.sendInput", {
+          data,
+          codePoints: Array.from(data).map((char) => char.charCodeAt(0)),
+          hasSessionManager: Boolean(sessionManager),
+          status,
+          activeSessionName,
+        });
         sessionManager?.sendInput(data);
       },
       onResize: (cols, rows) => {
@@ -464,6 +476,8 @@ onDestroy(() => {
                 <span class="status-indicator running">●</span>
               {:else if session.status === "crashed"}
                 <span class="status-indicator crashed">▲</span>
+              {:else if session.status === "starting"}
+                <span class="status-indicator">⏳</span>
               {:else}
                 <span class="status-indicator stopped">■</span>
               {/if}
@@ -553,6 +567,8 @@ onDestroy(() => {
                   ●
                 {:else if session.status === "crashed"}
                   ▲
+                {:else if session.status === "starting"}
+                  ⏳
                 {:else}
                   ■
                 {/if}

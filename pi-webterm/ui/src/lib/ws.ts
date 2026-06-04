@@ -205,6 +205,19 @@ export class WsClient {
   }
 
   private sendFrame(type: number, payload: string | Uint8Array): void {
+    const payloadBytes =
+      typeof payload === "string"
+        ? Array.from(payload).map((char) => char.charCodeAt(0))
+        : Array.from(payload);
+    console.log("[pi-webterm] WsClient.sendFrame", {
+      type,
+      payloadType: typeof payload === "string" ? "string" : "binary",
+      payloadBytes,
+      hasWs: Boolean(this.ws),
+      readyState: this.ws?.readyState ?? null,
+      isOpen: this.ws?.readyState === WebSocket.OPEN,
+      sessionId: this.options.sessionId ?? "pw",
+    });
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.ws.send(this.buildFrame(type, payload));
   }

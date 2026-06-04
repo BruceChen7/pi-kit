@@ -1,9 +1,61 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import { getCtrlShiftLetterControlChar } from "./ctrl-shift.js";
 
 let terminal: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
 let resizeObserver: ResizeObserver | null = null;
+let globalKeydownCleanup: (() => void) | null = null;
+let pendingSyntheticCtrlShiftEscSequence: string | null = null;
+const CTRL_SHIFT_HANDLED_FLAG = "__piCtrlShiftHandled" as const;
+
+type CtrlShiftHandledKeyboardEvent = KeyboardEvent & {
+  [CTRL_SHIFT_HANDLED_FLAG]?: boolean;
+};
+
+function isCtrlShiftDebugEvent(event: KeyboardEvent): boolean {
+  return event.ctrlKey && event.shiftKey;
+}
+
+function logCtrlShiftDebug(
+  source: string,
+  event: KeyboardEvent,
+  details: Record<string, unknown> = {},
+): void {
+  if (!isCtrlShiftDebugEvent(event)) {
+    return;
+  }
+
+  console.log("[pi-webterm] ctrl+shift debug", {
+    source,
+    type: event.type,
+    key: event.key,
+    code: event.code,
+    keyCode: event.keyCode,
+    which: event.which,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    metaKey: event.metaKey,
+    cancelable: event.cancelable,
+    defaultPrevented: event.defaultPrevented,
+    activeElement:
+      typeof document !== "undefined" && document.activeElement
+        ? (document.activeElement as HTMLElement).tagName
+        : null,
+    ...details,
+  });
+}
+
+function markCtrlShiftHandled(event: KeyboardEvent): void {
+  (event as CtrlShiftHandledKeyboardEvent)[CTRL_SHIFT_HANDLED_FLAG] = true;
+}
+
+function wasCtrlShiftHandled(event: KeyboardEvent): boolean {
+  return Boolean(
+    (event as CtrlShiftHandledKeyboardEvent)[CTRL_SHIFT_HANDLED_FLAG],
+  );
+}
 
 export function createTerminal(
   container: HTMLElement,
@@ -19,11 +71,15 @@ export function createTerminal(
   }
   resizeObserver?.disconnect();
   resizeObserver = null;
+  globalKeydownCleanup?.();
+  globalKeydownCleanup = null;
+  pendingSyntheticCtrlShiftEscSequence = null;
 
   fitAddon = new FitAddon();
   terminal = new Terminal({
     cursorBlink: true,
     cursorStyle: "bar",
+    macOptionIsMeta: true,
     fontSize: options.fontSize ?? 14,
     fontFamily: "'Menlo', 'Monaco', 'Courier New', monospace",
     theme: options.theme ?? {
@@ -54,7 +110,147 @@ export function createTerminal(
 
   terminal.loadAddon(fitAddon);
   terminal.open(container);
+
+  const ctrlShiftForwardState = new Map<string, "keydown" | "keyup">();
+
+  const forwardCtrlShiftLetter = (event: KeyboardEvent): boolean => {
+    if (wasCtrlShiftHandled(event)) {
+      logCtrlShiftDebug("forward:already-handled", event);
+      return false;
+    }
+
+    const ctrlChar = getCtrlShiftLetterControlChar(event);
+    logCtrlShiftDebug("forward:before", event, {
+      matched: Boolean(ctrlChar),
+      ctrlChar,
+      existingState: ctrlChar ? ctrlShiftForwardState.get(ctrlChar) : null,
+    });
+    if (!ctrlChar) {
+      return false;
+    }
+
+    if (event.type === "keyup") {
+      const state = ctrlShiftForwardState.get(ctrlChar);
+      if (state === "keydown") {
+        ctrlShiftForwardState.set(ctrlChar, "keyup");
+        markCtrlShiftHandled(event);
+        logCtrlShiftDebug("forward:keyup-skip-after-keydown", event, {
+          matched: true,
+          ctrlChar,
+        });
+        return false;
+      }
+
+      if (state === "keyup") {
+        ctrlShiftForwardState.delete(ctrlChar);
+        markCtrlShiftHandled(event);
+        logCtrlShiftDebug("forward:keyup-duplicate-skip", event, {
+          matched: true,
+          ctrlChar,
+        });
+        return false;
+      }
+
+      ctrlShiftForwardState.set(ctrlChar, "keyup");
+      markCtrlShiftHandled(event);
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      pendingSyntheticCtrlShiftEscSequence = `\x1b${ctrlChar}`;
+      console.log("[pi-webterm] synthetic ctrl+shift direct send", {
+        source: "keyup-fallback",
+        ctrlChar,
+        suppressedFollowup: pendingSyntheticCtrlShiftEscSequence,
+      });
+      options.onData?.(ctrlChar);
+      logCtrlShiftDebug("forward:keyup-fallback", event, {
+        matched: true,
+        ctrlChar,
+        defaultPreventedAfter: event.defaultPrevented,
+      });
+      return true;
+    }
+
+    if (event.type !== "keydown") {
+      return false;
+    }
+
+    ctrlShiftForwardState.set(ctrlChar, "keydown");
+    markCtrlShiftHandled(event);
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    pendingSyntheticCtrlShiftEscSequence = `\x1b${ctrlChar}`;
+    console.log("[pi-webterm] synthetic ctrl+shift direct send", {
+      source: "keydown",
+      ctrlChar,
+      suppressedFollowup: pendingSyntheticCtrlShiftEscSequence,
+    });
+    options.onData?.(ctrlChar);
+    logCtrlShiftDebug("forward:after", event, {
+      matched: true,
+      ctrlChar,
+      defaultPreventedAfter: event.defaultPrevented,
+    });
+    return true;
+  };
+
+  // Intercept as early as possible while the terminal textarea has focus.
+  // This covers browser/xterm layers before default shortcuts run.
+  const textarea = terminal.textarea;
+  if (textarea && typeof window !== "undefined") {
+    const onWindowKeyEvent = (event: KeyboardEvent) => {
+      logCtrlShiftDebug("window:capture", event, {
+        textareaFocused: document.activeElement === textarea,
+      });
+      if (document.activeElement !== textarea) {
+        return;
+      }
+      forwardCtrlShiftLetter(event);
+    };
+    window.addEventListener("keydown", onWindowKeyEvent, true);
+    window.addEventListener("keyup", onWindowKeyEvent, true);
+    globalKeydownCleanup = () => {
+      window.removeEventListener("keydown", onWindowKeyEvent, true);
+      window.removeEventListener("keyup", onWindowKeyEvent, true);
+    };
+  }
+
+  // ── Ctrl+Shift+letter fix ────────────────────────────────
+  // xterm.js ignores Ctrl+Shift+A-Z in Keyboard.ts because the main
+  // Ctrl branch requires !ev.shiftKey. Bind the custom key handler
+  // after open(), matching xterm.js usage patterns, and forward the
+  // same control character as the non-Shift version.
+  terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+    logCtrlShiftDebug("xterm:custom-handler", event);
+    if (wasCtrlShiftHandled(event)) {
+      logCtrlShiftDebug("xterm:custom-handler-skip-handled", event);
+      return false;
+    }
+    if (forwardCtrlShiftLetter(event)) {
+      return false;
+    }
+    return true;
+  });
+
   terminal.onData((data) => {
+    console.log("[pi-webterm] terminal.onData raw", {
+      data,
+      codePoints: Array.from(data).map((char) => char.charCodeAt(0)),
+      pendingSyntheticCtrlShiftEscSequence,
+    });
+    if (
+      pendingSyntheticCtrlShiftEscSequence &&
+      data === pendingSyntheticCtrlShiftEscSequence
+    ) {
+      console.log("[pi-webterm] terminal.onData suppressed synthetic follow-up", {
+        data,
+        codePoints: Array.from(data).map((char) => char.charCodeAt(0)),
+      });
+      pendingSyntheticCtrlShiftEscSequence = null;
+      return;
+    }
+    pendingSyntheticCtrlShiftEscSequence = null;
     options.onData?.(data);
   });
 
@@ -138,6 +334,8 @@ export function getTerminal(): Terminal | null {
 }
 
 export function disposeTerminal(): void {
+  globalKeydownCleanup?.();
+  globalKeydownCleanup = null;
   resizeObserver?.disconnect();
   resizeObserver = null;
   terminal?.dispose();

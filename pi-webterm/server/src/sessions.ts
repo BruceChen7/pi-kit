@@ -82,11 +82,15 @@ const SHELL_NAMES = new Set(["bash", "zsh", "sh", "fish", "dash", "ksh"]);
 /**
  * Detect session status by checking tmux pane state.
  *
- * Simple heuristic:
- * - Session doesn't exist → stopped
- * - Foreground command is a shell → crashed (agent exited)
- * - Otherwise → running
- * - Can't reach tmux → starting
+ * Crashed detection:
+ * `ensureSession` creates the pane via `shell -c "exec <agentCommand>"`.
+ * The shell replaces itself with the agent (`exec`), so there is _no_
+ * fallback shell if the agent exits.  The only reliable crash signal is
+ * an empty `pane_current_command` (the foreground process is gone).
+ *
+ * A shell foreground means either (a) the shell is still sourcing rc
+ * files before exec'ing the agent, or (b) someone attached directly.
+ * Neither case is "crashed".
  */
 export function detectSessionStatus(name: string): SessionStatus {
   if (!name || !hasSession(name)) return "stopped";
@@ -98,7 +102,15 @@ export function detectSessionStatus(name: string): SessionStatus {
       { encoding: "utf-8", timeout: 5000 },
     );
     const cmd = out?.trim() || "";
-    if (SHELL_NAMES.has(cmd)) return "crashed";
+
+    // No foreground process → pane is dead → agent exited
+    if (!cmd) return "crashed";
+
+    // Shell foreground: still sourcing rc files (before exec) or
+    // someone attached directly.  Not crashed — treat as starting.
+    if (SHELL_NAMES.has(cmd)) return "starting";
+
+    // Non-shell foreground → the agent command is running
     return "running";
   } catch {
     return "starting";

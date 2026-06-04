@@ -53,6 +53,8 @@ let _deleteLoading = $state<Set<string>>(new Set()); // set of session names bei
 // Workspace / directory discovery
 let _directories: DirectoryInfo[] = $state([]);
 let _loadingDirs = $state(false);
+let _loadingBranches = $state(false); // lazy branch load in progress
+let _branchLoadingDir = $state("");   // which dir is currently loading branches
 
 // Create form — directory & branch
 let _directorySearch = $state(""); // search/filter input for directory list
@@ -344,12 +346,30 @@ async function _loadDirectories() {
   }
 }
 
-function _onSelectDirectory(dir: DirectoryInfo) {
+async function _onSelectDirectory(dir: DirectoryInfo) {
   _selectedDirectoryPath = dir.path;
   _directorySearch = "";
-  _availableBranches = dir.branches;
   _createNewBranchMode = false;
   _createNewBranchName = "";
+
+  // If branches haven't been fetched yet (lazy from cache/refresh), fetch on demand
+  if (dir.branches.length === 0) {
+    _loadingBranches = true;
+    _branchLoadingDir = dir.path;
+    try {
+      const result = await api.fetchRepoBranches(authToken, dir.path);
+      dir.branches = result.branches;
+    } catch {
+      dir.branches = [];
+    } finally {
+      _loadingBranches = false;
+      _branchLoadingDir = "";
+    }
+  }
+
+  // Set available branches for the branch selector
+  _availableBranches = dir.branches;
+
   // Auto-select main or first branch
   if (dir.branches.includes("main")) {
     _createBranch = "main";
@@ -681,7 +701,7 @@ onDestroy(() => {
                 >
                   <div class="dir-item-top">
                     <div class="dir-item-name">{dir.name}</div>
-                    <div class="dir-item-branches">{dir.branches.length} 分支</div>
+                    <div class="dir-item-branches">{dir.branches.length > 0 ? `${dir.branches.length} 分支` : "···"}</div>
                   </div>
                   <div class="dir-item-path">{dir.path}</div>
                 </div>
@@ -697,7 +717,11 @@ onDestroy(() => {
             <div class="panel-heading">
               <span>分支设置</span>
               {#if _selectedDirectory}
-                <span>{_availableBranches.length} 个可选</span>
+                {#if _loadingBranches}
+                  <span>正在加载分支...</span>
+                {:else}
+                  <span>{_availableBranches.length} 个可选</span>
+                {/if}
               {/if}
             </div>
 
@@ -716,11 +740,15 @@ onDestroy(() => {
             {#if _selectedDirectory && !_createNewBranchMode}
               <!-- Branch selector (existing branches) -->
               <label class="field-label" for="branch-select">使用分支</label>
+              {#if _loadingBranches}
+                <div class="loading-hint" style="padding:0.5rem 0">正在拉取分支列表...</div>
+              {:else}
               <select
                 id="branch-select"
                 class="branch-select"
                 value={_createBranch}
                 onchange={_onBranchSelect}
+                disabled={_availableBranches.length === 0}
               >
                 <option value="" disabled>选择分支</option>
                 {#each _availableBranches as branch}
@@ -728,6 +756,7 @@ onDestroy(() => {
                 {/each}
                 <option value="__new__">创建新分支...</option>
               </select>
+              {/if}
             {/if}
 
             {#if _createNewBranchMode}

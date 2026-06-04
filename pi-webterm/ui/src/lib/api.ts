@@ -4,6 +4,7 @@ export interface SessionInfo {
   name: string;
   dirname: string;
   branch: string;
+  hash?: string; // short cwd hash (v2 sessions only)
   status: "running" | "stopped" | "crashed" | "starting";
   attached: boolean;
 }
@@ -29,6 +30,22 @@ export interface AttachResult {
   name: string;
 }
 
+// ─── Workspace / Directory Discovery ───────────────────────────
+
+export interface DirectoryInfo {
+  path: string;
+  name: string;
+  branches: string[];
+}
+
+export interface ListDirectoriesResult {
+  basePath: string;
+  scannedAt: number;
+  directories: DirectoryInfo[];
+}
+
+// ─── Helpers ───────────────────────────────────────────────────
+
 function apiUrl(path: string): string {
   const proto = window.location.protocol === "https:" ? "https" : "http";
   return `${proto}://${window.location.host}${path}`;
@@ -43,6 +60,8 @@ function headers(
   if (token) h["authorization"] = `Bearer ${token}`;
   return h;
 }
+
+// ─── API Methods ───────────────────────────────────────────────
 
 export const api = {
   async login(username: string, password: string): Promise<LoginResult> {
@@ -86,6 +105,7 @@ export const api = {
       branch?: string;
       cwd?: string;
       agentCommand?: string;
+      baseBranch?: string;
     },
   ): Promise<CreateSessionResult> {
     const res = await fetch(apiUrl("/api/sessions"), {
@@ -125,5 +145,24 @@ export const api = {
       },
     );
     if (!res.ok) throw new Error("Failed to delete session");
+  },
+
+  // ── Workspace / Directory Discovery ─────────────────────────
+
+  async listDirectories(token: string): Promise<ListDirectoriesResult> {
+    const res = await fetch(apiUrl("/api/workspace/directories"), {
+      headers: headers(token),
+    });
+    if (!res.ok) throw new Error("Failed to list directories");
+    return res.json();
+  },
+
+  async refreshDirectories(token: string): Promise<ListDirectoriesResult> {
+    const res = await fetch(apiUrl("/api/workspace/refresh"), {
+      method: "POST",
+      headers: headers(token),
+    });
+    if (!res.ok) throw new Error("Failed to refresh directories");
+    return res.json();
   },
 };

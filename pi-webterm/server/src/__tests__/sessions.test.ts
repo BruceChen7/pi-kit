@@ -5,9 +5,17 @@ import {
   parseTmuxSessionName,
 } from "../sessions.js";
 
-// ─── Naming ───────────────────────────────────────────────────
+// Mock workspace module for shortHash
+vi.mock("../workspace.js", () => ({
+  shortHash: vi.fn((s: string) => {
+    // Deterministic mock: return first 4 chars of input reversed
+    return s.split("").reverse().join("").slice(0, 4) || "0000";
+  }),
+}));
 
-describe("getTmuxSessionName", () => {
+// ─── Naming (v1 — without cwd) ────────────────────────────────
+
+describe("getTmuxSessionName (v1, no cwd)", () => {
   it("builds name from dirname and branch", () => {
     expect(getTmuxSessionName("my-app", "main")).toBe("pw__my-app__main");
   });
@@ -43,8 +51,32 @@ describe("getTmuxSessionName", () => {
   });
 });
 
-describe("parseTmuxSessionName", () => {
-  it("parses standard name", () => {
+// ─── Naming (v2 — with cwd / hash) ────────────────────────────
+
+describe("getTmuxSessionName (v2, with cwd)", () => {
+  it("appends short hash when cwd is provided", () => {
+    const name = getTmuxSessionName("my-app", "main", "/path/to/repo");
+    // Mock shortHash("/path/to/repo") → reversed + slice(0,4) = "oper"
+    expect(name).toBe("pw__my-app__main__oper");
+  });
+
+  it("produces different hashes for different cwds", () => {
+    const name1 = getTmuxSessionName("my-app", "main", "/path/a");
+    const name2 = getTmuxSessionName("my-app", "main", "/path/b");
+    expect(name1).not.toBe(name2);
+  });
+
+  it("same dirname+branch with same cwd produces same name", () => {
+    const name1 = getTmuxSessionName("app", "dev", "/project");
+    const name2 = getTmuxSessionName("app", "dev", "/project");
+    expect(name1).toBe(name2);
+  });
+});
+
+// ─── Parsing (v1 — old format) ────────────────────────────────
+
+describe("parseTmuxSessionName (v1)", () => {
+  it("parses standard v1 name without hash", () => {
     const result = parseTmuxSessionName("pw__my-app__main");
     expect(result).toEqual({ dirname: "my-app", branch: "main" });
   });
@@ -78,13 +110,56 @@ describe("parseTmuxSessionName", () => {
   it("returns null for empty dirname", () => {
     expect(parseTmuxSessionName("pw____main")).toBeNull();
   });
+});
 
-  it("roundtrips: getTmuxSessionName → parseTmuxSessionName", () => {
+// ─── Parsing (v2 — new format with hash) ──────────────────────
+
+describe("parseTmuxSessionName (v2)", () => {
+  it("parses v2 name with hash", () => {
+    const result = parseTmuxSessionName("pw__my-app__main__a3f2");
+    expect(result).toEqual({
+      dirname: "my-app",
+      branch: "main",
+      hash: "a3f2",
+    });
+  });
+
+  it("parses v2 name with underscores in dirname", () => {
+    const result = parseTmuxSessionName("pw__node_fs__main__b1c2");
+    expect(result).toEqual({ dirname: "node_fs", branch: "main", hash: "b1c2" });
+  });
+
+  it("parses v2 name with sanitized branch", () => {
+    const result = parseTmuxSessionName("pw__my-app__feature_auth__x7y8");
+    expect(result).toEqual({
+      dirname: "my-app",
+      branch: "feature_auth",
+      hash: "x7y8",
+    });
+  });
+});
+
+// ─── Roundtrip ────────────────────────────────────────────────
+
+describe("roundtrip", () => {
+  it("v1: getTmuxSessionName → parseTmuxSessionName", () => {
     const name = getTmuxSessionName("my-project", "feature/auth");
     const parsed = parseTmuxSessionName(name);
     expect(parsed).toEqual({
       dirname: "my-project",
       branch: "feature_auth", // '/' sanitized to '_'
+    });
+    // v1 without cwd should not have hash
+    expect(parsed).not.toHaveProperty("hash");
+  });
+
+  it("v2: getTmuxSessionName with cwd → parseTmuxSessionName", () => {
+    const name = getTmuxSessionName("my-project", "feature/auth", "/my/path");
+    const parsed = parseTmuxSessionName(name);
+    expect(parsed).toEqual({
+      dirname: "my-project",
+      branch: "feature_auth",
+      hash: expect.any(String),
     });
   });
 });

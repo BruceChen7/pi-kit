@@ -206,3 +206,27 @@ export class TerminalProtocolAdapter {
     return result.forward;
   }
 }
+
+// ─── Binary Frame Input Processing ─────────────────────────────
+
+/**
+ * Pure function: decide what input to forward to the PTY.
+ *
+ * Returns the cleaned (protocol-adapted), normalized input plus
+ * a debug flag for Ctrl+L (form feed) debugging.
+ *
+ * Extracted from handleWsMessage to separate the decision (what to
+ * write) from the effect (writing it), making the pipeline testable.
+ */
+export function processBinaryFrameInput(
+  input: string,
+  protocolAdapter: TerminalProtocolAdapter | undefined,
+): { cleanInput: string; normalizedInput: string; shouldDebugCtrlL: boolean } {
+  const cleanInput = protocolAdapter
+    ? protocolAdapter.processClientInput(input)
+    : handleTerminalQueries(stripTerminalResponses(input)).filtered;
+  const normalizedInput = cleanInput.replace(/\r?\n/g, "\r");
+  const shouldDebugCtrlL =
+    input.includes("\f") || cleanInput.includes("\f") || normalizedInput.includes("\f");
+  return { cleanInput, normalizedInput, shouldDebugCtrlL };
+}

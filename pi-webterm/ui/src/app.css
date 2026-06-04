@@ -1,10 +1,13 @@
 :root {
-  --bg-primary: #1a1a2e;
-  --bg-secondary: #16213e;
-  --bg-status: #0f3460;
+  --bg-primary: #10131c;
+  --bg-secondary: #171c2a;
+  --bg-status: #1b2740;
+  --bg-panel: #131827;
+  --border-subtle: rgba(150, 168, 205, 0.18);
   --text-primary: #e0e0e0;
   --text-secondary: #a0a0b0;
   --accent-green: #50fa7b;
+  --accent-cyan: #62d7ff;
   --accent-red: #ff5555;
   --accent-yellow: #f1fa8c;
   --status-dot-size: 10px;
@@ -134,6 +137,9 @@ body {
   padding: 24px;
   text-align: center;
   gap: 16px;
+  background:
+    linear-gradient(180deg, rgba(98, 215, 255, 0.05), transparent 34%),
+    var(--bg-primary);
 }
 
 .setup-screen h1 {
@@ -149,7 +155,7 @@ body {
 
 .setup-screen input {
   background: var(--bg-secondary);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
   color: var(--text-primary);
   padding: 10px 14px;
@@ -162,17 +168,26 @@ body {
 
 .setup-screen input:focus {
   border-color: var(--accent-green);
+  box-shadow: 0 0 0 3px rgba(80, 250, 123, 0.1);
+}
+
+/* Directory input (no forced centering to show full path) */
+.setup-screen input[list="directory-list"] {
+  text-align: left;
+  font-family: monospace;
+  font-size: 13px;
 }
 
 .setup-screen .connect-btn {
-  background: var(--accent-green);
-  color: var(--bg-primary);
-  border: none;
-  border-radius: 8px;
-  padding: 12px 32px;
+  background: linear-gradient(180deg, #43d76a, #27b65a);
+  color: #07120c;
+  border: 1px solid rgba(80, 250, 123, 0.35);
+  border-radius: 6px;
+  padding: 11px 22px;
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
+  min-height: 42px;
 }
 
 .setup-screen .connect-btn:disabled {
@@ -183,6 +198,7 @@ body {
 .setup-screen .error {
   color: var(--accent-red);
   font-size: 13px;
+  line-height: 1.45;
 }
 
 /* ─── Sidebar Layout ──────────────────────────────────────────── */
@@ -495,7 +511,331 @@ body {
 .form-actions {
   display: flex;
   gap: 12px;
-  justify-content: center;
+  justify-content: flex-end;
+  margin-top: auto;
+}
+
+/* ─── Create Form ────────────────────────────────────────────── */
+
+.setup-screen-create {
+  justify-content: flex-start;
+  overflow: auto;
+  padding: 32px 18px;
+  text-align: left;
+}
+
+.setup-shell {
+  width: min(920px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.setup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 2px 10px;
+}
+
+.setup-header h1 {
+  font-size: 28px;
+  letter-spacing: 0;
+}
+
+.setup-header p {
+  max-width: none;
+  margin-top: 4px;
+}
+
+.setup-header-action {
+  flex-shrink: 0;
+}
+
+.create-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.create-panel {
+  min-height: 430px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: rgba(19, 24, 39, 0.92);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.panel-heading span:last-child {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.loading-hint {
+  width: fit-content;
+  color: var(--accent-cyan);
+  background: rgba(98, 215, 255, 0.08);
+  border: 1px solid rgba(98, 215, 255, 0.16);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.branch-select {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 10px 14px;
+  font-size: 14px;
+  width: 100%;
+  outline: none;
+  cursor: pointer;
+  appearance: auto;
+  -webkit-appearance: auto;
+}
+
+.branch-select:focus {
+  border-color: var(--accent-green);
+  box-shadow: 0 0 0 3px rgba(80, 250, 123, 0.1);
+}
+
+.branch-panel {
+  gap: 14px;
+}
+
+.selected-dir {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 80px;
+  padding: 12px;
+  background: rgba(98, 215, 255, 0.06);
+  border: 1px solid rgba(98, 215, 255, 0.14);
+  border-radius: 8px;
+}
+
+.selected-dir-empty {
+  background: rgba(255, 255, 255, 0.035);
+  border-style: dashed;
+}
+
+.selected-dir-name {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.selected-dir-path {
+  color: var(--text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.field-label {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.new-branch-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 100%;
+}
+
+.new-branch-fields select {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 10px 14px;
+  font-size: 14px;
+  width: 100%;
+  outline: none;
+  cursor: pointer;
+  appearance: auto;
+  -webkit-appearance: auto;
+}
+
+.new-branch-fields select:focus {
+  border-color: var(--accent-green);
+  box-shadow: 0 0 0 3px rgba(80, 250, 123, 0.1);
+}
+
+/* ─── Session Display ────────────────────────────────────────── */
+
+.session-card-hash {
+  color: var(--accent-yellow);
+  font-size: 11px;
+  font-family: monospace;
+  margin-left: 4px;
+}
+
+.sidebar-item-hash {
+  color: var(--accent-yellow);
+  font-size: 10px;
+  font-family: monospace;
+  margin-left: 2px;
+}
+
+/* ─── Directory Picker (list-based) ─────────────────────────── */
+
+.dir-picker {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dir-search {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 10px 14px;
+  font-size: 14px;
+  width: 100%;
+  outline: none;
+  text-align: left;
+}
+
+.dir-search:focus {
+  border-color: var(--accent-green);
+  box-shadow: 0 0 0 3px rgba(80, 250, 123, 0.1);
+}
+
+.dir-list {
+  height: 330px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(8, 12, 22, 0.5);
+  padding: 6px;
+  scrollbar-color: rgba(160, 170, 196, 0.45) transparent;
+}
+
+.dir-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    transform 0.15s;
+  background: transparent;
+}
+
+.dir-item:hover {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.dir-item-selected {
+  background: rgba(80, 250, 123, 0.11);
+  border-color: rgba(80, 250, 123, 0.38);
+}
+
+.dir-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dir-item-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dir-item-path {
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dir-item-branches {
+  flex-shrink: 0;
+  color: var(--accent-cyan);
+  background: rgba(98, 215, 255, 0.08);
+  border: 1px solid rgba(98, 215, 255, 0.12);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+.dir-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+@media (max-width: 760px) {
+  .setup-screen-create {
+    padding: 18px 12px;
+  }
+
+  .setup-header {
+    align-items: flex-start;
+  }
+
+  .setup-header h1 {
+    font-size: 24px;
+  }
+
+  .create-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .create-panel {
+    min-height: auto;
+    padding: 14px;
+  }
+
+  .dir-list {
+    height: min(42vh, 320px);
+  }
+
+  .form-actions {
+    justify-content: stretch;
+  }
+
+  .form-actions button {
+    flex: 1;
+  }
 }
 
 /* iOS safe area */

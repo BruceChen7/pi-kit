@@ -439,9 +439,9 @@ function handleWsMessage(socket: any, raw: Buffer): void {
 
     const normalizedInput = cleanInput.replace(/\r?\n/g, "\r");
     const shouldDebugCtrlL =
-      input.includes("\f")
-      || cleanInput.includes("\f")
-      || normalizedInput.includes("\f");
+      input.includes("\f") ||
+      cleanInput.includes("\f") ||
+      normalizedInput.includes("\f");
     const pty = sessionName ? activePtySessions.get(sessionName) : undefined;
     if (shouldDebugCtrlL) {
       console.log("[pi-webterm-server] ws input ctrl+l", {

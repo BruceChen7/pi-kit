@@ -1,7 +1,6 @@
 ---
 description: Debug browser-only bugs with opencli using live page interaction, DOM inspection, network/WS instrumentation, and backend cross-checks
 argument-hint: "[url] [focus] [extra-instructions]"
-skills: [opencli-browser, systematic-debugging]
 ---
 Debug a real browser issue with `opencli`.
 

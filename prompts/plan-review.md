@@ -1,6 +1,5 @@
 ---
 description: Generate a visual HTML plan review — current codebase state vs. proposed implementation plan
-skills: [plannotator-visual-explainer, visual-explainer]
 ---
 Generate a comprehensive visual plan review as a self-contained HTML page, comparing the current codebase against a proposed implementation plan.
 

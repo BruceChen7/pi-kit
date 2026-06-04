@@ -1,6 +1,5 @@
 ---
 description: Generate a reviewed HTML implementation plan that matches Plan Mode and Plannotator Auto
-skills: [plannotator-visual-explainer, visual-explainer]
 ---
 Generate a comprehensive visual implementation plan for `$@` as a self-contained HTML plan artifact.
 

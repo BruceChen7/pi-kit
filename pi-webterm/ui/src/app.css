@@ -355,15 +355,15 @@ body {
 }
 
 .sidebar-item-del:hover {
-  opacity: 1 !important;
+  opacity: 1;
   color: var(--accent-red);
 }
 
 .sidebar-item-del:disabled,
 .sidebar-item-del-loading {
-  opacity: 0.6 !important;
+  opacity: 0.6;
   cursor: wait;
-  color: var(--text-secondary) !important;
+  color: var(--text-secondary);
 }
 
 .sidebar-error {

@@ -57,7 +57,7 @@ function headers(
 ): Record<string, string> {
   const h: Record<string, string> = {};
   if (!opts?.noContentType) h["content-type"] = "application/json";
-  if (token) h["authorization"] = `Bearer ${token}`;
+  if (token) h.authorization = `Bearer ${token}`;
   return h;
 }
 

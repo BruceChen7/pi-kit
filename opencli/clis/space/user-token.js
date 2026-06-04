@@ -39,7 +39,7 @@ cli({
     // 等待页面加载完成（核心 SPA 渲染）
     try {
       await page.wait({ selector: "#root", timeout: 30 });
-    } catch (err) {
+    } catch (_err) {
       throw new TimeoutError(
         `Page ${url} did not finish loading`,
         "Root element not found within 30s",
@@ -68,7 +68,7 @@ cli({
       );
     }
 
-    if (!sessionData || !sessionData.token) {
+    if (!sessionData?.token) {
       throw new AuthRequiredError(
         "No user token found in localStorage",
         "Please log in to space.shopee.io first and ensure you are on the page",

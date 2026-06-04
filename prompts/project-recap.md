@@ -1,6 +1,5 @@
 ---
 description: Generate a visual HTML project recap — rebuild mental model of a project's current state, recent decisions, and cognitive debt hotspots
-skills: [plannotator-visual-explainer, visual-explainer]
 ---
 Generate a comprehensive visual project recap as a self-contained HTML page.
 

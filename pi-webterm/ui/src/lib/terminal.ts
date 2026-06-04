@@ -6,7 +6,9 @@ let terminal: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let globalKeydownCleanup: (() => void) | null = null;
-let pendingSyntheticCtrlShiftEscSequence: string | null = null;
+// CSI-u key sequences are sent directly via options.onData and never
+// flow through xterm.js's terminal.onData, so no synthetic-follow-up
+// suppression is needed.
 const CTRL_SHIFT_HANDLED_FLAG = "__piCtrlShiftHandled" as const;
 
 type CtrlShiftHandledKeyboardEvent = KeyboardEvent & {
@@ -57,6 +59,40 @@ function wasCtrlShiftHandled(event: KeyboardEvent): boolean {
   );
 }
 
+/**
+ * Derive the unmodified Unicode code point from a physical key position
+ * (event.code).  Needed when Shift is held so we can recover the base
+ * character (e.g. codepoint 46 for `.` even though event.key is `>`).
+ *
+ * Letters and digits are handled by their Key<letter> / Digit<d> codes.
+ * Symbol keys use a fixed US-layout mapping (consistent because event.code
+ * is the physical key position, independent of keyboard layout).
+ */
+function getUnshiftedCodePoint(code: string): number {
+  if (code.startsWith("Key")) {
+    return code.charCodeAt(3) + 32; // "KeyA" (65) → 'a' (97)
+  }
+  if (code.startsWith("Digit")) {
+    return code.charCodeAt(5); // "Digit0" (48) … "Digit9" (57)
+  }
+
+  const map: Record<string, number> = {
+    Period: 46,
+    Comma: 44,
+    Slash: 47,
+    Semicolon: 59,
+    Quote: 39,
+    BracketLeft: 91,
+    BracketRight: 93,
+    Backslash: 92,
+    Backquote: 96,
+    Minus: 45,
+    Equal: 61,
+    Space: 32,
+  };
+  return map[code] ?? -1;
+}
+
 export function createTerminal(
   container: HTMLElement,
   options: {
@@ -73,7 +109,6 @@ export function createTerminal(
   resizeObserver = null;
   globalKeydownCleanup?.();
   globalKeydownCleanup = null;
-  pendingSyntheticCtrlShiftEscSequence = null;
 
   fitAddon = new FitAddon();
   terminal = new Terminal({
@@ -129,6 +164,16 @@ export function createTerminal(
       return false;
     }
 
+    // Build CSI-u sequence for Ctrl+Shift+Letter so the downstream
+    // application (Pi agent via tmux) can preserve the Shift modifier.
+    //   CSI-u format:  \e[<lowercase_codepoint>;6u
+    //   where modifier 6 = Ctrl+Shift = 1 + 1(u0020Shift) + 4(Ctrl).
+    //   Codepoint is the LOWERCASE letter (e.g. 97 for Ctrl+Shift+A).
+    const codeMatch = event.code?.match(/^Key([A-Z])$/);
+    const letter = codeMatch?.[1] ?? null;
+    const csiSeq =
+      letter !== null ? `\x1b[${letter.toLowerCase().charCodeAt(0)};6u` : null;
+
     if (event.type === "keyup") {
       const state = ctrlShiftForwardState.get(ctrlChar);
       if (state === "keydown") {
@@ -151,18 +196,20 @@ export function createTerminal(
         return false;
       }
 
+      // keyup fallback: macOS Brave swallows Ctrl+Shift+letter keydown
+      // in certain environments, so we forward on keyup as a fallback.
       ctrlShiftForwardState.set(ctrlChar, "keyup");
       markCtrlShiftHandled(event);
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      pendingSyntheticCtrlShiftEscSequence = `\x1b${ctrlChar}`;
-      console.log("[pi-webterm] synthetic ctrl+shift direct send", {
-        source: "keyup-fallback",
-        ctrlChar,
-        suppressedFollowup: pendingSyntheticCtrlShiftEscSequence,
-      });
-      options.onData?.(ctrlChar);
+      if (csiSeq) {
+        console.log("[pi-webterm] CSI-u ctrl+shift (keyup fallback)", {
+          csiSeq,
+          letter,
+        });
+        options.onData?.(csiSeq);
+      }
       logCtrlShiftDebug("forward:keyup-fallback", event, {
         matched: true,
         ctrlChar,
@@ -180,13 +227,13 @@ export function createTerminal(
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
-    pendingSyntheticCtrlShiftEscSequence = `\x1b${ctrlChar}`;
-    console.log("[pi-webterm] synthetic ctrl+shift direct send", {
-      source: "keydown",
-      ctrlChar,
-      suppressedFollowup: pendingSyntheticCtrlShiftEscSequence,
-    });
-    options.onData?.(ctrlChar);
+    if (csiSeq) {
+      console.log("[pi-webterm] CSI-u ctrl+shift (keydown)", {
+        csiSeq,
+        letter,
+      });
+      options.onData?.(csiSeq);
+    }
     logCtrlShiftDebug("forward:after", event, {
       matched: true,
       ctrlChar,
@@ -230,30 +277,92 @@ export function createTerminal(
     if (forwardCtrlShiftLetter(event)) {
       return false;
     }
+
+    // ── Ctrl+non-letter printable keys ───────────────────────
+    // xterm.js Keyboard.ts drops Ctrl+non-letter combinations
+    // (Ctrl+., Ctrl+,, Ctrl+/, etc.) because its handleable set is
+    // limited to: A-Z (control chars), Space (NUL), 3-8 (ESC..DEL),
+    // [/\] (ESC/FS/GS), and @/_ (NUL/US via key check).
+    //
+    // Everything else falls through with `result.key` undefined,
+    // so _keyDown returns true without emitting any data.
+    //
+    // We need to send a CSI-u (Kitty keyboard protocol) sequence so
+    // the downstream application (Pi agent via tmux) can distinguish
+    // e.g. Ctrl+. from a plain `.`.  Native terminal emulators send
+    // `\e[<codepoint>;<modifier>u` for this purpose.
+    if (
+      event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      event.type === "keydown"
+    ) {
+      if (event.key && event.key.length === 1) {
+        const code = event.key.charCodeAt(0);
+
+        // Letters A-Z/a-z are handled by xterm.js → skip
+        if ((code >= 65 && code <= 90) || (code >= 97 && code <= 122)) {
+          return true;
+        }
+
+        // Keys xterm.js maps to control characters (Ctrl only, no Shift)
+        if (!event.shiftKey) {
+          // Ctrl+Space → NUL
+          if (event.keyCode === 32) return true;
+          // Ctrl+3-8 → ESC through DEL
+          if (event.keyCode >= 51 && event.keyCode <= 56) return true;
+          // Ctrl+[/\] → ESC/FS/GS
+          if (
+            event.keyCode === 219 ||
+            event.keyCode === 220 ||
+            event.keyCode === 221
+          ) {
+            return true;
+          }
+        }
+
+        // Ctrl+@ → NUL, Ctrl+_ → US (handled by xterm.js via key check)
+        if (event.key === "@" || event.key === "_") return true;
+
+        // ── Send CSI-u (Kitty protocol) sequence ──────────────
+        //
+        // CSI-u format:  \e[<codepoint>;<modifier>u
+        //   codepoint  – Unicode code point of the UNMODIFIED key
+        //                 (e.g. 46 for `.`, 44 for `,`, 47 for `/`)
+        //   modifier   – 1-indexed bitmask:
+        //                 1 (none), 2 (shift), 3 (alt), 5 (ctrl),
+        //                 6 (ctrl+shift), 7 (ctrl+alt), …
+        //
+        // Without Shift, event.key is already the base character.
+        // With Shift, event.key reports the shifted glyph (e.g. `>`
+        // for period), so we derive the unshifted codepoint from
+        // the physical key position (event.code).
+        const csiMod = 1 + (event.shiftKey ? 1 : 0) + 4; // Ctrl = 4
+        const codepoint = event.shiftKey
+          ? getUnshiftedCodePoint(event.code)
+          : code;
+
+        if (codepoint > 0) {
+          const csiSeq = `\x1b[${codepoint};${csiMod}u`;
+          console.log("[pi-webterm] sending CSI-u:", {
+            csiSeq,
+            key: event.key,
+            code: codepoint,
+            modifier: csiMod,
+          });
+          options.onData?.(csiSeq);
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          return false;
+        }
+      }
+    }
+
     return true;
   });
 
   terminal.onData((data) => {
-    console.log("[pi-webterm] terminal.onData raw", {
-      data,
-      codePoints: Array.from(data).map((char) => char.charCodeAt(0)),
-      pendingSyntheticCtrlShiftEscSequence,
-    });
-    if (
-      pendingSyntheticCtrlShiftEscSequence &&
-      data === pendingSyntheticCtrlShiftEscSequence
-    ) {
-      console.log(
-        "[pi-webterm] terminal.onData suppressed synthetic follow-up",
-        {
-          data,
-          codePoints: Array.from(data).map((char) => char.charCodeAt(0)),
-        },
-      );
-      pendingSyntheticCtrlShiftEscSequence = null;
-      return;
-    }
-    pendingSyntheticCtrlShiftEscSequence = null;
     options.onData?.(data);
   });
 

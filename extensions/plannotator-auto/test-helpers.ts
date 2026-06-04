@@ -76,6 +76,7 @@ export type TestCtx = {
   abort: ReturnType<typeof vi.fn>;
   ui: {
     notify: ReturnType<typeof vi.fn>;
+    custom?: ReturnType<typeof vi.fn>;
   };
   sessionManager: {
     getSessionFile: () => string;
@@ -388,6 +389,7 @@ export function createTestContext(
     hasUI?: boolean;
     isIdle?: boolean;
     sessionFile?: string;
+    uiCustom?: ReturnType<typeof vi.fn>;
   } = {},
 ): TestCtx {
   return {
@@ -397,6 +399,7 @@ export function createTestContext(
     abort: vi.fn(),
     ui: {
       notify: vi.fn(),
+      custom: options.uiCustom,
     },
     sessionManager: {
       getSessionFile: () =>

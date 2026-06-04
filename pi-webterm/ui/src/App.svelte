@@ -54,7 +54,7 @@ let _deleteLoading = $state<Set<string>>(new Set()); // set of session names bei
 let _directories: DirectoryInfo[] = $state([]);
 let _loadingDirs = $state(false);
 let _loadingBranches = $state(false); // lazy branch load in progress
-let _branchLoadingDir = $state("");   // which dir is currently loading branches
+let _branchLoadingDir = $state(""); // which dir is currently loading branches
 
 // Create form — directory & branch
 let _directorySearch = $state(""); // search/filter input for directory list

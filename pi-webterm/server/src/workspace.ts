@@ -243,10 +243,7 @@ function incrementalRefresh(
   }
 
   // IO: check .git existence for all candidate paths
-  const allCandidatePaths = [
-    ...old.repos.map((r) => r.path),
-    ...dirPaths,
-  ];
+  const allCandidatePaths = [...old.repos.map((r) => r.path), ...dirPaths];
   const existingWithGit = new Set(
     allCandidatePaths.filter((p) => repoExists(p)),
   );
@@ -259,9 +256,7 @@ function incrementalRefresh(
   );
 
   return {
-    repos: [...kept, ...added].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    ),
+    repos: [...kept, ...added].sort((a, b) => a.name.localeCompare(b.name)),
     scannedAt: Date.now(),
     basePath,
   };

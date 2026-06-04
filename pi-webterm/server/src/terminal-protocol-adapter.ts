@@ -227,6 +227,8 @@ export function processBinaryFrameInput(
     : handleTerminalQueries(stripTerminalResponses(input)).filtered;
   const normalizedInput = cleanInput.replace(/\r?\n/g, "\r");
   const shouldDebugCtrlL =
-    input.includes("\f") || cleanInput.includes("\f") || normalizedInput.includes("\f");
+    input.includes("\f") ||
+    cleanInput.includes("\f") ||
+    normalizedInput.includes("\f");
   return { cleanInput, normalizedInput, shouldDebugCtrlL };
 }

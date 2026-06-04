@@ -52,7 +52,7 @@ export const defaultReviewTargetKindFromRelativePath = (
   if (
     parts.length === 6 &&
     targetDir === REVIEW_TARGET_ISSUES_DIR &&
-    Boolean(topicSlug) &&
+    topicSlug &&
     REVIEW_MARKDOWN_FILE_PATTERN.test(issueFileName)
   ) {
     return "plan";

@@ -1,10 +1,10 @@
-import { cli, Strategy } from "@jackwener/opencli/registry";
+import { writeFile } from "node:fs/promises";
 import {
   AuthRequiredError,
-  TimeoutError,
   CommandExecutionError,
+  TimeoutError,
 } from "@jackwener/opencli/errors";
-import { writeFile } from "node:fs/promises";
+import { cli, Strategy } from "@jackwener/opencli/registry";
 
 cli({
   site: "space",

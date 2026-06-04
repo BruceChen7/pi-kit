@@ -1,12 +1,12 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  shortHash,
-  getLocalBranches,
-  scanGitRepos,
   discoverWorkspace,
+  getLocalBranches,
   getWorkspaceCache,
   refreshWorkspace,
   resetWorkspaceCache,
+  scanGitRepos,
+  shortHash,
 } from "../workspace.js";
 
 // Use vi.hoisted to create mocks before vi.mock factories run (they're hoisted)

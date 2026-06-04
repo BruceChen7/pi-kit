@@ -1,6 +1,6 @@
 <script lang="ts">
 import { onDestroy, onMount, tick } from "svelte";
-import { api, type SessionInfo, type DirectoryInfo } from "./lib/api";
+import { api, type DirectoryInfo, type SessionInfo } from "./lib/api";
 import {
   clearSessionToken,
   getSessionToken,
@@ -178,7 +178,9 @@ async function _createAndAttach() {
     _creating = true;
 
     // Determine branch: new branch name or selected branch
-    const branch = _createNewBranchMode ? _createNewBranchName.trim() : _createBranch;
+    const branch = _createNewBranchMode
+      ? _createNewBranchName.trim()
+      : _createBranch;
     const baseBranch = _createNewBranchMode ? _baseBranch : undefined;
 
     if (!_selectedDirectoryPath) {
@@ -363,7 +365,8 @@ function _onSelectBranch(branch: string) {
   if (branch === "__new__") {
     _createNewBranchMode = true;
     _createNewBranchName = "";
-    _baseBranch = _createBranch && _createBranch !== "__new__" ? _createBranch : "main";
+    _baseBranch =
+      _createBranch && _createBranch !== "__new__" ? _createBranch : "main";
     _createBranch = "";
   } else {
     _createNewBranchMode = false;

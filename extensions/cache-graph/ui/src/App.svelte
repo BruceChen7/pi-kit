@@ -1,16 +1,16 @@
 <script lang="ts">
 import {
-  type ChartBarDetail,
   buildChartBarDetail,
+  type ChartBarDetail,
   type ChartView,
 } from "../../chart-details.ts";
 import {
   buildRepoOptions,
+  type ChartRange,
   filterRowsForGraph,
   formatDateInputValue,
-  totalsForRows,
-  type ChartRange,
   type RepoFilter,
+  totalsForRows,
 } from "../../chart-filters.ts";
 import {
   formatShortTimeRange,

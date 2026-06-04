@@ -90,8 +90,9 @@ export class WsClient {
       this.scheduleReconnect();
     };
 
-    this.ws.onerror = (_err: Event) => {
+    this.ws.onerror = (err: Event) => {
       this._status = "error";
+      this.options.onError?.(err);
     };
 
     this.ws.onmessage = (event: MessageEvent) => {

@@ -76,7 +76,7 @@
     "@sinclair/typebox": "^0.34.49",
     "defuddle": "0.14.0",
     "diff": "^8.0.4",
-    "glimpseui": "^0.8.0",
+    "glimpseui": "^0.8.1",
     "typebox": "^1.1.38"
   }
 }

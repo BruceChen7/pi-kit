@@ -215,9 +215,7 @@ describe("computeRepoDiff", () => {
 
 describe("getCachePath", () => {
   it("returns path under controlled home directory", () => {
-    expect(getCachePath()).toBe(
-      "/fake-home/.pi-webterm/workspace-cache.json",
-    );
+    expect(getCachePath()).toBe("/fake-home/.pi-webterm/workspace-cache.json");
   });
 });
 
@@ -355,8 +353,17 @@ describe("scanGitRepos", () => {
   beforeEach(resetAllMocks);
 
   it.each([
-    { desc: "fd command fails", arrange: () => mockExecSync.mockImplementation(() => { throw new Error("fd failed"); }) },
-    { desc: "base path does not exist", arrange: () => mockExistsSync.mockReturnValue(false) },
+    {
+      desc: "fd command fails",
+      arrange: () =>
+        mockExecSync.mockImplementation(() => {
+          throw new Error("fd failed");
+        }),
+    },
+    {
+      desc: "base path does not exist",
+      arrange: () => mockExistsSync.mockReturnValue(false),
+    },
   ])("returns empty array when $desc", ({ arrange }) => {
     arrange();
     expect(scanGitRepos("/tmp")).toEqual([]);
@@ -364,7 +371,13 @@ describe("scanGitRepos", () => {
 
   it("orchestrates fd + filesystem to produce repos with lazy branches", () => {
     mockExistsSync.mockImplementation(
-      hasDotGit("/tmp", "/tmp/repo-a", "/tmp/repo-b", "/tmp/repo-a/.git", "/tmp/repo-b/.git"),
+      hasDotGit(
+        "/tmp",
+        "/tmp/repo-a",
+        "/tmp/repo-b",
+        "/tmp/repo-a/.git",
+        "/tmp/repo-b/.git",
+      ),
     );
     mockExecSync.mockImplementation((cmd: string) =>
       cmd.includes("fd") ? "/tmp/repo-b/.git\n/tmp/repo-a/.git\n" : "",
@@ -555,9 +568,7 @@ describe("workspace cache (default singleton)", () => {
     resetWorkspaceCache();
 
     const diskCache: WorkspaceCache = {
-      repos: [
-        { path: "/tmp/repo", name: "repo", branches: ["main"] },
-      ],
+      repos: [{ path: "/tmp/repo", name: "repo", branches: ["main"] }],
       scannedAt: 100,
       basePath: "/tmp",
     };
@@ -602,9 +613,7 @@ describe("WorkspaceScanner class", () => {
 
   it("getWorkspaceCache on fresh instance falls through to disk cache", () => {
     const diskCache: WorkspaceCache = {
-      repos: [
-        { path: "/cached/repo", name: "repo", branches: ["main"] },
-      ],
+      repos: [{ path: "/cached/repo", name: "repo", branches: ["main"] }],
       scannedAt: 100,
       basePath: process.cwd(),
     };
@@ -635,9 +644,7 @@ describe("WorkspaceScanner class", () => {
     scanner.resetCache();
 
     const diskCache: WorkspaceCache = {
-      repos: [
-        { path: "/tmp/repo", name: "repo", branches: ["main"] },
-      ],
+      repos: [{ path: "/tmp/repo", name: "repo", branches: ["main"] }],
       scannedAt: 100,
       basePath: "/tmp",
     };

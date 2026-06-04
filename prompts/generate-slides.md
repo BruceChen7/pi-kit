@@ -1,6 +1,5 @@
 ---
 description: Generate a stunning magazine-quality slide deck as a self-contained HTML page
-skills: [plannotator-visual-explainer, visual-explainer]
 ---
 Generate a slide deck for: $@
 

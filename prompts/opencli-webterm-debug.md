@@ -1,7 +1,6 @@
 ---
 description: Specialize the generic browser-debug workflow for pi-webterm
 argument-hint: "[url] [focus: width|pty|switch|full] [extra-instructions]"
-skills: [opencli-browser, systematic-debugging]
 ---
 Use `browser-debug` as the base workflow, then apply these `pi-webterm`-specific checks.
 

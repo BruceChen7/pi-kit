@@ -1,6 +1,5 @@
 ---
 description: Verify the factual accuracy of a document against the actual codebase, correct inaccuracies in place
-skills: [plannotator-visual-explainer, visual-explainer]
 ---
 Verify the factual accuracy of a document that makes claims about a codebase. Read the file, extract every verifiable claim, check each against the actual code and git history, correct inaccuracies in place, and add a verification summary.
 

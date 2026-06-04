@@ -1,6 +1,5 @@
 ---
 description: Generate a beautiful standalone HTML diagram and deliver it with Plannotator annotation UI
-skills: [plannotator-visual-explainer, visual-explainer]
 ---
 Generate an HTML diagram for: $@
 

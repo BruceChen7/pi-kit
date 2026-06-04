@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { GitRepo, WorkspaceCache } from "../workspace.js";
 import {
   computeRepoDiff,
   discoverWorkspace,
@@ -14,7 +15,6 @@ import {
   shortHash,
   WorkspaceScanner,
 } from "../workspace.js";
-import type { GitRepo, WorkspaceCache } from "../workspace.js";
 
 // Use vi.hoisted to create mocks before vi.mock factories run (they're hoisted)
 const {
@@ -123,7 +123,7 @@ describe("computeRepoDiff", () => {
     name: "repo-b",
     branches: ["feature/x"],
   };
-  const repoC: GitRepo = {
+  const _repoC: GitRepo = {
     path: "/tmp/repo-c",
     name: "repo-c",
     branches: [],

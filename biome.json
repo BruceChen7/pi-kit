@@ -16,13 +16,21 @@
   },
   "overrides": [
     {
-      "includes": ["*.svelte"],
+      "includes": ["**/*.svelte"],
       "formatter": {
         "indentWidth": 2
       },
       "javascript": {
         "formatter": {
           "quoteStyle": "double"
+        }
+      },
+      "linter": {
+        "rules": {
+          "recommended": true,
+          "correctness": {
+            "noUnusedVariables": "off"
+          }
         }
       }
     }

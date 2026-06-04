@@ -36,9 +36,17 @@ You are executing a git workflow for branching, committing, and pushing.
   - Otherwise propose a descriptive branch name based on the diff and confirm.
   - `git checkout -b <branch>`.
 
-## Step 3: Quality checks (if applicable)
-- If repo instructions or `package.json` include format/lint scripts, run them when code files changed.
-- If checks fail, report the failure and ask whether to continue.
+## Step 3: Quality gate — format & lint (mandatory when detected)
+
+This step is a hard gate: if the project has format/lint tooling configured, both must pass before committing.
+
+Read `references/format-lint-check.md` for the full detection and execution guide.
+
+1. **Detect available tools** — check `package.json` scripts, then config files on disk, then fallback probes. Follow the order in the reference.
+2. **Run format** in auto-fix mode (`--write`), then stage any formatting changes.
+3. **Run lint** in check-only mode. If lint exits non-zero, **block** and report the output to the user. Do not auto-fix lint issues.
+4. **If no format/lint tooling is found**, skip this step — it is not a blocker.
+5. **If format or lint fails** (tool error, not just warnings), block the commit and report what went wrong.
 
 ## Step 4: Commit
 - Stage changes (`git add -A` unless the user requests a narrower scope).

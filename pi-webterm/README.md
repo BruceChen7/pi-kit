@@ -4,12 +4,12 @@
 WebSocket + tmux 远程访问本地的 [Pi](https://github.com/earendil-works/pi-coding-agent) 编码 Agent。
 
 ```
-┌──────────┐  WS  ┌──────────────┐ node-pty ┌──────────┐  PTY ┌──────────┐
-│  Svelte  │◄────►│  Node.js     │◄────────►│  tmux    │◄────►│  pi /    │
-│  xterm   │      │  守护进程     │          │  持久化   │      │  claude  │
-│  PWA     │      │  Fastify     │          │  层      │      │  codex   │
-└──────────┘      │  + node-pty  │          └──────────┘      └──────────┘
-                  └──────────────┘
+┌──────────┐  WS   ┌──────────────┐ node-pty       ┌──────┐  PTY  ┌──────────┐
+│  Svelte  │◄─────►│  Node.js     │◄──spawn──►     │ tmux │◄─────►│  pi /    │
+│  xterm   │       │  守护进程     │  tmux attach    │ 持久化│       │  claude  │
+│  PWA     │       │  Fastify     │  -session       │ 层   │       │  codex   │
+└──────────┘       │  + node-pty  │                └──────┘       └──────────┘
+                   └──────────────┘
 ```
 
 ## 功能
@@ -17,88 +17,78 @@ WebSocket + tmux 远程访问本地的 [Pi](https://github.com/earendil-works/pi
 - **手机访问**：通过 PWA + xterm.js 在手机上使用 Pi
 - **会话持久化**：tmux 保持 Agent 运行，浏览器断开不影响
 - **实时 I/O**：node-pty 实时双向通道，无需轮询
-- **安全认证**：Ed25519 签名 + Token 降级方案
-- **多 session**：tmuxSessionName 自动包含工作目录名，项目间隔离
+- **安全认证**：用户名/密码登录 → Bearer Token → WebSocket 首次消息认证
+- **多 Session 管理**：tmux session 命名规则 `pw__<dirname>__<branchname>`，项目间隔离
+- **Session 快照恢复**：重连时通过 tmux capture-pane 拉取最近 200 行历史输出
 
 ## 快速开始
 
 ```bash
-# 构建 UI + 启动
-make run
-
-# 或者分步执行
-make build
+# 安装依赖 + 启动开发服务器 (tsx watch 模式)
 make dev
+
+# 或分步执行
+make install         # 安装 server + UI 依赖
+make build           # 构建 UI (vite build → ui/dist/)
+make run             # 构建 UI + 启动服务
 ```
 
-启动后访问 `http://<本机IP>:4730`，输入 Token 即可连接。
+启动后访问 `http://<本机IP>:4730`，输入用户名和密码即可登录。
 
 ## 配置
 
-| 选项 | 环境变量 | 默认值 | 说明 |
-|------|---------|--------|------|
-| `--port` | `PI_WEBTERM_PORT` | 4730 | 监听端口 |
-| `--host` | `PI_WEBTERM_HOST` | 0.0.0.0 | 监听地址 |
-| `--token` | `PI_WEBTERM_TOKEN` | 自动生成 | 认证 Token |
-| `--agent` | `PI_WEBTERM_AGENT` | pi | Agent 命令 |
-| `--cwd` | `PI_WEBTERM_CWD` | process.cwd() | 工作目录 |
-| `--no-auto-start` | — | — | 不自动启动 Agent |
+| 选项 | CLI 参数 | 环境变量 | 默认值 | 说明 |
+|------|---------|---------|--------|------|
+| 端口 | `--port`, `-p` | `PI_WEBTERM_PORT` | 4730 | 监听端口 |
+| 地址 | `--host` | `PI_WEBTERM_HOST` | 0.0.0.0 | 监听地址 |
+| 用户名 | `--username`, `-u` | `PI_WEBTERM_USERNAME` | admin | 登录用户名 |
+| 密码 | `--password`, `-pwd` | `PI_WEBTERM_PASSWORD` | admin | 登录密码 |
+| Agent 命令 | `--agent` | `PI_WEBTERM_AGENT` | pi | Agent 启动命令 |
+| 工作目录 | `--cwd` | `PI_WEBTERM_CWD` | process.cwd() | Agent 工作目录 |
+| 数据目录 | `--data-dir` | `PI_WEBTERM_DATADIR` | ~/.pi/pi-webterm/ | 持久化配置存储 |
+| 不自动启动 Agent | `--no-auto-start` | `PI_WEBTERM_AUTOSTARTAGENT` | — | Agent 仅在 WS 连接时 attach |
 
-### 命令行
+> 安全警告：`0.0.0.0` 上暴露时需 8+ 字符强密码。
+
+### CLI 示例
 
 ```bash
-npm run dev -- --port 8080 --token my-token
-node src/index.ts --port 8080 --agent claude
+cd server && npx tsx src/index.ts --port 8080 --username admin --password my-secret-pwd
+cd server && npx tsx src/index.ts --agent claude --cwd /path/to/project
 ```
 
-### 环境变量
+### 环境变量示例
 
 ```bash
 export PI_WEBTERM_PORT=8080
-export PI_WEBTERM_TOKEN=my-secret-token
-npm run dev
+export PI_WEBTERM_USERNAME=admin
+export PI_WEBTERM_PASSWORD=my-secret-pwd
+cd server && npx tsx src/index.ts
 ```
 
-## Protocol
+## REST API
 
-WebSocket 使用混合二进制/JSON 协议：
-
-```
-┌─────┬──────────┬────────────────────────────┐
-│ 1字节 │ 变长     │ 变长                       │
-│ 类型  │ sessionId│ 数据                       │
-├─────┼──────────┼────────────────────────────┤
-│ 0x00 │ "pi-agent"│ 原始 ANSI 字节 (终端 I/O)  │ ← 二进制帧
-│ 0x01 │ —        │ JSON 字符串 (控制消息)      │ ← JSON 帧
-└─────┴──────────┴────────────────────────────┘
-```
-
-### REST API
+所有端点（除 `/api/health`、`/api/setup`、`/api/login` 外）均需 `Authorization: Bearer <token>` header。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/health` | 健康检查 |
-| GET | `/api/setup` | 获取公钥和 Token 提示 |
-| GET | `/api/sessions` | 列出 session |
-| POST | `/api/sessions` | 创建 session |
-| DELETE | `/api/sessions/:name` | 删除 session |
-
-API 需要 `Authorization: Bearer <token>` header。
+| `GET` | `/api/health` | 健康检查 |
+| `GET` | `/api/setup` | 获取服务器信息 |
+| `POST` | `/api/login` | 用户名/密码登录，返回 master token + session 列表 |
+| `POST` | `/api/logout` | 登出 |
+| `GET` | `/api/sessions` | 列出所有 session |
+| `POST` | `/api/sessions` | 创建新 session |
+| `GET` | `/api/sessions/:name` | Session 详情 |
+| `POST` | `/api/sessions/:name/attach` | Attach 到 session |
+| `DELETE` | `/api/sessions/:name` | 删除 session |
 
 ## 开发
 
 ```bash
-# 运行测试
-make test
-
-# 监听模式
-make test-watch
-
-# 类型检查
-make typecheck
-
-# 清理
-make clean
+make test           # 运行测试
+make test-watch     # 监听模式
+make typecheck      # 类型检查
+make clean          # 清理构建产物
 ```
 
 ## License

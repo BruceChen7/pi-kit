@@ -95,6 +95,28 @@ function defaultDataDir(): string {
   return join(homedir(), ".pi", "pi-webterm");
 }
 
+/**
+ * Expand leading `~` to the user's home directory.
+ * Supports `~/path` and `~user/path` (if user is current user).
+ */
+function expandTilde(path: string): string {
+  if (path.startsWith("~/")) {
+    return join(homedir(), path.slice(2));
+  }
+  if (path === "~" || path === "~/" || path === "") {
+    return homedir();
+  }
+  // ~user/... — only expand if user matches current user
+  if (path.startsWith("~")) {
+    const end = path.indexOf("/");
+    const user = end === -1 ? path.slice(1) : path.slice(1, end);
+    if (user === homedir().split("/").pop()) {
+      return end === -1 ? homedir() : join(homedir(), path.slice(end + 1));
+    }
+  }
+  return path;
+}
+
 function ensureDataDir(dir: string): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
@@ -134,7 +156,7 @@ export function loadConfig(args: CliArgs = {}): Config {
   const persisted = readPersistedConfig(dataDir);
 
   const cwd = args.cwd || env("cwd") || process.cwd();
-  const resolvedCwd = resolve(cwd);
+  const resolvedCwd = resolve(expandTilde(cwd));
 
   const agentCommand =
     args.agentCommand || env("agent") || persisted?.agentCommand || "pi";

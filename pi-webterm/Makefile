@@ -5,7 +5,7 @@
 dev: install
 	@echo "Starting Pi WebTerm in dev mode..."
 	@echo "Open http://localhost:4730 in your browser."
-	@cd server && npx tsx watch src/index.ts
+	@cd server && npx tsx watch src/index.ts --cwd ~/work
 
 # ─── Build ──────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ clean:
 run: build
 	@echo "\n  🔗 Pi WebTerm starting..."
 	@echo "  📱 Open in mobile browser: http://<your-ip>:4730\n"
-	@cd server && npx tsx src/index.ts
+	@cd server && npx tsx src/index.ts --cwd ~/work
 
 # ─── Type Check ─────────────────────────────────────────────────
 

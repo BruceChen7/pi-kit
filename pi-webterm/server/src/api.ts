@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { IPty } from "node-pty";
@@ -29,6 +30,7 @@ import {
 } from "./terminal-protocol-adapter.js";
 import { attachToSession, capturePane, detachPty, hasSession } from "./tmux.js";
 import {
+  getLocalBranches,
   getWorkspaceCache,
   refreshWorkspace,
   type WorkspaceCache,
@@ -350,6 +352,28 @@ export function registerRoutes(
     async () => {
       const cfg = getConfig();
       return toWorkspaceResponse(refreshWorkspace(cfg.cwd));
+    },
+  );
+
+  // Lazy-load branches for a specific repo (avoids fetching all branches upfront)
+  fastify.get(
+    "/api/workspace/repo/branches",
+    { preHandler: authPreHandler },
+    async (request: any, reply: any) => {
+      const { path } = request.query as { path?: string };
+      if (!path) return reply.status(400).send({ error: "path required" });
+
+      const decodedPath = decodeURIComponent(path);
+      if (!decodedPath || !existsSync(decodedPath)) {
+        return reply.status(404).send({ error: "directory not found" });
+      }
+
+      const branches = getLocalBranches(decodedPath);
+      return {
+        path: decodedPath,
+        name: decodedPath.split("/").pop() ?? decodedPath,
+        branches,
+      };
     },
   );
 

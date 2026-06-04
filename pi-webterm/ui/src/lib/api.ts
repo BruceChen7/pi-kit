@@ -165,4 +165,18 @@ export const api = {
     if (!res.ok) throw new Error("Failed to refresh directories");
     return res.json();
   },
+
+  async fetchRepoBranches(
+    token: string,
+    repoPath: string,
+  ): Promise<DirectoryInfo> {
+    const res = await fetch(
+      apiUrl(
+        `/api/workspace/repo/branches?path=${encodeURIComponent(repoPath)}`,
+      ),
+      { headers: headers(token) },
+    );
+    if (!res.ok) throw new Error("Failed to fetch repo branches");
+    return res.json();
+  },
 };

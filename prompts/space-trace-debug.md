@@ -27,7 +27,7 @@ Fetch and analyze a Shopee Space trace using `opencli space trace`. Always save 
    mkdir -p ~/.space/traces/
    ```
 
-   Use Node.js or Python to fetch the raw API data and save specific event attributes (e.g., `resp.data`) to a file under `~/.space/traces/`. Name the file descriptively, e.g.:
+   Pipe the `opencli space trace` JSON output through `jq` (see example below) to extract specific event attributes (e.g., `resp.data`) to a file under `~/.space/traces/`. Name the file descriptively, e.g.:
 
    - `~/.space/traces/<trace-id>-<span-operation>-resp.json`
    - `~/.space/traces/<trace-id>-<span-operation>-req.json`
@@ -55,34 +55,32 @@ Example:
 ~/.space/traces/b11ba3af53-0700004e125f-get_post_products-resp.json
 ```
 
-## Example: extracting resp.data to file via Node.js
+## Example: extracting event attribute to file via opencli + jq
 
-```js
-const token = "your-token-here";
+You already fetched the full trace with `opencli space trace --show-detail`. Pipe its JSON output through `jq` to extract the desired attribute without writing a separate script:
 
-fetch("https://log.shopee.io/openapi/v1/trace/search/trace/detail", {
-  method: "POST",
-  headers: { "x-openapi-key": token, "Content-Type": "application/json" },
-  body: JSON.stringify({ trace_id: "<TRACE_ID>" }),
-})
-.then(r => r.json())
-.then(d => {
-  const fs = require("fs");
-  for (const s of d.spans || []) {
-    if (s.operation === "[*]get_post_products") {
-      for (const e of s.events || []) {
-        for (const a of e.attributes || []) {
-          if (a.key === "resp.data") {
-            const raw = a.value.stringValue;
-            fs.writeFileSync(path, raw, "utf-8");
-            console.log("Saved:", path);
-          }
-        }
-      }
-    }
-  }
-})
+```bash
+opencli space trace --trace-id <TRACE_ID> --env live --show-detail --max-event-length 0 -f json \
+  | jq '.spans[] | select(.operation == "[*]get_post_products") | .events[].attributes[] | select(.key == "resp.data") | .value.stringValue' \
+  > ~/.space/traces/<trace-id>-get_post_products-resp.json
 ```
+
+If the attribute value is a JSON string itself (common for `resp.data`/`req.data`), remove the outer quotes and parse it:
+
+```bash
+opencli space trace --trace-id <TRACE_ID> --env live --show-detail --max-event-length 0 -f json \
+  | jq -r '.spans[] | select(.operation == "[*]get_post_products") | .events[].attributes[] | select(.key == "resp.data") | .value.stringValue' \
+  | jq '.' \
+  > ~/.space/traces/<trace-id>-get_post_products-resp.json
+```
+
+| Piece | Purpose |
+|---|---|
+| `-r` | raw output — strips surrounding JSON quotes |
+| `jq '.'` | re-parse the string as JSON and pretty-print |
+| `> file` | save to file (never print large payloads to terminal) |
+
+Need a different attribute? Just change `.key == "resp.data"` to the field you want (e.g., `req.data`, `error.message`, `db.statement`).
 
 Trace ID: ${1:-}
 Environment: ${2:-live}

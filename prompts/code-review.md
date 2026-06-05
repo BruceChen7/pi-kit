@@ -1,14 +1,29 @@
 ---
 description: Review code/test changes using Boundaries Refactor + TDD principles with P0-P3 severity classification
-argument-hint: "[path]"
+argument-hint: "[scope]"
 ---
 Review the code or test changes using two complementary frameworks:
 
 1. **Boundaries Refactor (Functional Core, Imperative Shell)** — Identify where IO/side effects mix with pure decision logic, where boundaries DTOs are missing, and where module-level mutable state leaks. Read `/skill:boundaries-refactor` for full reference.
 2. **me-tdd** — Evaluate whether tests verify behavioral contracts through public interfaces, or are coupled to implementation details, mock too deeply, or assert on call-choreography instead of outcomes. Read `/skill:me-tdd` for full reference.
 
+## Scope detection
+
+Determine what to review based on the argument (`$@`):
+
+- **No argument**: uncommitted changes only — `git diff` (working tree) and `git diff --staged` (staged)
+- **Commit ref** (e.g. `HEAD`, `HEAD~1`, `abc123`): that commit's changes — `git diff <ref>~1 <ref>` and `git log -1 <ref>`
+- **Commit range** (e.g. `abc123..def456`): diff between two commits
+- **Branch name** (e.g. `main`, `develop`): working tree vs that branch — `git diff <branch>`
+- **PR number** (e.g. `#42`): `gh pr diff 42`
+
+For commit/range/PR scopes, also read commit messages for context:
+- `git log -1 --format="%H%n%an%n%ad%n%s%n%b" <ref>` for a single commit
+- `git log --oneline <range>` for a range
+
 ## Steps
 
+0. **Determine scope**: apply the scope detection above. If reviewing a commit or range, first read commit messages (`git log -1`, `git log --oneline`) and display them for context.
 1. Read every modified file in full
 2. Read both skill references to internalize the principles
 3. Classify each finding by severity:
@@ -53,11 +68,3 @@ Review the code or test changes using two complementary frameworks:
 |------|------|------|------|
 | 🔴 P0 | ... | ... | ... |
 ```
-
-## Scope
-
-`$1` — target path or scope (optional, defaults to current working tree diff):
-- Omitted: review the current working tree changes
-- `path/to/file.ts`: review only that file
-- `path/to/`: review a directory
-- `tests/`: focus review on test quality

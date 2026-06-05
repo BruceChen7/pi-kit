@@ -531,7 +531,9 @@ describe("workspace cache (default singleton)", () => {
     const cache = refreshWorkspace("/tmp");
     expect(cache.basePath).toBe("/tmp");
     // fd was called (full scan occurred)
-    const allCmds = mockExecSync.mock.calls.map((c: any[]) => c[0]);
+    const allCmds = mockExecSync.mock.calls.map(
+      (c: Parameters<typeof mockExecSync>) => c[0],
+    );
     const fdCalls = allCmds.filter((c: string) => c.includes("fd"));
     expect(fdCalls.length).toBeGreaterThanOrEqual(1);
   });

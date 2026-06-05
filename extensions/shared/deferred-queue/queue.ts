@@ -164,7 +164,11 @@ export class Queue {
 
     // ── 3. Shell: execute each due task ────────────────────────
     for (const id of dueIds) {
-      const task = this.tasks.get(id)!;
+      const task = this.tasks.get(id);
+      if (!task) {
+        log.warn("task definition not found, skipping", { id });
+        continue;
+      }
 
       // Try to acquire exclusive lock to prevent duplicate execution
       // across multiple Pi processes

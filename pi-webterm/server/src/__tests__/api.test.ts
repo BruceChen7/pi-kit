@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import type { IPty } from "node-pty";
 import {
   afterAll,
   beforeAll,
@@ -91,7 +92,7 @@ describe("API routes", () => {
     sessionToken = generateSessionToken("admin");
 
     await fastify.register(import("@fastify/cors"));
-    registerRoutes(fastify, {} as any);
+    registerRoutes(fastify, {} as unknown);
     await fastify.ready();
   });
 
@@ -559,8 +560,8 @@ describe("active PTY session lifecycle", () => {
   });
 
   it("detaches the previous PTY when re-registering the same session", () => {
-    const firstPty = { kill: vi.fn() } as any;
-    const secondPty = { kill: vi.fn() } as any;
+    const firstPty = { kill: vi.fn() } as unknown as IPty;
+    const secondPty = { kill: vi.fn() } as unknown as IPty;
 
     registerActivePtySession("pw__demo__main", firstPty);
     registerActivePtySession("pw__demo__main", secondPty);
@@ -571,8 +572,8 @@ describe("active PTY session lifecycle", () => {
   });
 
   it("ignores stale cleanup from an older PTY after a newer one replaced it", () => {
-    const firstPty = { kill: vi.fn() } as any;
-    const secondPty = { kill: vi.fn() } as any;
+    const firstPty = { kill: vi.fn() } as unknown as IPty;
+    const secondPty = { kill: vi.fn() } as unknown as IPty;
 
     registerActivePtySession("pw__demo__main", firstPty);
     registerActivePtySession("pw__demo__main", secondPty);

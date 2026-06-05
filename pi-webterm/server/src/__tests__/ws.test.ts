@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { WsConnection } from "../ws.js";
 import {
   decodeFrame,
   encodeBinaryFrame,
@@ -98,12 +99,12 @@ describe("handleConnection", () => {
   it("terminates on unknown message type", () => {
     const send = vi.fn();
     const terminate = vi.fn();
-    const conn = {
+    const conn: WsConnection = {
       sessionName: "pi-agent",
       send,
       terminate,
       pty: null,
-    } as any;
+    };
 
     handleConnection(conn, encodeJsonFrame("pi-agent", { type: "unknown" }));
     expect(terminate).toHaveBeenCalledTimes(1);
@@ -111,12 +112,12 @@ describe("handleConnection", () => {
 
   it("sends pong on ping", () => {
     const frames: Buffer[] = [];
-    const conn = {
+    const conn: WsConnection = {
       sessionName: "pi-agent",
-      send: (data: any) => frames.push(Buffer.from(data)),
+      send: (data: Buffer) => frames.push(Buffer.from(data)),
       terminate: vi.fn(),
       pty: null,
-    } as any;
+    };
 
     handleConnection(conn, encodeJsonFrame("pi-agent", { type: "ping" }));
 

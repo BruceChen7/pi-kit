@@ -4,7 +4,12 @@ import { FileLock } from "./file-lock.ts";
 import { createExecContext } from "./handler-registry.ts";
 import { log } from "./logger.ts";
 import { Persister } from "./persister.ts";
-import type { ExecContext, QueueConfig, TaskDefinition } from "./types.ts";
+import type {
+  ExecContext,
+  QueueConfig,
+  TaskDefinition,
+  TaskPersistenceRecord,
+} from "./types.ts";
 
 /**
  * Deferred Queue — a natural-time-interval task scheduler.
@@ -113,6 +118,91 @@ export class Queue {
   }
 
   /**
+   * List registered tasks with their metadata (id, every, description, last run info).
+   * Returns an array suitable for displaying in a picker.
+   */
+  listWithMeta(): Array<{
+    id: string;
+    every: string;
+    description?: string;
+    lastRunAt: number | null;
+    lastResult: TaskPersistenceRecord["lastResult"];
+    triggeredBy?: "auto" | "manual";
+  }> {
+    const result: Array<{
+      id: string;
+      every: string;
+      description?: string;
+      lastRunAt: number | null;
+      lastResult: TaskPersistenceRecord["lastResult"];
+      triggeredBy?: "auto" | "manual";
+    }> = [];
+    for (const [id, task] of this.tasks) {
+      const rec = this.persister.getRecord(id);
+      result.push({
+        id,
+        every: task.every,
+        description: task.description,
+        lastRunAt: rec?.lastRunAt ?? null,
+        lastResult: rec?.lastResult,
+        triggeredBy: rec?.triggeredBy,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Execute a task immediately, out-of-band.
+   *
+   * Does NOT update lastRunAt — the automatic schedule is unaffected.
+   * Records lastResult with triggeredBy: "manual" for audit.
+   * Skips if the file lock is held (another process is executing).
+   *
+   * Returns { executed: true } on success, or { executed: false, reason }
+   * if the task cannot be run.
+   */
+  async runNow(
+    taskId: string,
+  ): Promise<{ executed: boolean; reason?: string }> {
+    const task = this.tasks.get(taskId);
+    if (!task) {
+      return { executed: false, reason: `task "${taskId}" not found` };
+    }
+
+    if (!this.fileLock.tryLock()) {
+      return {
+        executed: false,
+        reason: `task "${taskId}" is currently being executed by another process`,
+      };
+    }
+
+    try {
+      log.info("task manually triggered", { id: taskId });
+      this.config.onTaskStatus?.(taskId, "running");
+
+      try {
+        await task.handler(this.execContext);
+        this.persister.setLastResult(taskId, "ok", "manual");
+        this.config.onTaskStatus?.(taskId, "completed");
+        log.info("manual task completed successfully", { id: taskId });
+      } catch (_error) {
+        this.persister.setLastResult(taskId, "error", "manual");
+        this.config.onTaskStatus?.(taskId, "failed");
+        log.warn("manual task failed", {
+          id: taskId,
+          error: _error instanceof Error ? _error.message : String(_error),
+        });
+      } finally {
+        this.persister.flush();
+      }
+
+      return { executed: true };
+    } finally {
+      this.fileLock.unlock();
+    }
+  }
+
+  /**
    * Start the check loop.
    * Does nothing if already running.
    */
@@ -179,7 +269,7 @@ export class Queue {
 
       try {
         executed++;
-        this.persister.setLastRunAt(id, now);
+        this.persister.setLastRunAt(id, now, "auto");
         this.persister.flush();
         log.info("task executing", { id });
         this.config.onTaskStatus?.(id, "running");

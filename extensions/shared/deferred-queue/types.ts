@@ -103,6 +103,7 @@ export interface QueueConfig {
 export interface TaskPersistenceRecord {
   lastRunAt: number;
   lastResult?: "ok" | "error";
+  triggeredBy?: "auto" | "manual";
 }
 
 /**

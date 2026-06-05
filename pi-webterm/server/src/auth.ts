@@ -200,11 +200,12 @@ export interface WsAuthMessage {
 }
 
 export function authenticateWsMessage(msg: unknown): msg is WsAuthMessage {
+  const record = msg as Record<string, unknown> | null;
   return (
     typeof msg === "object" &&
     msg !== null &&
-    (msg as any).type === "auth" &&
-    typeof (msg as any).token === "string"
+    record?.type === "auth" &&
+    typeof record?.token === "string"
   );
 }
 

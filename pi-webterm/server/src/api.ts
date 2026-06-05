@@ -1,7 +1,20 @@
 import { existsSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { IPty } from "node-pty";
+
+/**
+ * Minimal socket interface for WebSocket operations.
+ * @fastify/websocket uses ws under the hood but ws has no bundled types,
+ * so we define the subset we need here instead of reaching for `any`.
+ */
+interface WsSocket {
+  close(code: number, reason?: string): void;
+  send(data: unknown, cb?: (err?: Error) => void): void;
+  on(event: string, listener: (...args: unknown[]) => void): this;
+  off(event: string, listener: (...args: unknown[]) => void): this;
+}
+
 import {
   type AuthRequest,
   authenticateWsMessage,
@@ -44,8 +57,8 @@ export { handleTerminalQueries, stripTerminalResponses };
 const activePtySessions = new Map<string, IPty>();
 
 // Maps WebSocket connection → tmux session name (for multi-session routing)
-const socketSessionMap = new Map<any, string>();
-const socketProtocolAdapterMap = new Map<any, TerminalProtocolAdapter>();
+const socketSessionMap = new Map<object, string>();
+const socketProtocolAdapterMap = new Map<object, TerminalProtocolAdapter>();
 
 // ─── Cleanup (for graceful shutdown) ───────────────────────────
 
@@ -113,8 +126,11 @@ export function registerRoutes(
   _options: unknown,
 ): void {
   const auth = createAuthMiddleware();
-  const authPreHandler = async (request: any, reply: any) => {
-    if (await auth(request as AuthRequest)) {
+  const authPreHandler = async (
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ) => {
+    if (await auth(request as unknown as AuthRequest)) {
       return;
     }
     reply.status(401).send({ error: "Unauthorized" });
@@ -141,33 +157,39 @@ export function registerRoutes(
   });
 
   // Login — returns master token + list of existing pw__ sessions
-  fastify.post("/api/login", async (request: any, reply: any) => {
-    const { username, password } = request.body || {};
-    if (!username || !password) {
-      return reply
-        .status(400)
-        .send({ error: "Username and password are required" });
-    }
-    const cfg = getConfig();
-    if (validateCredentials(cfg.username, cfg.password, username, password)) {
-      const token = generateSessionToken(username); // master token (no sessionId)
-      const sessions = listPwSessions().map((s) => ({
-        ...s,
-        attached: activePtySessions.has(s.name),
-      }));
-      return { token, expiresIn: 86400, sessions };
-    }
-    return reply.status(401).send({ error: "Invalid credentials" });
-  });
+  fastify.post(
+    "/api/login",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { username, password } = request.body || {};
+      if (!username || !password) {
+        return reply
+          .status(400)
+          .send({ error: "Username and password are required" });
+      }
+      const cfg = getConfig();
+      if (validateCredentials(cfg.username, cfg.password, username, password)) {
+        const token = generateSessionToken(username); // master token (no sessionId)
+        const sessions = listPwSessions().map((s) => ({
+          ...s,
+          attached: activePtySessions.has(s.name),
+        }));
+        return { token, expiresIn: 86400, sessions };
+      }
+      return reply.status(401).send({ error: "Invalid credentials" });
+    },
+  );
 
   // Logout
-  fastify.post("/api/logout", async (request: any, _reply: any) => {
-    const bearerToken = getBearerToken(request.headers.authorization);
-    if (bearerToken) {
-      destroySession(bearerToken);
-    }
-    return { ok: true };
-  });
+  fastify.post(
+    "/api/logout",
+    async (request: FastifyRequest, _reply: FastifyReply) => {
+      const bearerToken = getBearerToken(request.headers.authorization);
+      if (bearerToken) {
+        destroySession(bearerToken);
+      }
+      return { ok: true };
+    },
+  );
 
   // ── Protected routes ────────────────────────────────────────
 
@@ -184,15 +206,17 @@ export function registerRoutes(
   fastify.post(
     "/api/sessions",
     { preHandler: authPreHandler },
-    async (request: any, reply: any) => {
+    async (request: FastifyRequest, reply: FastifyReply) => {
       const cfg = getConfig();
-      const body = request.body || {};
+      const body = (request.body as Record<string, unknown>) || {};
 
       // cwd is required from the UI directory picker
-      const sessionCwd = body.cwd ? resolve(body.cwd) : resolve(cfg.cwd);
-      const dirname = body.dirname || basename(sessionCwd);
-      const branch = body.branch || getGitBranch(sessionCwd);
-      const agentCommand = body.agentCommand || cfg.agentCommand;
+      const sessionCwd = body.cwd
+        ? resolve(body.cwd as string)
+        : resolve(cfg.cwd);
+      const dirname = (body.dirname as string) || basename(sessionCwd);
+      const branch = (body.branch as string) || getGitBranch(sessionCwd);
+      const agentCommand = (body.agentCommand as string) || cfg.agentCommand;
 
       // Create branch from baseBranch if it doesn't exist locally
       if (body.branch && body.baseBranch) {
@@ -267,8 +291,8 @@ export function registerRoutes(
   fastify.get(
     "/api/sessions/:name",
     { preHandler: authPreHandler },
-    async (request: any, reply: any) => {
-      const { name } = request.params;
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { name } = request.params as { name: string };
       if (!hasSession(name)) {
         return reply.status(404).send({ error: "Session not found" });
       }
@@ -285,8 +309,8 @@ export function registerRoutes(
   fastify.post(
     "/api/sessions/:name/attach",
     { preHandler: authPreHandler },
-    async (request: any, reply: any) => {
-      const { name } = request.params;
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { name } = request.params as { name: string };
       if (!hasSession(name)) {
         return reply.status(404).send({ error: "Session not found" });
       }
@@ -299,8 +323,8 @@ export function registerRoutes(
   fastify.delete(
     "/api/sessions/:name",
     { preHandler: authPreHandler },
-    async (request: any, reply: any) => {
-      const { name } = request.params;
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { name } = request.params as { name: string };
       if (!hasSession(name)) {
         return reply.status(404).send({ error: "Session not found" });
       }
@@ -359,7 +383,7 @@ export function registerRoutes(
   fastify.get(
     "/api/workspace/repo/branches",
     { preHandler: authPreHandler },
-    async (request: any, reply: any) => {
+    async (request: FastifyRequest, reply: FastifyReply) => {
       const { path } = request.query as { path?: string };
       if (!path) return reply.status(400).send({ error: "path required" });
 
@@ -379,7 +403,7 @@ export function registerRoutes(
 
   // ── WebSocket ────────────────────────────────────────────────
 
-  fastify.get("/ws", { websocket: true }, (socket, _request) => {
+  fastify.get("/ws", { websocket: true }, (socket: WsSocket, _request) => {
     // Do NOT send any data until authenticated
     handleWsAuth(socket);
   });
@@ -387,7 +411,7 @@ export function registerRoutes(
 
 // ─── WebSocket Auth ────────────────────────────────────────────
 
-function handleWsAuth(socket: any): void {
+function handleWsAuth(socket: WsSocket): void {
   let authenticated = false;
 
   // Set 5-second auth timeout
@@ -397,17 +421,19 @@ function handleWsAuth(socket: any): void {
     }
   }, 5000);
 
-  socket.on("message", (raw: Buffer) => {
-    if (raw.length === 0) return;
+  // ws sends Buffer data on Node.js; type narrow from unknown[]
+  socket.on("message", (raw: unknown) => {
+    const buf = raw as Buffer;
+    if (buf.length === 0) return;
 
     if (!authenticated) {
       // Only accept JSON control frames for auth
-      if (raw[0] !== 0x01) return;
+      if (buf[0] !== 0x01) return;
 
       try {
-        const nullPos = raw.indexOf(0x00, 1);
+        const nullPos = buf.indexOf(0x00, 1);
         if (nullPos === -1) return;
-        const jsonStr = raw.subarray(nullPos + 1).toString("utf-8");
+        const jsonStr = buf.subarray(nullPos + 1).toString("utf-8");
         const msg = JSON.parse(jsonStr);
 
         if (authenticateWsMessage(msg) && verifyWsToken(msg.token)) {
@@ -436,7 +462,7 @@ function handleWsAuth(socket: any): void {
     }
 
     // ── Authenticated message handling ──
-    handleWsMessage(socket, raw);
+    handleWsMessage(socket, buf);
   });
 
   const cleanup = () => {
@@ -449,7 +475,7 @@ function handleWsAuth(socket: any): void {
 
 // ─── WebSocket Handler (after auth) ────────────────────────────
 
-async function handleWsConnection(socket: any, sessionName: string) {
+async function handleWsConnection(socket: WsSocket, sessionName: string) {
   // Session must already exist (created via POST /api/sessions or previous run)
   if (!hasSession(sessionName)) {
     socket.send(
@@ -543,7 +569,7 @@ async function handleWsConnection(socket: any, sessionName: string) {
 
 // ─── WebSocket Message Handler ─────────────────────────────────
 
-function handleWsMessage(socket: any, raw: Buffer): void {
+function handleWsMessage(socket: WsSocket, raw: Buffer): void {
   const frame = decodeFrame(raw);
   if (!frame) return;
 

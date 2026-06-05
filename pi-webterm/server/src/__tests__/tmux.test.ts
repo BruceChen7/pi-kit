@@ -1,3 +1,4 @@
+import type { IPty } from "node-pty";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachToSession,
@@ -15,13 +16,17 @@ vi.mock("node:child_process", () => ({
 
 import { execSync } from "node:child_process";
 
+function mockBuffer(text: string): Buffer {
+  return Buffer.from(text);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
 describe("hasSession", () => {
   it("returns true when tmux has-session succeeds", () => {
-    vi.mocked(execSync).mockReturnValue("" as any);
+    vi.mocked(execSync).mockReturnValue(mockBuffer(""));
     expect(hasSession("pi-agent")).toBe(true);
     expect(execSync).toHaveBeenCalledWith(
       "tmux has-session -t '=pi-agent' 2>/dev/null",
@@ -43,12 +48,14 @@ describe("hasSession", () => {
 
 describe("listSessions", () => {
   it("returns array of session names", () => {
-    vi.mocked(execSync).mockReturnValue("pi-agent\nother-session\n" as any);
+    vi.mocked(execSync).mockReturnValue(
+      mockBuffer("pi-agent\nother-session\n"),
+    );
     expect(listSessions()).toEqual(["pi-agent", "other-session"]);
   });
 
   it("returns empty array when no sessions", () => {
-    vi.mocked(execSync).mockReturnValue("" as any);
+    vi.mocked(execSync).mockReturnValue(mockBuffer(""));
     expect(listSessions()).toEqual([]);
   });
 
@@ -63,7 +70,7 @@ describe("listSessions", () => {
 describe("killSession", () => {
   it("calls tmux kill-session with exact target and returns true when removed", () => {
     vi.mocked(execSync)
-      .mockReturnValueOnce("" as any)
+      .mockReturnValueOnce(mockBuffer(""))
       .mockImplementationOnce(() => {
         throw new Error("no session");
       });
@@ -84,7 +91,7 @@ describe("killSession", () => {
 
 describe("capturePane", () => {
   it("returns captured output", () => {
-    vi.mocked(execSync).mockReturnValue("line1\nline2\n" as any);
+    vi.mocked(execSync).mockReturnValue(mockBuffer("line1\nline2\n"));
     expect(capturePane("pi-agent", 10)).toBe("line1\nline2\n");
   });
 
@@ -107,7 +114,11 @@ describe("attachToSession", () => {
 describe("detachPty", () => {
   it("calls pty.kill()", () => {
     const killed = vi.fn();
-    const pty = { kill: killed, resize: vi.fn(), write: vi.fn() } as any;
+    const pty = {
+      kill: killed,
+      resize: vi.fn(),
+      write: vi.fn(),
+    } as unknown as IPty;
     detachPty(pty);
     expect(killed).toHaveBeenCalled();
   });
@@ -117,7 +128,7 @@ describe("detachPty", () => {
       kill: () => {
         throw new Error("already dead");
       },
-    } as any;
+    } as unknown as IPty;
     expect(() => detachPty(pty)).not.toThrow();
   });
 });
@@ -138,10 +149,10 @@ describe("ensureSession", () => {
       .mockImplementationOnce(() => {
         throw new Error("no session");
       }) // hasSession → false
-      .mockImplementationOnce(() => "" as any) // new-session
-      .mockImplementationOnce(() => "" as any) // set window-size
-      .mockImplementationOnce(() => "" as any) // set status off
-      .mockImplementationOnce(() => "" as any); // set history-limit
+      .mockImplementationOnce(() => mockBuffer("")) // new-session
+      .mockImplementationOnce(() => mockBuffer("")) // set window-size
+      .mockImplementationOnce(() => mockBuffer("")) // set status off
+      .mockImplementationOnce(() => mockBuffer("")); // set history-limit
 
     ensureSession("pi-agent", "/home/user/project", "pi");
 
@@ -157,7 +168,7 @@ describe("ensureSession", () => {
   it("does nothing if session already exists", () => {
     // Override default: execSync succeeds → hasSession returns true
     vi.mocked(execSync).mockReset();
-    vi.mocked(execSync).mockReturnValue("" as any);
+    vi.mocked(execSync).mockReturnValue(mockBuffer(""));
 
     ensureSession("existing-session", "/home/user/project", "pi");
 
@@ -189,10 +200,10 @@ describe("ensureSession", () => {
       .mockImplementationOnce(() => {
         throw new Error("no session");
       }) // hasSession → false
-      .mockImplementationOnce(() => "" as any) // new-session
-      .mockImplementationOnce(() => "" as any) // set window-size
-      .mockImplementationOnce(() => "" as any) // set status off
-      .mockImplementationOnce(() => "" as any); // set history-limit
+      .mockImplementationOnce(() => mockBuffer("")) // new-session
+      .mockImplementationOnce(() => mockBuffer("")) // set window-size
+      .mockImplementationOnce(() => mockBuffer("")) // set status off
+      .mockImplementationOnce(() => mockBuffer("")); // set history-limit
 
     ensureSession("pi-agent", "/home/user/project", "pi");
 

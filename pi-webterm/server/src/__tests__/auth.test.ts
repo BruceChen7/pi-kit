@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  type AuthRequest,
   authenticateWsMessage,
   createAuthMiddleware,
   destroySession,
@@ -269,41 +270,41 @@ describe("createAuthMiddleware", () => {
 
   it("accepts valid session token in Authorization header", async () => {
     const middleware = createAuthMiddleware();
-    const req = {
+    const req: AuthRequest = {
       headers: { authorization: `Bearer ${sessionToken}` },
       query: {},
-    } as any;
-    const result = await middleware(req as any);
+    };
+    const result = await middleware(req);
     expect(result).toBe(true);
   });
 
   it("rejects invalid token in Authorization header", async () => {
     const middleware = createAuthMiddleware();
-    const req = {
+    const req: AuthRequest = {
       headers: { authorization: "Bearer invalid-session-token" },
       query: {},
-    } as any;
-    const result = await middleware(req as any);
+    };
+    const result = await middleware(req);
     expect(result).toBe(false);
   });
 
   it("rejects request without any auth", async () => {
     const middleware = createAuthMiddleware();
-    const req = {
+    const req: AuthRequest = {
       headers: {},
       query: {},
-    } as any;
-    const result = await middleware(req as any);
+    };
+    const result = await middleware(req);
     expect(result).toBe(false);
   });
 
   it("rejects request with malformed Authorization header", async () => {
     const middleware = createAuthMiddleware();
-    const req = {
+    const req: AuthRequest = {
       headers: { authorization: "Basic xyz" },
       query: {},
-    } as any;
-    const result = await middleware(req as any);
+    };
+    const result = await middleware(req);
     expect(result).toBe(false);
   });
 
@@ -313,11 +314,11 @@ describe("createAuthMiddleware", () => {
     const middleware = createAuthMiddleware({ publicKey });
     const msg = JSON.stringify({ ts: Date.now(), session: "test" });
     const sig = signMessage(privateKey, msg);
-    const req = {
+    const req: AuthRequest = {
       headers: {},
       query: { sig, msg },
-    } as any;
-    const result = await middleware(req as any);
+    };
+    const result = await middleware(req);
     expect(result).toBe(true);
   });
 
@@ -327,11 +328,11 @@ describe("createAuthMiddleware", () => {
     const expiresAt = expiredTs.toString(36);
     const expiredToken = `${expiresAt}.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`;
     const middleware = createAuthMiddleware();
-    const req = {
+    const req: AuthRequest = {
       headers: { authorization: `Bearer ${expiredToken}` },
       query: {},
-    } as any;
-    const result = await middleware(req as any);
+    };
+    const result = await middleware(req);
     expect(result).toBe(false);
   });
 });

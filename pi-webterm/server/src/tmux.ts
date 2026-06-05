@@ -49,39 +49,11 @@ export function ensureSession(
 ): void {
   if (hasSession(name)) return;
 
-  if (!name || !cwd) {
-    throw new Error(`Invalid session params: name=${name}, cwd=${cwd}`);
-  }
-
-  // Use a login (+interactive) shell so the user's profile/rc files are sourced.
-  // Without this, env vars set in ~/.zshrc / ~/.bash_profile (e.g., OPENCODE_API_KEY)
-  // are invisible to the agent process because `tmux new-session` runs the command
-  // directly without sourcing shell rc files.
   const shell = process.env.SHELL || "/bin/bash";
-  execSync(
-    `tmux new-session -d -s ${name} -c ${cwd} '${shell} -l -i -c "exec ${agentCommand}"'`,
-    { stdio: "pipe", timeout: 10_000 },
-  );
-
-  // Ensure the tmux window always resizes to match the attached client's
-  // terminal size. The global default is `window-size latest` (tmux ≥3.3),
-  // but we explicitly set `largest` here so the window follows the PTY
-  // resize triggered by `pty.resize()` even if the user's tmux.conf has
-  // a different setting (`fixed-latest`, `smallest`, `manual`).
-  execSync(`tmux set -t ${name} window-size largest 2>/dev/null`, {
-    stdio: "pipe",
-    timeout: 5_000,
-  });
-
-  // Clean output: disable status bar
-  execSync(`tmux set -t ${name} status off`, {
-    stdio: "pipe",
-    timeout: 5_000,
-  });
-  execSync(`tmux set -t ${name} history-limit 10000`, {
-    stdio: "pipe",
-    timeout: 5_000,
-  });
+  const commands = buildSessionCommands({ name, cwd, shell, agentCommand });
+  for (const cmd of commands) {
+    execSync(cmd.command, { stdio: "pipe", timeout: cmd.timeout });
+  }
 }
 
 /** Kill a tmux session. Returns true only when the session is gone. */
@@ -109,6 +81,55 @@ export function capturePane(name: string, lines: number = 200): string {
   } catch {
     return "";
   }
+}
+
+// ─── Command Construction (pure, no IO) ─────────────────────────
+
+export interface SessionConfig {
+  name: string;
+  cwd: string;
+  shell: string;
+  agentCommand: string;
+}
+
+export interface TmuxCliCommand {
+  command: string;
+  timeout: number;
+}
+
+/**
+ * Build the list of tmux CLI commands needed to create and configure a session.
+ *
+ * Pure function — no IO, no side effects. Returns a list of commands the shell
+ * should execute in sequence.
+ */
+export function buildSessionCommands(config: SessionConfig): TmuxCliCommand[] {
+  if (!config.name || !config.cwd) {
+    throw new Error(
+      `Invalid session params: name=${config.name}, cwd=${config.cwd}`,
+    );
+  }
+
+  return [
+    {
+      command:
+        `tmux new-session -d -s ${config.name} -c ${config.cwd} ` +
+        `'${config.shell} -l -i -c "exec ${config.agentCommand}"'`,
+      timeout: 10_000,
+    },
+    {
+      command: `tmux set -t ${config.name} window-size largest 2>/dev/null`,
+      timeout: 5_000,
+    },
+    {
+      command: `tmux set -t ${config.name} status off`,
+      timeout: 5_000,
+    },
+    {
+      command: `tmux set -t ${config.name} history-limit 10000`,
+      timeout: 5_000,
+    },
+  ];
 }
 
 // ─── PTY Attach (async via node-pty) ────────────────────────────

@@ -155,8 +155,8 @@ async function _onLogin() {
       // Multiple sessions — show picker
       _showSessionPicker = true;
     }
-  } catch (err: any) {
-    _errorMsg = err.message || "登录失败";
+  } catch (err: unknown) {
+    _errorMsg = err instanceof Error ? err.message : "登录失败";
   } finally {
     _loggingIn = false;
   }
@@ -207,8 +207,8 @@ async function _createAndAttach() {
     _showSessionPicker = false;
     await _refreshSessions();
     connectWs();
-  } catch (err: any) {
-    _errorMsg = err.message || "创建失败";
+  } catch (err: unknown) {
+    _errorMsg = err instanceof Error ? err.message : "创建失败";
   } finally {
     _creating = false;
   }
@@ -228,8 +228,8 @@ async function _attachToSession(name: string): Promise<boolean> {
     _scheduleTerminalFit();
     connectWs();
     return true;
-  } catch (err: any) {
-    _errorMsg = err.message || "连接失败";
+  } catch (err: unknown) {
+    _errorMsg = err instanceof Error ? err.message : "连接失败";
     return false;
   } finally {
     _attaching = false;
@@ -300,8 +300,8 @@ async function _deleteSession(name: string) {
       sessionToken = null;
       _showSessionPicker = true;
     }
-  } catch (err: any) {
-    const msg = err.message || "删除失败";
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "删除失败";
     _errorMsg = msg;
     console.error("[pi-webterm] delete session failed:", name, msg, err);
     // Auto-clear error after 8 seconds

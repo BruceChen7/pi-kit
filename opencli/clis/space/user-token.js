@@ -1,10 +1,23 @@
 import { writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import {
   AuthRequiredError,
   CommandExecutionError,
   TimeoutError,
 } from "@jackwener/opencli/errors";
 import { cli, Strategy } from "@jackwener/opencli/registry";
+
+/**
+ * Expand a leading `~` to the user's home directory.
+ * Handles bare `~` and `~/path` forms.
+ * @param {string} value
+ * @returns {string}
+ */
+function expandTilde(value) {
+  if (value === "~") return homedir();
+  if (value.startsWith("~/")) return homedir() + value.slice(1);
+  return value;
+}
 
 cli({
   site: "space",
@@ -79,11 +92,12 @@ cli({
 
     // 如果指定了 --write 参数，写入文件
     if (kwargs.write) {
+      const dest = expandTilde(kwargs.write);
       try {
-        await writeFile(kwargs.write, token, "utf-8");
+        await writeFile(dest, token, "utf-8");
       } catch (err) {
         throw new CommandExecutionError(
-          `Failed to write token to ${kwargs.write}`,
+          `Failed to write token to ${dest}`,
           `write error: ${err.message}`,
         );
       }

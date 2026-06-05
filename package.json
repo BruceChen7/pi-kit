@@ -34,6 +34,7 @@
       "./extensions/file-watcher",
       "./extensions/agent-end-code-simplifier",
       "./extensions/review-feedback",
+      "./extensions/scheduled-tasks",
       "./extensions/brainstorm-events",
       "./extensions/cache-graph",
       "./extensions/librarian",

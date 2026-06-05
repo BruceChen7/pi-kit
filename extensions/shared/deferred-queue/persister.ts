@@ -28,12 +28,22 @@ export class Persister {
     return this.data.tasks[taskId]?.lastRunAt ?? null;
   }
 
+  /** Get the full persistence record for a task, or undefined. */
+  getRecord(taskId: string): TaskPersistenceRecord | undefined {
+    return this.data.tasks[taskId];
+  }
+
   /** Set lastRunAt and mark as dirty. */
-  setLastRunAt(taskId: string, timestamp: number): void {
+  setLastRunAt(
+    taskId: string,
+    timestamp: number,
+    triggeredBy?: "auto" | "manual",
+  ): void {
     const existing = this.data.tasks[taskId];
     this.data.tasks[taskId] = {
       lastRunAt: timestamp,
       lastResult: existing?.lastResult,
+      triggeredBy,
     };
     this.dirty = true;
   }
@@ -42,11 +52,13 @@ export class Persister {
   setLastResult(
     taskId: string,
     result: TaskPersistenceRecord["lastResult"],
+    triggeredBy?: "auto" | "manual",
   ): void {
     const existing = this.data.tasks[taskId] ?? { lastRunAt: Date.now() };
     this.data.tasks[taskId] = {
       lastRunAt: existing.lastRunAt,
       lastResult: result,
+      triggeredBy: triggeredBy ?? existing.triggeredBy,
     };
     this.dirty = true;
   }

@@ -163,4 +163,113 @@ describe("Queue", () => {
     );
     expect(typeof (context as Record<string, unknown>).notify).toBe("function");
   });
+
+  // ── runNow ────────────────────────────────────────────────
+
+  it("runNow executes a registered task", async () => {
+    const handler = vi.fn();
+    const q = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    q.add({ id: "manual", every: "1h", handler });
+
+    const result = await q.runNow("manual");
+
+    expect(result).toEqual({ executed: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("runNow returns not-found for unknown task", async () => {
+    const q = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    const result = await q.runNow("nonexistent");
+
+    expect(result).toEqual({
+      executed: false,
+      reason: 'task "nonexistent" not found',
+    });
+  });
+
+  it("runNow does not update lastRunAt", async () => {
+    const handler = vi.fn();
+    const q = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    q.add({ id: "manual", every: "1h", handler });
+    const before = q.getTaskLastRunAt("manual");
+
+    await q.runNow("manual");
+
+    // lastRunAt should remain unchanged — out-of-band execution
+    expect(q.getTaskLastRunAt("manual")).toBe(before);
+  });
+
+  it("runNow records triggeredBy: manual", async () => {
+    const handler = vi.fn();
+    const q = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    q.add({ id: "manual", every: "1h", handler });
+
+    await q.runNow("manual");
+
+    const metas = q.listWithMeta();
+    const rec = metas.find((m) => m.id === "manual");
+    expect(rec?.triggeredBy).toBe("manual");
+  });
+
+  // ── listWithMeta ──────────────────────────────────────────
+
+  it("listWithMeta returns task metadata", () => {
+    const q = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    q.add({
+      id: "meta-task",
+      every: "1h",
+      description: "Test task",
+      handler: async () => {},
+    });
+
+    const metas = q.listWithMeta();
+    expect(metas).toHaveLength(1);
+    expect(metas[0]).toMatchObject({
+      id: "meta-task",
+      every: "1h",
+      description: "Test task",
+    });
+    expect(metas[0].lastRunAt).toBeTypeOf("number");
+    expect(metas[0].lastResult).toBe("ok");
+  });
+
+  it("listWithMeta returns data for multiple tasks", () => {
+    const q = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    q.add({ id: "a", every: "30m", description: "A", handler: async () => {} });
+    q.add({ id: "b", every: "1h", handler: async () => {} });
+
+    const metas = q.listWithMeta();
+    expect(metas).toHaveLength(2);
+    expect(metas.find((m) => m.id === "a")?.description).toBe("A");
+    expect(metas.find((m) => m.id === "b")?.description).toBeUndefined();
+  });
+
+  // ── triggeredBy integration ───────────────────────────────
+
+  it("auto execution records triggeredBy: auto", async () => {
+    const handler = vi.fn();
+    const q = new Queue({ persistPath, checkIntervalMs: 50_000 });
+    q.add({ id: "auto-task", every: "1h", handler });
+    q.setTaskLastRunAt("auto-task", Date.now() - 7_200_000);
+
+    await q.runCheck();
+
+    const metas = q.listWithMeta();
+    const rec = metas.find((m) => m.id === "auto-task");
+    expect(rec?.triggeredBy).toBe("auto");
+  });
+
+  it("manual triggeredBy does not overwrite auto lastRunAt", async () => {
+    const handler = vi.fn();
+    const q = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    q.add({ id: "combo", every: "1h", handler });
+
+    // Simulate: auto run happened
+    await q.runNow("combo");
+    q.setTaskLastRunAt("combo", 1000);
+    await q.runNow("combo");
+
+    // lastRunAt should still be 1000 (from setTaskLastRunAt), not updated by runNow
+    expect(q.getTaskLastRunAt("combo")).toBe(1000);
+  });
 });

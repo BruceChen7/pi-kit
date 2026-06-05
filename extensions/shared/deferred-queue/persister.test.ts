@@ -105,4 +105,55 @@ describe("Persister", () => {
       expect(parsed.tasks.t.lastResult).toBe("error");
     });
   });
+
+  // ── getRecord ─────────────────────────────────────────────
+
+  it("getRecord returns full record", () => {
+    withPersister((p) => {
+      p.setLastRunAt("t", 100, "auto");
+      p.setLastResult("t", "ok");
+      const rec = p.getRecord("t");
+      expect(rec).toBeDefined();
+      expect(rec?.lastRunAt).toBe(100);
+      expect(rec?.lastResult).toBe("ok");
+      expect(rec?.triggeredBy).toBe("auto");
+    });
+  });
+
+  it("getRecord returns undefined for unknown task", () => {
+    withPersister((p) => {
+      expect(p.getRecord("nonexistent")).toBeUndefined();
+    });
+  });
+
+  // ── triggeredBy ───────────────────────────────────────────
+
+  it("setLastRunAt stores triggeredBy", () => {
+    withPersister((p, filePath) => {
+      p.setLastRunAt("t", 100, "manual");
+      p.flush();
+      const parsed = JSON.parse(readFileSync(filePath, "utf-8"));
+      expect(parsed.tasks.t.triggeredBy).toBe("manual");
+    });
+  });
+
+  it("setLastResult preserves triggeredBy from setLastRunAt", () => {
+    withPersister((p, filePath) => {
+      p.setLastRunAt("t", 100, "auto");
+      p.setLastResult("t", "error");
+      p.flush();
+      const parsed = JSON.parse(readFileSync(filePath, "utf-8"));
+      expect(parsed.tasks.t.triggeredBy).toBe("auto");
+    });
+  });
+
+  it("setLastResult overrides triggeredBy when passed", () => {
+    withPersister((p, filePath) => {
+      p.setLastRunAt("t", 100, "auto");
+      p.setLastResult("t", "ok", "manual");
+      p.flush();
+      const parsed = JSON.parse(readFileSync(filePath, "utf-8"));
+      expect(parsed.tasks.t.triggeredBy).toBe("manual");
+    });
+  });
 });

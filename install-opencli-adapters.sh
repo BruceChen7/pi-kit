@@ -123,4 +123,6 @@ fi
 
 echo "Target directory: $TARGET_BASE"
 echo ""
+echo "Adapters previously in pi-kit (deploy, cancel) have been migrated to personal-agent-staff."
+echo ""
 echo "To verify: opencli browser verify space/user-token"

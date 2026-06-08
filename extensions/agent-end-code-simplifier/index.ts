@@ -77,7 +77,6 @@ const DEFAULT_PROMPT_SKILLS = [
   "boundaries-refactor",
   "improve-codebase-architecture",
   "software-design-philosophy",
-  "push-ifs-up-fors-down",
 ] as const;
 
 const DEFAULT_PROMPT_REQUIREMENTS = [
@@ -88,7 +87,7 @@ const DEFAULT_PROMPT_REQUIREMENTS = [
   "按 improve-codebase-architecture 词汇审查 Module / Interface / Implementation / Depth / Seam / Adapter；优先保留或形成 deep module、information hiding 和不同层级的不同抽象",
   "测试以 Interface is the test surface 为准，优先 test seam/Adapter behavior，不测试 Implementation details",
   "检查并消除不必要的 shallow module、information leakage、temporal decomposition、浅封装/pass-through helper、无意义转发函数和可直接内联的局部抽象",
-  "将不可避免的复杂度向模块内部下沉；用 push ifs up and fors down 视角在不改变语义时集中分支决策、下沉重复标量处理",
+  "将不可避免的复杂度向模块内部下沉；用 Push Ifs Up and Fors Down 视角（已内联在 me-code-simplifier 中）在不改变语义时集中分支决策、下沉重复标量处理",
   "保持行为、接口、错误语义和副作用不变；如果没有必要的简化空间，直接说明无需修改",
 ];
 

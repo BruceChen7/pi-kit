@@ -15,7 +15,7 @@ visual-explainer|https://github.com/nicobailon/visual-explainer.git|plugins/visu
 render-markdown|local|skills/render-markdown
 plannotator-visual-explainer|local|skills/plannotator-visual-explainer
 skill-creator|https://github.com/anthropics/skills.git|skills/skill-creator
-jira|https://github.com/softaworks/agent-toolkit|skills/jira
+# jira|https://github.com/softaworks/agent-toolkit|skills/jira
 diagram-design|https://github.com/cathrynlavery/diagram-design|
 boundaries-refactor|local|skills/boundaries-refactor
 branch-commit-push|local|skills/branch-commit-push
@@ -26,12 +26,13 @@ slidev|https://github.com/slidevjs/slidev.git|skills/slidev
 me-code-simplifier|local|skills/me-code-simplifier
 zero-tech-debt|local|skills/zero-tech-debt
 me-tdd|local|skills/me_tdd
-push-ifs-up-fors-down|local|skills/push-ifs-up-fors-down
 debug-pi-coding-agent|local|skills/debug-pi-coding-agent
 chao-go-perf|local|skills/chao-go-perf
 plan-code-review|local|skills/review
 handoff|local|skills/handoff
 # https://github.com/mattpocock/skills
+prototype|local|skills/prototype
+teach|local|skills/teach
 grill-with-docs|local|skills/grill-with-docs
 grill-me|local|skills/grill-me
 improve-codebase-architecture|local|skills/improve-codebase-architecture

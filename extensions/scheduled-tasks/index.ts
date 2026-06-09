@@ -127,7 +127,7 @@ export default async function (pi: ExtensionAPI) {
   }
 
   /**
-   * Shared command handler for /tasks and /task.
+   * Shared command handler for /tasks.
    * Shows interactive picker in TUI mode, falls back to notification.
    */
   const tasksHandler = async (_args: string, ctx: ExtensionContext) => {
@@ -234,11 +234,6 @@ export default async function (pi: ExtensionAPI) {
 
   pi.registerCommand("tasks", {
     description: "List and manually trigger deferred tasks",
-    handler: tasksHandler,
-  });
-
-  pi.registerCommand("task", {
-    description: "List and manually trigger deferred tasks (alias)",
     handler: tasksHandler,
   });
 }

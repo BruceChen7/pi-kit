@@ -428,11 +428,7 @@ describe("project symlink management", () => {
 describe("default project bootstrap", () => {
   it("enables every library plugin except default-disabled plugins for a new cwd", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = createPluginLibrary(
-      "alpha",
-      "cwd-history",
-      "dirty-git-status",
-    );
+    const library = createPluginLibrary("alpha", "cwd-history", "copyx");
 
     const { bootstrapDefaultManagedPlugins, discoverPlugins } =
       await importPluginToggle();
@@ -441,17 +437,15 @@ describe("default project bootstrap", () => {
     const result = bootstrapDefaultManagedPlugins(cwd, plugins);
 
     expect(result.enabled).toEqual(["alpha", "cwd-history"]);
-    expect(result.skippedDefaultDisabled).toEqual(["dirty-git-status"]);
+    expect(result.skippedDefaultDisabled).toEqual(["copyx"]);
     expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(true);
     expect(fs.existsSync(projectPluginPath(cwd, "cwd-history"))).toBe(true);
-    expect(fs.existsSync(projectPluginPath(cwd, "dirty-git-status"))).toBe(
-      false,
-    );
+    expect(fs.existsSync(projectPluginPath(cwd, "copyx"))).toBe(false);
   });
 
   it("leaves default-disabled plugins visible as disabled choices", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = createPluginLibrary("alpha", "dirty-git-status");
+    const library = createPluginLibrary("alpha", "copyx");
 
     const {
       bootstrapDefaultManagedPlugins,
@@ -473,13 +467,13 @@ describe("default project bootstrap", () => {
 
     const rendered = picker.render(70).join("\n");
     expect(rendered).toContain("✓ alpha");
-    expect(rendered).toContain("  dirty-git-status");
+    expect(rendered).toContain("  copyx");
     picker.dispose();
   });
 
   it("records a new cwd even when every plugin is default-disabled", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = createPluginLibrary("dirty-git-status");
+    const library = createPluginLibrary("copyx");
 
     const { bootstrapDefaultManagedPlugins, discoverPlugins } =
       await importPluginToggle();
@@ -490,7 +484,7 @@ describe("default project bootstrap", () => {
 
   it("uses configured default-disabled plugins instead of the built-in list", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = createPluginLibrary("alpha", "dirty-git-status");
+    const library = createPluginLibrary("alpha", "copyx");
     const { globalPath } = getSettingsPaths(cwd);
     writeSettingsFile(globalPath, {
       pluginToggle: { defaultDisabledPlugins: ["alpha"] },
@@ -502,13 +496,13 @@ describe("default project bootstrap", () => {
 
     const result = bootstrapDefaultManagedPlugins(cwd, plugins);
 
-    expect(result.enabled).toEqual(["dirty-git-status"]);
+    expect(result.enabled).toEqual(["copyx"]);
     expect(result.skippedDefaultDisabled).toEqual(["alpha"]);
   });
 
   it("allows an empty configured default-disabled list", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = createPluginLibrary("dirty-git-status");
+    const library = createPluginLibrary("copyx");
     const { globalPath } = getSettingsPaths(cwd);
     writeSettingsFile(globalPath, {
       pluginToggle: { defaultDisabledPlugins: [] },
@@ -520,7 +514,7 @@ describe("default project bootstrap", () => {
 
     const result = bootstrapDefaultManagedPlugins(cwd, plugins);
 
-    expect(result.enabled).toEqual(["dirty-git-status"]);
+    expect(result.enabled).toEqual(["copyx"]);
     expect(result.skippedDefaultDisabled).toEqual([]);
   });
 
@@ -607,7 +601,7 @@ describe("default project bootstrap", () => {
 
   it("does not queue reload when every discovered plugin is default-disabled", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    createPluginLibrary("dirty-git-status");
+    createPluginLibrary("copyx");
     const { runSessionStart, sendUserMessage } =
       await createFakeExtensionRuntime();
 

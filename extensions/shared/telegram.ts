@@ -1,4 +1,8 @@
+import { createLogger } from "./logger.ts";
 import { loadSettings } from "./settings.ts";
+
+/** Logger shared across all Telegram notification callers. */
+const log = createLogger("telegram", { stderr: null });
 
 /**
  * Minimal Telegram notification helper.
@@ -49,6 +53,10 @@ const escapeHtml = (text: string): string =>
  * - `` `code` `` → `<code>code</code>`
  * - `#/##/### heading` → `<b>heading</b>`
  *
+ * Headings are wrapped in <b> to approximate visual weight.
+ * Bold markers **…** inside heading content are stripped (not converted to nested <b>)
+ * because Telegram rejects nested <b> tags with 400 Bad Request.
+ *
  * Inline code content is preserved as-is (no HTML escaping).
  * All other text is HTML-escaped to prevent broken markup.
  */
@@ -77,12 +85,24 @@ export function convertMarkdownToTelegramHtml(text: string): string {
   // 3. HTML-escape remaining text
   processed = escapeHtml(processed);
 
-  // 4. Convert headings (most # first to avoid partial matches)
-  processed = processed.replace(/^### (.+)$/gm, "<b>$1</b>");
-  processed = processed.replace(/^## (.+)$/gm, "<b>$1</b>");
-  processed = processed.replace(/^# (.+)$/gm, "<b>$1</b>");
+  // 4. Convert headings — strip **bold** markers inside headings to prevent
+  //    nested <b> tags (Telegram rejects them with 400 Bad Request).
+  //    The heading is already wrapped in <b>, so inner bold is visually redundant.
+  processed = processed.replace(/^### (.+)$/gm, (_, content: string) => {
+    const clean = content.replace(/\*\*(.+?)\*\*/g, "$1");
+    return `<b>${clean}</b>`;
+  });
+  processed = processed.replace(/^## (.+)$/gm, (_, content: string) => {
+    const clean = content.replace(/\*\*(.+?)\*\*/g, "$1");
+    return `<b>${clean}</b>`;
+  });
+  processed = processed.replace(/^# (.+)$/gm, (_, content: string) => {
+    const clean = content.replace(/\*\*(.+?)\*\*/g, "$1");
+    return `<b>${clean}</b>`;
+  });
 
-  // 5. Convert bold
+  // 5. Convert bold (non-heading text only, since heading bold was already
+  //    stripped in step 4 to prevent <b> nesting)
   processed = processed.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
 
   // 6. Restore links (escape URL quotes and text HTML entities)
@@ -163,34 +183,83 @@ export async function sendTelegramNotification(
 ): Promise<void> {
   const { botToken, chatId } = config ?? loadTelegramConfig();
 
+  // Log key content for debugging
+  const textPreview =
+    text.length > 300
+      ? `${text.slice(0, 300)}… (${text.length - 300} more chars)`
+      : text;
+  log.debug("sending telegram notification", {
+    textLength: text.length,
+    rawHtml,
+    chatId: `${chatId.slice(0, 4)}…`,
+    textPreview,
+  });
+
   const body = {
     chat_id: chatId,
     text: rawHtml ? text : escapeHtml(text),
     parse_mode: "HTML",
   };
 
-  const response = await fetch(buildTelegramUrl(botToken, "sendMessage"), {
+  const url = buildTelegramUrl(botToken, "sendMessage");
+  const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
-  if (!response.ok) {
-    throw new TelegramError(
-      `sendMessage failed: ${response.status} ${response.statusText}`,
-      { method: "sendMessage", status: response.status },
-    );
-  }
-
-  const payload = (await response.json()) as {
+  // Try to extract the response body for diagnostics, even on error
+  let responseBody: {
     ok?: boolean;
     description?: string;
-  };
+    error_code?: number;
+  } | null = null;
+  try {
+    responseBody = (await response.json()) as {
+      ok?: boolean;
+      description?: string;
+      error_code?: number;
+    };
+  } catch {
+    // Response body is not JSON — use status text only
+  }
 
-  if (!payload.ok) {
+  if (!response.ok) {
+    const description = responseBody?.description
+      ? `: ${responseBody.description}`
+      : "";
+    // Log the error with full response details
+    log.warn("telegram sendMessage HTTP error", {
+      status: response.status,
+      statusText: response.statusText,
+      description: responseBody?.description,
+      textLength: text.length,
+      textPreview,
+    });
     throw new TelegramError(
-      `sendMessage rejected: ${payload.description ?? "unknown"}`,
-      { method: "sendMessage", description: payload.description },
+      `sendMessage failed: ${response.status} ${response.statusText}${description}`,
+      {
+        method: "sendMessage",
+        status: response.status,
+        description: responseBody?.description,
+      },
     );
   }
+
+  if (!responseBody?.ok) {
+    log.warn("telegram sendMessage API rejected", {
+      description: responseBody?.description,
+      textLength: text.length,
+      textPreview,
+    });
+    throw new TelegramError(
+      `sendMessage rejected: ${responseBody?.description ?? "unknown"}`,
+      { method: "sendMessage", description: responseBody?.description },
+    );
+  }
+
+  log.debug("telegram notification sent", {
+    textLength: text.length,
+    ok: responseBody?.ok,
+  });
 }

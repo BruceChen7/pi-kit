@@ -6,37 +6,117 @@ import {
 } from "../../shared/telegram.ts";
 
 const CHUNK_MAX_LENGTH = 3800;
+const TELEGRAM_MAX_LENGTH = 4096;
+const SUBAGENT_TIMEOUT_MS = 120_000;
+const CHUNK_PREFIX = "📑 X Bookmarks\n\n";
 
 /**
- * Split bookmark entries into chunks by complete entries.
- *
- * Splits on `## N.` headings so each chunk contains whole entries.
- * The first chunk always includes the summary header.
+ * Input for the pure core decision: how to chunk bookmark output.
  */
-function chunkByEntries(text: string, maxLen: number): string[] {
-  const chunks: string[] = [];
+export interface BookmarkChunkInput {
+  /** Raw Markdown output from the subagent. */
+  rawOutput: string;
+  /** Prefix prepended to the first chunk. */
+  prefix: string;
+  /**
+   * Maximum character length of the raw content per chunk.
+   * Used as a first-pass limit; the output HTML is further constrained
+   * by `maxHtmlLength` to account for tag expansion.
+   */
+  maxChunkLength: number;
+  /**
+   * Maximum HTML length per chunk (Telegram's sendMessage limit is 4096).
+   * After Markdown→HTML conversion, each chunk's HTML string is guaranteed
+   * to be ≤ this value.
+   */
+  maxHtmlLength: number;
+}
+
+/**
+ * A single HTML chunk ready to send to Telegram.
+ */
+export interface BookmarkChunk {
+  /** HTML string safe for Telegram parse_mode=HTML. */
+  html: string;
+}
+
+/**
+ * Pure core: converts raw subagent output into HTML chunks ready to send.
+ *
+ * - Splits output at entry boundaries (`## N.` headings) to keep whole entries intact.
+ * - Accumulates entries into chunks by **HTML length** (not raw length), so the
+ *   output never exceeds Telegram's 4096-character `sendMessage` limit even after
+ *   Markdown→HTML tag expansion.
+ * - Prepends the prefix only to the first chunk.
+ *
+ * Edge case: a single entry whose HTML exceeds `maxHtmlLength` is still sent as
+ * one chunk (Telegram will reject it, but this is extremely rare — a single
+ * bookmark entry would need to be thousands of characters long).
+ *
+ * No IO, no side effects — fully testable with string inputs.
+ */
+export function prepareBookmarkChunks(
+  input: BookmarkChunkInput,
+): BookmarkChunk[] {
+  const entries = splitEntries(input.rawOutput);
+  const result: BookmarkChunk[] = [];
+
+  let buffer: string[] = [];
+
+  const flushBuffer = () => {
+    if (buffer.length === 0) return;
+    const raw = buffer.join("\n");
+    const text = result.length === 0 ? input.prefix + raw : raw;
+    result.push({ html: convertMarkdownToTelegramHtml(text) });
+    buffer = [];
+  };
+
+  for (const entry of entries) {
+    const candidateBuffer = [...buffer, entry];
+    const raw = candidateBuffer.join("\n");
+    const text =
+      result.length === 0 && buffer.length === 0 ? input.prefix + raw : raw;
+
+    if (
+      convertMarkdownToTelegramHtml(text).length > input.maxHtmlLength &&
+      buffer.length > 0
+    ) {
+      // Adding this entry would exceed the HTML length limit — flush first
+      flushBuffer();
+    }
+
+    buffer.push(entry);
+  }
+
+  flushBuffer();
+
+  return result;
+}
+
+/**
+ * Split raw Markdown text into individual bookmark entries.
+ *
+ * Entries are delimited by `## N.` heading lines.
+ * The leading summary text (before the first `## N.`) is treated as the first entry.
+ */
+function splitEntries(text: string): string[] {
+  const entries: string[] = [];
   let buffer = "";
 
   for (const line of text.split("\n")) {
-    const isEntryStart = /^## \d+\.\s/.test(line);
-
-    if (
-      isEntryStart &&
-      buffer.length > 0 &&
-      buffer.length + line.length > maxLen
-    ) {
-      chunks.push(buffer.trim());
+    if (/^## \d+\.\s/.test(line) && buffer) {
+      entries.push(buffer.trim());
       buffer = line;
     } else {
       buffer += (buffer ? "\n" : "") + line;
     }
   }
 
-  if (buffer.trim().length > 0) {
-    chunks.push(buffer.trim());
+  if (buffer.trim()) {
+    entries.push(buffer.trim());
   }
 
-  return chunks;
+  return entries;
 }
 
 export default defineTask({
@@ -48,25 +128,31 @@ export default defineTask({
 
     const result = await exec.subagent({
       prompt: "/x-bookmarks 50 bookmarks",
-      timeoutMs: 60_000,
-    });
-
-    log.info("subagent finished", {
-      exitCode: result.exitCode,
-      stderrLength: result.stderr.length,
-      outputLength: result.stdout.length,
-      summaryLength: result.summary?.length ?? 0,
+      timeoutMs: SUBAGENT_TIMEOUT_MS,
     });
 
     const output = result.summary ?? result.stdout;
-    log.info("sending to telegram", { outputLength: output.length });
 
-    const chunks = chunkByEntries(output, CHUNK_MAX_LENGTH);
-    const prefix = "📑 X Bookmarks\n\n";
+    log.info("subagent finished", {
+      exitCode: result.exitCode,
+      outputLength: output.length,
+    });
 
-    for (let i = 0; i < chunks.length; i++) {
-      const text = i === 0 ? prefix + chunks[i] : chunks[i];
-      const html = convertMarkdownToTelegramHtml(text);
+    // ── Pure core: decide what to send ──────────────────────────
+    const chunks = prepareBookmarkChunks({
+      rawOutput: output,
+      prefix: CHUNK_PREFIX,
+      maxChunkLength: CHUNK_MAX_LENGTH,
+      maxHtmlLength: TELEGRAM_MAX_LENGTH,
+    });
+
+    log.info("bookmarks fetch: sending chunks", {
+      chunkCount: chunks.length,
+      chunkLengths: chunks.map((c) => c.html.length),
+    });
+
+    // ── Shell: execute the send for each chunk ─────────────────
+    for (const { html } of chunks) {
       await sendTelegramNotification(html, undefined, true);
     }
 

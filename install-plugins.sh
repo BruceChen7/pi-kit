@@ -168,7 +168,7 @@ install_plugin_dependencies() {
 
 is_bootstrap_global_entry() {
     local name="$1"
-    [ "$name" = "plugin-toggle" ] || [ "$name" = "shared" ]
+    [ "$name" = "plugin-toggle" ] || [ "$name" = "shared" ] || [ "$name" = "auto-trust-work" ]
 }
 
 is_plugin_like_entry() {
@@ -323,8 +323,9 @@ echo ""
 if [ "$SCOPE" = "library" ]; then
     install_plugin_sources "$LIBRARY_DIR"
     echo ""
-    echo "Bootstrapping plugin-toggle globally..."
+    echo "Bootstrapping global extensions..."
     install_symlink "$EXTENSIONS_DIR/plugin-toggle" "plugin-toggle" "$GLOBAL_EXTENSION_DIR"
+    install_symlink "$EXTENSIONS_DIR/auto-trust-work" "auto-trust-work" "$GLOBAL_EXTENSION_DIR"
     install_shared_symlink "$HOME/.pi/agent"
     install_shared_symlink "$GLOBAL_EXTENSION_DIR"
     migrate_old_global_autoload

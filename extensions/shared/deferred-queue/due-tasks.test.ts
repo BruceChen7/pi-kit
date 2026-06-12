@@ -1,10 +1,35 @@
 import { describe, expect, it } from "vitest";
-import { getDueTaskIds } from "./due-tasks.ts";
-import type { TaskDefinition } from "./types.ts";
+import { getDueTaskIds, isTaskDue } from "./due-tasks.ts";
+import type { Duration, TaskDefinition } from "./types.ts";
 
 function task(id: string, every: TaskDefinition["every"]): TaskDefinition {
   return { id, every, handler: async () => {} };
 }
+
+describe("isTaskDue", () => {
+  it("returns true when enough time has elapsed", () => {
+    expect(isTaskDue(0, "30m" as Duration, 2_000_000)).toBe(true);
+  });
+
+  it("returns false when not enough time has elapsed", () => {
+    expect(isTaskDue(1_000_000, "1h" as Duration, 2_000_000)).toBe(false);
+  });
+
+  it("returns true at exact boundary (elapsed === interval)", () => {
+    expect(isTaskDue(0, "10m" as Duration, 600_000)).toBe(true);
+  });
+
+  it("returns false when lastRunAt equals now", () => {
+    expect(isTaskDue(1000, "1h" as Duration, 1000)).toBe(false);
+  });
+
+  it("handles different Duration units", () => {
+    expect(isTaskDue(0, "5m" as Duration, 300_000)).toBe(true);
+    expect(isTaskDue(0, "1h" as Duration, 3_600_000)).toBe(true);
+    expect(isTaskDue(0, "1d" as Duration, 86_400_000)).toBe(true);
+    expect(isTaskDue(0, "5m" as Duration, 100_000)).toBe(false);
+  });
+});
 
 describe("getDueTaskIds", () => {
   it("returns empty for no tasks", () => {

@@ -1,4 +1,4 @@
-import { getDueTaskIds } from "./due-tasks.ts";
+import { getDueTaskIds, isTaskDue } from "./due-tasks.ts";
 import { parseDuration } from "./duration.ts";
 import { FileLock } from "./file-lock.ts";
 import { createExecContext } from "./handler-registry.ts";
@@ -268,6 +268,18 @@ export class Queue {
       }
 
       try {
+        // Reload persisted state from disk — another process may have
+        // updated lastRunAt while we were waiting for the lock, making
+        // our stale in-memory due decision incorrect.
+        this.persister.reload();
+        const freshLastRunAt = this.persister.getLastRunAt(id) ?? now;
+        if (!isTaskDue(freshLastRunAt, task.every, now)) {
+          log.debug("task already executed by another process, skipping", {
+            id,
+          });
+          continue;
+        }
+
         executed++;
         this.persister.setLastRunAt(id, now, "auto");
         this.persister.flush();

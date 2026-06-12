@@ -78,6 +78,21 @@ export class Persister {
     this.dirty = false;
   }
 
+  /**
+   * Reload persisted state from disk.
+   *
+   * Used after acquiring the file lock to detect if another process has
+   * already executed a task since we computed our due list.
+   * Discards any in-memory dirty state — the disk is the source of truth.
+   */
+  reload(): void {
+    this.data = this.readFile();
+    this.dirty = false;
+    log.debug("persister: reloaded from disk", {
+      taskCount: Object.keys(this.data.tasks).length,
+    });
+  }
+
   private readFile(): PersistenceFile {
     try {
       if (!fs.existsSync(this.filePath)) {

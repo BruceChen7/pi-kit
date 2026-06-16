@@ -2,94 +2,27 @@
 
 Reference for detecting and running project-level formatting and linting tools before commit.
 
-## Detection (try in order)
+This file is a **router**: it detects the project language/ecosystem and points you to the
+appropriate sub-file. Each sub-file covers tool detection, format execution, lint execution,
+and known caveats for that ecosystem.
 
-### 1. Check package.json scripts
+## Detection: identify project ecosystem
 
-Read `package.json` and look for known script keys:
+Check the project root for these files **in parallel** (no priority order). The first match
+determines the primary ecosystem:
 
-| Key pattern | Likely tool |
-|---|---|
-| `format`, `fmt` | Prettier, Biome, gofmt |
-| `lint`, `lint:check` | ESLint, Biome, golangci-lint |
-| `check` | Biome check, combined lint |
-| `biome:*` | Biome |
-| `eslint` | ESLint |
-| `prettier:*` | Prettier |
+| Root file detected | Ecosystem | Route to |
+|---|---|---|
+| `package.json` | JS / TypeScript | [`./format-lint-js-ts.md`](./format-lint-js-ts.md) |
+| `go.mod` | Go | [`./format-lint-go.md`](./format-lint-go.md) |
+| `pyproject.toml` or `setup.py` or `setup.cfg` or `requirements.txt` | Python | [`./format-lint-python.md`](./format-lint-python.md) |
+| `Cargo.toml` | Rust | [`./format-lint-rust.md`](./format-lint-rust.md) |
+| `Makefile` (with `fmt` or `lint` targets) or none of the above | Generic / unknown | [`./format-lint-generic.md`](./format-lint-generic.md) |
 
-If found, use the exact script command: `npm run <script>`.
+If multiple ecosystem markers exist (e.g., `package.json` + `go.mod` in a monorepo), read
+the relevant sub-files for **all** detected ecosystems and run each.
 
-### 2. Check config files on disk
-
-Look for these files in the project root:
-
-- `biome.json` / `biome.jsonc` — Biome (formatter + linter)
-- `.eslintrc.js` / `.eslintrc.json` / `.eslintrc.yaml` / `eslint.config.js` — ESLint
-- `.prettierrc` / `.prettierrc.json` / `.prettierrc.js` / `.prettierrc.yaml` — Prettier
-- `.golangci.yml` / `.golangci.yaml` — golangci-lint
-- `go.mod` — Go project (gofmt / go vet)
-- `.rustfmt.toml` / `Cargo.toml` — Rust (rustfmt / clippy)
-
-### 3. Fallback: npx-based detection
-
-If neither scripts nor config files give a clear answer, probe with:
-
-```bash
-npx --yes biome --version 2>/dev/null
-npx eslint --version 2>/dev/null
-npx prettier --version 2>/dev/null
-```
-
-Prefer tool order: Biome → ESLint + Prettier → golangci-lint → language-native tools.
-
-## Execution
-
-### Format (auto-fix mode)
-
-Run the formatter in write mode so changes are applied automatically:
-
-- **Biome**: `npx biome format --write .`
-- **Prettier**: `npx prettier --write .`
-- **Go**: `gofmt -w .`
-- **Rust**: `cargo fmt`
-- **package.json script**: `npm run format`
-
-### Lint (check-only mode)
-
-Run the linter in check mode. Do NOT auto-fix lint issues — they need human review:
-
-- **Biome**: `npx biome lint .`
-- **ESLint**: `npx eslint .`
-- **golangci-lint**: `golangci-lint run`
-- **Go vet**: `go vet ./...`
-- **Clippy**: `cargo clippy`
-- **package.json script**: `npm run lint`
-
-> **Note**: Some tools (e.g., Biome `check`) bundle format and lint together. When available, prefer separate format + lint commands for clearer failure reporting.
-
-## ⚠️ Known caveats
-
-### Biome + Svelte: `noUnusedVariables` 误报
-
-Biome 的 Svelte 支持只解析 `<script>` 块，**无法看到 template（HTML）中引用的变量**。因此 `lint/correctness/noUnusedVariables` 会对 `.svelte` 文件大量误报。
-
-**对策**：在项目 `biome.json` 的 Svelte override 中关闭此规则：
-```json
-{
-  "includes": ["*.svelte"],
-  "linter": {
-    "rules": {
-      "correctness": {
-        "noUnusedVariables": "off"
-      }
-    }
-  }
-}
-```
-
-如果项目还未配置，手动跳过 `.svelte` 文件的 `noUnusedVariables` 检查，不要信任 Biome 对此规则的 Svelte 报告。
-
-## Pass/Fail determination
+## Pass/Fail determination (shared across all ecosystems)
 
 | Condition | Result |
 |---|---|
@@ -99,7 +32,7 @@ Biome 的 Svelte 支持只解析 `<script>` 块，**无法看到 template（HTML
 | Lint exits 0 | Pass |
 | Lint exits non-zero | Block — show lint output to user |
 
-## Auto-staging after format
+## Auto-staging after format (shared across all ecosystems)
 
 After formatting runs successfully, stage any resulting changes:
 

@@ -6,6 +6,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   createCacheStatsActions,
+  deriveDefaultRepoSlug,
   formatExportSuccess,
 } from "./cache-actions.ts";
 import { openCacheGraphDashboard } from "./glimpse-host.ts";
@@ -79,7 +80,13 @@ export default function cacheGraphExtension(pi: ExtensionAPI): void {
       }
 
       try {
-        await openCacheGraphDashboard(actions);
+        const sessionFile = ctx.sessionManager.getSessionFile();
+        const defaultRepoSlug = deriveDefaultRepoSlug(sessionFile);
+        await openCacheGraphDashboard({
+          getMetrics: actions.getMetrics,
+          exportCsv: actions.exportCsv,
+          defaultRepoSlug,
+        });
       } catch (error) {
         ctx.ui.notify(
           `Failed to open cache graph dashboard: ${errorMessage(error)}`,

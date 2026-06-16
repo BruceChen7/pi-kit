@@ -156,7 +156,7 @@ function defaultSessionsRoot(): string {
   return path.join(os.homedir(), ".pi", "agent", "sessions");
 }
 
-function formatRepoSlug(directoryName: string): string {
+export function formatRepoSlug(directoryName: string): string {
   const trimmed = directoryName.replace(/^--|--$/g, "");
   if (!trimmed) return directoryName;
 

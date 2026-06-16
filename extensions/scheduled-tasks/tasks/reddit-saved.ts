@@ -10,84 +10,98 @@ import {
 
 const CHUNK_MAX_LENGTH = 3800;
 const TELEGRAM_MAX_LENGTH = 4096;
-const CHUNK_PREFIX = "📑 X Bookmarks\n\n";
+const CHUNK_PREFIX = "📑 Reddit Saved\n\n";
 const LIMIT = 50;
 const CHECKPOINT_PATH = join(
   homedir(),
   ".pi",
   "agent",
-  "x-bookmarks-checkpoint.json",
+  "reddit-saved-checkpoint.json",
 );
 
 // ── Types ──────────────────────────────────────────────
 
-/** A single bookmark entry from the opencli JSON output. */
-export interface BookmarkItem {
-  id: string;
-  author: string;
-  name: string;
-  text: string;
-  likes: number;
-  retweets: number;
-  bookmarks: number;
-  created_at: string;
+/** A single saved Reddit post from the opencli JSON output. */
+export interface SavedPost {
+  title: string;
+  subreddit: string;
+  score: number;
+  comments: number;
   url: string;
-  has_media: boolean;
-  media_urls: string[];
 }
 
 /** On-disk checkpoint state (persisted to JSON). */
 export interface CheckpointState {
-  /** id of the most recently seen bookmark (null = first run). */
-  lastHeadTweetId: string | null;
+  /** post ID of the most recently seen saved post (null = first run). */
+  lastHeadPostId: string | null;
 }
 
 /**
  * Result of the incremental decision logic.
  *
- * - `init` — first run, checkpoint recorded; **do not push** anything.
+ * - `init` — first run; push all items and record checkpoint.
  * - `increment` — checkpoint found in the fetched range; push items before it.
  * - `warning` — checkpoint not found; push all fetched items with a truncation warning.
  * - `skip` — no new items, do nothing.
  */
 export type IncrementDecision =
-  | { kind: "init"; headId: string }
-  | { kind: "increment"; items: BookmarkItem[]; headId: string }
-  | { kind: "warning"; items: BookmarkItem[]; headId: string }
+  | { kind: "init"; items: SavedPost[]; headId: string }
+  | { kind: "increment"; items: SavedPost[]; headId: string }
+  | { kind: "warning"; items: SavedPost[]; headId: string }
   | { kind: "skip" };
+
+// ── Pure core: post ID extraction ──────────────────────
+
+/**
+ * Extract the Reddit post ID from a URL.
+ *
+ * Handles both regular post URLs and comment permalink URLs:
+ * - `https://www.reddit.com/r/PiCodingAgent/comments/1u5g1wo/title/` → `1u5g1wo`
+ * - `https://www.reddit.com/r/PiCodingAgent/comments/1tvko93/title/comment_id/` → `1tvko93`
+ */
+export function extractPostIdFromUrl(url: string): string {
+  const match = url.match(/\/comments\/([a-z0-9]+)\//);
+  if (!match) {
+    throw new Error(`Cannot extract post ID from URL: ${url}`);
+  }
+  return match[1];
+}
 
 // ── Pure core: incremental decision ────────────────────
 
 /**
  * Given the current fetch result and the persisted checkpoint, decide what to do.
  *
- * The opencli bookmarks API returns items newest-first (most recent bookmark
- * at index 0). The `headId` is the most recent bookmark we've already seen.
+ * The opencli saved API returns items newest-first (most recently saved
+ * at index 0). The `headId` identifies the most recently seen saved post.
  * Any items that appear *before* the checkpoint (earlier in the array) are
- * newer bookmarks we haven't seen yet.
+ * newly saved posts we haven't seen yet.
+ *
+ * **Key difference from bookmarks**: first run (`init`) pushes all items
+ * and records the checkpoint, rather than only recording.
  *
  * No IO, no side effects — fully testable.
  */
 export function computeIncrement(
-  items: BookmarkItem[],
+  items: SavedPost[],
   state: CheckpointState,
 ): IncrementDecision {
   if (items.length === 0) return { kind: "skip" };
 
-  const headId = items[0].id;
+  const headId = extractPostIdFromUrl(items[0].url);
 
-  if (state.lastHeadTweetId === null) {
-    // First run: record the most recent bookmark as checkpoint, push nothing.
-    return { kind: "init", headId };
+  if (state.lastHeadPostId === null) {
+    // First run: push all items and record the most recent post as checkpoint.
+    return { kind: "init", items, headId };
   }
 
   const checkpointIdx = items.findIndex(
-    (item) => item.id === state.lastHeadTweetId,
+    (item) => extractPostIdFromUrl(item.url) === state.lastHeadPostId,
   );
 
   if (checkpointIdx === -1) {
-    // Checkpoint not found in the fetched range — the user bookmarked so many
-    // new items that the checkpoint scrolled out of the limit window.
+    // Checkpoint not found in the fetched range — the user saved so many
+    // new posts that the checkpoint scrolled out of the limit window.
     return { kind: "warning", items, headId };
   }
 
@@ -100,14 +114,32 @@ export function computeIncrement(
 // ── Pure core: format items as Markdown ─────────────────
 
 /**
- * Convert a list of bookmark items into reading-friendly Markdown.
+ * Convert a single saved post into a Markdown entry line.
+ *
+ * Format:
+ * ```
+ * ## N.
+ * - subreddit：r/xxx
+ * - ⬆ score • 💬 comments
+ * - [title](url)
+ * ```
+ */
+export function formatSavedPost(item: SavedPost, index: number): string {
+  const lines: string[] = [
+    `## ${index + 1}.`,
+    `- subreddit：${item.subreddit}`,
+    `- ⬆ ${item.score} • 💬 ${item.comments}`,
+    `- [${item.title}](${item.url})`,
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * Convert a list of saved posts into reading-friendly Markdown.
  *
  * If `warning` is provided, prepend it above the list in a blockquote.
  */
-export function formatIncrement(
-  items: BookmarkItem[],
-  warning?: string,
-): string {
+export function formatSavedPosts(items: SavedPost[], warning?: string): string {
   const parts: string[] = [];
 
   if (warning) {
@@ -115,16 +147,7 @@ export function formatIncrement(
   }
 
   for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    const truncated =
-      item.text.length > 300 ? `${item.text.slice(0, 300)}…` : item.text;
-    parts.push(
-      `## ${i + 1}.`,
-      `- 作者：@${item.author}`,
-      `- 时间：${item.created_at}`,
-      `- 内容：${truncated}`,
-      `- 链接：${item.url}`,
-    );
+    parts.push(formatSavedPost(items[i], i));
   }
 
   return parts.join("\n");
@@ -133,28 +156,25 @@ export function formatIncrement(
 // ── JSON parsing ───────────────────────────────────────
 
 /**
- * Parse the JSON output from `opencli twitter bookmarks -f json`.
+ * Parse the JSON output from `opencli reddit saved -f json`.
  *
  * Pure function (throws on malformed input).
  */
-export function parseBookmarkItems(jsonString: string): BookmarkItem[] {
+export function parseSavedItems(jsonString: string): SavedPost[] {
   const parsed: unknown = JSON.parse(jsonString);
   if (!Array.isArray(parsed)) {
     throw new Error(`Expected JSON array from opencli, got ${typeof parsed}`);
   }
-  // Basic field validation is left to the caller / downstream code.
-  // If a field is missing, TypeScript will still produce a valid object
-  // and the formatting functions will render whatever is available.
-  return parsed as BookmarkItem[];
+  return parsed as SavedPost[];
 }
 
-// ── Input for the chunking decision ─────────────────────
+// ── Chunking ──────────────────────────────────────────
 
 /**
- * Input for the pure core decision: how to chunk bookmark output.
+ * Input for the pure core decision: how to chunk output.
  */
-export interface BookmarkChunkInput {
-  /** Raw Markdown output from the subagent. */
+export interface SavedChunkInput {
+  /** Raw Markdown output. */
   rawOutput: string;
   /** Prefix prepended to the first chunk. */
   prefix: string;
@@ -166,8 +186,6 @@ export interface BookmarkChunkInput {
   maxChunkLength: number;
   /**
    * Maximum HTML length per chunk (Telegram's sendMessage limit is 4096).
-   * After Markdown→HTML conversion, each chunk's HTML string is guaranteed
-   * to be ≤ this value.
    */
   maxHtmlLength: number;
 }
@@ -175,7 +193,7 @@ export interface BookmarkChunkInput {
 /**
  * A single HTML chunk ready to send to Telegram.
  */
-export interface BookmarkChunk {
+export interface SavedChunk {
   /** HTML string safe for Telegram parse_mode=HTML. */
   html: string;
 }
@@ -183,23 +201,16 @@ export interface BookmarkChunk {
 /**
  * Pure core: converts raw Markdown into HTML chunks ready to send.
  *
+ * Same strategy as `prepareBookmarkChunks`:
  * - Splits output at entry boundaries (`## N.` headings) to keep whole entries intact.
- * - Accumulates entries into chunks by **HTML length** (not raw length), so the
- *   output never exceeds Telegram's 4096-character `sendMessage` limit even after
- *   Markdown→HTML tag expansion.
+ * - Accumulates entries into chunks by **HTML length**.
  * - Prepends the prefix only to the first chunk.
- *
- * Edge case: a single entry whose HTML exceeds `maxHtmlLength` is still sent as
- * one chunk (Telegram will reject it, but this is extremely rare — a single
- * bookmark entry would need to be thousands of characters long).
  *
  * No IO, no side effects — fully testable with string inputs.
  */
-export function prepareBookmarkChunks(
-  input: BookmarkChunkInput,
-): BookmarkChunk[] {
+export function prepareSavedChunks(input: SavedChunkInput): SavedChunk[] {
   const entries = splitEntries(input.rawOutput);
-  const result: BookmarkChunk[] = [];
+  const result: SavedChunk[] = [];
 
   let buffer: string[] = [];
 
@@ -221,7 +232,6 @@ export function prepareBookmarkChunks(
       convertMarkdownToTelegramHtml(text).length > input.maxHtmlLength &&
       buffer.length > 0
     ) {
-      // Adding this entry would exceed the HTML length limit — flush first
       flushBuffer();
     }
 
@@ -234,12 +244,11 @@ export function prepareBookmarkChunks(
 }
 
 /**
- * Split raw Markdown text into individual bookmark entries.
+ * Split raw Markdown text into individual entries.
  *
  * Entries are delimited by `## N.` heading lines.
- * The leading summary text (before the first `## N.`) is treated as the first entry.
  */
-function splitEntries(text: string): string[] {
+export function splitEntries(text: string): string[] {
   const entries: string[] = [];
   let buffer = "";
 
@@ -263,25 +272,25 @@ function splitEntries(text: string): string[] {
 
 /**
  * Load checkpoint from disk.
- * Returns `lastHeadTweetId: null` when the file doesn't exist or is corrupt.
+ * Returns `lastHeadPostId: null` when the file doesn't exist or is corrupt.
  */
 export function loadCheckpoint(checkpointPath: string): CheckpointState {
   try {
     const raw = readFileSync(checkpointPath, "utf-8");
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     return {
-      lastHeadTweetId:
-        typeof parsed.lastHeadTweetId === "string"
-          ? parsed.lastHeadTweetId
+      lastHeadPostId:
+        typeof parsed.lastHeadPostId === "string"
+          ? parsed.lastHeadPostId
           : null,
     };
   } catch {
-    return { lastHeadTweetId: null };
+    return { lastHeadPostId: null };
   }
 }
 
 /**
- * Persist the latest head tweet id to disk.
+ * Persist the latest head post ID to disk.
  * Creates the directory if it doesn't exist.
  */
 export function saveCheckpoint(headId: string, checkpointPath: string): void {
@@ -291,7 +300,7 @@ export function saveCheckpoint(headId: string, checkpointPath: string): void {
   }
   writeFileSync(
     checkpointPath,
-    JSON.stringify({ lastHeadTweetId: headId }, null, 2),
+    JSON.stringify({ lastHeadPostId: headId }, null, 2),
     "utf-8",
   );
 }
@@ -309,16 +318,16 @@ export function buildTruncationWarning(limit: number): string {
 // ── Task handler ───────────────────────────────────────
 
 export default defineTask({
-  id: "x-bookmarks-fetch",
-  every: "24h",
-  description: "Fetch X bookmarks daily via Pi agent",
+  id: "reddit-saved-fetch",
+  every: "2d",
+  description: "Fetch Reddit saved posts every 2 days via Pi agent",
   handler: async (exec) => {
-    log.info("starting bookmarks fetch via opencli");
+    log.info("starting reddit saved fetch via opencli");
 
     // ── 1. Shell: run opencli ──────────────────────────────
     const result = await exec.exec("opencli", [
-      "twitter",
-      "bookmarks",
+      "reddit",
+      "saved",
       "--limit",
       String(LIMIT),
       "-f",
@@ -326,7 +335,7 @@ export default defineTask({
     ]);
 
     if (result.code !== 0) {
-      log.warn("opencli bookmarks failed", {
+      log.warn("opencli reddit saved failed", {
         exitCode: result.code,
         stderr: result.stderr.slice(0, 500),
       });
@@ -334,9 +343,9 @@ export default defineTask({
     }
 
     // ── 2. Parse JSON ──────────────────────────────────────
-    let items: BookmarkItem[];
+    let items: SavedPost[];
     try {
-      items = parseBookmarkItems(result.stdout);
+      items = parseSavedItems(result.stdout);
     } catch (err) {
       log.warn("failed to parse opencli JSON output", {
         error: String(err),
@@ -345,7 +354,7 @@ export default defineTask({
       return;
     }
 
-    log.info("opencli bookmarks fetched", { count: items.length });
+    log.info("opencli reddit saved fetched", { count: items.length });
 
     // ── 3. Pure: decide what to push ────────────────────────
     const state = loadCheckpoint(CHECKPOINT_PATH);
@@ -354,15 +363,7 @@ export default defineTask({
     log.info("increment decision", { kind: decision.kind });
 
     if (decision.kind === "skip") {
-      log.info("no new bookmarks to push");
-      return;
-    }
-
-    if (decision.kind === "init") {
-      log.info("first run — recording checkpoint, no push", {
-        headId: decision.headId,
-      });
-      saveCheckpoint(decision.headId, CHECKPOINT_PATH);
+      log.info("no new saved posts to push");
       return;
     }
 
@@ -370,31 +371,29 @@ export default defineTask({
     const warning =
       decision.kind === "warning" ? buildTruncationWarning(LIMIT) : undefined;
 
-    const markdown = formatIncrement(decision.items, warning);
+    const markdown = formatSavedPosts(decision.items, warning);
 
     // ── 5. Pure: chunk Markdown into Telegram HTML ──────────
-    const chunks = prepareBookmarkChunks({
+    const chunks = prepareSavedChunks({
       rawOutput: markdown,
       prefix: CHUNK_PREFIX,
       maxChunkLength: CHUNK_MAX_LENGTH,
       maxHtmlLength: TELEGRAM_MAX_LENGTH,
     });
 
-    log.info("sending bookmark chunks", {
+    log.info("sending saved post chunks", {
       chunkCount: chunks.length,
       newItems: decision.items.length,
       decisionKind: decision.kind,
     });
 
     // ── 6. Shell: send each chunk via Telegram ─────────────
-    // If any send fails, we abort — checkpoint is NOT updated,
-    // so next run will re-discover the same items.
     for (let i = 0; i < chunks.length; i++) {
       try {
         await sendTelegramNotification(chunks[i].html, undefined, true);
         log.info("chunk sent", { chunkIndex: i });
       } catch (err) {
-        log.warn("failed to send bookmark chunk", {
+        log.warn("failed to send saved post chunk", {
           chunkIndex: i,
           error: String(err),
         });
@@ -404,7 +403,7 @@ export default defineTask({
 
     // ── 7. All sent — persist new checkpoint ───────────────
     saveCheckpoint(decision.headId, CHECKPOINT_PATH);
-    log.info("bookmarks fetch complete, checkpoint updated", {
+    log.info("reddit saved fetch complete, checkpoint updated", {
       headId: decision.headId,
     });
   },

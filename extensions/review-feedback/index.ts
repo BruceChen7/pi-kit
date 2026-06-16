@@ -311,6 +311,32 @@ export function filterWhitespaceOnlyHunks(diff: string): string {
   return [...header, ...filtered.flat()].join("\n");
 }
 
+function summarizeDiff(diff: string): string {
+  if (!diff) return "no changes";
+
+  const lines = diff.split("\n");
+  let additions = 0;
+  let deletions = 0;
+
+  for (const line of lines) {
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      additions++;
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      deletions++;
+    }
+  }
+
+  const parts: string[] = [];
+  if (additions > 0) {
+    parts.push(`${additions} addition${additions !== 1 ? "s" : ""}`);
+  }
+  if (deletions > 0) {
+    parts.push(`${deletions} deletion${deletions !== 1 ? "s" : ""}`);
+  }
+
+  return parts.join(", ") || "no changes";
+}
+
 function hasPlaceholderToken(text: string): boolean {
   return text.split("\n").some((line) => line.trim() === PLACEHOLDER);
 }
@@ -534,13 +560,17 @@ export default function reviewFeedbackExtension(pi: ExtensionAPI) {
 
     pendingReview = createReviewArtifact(ctx, original, edited);
     if (!pendingReview) {
-      return; // No semantic changes, nothing to review
+      ctx.ui.notify(
+        "Review skipped: only whitespace changes detected (no semantic diff).",
+        "info",
+      );
+      return;
     }
 
     pi.appendEntry(CUSTOM_PENDING, pendingReview);
     ctx.ui.setEditorText(`${PLACEHOLDER}\n\n`);
     ctx.ui.notify(
-      "Review feedback staged. Add optional notes and submit, or delete the placeholder to discard.",
+      `Review feedback staged (${summarizeDiff(pendingReview.diff)}). Add optional notes and submit, or delete the placeholder to discard.`,
       "info",
     );
   }

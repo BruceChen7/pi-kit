@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildReviewPrompt,
+  filterWhitespaceOnlyHunks,
   findLastAssistantMarkdown,
   handleReviewInput,
   type PendingReview,
@@ -113,5 +114,106 @@ describe("review-feedback helpers", () => {
       resolution: "submitted",
       resolvedAt: expect.any(String),
     });
+  });
+});
+
+describe("filterWhitespaceOnlyHunks", () => {
+  const HEADER = [
+    "diff --git a/original.md b/edited.md",
+    "index abc..def 100644",
+    "--- a/original.md",
+    "+++ b/edited.md",
+  ].join("\n");
+
+  it("filters out a hunk with only trailing whitespace changes", () => {
+    const diff = [
+      HEADER,
+      "@@ -1,3 +1,3 @@",
+      " hello",
+      "-world ",
+      "+world",
+      " .",
+    ].join("\n");
+
+    expect(filterWhitespaceOnlyHunks(diff)).toBe("");
+  });
+
+  it("filters out a hunk with only blank line changes", () => {
+    const diff = [HEADER, "@@ -5,6 +5,7 @@", " keep", "-", "+", " keep"].join(
+      "\n",
+    );
+
+    expect(filterWhitespaceOnlyHunks(diff)).toBe("");
+  });
+
+  it("keeps a hunk with semantic changes", () => {
+    const diff = [
+      HEADER,
+      "@@ -1,3 +1,3 @@",
+      " hello",
+      "-old",
+      "+new",
+      " .",
+    ].join("\n");
+
+    expect(filterWhitespaceOnlyHunks(diff)).toBe(diff);
+  });
+
+  it("filters out whitespace-only hunks while keeping semantic hunks", () => {
+    const diff = [
+      HEADER,
+      "@@ -1,3 +1,3 @@",
+      " hello",
+      "-world ",
+      "+world",
+      " .",
+      "@@ -10,4 +10,4 @@",
+      " context",
+      "-old",
+      "+new",
+      " context",
+    ].join("\n");
+
+    const result = filterWhitespaceOnlyHunks(diff);
+
+    // First hunk (whitespace-only) should be removed
+    expect(result).not.toContain("world ");
+    // Second hunk (semantic) should remain
+    expect(result).toContain("-old");
+    expect(result).toContain("+new");
+    // Header should be present
+    expect(result).toContain("diff --git a/original.md b/edited.md");
+  });
+
+  it("returns empty string when all hunks are whitespace-only", () => {
+    const diff = [
+      HEADER,
+      "@@ -1,2 +1,2 @@",
+      "-  hello",
+      "+ hello",
+      "@@ -3,2 +3,2 @@",
+      "-foo ",
+      "+foo",
+    ].join("\n");
+
+    expect(filterWhitespaceOnlyHunks(diff)).toBe("");
+  });
+
+  it("returns empty string unchanged", () => {
+    expect(filterWhitespaceOnlyHunks("")).toBe("");
+  });
+
+  it("returns a non-hunk diff (fallback format) unchanged", () => {
+    const fallback = [
+      "--- a/original.md",
+      "+++ b/edited.md",
+      "@@ full file comparison @@",
+      "--- original.md",
+      "some content",
+      "+++ edited.md",
+      "some changed content",
+    ].join("\n");
+
+    expect(filterWhitespaceOnlyHunks(fallback)).toBe(fallback);
   });
 });

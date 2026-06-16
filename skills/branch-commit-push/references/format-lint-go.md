@@ -8,36 +8,30 @@ Based on the presence of `go.mod` in the project root.
 |---|---|---|
 | **gofmt** (formatter, built-in) | — | `which gofmt` (ships with Go) |
 | **go vet** (linter, built-in) | — | `which go` |
-| **golangci-lint** (linter, optional) | `.golangci.yml` / `.golangci.yaml` | `which golangci-lint` |
 
 ## Execution
 
 ### Format (auto-fix mode)
 
+Format all Go source files except protobuf-generated `.pb.go` files:
+
 ```bash
-gofmt -w .
+fd -e go -E '*.pb.go' -X gofmt -w {}
 ```
 
 If the project uses a different module path layout, narrow the scope:
 ```bash
-gofmt -w ./<package-dir>
+fd -e go -E '*.pb.go' . '<package-dir>' -X gofmt -w {}
 ```
 
 ### Lint (check-only mode)
 
-**Primary** (if `.golangci.yml` exists):
-```bash
-golangci-lint run
-```
-
-**Fallback** (always available):
 ```bash
 go vet ./...
 ```
 
 ## ⚠️ Known caveats
 
+- `fd | gofmt -w` skips `.pb.go` files (protobuf generated code) — these should not be manually formatted.
 - `gofmt -w` does not report errors for unparseable files — it silently skips them.
-  Always run `go vet` or `golanci-lint` after formatting to catch syntax issues.
-- If `golangci-lint` is not installed but a `.golangci.yml` exists, suggest the user install it
-  (`go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`).
+  Always run `go vet` after formatting to catch syntax issues.

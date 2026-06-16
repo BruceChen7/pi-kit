@@ -1,7 +1,214 @@
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { prepareBookmarkChunks } from "./bookmarks.ts";
+import {
+  type BookmarkItem,
+  buildTruncationWarning,
+  computeIncrement,
+  formatIncrement,
+  loadCheckpoint,
+  parseBookmarkItems,
+  prepareBookmarkChunks,
+  saveCheckpoint,
+} from "./bookmarks.ts";
 
 const TELEGRAM_MAX = 4096;
+
+function tempDir(): string {
+  return mkdtempSync(join(tmpdir(), "bkmk-test-"));
+}
+
+function cleanupDir(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // ignore cleanup failures
+  }
+}
+
+const sampleItem = (overrides: Partial<BookmarkItem> = {}): BookmarkItem => {
+  const author = overrides.author ?? "alice";
+  const id = overrides.id ?? "1";
+  return {
+    id,
+    author,
+    name: "Alice",
+    text: "hello world",
+    likes: 5,
+    retweets: 1,
+    bookmarks: 2,
+    created_at: "Wed Apr 16 10:00:00 +0000 2026",
+    url: `https://x.com/${author}/status/${id}`,
+    has_media: false,
+    media_urls: [],
+    ...overrides,
+  };
+};
+
+describe("computeIncrement", () => {
+  it("returns skip for empty items regardless of checkpoint", () => {
+    expect(computeIncrement([], { lastHeadTweetId: null })).toEqual({
+      kind: "skip",
+    });
+    expect(computeIncrement([], { lastHeadTweetId: "1" })).toEqual({
+      kind: "skip",
+    });
+  });
+
+  it("returns init when no checkpoint exists and sets headId to first (most recent) item", () => {
+    const items = [sampleItem({ id: "3" }), sampleItem({ id: "2" })];
+    expect(computeIncrement(items, { lastHeadTweetId: null })).toEqual({
+      kind: "init",
+      headId: "3",
+    });
+  });
+
+  it("returns increment with items before checkpoint", () => {
+    const items = [
+      sampleItem({ id: "3" }), // most recent bookmark → new headId
+      sampleItem({ id: "2" }), // new bookmark (before old head)
+      sampleItem({ id: "1" }), // old checkpoint
+    ];
+    const result = computeIncrement(items, { lastHeadTweetId: "1" });
+    expect(result).toEqual({
+      kind: "increment",
+      items: [items[0], items[1]],
+      headId: "3",
+    });
+  });
+
+  it("returns skip when first item is the checkpoint (nothing new)", () => {
+    const items = [sampleItem({ id: "1" }), sampleItem({ id: "0" })];
+    expect(computeIncrement(items, { lastHeadTweetId: "1" })).toEqual({
+      kind: "skip",
+    });
+  });
+
+  it("returns warning when checkpoint not found in fetched range", () => {
+    const items = [sampleItem({ id: "3" }), sampleItem({ id: "2" })];
+    const result = computeIncrement(items, { lastHeadTweetId: "1" });
+    expect(result).toEqual({
+      kind: "warning",
+      items,
+      headId: "3",
+    });
+  });
+});
+
+describe("formatIncrement", () => {
+  it("formats a single item without warning", () => {
+    const items = [
+      sampleItem({
+        id: "1",
+        author: "bob",
+        text: "hello",
+      }),
+    ];
+    const output = formatIncrement(items);
+    expect(output).toContain("## 1.");
+    expect(output).toContain("@bob");
+    expect(output).toContain("hello");
+    expect(output).toContain("x.com/bob/status/1");
+    expect(output).not.toContain("⚠️");
+  });
+
+  it("prepends warning when provided", () => {
+    const items = [sampleItem()];
+    const output = formatIncrement(items, "可能截断");
+    expect(output).toContain("⚠️");
+    expect(output).toContain("可能截断");
+  });
+
+  it("truncates very long text with ellipsis", () => {
+    const longText = "x".repeat(500);
+    const items = [sampleItem({ text: longText })];
+    const output = formatIncrement(items);
+    expect(output).toContain(`${"x".repeat(300)}…`);
+    expect(output).not.toContain("x".repeat(301));
+  });
+
+  it("numbers items sequentially", () => {
+    const items = [sampleItem({ id: "1" }), sampleItem({ id: "2" })];
+    const output = formatIncrement(items);
+    expect(output).toContain("## 1.");
+    expect(output).toContain("## 2.");
+  });
+});
+
+describe("parseBookmarkItems", () => {
+  it("parses a valid JSON array", () => {
+    const json = JSON.stringify([
+      { id: "1", author: "a", text: "hi" },
+      { id: "2", author: "b", text: "hello" },
+    ]);
+    const items = parseBookmarkItems(json);
+    expect(items).toHaveLength(2);
+    expect(items[0].id).toBe("1");
+    expect(items[1].id).toBe("2");
+  });
+
+  it("throws on non-array JSON", () => {
+    expect(() => parseBookmarkItems('{"id":"1"}')).toThrow(
+      /Expected JSON array/,
+    );
+  });
+
+  it("throws on invalid JSON", () => {
+    expect(() => parseBookmarkItems("not-json")).toThrow();
+  });
+});
+
+describe("buildTruncationWarning", () => {
+  it("includes the limit number in the warning", () => {
+    const msg = buildTruncationWarning(200);
+    expect(msg).toContain("200");
+  });
+});
+
+describe("loadCheckpoint / saveCheckpoint", () => {
+  it("returns null state when path does not exist", () => {
+    const state = loadCheckpoint("/nonexistent/path.json");
+    expect(state).toEqual({ lastHeadTweetId: null });
+  });
+
+  it("round-trips a checkpoint value", () => {
+    const dir = tempDir();
+    const path = join(dir, "checkpoint.json");
+    try {
+      saveCheckpoint("abc123", path);
+      const state = loadCheckpoint(path);
+      expect(state).toEqual({ lastHeadTweetId: "abc123" });
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it("returns null state for corrupt JSON", () => {
+    const dir = tempDir();
+    const path = join(dir, "corrupt.json");
+    try {
+      writeFileSync(path, "not-json{", "utf-8");
+      const state = loadCheckpoint(path);
+      expect(state).toEqual({ lastHeadTweetId: null });
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+
+  it("creates parent directories on save", () => {
+    const dir = tempDir();
+    const nested = join(dir, "sub", "nested", "checkpoint.json");
+    try {
+      saveCheckpoint("xyz", nested);
+      expect(existsSync(nested)).toBe(true);
+      const state = loadCheckpoint(nested);
+      expect(state).toEqual({ lastHeadTweetId: "xyz" });
+    } finally {
+      cleanupDir(dir);
+    }
+  });
+});
 
 describe("prepareBookmarkChunks", () => {
   it("returns empty array for empty output", () => {

@@ -1,12 +1,71 @@
+/* biome-ignore-all lint/suspicious/noExplicitAny: test mock boundary */
 import { describe, expect, it, vi } from "vitest";
-import registerLibrarianTools, {
-  globMatches,
-  normalizePath,
-  parseGitLabProject,
-  parseRepository,
-  summarizeToolCall,
-  validateSearchPattern,
-} from "./index.js";
+import { parseRepository, summarizeGithubToolCall } from "./github.js";
+import { parseGitLabProject } from "./gitlab.js";
+import registerLibrarianTools from "./index.js";
+import { globMatches, normalizePath, validateSearchPattern } from "./shared.js";
+
+// ---- Module structure tests (TDD-driven refactoring) ----
+
+describe("shared module exports", () => {
+  it("exports normalizePath", async () => {
+    const mod = await import("./shared.js");
+    expect(typeof mod.normalizePath).toBe("function");
+    expect(mod.normalizePath("/src/./index.ts")).toBe("src/index.ts");
+  });
+
+  it("exports globMatches", async () => {
+    const mod = await import("./shared.js");
+    expect(typeof mod.globMatches).toBe("function");
+    expect(mod.globMatches("**/*.ts", "src/index.ts")).toBe(true);
+  });
+
+  it("exports validateSearchPattern", async () => {
+    const mod = await import("./shared.js");
+    expect(typeof mod.validateSearchPattern).toBe("function");
+  });
+
+  it("exports formatNumberedFileContent", async () => {
+    const mod = await import("./shared.js");
+    expect(typeof mod.formatNumberedFileContent).toBe("function");
+  });
+
+  it("exports truncateInline", async () => {
+    const mod = await import("./shared.js");
+    expect(typeof mod.truncateInline).toBe("function");
+    expect(mod.truncateInline("hello world", 5)).toBe("hell…");
+  });
+
+  it("exports formatDuration", async () => {
+    const mod = await import("./shared.js");
+    expect(typeof mod.formatDuration).toBe("function");
+  });
+
+  it("exports sanitizeParamValue", async () => {
+    const mod = await import("./shared.js");
+    expect(typeof mod.sanitizeParamValue).toBe("function");
+  });
+
+  it("exports stripAnsiAndControl", async () => {
+    const mod = await import("./shared.js");
+    expect(typeof mod.stripAnsiAndControl).toBe("function");
+  });
+
+  it("exports sanitizeDisplayText", async () => {
+    const mod = await import("./shared.js");
+    expect(typeof mod.sanitizeDisplayText).toBe("function");
+  });
+
+  it("exports asTextResult", async () => {
+    const mod = await import("./shared.js");
+    expect(typeof mod.asTextResult).toBe("function");
+  });
+
+  it("exports toolErrorResult", async () => {
+    const mod = await import("./shared.js");
+    expect(typeof mod.toolErrorResult).toBe("function");
+  });
+});
 
 type RegisteredTool = {
   name: string;
@@ -34,6 +93,57 @@ function requireTool(tools: Map<string, RegisteredTool>, name: string) {
   return tool;
 }
 
+describe("github module exports", () => {
+  it("exports parseRepository", async () => {
+    const mod = await import("./github.js");
+    expect(typeof mod.parseRepository).toBe("function");
+    expect(mod.parseRepository("acme/project")).toEqual({
+      owner: "acme",
+      repo: "project",
+      fullName: "acme/project",
+    });
+  });
+
+  it("exports encodeGitHubPath", async () => {
+    const mod = await import("./github.js");
+    expect(typeof mod.encodeGitHubPath).toBe("function");
+    expect(mod.encodeGitHubPath("src/index.ts")).toBe("src/index.ts");
+    expect(mod.encodeGitHubPath("src/My File.ts")).toBe("src/My%20File.ts");
+  });
+
+  it("exports ghApi", async () => {
+    const mod = await import("./github.js");
+    expect(typeof mod.ghApi).toBe("function");
+  });
+
+  it("exports registerGithubTools which registers GitHub tools", async () => {
+    const pi = { registerTool: vi.fn() };
+    const { registerGithubTools } = await import("./github.js");
+    registerGithubTools(pi as any);
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "read_github" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "list_directory_github" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "glob_github" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "search_github" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "commit_search" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "diff" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "list_github_repositories" }),
+    );
+  });
+});
+
 describe("librarian repository parsing", () => {
   it("normalizes owner/repo input", () => {
     expect(parseRepository("acme/project")).toEqual({
@@ -52,6 +162,55 @@ describe("librarian repository parsing", () => {
   it("rejects non-GitHub repository URLs", () => {
     expect(() => parseRepository("https://gitlab.com/acme/project")).toThrow(
       /Only github\.com repositories/,
+    );
+  });
+});
+
+describe("gitlab module exports", () => {
+  it("exports parseGitLabProject", async () => {
+    const mod = await import("./gitlab.js");
+    expect(typeof mod.parseGitLabProject).toBe("function");
+    expect(mod.parseGitLabProject("acme/project")).toEqual({
+      host: "gitlab.com",
+      fullPath: "acme/project",
+      encodedPath: "acme%2Fproject",
+    });
+  });
+
+  it("exports glabApi", async () => {
+    const mod = await import("./gitlab.js");
+    expect(typeof mod.glabApi).toBe("function");
+  });
+
+  it("exports summarizeGitlabToolCall", async () => {
+    const mod = await import("./gitlab.js");
+    expect(typeof mod.summarizeGitlabToolCall).toBe("function");
+  });
+
+  it("exports registerGitlabTools which registers GitLab tools", async () => {
+    const pi = { registerTool: vi.fn() };
+    const { registerGitlabTools } = await import("./gitlab.js");
+    registerGitlabTools(pi as any);
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "read_gitlab" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "list_directory_gitlab" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "glob_gitlab" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "search_gitlab" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "commit_search_gitlab" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "diff_gitlab" }),
+    );
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "list_gitlab_projects" }),
     );
   });
 });
@@ -211,10 +370,197 @@ describe("librarian search tool", () => {
   });
 });
 
+describe("librarian-github module exports", () => {
+  it("exports registerLibrarianGithub", async () => {
+    const mod = await import("./librarian-github.js");
+    expect(typeof mod.registerLibrarianGithub).toBe("function");
+  });
+
+  it("registerLibrarianGithub registers librarian_github tool", async () => {
+    const pi = { registerTool: vi.fn() };
+    const { registerLibrarianGithub } = await import("./librarian-github.js");
+    registerLibrarianGithub(pi as any);
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "librarian_github" }),
+    );
+  });
+});
+
+describe("librarian-gitlab module exports", () => {
+  it("exports registerLibrarianGitlab", async () => {
+    const mod = await import("./librarian-gitlab.js");
+    expect(typeof mod.registerLibrarianGitlab).toBe("function");
+  });
+
+  it("registerLibrarianGitlab registers librarian_gitlab tool", async () => {
+    const pi = { registerTool: vi.fn() };
+    const { registerLibrarianGitlab } = await import("./librarian-gitlab.js");
+    registerLibrarianGitlab(pi as any);
+    expect(pi.registerTool).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "librarian_gitlab" }),
+    );
+  });
+});
+
+describe("librarian-runner module exports", () => {
+  it("exports runLibrarianSubagent", async () => {
+    const mod = await import("./librarian-runner.js");
+    expect(typeof mod.runLibrarianSubagent).toBe("function");
+  });
+
+  it("exports renderProgress", async () => {
+    const mod = await import("./librarian-runner.js");
+    expect(typeof mod.renderProgress).toBe("function");
+    const state = {
+      startedAt: Date.now(),
+      phase: "exploring" as const,
+      startedTools: 3,
+      completedTools: 2,
+      failedTools: 0,
+      currentAction: "Searching code",
+      recentActions: ["✓ read_github", "✗ search_github"],
+    };
+    const rendered = mod.renderProgress(state);
+    expect(rendered).toContain("Librarian");
+    expect(rendered).toContain("2/3");
+  });
+});
+
+describe("entry point registration", () => {
+  it("registers all tools from the index entry", () => {
+    const pi = { registerTool: vi.fn() };
+    registerLibrarianTools(pi as any);
+
+    const expectedTools = [
+      "read_github",
+      "list_directory_github",
+      "glob_github",
+      "search_github",
+      "commit_search",
+      "diff",
+      "list_github_repositories",
+      "read_gitlab",
+      "list_directory_gitlab",
+      "glob_gitlab",
+      "search_gitlab",
+      "commit_search_gitlab",
+      "diff_gitlab",
+      "list_gitlab_projects",
+      "librarian_github",
+      "librarian_gitlab",
+    ];
+
+    for (const toolName of expectedTools) {
+      expect(pi.registerTool).toHaveBeenCalledWith(
+        expect.objectContaining({ name: toolName }),
+      );
+    }
+  });
+});
+
+describe("librarian event parsing", () => {
+  it("parseLibrarianEvent returns null for empty line", async () => {
+    const { parseLibrarianEvent } = await import("./librarian-runner.js");
+    expect(parseLibrarianEvent("")).toBeNull();
+  });
+
+  it("parseLibrarianEvent returns null for non-JSON line", async () => {
+    const { parseLibrarianEvent } = await import("./librarian-runner.js");
+    expect(parseLibrarianEvent("not json")).toBeNull();
+  });
+
+  it("parseLibrarianEvent parses tool_execution_start", async () => {
+    const { parseLibrarianEvent } = await import("./librarian-runner.js");
+    const result = parseLibrarianEvent(
+      JSON.stringify({
+        type: "tool_execution_start",
+        toolName: "read_github",
+        toolCallId: "call-1",
+        args: { repository: "acme/project", path: "src/index.ts" },
+      }),
+      (name, args) => `${name}:${args?.path ?? "?"}`,
+    );
+    expect(result).toEqual({
+      kind: "tool_start",
+      toolName: "read_github",
+      toolCallId: "call-1",
+      summary: "read_github:src/index.ts",
+    });
+  });
+
+  it("parseLibrarianEvent parses tool_execution_end with error", async () => {
+    const { parseLibrarianEvent } = await import("./librarian-runner.js");
+    const result = parseLibrarianEvent(
+      JSON.stringify({
+        type: "tool_execution_end",
+        toolName: "search_github",
+        toolCallId: "call-2",
+        args: { pattern: "foo" },
+        isError: true,
+      }),
+      (_name, _args) => "some-tool",
+    );
+    expect(result).toEqual({
+      kind: "tool_end",
+      toolName: "search_github",
+      toolCallId: "call-2",
+      summary: "some-tool",
+      isError: true,
+    });
+  });
+
+  it("parseLibrarianEvent detects writing phase from text_start", async () => {
+    const { parseLibrarianEvent } = await import("./librarian-runner.js");
+    const result = parseLibrarianEvent(
+      JSON.stringify({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_start" },
+      }),
+      () => "",
+    );
+    expect(result).toEqual({ kind: "writing_phase" });
+  });
+
+  it("parseLibrarianEvent captures assistant message_end", async () => {
+    const { parseLibrarianEvent } = await import("./librarian-runner.js");
+    const result = parseLibrarianEvent(
+      JSON.stringify({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Here is the answer." }],
+          stopReason: "end_turn",
+        },
+      }),
+      () => "",
+    );
+    expect(result).toEqual({
+      kind: "assistant_message",
+      text: "Here is the answer.",
+      details: { phase: "assistant", stopReason: "end_turn" },
+    });
+  });
+
+  it("parseLibrarianEvent captures result event", async () => {
+    const { parseLibrarianEvent } = await import("./librarian-runner.js");
+    const result = parseLibrarianEvent(
+      JSON.stringify({
+        type: "result",
+        result: "Final answer text",
+      }),
+      () => "",
+    );
+    expect(result).toEqual({
+      kind: "result",
+      text: "Final answer text",
+    });
+  });
+});
+
 describe("librarian progress summaries", () => {
   it("summarizes read_github calls", () => {
     expect(
-      summarizeToolCall("read_github", {
+      summarizeGithubToolCall("read_github", {
         repository: "acme/project",
         path: "src/index.ts",
       }),
@@ -222,7 +568,7 @@ describe("librarian progress summaries", () => {
   });
 
   it("truncates long search patterns", () => {
-    const summary = summarizeToolCall("search_github", {
+    const summary = summarizeGithubToolCall("search_github", {
       repository: "acme/project",
       pattern: "x".repeat(100),
     });

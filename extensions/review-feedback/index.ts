@@ -259,6 +259,58 @@ function createFallbackDiff(originalPath: string, editedPath: string): string {
   ].join("\n");
 }
 
+function parseUnifiedDiff(diff: string): {
+  header: string[];
+  hunks: string[][];
+} {
+  const lines = diff.split("\n");
+  const firstHunkIdx = lines.findIndex((l) => l.startsWith("@@"));
+
+  if (firstHunkIdx === -1) {
+    return { header: lines, hunks: [] };
+  }
+
+  const header = lines.slice(0, firstHunkIdx);
+  const hunks: string[][] = [];
+  let current: string[] = [];
+
+  for (let i = firstHunkIdx; i < lines.length; i++) {
+    if (lines[i].startsWith("@@") && current.length > 0) {
+      hunks.push(current);
+      current = [];
+    }
+    current.push(lines[i]);
+  }
+  if (current.length > 0) {
+    hunks.push(current);
+  }
+
+  return { header, hunks };
+}
+
+function isWhitespaceOnlyHunk(hunkLines: string[]): boolean {
+  const removed = hunkLines
+    .filter((l) => l.startsWith("-"))
+    .map((l) => l.slice(1).replace(/\s/g, ""));
+  const added = hunkLines
+    .filter((l) => l.startsWith("+"))
+    .map((l) => l.slice(1).replace(/\s/g, ""));
+
+  return removed.join("") === added.join("");
+}
+
+export function filterWhitespaceOnlyHunks(diff: string): string {
+  if (!diff) return diff;
+
+  const { header, hunks } = parseUnifiedDiff(diff);
+  if (hunks.length === 0) return diff;
+
+  const filtered = hunks.filter((h) => !isWhitespaceOnlyHunk(h));
+  if (filtered.length === 0) return "";
+
+  return [...header, ...filtered.flat()].join("\n");
+}
+
 function hasPlaceholderToken(text: string): boolean {
   return text.split("\n").some((line) => line.trim() === PLACEHOLDER);
 }
@@ -367,33 +419,36 @@ export function handleReviewInput(
   };
 }
 
-function createReviewArtifact(
-  ctx: ReviewContext,
+function setupReviewFiles(
+  reviewDir: string,
   original: string,
   edited: string,
-): PendingReview {
-  const sessionDir = ctx.sessionManager.getSessionDir();
-  const sessionId = ctx.sessionManager.getSessionId();
-  const reviewId = `review_${new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")}_${randomUUID()}`;
-  const reviewDir = join(sessionDir, "feedback", sessionId, reviewId);
+): string {
   mkdirSync(reviewDir, { recursive: true });
 
   const originalPath = join(reviewDir, "original.md");
   const editedPath = join(reviewDir, "edited.md");
-  const diffPath = join(reviewDir, "diff.patch");
 
   writeFileSync(originalPath, `${original}\n`, "utf8");
   writeFileSync(editedPath, `${edited}\n`, "utf8");
 
-  const diff = createUnifiedDiff(originalPath, editedPath);
-  writeFileSync(diffPath, `${diff}\n`, "utf8");
+  return filterWhitespaceOnlyHunks(createUnifiedDiff(originalPath, editedPath));
+}
+
+function writeReviewMetadata(
+  reviewDir: string,
+  diff: string,
+  sessionId: string,
+  sessionFile: string | undefined,
+): void {
+  writeFileSync(join(reviewDir, "diff.patch"), `${diff}\n`, "utf8");
   writeFileSync(
     join(reviewDir, "metadata.json"),
     `${JSON.stringify(
       {
         version: 1,
         sessionId,
-        sessionFile: ctx.sessionManager.getSessionFile(),
+        sessionFile,
         createdAt: new Date().toISOString(),
         placeholder: PLACEHOLDER,
         reviewDir,
@@ -402,6 +457,33 @@ function createReviewArtifact(
       2,
     )}\n`,
     "utf8",
+  );
+}
+
+function createReviewArtifact(
+  ctx: ReviewContext,
+  original: string,
+  edited: string,
+): PendingReview | undefined {
+  const sessionDir = ctx.sessionManager.getSessionDir();
+  const sessionId = ctx.sessionManager.getSessionId();
+  const reviewId = `review_${new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-")}_${randomUUID()}`;
+  const reviewDir = join(sessionDir, "feedback", sessionId, reviewId);
+
+  // Phase 1 — IO: write files needed for diff, compute filtered diff
+  const diff = setupReviewFiles(reviewDir, original, edited);
+
+  // Phase 2 — Decision boundary: is there semantic content?
+  if (diff.length === 0) {
+    return undefined;
+  }
+
+  // Phase 3 — IO: write remaining artifact files
+  writeReviewMetadata(
+    reviewDir,
+    diff,
+    sessionId,
+    ctx.sessionManager.getSessionFile(),
   );
 
   return {
@@ -451,6 +533,9 @@ export default function reviewFeedbackExtension(pi: ExtensionAPI) {
     }
 
     pendingReview = createReviewArtifact(ctx, original, edited);
+    if (!pendingReview) {
+      return; // No semantic changes, nothing to review
+    }
 
     pi.appendEntry(CUSTOM_PENDING, pendingReview);
     ctx.ui.setEditorText(`${PLACEHOLDER}\n\n`);

@@ -5,6 +5,7 @@ import type { CacheSessionMetrics } from "./types.ts";
 
 export type CacheGraphBootData = {
   metrics: CacheSessionMetrics;
+  defaultRepoSlug?: string;
 };
 
 export type CreateCacheGraphHtmlOptions = {

@@ -80,6 +80,7 @@ type ChartTimeLabels = {
 
 type BootData = {
   metrics: CacheSessionMetrics;
+  defaultRepoSlug?: string;
 };
 
 type DashboardResult =
@@ -109,11 +110,16 @@ const boot = window.__CACHE_GRAPH_BOOT__ ?? {
   metrics: emptyMetrics(),
 };
 const bootRows = boot.metrics.allMessages.length;
+const initialRepo: RepoFilter =
+  boot.defaultRepoSlug &&
+  boot.metrics.allMessages.some((m) => m.repoSlug === boot.defaultRepoSlug)
+    ? boot.defaultRepoSlug
+    : "all";
 
 let metrics = $state<CacheSessionMetrics>(boot.metrics);
 let chartView = $state<ChartView>("per-turn");
 let chartRange = $state<ChartRange>("today");
-let selectedRepo = $state<RepoFilter>("all");
+let selectedRepo = $state<RepoFilter>(initialRepo);
 let selectedDate = $state(formatDateInputValue(new Date()));
 let status = $state<Status>("idle");
 let statusMessage = $state("");

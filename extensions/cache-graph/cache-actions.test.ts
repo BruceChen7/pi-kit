@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { collectAllRepoCacheMetricsWithArchive } from "./archive-metrics.ts";
-import { createCacheStatsActions } from "./cache-actions.ts";
+import {
+  createCacheStatsActions,
+  deriveDefaultRepoSlug,
+} from "./cache-actions.ts";
 import type { CacheSessionMetrics } from "./types.ts";
 
 const metrics: CacheSessionMetrics = {
@@ -42,6 +45,44 @@ vi.mock("./archive-metrics.ts", () => ({
     },
   })),
 }));
+
+describe("deriveDefaultRepoSlug", () => {
+  it("returns slug from a macOS session file path with wrapping hyphens", () => {
+    const slug = deriveDefaultRepoSlug(
+      "/Users/ming/.pi/agent/sessions/--Users-ming-work-pi-kit--/current.jsonl",
+    );
+    expect(slug).toBe("work-pi-kit");
+  });
+
+  it("returns slug from a macOS session file path without wrapping hyphens", () => {
+    const slug = deriveDefaultRepoSlug(
+      "/Users/ming/.pi/agent/sessions/Users-ming-work-pi-kit/current.jsonl",
+    );
+    expect(slug).toBe("work-pi-kit");
+  });
+
+  it("returns slug from a Linux-style session file path", () => {
+    const slug = deriveDefaultRepoSlug(
+      "/home/ming/.pi/agent/sessions/--home-ming-work-pi-kit--/current.jsonl",
+    );
+    expect(slug).toBe("work-pi-kit");
+  });
+
+  it("returns undefined for null session file", () => {
+    expect(deriveDefaultRepoSlug(null)).toBeUndefined();
+  });
+
+  it("returns undefined for undefined session file", () => {
+    expect(deriveDefaultRepoSlug(undefined)).toBeUndefined();
+  });
+
+  it("returns the directory name when it does not match a home-directory pattern", () => {
+    const slug = deriveDefaultRepoSlug(
+      "/tmp/sessions/my-custom-repo/session.jsonl",
+    );
+    expect(slug).toBe("my-custom-repo");
+  });
+});
 
 describe("createCacheStatsActions", () => {
   it("uses the incremental archive provider for metrics and export", async () => {

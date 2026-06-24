@@ -6,8 +6,8 @@ export {
 } from "./paths.ts";
 export { getSessionKey } from "./session.ts";
 
-import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { createLogger } from "../shared/logger.ts";
 import {
   recordSessionReviewDocumentWrites,

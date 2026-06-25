@@ -122,6 +122,42 @@ describe("resolveEnvGuardConfig", () => {
 });
 
 describe("rewriteGitDiffCommand", () => {
+  it("rewrites bare git diff command", () => {
+    const result = rewriteGitDiffCommand("git diff HEAD", []);
+    expect(result).toContain("git --no-pager diff");
+    expect(result).toContain("--no-ext-diff");
+    expect(result).toContain("HEAD");
+  });
+
+  it("rewrites git diff with leading cd prefix", () => {
+    const result = rewriteGitDiffCommand(
+      "cd /Users/ming.chen/work/video/bff_resource && git diff origin/release HEAD -- internal/preload/video_toggle_preload_handler.go",
+      [],
+    );
+    expect(result).toContain("git --no-pager diff");
+    expect(result).toContain("--no-ext-diff");
+    expect(result).toContain("origin/release HEAD");
+    // 保留 cd 前缀
+    expect(result).toContain("cd /Users/ming.chen/work/video/bff_resource");
+  });
+
+  it("rewrites git diff with multi-cd prefix", () => {
+    const result = rewriteGitDiffCommand(
+      "cd /a && cd /b && git diff origin/release HEAD",
+      [],
+    );
+    expect(result).toContain("git --no-pager diff");
+    expect(result).toContain("--no-ext-diff");
+    expect(result).toContain("cd /a && cd /b");
+  });
+
+  it("rewrites git diff with env var prefix", () => {
+    const result = rewriteGitDiffCommand("GIT_PAGER=cat git diff --stat", []);
+    expect(result).toContain("git --no-pager diff");
+    expect(result).toContain("--no-ext-diff");
+    expect(result).toContain("GIT_PAGER=cat");
+  });
+
   it("avoids duplicating --no-ext-diff when already present", () => {
     const result = rewriteGitDiffCommand("git diff --no-ext-diff --stat", []);
     expect(result).toBe("git --no-pager diff --no-ext-diff --stat");
@@ -135,5 +171,27 @@ describe("rewriteGitDiffCommand", () => {
     expect(result).toBe(
       "git --no-pager diff --no-ext-diff --color=never --stat",
     );
+  });
+
+  it("does not rewrite non-git commands", () => {
+    const result = rewriteGitDiffCommand("ls -la", []);
+    expect(result).toBe("ls -la");
+  });
+});
+
+describe("applyEnvGuard env handling", () => {
+  it("includes DEFAULT_ENV empty-string values in envMap for known keys", () => {
+    // resolveEnvGuardConfig 返回的 envMap 包含 DEFAULT_ENV 的 key
+    // 其中 GIT_EXTERNAL_DIFF 和 GIT_DIFF 为空串
+    // applyEnvGuard 会将这些空串转为 delete process.env
+    // 此处验证 resolveEnvGuardConfig 返回的 envMap 包含这些空值
+    const cwd = createTempDir("pi-kit-env-guard-cwd-");
+    const config = resolveEnvGuardConfig(cwd, { forceReload: true });
+
+    // DEFAULT_ENV 中的空值 key 应该存在
+    expect(config.envMap).toHaveProperty("GIT_EXTERNAL_DIFF");
+    expect(config.envMap.GIT_EXTERNAL_DIFF).toBe("");
+    expect(config.envMap).toHaveProperty("GIT_DIFF");
+    expect(config.envMap.GIT_DIFF).toBe("");
   });
 });

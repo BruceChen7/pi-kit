@@ -14,7 +14,7 @@ const DEFAULT_ENV: Record<string, string> = {
   LESS: "FRX",
 };
 
-const GIT_DIFF_COMMAND = /^\s*git\s+diff(\s|$)/;
+const GIT_DIFF_COMMAND = /(^|\s)git\s+diff(\s|$)/;
 const GIT_DIFF_HOOK_ID = "git-diff";
 
 type EnvGuardSettings = {
@@ -216,7 +216,11 @@ function applyEnvGuard(ctx: ExtensionContext): void {
   });
 
   for (const [key, value] of Object.entries(envMap)) {
-    process.env[key] = value;
+    if (value === "") {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
   }
 
   log?.debug("Applied env guard", { cwd: ctx.cwd, gitDiffFlags });

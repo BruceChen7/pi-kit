@@ -46,11 +46,13 @@ RIGHT (vertical):
 
 When exploring the codebase, use the project's domain glossary so that test names and interface vocabulary match the project's language, and respect ADRs in the area you're touching.
 
+For interface design vocabulary (**module**, **interface**, **depth**, **seam**, **adapter**, **leverage**, **locality**), run `/software-design-philosophy` or read the `improve-codebase-architecture/LANGUAGE.md` glossary. Use these terms exactly when discussing module shape and testability.
+
 Before writing any code:
 
 - [ ] Confirm with user what interface changes are needed
 - [ ] Confirm with user which behaviors to test (prioritize)
-- [ ] Identify opportunities for [deep modules](deep-modules.md) (small interface, deep implementation)
+- [ ] Identify opportunities for [deep modules](deep-modules.md) (small interface, deep implementation) — run `/software-design-philosophy` for the vocabulary and the testability checks
 - [ ] Design interfaces for [testability](interface-design.md)
 - [ ] List the behaviors to test (not implementation steps)
 - [ ] Get user approval on the plan
@@ -110,4 +112,5 @@ After all tests pass, look for [refactor candidates](refactoring.md):
 
 ## Attribution
 
-Adapted from the `tdd` skill in https://github.com/mattpocock/skills under the MIT License.
+Adapted from the `tdd` skill in https://github.com/mattpocock/skills (v1.0.0+) under the MIT License.
+References shared architecture vocabulary from `/software-design-philosophy` and `improve-codebase-architecture/LANGUAGE.md`, mirroring the upstream `/codebase-design` skill dependency.

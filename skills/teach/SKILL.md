@@ -30,6 +30,7 @@ The state of their learning is captured in several files:
 - **`./reference/`** — reference documents: cheat sheets, syntax, algorithms, glossaries. Beautiful, print-friendly HTML. They are the compressed essence of lessons.
 - **`./learning-records/`** — learning records capturing what the user has learned. Use the format in [LEARNING-RECORD-FORMAT.md](./LEARNING-RECORD-FORMAT.md).
 - **`./lessons/`** — self-contained HTML lessons. Each lesson teaches one tightly-scoped thing tied to the mission.
+- **`./assets/`** — reusable **components** shared across lessons. See [Assets](#assets).
 
 Create files and directories lazily — only when first needed.
 
@@ -90,6 +91,14 @@ Each lesson should:
 5. **Call to action** — what to try next, or a prompt to ask follow-up questions.
 
 Litter lessons with **citations** — links to external resources backing every claim. This increases trustworthiness and gives the user a path to go deeper.
+
+## Assets
+
+Lessons are built from reusable **components**, stored in `./assets/`: stylesheets, quiz widgets, simulators, diagram helpers — anything a second lesson could reuse.
+
+Reuse is the default, not the exception. Before authoring a lesson, read `./assets/` and build from the components already there. When a lesson needs something new and reusable, write it as a component in `./assets/` and link to it — never inline code a future lesson would duplicate.
+
+A shared stylesheet is the first component every workspace earns: every lesson links it, so the lessons look like one consistent course rather than a pile of one-offs. As the workspace grows, so should the component library.
 
 ## The Mission
 

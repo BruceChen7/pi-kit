@@ -4,6 +4,7 @@ description: >
   Compact the current conversation into a handoff document so another agent can continue the
   work. Use when the user asks to hand off, summarize for the next session, preserve context,
   or prepare a continuation note.
+argument-hint: "What will the next session be used for?"
 ---
 
 # Handoff
@@ -25,6 +26,7 @@ Default to Chinese unless the user explicitly asks for another language.
 - Redact any sensitive information, such as API keys, passwords, or personally identifiable
   information (PII).
 - If the user passed arguments, treat them as the next session's intended focus.
+- Include a **suggested skills** section in the document that names skills the next agent should invoke.
 
 ## What to inspect
 

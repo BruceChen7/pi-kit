@@ -7,6 +7,10 @@ description: Use when the user wants to improve architecture, find refactoring o
 
 Surface architectural friction and propose **deepening opportunities** — refactors that turn shallow modules into deep ones. The aim is testability, locality, leverage, and Pi-agent navigability.
 
+This skill is built on a shared design vocabulary — run the `/software-design-philosophy` skill or read `LANGUAGE.md` for the full architecture terminology (**module**, **interface**, **depth**, **seam**, **adapter**, **leverage**, **locality**). Use these terms exactly in every suggestion — don't drift into "component", "service", "API", or "boundary."
+
+The domain language in `.pi/contexts/**/CONTEXT.md` gives names to good seams; ADRs under `.pi/contexts/adr/` record decisions this skill should not re-litigate.
+
 Default to Chinese unless the user explicitly asks for another language.
 
 ## Pi-native rules
@@ -102,13 +106,13 @@ would you like to explore?”
 
 ### 3. Grilling loop
 
-Once the user picks a candidate, use the `/grill-with-docs` discipline:
+Once the user picks a candidate, run the `/grill-with-docs` discipline:
 
 - ask one question at a time
 - include your recommendation
 - explore code instead of asking when code can answer
-- update `.pi/contexts/**/CONTEXT.md` inline when domain terms crystallise
-- offer ADRs only for hard-to-reverse, surprising, trade-off decisions
+
+Side effects happen inline as decisions crystallise — update `.pi/contexts/**/CONTEXT.md` when domain terms sharpen, and offer ADRs only for hard-to-reverse, surprising, trade-off decisions. This mirrors the `/domain-modeling` discipline from the upstream skill ecosystem.
 
 If the user rejects a candidate with a load-bearing reason, ask whether to record an ADR so future architecture reviews do not re-suggest it.
 
@@ -142,13 +146,15 @@ Include:
 - risks and open questions
 
 
-## Dependency files
+## Dependencies
 
 This skill depends on:
 
-- `LANGUAGE.md`
-- `DEEPENING.md`
-- `INTERFACE-DESIGN.md`
-- `HTML-REPORT.md`
-- `../grill-with-docs/CONTEXT-FORMAT.md`
-- `../grill-with-docs/ADR-FORMAT.md`
+- `LANGUAGE.md` — shared architecture vocabulary (mirrors upstream `/codebase-design` skill)
+- `DEEPENING.md` — dependency categories and seam discipline
+- `INTERFACE-DESIGN.md` — alternative interface exploration
+- `HTML-REPORT.md` — HTML review report scaffold
+- `../grill-with-docs/CONTEXT-FORMAT.md` — domain glossary format (mirrors upstream `/domain-modeling` skill)
+- `../grill-with-docs/ADR-FORMAT.md` — ADR format
+
+For shared architecture vocabulary, you can also invoke `/software-design-philosophy` when deeper guidance on module design principles is needed.

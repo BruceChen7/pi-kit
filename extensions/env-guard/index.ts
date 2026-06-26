@@ -165,9 +165,19 @@ export function rewriteGitDiffCommand(
     return command;
   }
 
-  const trimmed = command.trimStart();
-  const leadingWhitespace = command.slice(0, command.length - trimmed.length);
-  const rest = trimmed.replace(GIT_DIFF_COMMAND, "").trimStart();
+  // Use match() instead of replace() to correctly handle compound commands
+  // (e.g. "cd /path && git diff ..." or "VAR=val git diff ..."). The old approach
+  // removed "git diff" from the middle of the string but accidentally kept the
+  // compound prefix as part of the suffix, producing malformed commands like:
+  //   git --no-pager diff --no-ext-diff cd /path && ...
+  const match = command.match(GIT_DIFF_COMMAND);
+  if (!match || match.index === undefined) return command;
+  // Include the (^|\s) captured character (e.g., space before "git") in the prefix
+  // so &&git stays as && git for readability.
+  const prefix = command.slice(0, match.index + (match[1]?.length ?? 0));
+  const afterGit = command.slice(match.index + (match[1]?.length ?? 0));
+  // Extract only the arguments after "git diff", leaving the prefix untouched
+  const rest = afterGit.replace(GIT_DIFF_COMMAND, "").trimStart();
   const flagRegion = sliceBeforeOptionsEnd(rest);
   const normalizedFlags = uniqueFlags(normalizeFlagList(extraFlags));
   const commandHasNoExtDiff = hasFlagToken(flagRegion, NO_EXT_DIFF_FLAG);
@@ -182,7 +192,7 @@ export function rewriteGitDiffCommand(
   ];
   const extra = diffFlags.length > 0 ? ` ${diffFlags.join(" ")}` : "";
   const suffix = rest ? ` ${rest}` : "";
-  const rewritten = `${leadingWhitespace}git --no-pager diff${extra}${suffix}`;
+  const rewritten = `${prefix}git --no-pager diff${extra}${suffix}`;
 
   log?.debug("Rewrote git diff command", {
     command,

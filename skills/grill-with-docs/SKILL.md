@@ -13,8 +13,11 @@ Default to Chinese for questions, specs, plans, and summaries unless the user ex
 
 ## Hard Rules
 
-- Run a `/grilling` session for the core interview discipline.
-- Run the `/domain-modeling` skill to build and sharpen the project's domain model inline.
+- Ask **one question at a time** and wait for the user's answer before continuing. Asking multiple questions at once is bewildering.
+- For each question, include your recommended answer and why.
+- If a question can be answered by exploring files, code, docs, or git history, investigate instead of asking the user.
+- Challenge fuzzy terms, overloaded terms, and contradictions with existing code or docs immediately.
+- Treat glossary and ADR inline updates as core behavior — run `/domain-modeling` when domain terms or ADR-worthy decisions crystallise.
 - Do not start implementation from this skill. End by producing reviewed planning artifacts when the user wants to proceed.
 - Keep pure interview sessions lightweight: if there are no file edits, code changes, or architectural commitments, the `AGENTS.md` skill-only exception applies and no plan file is required.
 - Store domain docs under `.pi/contexts/`; do not create `CONTEXT.md` or ADR files in application source directories.
@@ -64,7 +67,17 @@ Default to Chinese for questions, specs, plans, and summaries unless the user ex
 
 ### 2. Grill the plan
 
-Run a `/grilling` session to walk the design tree. Use the `/domain-modeling` skill — `CONTEXT-FORMAT.md` and `ADR-FORMAT.md` from `/domain-modeling` — to keep the domain model current as you go.
+Walk the design tree one decision at a time:
+
+- clarify the user goal and success criteria
+- identify actors, data, state transitions, and integration boundaries
+- test edge cases with concrete scenarios
+- ask what is explicitly out of scope
+- compare the user's language with existing glossary terms
+- compare the stated behavior with current code behavior
+- surface contradictions directly and ask which source should win
+
+Use `/domain-modeling` (via its `CONTEXT-FORMAT.md` and `ADR-FORMAT.md`) to keep the domain model current as you go — update `.pi/contexts/**/CONTEXT.md` when terms sharpen, and offer ADRs for hard-to-reverse decisions.
 
 Question format:
 

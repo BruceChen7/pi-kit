@@ -14,7 +14,6 @@ const DEFAULT_ENV: Record<string, string> = {
   LESS: "FRX",
 };
 
-const GIT_DIFF_COMMAND = /(^|\s)git\s+diff(\s|$)/;
 const GIT_DIFF_HOOK_ID = "git-diff";
 
 type EnvGuardSettings = {
@@ -35,43 +34,109 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-// Check if a position in the command string is inside single/double quotes.
-function isInsideQuotes(str: string, pos: number): boolean {
+// ── Single-pass tokenizer ──────────────────────────────────────────────
+//
+// Walk the command string character-by-character, tracking shell quote state
+// and command boundaries. Returns the "git diff" match only when it appears
+// as an actual command, not inside quotes or as an argument to another command.
+//
+// State machine:
+//   outside quotes → track (", ') → enter quoted state
+//                  → track (&&, ||, ;, |, () → new segment boundary
+//                  → at segment start:
+//                      VAR=value → skip value, stay in segment
+//                      git diff  → ✅ match
+//                      other     → mark segment consumed, continue
+//   inside quotes  → skip all logic until closing quote
+type GitDiffMatch = {
+  /** Everything before "git diff" in the original command (preserved as-is) */
+  prefix: string;
+  /** Everything after "git diff" (the diff arguments) */
+  rest: string;
+};
+
+function findGitDiffCommand(command: string): GitDiffMatch | null {
   let inSingle = false;
   let inDouble = false;
-  for (let i = 0; i < pos; i++) {
-    const ch = str[i];
-    if (ch === "'" && !inDouble) inSingle = !inSingle;
-    else if (ch === '"' && !inSingle) inDouble = !inDouble;
+  let newSeg = true;
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+
+    // ── 1) Track quote state ──────────────────────────────────────────
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      continue;
+    }
+    if (ch === "\\" && inDouble && i + 1 < command.length) {
+      i++; // skip escaped char inside double quotes (e.g. \")
+      continue;
+    }
+    if (inSingle || inDouble) continue;
+
+    // ── 2) Shell control operators → new segment ──────────────────────
+    if (ch === ";") {
+      newSeg = true;
+      continue;
+    }
+    if (ch === "|" || ch === "(") {
+      newSeg = true;
+      continue;
+    }
+    if (ch === "&" && command[i + 1] === "&") {
+      newSeg = true;
+      i++;
+      continue;
+    }
+
+    // ── 3) At the start of a command segment ──────────────────────────
+    if (newSeg) {
+      if (ch === " " || ch === "\t") continue; // skip leading whitespace
+      newSeg = false;
+
+      // ── 3a) VAR=value → skip env var assignment ────────────────────
+      const eqIdx = command.indexOf("=", i);
+      if (eqIdx > i && eqIdx - i < 256) {
+        let validId = true;
+        for (let j = i; j < eqIdx; j++) {
+          if (!/[a-zA-Z0-9_]/.test(command[j])) {
+            validId = false;
+            break;
+          }
+        }
+        if (validId) {
+          const valEnd = command.indexOf(" ", eqIdx + 1);
+          i = valEnd > 0 ? valEnd : command.length;
+          newSeg = true;
+          continue;
+        }
+      }
+
+      // ── 3b) Exact "git diff" or "git\tdiff" → match ─────────────────
+      if (
+        (command.startsWith("git diff", i) ||
+          command.startsWith("git\tdiff", i)) &&
+        (i + 8 >= command.length ||
+          command[i + 8] === " " ||
+          command[i + 8] === "\t" ||
+          command[i + 8] === "-" ||
+          command[i + 8] === "/")
+      ) {
+        return {
+          prefix: command.slice(0, i),
+          rest: command.slice(i + 8).trimStart(),
+        };
+      }
+
+      // Not git diff, not env var → current segment is a different command.
+      // Keep newSeg=false so we scan forward until the next control operator.
+    }
   }
-  return inSingle || inDouble;
-}
-
-// Check that "git diff" appears as a command (not as an argument to another command).
-// It must be at the start, or preceded by a shell control operator (;&|), or preceded
-// by one or more env var assignments (VAR=value).
-function isAtCommandBoundary(command: string, matchIndex: number): boolean {
-  if (matchIndex === 0) return true;
-  let i = matchIndex - 1;
-  while (i >= 0 && /\s/.test(command[i])) i--;
-  if (i < 0 || ";|&(".includes(command[i])) return true;
-
-  // Check for env var prefix: VAR=value or VAR1=a VAR2=b before git diff.
-  // Scan backwards from matchIndex to the last control operator or string start.
-  const beforeMatch = command.slice(0, matchIndex).trimEnd();
-  const lastOpIdx = Math.max(
-    beforeMatch.lastIndexOf(";"),
-    beforeMatch.lastIndexOf("&"),
-    beforeMatch.lastIndexOf("|"),
-  );
-  const afterOp =
-    lastOpIdx >= 0
-      ? beforeMatch.slice(lastOpIdx + 1).trim()
-      : beforeMatch;
-  // Match one or more env var assignments: VAR=value, VAR1=a VAR2=b
-  if (/^(\w+=\S+\s+)*\w+=\S+$/.test(afterOp)) return true;
-
-  return false;
+  return null;
 }
 
 function extractEnvOverrides(
@@ -200,30 +265,10 @@ export function rewriteGitDiffCommand(
   command: string,
   extraFlags: string[],
 ): string {
-  if (!GIT_DIFF_COMMAND.test(command)) {
-    return command;
-  }
+  const found = findGitDiffCommand(command);
+  if (!found) return command;
 
-  // Use match() instead of replace() to correctly handle compound commands
-  // (e.g. "cd /path && git diff ..." or "VAR=val git diff ..."). The old approach
-  // removed "git diff" from the middle of the string but accidentally kept the
-  // compound prefix as part of the suffix, producing malformed commands like:
-  //   git --no-pager diff --no-ext-diff cd /path && ...
-  const match = command.match(GIT_DIFF_COMMAND);
-  if (!match || match.index === undefined) return command;
-
-  // Only rewrite if "git diff" appears as a command, not inside a quoted string
-  // (e.g. git commit -m "fix: git diff issue") or as an argument to another command
-  // (e.g. echo git diff).
-  if (isInsideQuotes(command, match.index)) return command;
-  if (!isAtCommandBoundary(command, match.index)) return command;
-
-  // Include the (^|\s) captured character (e.g., space before "git") in the prefix
-  // so &&git stays as && git for readability.
-  const prefix = command.slice(0, match.index + (match[1]?.length ?? 0));
-  const afterGit = command.slice(match.index + (match[1]?.length ?? 0));
-  // Extract only the arguments after "git diff", leaving the prefix untouched
-  const rest = afterGit.replace(GIT_DIFF_COMMAND, "").trimStart();
+  const { prefix, rest } = found;
   const flagRegion = sliceBeforeOptionsEnd(rest);
   const normalizedFlags = uniqueFlags(normalizeFlagList(extraFlags));
   const commandHasNoExtDiff = hasFlagToken(flagRegion, NO_EXT_DIFF_FLAG);

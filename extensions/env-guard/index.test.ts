@@ -187,10 +187,7 @@ describe("rewriteGitDiffCommand", () => {
   });
 
   it("does not rewrite git diff inside a single-quoted string argument", () => {
-    const result = rewriteGitDiffCommand(
-      "echo 'run git diff here'",
-      [],
-    );
+    const result = rewriteGitDiffCommand("echo 'run git diff here'", []);
     expect(result).toBe("echo 'run git diff here'");
   });
 
@@ -210,6 +207,25 @@ describe("rewriteGitDiffCommand", () => {
   it("does not rewrite non-git commands", () => {
     const result = rewriteGitDiffCommand("ls -la", []);
     expect(result).toBe("ls -la");
+  });
+
+  it("rewrites git diff after pipe", () => {
+    const result = rewriteGitDiffCommand("cat x | git diff - HEAD", []);
+    expect(result).toBe("cat x | git --no-pager diff --no-ext-diff - HEAD");
+  });
+
+  it("rewrites git diff after env var with complex value (A=B=C)", () => {
+    const result = rewriteGitDiffCommand("A=B=C git diff HEAD", []);
+    expect(result).toContain("A=B=C");
+    expect(result).toContain("git --no-pager diff");
+  });
+
+  it("does not rewrite git diff with escaped quote inside double quotes", () => {
+    const result = rewriteGitDiffCommand(
+      'echo "he said \\"git diff stuff\\""',
+      [],
+    );
+    expect(result).toBe('echo "he said \\"git diff stuff\\""');
   });
 });
 

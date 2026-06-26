@@ -287,16 +287,16 @@ describe("project managed skill symlinks", () => {
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const sourceSkillDir = path.join(
       createTempDir("pi-kit-skill-toggle-source-"),
-      "software-design-philosophy-skill",
+      "test-managed-skill-source",
     );
-    const skillName = "software-design-philosophy";
-    writeNamedSkillFile(sourceSkillDir, skillName, "Design philosophy skill");
+    const skillName = "test-managed-skill";
+    writeNamedSkillFile(sourceSkillDir, skillName, "Test managed skill");
 
     const { loadToggleState, toggleSkillLink } = await importSkillToggle();
     const state = loadToggleState(cwd);
     const result = toggleSkillLink(state, {
       name: skillName,
-      description: "Design philosophy skill",
+      description: "Test managed skill",
       filePath: path.join(sourceSkillDir, "SKILL.md"),
       scope: "user",
     });
@@ -304,9 +304,7 @@ describe("project managed skill symlinks", () => {
     expect(result.status).toBe("enabled");
     expectSymlinkTarget(getManagedSkillDir(cwd, skillName), sourceSkillDir);
     expect(
-      fs.existsSync(
-        getManagedSkillDir(cwd, "software-design-philosophy-skill"),
-      ),
+      fs.existsSync(getManagedSkillDir(cwd, "test-managed-skill-source")),
     ).toBe(false);
   });
 

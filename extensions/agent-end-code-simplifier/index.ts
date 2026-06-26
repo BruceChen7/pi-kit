@@ -76,14 +76,13 @@ const DEFAULT_PROMPT_SKILLS = [
   "me-code-simplifier",
   "boundaries-refactor",
   "improve-codebase-architecture",
-  "software-design-philosophy",
 ] as const;
 
 const DEFAULT_PROMPT_REQUIREMENTS = [
   `先遵循 ${DEFAULT_PROMPT_SKILLS.join("、")} skills 中定义的规则，再遵循以下任务边界`,
   "这是自动后处理任务：直接做行为不变的简化；不要扩大范围",
   "仅处理 modified_files 中列出的文件；先读取每个文件的完整内容，不要只看 diff 或局部片段",
-  "用 software-design-philosophy 的复杂度视角审查 change amplification、cognitive load 和 unknown unknowns",
+  "用 /codebase-design 的复杂度视角审查 change amplification、cognitive load 和 unknown unknowns",
   "按 improve-codebase-architecture 词汇审查 Module / Interface / Implementation / Depth / Seam / Adapter；优先保留或形成 deep module、information hiding 和不同层级的不同抽象",
   "测试以 Interface is the test surface 为准，优先 test seam/Adapter behavior，不测试 Implementation details",
   "检查并消除不必要的 shallow module、information leakage、temporal decomposition、浅封装/pass-through helper、无意义转发函数和可直接内联的局部抽象",

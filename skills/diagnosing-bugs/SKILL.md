@@ -1,13 +1,9 @@
 ---
-name: diagnose
-description: >
-  Disciplined diagnosis loop for hard bugs and performance regressions. Build a feedback
-  loop → reproduce → pattern analysis → hypothesise → instrument → fix + regression test →
-  cleanup → question architecture when repeated fix attempts fail. Use when encountering
-  any bug, test failure, unexpected behavior, or performance regression.
+name: diagnosing-bugs
+description: Disciplined diagnosis loop for hard bugs and performance regressions. Build a feedback loop → reproduce + minimise → pattern analysis → hypothesise → instrument → fix + regression test → cleanup → question architecture when repeated fix attempts fail. Use when encountering any bug, test failure, unexpected behavior, or performance regression.
 ---
 
-# Diagnose
+# Diagnosing Bugs
 
 A discipline for hard bugs. Skip phases only when explicitly justified.
 
@@ -59,10 +55,7 @@ Systematic is faster than thrashing.
 
 ## Phase 1 — Build a Feedback Loop
 
-**This is the skill.** Everything else is mechanical. If you have a fast, deterministic,
-agent-runnable pass/fail signal for the bug, you will find the cause — bisection,
-hypothesis-testing, and instrumentation all just consume that signal. If you don't have one,
-no amount of staring at code will save you.
+**This is the skill.** Everything else is mechanical. If you have a **tight** pass/fail signal for the bug — one that goes red on *this* bug — you will find the cause; bisection, hypothesis-testing, and instrumentation all just consume it. If you don't have one, no amount of staring at code will save you.
 
 Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give up.**
 
@@ -81,22 +74,30 @@ Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give
 
 Build the right feedback loop, and the bug is 90% fixed.
 
-### Iterate on the loop itself
+### Tighten the loop
 
-Treat the loop as a product. Once you have *a* loop, ask:
+Treat the loop as a product. Once you have *a* loop, **tighten** it:
 
 - Can I make it **faster**? (Cache setup, skip unrelated init, narrow the test scope.)
 - Can I make the **signal sharper**? (Assert on the specific symptom, not "didn't crash".)
 - Can I make it more **deterministic**? (Pin time, seed RNG, isolate filesystem, freeze network.)
 
-A 30-second flaky loop is barely better than no loop. A 2-second deterministic loop is a
-debugging superpower.
+A 30-second flaky loop is barely better than no loop; a 2-second deterministic one is tight — a debugging superpower.
 
 ### Non-deterministic bugs
 
-The goal is not a clean repro but a **higher reproduction rate**. Loop the trigger 100×,
-parallelise, add stress, narrow timing windows, inject sleeps. A 50%-flake bug is debuggable;
-1% is not — keep raising the rate until it's debuggable.
+The goal is not a clean repro but a **higher reproduction rate**. Loop the trigger 100×, parallelise, add stress, narrow timing windows, inject sleeps. A 50%-flake bug is debuggable; 1% is not — keep raising the rate until it's debuggable.
+
+### Completion criterion — a tight loop that goes red
+
+Phase 1 is done when the loop is **tight** and **red-capable**: you can name **one command** — a script path, a test invocation, a curl — that you have **already run at least once** (paste the invocation and its output), and that is:
+
+- [ ] **Red-capable** — it drives the actual bug code path and asserts the **user's exact symptom**, so it can go red on this bug and green once fixed. Not "runs without erroring" — it must be able to *catch this specific bug*.
+- [ ] **Deterministic** — same verdict every run (flaky bugs: a pinned, high reproduction rate, per above).
+- [ ] **Fast** — seconds, not minutes.
+- [ ] **Agent-runnable** — you can run it unattended; a human in the loop only via `scripts/hitl-loop.template.sh`.
+
+If you catch yourself reading code to build a theory before this command exists, **stop — jumping straight to a hypothesis is the exact failure this skill prevents.** No red-capable command, no Phase 2.
 
 ### When you genuinely cannot build a loop
 
@@ -110,9 +111,9 @@ Do **not** proceed to Phase 2 until you have a loop you believe in.
 
 ---
 
-## Phase 2 — Reproduce
+## Phase 2 — Reproduce + Minimise
 
-Run the loop. Watch the bug appear.
+Run the loop. Watch it go red — the bug appears.
 
 Confirm:
 
@@ -120,7 +121,15 @@ Confirm:
 - [ ] The failure is reproducible across multiple runs (or, for non-deterministic bugs, reproducible at a high enough rate to debug against).
 - [ ] You have captured the exact symptom (error message, wrong output, slow timing) so later phases can verify the fix actually addresses it.
 
-Do not proceed until you reproduce the bug.
+### Minimise
+
+Once it's red, shrink the repro to the **smallest scenario that still goes red**. Cut inputs, callers, config, data, and steps **one at a time**, re-running the loop after each cut — keep only what's load-bearing for the failure.
+
+Why bother: a minimal repro shrinks the hypothesis space in Phase 3 (fewer moving parts left to suspect) and becomes the clean regression test in Phase 5.
+
+Done when **every remaining element is load-bearing** — removing any one of them makes the loop go green.
+
+Do not proceed until you have reproduced **and** minimised.
 
 ---
 
@@ -137,20 +146,15 @@ Before forming hypotheses, look for patterns:
 
 ## Phase 3 — Hypothesise
 
-Generate **3–5 ranked hypotheses** before testing any of them. Single-hypothesis generation
-anchors on the first plausible idea.
+Generate **3–5 ranked hypotheses** before testing any of them. Single-hypothesis generation anchors on the first plausible idea.
 
 Each hypothesis must be **falsifiable**: state the prediction it makes.
 
-> Format: "If \<X\> is the cause, then \<changing Y\> will make the bug disappear /
-> \<changing Z\> will make it worse."
+> Format: "If \<X\> is the cause, then \<changing Y\> will make the bug disappear / \<changing Z\> will make it worse."
 
 If you cannot state the prediction, the hypothesis is a vibe — discard or sharpen it.
 
-**Show the ranked list to the user before testing.** They often have domain knowledge that
-re-ranks instantly ("we just deployed a change to #3"), or know hypotheses they've already
-ruled out. Cheap checkpoint, big time saver. Don't block on it — proceed with your ranking
-if the user is AFK.
+**Show the ranked list to the user before testing.** They often have domain knowledge that re-ranks instantly ("we just deployed a change to #3"), or know hypotheses they've already ruled out. Cheap checkpoint, big time saver. Don't block on it — proceed with your ranking if the user is AFK.
 
 ---
 
@@ -164,12 +168,9 @@ Tool preference:
 2. **Targeted logs** at the boundaries that distinguish hypotheses.
 3. Never "log everything and grep".
 
-**Tag every debug log** with a unique prefix, e.g. `[DEBUG-a4f2]`. Cleanup at the end becomes
-a single grep. Untagged logs survive; tagged logs die.
+**Tag every debug log** with a unique prefix, e.g. `[DEBUG-a4f2]`. Cleanup at the end becomes a single grep. Untagged logs survive; tagged logs die.
 
-**Perf branch.** For performance regressions, logs are usually wrong. Instead: establish a
-baseline measurement (timing harness, `performance.now()`, profiler, query plan), then bisect.
-Measure first, fix second.
+**Perf branch.** For performance regressions, logs are usually wrong. Instead: establish a baseline measurement (timing harness, `performance.now()`, profiler, query plan), then bisect. Measure first, fix second.
 
 ---
 
@@ -177,13 +178,9 @@ Measure first, fix second.
 
 Write the regression test **before the fix** — but only if there is a **correct seam** for it.
 
-A correct seam is one where the test exercises the **real bug pattern** as it occurs at the
-call site. If the only available seam is too shallow (single-caller test when the bug needs
-multiple callers, unit test that can't replicate the chain that triggered the bug), a regression
-test there gives false confidence.
+A correct seam is one where the test exercises the **real bug pattern** as it occurs at the call site. If the only available seam is too shallow (single-caller test when the bug needs multiple callers, unit test that can't replicate the chain that triggered the bug), a regression test there gives false confidence.
 
-**If no correct seam exists, that itself is the finding.** Note it. The codebase architecture
-is preventing the bug from being locked down. Flag this for Phase 7.
+**If no correct seam exists, that itself is the finding.** Note it. The codebase architecture is preventing the bug from being locked down. Flag this for Phase 7.
 
 If a correct seam exists:
 
@@ -210,13 +207,9 @@ Required before declaring done:
 - [ ] Throwaway prototypes deleted (or moved to a clearly-marked debug location)
 - [ ] The hypothesis that turned out correct is stated in the commit / PR message — so the next debugger learns
 
-**Then ask: what would have prevented this bug?** If the answer involves architectural change
-(no good test seam, tangled callers, hidden coupling), hand off to
-`/improve-codebase-architecture` with the specifics. Make the recommendation **after** the fix
-is in, not before — you have more information now than when you started.
+**Then ask: what would have prevented this bug?** If the answer involves architectural change (no good test seam, tangled callers, hidden coupling) hand off to `/improve-codebase-architecture` with the specifics. Make the recommendation **after** the fix is in, not before — you have more information now than when you started.
 
-For significant debugging outcomes, consider recording the root cause and prevention strategy
-in an ADR under `.pi/contexts/**/adr/` or a note in `.pi/plans/<repo>/plan/`.
+For significant debugging outcomes, consider recording the root cause and prevention strategy in an ADR under `.pi/contexts/**/adr/` or a note in `.pi/plans/<repo>/plan/`.
 
 ---
 
@@ -236,8 +229,7 @@ If 3+ fix attempts have failed:
 
 **Discuss with your human partner before attempting more fixes.**
 
-This is NOT a failed hypothesis — this is a wrong architecture. Hand off to
-`/improve-codebase-architecture`.
+This is NOT a failed hypothesis — this is a wrong architecture. Hand off to `/improve-codebase-architecture`.
 
 ---
 
@@ -252,8 +244,8 @@ This skill's directory includes:
 
 | Phase | Key Activities | Success Criteria |
 |-------|---------------|------------------|
-| **1. Feedback Loop** | Build fast, deterministic pass/fail signal | Bug can be checked in \< 30s |
-| **2. Reproduce** | Run the loop, confirm the bug | Bug appears on demand |
+| **1. Feedback Loop** | Build tight, red-capable pass/fail signal | One command that goes red on the bug |
+| **2. Reproduce + Minimise** | Run the loop, shrink repro, confirm bug | Minimal scenario, bug appears on demand |
 | **2.5. Pattern Analysis** | Find working examples, trace data flow | Differences identified |
 | **3. Hypothesise** | 3–5 ranked falsifiable predictions | Ranked list ready |
 | **4. Instrument** | Probe one variable at a time | Hypothesis confirmed or refuted |
@@ -263,10 +255,11 @@ This skill's directory includes:
 
 ## Pi integration
 
-- Default to Chinese for questions, summaries, and documentation unless the user specifies
-  another language.
+- Default to Chinese for questions, summaries, and documentation unless the user specifies another language.
 - Use `.pi/contexts/**/CONTEXT.md` for domain glossary lookups during data flow tracing.
-- Record significant debugging outcomes (root cause, prevention strategy) in an ADR under
-  `.pi/contexts/**/adr/` or a note in `.pi/plans/<repo>/plan/`.
-- When a debugging session reveals an architectural problem, hand off to
-  `/improve-codebase-architecture` with specific findings.
+- Record significant debugging outcomes (root cause, prevention strategy) in an ADR under `.pi/contexts/**/adr/` or a note in `.pi/plans/<repo>/plan/`.
+- When a debugging session reveals an architectural problem, hand off to `/improve-codebase-architecture` with specific findings.
+
+## Attribution
+
+Adapted from the `diagnosing-bugs` skill in https://github.com/mattpocock/skills (v1.0.0+) under the MIT License.

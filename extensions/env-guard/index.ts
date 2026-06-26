@@ -35,6 +35,45 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+// Check if a position in the command string is inside single/double quotes.
+function isInsideQuotes(str: string, pos: number): boolean {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < pos; i++) {
+    const ch = str[i];
+    if (ch === "'" && !inDouble) inSingle = !inSingle;
+    else if (ch === '"' && !inSingle) inDouble = !inDouble;
+  }
+  return inSingle || inDouble;
+}
+
+// Check that "git diff" appears as a command (not as an argument to another command).
+// It must be at the start, or preceded by a shell control operator (;&|), or preceded
+// by one or more env var assignments (VAR=value).
+function isAtCommandBoundary(command: string, matchIndex: number): boolean {
+  if (matchIndex === 0) return true;
+  let i = matchIndex - 1;
+  while (i >= 0 && /\s/.test(command[i])) i--;
+  if (i < 0 || ";|&(".includes(command[i])) return true;
+
+  // Check for env var prefix: VAR=value or VAR1=a VAR2=b before git diff.
+  // Scan backwards from matchIndex to the last control operator or string start.
+  const beforeMatch = command.slice(0, matchIndex).trimEnd();
+  const lastOpIdx = Math.max(
+    beforeMatch.lastIndexOf(";"),
+    beforeMatch.lastIndexOf("&"),
+    beforeMatch.lastIndexOf("|"),
+  );
+  const afterOp =
+    lastOpIdx >= 0
+      ? beforeMatch.slice(lastOpIdx + 1).trim()
+      : beforeMatch;
+  // Match one or more env var assignments: VAR=value, VAR1=a VAR2=b
+  if (/^(\w+=\S+\s+)*\w+=\S+$/.test(afterOp)) return true;
+
+  return false;
+}
+
 function extractEnvOverrides(
   settings: Record<string, unknown>,
 ): Record<string, string> {
@@ -172,6 +211,13 @@ export function rewriteGitDiffCommand(
   //   git --no-pager diff --no-ext-diff cd /path && ...
   const match = command.match(GIT_DIFF_COMMAND);
   if (!match || match.index === undefined) return command;
+
+  // Only rewrite if "git diff" appears as a command, not inside a quoted string
+  // (e.g. git commit -m "fix: git diff issue") or as an argument to another command
+  // (e.g. echo git diff).
+  if (isInsideQuotes(command, match.index)) return command;
+  if (!isAtCommandBoundary(command, match.index)) return command;
+
   // Include the (^|\s) captured character (e.g., space before "git") in the prefix
   // so &&git stays as && git for readability.
   const prefix = command.slice(0, match.index + (match[1]?.length ?? 0));

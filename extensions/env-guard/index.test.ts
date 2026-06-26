@@ -173,6 +173,40 @@ describe("rewriteGitDiffCommand", () => {
     );
   });
 
+  it("does not rewrite git diff inside a commit message", () => {
+    const result = rewriteGitDiffCommand(
+      'git commit -m "fix: handle git diff edge case"',
+      [],
+    );
+    expect(result).toBe('git commit -m "fix: handle git diff edge case"');
+  });
+
+  it("does not rewrite git diff inside a double-quoted string argument", () => {
+    const result = rewriteGitDiffCommand('echo "run git diff here"', []);
+    expect(result).toBe('echo "run git diff here"');
+  });
+
+  it("does not rewrite git diff inside a single-quoted string argument", () => {
+    const result = rewriteGitDiffCommand(
+      "echo 'run git diff here'",
+      [],
+    );
+    expect(result).toBe("echo 'run git diff here'");
+  });
+
+  it("does not rewrite git diff as a bare argument to another command", () => {
+    const result = rewriteGitDiffCommand("echo git diff", []);
+    expect(result).toBe("echo git diff");
+  });
+
+  it("does not rewrite git diff after a flag argument", () => {
+    const result = rewriteGitDiffCommand(
+      "some-tool --message git diff here",
+      [],
+    );
+    expect(result).toBe("some-tool --message git diff here");
+  });
+
   it("does not rewrite non-git commands", () => {
     const result = rewriteGitDiffCommand("ls -la", []);
     expect(result).toBe("ls -la");

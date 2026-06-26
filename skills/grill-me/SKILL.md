@@ -21,7 +21,10 @@ user explicitly asks for another language.
 
 ## Hard Rules
 
-- Run a `/grilling` session for the core interview discipline.
+- Ask **one question at a time** and wait for the user's answer before continuing. Asking multiple questions at once is bewildering.
+- For each question, include your recommended answer and why.
+- If a question can be answered by exploring this repo's code, docs, plans, or history, investigate instead of asking the user.
+- Challenge contradictions, overloaded terms, unclear success criteria, and hidden trade-offs.
 - Do not implement from this skill directly.
 - Pure grilling sessions are lightweight: if no repo files, specs, plans, or code will change,
   no plan file is required.

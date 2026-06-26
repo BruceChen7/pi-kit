@@ -13,13 +13,8 @@ Default to Chinese for questions, specs, plans, and summaries unless the user ex
 
 ## Hard Rules
 
-- Ask **one question at a time** and wait for the user's answer before continuing.
-- For each question, include your recommended answer and why.
-- If a question can be answered by exploring files, code, docs, or git history, investigate instead of asking.
-- Challenge fuzzy terms, overloaded terms, and contradictions with existing code or docs immediately.
-- Treat glossary and ADR inline updates as core behavior: once a domain term, relationship,
-  avoided alias, ambiguity, or ADR-worthy decision is resolved, update or propose the durable
-  record before moving on to unrelated questions.
+- Run a `/grilling` session for the core interview discipline.
+- Run the `/domain-modeling` skill to build and sharpen the project's domain model inline.
 - Do not start implementation from this skill. End by producing reviewed planning artifacts when the user wants to proceed.
 - Keep pure interview sessions lightweight: if there are no file edits, code changes, or architectural commitments, the `AGENTS.md` skill-only exception applies and no plan file is required.
 - Store domain docs under `.pi/contexts/`; do not create `CONTEXT.md` or ADR files in application source directories.
@@ -69,15 +64,7 @@ Default to Chinese for questions, specs, plans, and summaries unless the user ex
 
 ### 2. Grill the plan
 
-Walk the design tree one decision at a time:
-
-- clarify the user goal and success criteria
-- identify actors, data, state transitions, and integration boundaries
-- test edge cases with concrete scenarios
-- ask what is explicitly out of scope
-- compare the user's language with existing glossary terms
-- compare the stated behavior with current code behavior
-- surface contradictions directly and ask which source should win
+Run a `/grilling` session to walk the design tree. Use the `/domain-modeling` skill — `CONTEXT-FORMAT.md` and `ADR-FORMAT.md` from `/domain-modeling` — to keep the domain model current as you go.
 
 Question format:
 
@@ -91,31 +78,19 @@ Question format:
 
 ### 3. Update domain language inline
 
-When a term or relationship is resolved, update the appropriate `.pi/contexts/**/CONTEXT.md` immediately. Do not batch resolved terminology until the end.
+When a term or relationship is resolved, update the appropriate `.pi/contexts/**/CONTEXT.md` immediately via `/domain-modeling`. Do not batch resolved terminology until the end.
 
-Use `CONTEXT-FORMAT.md` for structure and rules. Key constraints:
-
-- only include domain concepts meaningful to domain experts
-- avoid general programming terms
-- pick one canonical term and list avoided aliases when useful
-- keep definitions to one sentence
-- document relationships and flagged ambiguities
-- do not include implementation steps, file-path-level designs, feature specs, rollout notes,
-  temporary notes, or technical decisions
-
-Create `.pi/contexts/CONTEXT.md` or `.pi/contexts/<context-id>/CONTEXT.md` lazily only
-when there is a real resolved term to record. Put implementation decisions in `.pi/plans/**`
-or ADRs, not in `CONTEXT.md`.
+Create `.pi/contexts/CONTEXT.md` or `.pi/contexts/<context-id>/CONTEXT.md` lazily only when there is a real resolved term to record. Put implementation decisions in `.pi/plans/**` or ADRs, not in `CONTEXT.md`.
 
 ### 4. Offer ADRs sparingly
 
-Offer an ADR only when all three are true:
+Offer an ADR only when all three are true (see `/domain-modeling` for the full guidance):
 
 1. **Hard to reverse** — changing later is meaningfully costly.
 2. **Surprising without context** — future readers would wonder why.
 3. **Real trade-off** — there were genuine alternatives.
 
-Use `ADR-FORMAT.md`. ADRs live in the selected `.pi/contexts/**/adr/` directory and use sequential numbering like `0001-short-slug.md`. Use `.pi/contexts/adr/` for single-context or cross-context decisions; use `.pi/contexts/<context-id>/adr/` next to the relevant `.pi` `CONTEXT.md` for context-specific decisions. Create the directory lazily only when the first ADR is needed.
+ADRs live in the selected `.pi/contexts/**/adr/` directory and use sequential numbering like `0001-short-slug.md`. Use `.pi/contexts/adr/` for single-context or cross-context decisions; use `.pi/contexts/<context-id>/adr/` next to the relevant `.pi` `CONTEXT.md` for context-specific decisions. Create the directory lazily only when the first ADR is needed.
 
 ### 5. Produce the handoff artifact
 
@@ -136,9 +111,9 @@ Write it to `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md`
 
 ## Dependency Files
 
-This skill depends on:
+This skill depends on the `/domain-modeling` skill for:
 
-- `CONTEXT-FORMAT.md`
-- `ADR-FORMAT.md`
+- `CONTEXT-FORMAT.md` — domain glossary structure and rules
+- `ADR-FORMAT.md` — ADR template and offering guidance
 
-Read those files from this skill directory before creating or editing `.pi/contexts/**/CONTEXT.md` or ADR files.
+Read those files from `/domain-modeling` before creating or editing `.pi/contexts/**/CONTEXT.md` or ADR files.

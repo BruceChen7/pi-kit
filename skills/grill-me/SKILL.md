@@ -21,11 +21,7 @@ user explicitly asks for another language.
 
 ## Hard Rules
 
-- Ask **one question at a time** and wait for the user's answer before continuing.
-- For every question, include your recommended answer and why.
-- If a question can be answered by exploring this repo's code, docs, plans, or history,
-  investigate instead of asking the user.
-- Challenge contradictions, overloaded terms, unclear success criteria, and hidden trade-offs.
+- Run a `/grilling` session for the core interview discipline.
 - Do not implement from this skill directly.
 - Pure grilling sessions are lightweight: if no repo files, specs, plans, or code will change,
   no plan file is required.

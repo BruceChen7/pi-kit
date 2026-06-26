@@ -7,7 +7,7 @@
 # Example:
 #   dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
 # systematic-debugging replaced by diagnose (merged from obre/superpowers + mattpocock/skills)
-diagnose|local|skills/diagnose
+diagnosing-bugs|local|skills/diagnosing-bugs
 # dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
 # visualise|https://github.com/bentossell/visualise.git|
 visual-explainer|https://github.com/nicobailon/visual-explainer.git|plugins/visual-explainer
@@ -27,6 +27,10 @@ debug-pi-coding-agent|local|skills/debug-pi-coding-agent
 chao-go-perf|local|skills/chao-go-perf
 plan-code-review|local|skills/review
 handoff|local|skills/handoff
+# Shared skills from https://github.com/mattpocock/skills (v1.0.0+)
+codebase-design|local|skills/codebase-design
+domain-modeling|local|skills/domain-modeling
+grilling|local|skills/grilling
 # https://github.com/mattpocock/skills
 prototype|local|skills/prototype
 teach|local|skills/teach
@@ -36,7 +40,6 @@ improve-codebase-architecture|local|skills/improve-codebase-architecture
 to-prd|local|skills/to-prd
 to-issues|local|skills/to-issues
 coding-style-line-length/|local|skills/coding-style-line-length
-software-design-philosophy|https://github.com/luoling8192/software-design-philosophy-skill.git|
 opencli-usage|local|skills/opencli-usage
 opencli-browser|local|skills/opencli-browser
 opencli-autofix|local|skills/opencli-autofix

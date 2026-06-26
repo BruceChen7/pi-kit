@@ -7,7 +7,7 @@ description: Use when the user wants to improve architecture, find refactoring o
 
 Surface architectural friction and propose **deepening opportunities** — refactors that turn shallow modules into deep ones. The aim is testability, locality, leverage, and Pi-agent navigability.
 
-This skill is built on a shared design vocabulary — run the `/software-design-philosophy` skill or read `LANGUAGE.md` for the full architecture terminology (**module**, **interface**, **depth**, **seam**, **adapter**, **leverage**, **locality**). Use these terms exactly in every suggestion — don't drift into "component", "service", "API", or "boundary."
+This skill is built on a shared design vocabulary — run the `/codebase-design` skill for the full architecture terminology (**module**, **interface**, **depth**, **seam**, **adapter**, **leverage**, **locality**). Use these terms exactly in every suggestion — don't drift into "component", "service", "API", or "boundary."
 
 The domain language in `.pi/contexts/**/CONTEXT.md` gives names to good seams; ADRs under `.pi/contexts/adr/` record decisions this skill should not re-litigate.
 
@@ -29,13 +29,13 @@ Default to Chinese unless the user explicitly asks for another language.
 
 ## Required vocabulary
 
-Use these terms exactly in every suggestion. Full definitions are in `LANGUAGE.md`.
+Use these terms exactly in every suggestion. Full definitions are in the `/codebase-design` skill.
 
 - **Module** — anything with an interface and an implementation.
 - **Interface** — everything a caller must know to use the module correctly.
 - **Implementation** — the code inside a module.
 - **Depth** — leverage at the interface; **deep** means much behavior behind a small interface.
-- **Seam** — where an interface lives; use this, not “boundary”.
+- **Seam** — where an interface lives; use this, not "boundary".
 - **Adapter** — a concrete thing satisfying an interface at a seam.
 - **Leverage** — what callers get from depth.
 - **Locality** — what maintainers get from depth.
@@ -56,7 +56,7 @@ Read:
 - `.pi/contexts/CONTEXT.md` or `.pi/contexts/CONTEXT-MAP.md`
 - relevant `.pi/contexts/<context-id>/CONTEXT.md`
 - relevant ADRs under `.pi/contexts/adr/` or `.pi/contexts/<context-id>/adr/`
-- `LANGUAGE.md` and `DEEPENING.md` from this skill directory
+- `/codebase-design` for the architecture vocabulary and deepening guidance
 
 Then inspect the code organically. Note where you experience friction:
 
@@ -91,11 +91,11 @@ Each candidate — whether in HTML or list form — includes:
 - **Benefits** — explain via **locality**, **leverage**, and improved tests
 - **Before / After diagram** — side-by-side visual illustrating the shallowness and deepening
 - **Recommendation strength** — `Strong`, `Worth exploring`, or `Speculative`
-- **Dependency category** — from `DEEPENING.md` (`in-process`, `local-substitutable`,
+- **Dependency category** — from `/codebase-design`'s deepening guidance (`in-process`, `local-substitutable`,
   `ports & adapters`, `mock`)
 - **Doc impact** — `.pi/contexts/**` terms or ADRs that may need updates
 
-Use `.pi/contexts/**/CONTEXT.md` vocabulary for domain names and `LANGUAGE.md` vocabulary for
+Use `.pi/contexts/**/CONTEXT.md` vocabulary for domain names and `/codebase-design` vocabulary for
 architecture. If a candidate contradicts an existing ADR, surface it only when friction is real
 enough to justify revisiting the ADR.
 
@@ -106,28 +106,17 @@ would you like to explore?”
 
 ### 3. Grilling loop
 
-Once the user picks a candidate, run the `/grill-with-docs` discipline:
+Once the user picks a candidate, run the `/grill-with-docs` discipline (which uses `/grilling` for the core interview loop and `/domain-modeling` for glossary/ADR updates).
 
-- ask one question at a time
-- include your recommendation
-- explore code instead of asking when code can answer
-
-Side effects happen inline as decisions crystallise — update `.pi/contexts/**/CONTEXT.md` when domain terms sharpen, and offer ADRs only for hard-to-reverse, surprising, trade-off decisions. This mirrors the `/domain-modeling` discipline from the upstream skill ecosystem.
+Side effects happen inline as decisions crystallise — update `.pi/contexts/**/CONTEXT.md` via `/domain-modeling` when domain terms sharpen, and offer ADRs only for hard-to-reverse, surprising, trade-off decisions.
 
 If the user rejects a candidate with a load-bearing reason, ask whether to record an ADR so future architecture reviews do not re-suggest it.
 
 ### 4. Interface exploration
 
-If the user wants alternative interfaces for a deepened module, read `INTERFACE-DESIGN.md`.
+If the user wants alternative interfaces for a deepened module, run the `/codebase-design` skill and follow its design-it-twice pattern from `DESIGN-IT-TWICE.md`.
 
-Pi adaptation: if no subagent facility is available, run 3 distinct design passes yourself and clearly label them:
-
-1. minimal interface, 1–3 entry points
-2. flexible interface for many use cases
-3. default-case-optimized interface
-4. ports-and-adapters variant when cross-seam dependencies require it
-
-Compare by **depth**, **locality**, and **seam** placement, then give a strong recommendation.
+Pi adaptation: if no subagent facility is available, run 3 distinct design passes yourself and clearly label them as described in `/codebase-design`.
 
 ### 5. Handoff artifact
 
@@ -150,11 +139,11 @@ Include:
 
 This skill depends on:
 
-- `LANGUAGE.md` — shared architecture vocabulary (mirrors upstream `/codebase-design` skill)
-- `DEEPENING.md` — dependency categories and seam discipline
-- `INTERFACE-DESIGN.md` — alternative interface exploration
+- `/codebase-design` — shared architecture vocabulary, deepening guidance, and design-it-twice pattern
+- `/domain-modeling` — domain glossary format and ADR format
 - `HTML-REPORT.md` — HTML review report scaffold
-- `../grill-with-docs/CONTEXT-FORMAT.md` — domain glossary format (mirrors upstream `/domain-modeling` skill)
-- `../grill-with-docs/ADR-FORMAT.md` — ADR format
+- `LANGUAGE.md` — local convenience copy of the architecture glossary
+- `DEEPENING.md` — local convenience copy of deepening guidance
+- `INTERFACE-DESIGN.md` — local convenience copy of interface exploration guidance
 
-For shared architecture vocabulary, you can also invoke `/software-design-philosophy` when deeper guidance on module design principles is needed.
+For shared architecture vocabulary, you can also invoke `/codebase-design` directly when deeper guidance on module design principles is needed.

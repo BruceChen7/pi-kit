@@ -6,6 +6,7 @@
  *
  * Supported terminals: Ghostty, iTerm2, WezTerm, rxvt-unicode
  * Not supported: Kitty (uses OSC 99), Terminal.app, Windows Terminal, Alacritty
+ * Herdr: uses herdr CLI (herdr notification show) when HERDR_PANE_ID is set.
  */
 
 import { execFile } from "node:child_process";
@@ -48,7 +49,7 @@ type AgentEndMessage = {
 };
 type AgentEndEvent = { messages?: AgentEndMessage[] };
 type NotifyTurnStatus = "success" | "aborted" | "error" | "length";
-type NotifyTransportStatus = "sent" | "write-failed";
+type NotifyTransportStatus = "sent" | "write-failed" | "failed";
 
 type NotificationDecision = {
   shouldNotify: boolean;
@@ -130,19 +131,20 @@ const wrapForTmuxPassthrough = (payload: string): string => {
   return `\x1bPtmux;${escaped}\x1b\\`;
 };
 
-const notify = (title: string, body: string): NotifyTransportStatus => {
-  const safeTitle = sanitizeOscField(title);
-  const safeBody = sanitizeOscField(body);
+const notify = async (
+  title: string,
+  body: string,
+): Promise<NotifyTransportStatus> => {
   // OSC 777 format: ESC ] 777 ; notify ; title ; body BEL
-  const osc777 = `\x1b]777;notify;${safeTitle};${safeBody}\x07`;
+  const osc777 = `\x1b]777;notify;${title};${body}\x07`;
   const inTmux = Boolean(process.env.TMUX);
   const payload = inTmux ? wrapForTmuxPassthrough(osc777) : osc777;
 
   log?.debug("writing notification payload", {
     protocol: "OSC777",
     inTmux,
-    titleLength: safeTitle.length,
-    bodyLength: safeBody.length,
+    titleLength: title.length,
+    bodyLength: body.length,
     payloadPreview: payload
       .split("\x1b")
       .join("<ESC>")
@@ -170,9 +172,10 @@ const notify = (title: string, body: string): NotifyTransportStatus => {
 const execFileAsync = (
   file: string,
   args: string[],
+  options?: { timeout?: number },
 ): Promise<{ stdout: string; stderr: string }> =>
   new Promise((resolve, reject) => {
-    execFile(file, args, (error, stdout, stderr) => {
+    execFile(file, args, options ?? {}, (error, stdout, stderr) => {
       if (error) {
         reject(error);
         return;
@@ -184,6 +187,47 @@ const execFileAsync = (
       });
     });
   });
+
+const HERDR_NOTIFY_TIMEOUT_MS = 3_000;
+
+const herdrNotify = async (
+  title: string,
+  body: string,
+): Promise<NotifyTransportStatus> => {
+  const herdrBin = process.env.HERDR_BIN_PATH ?? "herdr";
+
+  log?.debug("sending herdr notification", {
+    herdrBin,
+    title,
+    bodyPreview: body.slice(0, 120),
+    bodyLength: body.length,
+  });
+
+  try {
+    await execFileAsync(
+      herdrBin,
+      [
+        "notification",
+        "show",
+        title,
+        "--body",
+        body,
+        "--position",
+        "top-right",
+        "--sound",
+        "request",
+      ],
+      { timeout: HERDR_NOTIFY_TIMEOUT_MS },
+    );
+    return "sent";
+  } catch (error) {
+    log?.warn("herdr notification failed", {
+      error: error instanceof Error ? error.message : String(error),
+      herdrBin,
+    });
+    return "failed";
+  }
+};
 
 export const getTmuxWindowName = async (): Promise<string | null> => {
   try {
@@ -480,7 +524,12 @@ export default async function (pi: ExtensionAPI) {
       inTmux,
     });
 
-    const transportStatus = notify(resolvedTitle, decision.body);
+    const safeTitle = sanitizeOscField(resolvedTitle);
+    const safeBody = sanitizeOscField(decision.body);
+    const inHerdr = Boolean(process.env.HERDR_PANE_ID);
+    const transportStatus = inHerdr
+      ? await herdrNotify(safeTitle, safeBody)
+      : await notify(safeTitle, safeBody);
     if (transportStatus !== "sent") {
       return;
     }

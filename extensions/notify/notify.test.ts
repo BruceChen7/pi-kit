@@ -80,16 +80,20 @@ const emitAgentEnd = async (
 afterEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
+  delete process.env.HERDR_PANE_ID;
+  delete process.env.HERDR_BIN_PATH;
   clearSettingsCache();
 });
 
 describe("notify tmux title", () => {
   it("uses tmux window name when available", async () => {
     const execFile = await loadExecFile();
-    vi.mocked(execFile).mockImplementation((_file, _args, callback) => {
-      callback(null, "work\n", "");
-      return {} as never;
-    });
+    vi.mocked(execFile).mockImplementation(
+      (_file, _args, _options, callback) => {
+        callback(null, "work\n", "");
+        return {} as never;
+      },
+    );
 
     const { resolveNotificationTitle } = await loadNotify();
     const title = await resolveNotificationTitle("π", true);
@@ -100,10 +104,12 @@ describe("notify tmux title", () => {
 
   it("falls back to π when tmux window is empty", async () => {
     const execFile = await loadExecFile();
-    vi.mocked(execFile).mockImplementation((_file, _args, callback) => {
-      callback(null, "\n", "");
-      return {} as never;
-    });
+    vi.mocked(execFile).mockImplementation(
+      (_file, _args, _options, callback) => {
+        callback(null, "\n", "");
+        return {} as never;
+      },
+    );
 
     const { resolveNotificationTitle } = await loadNotify();
     const title = await resolveNotificationTitle("π", true);
@@ -114,10 +120,12 @@ describe("notify tmux title", () => {
 
   it("keeps π when not in tmux", async () => {
     const execFile = await loadExecFile();
-    vi.mocked(execFile).mockImplementation((_file, _args, callback) => {
-      callback(null, "work\n", "");
-      return {} as never;
-    });
+    vi.mocked(execFile).mockImplementation(
+      (_file, _args, _options, callback) => {
+        callback(null, "work\n", "");
+        return {} as never;
+      },
+    );
 
     const { resolveNotificationTitle } = await loadNotify();
     const title = await resolveNotificationTitle("π", false);
@@ -246,6 +254,122 @@ describe("notify failure scenarios", () => {
     expect(payload.startsWith(prefix)).toBe(true);
     const bodyPayload = payload.slice(prefix.length);
     expect(bodyPayload.slice(0, -1)).toBe("ok]bad done");
+  });
+});
+
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
+const mockHerdrExec = async (error?: Error) => {
+  const execFile = await loadExecFile();
+  vi.mocked(execFile).mockImplementation((_file, _args, _options, callback) => {
+    callback(error ?? null, "", "");
+    return {} as never;
+  });
+  return execFile;
+};
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
+describe("herdr transport", () => {
+  it("sends notification via herdr CLI when HERDR_PANE_ID is set", async () => {
+    process.env.HERDR_PANE_ID = "pane-123";
+    const execFile = await mockHerdrExec();
+    const harness = await buildNotifyHarness();
+
+    await emitAgentEnd(harness, {
+      messages: [{ role: "assistant", content: "Done." }],
+    });
+
+    // herdr CLI was called
+    expect(execFile).toHaveBeenCalledTimes(1);
+    // Should not write OSC 777 to stdout
+    expect(harness.write).not.toHaveBeenCalled();
+    // Should still emit idle event on success
+    expect(harness.events.emitted).toHaveLength(1);
+    expect(harness.events.emitted[0].payload).toMatchObject({
+      type: "notify.idle",
+      title: "π",
+      body: "Done.",
+    });
+  });
+
+  it("formats herdr CLI arguments correctly", async () => {
+    process.env.HERDR_PANE_ID = "pane-arg-test";
+    const execFile = await mockHerdrExec();
+    const harness = await buildNotifyHarness();
+
+    await emitAgentEnd(harness, {
+      messages: [{ role: "assistant", content: "Done." }],
+    });
+
+    expect(execFile).toHaveBeenCalledWith(
+      "herdr",
+      [
+        "notification",
+        "show",
+        "π",
+        "--body",
+        "Done.",
+        "--position",
+        "top-right",
+        "--sound",
+        "request",
+      ],
+      { timeout: 3000 },
+      expect.any(Function),
+    );
+  });
+
+  it("uses HERDR_BIN_PATH when set", async () => {
+    process.env.HERDR_PANE_ID = "pane-456";
+    process.env.HERDR_BIN_PATH = "/opt/bin/herdr";
+    const execFile = await mockHerdrExec();
+    const harness = await buildNotifyHarness();
+
+    await emitAgentEnd(harness, {
+      messages: [{ role: "assistant", content: "Done." }],
+    });
+
+    expect(execFile).toHaveBeenCalledWith(
+      "/opt/bin/herdr",
+      expect.any(Array),
+      { timeout: 3000 },
+      expect.any(Function),
+    );
+  });
+
+  it("fails closed when herdr CLI errors", async () => {
+    process.env.HERDR_PANE_ID = "pane-789";
+    const execFile = await mockHerdrExec(new Error("herdr not found"));
+    const harness = await buildNotifyHarness();
+
+    await emitAgentEnd(harness, {
+      messages: [{ role: "assistant", content: "Done." }],
+    });
+
+    // Should not write OSC 777 to stdout
+    expect(harness.write).not.toHaveBeenCalled();
+    // Should not emit idle event (transport failed)
+    expect(harness.events.emitted).toHaveLength(0);
+  });
+
+  it("sanitizes herdr notification body", async () => {
+    process.env.HERDR_PANE_ID = "pane-abc";
+    const execFile = await mockHerdrExec();
+    const harness = await buildNotifyHarness();
+
+    await emitAgentEnd(harness, {
+      messages: [{ role: "assistant", content: "ok\u001b]bad\u0007 done" }],
+    });
+
+    // Sanitized body passed to herdr CLI (control chars stripped)
+    expect(execFile).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.arrayContaining(["--body", "ok]bad done"]),
+      { timeout: 3000 },
+      expect.any(Function),
+    );
+    expect(harness.write).not.toHaveBeenCalled();
   });
 });
 

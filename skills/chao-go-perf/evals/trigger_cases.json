@@ -1,0 +1,147 @@
+{
+  "recommended_threshold": 0.1,
+  "negative_patterns": [
+    "one-off",
+    "syntax",
+    "just explain",
+    "brainstorm",
+    "architecture only",
+    "not performance"
+  ],
+  "should_trigger": [
+    {
+      "text": "My Go app is slow, how do I profile it with pprof?",
+      "family": "cpu_profile"
+    },
+    {
+      "text": "Why is this function allocating so much? Check escape analysis.",
+      "family": "escape_analysis"
+    },
+    {
+      "text": "How to reduce GC pressure in this Go service?",
+      "family": "gc_tuning"
+    },
+    {
+      "text": "Does this hot path benefit from bounds check elimination?",
+      "family": "bce"
+    },
+    {
+      "text": "Is the compiler inlining this function? How to check?",
+      "family": "inlining"
+    },
+    {
+      "text": "benchstat shows -3% but the variance is high, is this real?",
+      "family": "benchmark"
+    },
+    {
+      "text": "How to detect false sharing in a Go benchmark?",
+      "family": "cache_false_sharing"
+    },
+    {
+      "text": "sync.Pool vs slab allocator for frequent short-lived objects",
+      "family": "memory_pool"
+    },
+    {
+      "text": "Should I use sync.Mutex or channel for this concurrent counter?",
+      "family": "concurrency"
+    },
+    {
+      "text": "fieldalignment shows 40 bytes padding, how to optimize struct layout?",
+      "family": "struct_layout"
+    },
+    {
+      "text": "Slice preallocation benchmark shows 2x speedup, is make+append worth it?",
+      "family": "slice_string"
+    },
+    {
+      "text": "PGO in Go 1.21 vs 1.22, any real-world improvement data?",
+      "family": "pgo"
+    },
+    {
+      "text": "Go build -gcflags='-m' shows 'escapes to heap', how to fix?",
+      "family": "escape_analysis"
+    },
+    {
+      "text": "GODEBUG=gctrace=1 shows high GC CPU%, what next?",
+      "family": "gc_tuning"
+    },
+    {
+      "text": "How to write a benchmark that accurately measures latency tail?",
+      "family": "benchmark"
+    },
+    {
+      "text": "go test -bench=. -benchmem, any common mistakes to avoid?",
+      "family": "benchmark"
+    },
+    {
+      "text": "Which Go version has the best inlining improvements for our codebase?",
+      "family": "version_diff"
+    }
+  ],
+  "should_not_trigger": [
+    {
+      "text": "What's the syntax for Go generics?",
+      "family": "syntax_only"
+    },
+    {
+      "text": "How to structure a Go web API project?",
+      "family": "architecture_only"
+    },
+    {
+      "text": "Explain what a goroutine is.",
+      "family": "explain_only"
+    },
+    {
+      "text": "Compare Rust and Go for systems programming.",
+      "family": "language_compare"
+    },
+    {
+      "text": "How to implement a REST handler in Go?",
+      "family": "code_gen_only"
+    },
+    {
+      "text": "What's new in Go 1.23?",
+      "family": "release_notes"
+    },
+    {
+      "text": "How to deploy a Go service to Kubernetes?",
+      "family": "deployment"
+    },
+    {
+      "text": "Debug this Go test that's failing with nil pointer.",
+      "family": "debug_not_perf"
+    },
+    {
+      "text": "Write a Go function that merges two sorted slices.",
+      "family": "coding_only"
+    },
+    {
+      "text": "What's the best Go ORM library?",
+      "family": "library_question"
+    },
+    {
+      "text": "Help me set up CI for my Go project.",
+      "family": "ci_cd"
+    },
+    {
+      "text": "How does Go's garbage collector work internally?",
+      "family": "theory_only"
+    },
+    {
+      "text": "Best practices for Go error handling.",
+      "family": "general_go"
+    },
+    {
+      "text": "Should I use gin or echo for my API?",
+      "family": "framework_choice"
+    },
+    {
+      "text": "How to write unit tests in Go with testify?",
+      "family": "testing_not_benchmark"
+    },
+    {
+      "text": "Convert this Python script to Go.",
+      "family": "migration"
+    }
+  ]
+}

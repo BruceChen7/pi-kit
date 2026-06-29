@@ -1,0 +1,13 @@
+{
+  "name": "chao-go-perf",
+  "version": "1.0.0",
+  "owner": "Ming Chen",
+  "updated_at": "2026-06-29",
+  "status": "active",
+  "maturity_tier": "scaffold",
+  "lifecycle_stage": "library",
+  "context_budget_tier": "production",
+  "review_cadence": "quarterly",
+  "target_platforms": ["pi-kit"],
+  "factory_components": ["references", "reports"]
+}

@@ -1,11 +1,16 @@
 ---
 name: chao-go-perf
 description: >
-  Go 性能分析专家。用于分析 CPU/内存性能瓶颈、benchmark 设计、pprof、逃逸分析、GC
-  调优、编译器优化（BCE/内联）、CPU cache/false sharing、并发性能、PGO 与 Go
-  版本性能差异。用户提到 Go 性能、benchmark、benchstat、profile、pprof、内存分配、逃逸、
-  sync.Pool、cache line、false sharing、GC 优化、编译器优化、BCE、bounds check、内联、
-  profile-guided optimization、字符串拼接性能、slice 预分配、struct 布局优化等话题时应使用此 skill。
+  Go 性能分析专家。分析 CPU、内存、GC、并发瓶颈，设计 benchmark，解读 pprof/trace，优化编译器
+  决策（BCE、内联、逃逸分析）、CPU cache 利用、锁与并发策略、PGO 及 Go 版本升级收益。
+  用户提出性能相关 question 时激活，涉及 pprof/profile 分析、逃逸分析、sync.Pool 复用、
+  cache line/false sharing、bounds check elimination、slice preallocation、struct layout、
+  字符串拼接优化、pgo 性能对比等话题。
+exclude_when:
+  - 不需要性能分析，仅询问 Go 语法或通用编码问题
+  - 不涉及性能考量的架构设计或业务逻辑讨论
+  - 非 Go 语言的性能问题
+  - 只需要代码生成而不需要性能诊断或优化验证
 version: 1.0.0
 ---
 

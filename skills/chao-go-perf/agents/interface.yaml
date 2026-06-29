@@ -1,0 +1,20 @@
+interface:
+  display_name: "Go 性能分析专家"
+  short_description: "Go CPU/memory/GC/concurrency/cache optimization, benchmark design, pprof/trace analysis, compiler optimization (BCE, inlining), and escape analysis."
+  default_prompt: "Use $chao-go-perf to diagnose Go performance issues, analyze pprof/trace, design benchmarks, or optimize CPU/memory/GC/concurrency bottlenecks."
+compatibility:
+  canonical_format: "agent-skills"
+  adapter_targets:
+    - "pi-kit"
+  activation:
+    mode: "auto"
+    paths: []
+  execution:
+    context: "inline"
+    shell: "bash"
+  trust:
+    source_tier: "local"
+    remote_inline_execution: "forbid"
+    remote_metadata_policy: "allow-metadata-only"
+  degradation:
+    pi-kit: "neutral-source"

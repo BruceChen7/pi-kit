@@ -6,6 +6,12 @@
  * - poetry: Blocked with uv equivalents (uv init, uv add, uv sync, uv run)
  * - python/python3: Redirected to `uv run python`, with special handling to
  *   block `python -m pip` and `python -m venv`
+ * - grep: Transparent proxy to `rg`, translating common grep CLI flags to
+ *   ripgrep equivalents (handles conflicting flags: -r, -E, -d, -L, -s, etc.)
+ *   Falls back to system grep for patterns rg cannot handle (e.g., \\K).
+ * - find: Transparent proxy to `fd`, translating common find flags to fd
+ *   equivalents (handles conflicting flags: -d, -H, -i, -l, -x, -o, -s, etc.)
+ *   Falls back to system find for complex expressions (-o, -perm, -prune, etc.)
  *
  * Built-in grep/find tools are disabled and replaced with:
  * - rg: structured ripgrep output (same format as built-in grep)

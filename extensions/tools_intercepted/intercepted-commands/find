@@ -1,0 +1,561 @@
+#!/bin/bash
+# find -> fd transparent proxy shim
+#
+# Translates common find CLI flags to fd equivalents.
+# Falls back to system find when fd cannot handle the expression.
+#
+# Conflict resolution (find vs fd single-letter flags):
+#   find -d = depth-first (no arg)  | fd -d = max-depth (takes arg)  -> detect context
+#   find -H = no descend symlink    | fd -H = hidden                 -> handled
+#   find -L = follow symlinks       | fd -L = follow symlinks        -> compatible
+#   find -i = iname (deprecated)    | fd -i = ignore-case            -> compatible
+#   find -l = links N               | fd -l = list-details           -> handled
+#   find -x = xdev (stay one FS)    | fd -x = exec                   -> handled
+#   find -o = or                    | fd -o = owner                  -> handled
+#   find -s = sort entries          | fd -s = case-sensitive         -> handled
+#   find -g = group NAME            | fd -g = glob                   -> handled
+#   find -a = and                   | fd -a = absolute-path          -> handled
+#   find -0 = print0                | fd -0 = print0                 -> compatible
+#   find -u = uid N                 | fd -u = unrestricted           -> handled
+#   find -E = (not standard)        | fd -E = exclude                -> compatible
+#   find -F = (not standard)        | fd -F = fixed-strings          -> compatible
+#   find -S = (not standard)        | fd -S = size                   -> compatible
+
+set -o pipefail
+
+# ---------------------------------------------------------------------------
+# Locate the real system find
+# ---------------------------------------------------------------------------
+REAL_FIND=""
+while IFS= read -r candidate; do
+    if [ -x "$candidate" ] && [ "$(command -v "$candidate")" != "$0" ]; then
+        REAL_FIND="$candidate"
+        break
+    fi
+done < <(printf "%s\n" /usr/bin/find /bin/find /usr/local/bin/find /opt/homebrew/bin/find)
+
+if [ -z "$REAL_FIND" ]; then
+    REAL_FIND="$(command -v find)"
+fi
+
+# ---------------------------------------------------------------------------
+# Prerequisite check
+# ---------------------------------------------------------------------------
+FD_AVAILABLE=false
+command -v fd &>/dev/null && FD_AVAILABLE=true
+
+if ! $FD_AVAILABLE; then
+    exec "$REAL_FIND" "$@"
+fi
+
+# ---------------------------------------------------------------------------
+# Pre-scan for complex expressions fd cannot handle → fall back to real find
+# ---------------------------------------------------------------------------
+for arg in "$@"; do
+    case "$arg" in
+        -o|-or|-perm|-printf|-fls|-ok|-okdir|-prune|-newer)
+            exec "$REAL_FIND" "$@"
+            ;;
+        -anewer|-cnewer|-used|-nogroup|-nouser|-execdir)
+            exec "$REAL_FIND" "$@"
+            ;;
+        !)
+            exec "$REAL_FIND" "$@"
+            ;;
+        -empty)
+            # fd cannot express -empty precisely enough → fall back
+            exec "$REAL_FIND" "$@"
+            ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
+# Parse find arguments and build fd equivalents
+# ---------------------------------------------------------------------------
+FD_ARGS=()
+PATHS=()
+PATTERN=""
+USE_GLOB=false
+SEEN_NAME=false
+SEEN_TYPE=false
+
+# Flags for positional arg handling
+SEEN_NAME=false
+SEEN_INAME=false
+SEEN_TYPE=false
+SEEN_SIZE=false
+SEEN_MAXDEPTH=false
+SEEN_MINDEPTH=false
+HAS_EXEC=false
+
+parse_args() {
+    local exec_cmd_parts=()
+    local in_exec=false
+    local exec_batch_mode=false
+
+    while [ $# -gt 0 ]; do
+        arg="$1"
+        shift
+
+        # Inside -exec command block: collect until ";" or "+"
+        if $in_exec; then
+            if [ "$arg" = ";" ] || [ "$arg" = "+" ]; then
+                # End of exec args → push -x/-X and collected parts
+                local batch_flag=false
+                [ "$arg" = "+" ] && batch_flag=true
+                if $batch_flag || $exec_batch_mode; then
+                    FD_ARGS+=("-X")
+                else
+                    FD_ARGS+=("-x")
+                fi
+                for part in "${exec_cmd_parts[@]}"; do
+                    FD_ARGS+=("$part")
+                done
+                in_exec=false
+                exec_cmd_parts=()
+                exec_batch_mode=false
+                continue
+            fi
+            exec_cmd_parts+=("$arg")
+            continue
+        fi
+
+        case "$arg" in
+            --)
+                FD_ARGS+=("--")
+                ;;
+
+            # --- Paths are positional args before any test/action ---
+            # Handled by the *) default case below
+
+            # --- -name → glob pattern ---
+            -name)
+                USE_GLOB=true
+                SEEN_NAME=true
+                if [ $# -gt 0 ]; then
+                    PATTERN="$1"
+                    shift
+                fi
+                ;;
+
+            # --- -iname → glob + case-insensitive ---
+            -iname)
+                USE_GLOB=true
+                SEEN_INAME=true
+                FD_ARGS+=("-i")
+                if [ $# -gt 0 ]; then
+                    PATTERN="$1"
+                    shift
+                fi
+                ;;
+
+            # --- -type → -t ---
+            -type)
+                SEEN_TYPE=true
+                if [ $# -gt 0 ]; then
+                    local ftype="$1"
+                    shift
+                    case "$ftype" in
+                        f) FD_ARGS+=("-t" "f") ;;
+                        d) FD_ARGS+=("-t" "d") ;;
+                        l) FD_ARGS+=("-t" "l") ;;
+                        s) FD_ARGS+=("-t" "s") ;;
+                        p) FD_ARGS+=("-t" "p") ;;
+                        *)  exec "$REAL_FIND" "$@" ;; # unsupported type
+                    esac
+                fi
+                ;;
+
+            # --- -maxdepth → -d / --max-depth ---
+            -maxdepth)
+                SEEN_MAXDEPTH=true
+                if [ $# -gt 0 ]; then
+                    FD_ARGS+=("--max-depth" "$1")
+                    shift
+                fi
+                ;;
+
+            # --- -mindepth → --min-depth ---
+            -mindepth)
+                SEEN_MINDEPTH=true
+                if [ $# -gt 0 ]; then
+                    FD_ARGS+=("--min-depth" "$1")
+                    shift
+                fi
+                ;;
+
+            # --- -depth (process dir before content) → drop (fd default) ---
+            -depth)
+                ;;
+
+            # --- -size → --size / -S ---
+            -size)
+                SEEN_SIZE=true
+                if [ $# -gt 0 ]; then
+                    local sizearg="$1"
+                    shift
+                    # Translate find size suffixes to fd suffixes
+                    # find: c=bytes, w=2-byte words, b=512B blocks, k=KB, M=MB, G=GB
+                    # fd: B=bytes, K=KB, M=MB, G=GB, T=TB
+                    local sign=""
+                    local num="${sizearg}"
+                    case "${num:0:1}" in
+                        +) sign="+"; num="${num:1}" ;;
+                        -) sign="-"; num="${num:1}" ;;
+                    esac
+                    local suffix="${num: -1}"
+                    local value="${num%?}"
+                    case "$suffix" in
+                        c) FD_ARGS+=("--size" "${sign}${value}B") ;;
+                        k) FD_ARGS+=("--size" "${sign}${value}K") ;;
+                        M) FD_ARGS+=("--size" "${sign}${value}M") ;;
+                        G) FD_ARGS+=("--size" "${sign}${value}G") ;;
+                        w|b)
+                            # w=2-byte words, b=512B blocks - not directly in fd
+                            exec "$REAL_FIND" "$@"
+                            ;;
+                        [0-9])
+                            # No suffix -> find treats as 512B blocks -> fall back
+                            exec "$REAL_FIND" "$@"
+                            ;;
+                        *)  FD_ARGS+=("--size" "$sizearg") ;;
+                    esac
+                fi
+                ;;
+
+            # --- -mtime → --changed-within / --changed-before ---
+            -mtime)
+                if [ $# -gt 0 ]; then
+                    local val="$1"
+                    shift
+                    case "${val:0:1}" in
+                        +) FD_ARGS+=("--changed-before" "${val:1}days") ;;
+                        -) FD_ARGS+=("--changed-within" "${val:1}days") ;;
+                        *) FD_ARGS+=("--changed-within" "${val}days") ;;
+                    esac
+                fi
+                ;;
+
+            # --- -atime / -ctime → approximate ---
+            -atime|-ctime)
+                if [ $# -gt 0 ]; then
+                    local val="$1"
+                    shift
+                    case "${val:0:1}" in
+                        +) FD_ARGS+=("--changed-before" "${val:1}days") ;;
+                        -) FD_ARGS+=("--changed-within" "${val:1}days") ;;
+                        *) FD_ARGS+=("--changed-within" "${val}days") ;;
+                    esac
+                fi
+                ;;
+
+            # --- -L / -follow → compatible ---
+            -L|-follow)
+                FD_ARGS+=("-L")
+                ;;
+
+            # --- -H → find: no symlinks on cmdline, fd: hidden → drop (different semantics) ---
+            -H)
+                ;;
+
+            # --- -xdev / -mount → --one-file-system ---
+            -xdev|-mount)
+                FD_ARGS+=("--one-file-system")
+                ;;
+
+            # --- -exec → collect command parts ---
+            -exec)
+                HAS_EXEC=true
+                in_exec=true
+                exec_batch_mode=false
+                exec_cmd_parts=()
+                # Next iteration of while loop will collect command parts
+                ;;
+
+            # --- -exec ... + (batch) ---
+            # + is handled as the last part of the exec command
+
+            # --- -delete → fd -x rm ---
+            -delete)
+                HAS_EXEC=true
+                FD_ARGS+=("-x" "rm")
+                ;;
+
+            # --- -ls → -l / --list-details ---
+            -ls)
+                FD_ARGS+=("-l")
+                ;;
+
+            # --- -print → default, drop ---
+            -print)
+                ;;
+
+            # --- -path → use as regex pattern (fd matches full path by default) ---
+            -path)
+                if [ $# -gt 0 ]; then
+                    PATTERN="$1"
+                    shift
+                fi
+                ;;
+
+            # --- -regex / -iregex → fd uses regex by default ---
+            -regex)
+                if [ $# -gt 0 ]; then
+                    PATTERN="$1"
+                    shift
+                fi
+                ;;
+            -iregex)
+                if [ $# -gt 0 ]; then
+                    PATTERN="$1"
+                    shift
+                fi
+                FD_ARGS+=("-i")
+                ;;
+
+            # --- -not -name → fd --exclude ---
+            -not)
+                if [ $# -gt 0 ]; then
+                    local next="$1"
+                    shift
+                    case "$next" in
+                        -name|-iname|-path)
+                            if [ $# -gt 0 ]; then
+                                FD_ARGS+=("--exclude" "$1")
+                                shift
+                            fi
+                            ;;
+                        *)  exec "$REAL_FIND" "$@" ;;
+                    esac
+                fi
+                ;;
+
+            # --- -D / -daystart / -warn / -nowarn (find options) → drop ---
+            -D|-daystart|-warn|-nowarn)
+                if [ "$arg" = "-D" ] && [ $# -gt 0 ] && [[ ! "$1" =~ ^- ]]; then
+                    shift
+                fi
+                ;;
+
+            # --- -regextype → skip next arg ---
+            -regextype)
+                if [ $# -gt 0 ]; then
+                    shift
+                fi
+                ;;
+
+            # --- --help → real find ---
+            --help)
+                exec "$REAL_FIND" "$@"
+                ;;
+
+            # --- --version / -V → fd version ---
+            --version|-V)
+                exec fd --version
+                ;;
+
+            # === Single-letter flag conflicts ===
+
+            # -d: find = depth-first (no arg), fd = max-depth (needs arg)
+            -d)
+                if [ $# -gt 0 ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+                    FD_ARGS+=("--max-depth" "$1")
+                    shift
+                fi
+                # else: find -d depth-first → drop
+                ;;
+
+            # -s: find = sort entries (no standard meaning), fd = case-sensitive
+            # Rare in find; common in fd → treat as fd's case-sensitive
+            -s)
+                FD_ARGS+=("--case-sensitive")
+                ;;
+
+            # -i: find = deprecated -iname shortcut, fd = ignore-case
+            -i)
+                FD_ARGS+=("-i")
+                ;;
+
+            # -l: find = -links N (needs arg), fd = list-details (no arg)
+            -l)
+                if [ $# -gt 0 ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+                    # find -l N (−links test) → fall back
+                    exec "$REAL_FIND" "$@"
+                else
+                    FD_ARGS+=("-l")
+                fi
+                ;;
+
+            # -x: find = -xdev (no arg), fd = -x exec (needs cmd)
+            -x)
+                FD_ARGS+=("--one-file-system")
+                ;;
+
+            # -E: fd = exclude (not standard in find)
+            -E)
+                if [ $# -gt 0 ]; then
+                    FD_ARGS+=("--exclude" "$1")
+                    shift
+                fi
+                ;;
+
+            # -o: find = OR operator, fd = owner
+            # Pre-scanned above → should not reach here
+            -o)
+                exec "$REAL_FIND" "$@"
+                ;;
+
+            # -u: find = -uid N, fd = unrestricted
+            -u)
+                exec "$REAL_FIND" "$@"
+                ;;
+
+            # -g: find = -group NAME, fd = glob
+            -g)
+                if [ $# -gt 0 ]; then
+                    USE_GLOB=true
+                    PATTERN="$1"
+                    shift
+                fi
+                ;;
+
+            # -a: find = AND (implicit, not normally used), fd = absolute-path
+            -a)
+                FD_ARGS+=("--absolute-path")
+                ;;
+
+            # -F: fd = fixed-strings (not a find flag)
+            -F)
+                FD_ARGS+=("--fixed-strings")
+                ;;
+
+            # -0 / --print0 → compatible
+            -0|-print0)
+                FD_ARGS+=("-0")
+                ;;
+
+            # -S: fd = size (find doesn't have -S)
+            -S)
+                if [ $# -gt 0 ]; then
+                    FD_ARGS+=("--size" "$1")
+                    shift
+                fi
+                ;;
+
+            # --- Unknown long options → passthrough ---
+            --*)
+                FD_ARGS+=("$arg")
+                ;;
+
+            # --- Unknown short flags → fallback ---
+            -?*)
+                exec "$REAL_FIND" "$@"
+                ;;
+
+            # --- Positional: paths ---
+            *)
+                PATHS+=("$arg")
+                ;;
+        esac
+    done
+
+    # If we were inside -exec but never saw ";" or "+" in the loop
+    if $in_exec && [ ${#exec_cmd_parts[@]} -gt 0 ]; then
+        # Check if last part is "+" (batch mode) — trailing "+" was collected as arg
+        local last_idx=$((${#exec_cmd_parts[@]} - 1))
+        if [ "${exec_cmd_parts[$last_idx]}" = "+" ]; then
+            unset 'exec_cmd_parts[$last_idx]'
+            if $exec_batch_mode; then
+                FD_ARGS+=("-X")
+            else
+                FD_ARGS+=("-x")
+            fi
+            for part in "${exec_cmd_parts[@]}"; do
+                FD_ARGS+=("$part")
+            done
+        else
+            # Unfinished -exec, fallback to real find
+            exec "$REAL_FIND" "$@"
+        fi
+    fi
+}
+
+parse_args "$@"
+
+# ---------------------------------------------------------------------------
+# Edge case: no flags but a positional arg that looks like a glob pattern
+# e.g., find "*.ts" (unescaped or unexpanded glob) -> treat as pattern
+# Only promote when the arg contains actual glob characters (* ? [)
+# to avoid stealing paths like "." or "/tmp/foo"
+# ---------------------------------------------------------------------------
+if [ -z "$PATTERN" ] && [ ${#PATHS[@]} -gt 0 ]; then
+    if [[ "${PATHS[0]}" == *[*?[]* ]]; then
+        PATTERN="${PATHS[0]}"
+        PATHS=("${PATHS[@]:1}")
+        USE_GLOB=true
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Split FD_ARGS into non-exec flags and exec command
+# fd expects: fd [FLAGS] [PATTERN] [PATH]... [-x/-X CMD...]
+# So exec args must be at the very end.
+# ---------------------------------------------------------------------------
+FD_FLAGS=()
+EXEC_ARGS=()
+in_exec_section=false
+
+for flag in "${FD_ARGS[@]}"; do
+    if [ "$flag" = "-x" ] || [ "$flag" = "-X" ]; then
+        in_exec_section=true
+    fi
+    if $in_exec_section; then
+        EXEC_ARGS+=("$flag")
+    else
+        FD_FLAGS+=("$flag")
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# Build paths translation: use --search-path for safety
+# fd can interpret a path-like positional arg as a regex pattern (especially
+# when path contains "." or "/"). Using --search-path avoids this ambiguity.
+# ---------------------------------------------------------------------------
+SEARCH_PATH_ARGS=()
+for p in "${PATHS[@]}"; do
+    SEARCH_PATH_ARGS+=("--search-path" "$p")
+done
+
+# ---------------------------------------------------------------------------
+# Execute fd
+# ---------------------------------------------------------------------------
+if [ ${#EXEC_ARGS[@]} -gt 0 ]; then
+    # Has exec: pattern, glob, and search-paths must come before -x/-X
+    ARGS=()
+    for f in "${FD_FLAGS[@]}"; do ARGS+=("$f"); done
+    if $USE_GLOB; then ARGS+=("--glob"); fi
+    for p in "${SEARCH_PATH_ARGS[@]}"; do ARGS+=("$p"); done
+    if [ -n "$PATTERN" ]; then ARGS+=("$PATTERN"); fi
+    for e in "${EXEC_ARGS[@]}"; do ARGS+=("$e"); done
+
+    exec fd "${ARGS[@]}"
+elif [ -n "$PATTERN" ]; then
+    # No exec, has pattern
+    ARGS=()
+    for f in "${FD_FLAGS[@]}"; do ARGS+=("$f"); done
+    if $USE_GLOB; then ARGS+=("--glob"); fi
+    ARGS+=("$PATTERN")
+    for p in "${SEARCH_PATH_ARGS[@]}"; do ARGS+=("$p"); done
+
+    exec fd "${ARGS[@]}"
+elif [ ${#PATHS[@]} -gt 0 ]; then
+    # No pattern, just paths -> list all
+    ARGS=()
+    for f in "${FD_FLAGS[@]}"; do ARGS+=("$f"); done
+    # Pass paths as --search-path to avoid fd interpreting them as regex patterns
+    for p in "${SEARCH_PATH_ARGS[@]}"; do ARGS+=("$p"); done
+
+    exec fd "${ARGS[@]}"
+else
+    exec fd "${FD_FLAGS[@]}"
+fi

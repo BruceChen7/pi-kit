@@ -1,0 +1,485 @@
+#!/bin/bash
+# grep -> rg transparent proxy shim
+#
+# Translates common grep CLI flags to ripgrep (rg) equivalents.
+# Falls back to system grep for patterns rg cannot handle (e.g., \K).
+#
+# Conflict resolution (grep vs rg single-letter flags):
+#   grep -E = extended-regexp   | rg -E = encoding        -> handled
+#   grep -r = recursive          | rg -r = replace          -> handled
+#   grep -d = action for dirs    | rg -d = max-depth        -> handled
+#   grep -L = files-without-match| rg -L = follow symlinks  -> handled
+#   grep -P = Perl regex         | rg -P = PCRE2 (compatible)-> passthrough
+#   grep -T = initial-tab        | rg -T = type-not         -> handled
+#   grep -U = binary (no strip)  | rg -U = multiline        -> handled
+#   grep -I = ignore binary      | rg -I = no-filename      -> handled
+
+set -o pipefail
+
+# ---------------------------------------------------------------------------
+# Locate the real system grep (skip our own shim)
+# ---------------------------------------------------------------------------
+REAL_GREP=""
+while IFS= read -r candidate; do
+    if [ -x "$candidate" ] && [ "$(command -v "$candidate")" != "$0" ]; then
+        REAL_GREP="$candidate"
+        break
+    fi
+done < <(printf "%s\n" /bin/grep /usr/bin/grep /usr/local/bin/grep /opt/homebrew/bin/grep)
+
+if [ -z "$REAL_GREP" ]; then
+    REAL_GREP="$(command -v grep)"
+fi
+
+# ---------------------------------------------------------------------------
+# Check prerequisites
+# ---------------------------------------------------------------------------
+RG_AVAILABLE=false
+command -v rg &>/dev/null && RG_AVAILABLE=true
+
+# ---------------------------------------------------------------------------
+# Pre-scan: check for \K (keep-left) in pattern values — rg cannot handle it
+# ---------------------------------------------------------------------------
+NEED_FALLBACK=false
+for arg in "$@"; do
+    if [[ "$arg" =~ \\K ]]; then
+        NEED_FALLBACK=true
+        break
+    fi
+done
+
+if $NEED_FALLBACK; then
+    exec "$REAL_GREP" "$@"
+fi
+
+if ! $RG_AVAILABLE; then
+    exec "$REAL_GREP" "$@"
+fi
+
+# ---------------------------------------------------------------------------
+# Parse grep arguments and build rg equivalents
+# ---------------------------------------------------------------------------
+RG_ARGS=()
+PATTERN=""
+PATTERN_FROM_E=false
+FILES=()
+HAS_DASH_DASH=false
+HAS_ONLY_MATCHING=false
+HAS_FILE_ARG=false
+USE_RECURSIVE=true   # rg is recursive by default
+
+# Flags that rg supports directly (same name, same meaning)
+# -i, --ignore-case
+# -v, --invert-match
+# -w, --word-regexp
+# -x, --line-regexp
+# -F, --fixed-strings
+# -a, --text
+# -c, --count
+# -l, --files-with-matches
+# -n, --line-number
+# -b, --byte-offset
+# -q, --quiet
+# -o, --only-matching
+# -s, --case-sensitive
+# -A, --after-context
+# -B, --before-context
+# -C, --context
+# -m, --max-count
+# -H, --with-filename
+# -P, --pcre2
+
+# Flags that need translation (grep vs rg meaning differs):
+# grep -E  (ext-regexp)  -> drop (rg uses ERE by default)
+# grep -r/-R (recursive) -> drop (rg is recursive by default)
+# grep -d  (dir action)  -> drop 'recurse', warn for others
+# grep -L  (no-match)    -> --files-without-match
+# grep -T  (tab)         -> drop (rg default)
+# grep -U  (binary)      -> drop (rg handles binary differently)
+# grep -I  (no-binary)   -> drop (rg default skips binary)
+# grep -s  (no-errors)   -> --no-messages
+# grep -h  (no-filename) -> --no-filename
+# grep -Z  (null)        -> --null
+# grep -z  (null-data)   -> --null-data
+# grep --include=GLOB    -> --glob=GLOB
+# grep --exclude=GLOB    -> --glob=!GLOB
+# grep --exclude-dir=DIR -> --glob=!DIR/**
+
+# For grep -Z (output null-terminated), also add context for rg
+# grep -z (null-data) maps to rg --null-data
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        arg="$1"
+        shift
+
+        if $HAS_DASH_DASH; then
+            # Everything after -- is a positional arg
+            if [ -z "$PATTERN" ] && ! $PATTERN_FROM_E && ! $HAS_FILE_ARG; then
+                PATTERN="$arg"
+            else
+                FILES+=("$arg")
+                HAS_FILE_ARG=true
+            fi
+            continue
+        fi
+
+        case "$arg" in
+            --)
+                HAS_DASH_DASH=true
+                ;;
+
+            # --- Direct passthrough flags (same in grep and rg) ---
+            -i|--ignore-case|-v|--invert-match|-w|--word-regexp|-x|--line-regexp)
+                RG_ARGS+=("$arg")
+                ;;
+            -F|--fixed-strings|-a|--text)
+                RG_ARGS+=("$arg")
+                ;;
+            -b|--byte-offset|-q|--quiet)
+                RG_ARGS+=("$arg")
+                ;;
+            -P|--pcre2)
+                RG_ARGS+=("$arg")
+                ;;
+
+            # --- Line number ---
+            -n|--line-number)
+                RG_ARGS+=("$arg")
+                ;;
+
+            # --- Only matching ---
+            -o|--only-matching)
+                RG_ARGS+=("$arg")
+                HAS_ONLY_MATCHING=true
+                ;;
+
+            # --- Count ---
+            -c|--count)
+                RG_ARGS+=("$arg")
+                ;;
+
+            # --- Files with matches / without match ---
+            -l|--files-with-matches)
+                RG_ARGS+=("$arg")
+                ;;
+            -L|--files-without-match)
+                RG_ARGS+=("--files-without-match")
+                ;;
+
+            # --- Context ---
+            -C|--context)
+                if [ $# -gt 0 ] && [[ ! "$1" =~ ^- ]]; then
+                    RG_ARGS+=("--context=$1")
+                    shift
+                else
+                    RG_ARGS+=("--context")
+                fi
+                ;;
+            --context=*)
+                RG_ARGS+=("$arg")
+                ;;
+            -A|--after-context)
+                if [ $# -gt 0 ] && [[ ! "$1" =~ ^- ]]; then
+                    RG_ARGS+=("--after-context=$1")
+                    shift
+                else
+                    RG_ARGS+=("--after-context")
+                fi
+                ;;
+            --after-context=*)
+                RG_ARGS+=("$arg")
+                ;;
+            -B|--before-context)
+                if [ $# -gt 0 ] && [[ ! "$1" =~ ^- ]]; then
+                    RG_ARGS+=("--before-context=$1")
+                    shift
+                else
+                    RG_ARGS+=("--before-context")
+                fi
+                ;;
+            --before-context=*)
+                RG_ARGS+=("$arg")
+                ;;
+
+            # --- Max count ---
+            -m|--max-count)
+                if [ $# -gt 0 ] && [[ ! "$1" =~ ^- ]]; then
+                    RG_ARGS+=("--max-count=$1")
+                    shift
+                else
+                    RG_ARGS+=("--max-count")
+                fi
+                ;;
+            --max-count=*)
+                RG_ARGS+=("$arg")
+                ;;
+
+            # --- With / without filename ---
+            -H|--with-filename)
+                RG_ARGS+=("$arg")
+                ;;
+            -h|--no-filename)
+                RG_ARGS+=("--no-filename")
+                ;;
+            -I)
+                # grep -I = ignore binary files (default in rg)
+                # rg -I = --no-filename (different!)
+                # Just drop it; rg skips binary by default
+                ;;
+
+            # --- Case sensitivity ---
+            # NOTE: -s is intentionally NOT handled here.
+                # grep -s = suppress errors, rg -s = case-sensitive.
+                # It is handled in the translation section below as --no-messages.
+            -S|--smart-case)
+                RG_ARGS+=("$arg")
+                ;;
+
+            # --- grep -E (extended regex) -> drop, rg default ---
+            -E|--extended-regexp)
+                # rg uses extended regex by default, no flag needed
+                ;;
+
+            # --- grep -r/-R (recursive) -> drop, rg default ---
+            -r|-R|--recursive)
+                # rg is recursive by default
+                ;;
+
+            # --- grep -d (directory action) -> translate ---
+            -d)
+                if [ $# -gt 0 ]; then
+                    case "$1" in
+                        recurse)
+                            # rg default, drop
+                            ;;
+                        skip)
+                            # rg doesn't skip dirs by default
+                            # Use --max-depth=0 to skip all subdirectories? No...
+                            # Just drop it for now; rg will search into dirs
+                            ;;
+                        read)
+                            # grep reads directory as if it's a file
+                            # rg cannot do this; fall through to real grep
+                            exec "$REAL_GREP" "$@"
+                            ;;
+                    esac
+                    shift
+                fi
+                ;;
+            --directories=*)
+                case "${arg#--directories=}" in
+                    recurse) ;;
+                    skip) ;;
+                    read)
+                        exec "$REAL_GREP" "$@"
+                        ;;
+                esac
+                ;;
+
+            # --- grep -T (initial-tab) -> drop ---
+            -T|--initial-tab)
+                ;;
+
+            # --- grep -U (binary / no strip CR) -> drop ---
+            -U|--binary)
+                ;;
+
+            # --- grep -s (suppress errors) -> --no-messages ---
+            -s|--no-messages)
+                RG_ARGS+=("--no-messages")
+                ;;
+
+            # --- grep -Z (null-terminated output) -> --null ---
+            -Z|--null)
+                RG_ARGS+=("--null")
+                ;;
+
+            # --- grep -z (null-data, treat input as NUL-separated) -> --null-data ---
+            -z|--null-data)
+                RG_ARGS+=("--null-data")
+                ;;
+
+            # --- include / exclude globs ---
+            --include=*)
+                RG_ARGS+=("--glob=${arg#--include=}")
+                ;;
+            --include)
+                if [ $# -gt 0 ]; then
+                    RG_ARGS+=("--glob=$1")
+                    shift
+                fi
+                ;;
+            --exclude=*)
+                RG_ARGS+=("--glob=!${arg#--exclude=}")
+                ;;
+            --exclude)
+                if [ $# -gt 0 ]; then
+                    RG_ARGS+=("--glob=!$1")
+                    shift
+                fi
+                ;;
+            --exclude-dir=*)
+                RG_ARGS+=("--glob=!${arg#--exclude-dir=}/**")
+                ;;
+            --exclude-dir)
+                if [ $# -gt 0 ]; then
+                    RG_ARGS+=("--glob=!$1/**")
+                    shift
+                fi
+                ;;
+            --include-dir=*)
+                RG_ARGS+=("--glob=${arg#--include-dir=}/")
+                ;;
+            --include-dir)
+                if [ $# -gt 0 ]; then
+                    RG_ARGS+=("--glob=$1/")
+                    shift
+                fi
+                ;;
+
+            # --- grep --binary-files=type -> --text or drop ---
+            --binary-files=*)
+                case "${arg#--binary-files=}" in
+                    text|without-match) ;;
+                    *) ;;
+                esac
+                ;;
+
+            # --- grep --label -> --label (only rg supports it) ---
+            --label=*)
+                RG_ARGS+=("$arg")
+                ;;
+            --label)
+                if [ $# -gt 0 ]; then
+                    RG_ARGS+=("--label=$1")
+                    shift
+                fi
+                ;;
+
+            # --- grep --color -> let rg handle (omit) ---
+            --color=*)
+                RG_ARGS+=("$arg")
+                ;;
+            --colour=*)
+                RG_ARGS+=("$arg")
+                ;;
+
+            # --- grep -e (multiple / explicit patterns) ---
+            -e|--regexp)
+                if [ $# -gt 0 ]; then
+                    RG_ARGS+=("$arg")
+                    RG_ARGS+=("$1")
+                    PATTERN_FROM_E=true
+                    shift
+                fi
+                ;;
+            --regexp=*)
+                RG_ARGS+=("$arg")
+                PATTERN_FROM_E=true
+                ;;
+
+            # --- grep -f (pattern file) ---
+            -f|--file)
+                if [ $# -gt 0 ]; then
+                    RG_ARGS+=("-f")
+                    RG_ARGS+=("$1")
+                    shift
+                fi
+                ;;
+            --file=*)
+                RG_ARGS+=("--file=${arg#--file=}")
+                ;;
+
+            # --- grep --no-ignore -> rg --no-ignore ---
+            --no-ignore)
+                RG_ARGS+=("--no-ignore")
+                ;;
+            --ignore-file)
+                if [ $# -gt 0 ]; then
+                    RG_ARGS+=("--ignore-file=$1")
+                    shift
+                fi
+                ;;
+            --ignore-file=*)
+                RG_ARGS+=("$arg")
+                ;;
+
+            # --- grep --help / --version ---
+            --help)
+                exec "$REAL_GREP" "$@"
+                ;;
+            --version|-V)
+                if $RG_AVAILABLE; then
+                    exec rg --version
+                else
+                    exec "$REAL_GREP" "$@"
+                fi
+                ;;
+
+            # --- Mapped/captured output flags ---
+            --label=*)
+                RG_ARGS+=("$arg")
+                ;;
+            --devices|-D)
+                # Skip next arg
+                if [ $# -gt 0 ] && [[ ! "$1" =~ ^- ]]; then
+                    shift
+                fi
+                ;;
+
+            # --- Pass through other long options (rg might support them) ---
+            --*)
+                RG_ARGS+=("$arg")
+                ;;
+
+            # --- Unknown short flags: try rg, but skip known conflicts ---
+            -*)
+                # These are grep-only flags rg won't understand; drop them
+                case "$arg" in
+                    -G|--basic-regexp)
+                        # grep -G = basic regex (default in grep)
+                        # rg uses extended by default, so this is a slight mismatch
+                        # Pass --fixed-strings? No, just drop and note mismatch
+                        ;;
+                    -Y) ;; # grep -Y (undocumented, treated as unknown)
+                    -O) ;; # grep -O (if implemented)
+                    *)
+                        RG_ARGS+=("$arg")
+                        ;;
+                esac
+                ;;
+
+            # --- Positional arguments: pattern then files ---
+            *)
+                if [ -z "$PATTERN" ] && ! $PATTERN_FROM_E; then
+                    PATTERN="$arg"
+                else
+                    FILES+=("$arg")
+                    HAS_FILE_ARG=true
+                fi
+                ;;
+        esac
+    done
+}
+
+parse_args "$@"
+
+# ---------------------------------------------------------------------------
+# Edge case: no pattern but one positional arg -> treat as pattern
+# ---------------------------------------------------------------------------
+if [ -z "$PATTERN" ] && [ ${#FILES[@]} -gt 0 ]; then
+    PATTERN="${FILES[0]}"
+    FILES=("${FILES[@]:1}")
+fi
+
+# ---------------------------------------------------------------------------
+# Execute rg with mapped arguments
+# ---------------------------------------------------------------------------
+# Use --hidden to also search hidden files (like grep)
+# But skip .git/ which grep doesn't search by default either
+if [ ${#FILES[@]} -gt 0 ]; then
+    exec rg --color=never --hidden --glob '!**/.git/**' "${RG_ARGS[@]}" "$PATTERN" "${FILES[@]}"
+else
+    exec rg --color=never --hidden --glob '!**/.git/**' "${RG_ARGS[@]}" "$PATTERN"
+fi

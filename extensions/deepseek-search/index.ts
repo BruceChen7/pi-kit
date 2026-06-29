@@ -8,6 +8,11 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { createLogger } from "../shared/logger.ts";
+import {
+  getGlobalSettingsPath,
+  loadGlobalSettings,
+  writeSettingsFile,
+} from "../shared/settings.ts";
 
 const ANTHROPIC_BASE = "https://api.deepseek.com/anthropic";
 const SEARCH_MODEL = process.env.DEEPSEEK_SEARCH_MODEL || "deepseek-v4-flash";
@@ -18,6 +23,9 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const SERVER_TOOL_TYPE = "web_search_20260209";
 
 const log = createLogger("deepseek-search", { stderr: null });
+
+const SETTINGS_KEY = "deepseekSearch";
+const SETTINGS_FILE_PATH = getGlobalSettingsPath();
 
 type SearchSource = {
   title: string;
@@ -355,6 +363,48 @@ function buildSearchRequestBody(
 const citationReminder =
   "\n\nREMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.";
 
+type DeepSeekSearchSettings = {
+  enabled: boolean;
+};
+
+export function loadDeepSeekSearchSettings(): DeepSeekSearchSettings {
+  const { global } = loadGlobalSettings();
+  const ext = global[SETTINGS_KEY];
+  if (isRecord(ext) && typeof ext.enabled === "boolean") {
+    return { enabled: ext.enabled };
+  }
+  return { enabled: false };
+}
+
+export function saveDeepSeekSearchSettings(
+  settings: DeepSeekSearchSettings,
+): void {
+  const { global } = loadGlobalSettings();
+  writeSettingsFile(SETTINGS_FILE_PATH, {
+    ...global,
+    [SETTINGS_KEY]: settings,
+  });
+}
+
+export type DeepSeekSearchStatus = {
+  message: string;
+  severity: "info" | "warning";
+};
+
+export function formatDeepSeekSearchStatus(
+  active: boolean,
+  savedEnabled: boolean,
+  model: string,
+): DeepSeekSearchStatus {
+  let message = active
+    ? `DeepSeek search: enabled | Model: ${model}`
+    : `DeepSeek search: disabled`;
+  if (savedEnabled && !active) {
+    message += ` (saved: enabled — run \`on\` to activate for this session)`;
+  }
+  return { message, severity: active ? "info" : "warning" };
+}
+
 export default function deepseekSearchExtension(pi: ExtensionAPI) {
   log.info("deepseek-search extension loaded", {
     toolName: TOOL_NAME,
@@ -485,20 +535,83 @@ export default function deepseekSearchExtension(pi: ExtensionAPI) {
     });
   };
 
+  const isToolActive = (): boolean => pi.getActiveTools().includes(TOOL_NAME);
+
+  const activateTool = (): void => {
+    const active = pi.getActiveTools();
+    if (active.includes(TOOL_NAME)) return;
+    pi.setActiveTools([...active, TOOL_NAME]);
+  };
+
+  const deactivateTool = (): void => {
+    const active = pi.getActiveTools();
+    if (!active.includes(TOOL_NAME)) return;
+    pi.setActiveTools(active.filter((n) => n !== TOOL_NAME));
+  };
+
+  pi.registerCommand("deepseek-search-toggle", {
+    description: "Toggle DeepSeek web search tool on/off or show status",
+    handler: async (args, ctx) => {
+      const arg = args?.trim().toLowerCase();
+
+      if (!arg || arg === "status") {
+        const active = isToolActive();
+        const savedEnabled = loadDeepSeekSearchSettings().enabled;
+        const { message, severity } = formatDeepSeekSearchStatus(
+          active,
+          savedEnabled,
+          SEARCH_MODEL,
+        );
+        ctx.ui.notify(message, severity);
+        return;
+      }
+
+      if (arg === "on") {
+        if (isToolActive()) {
+          ctx.ui.notify("DeepSeek search already enabled", "info");
+          return;
+        }
+
+        try {
+          await resolveApiKey(ctx);
+          registerSearchTool();
+          activateTool();
+          saveDeepSeekSearchSettings({ enabled: true });
+          ctx.ui.notify("DeepSeek search enabled", "info");
+        } catch (error) {
+          ctx.ui.notify(`Cannot enable: ${readErrorMessage(error)}`, "error");
+        }
+        return;
+      }
+
+      if (arg === "off") {
+        if (!isToolActive()) {
+          ctx.ui.notify("DeepSeek search already disabled", "info");
+          return;
+        }
+
+        deactivateTool();
+        saveDeepSeekSearchSettings({ enabled: false });
+        ctx.ui.notify("DeepSeek search disabled", "info");
+        return;
+      }
+
+      ctx.ui.notify("Usage: /deepseek-search-toggle [on|off|status]", "info");
+    },
+  });
+
   pi.on("session_start", async (event, ctx) => {
     try {
-      await resolveApiKey(ctx);
-      log.info("deepseek-search available for session", {
+      const settings = loadDeepSeekSearchSettings();
+      log.info("deepseek-search session ready", {
         reason: event.reason,
         cwd: ctx.cwd,
+        savedEnabled: settings.enabled,
         toolName: TOOL_NAME,
         searchModel: SEARCH_MODEL,
       });
-      registerSearchTool();
     } catch (error) {
-      log.warn("deepseek-search unavailable for session", {
-        reason: event.reason,
-        cwd: ctx.cwd,
+      log.warn("deepseek-search settings load failed", {
         error: readErrorMessage(error),
       });
     }

@@ -12,6 +12,7 @@ extensions/cache-graph/ui-dist/
 package-lock.json
 pnpm-lock.yaml
 skills/render-markdown/bun.lock
+skills/*/reports/
 /.pi
 .config/wt.toml
 .worktreeinclude

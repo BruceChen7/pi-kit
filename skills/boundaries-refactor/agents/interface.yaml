@@ -1,0 +1,56 @@
+interface:
+  name: boundaries-refactor
+  display_name: Boundaries Refactor
+  short_description: >-
+    Refactor code toward Functional Core, Imperative Shell: extract pure
+    decision functions, thin the imperative shell, create boundary DTOs,
+    and reduce mock-heavy tests.
+  default_prompt: >-
+    Refactor this code to separate business decisions from side effects
+    using the Functional Core, Imperative Shell pattern.
+  description: >-
+    Refactor code toward Gary Bernhardt's Functional Core, Imperative Shell
+    pattern: extract business decisions into pure value-in/value-out functions,
+    keep IO and side effects at the shell edge, reduce mock-heavy tests, and
+    improve testability.
+  tags:
+    - refactoring
+    - functional-core
+    - boundaries
+    - testability
+compatibility:
+  canonical_format: agent-skills
+  adapter_targets:
+    - generic
+  activation:
+    mode: manual
+  execution:
+    context: inline
+    shell: bash
+  trust:
+    source_tier: local
+    remote_inline_execution: forbid
+    remote_metadata_policy: read-only
+  degradation:
+    generic:
+      notes: Full support for generic agent skill format
+inputs:
+  - name: source_code
+    type: string
+    description: Source code with tangled business logic and IO
+  - name: target_function
+    type: string
+    description: Optional specific function or module to refactor
+outputs:
+  - name: core_function
+    type: string
+    description: Extracted pure decision function
+  - name: shell_function
+    type: string
+    description: Thinned imperative shell coordinating effects
+  - name: boundary_dto
+    type: string
+    description: Plain data structs for core/shell boundary
+  - name: tests
+    type: string
+    description: Table-driven core tests and minimal shell wiring tests

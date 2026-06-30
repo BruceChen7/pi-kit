@@ -1,0 +1,130 @@
+{
+  "recommended_threshold": 0.15,
+  "negative_patterns": [
+    "greenfield",
+    "just explain",
+    "brainstorm",
+    "architecture only",
+    "no decision logic"
+  ],
+  "should_trigger": [
+    {
+      "text": "This handler is impossible to test because it mixes DB queries with business rules. Help me refactor it.",
+      "family": "handler_refactor"
+    },
+    {
+      "text": "I have a function that both checks eligibility and sends emails. How do I separate the decision from the side effect?",
+      "family": "core_extraction"
+    },
+    {
+      "text": "My tests are all mock-heavy and only assert call order. I want to test the actual business logic instead.",
+      "family": "test_cleanup"
+    },
+    {
+      "text": "Refactor this pricing logic out of the HTTP handler into a pure function.",
+      "family": "pricing_logic"
+    },
+    {
+      "text": "How do I apply functional core / imperative shell to this Go service that mixes validation with database writes?",
+      "family": "functional_core_pattern"
+    },
+    {
+      "text": "This function reads time.Now() and calls an API inside the same business decision. How do I fix this?",
+      "family": "effect_separation"
+    },
+    {
+      "text": "I want to extract the state transition logic from this queue consumer into a testable core.",
+      "family": "queue_consumer"
+    },
+    {
+      "text": "帮我把 handler 里的业务逻辑抽出来，现在 mock 太多了根本测不到核心逻辑。",
+      "family": "handler_refactor_zh"
+    },
+    {
+      "text": "This domain function accepts *sql.DB directly. How do I introduce boundary DTOs?",
+      "family": "boundary_dto"
+    },
+    {
+      "text": "My test file has 200 lines of setup just to test one if-else branch. How do I simplify this?",
+      "family": "test_simplification"
+    },
+    {
+      "text": "How do I apply the boundaries pattern to this cron job that mixes scheduling with notification logic?",
+      "family": "cron_job"
+    },
+    {
+      "text": "This function both decides what action to take and performs the action immediately. How do I return action values instead?",
+      "family": "action_values"
+    }
+  ],
+  "should_not_trigger": [
+    {
+      "text": "Help me design a clean architecture for a new microservice.",
+      "family": "greenfield_design"
+    },
+    {
+      "text": "Explain what the functional core pattern is.",
+      "family": "explain_only"
+    },
+    {
+      "text": "I need to refactor this function to use generics.",
+      "family": "syntax_refactor"
+    },
+    {
+      "text": "Help me set up database migrations for this project.",
+      "family": "infra_plumbing"
+    },
+    {
+      "text": "Write a script to process CSV files.",
+      "family": "script_only"
+    },
+    {
+      "text": "How do I configure Docker for this Go app?",
+      "family": "devops"
+    }
+  ],
+  "near_neighbor": [
+    {
+      "text": "I want to reduce the number of mocks in my test suite.",
+      "family": "mock_reduction",
+      "expected": "trigger",
+      "note": "Closely related — mock reduction is a key motivation for boundaries refactor"
+    },
+    {
+      "text": "How do I make this function more testable?",
+      "family": "testability",
+      "expected": "trigger",
+      "note": "Broad but boundaries refactor is a primary answer"
+    },
+    {
+      "text": "I need to separate concerns in this Go handler.",
+      "family": "separation_of_concerns",
+      "expected": "trigger",
+      "note": "Boundaries refactor is a concrete approach to separation"
+    },
+    {
+      "text": "How do I refactor this function without breaking existing behavior?",
+      "family": "safe_refactor",
+      "expected": "trigger",
+      "note": "Iterate safely is step 7 of the workflow"
+    },
+    {
+      "text": "My code has too many dependencies injected into every function.",
+      "family": "dependency_overload",
+      "expected": "trigger",
+      "note": "Dependency creep is a signal for boundary extraction"
+    },
+    {
+      "text": "How do I write table-driven tests in Go?",
+      "family": "table_driven_tests",
+      "expected": "skip",
+      "note": "Related but not specific to boundaries refactor — generic Go testing question"
+    },
+    {
+      "text": "Help me refactor this Go code to be more idiomatic.",
+      "family": "idiomatic_refactor",
+      "expected": "skip",
+      "note": "Too broad — may not involve business rule extraction"
+    }
+  ]
+}

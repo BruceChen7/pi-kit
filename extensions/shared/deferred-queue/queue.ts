@@ -156,7 +156,7 @@ export class Queue {
    *
    * Does NOT update lastRunAt — the automatic schedule is unaffected.
    * Records lastResult with triggeredBy: "manual" for audit.
-   * Skips if the file lock is held (another process is executing).
+   * Skips if the task lock is held (another process is executing the same task).
    *
    * Returns { executed: true } on success, or { executed: false, reason }
    * if the task cannot be run.
@@ -169,7 +169,7 @@ export class Queue {
       return { executed: false, reason: `task "${taskId}" not found` };
     }
 
-    if (!this.fileLock.tryLock()) {
+    if (!this.fileLock.tryLock(taskId)) {
       return {
         executed: false,
         reason: `task "${taskId}" is currently being executed by another process`,
@@ -198,7 +198,7 @@ export class Queue {
 
       return { executed: true };
     } finally {
-      this.fileLock.unlock();
+      this.fileLock.unlock(taskId);
     }
   }
 
@@ -262,7 +262,7 @@ export class Queue {
 
       // Try to acquire exclusive lock to prevent duplicate execution
       // across multiple Pi processes
-      if (!this.fileLock.tryLock()) {
+      if (!this.fileLock.tryLock(id)) {
         log.debug("task skipped — lock held by another process", { id });
         continue;
       }
@@ -302,7 +302,7 @@ export class Queue {
           this.persister.flush();
         }
       } finally {
-        this.fileLock.unlock();
+        this.fileLock.unlock(id);
       }
     }
 

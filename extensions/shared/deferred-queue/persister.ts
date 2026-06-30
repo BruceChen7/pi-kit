@@ -13,6 +13,7 @@ export class Persister {
   private readonly filePath: string;
   private data: PersistenceFile;
   private dirty = false;
+  private readonly dirtyTaskIds = new Set<string>();
 
   constructor(filePath: string) {
     this.filePath = filePath;
@@ -46,6 +47,7 @@ export class Persister {
       triggeredBy,
     };
     this.dirty = true;
+    this.dirtyTaskIds.add(taskId);
   }
 
   /** Update the last result status. */
@@ -61,11 +63,19 @@ export class Persister {
       triggeredBy: triggeredBy ?? existing.triggeredBy,
     };
     this.dirty = true;
+    this.dirtyTaskIds.add(taskId);
   }
 
   /** Flush to disk if dirty. */
   flush(): void {
     if (!this.dirty) return;
+
+    const latest = this.readFile();
+    for (const taskId of this.dirtyTaskIds) {
+      latest.tasks[taskId] = this.data.tasks[taskId];
+    }
+    this.data = latest;
+
     log.debug("persister: flushing to disk", {
       taskCount: Object.keys(this.data.tasks).length,
     });
@@ -76,6 +86,7 @@ export class Persister {
       "utf-8",
     );
     this.dirty = false;
+    this.dirtyTaskIds.clear();
   }
 
   /**
@@ -88,6 +99,7 @@ export class Persister {
   reload(): void {
     this.data = this.readFile();
     this.dirty = false;
+    this.dirtyTaskIds.clear();
     log.debug("persister: reloaded from disk", {
       taskCount: Object.keys(this.data.tasks).length,
     });

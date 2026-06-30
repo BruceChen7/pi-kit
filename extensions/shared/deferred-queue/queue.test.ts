@@ -211,6 +211,79 @@ describe("Queue", () => {
     expect(rec?.triggeredBy).toBe("manual");
   });
 
+  it("runNow allows different tasks to execute concurrently", async () => {
+    let finishSlowTask!: () => void;
+    const slowTaskStarted = Promise.withResolvers<void>();
+    const slowHandler = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishSlowTask = resolve;
+          slowTaskStarted.resolve();
+        }),
+    );
+    const fastHandler = vi.fn();
+
+    const q1 = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    const q2 = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    for (const q of [q1, q2]) {
+      q.add({ id: "slow", every: "1h", handler: slowHandler });
+      q.add({ id: "fast", every: "1h", handler: fastHandler });
+    }
+
+    const slowRun = q1.runNow("slow");
+    await slowTaskStarted.promise;
+
+    const fastRun = await q2.runNow("fast");
+
+    finishSlowTask();
+    await slowRun;
+
+    const persisted = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    persisted.add({ id: "slow", every: "1h", handler: async () => {} });
+    persisted.add({ id: "fast", every: "1h", handler: async () => {} });
+
+    expect(fastRun).toEqual({ executed: true });
+    expect(slowHandler).toHaveBeenCalledTimes(1);
+    expect(fastHandler).toHaveBeenCalledTimes(1);
+    expect(persisted.listWithMeta()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "slow", triggeredBy: "manual" }),
+        expect.objectContaining({ id: "fast", triggeredBy: "manual" }),
+      ]),
+    );
+  });
+
+  it("runNow still rejects a duplicate execution of the same task", async () => {
+    let finishTask!: () => void;
+    const taskStarted = Promise.withResolvers<void>();
+    const handler = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishTask = resolve;
+          taskStarted.resolve();
+        }),
+    );
+
+    const q1 = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    const q2 = new Queue({ persistPath, checkIntervalMs: 10_000 });
+    q1.add({ id: "same", every: "1h", handler });
+    q2.add({ id: "same", every: "1h", handler });
+
+    const firstRun = q1.runNow("same");
+    await taskStarted.promise;
+
+    const secondRun = await q2.runNow("same");
+
+    finishTask();
+    await firstRun;
+
+    expect(secondRun).toEqual({
+      executed: false,
+      reason: 'task "same" is currently being executed by another process',
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
   // ── listWithMeta ──────────────────────────────────────────
 
   it("listWithMeta returns task metadata", () => {

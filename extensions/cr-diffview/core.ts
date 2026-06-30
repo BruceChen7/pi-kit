@@ -246,6 +246,19 @@ export const annotationsFromFinishPayload = (
   return payload.annotations.filter(isCrAnnotation);
 };
 
+export const parseAnnotationsJsonl = (raw: string): CrAnnotation[] => {
+  try {
+    return raw
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as CrAnnotation)
+      .filter((annotation) => annotation.comment?.trim());
+  } catch {
+    return [];
+  }
+};
+
 export const formatAnnotationsPrompt = (
   annotations: CrAnnotation[],
 ): string => {

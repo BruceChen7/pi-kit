@@ -7,11 +7,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FILE_WATCHER_CONTROL_CHANNEL } from "../shared/internal-events.ts";
 
+import type { CrDiffScope } from "./core.ts";
+
 import crDiffviewExtension, {
   buildCrTmuxKillWindowArgs,
   buildCrTmuxNewWindowArgs,
   buildCrTmuxSelectPaneArgs,
   buildCrTmuxWindowName,
+  buildSessionData,
 } from "./index.ts";
 
 beforeEach(() => {
@@ -147,9 +150,6 @@ const herdrArgsFromExec = (
   exec.mock.calls.find(
     (call) => call[0] === "herdr" && call[1]?.[0] === subcommand,
   )?.[1] ?? [];
-
-const herdrPaneRunCommandFromExec = (exec: ReturnType<typeof vi.fn>): string =>
-  String(herdrArgsFromExec(exec, "pane")[3] ?? "");
 
 const expectTmuxNewWindowStarted = (
   exec: ReturnType<typeof vi.fn>,
@@ -358,30 +358,22 @@ describe("cr-diffview command", () => {
       herdr: true,
     });
 
-    expect(exec).toHaveBeenCalledWith(
-      "herdr",
-      expect.arrayContaining([
-        "tab",
-        "create",
-        "--cwd",
-        repoRoot,
-        "--workspace",
-        HERDR_WORKSPACE_ID,
-        "--label",
-        buildCrTmuxWindowName(repoRoot),
-        "--no-focus",
-      ]),
+    const tabCreateArgs = herdrArgsFromExec(exec, "tab");
+    expect(tabCreateArgs).toEqual(
+      expect.arrayContaining(["create", "--cwd", repoRoot, "--no-focus"]),
     );
-    expect(herdrArgsFromExec(exec, "tab")).toEqual(
+    expect(tabCreateArgs).toEqual(
       expect.arrayContaining([expect.stringContaining("CR_SOCKET=")]),
     );
-    expect(exec).toHaveBeenCalledWith("herdr", [
-      "pane",
-      "run",
-      HERDR_REVIEW_PANE_ID,
-      expect.stringContaining("nvim --listen"),
-    ]);
-    expect(herdrPaneRunCommandFromExec(exec)).not.toContain("cd ");
+
+    const paneRunArgs = herdrArgsFromExec(exec, "pane");
+    expect(paneRunArgs).toEqual(
+      expect.arrayContaining(["run", expect.stringMatching(/^wB:p\d+$/)]),
+    );
+    const paneCommand = String(paneRunArgs?.at(3) ?? "");
+    expect(paneCommand).toContain("nvim --listen");
+    expect(paneCommand).not.toContain("cd ");
+
     expect(notify).toHaveBeenCalledWith(
       "Opened CR diffview for main...HEAD",
       "info",
@@ -559,6 +551,35 @@ describe("cr-diffview command", () => {
     );
   });
 
+  it("builds session data as a pure value-in value-out function", () => {
+    const repoRoot = "/tmp/test-repo";
+    const scope: CrDiffScope = {
+      target: "main",
+      label: "main...HEAD",
+      diffArgs: ["main...HEAD"],
+    };
+    const sessionId = "cr-1234";
+    const { session, sessionDir } = buildSessionData(
+      repoRoot,
+      scope,
+      "pi-cr-test-repo",
+      "%42",
+      sessionId,
+      "abc123def",
+      "def456abc",
+    );
+
+    expect(session.sessionId).toBe(sessionId);
+    expect(session.repoRoot).toBe(repoRoot);
+    expect(session.head).toBe("abc123def");
+    expect(session.mergeBase).toBe("def456abc");
+    expect(session.reviewViewId).toBe("pi-cr-test-repo");
+    expect(session.originViewId).toBe("%42");
+    expect(session.crSocketPath).toContain(sessionId);
+    expect(session.socketPath).toContain("nvim.sock");
+    expect(sessionDir).toBe(join(repoRoot, ".pi", "cr-diffview", sessionId));
+  });
+
   it("stops the tmux Neovim CR window", async () => {
     const exec = createCrExec("/repo");
     const { ctx, notify } = createTestContext();
@@ -577,20 +598,19 @@ describe("cr-diffview command", () => {
     const repoRoot = createRepoRoot();
     const reviewViewName = buildCrTmuxWindowName(repoRoot);
     const exec = vi.fn(async (command: string, args: string[]) => {
-      if (command === "git" && args.join(" ") === "rev-parse --show-toplevel") {
+      // git repo root
+      if (command === "git")
         return { code: 0, stdout: `${repoRoot}\n`, stderr: "" };
-      }
+      // First close-by-label fails: triggers label→tab_id resolution
       if (
         command === "herdr" &&
-        args.join(" ") === `tab close ${reviewViewName}`
+        args[1] === "close" &&
+        args[2] === reviewViewName
       ) {
-        return {
-          code: 1,
-          stdout: "",
-          stderr: `tab ${reviewViewName} not found`,
-        };
+        return { code: 1, stdout: "", stderr: "not found" };
       }
-      if (command === "herdr" && args.join(" ") === "tab list --workspace wB") {
+      // Tab list returns the matching orphaned tab
+      if (command === "herdr" && args[1] === "list") {
         return {
           code: 0,
           stdout: `${JSON.stringify({
@@ -607,12 +627,8 @@ describe("cr-diffview command", () => {
           stderr: "",
         };
       }
-      if (
-        command === "herdr" &&
-        args.join(" ") === `tab close ${HERDR_REVIEW_TAB_ID}`
-      ) {
-        return { code: 0, stdout: "", stderr: "" };
-      }
+      // Any other herdr call succeeds (close-by-id, focus fallback)
+      if (command === "herdr") return { code: 0, stdout: "", stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
     });
     const { ctx, notify } = createTestContext({

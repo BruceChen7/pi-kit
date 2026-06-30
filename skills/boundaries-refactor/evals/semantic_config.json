@@ -1,0 +1,246 @@
+{
+  "optimizer_hints": {
+    "capability": "Functional Core / Imperative Shell 重构专家",
+    "inputs": [
+      "source code",
+      "test files",
+      "handler code",
+      "domain logic",
+      "mock-heavy tests",
+      "business rules mixed with IO"
+    ],
+    "trigger_actions": [
+      "extract pure function",
+      "separate decision from effect",
+      "create boundary DTO",
+      "thin the shell",
+      "reduce mocks",
+      "add table-driven tests",
+      "trim shell tests",
+      "重构业务逻辑",
+      "提取纯函数",
+      "分离决策与副作用",
+      "创建边界 DTO",
+      "减少 mock",
+      "添加表驱动测试"
+    ],
+    "exclusions": [
+      "greenfield architecture design",
+      "pure IO plumbing",
+      "one-off script refactors",
+      "syntax-only changes",
+      "framework selection",
+      "deployment/CI configuration",
+      "generic code style questions"
+    ],
+    "artifacts": [
+      "refactored source code",
+      "extracted core function",
+      "boundary DTO structs",
+      "table-driven test file",
+      "thinned shell function"
+    ]
+  },
+  "fallback_positive_concepts": [
+    "core_extraction",
+    "boundary_dto",
+    "effect_separation",
+    "mock_reduction",
+    "test_simplification",
+    "action_values"
+  ],
+  "positive_concepts": {
+    "core_extraction": {
+      "weight": 0.25,
+      "phrases": [
+        "extract core",
+        "extract function",
+        "pure function",
+        "functional core",
+        "value-in value-out",
+        "decision logic",
+        "business rule extraction",
+        "business logic extraction",
+        "business rules mixed",
+        "extract the logic",
+        "extract the decision",
+        "separate the logic",
+        "separate the decision",
+        "testable core",
+        "testable function",
+        "提取核心逻辑",
+        "提取纯函数",
+        "业务逻辑提取",
+        "业务规则提取",
+        "决策逻辑",
+        "抽出逻辑",
+        "抽取逻辑",
+        "抽出来"
+      ]
+    },
+    "boundary_dto": {
+      "weight": 0.2,
+      "phrases": [
+        "boundary DTO",
+        "boundary struct",
+        "plain data",
+        "value object",
+        "input struct",
+        "output struct",
+        "boundary value",
+        "introduce boundary",
+        "边界 DTO",
+        "边界结构体",
+        "纯数据结构",
+        "值对象",
+        "边界值"
+      ]
+    },
+    "effect_separation": {
+      "weight": 0.2,
+      "phrases": [
+        "separate effect",
+        "separate IO",
+        "separate side effect",
+        "separate decision from",
+        "imperative shell",
+        "shell thin",
+        "IO at edge",
+        "mixes DB",
+        "mixes with",
+        "mixed with database",
+        "mixed with API",
+        "time.Now",
+        "calls an API",
+        "mixes scheduling",
+        "分离副作用",
+        "分离 IO",
+        "命令式外壳",
+        "薄外壳",
+        "混合了",
+        "混在一起",
+        "拆分"
+      ]
+    },
+    "mock_reduction": {
+      "weight": 0.15,
+      "phrases": [
+        "reduce mock",
+        "remove mock",
+        "too many mocks",
+        "mock heavy",
+        "mock-heavy",
+        "assertion on call order",
+        "assert call order",
+        "assert mock",
+        "减少 mock",
+        "删除 mock",
+        "mock 太多",
+        "mock 重",
+        "mock 太多了",
+        "测不到核心逻辑"
+      ]
+    },
+    "test_simplification": {
+      "weight": 0.1,
+      "phrases": [
+        "simplify test",
+        "table-driven test",
+        "decision matrix test",
+        "trim test",
+        "test cleanup",
+        "test setup",
+        "lines of setup",
+        "impossible to test",
+        "can't test",
+        "hard to test",
+        "简化测试",
+        "表驱动测试",
+        "决策矩阵测试",
+        "测试清理",
+        "测不到",
+        "没法测",
+        "难测"
+      ]
+    },
+    "action_values": {
+      "weight": 0.1,
+      "phrases": [
+        "return action",
+        "action value",
+        "command object",
+        "describe what should happen",
+        "decides and performs",
+        "both decides",
+        "返回 action",
+        "action 值",
+        "命令对象",
+        "描述应该发生什么"
+      ]
+    }
+  },
+  "negative_concepts": {
+    "greenfield": {
+      "weight": 0.35,
+      "exclusive": true,
+      "phrases": [
+        "greenfield",
+        "new project",
+        "new microservice",
+        "start from scratch",
+        "新建项目",
+        "从零开始",
+        "新微服务"
+      ]
+    },
+    "explain_only": {
+      "weight": 0.3,
+      "exclusive": false,
+      "phrases": [
+        "explain",
+        "what is",
+        "how does it work",
+        "定义",
+        "什么是",
+        "解释一下"
+      ]
+    },
+    "syntax_refactor": {
+      "weight": 0.25,
+      "exclusive": true,
+      "phrases": [
+        "generics",
+        "type assertion",
+        "error handling",
+        "泛型",
+        "类型断言",
+        "错误处理"
+      ]
+    },
+    "devops": {
+      "weight": 0.35,
+      "exclusive": false,
+      "phrases": [
+        "docker",
+        "kubernetes",
+        "CI/CD",
+        "deploy",
+        "Docker",
+        "部署",
+        "容器化"
+      ]
+    },
+    "script_only": {
+      "weight": 0.3,
+      "exclusive": true,
+      "phrases": [
+        "write a script",
+        "write a function",
+        "generate code",
+        "写脚本",
+        "写函数",
+        "生成代码"
+      ]
+    }
+  }
+}

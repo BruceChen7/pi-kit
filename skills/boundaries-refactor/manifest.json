@@ -1,0 +1,26 @@
+{
+  "name": "boundaries-refactor",
+  "version": "1.0.0",
+  "description": "Refactor code toward Functional Core, Imperative Shell pattern",
+  "owner": "pi-kit",
+  "status": "active",
+  "maturity_tier": "scaffold",
+  "lifecycle_stage": "scaffold",
+  "review_cadence": "monthly",
+  "updated_at": "2026-06-30",
+  "license": "MIT",
+  "tags": [
+    "refactoring",
+    "functional-core",
+    "imperative-shell",
+    "testability",
+    "boundaries"
+  ],
+  "factory_components": [
+    "SKILL.md",
+    "agents/interface.yaml",
+    "manifest.json",
+    "references/",
+    "evals/"
+  ]
+}

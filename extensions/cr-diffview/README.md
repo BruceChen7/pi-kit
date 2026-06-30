@@ -1,13 +1,13 @@
 # cr-diffview
 
-`/cr-neovim-start` starts a human code-review flow in a new tmux window named
-`pi-cr-<repo>`, using Neovim and `codediff.nvim`. The shortcut `Alt+R` starts
-the same flow with the interactive target picker.
+`/cr-neovim-start` starts a human code-review flow in a dedicated terminal
+review view named `pi-cr-<repo>`, using Neovim and `codediff.nvim`. The shortcut
+`Alt+R` starts the same flow with the interactive target picker.
 
 ## Requirements
 
 - A git repository
-- tmux, with Pi running inside a tmux session
+- tmux or herdr, with Pi running inside the managed terminal session
 - Neovim on `PATH` as `nvim`
 - `codediff.nvim` configured in Neovim, with the `:CodeDiff` command available
 
@@ -19,7 +19,7 @@ the same flow with the interactive target picker.
   - review against a base branch (`branch...HEAD`)
 - `/cr-neovim-start main` skips the selector and opens `CodeDiff main...HEAD`.
 - `Alt+R` opens the same interactive selector.
-- `/cr-neovim-stop` closes the active CR tmux window.
+- `/cr-neovim-stop` closes the active CR review view.
 
 Staged-only and unstaged-only sessions use CodeDiff's explorer visible-groups
 configuration for the launched Neovim process.

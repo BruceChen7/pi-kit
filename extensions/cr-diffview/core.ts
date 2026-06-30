@@ -7,6 +7,44 @@ export const CR_WIDGET_KEY = "cr-diffview";
 export const START_COMMAND = "cr-neovim-start";
 export const STOP_COMMAND = "cr-neovim-stop";
 
+export type ExecResult = { code: number; stdout: string; stderr: string };
+
+export type CrMultiplexerType = "tmux" | "herdr";
+
+export type CrReviewView = {
+  /**
+   * Domain identifier for the terminal view that hosts CR Neovim.
+   * tmux: window name, herdr: tab ID.
+   */
+  reviewViewId: string;
+  /**
+   * Domain identifier for the terminal view to focus after review completion.
+   * tmux: source pane ID, herdr: source tab ID.
+   */
+  originViewId: string;
+};
+
+export type CrReviewViewLaunch = {
+  cwd: string;
+  env: Record<string, string>;
+  command: string;
+  shellCommand: string;
+};
+
+export type OpenReviewViewResult = CrReviewView & ExecResult;
+
+export type CrMultiplexer = {
+  readonly type: CrMultiplexerType;
+  readonly label: string;
+  isAvailable(): boolean;
+  openReviewView(
+    reviewViewName: string,
+    launch: CrReviewViewLaunch,
+  ): Promise<OpenReviewViewResult>;
+  closeReviewView(reviewViewId: string): Promise<ExecResult>;
+  focusView(viewId: string): Promise<ExecResult>;
+};
+
 export const CR_PRESETS = [
   {
     value: "unstaged",
@@ -48,8 +86,8 @@ export type CrSession = {
   diffArgs: string[];
   socketPath: string;
   crSocketPath: string;
-  tmuxWindowName: string;
-  originTmuxPane: string;
+  reviewViewId: string;
+  originViewId: string;
   artifactPath: string;
   createdAt: string;
 };
@@ -148,11 +186,13 @@ export const buildNoBranchCandidatesMessage = (
     ? `No other branches found (current branch: ${currentBranch})`
     : "No branches found";
 
-export const buildCrTmuxWindowName = (repoRoot: string): string =>
+export const buildCrReviewViewName = (repoRoot: string): string =>
   `${CR_TMUX_WINDOW_NAME_PREFIX}-${basename(repoRoot)}`;
 
-export const getCrTmuxWindowName = (session: CrSession | null): string =>
-  session?.tmuxWindowName ?? CR_TMUX_WINDOW_NAME_PREFIX;
+export const buildCrTmuxWindowName = buildCrReviewViewName;
+
+export const getCrReviewViewId = (session: CrSession | null): string =>
+  session?.reviewViewId ?? CR_TMUX_WINDOW_NAME_PREFIX;
 
 export const buildCrTmuxNewWindowArgs = <CommandArg = string>(
   tmuxWindowName: string,

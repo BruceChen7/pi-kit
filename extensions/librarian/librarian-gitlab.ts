@@ -1,7 +1,11 @@
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { summarizeGitlabToolCall } from "./gitlab.js";
 import { runLibrarianSubagent } from "./librarian-runner.js";
+
+// ExtensionContext does not expose extensionPath, so we compute it from the module URL.
+const EXTENSION_DIR = fileURLToPath(new URL(".", import.meta.url));
 
 const GITLAB_TOOLS = [
   "read_gitlab",
@@ -89,7 +93,7 @@ export function registerLibrarianGitlab(pi: ExtensionAPI) {
           systemPrompt: GITLAB_SYSTEM_PROMPT,
           summarizeToolCall: summarizeGitlabToolCall,
           subagentTools: GITLAB_TOOLS,
-          extensionPath: ctx.extensionPath,
+          extensionPath: EXTENSION_DIR,
         });
 
         return {

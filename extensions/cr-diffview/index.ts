@@ -40,6 +40,7 @@ import {
   formatAnnotationsPrompt,
   getBranchCandidates,
   getCrReviewViewId,
+  parseAnnotationsJsonl,
   parseSocketPayload,
   START_COMMAND,
   STOP_COMMAND,
@@ -344,6 +345,36 @@ const showNumberInput = async (ctx: ExtensionContext): Promise<number | null> =>
     };
   });
 
+export const buildSessionData = (
+  repoRoot: string,
+  scope: CrDiffScope,
+  reviewViewName: string,
+  originViewId: string,
+  sessionId: string,
+  head: string,
+  mergeBase: string,
+): { session: CrSession; sessionDir: string } => {
+  const sessionDir = join(repoRoot, ...CR_SESSION_ROOT, sessionId);
+  return {
+    session: {
+      sessionId,
+      repoRoot,
+      target: scope.target,
+      label: scope.label,
+      head,
+      mergeBase,
+      diffArgs: scope.diffArgs,
+      socketPath: join(sessionDir, "nvim.sock"),
+      crSocketPath: join(tmpdir(), `${sessionId}.sock`),
+      reviewViewId: reviewViewName,
+      originViewId,
+      artifactPath: join(sessionDir, "annotations.jsonl"),
+      createdAt: new Date().toISOString(),
+    },
+    sessionDir,
+  };
+};
+
 const createSession = async (
   pi: ExtensionAPI,
   repoRoot: string,
@@ -352,27 +383,24 @@ const createSession = async (
   originViewId: string,
 ): Promise<CrSession> => {
   const sessionId = `cr-${Date.now()}`;
-  const sessionDir = join(repoRoot, ...CR_SESSION_ROOT, sessionId);
-  mkdirSync(sessionDir, { recursive: true });
+  const [head, mergeBase] = await Promise.all([
+    gitOutput(pi, ["rev-parse", "HEAD"]),
+    scope.target
+      ? gitOutput(pi, ["merge-base", scope.target, "HEAD"])
+      : Promise.resolve(""),
+  ]);
 
-  const session = {
-    sessionId,
+  const { session, sessionDir } = buildSessionData(
     repoRoot,
-    target: scope.target,
-    label: scope.label,
-    head: await gitOutput(pi, ["rev-parse", "HEAD"]),
-    mergeBase: scope.target
-      ? await gitOutput(pi, ["merge-base", scope.target, "HEAD"])
-      : "",
-    diffArgs: scope.diffArgs,
-    socketPath: join(sessionDir, "nvim.sock"),
-    crSocketPath: join(tmpdir(), `${sessionId}.sock`),
-    reviewViewId: reviewViewName,
+    scope,
+    reviewViewName,
     originViewId,
-    artifactPath: join(sessionDir, "annotations.jsonl"),
-    createdAt: new Date().toISOString(),
-  };
+    sessionId,
+    head,
+    mergeBase,
+  );
 
+  mkdirSync(sessionDir, { recursive: true });
   writeSession(session);
   return session;
 };
@@ -424,12 +452,7 @@ const buildReviewViewLaunch = (session: CrSession): CrReviewViewLaunch => ({
 
 const readArtifactAnnotations = (artifactPath: string): CrAnnotation[] => {
   try {
-    return readFileSync(artifactPath, "utf8")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as CrAnnotation)
-      .filter((annotation) => annotation.comment?.trim());
+    return parseAnnotationsJsonl(readFileSync(artifactPath, "utf8"));
   } catch {
     return [];
   }

@@ -7,11 +7,11 @@
 #   git clone https://github.com/yaojingang/yao-meta-skill.git ~/work/yao-meta-skill
 #   cd ~/work/yao-meta-skill && uv venv --python 3.11 && uv pip install -r requirements-ci.txt
 #
-# Usage:
-#   make eval SKILL=chao-go-perf
-#   make validate SKILL=chao-go-perf
-#   make interpretation SKILL=chao-go-perf
-#   make eval-all        # Run eval on all skills with evals/
+# Usage (run from repo root):
+#   make -C skills eval SKILL=chao-go-perf
+#   make -C skills validate SKILL=chao-go-perf
+#   make -C skills interpretation SKILL=chao-go-perf
+#   make -C skills eval-all        # Run eval on all skills with evals/
 
 YAO_META_SKILL ?= $(HOME)/work/yao-meta-skill
 SKILL ?= chao-go-perf

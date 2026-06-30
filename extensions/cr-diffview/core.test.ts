@@ -11,7 +11,7 @@ import {
   decideScopeResolution,
   formatAnnotationsPrompt,
   getBranchCandidates,
-  getCrTmuxWindowName,
+  getCrReviewViewId,
   parseSocketPayload,
 } from "./core.ts";
 
@@ -77,11 +77,11 @@ describe("cr-diffview pure decisions", () => {
     expect(buildNoBranchCandidatesMessage(null)).toBe("No branches found");
   });
 
-  it("uses the active session window name or falls back to the generic window", () => {
-    expect(getCrTmuxWindowName(null)).toBe("pi-cr");
-    expect(
-      getCrTmuxWindowName({ tmuxWindowName: "pi-cr-repo" } as CrSession),
-    ).toBe("pi-cr-repo");
+  it("uses the active review view id or falls back to the generic view", () => {
+    expect(getCrReviewViewId(null)).toBe("pi-cr");
+    expect(getCrReviewViewId({ reviewViewId: "pi-cr-repo" } as CrSession)).toBe(
+      "pi-cr-repo",
+    );
   });
 });
 

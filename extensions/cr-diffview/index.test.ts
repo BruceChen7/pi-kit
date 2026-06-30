@@ -16,6 +16,10 @@ import crDiffviewExtension, {
 
 beforeEach(() => {
   vi.stubEnv("TMUX", undefined);
+  vi.stubEnv("HERDR_ENV", undefined);
+  vi.stubEnv("HERDR_WORKSPACE_ID", undefined);
+  vi.stubEnv("HERDR_TAB_ID", undefined);
+  vi.stubEnv("HERDR_PANE_ID", undefined);
 });
 
 afterEach(() => {
@@ -39,6 +43,11 @@ const START_COMMAND = "cr-neovim-start";
 const STOP_COMMAND = "cr-neovim-stop";
 const START_SHORTCUT = "alt+r";
 const TMUX_ENV = "/tmp/tmux";
+const HERDR_WORKSPACE_ID = "wB";
+const HERDR_ORIGIN_TAB_ID = "wB:t7";
+const HERDR_ORIGIN_PANE_ID = "wB:p7";
+const HERDR_REVIEW_TAB_ID = "wB:t8";
+const HERDR_REVIEW_PANE_ID = "wB:p8";
 
 const createRepoRoot = (): string =>
   mkdtempSync(join(tmpdir(), "cr-diffview-repo-"));
@@ -48,6 +57,7 @@ type TestContextOptions = {
   hasUI?: boolean;
   tmux?: boolean;
   tmuxPane?: string;
+  herdr?: boolean;
   ui?: Record<string, unknown>;
 };
 
@@ -56,6 +66,7 @@ const createTestContext = ({
   hasUI = true,
   tmux = true,
   tmuxPane,
+  herdr = false,
   ui = {},
 }: TestContextOptions = {}) => {
   const notify = vi.fn();
@@ -63,6 +74,12 @@ const createTestContext = ({
   const env: Record<string, string> = {};
   if (tmux) env.TMUX = TMUX_ENV;
   if (tmuxPane) env.TMUX_PANE = tmuxPane;
+  if (herdr) {
+    env.HERDR_ENV = "1";
+    env.HERDR_WORKSPACE_ID = HERDR_WORKSPACE_ID;
+    env.HERDR_TAB_ID = HERDR_ORIGIN_TAB_ID;
+    env.HERDR_PANE_ID = HERDR_ORIGIN_PANE_ID;
+  }
 
   return {
     ctx: {
@@ -123,6 +140,17 @@ const tmuxCommandFromExec = (exec: ReturnType<typeof vi.fn>): string =>
     tmuxArgsFromExec(exec).find((arg) => String(arg).includes("nvim --listen")),
   );
 
+const herdrArgsFromExec = (
+  exec: ReturnType<typeof vi.fn>,
+  subcommand: string,
+): unknown[] =>
+  exec.mock.calls.find(
+    (call) => call[0] === "herdr" && call[1]?.[0] === subcommand,
+  )?.[1] ?? [];
+
+const herdrPaneRunCommandFromExec = (exec: ReturnType<typeof vi.fn>): string =>
+  String(herdrArgsFromExec(exec, "pane")[3] ?? "");
+
 const expectTmuxNewWindowStarted = (
   exec: ReturnType<typeof vi.fn>,
   repoRoot: string,
@@ -156,6 +184,14 @@ const socketFromTmuxCommand = (exec: ReturnType<typeof vi.fn>): string => {
   const match = tmuxCommandFromExec(exec).match(/CR_SOCKET='([^']+)'/);
   expect(match?.[1]).toBeTruthy();
   return match?.[1] ?? "";
+};
+
+const socketFromHerdrTabCreate = (exec: ReturnType<typeof vi.fn>): string => {
+  const envArg = herdrArgsFromExec(exec, "tab")
+    .map(String)
+    .find((arg) => arg.startsWith("CR_SOCKET="));
+  expect(envArg).toBeTruthy();
+  return envArg?.replace(/^CR_SOCKET=/, "") ?? "";
 };
 
 const sessionDirFromTmuxCommand = (exec: ReturnType<typeof vi.fn>): string => {
@@ -218,6 +254,19 @@ const createCrExec = (
 
   return vi.fn(async (command: string, args: string[]) => {
     if (command === "tmux") return tmuxResult;
+    if (command === "herdr" && args.join(" ").startsWith("tab create")) {
+      return {
+        code: 0,
+        stdout: `${JSON.stringify({
+          result: {
+            tab: { tab_id: HERDR_REVIEW_TAB_ID },
+            root_pane: { pane_id: HERDR_REVIEW_PANE_ID },
+          },
+        })}\n`,
+        stderr: "",
+      };
+    }
+    if (command === "herdr") return { code: 0, stdout: "", stderr: "" };
     return (
       results.get(`${command} ${args.join(" ")}`) ?? {
         code: 0,
@@ -232,6 +281,8 @@ type StartedCrReviewOptions = {
   args?: string;
   repoRoot?: string;
   tmuxPane?: string;
+  tmux?: boolean;
+  herdr?: boolean;
   ui?: Record<string, unknown>;
 };
 
@@ -239,11 +290,19 @@ const startCrReview = async ({
   args = "main",
   repoRoot = createRepoRoot(),
   tmuxPane,
+  tmux = true,
+  herdr = false,
   ui,
 }: StartedCrReviewOptions = {}) => {
   const exec = createCrExec(repoRoot);
   const handlers = registerCrCommands(exec);
-  const testContext = createTestContext({ repoRoot, tmuxPane, ui });
+  const testContext = createTestContext({
+    repoRoot,
+    tmux,
+    tmuxPane,
+    herdr,
+    ui,
+  });
 
   await handlers.startHandler(args, testContext.ctx);
 
@@ -265,7 +324,7 @@ describe("cr-diffview command", () => {
     );
   });
 
-  it("requires tmux before starting Neovim", async () => {
+  it("requires tmux or herdr before starting Neovim", async () => {
     const exec = vi
       .fn()
       .mockResolvedValueOnce({ code: 0, stdout: "/repo\n", stderr: "" });
@@ -275,7 +334,7 @@ describe("cr-diffview command", () => {
     await startHandler("main", ctx);
 
     expect(notify).toHaveBeenCalledWith(
-      `/${START_COMMAND} requires tmux`,
+      `/${START_COMMAND} requires tmux or herdr`,
       "error",
     );
   });
@@ -285,6 +344,44 @@ describe("cr-diffview command", () => {
 
     expectTmuxNewWindowStarted(exec, repoRoot);
     expect(tmuxCommandFromExec(exec)).toContain("CR_SOCKET='");
+    expect(notify).toHaveBeenCalledWith(
+      "Opened CR diffview for main...HEAD",
+      "info",
+    );
+  });
+
+  it("opens a direct target diff in a new herdr Neovim tab", async () => {
+    const repoRoot = createRepoRoot();
+    const { exec, notify } = await startCrReview({
+      repoRoot,
+      tmux: false,
+      herdr: true,
+    });
+
+    expect(exec).toHaveBeenCalledWith(
+      "herdr",
+      expect.arrayContaining([
+        "tab",
+        "create",
+        "--cwd",
+        repoRoot,
+        "--workspace",
+        HERDR_WORKSPACE_ID,
+        "--label",
+        buildCrTmuxWindowName(repoRoot),
+        "--no-focus",
+      ]),
+    );
+    expect(herdrArgsFromExec(exec, "tab")).toEqual(
+      expect.arrayContaining([expect.stringContaining("CR_SOCKET=")]),
+    );
+    expect(exec).toHaveBeenCalledWith("herdr", [
+      "pane",
+      "run",
+      HERDR_REVIEW_PANE_ID,
+      expect.stringContaining("nvim --listen"),
+    ]);
+    expect(herdrPaneRunCommandFromExec(exec)).not.toContain("cd ");
     expect(notify).toHaveBeenCalledWith(
       "Opened CR diffview for main...HEAD",
       "info",
@@ -426,6 +523,23 @@ describe("cr-diffview command", () => {
     });
   });
 
+  it("returns focus to the herdr tab that started the CR review", async () => {
+    const { exec } = await startCrReview({ tmux: false, herdr: true });
+
+    await exchangeSocketMessages(socketFromHerdrTabCreate(exec), [
+      { type: "hello" },
+      { type: "finish", annotations: [] },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(exec).toHaveBeenCalledWith("herdr", [
+        "tab",
+        "focus",
+        HERDR_ORIGIN_TAB_ID,
+      ]);
+    });
+  });
+
   it("does not crash when the CR socket peer closes before config is written", async () => {
     const { exec, notify } = await startCrReview();
 
@@ -456,7 +570,66 @@ describe("cr-diffview command", () => {
       "tmux",
       buildCrTmuxKillWindowArgs("pi-cr"),
     );
-    expect(notify).toHaveBeenCalledWith("Closed CR Neovim window", "info");
+    expect(notify).toHaveBeenCalledWith("Closed CR Neovim view", "info");
+  });
+
+  it("stops an orphaned herdr Neovim CR tab by the current repo review label", async () => {
+    const repoRoot = createRepoRoot();
+    const reviewViewName = buildCrTmuxWindowName(repoRoot);
+    const exec = vi.fn(async (command: string, args: string[]) => {
+      if (command === "git" && args.join(" ") === "rev-parse --show-toplevel") {
+        return { code: 0, stdout: `${repoRoot}\n`, stderr: "" };
+      }
+      if (
+        command === "herdr" &&
+        args.join(" ") === `tab close ${reviewViewName}`
+      ) {
+        return {
+          code: 1,
+          stdout: "",
+          stderr: `tab ${reviewViewName} not found`,
+        };
+      }
+      if (command === "herdr" && args.join(" ") === "tab list --workspace wB") {
+        return {
+          code: 0,
+          stdout: `${JSON.stringify({
+            result: {
+              tabs: [
+                {
+                  tab_id: HERDR_REVIEW_TAB_ID,
+                  label: reviewViewName,
+                  workspace_id: HERDR_WORKSPACE_ID,
+                },
+              ],
+            },
+          })}\n`,
+          stderr: "",
+        };
+      }
+      if (
+        command === "herdr" &&
+        args.join(" ") === `tab close ${HERDR_REVIEW_TAB_ID}`
+      ) {
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    const { ctx, notify } = createTestContext({
+      repoRoot,
+      tmux: false,
+      herdr: true,
+    });
+    const { stopHandler } = registerCrCommands(exec);
+
+    await stopHandler("", ctx);
+
+    expect(exec).toHaveBeenCalledWith("herdr", [
+      "tab",
+      "close",
+      HERDR_REVIEW_TAB_ID,
+    ]);
+    expect(notify).toHaveBeenCalledWith("Closed CR Neovim view", "info");
   });
 
   it("clears the widget even when stopping the CR Neovim window fails", async () => {

@@ -1,7 +1,11 @@
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { summarizeGithubToolCall } from "./github.js";
 import { runLibrarianSubagent } from "./librarian-runner.js";
+
+// ExtensionContext does not expose extensionPath, so we compute it from the module URL.
+const EXTENSION_DIR = fileURLToPath(new URL(".", import.meta.url));
 
 const GITHUB_TOOLS = [
   "read_github",
@@ -105,7 +109,7 @@ export function registerLibrarianGithub(pi: ExtensionAPI) {
           systemPrompt: GITHUB_SYSTEM_PROMPT,
           summarizeToolCall: summarizeGithubToolCall,
           subagentTools: GITHUB_TOOLS,
-          extensionPath: ctx.extensionPath,
+          extensionPath: EXTENSION_DIR,
         });
 
         return {

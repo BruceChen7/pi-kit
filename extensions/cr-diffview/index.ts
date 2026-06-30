@@ -24,28 +24,31 @@ import {
   annotationsFromFinishPayload,
   branchScope,
   buildBranchItems,
-  buildCrTmuxKillWindowArgs,
-  buildCrTmuxNewWindowArgs,
-  buildCrTmuxSelectPaneArgs,
-  buildCrTmuxWindowName,
+  buildCrReviewViewName,
   buildNoBranchCandidatesMessage,
   CR_PRESETS,
   CR_WIDGET_KEY,
   type CrAnnotation,
   type CrDiffScope,
+  type CrMultiplexer,
   type CrPresetValue,
+  type CrReviewViewLaunch,
   type CrSession,
   decideScopeFromPreset,
   decideScopeResolution,
+  type ExecResult,
   formatAnnotationsPrompt,
   getBranchCandidates,
-  getCrTmuxWindowName,
+  getCrReviewViewId,
   parseSocketPayload,
   START_COMMAND,
   STOP_COMMAND,
 } from "./core.ts";
+import { createHerdrMultiplexer } from "./herdr-multiplexer.ts";
+import { createTmuxMultiplexer } from "./tmux-multiplexer.ts";
 
 export {
+  buildCrReviewViewName,
   buildCrTmuxKillWindowArgs,
   buildCrTmuxNewWindowArgs,
   buildCrTmuxSelectPaneArgs,
@@ -58,8 +61,6 @@ const SELECT_LIST_HINT = "Type to filter • Enter to select • esc to cancel";
 const EMPTY_FILTER_HINT = "type to filter...";
 const START_SHORTCUT = "alt+r";
 const CR_FILE_WATCHER_SOURCE = "cr-diffview";
-
-type ExecResult = { code: number; stdout: string; stderr: string };
 
 type WidgetContext = ExtensionContext & {
   ui?: ExtensionContext["ui"] & {
@@ -100,14 +101,29 @@ const gitOutput = async (pi: ExtensionAPI, args: string[]): Promise<string> => {
   return code === 0 ? stdout.trim() : "";
 };
 
-const getTmuxEnv = (ctx: ExtensionContext): string | undefined =>
-  (ctx as { env?: Record<string, string | undefined> }).env?.TMUX ??
-  process.env.TMUX;
+const getExtensionEnv = (
+  ctx: ExtensionContext,
+): Record<string, string | undefined> =>
+  (ctx as { env?: Record<string, string | undefined> }).env ?? process.env;
 
-const getTmuxPaneEnv = (ctx: ExtensionContext): string =>
-  (ctx as { env?: Record<string, string | undefined> }).env?.TMUX_PANE ??
-  process.env.TMUX_PANE ??
-  "";
+const createMultiplexer = (
+  pi: ExtensionAPI,
+  env: Record<string, string | undefined>,
+): CrMultiplexer | null => {
+  const multiplexers: CrMultiplexer[] = [
+    createHerdrMultiplexer(pi, env),
+    createTmuxMultiplexer(pi, env),
+  ];
+  return multiplexers.find((multiplexer) => multiplexer.isAvailable()) ?? null;
+};
+
+const getOriginViewId = (
+  multiplexer: CrMultiplexer,
+  env: Record<string, string | undefined>,
+): string => {
+  if (multiplexer.type === "herdr") return env.HERDR_TAB_ID ?? "";
+  return env.TMUX_PANE ?? "";
+};
 
 const buildSelectListTheme = (theme: {
   fg: (token: string, text: string) => string;
@@ -332,7 +348,8 @@ const createSession = async (
   pi: ExtensionAPI,
   repoRoot: string,
   scope: CrDiffScope,
-  originTmuxPane: string,
+  reviewViewName: string,
+  originViewId: string,
 ): Promise<CrSession> => {
   const sessionId = `cr-${Date.now()}`;
   const sessionDir = join(repoRoot, ...CR_SESSION_ROOT, sessionId);
@@ -350,17 +367,26 @@ const createSession = async (
     diffArgs: scope.diffArgs,
     socketPath: join(sessionDir, "nvim.sock"),
     crSocketPath: join(tmpdir(), `${sessionId}.sock`),
-    tmuxWindowName: buildCrTmuxWindowName(repoRoot),
-    originTmuxPane,
+    reviewViewId: reviewViewName,
+    originViewId,
     artifactPath: join(sessionDir, "annotations.jsonl"),
     createdAt: new Date().toISOString(),
   };
 
+  writeSession(session);
+  return session;
+};
+
+const writeSession = (session: CrSession): void => {
   writeFileSync(
-    join(sessionDir, "session.json"),
+    join(
+      session.repoRoot,
+      ...CR_SESSION_ROOT,
+      session.sessionId,
+      "session.json",
+    ),
     `${JSON.stringify(session, null, 2)}\n`,
   );
-  return session;
 };
 
 const luaString = (value: string): string => JSON.stringify(value);
@@ -369,12 +395,7 @@ const buildNvimEntrypoint = (): string =>
   ["lua", `require(${luaString("pi.cr")}).start()`].join(" ");
 
 const buildNvimCommand = (session: CrSession): string => {
-  const env = `CR_SOCKET=${shellQuote(session.crSocketPath)}`;
   return [
-    "cd",
-    shellQuote(session.repoRoot),
-    "&&",
-    env,
     "nvim",
     "--listen",
     shellQuote(session.socketPath),
@@ -382,6 +403,24 @@ const buildNvimCommand = (session: CrSession): string => {
     shellQuote(buildNvimEntrypoint()),
   ].join(" ");
 };
+
+const buildNvimShellCommand = (session: CrSession): string => {
+  const env = `CR_SOCKET=${shellQuote(session.crSocketPath)}`;
+  return [
+    "cd",
+    shellQuote(session.repoRoot),
+    "&&",
+    env,
+    buildNvimCommand(session),
+  ].join(" ");
+};
+
+const buildReviewViewLaunch = (session: CrSession): CrReviewViewLaunch => ({
+  cwd: session.repoRoot,
+  env: { CR_SOCKET: session.crSocketPath },
+  command: buildNvimCommand(session),
+  shellCommand: buildNvimShellCommand(session),
+});
 
 const readArtifactAnnotations = (artifactPath: string): CrAnnotation[] => {
   try {
@@ -473,6 +512,7 @@ const closeCrSocketServer = (server: net.Server, socketPath: string): void => {
 const startCrSocketServer = async (
   session: CrSession,
   pi: ExtensionAPI,
+  multiplexer: CrMultiplexer,
   onFinish?: () => void,
 ): Promise<net.Server> => {
   rmSync(session.crSocketPath, { force: true });
@@ -494,11 +534,8 @@ const startCrSocketServer = async (
         }
         if (payload?.type === "finish") {
           sendAnnotationsToPi(pi, annotationsFromFinishPayload(payload));
-          if (session.originTmuxPane) {
-            void pi.exec(
-              "tmux",
-              buildCrTmuxSelectPaneArgs(session.originTmuxPane),
-            );
+          if (session.originViewId) {
+            void multiplexer.focusView(session.originViewId);
           }
           onFinish?.();
           closeCrSocketServer(server, session.crSocketPath);
@@ -583,8 +620,10 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    if (!getTmuxEnv(ctx)) {
-      ctx.ui.notify(`/${START_COMMAND} requires tmux`, "error");
+    const env = getExtensionEnv(ctx);
+    const multiplexer = createMultiplexer(pi, env);
+    if (!multiplexer) {
+      ctx.ui.notify(`/${START_COMMAND} requires tmux or herdr`, "error");
       return;
     }
 
@@ -597,33 +636,43 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     if (!scope) return;
 
     const widgetCtx = ctx as WidgetContext;
+    const reviewViewName = buildCrReviewViewName(repoRoot);
     const session = await createSession(
       pi,
       repoRoot,
       scope,
-      getTmuxPaneEnv(ctx),
+      reviewViewName,
+      getOriginViewId(multiplexer, env),
     );
-    const crSocketServer = await startCrSocketServer(session, pi, () => {
-      if (activeSession?.sessionId !== session.sessionId) return;
-      stopCrFileWatcher(session, widgetCtx);
-      activeSession = null;
-      clearVisibleCrWidget(widgetCtx);
-    });
-    const nvimCommand = buildNvimCommand(session);
-    const tmuxResult = (await pi.exec(
-      "tmux",
-      buildCrTmuxNewWindowArgs(session.tmuxWindowName, nvimCommand),
-    )) as ExecResult;
+    const crSocketServer = await startCrSocketServer(
+      session,
+      pi,
+      multiplexer,
+      () => {
+        if (activeSession?.sessionId !== session.sessionId) return;
+        stopCrFileWatcher(session, widgetCtx);
+        activeSession = null;
+        clearVisibleCrWidget(widgetCtx);
+      },
+    );
+    const openResult = await multiplexer.openReviewView(
+      reviewViewName,
+      buildReviewViewLaunch(session),
+    );
 
-    if (tmuxResult.code !== 0) {
+    if (openResult.code !== 0) {
       closeCrSocketServer(crSocketServer, session.crSocketPath);
       clearVisibleCrWidget(widgetCtx);
       ctx.ui.notify(
-        tmuxResult.stderr.trim() || "Failed to open CR Neovim window",
+        openResult.stderr.trim() || "Failed to open CR Neovim view",
         "error",
       );
       return;
     }
+
+    session.reviewViewId = openResult.reviewViewId;
+    session.originViewId = openResult.originViewId;
+    writeSession(session);
 
     activeSession = session;
     crWidgetVisible = showCrWidget(widgetCtx, session);
@@ -633,12 +682,12 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
   };
 
   pi.registerCommand(START_COMMAND, {
-    description: "Open a tmux Neovim diffview code review workflow",
+    description: "Open a Neovim diffview code review workflow",
     handler: startHandler,
   });
 
   pi.registerShortcut(START_SHORTCUT, {
-    description: "Open a tmux Neovim diffview code review workflow (Alt+R)",
+    description: "Open a Neovim diffview code review workflow (Alt+R)",
     handler: (ctx) => startHandler("", ctx),
   });
 
@@ -652,36 +701,44 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand(STOP_COMMAND, {
-    description: "Close the tmux Neovim code review window",
+    description: "Close the Neovim code review view",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      if (!getTmuxEnv(ctx)) {
-        ctx.ui.notify(`/${STOP_COMMAND} requires tmux`, "error");
+      const env = getExtensionEnv(ctx);
+      const multiplexer = createMultiplexer(pi, env);
+      if (!multiplexer) {
+        ctx.ui.notify(`/${STOP_COMMAND} requires tmux or herdr`, "error");
         return;
       }
-
       const widgetCtx = ctx as WidgetContext;
+      const repoRoot =
+        !activeSession && multiplexer.type === "herdr"
+          ? await getRepoRoot(pi)
+          : null;
+      const reviewViewId = activeSession
+        ? activeSession.reviewViewId
+        : multiplexer.type === "herdr" && repoRoot
+          ? buildCrReviewViewName(repoRoot)
+          : getCrReviewViewId(activeSession);
+
       if (activeSession) {
         sendArtifactAnnotationsToPi(pi, activeSession);
       }
       stopCrFileWatcher(activeSession, ctx);
 
-      const tmuxResult = (await pi.exec(
-        "tmux",
-        buildCrTmuxKillWindowArgs(getCrTmuxWindowName(activeSession)),
-      )) as ExecResult;
+      const closeResult = await multiplexer.closeReviewView(reviewViewId);
 
       activeSession = null;
       clearVisibleCrWidget(widgetCtx);
 
-      if (tmuxResult.code !== 0) {
+      if (closeResult.code !== 0) {
         ctx.ui.notify(
-          tmuxResult.stderr.trim() || "Failed to close CR Neovim window",
+          closeResult.stderr.trim() || "Failed to close CR Neovim view",
           "error",
         );
         return;
       }
 
-      ctx.ui.notify("Closed CR Neovim window", "info");
+      ctx.ui.notify("Closed CR Neovim view", "info");
     },
   });
 }

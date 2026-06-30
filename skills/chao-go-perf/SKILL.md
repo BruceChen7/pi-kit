@@ -85,3 +85,15 @@ GODEBUG=gctrace=1 ./app
 - `references/tooling.md` — pprof、trace、fieldalignment、benchstat 完整用法
 - `references/version-changes.md` — Go 版本间关键性能变更详情
 - `references/pgo.md` — Profile-Guided Optimization 完整工作流
+
+## 评测
+
+本 skill 的 `evals/` 包含触发词评测集，依赖
+[yao-meta-skill](https://github.com/yaojingang/yao-meta-skill) 提供的评估框架。
+修改 `SKILL.md` 的 description 后，建议重新验证：
+
+```bash
+make -C skills eval SKILL=chao-go-perf
+```
+
+前置要求：Python 3.11+、uv、且 `~/work/yao-meta-skill` 已克隆并初始化。

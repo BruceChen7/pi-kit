@@ -27,6 +27,7 @@ import {
   buildCrReviewViewName,
   buildNoBranchCandidatesMessage,
   CR_PRESETS,
+  CR_TMUX_WINDOW_NAME_PREFIX,
   CR_WIDGET_KEY,
   type CrAnnotation,
   type CrDiffScope,
@@ -39,7 +40,6 @@ import {
   type ExecResult,
   formatAnnotationsPrompt,
   getBranchCandidates,
-  getCrReviewViewId,
   parseAnnotationsJsonl,
   parseSocketPayload,
   START_COMMAND,
@@ -124,6 +124,16 @@ const getOriginViewId = (
 ): string => {
   if (multiplexer.type === "herdr") return env.HERDR_TAB_ID ?? "";
   return env.TMUX_PANE ?? "";
+};
+
+const resolveFallbackReviewViewName = async (
+  pi: ExtensionAPI,
+  session: CrSession | null,
+): Promise<string> => {
+  const repoRoot = session?.repoRoot ?? (await getRepoRoot(pi));
+  return repoRoot
+    ? buildCrReviewViewName(repoRoot)
+    : CR_TMUX_WINDOW_NAME_PREFIX;
 };
 
 const buildSelectListTheme = (theme: {
@@ -733,22 +743,18 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
         return;
       }
       const widgetCtx = ctx as WidgetContext;
-      const repoRoot =
-        !activeSession && multiplexer.type === "herdr"
-          ? await getRepoRoot(pi)
-          : null;
-      const reviewViewId = activeSession
-        ? activeSession.reviewViewId
-        : multiplexer.type === "herdr" && repoRoot
-          ? buildCrReviewViewName(repoRoot)
-          : getCrReviewViewId(activeSession);
+      const sessionToClose = activeSession;
 
-      if (activeSession) {
-        sendArtifactAnnotationsToPi(pi, activeSession);
+      if (sessionToClose) {
+        sendArtifactAnnotationsToPi(pi, sessionToClose);
       }
-      stopCrFileWatcher(activeSession, ctx);
+      stopCrFileWatcher(sessionToClose, ctx);
 
-      const closeResult = await multiplexer.closeReviewView(reviewViewId);
+      const closeResult = await multiplexer.closeReviewView({
+        reviewViewId: sessionToClose?.reviewViewId,
+        resolveReviewViewName: () =>
+          resolveFallbackReviewViewName(pi, sessionToClose),
+      });
 
       activeSession = null;
       clearVisibleCrWidget(widgetCtx);

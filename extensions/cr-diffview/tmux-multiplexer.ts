@@ -4,11 +4,16 @@ import {
   buildCrTmuxKillWindowArgs,
   buildCrTmuxNewWindowArgs,
   buildCrTmuxSelectPaneArgs,
+  type CloseReviewViewTarget,
+  CR_TMUX_WINDOW_NAME_PREFIX,
   type CrMultiplexer,
   type CrReviewViewLaunch,
   type ExecResult,
   type OpenReviewViewResult,
 } from "./core.ts";
+
+const resolveTmuxReviewViewId = (target: CloseReviewViewTarget = {}): string =>
+  target.reviewViewId ?? CR_TMUX_WINDOW_NAME_PREFIX;
 
 export const createTmuxMultiplexer = (
   pi: ExtensionAPI,
@@ -32,10 +37,10 @@ export const createTmuxMultiplexer = (
       originViewId: env.TMUX_PANE ?? "",
     };
   },
-  closeReviewView: (reviewViewId: string): Promise<ExecResult> =>
+  closeReviewView: (target?: CloseReviewViewTarget): Promise<ExecResult> =>
     pi.exec(
       "tmux",
-      buildCrTmuxKillWindowArgs(reviewViewId),
+      buildCrTmuxKillWindowArgs(resolveTmuxReviewViewId(target)),
     ) as Promise<ExecResult>,
   focusView: (viewId: string): Promise<ExecResult> =>
     pi.exec("tmux", buildCrTmuxSelectPaneArgs(viewId)) as Promise<ExecResult>,

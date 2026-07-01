@@ -33,6 +33,11 @@ export type CrReviewViewLaunch = {
 
 export type OpenReviewViewResult = CrReviewView & ExecResult;
 
+export type CloseReviewViewTarget = {
+  readonly reviewViewId?: string;
+  readonly resolveReviewViewName?: () => Promise<string | null>;
+};
+
 export type CrMultiplexer = {
   readonly type: CrMultiplexerType;
   readonly label: string;
@@ -41,7 +46,7 @@ export type CrMultiplexer = {
     reviewViewName: string,
     launch: CrReviewViewLaunch,
   ): Promise<OpenReviewViewResult>;
-  closeReviewView(reviewViewId: string): Promise<ExecResult>;
+  closeReviewView(target?: CloseReviewViewTarget): Promise<ExecResult>;
   focusView(viewId: string): Promise<ExecResult>;
 };
 

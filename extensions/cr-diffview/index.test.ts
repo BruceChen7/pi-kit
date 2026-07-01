@@ -591,6 +591,31 @@ describe("cr-diffview command", () => {
       "tmux",
       buildCrTmuxKillWindowArgs("pi-cr"),
     );
+    expect(exec).not.toHaveBeenCalledWith("git", [
+      "rev-parse",
+      "--show-toplevel",
+    ]);
+    expect(notify).toHaveBeenCalledWith("Closed CR Neovim view", "info");
+  });
+
+  it("stops an active herdr Neovim CR tab by tab id", async () => {
+    const { ctx, exec, notify, stopHandler } = await startCrReview({
+      tmux: false,
+      herdr: true,
+    });
+
+    exec.mockClear();
+    await stopHandler("", ctx);
+
+    expect(exec).toHaveBeenCalledWith("herdr", [
+      "tab",
+      "close",
+      HERDR_REVIEW_TAB_ID,
+    ]);
+    expect(exec).not.toHaveBeenCalledWith("git", [
+      "rev-parse",
+      "--show-toplevel",
+    ]);
     expect(notify).toHaveBeenCalledWith("Closed CR Neovim view", "info");
   });
 

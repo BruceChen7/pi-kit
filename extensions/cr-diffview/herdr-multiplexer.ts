@@ -1,11 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import type {
+  CloseReviewViewTarget,
   CrMultiplexer,
   CrReviewViewLaunch,
   ExecResult,
   OpenReviewViewResult,
 } from "./core.ts";
+import { CR_TMUX_WINDOW_NAME_PREFIX } from "./core.ts";
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null
@@ -76,7 +78,18 @@ export const createHerdrMultiplexer = (
   pi: ExtensionAPI,
   env: Record<string, string | undefined>,
 ): CrMultiplexer => {
-  const closeReviewView = async (reviewViewId: string): Promise<ExecResult> => {
+  const resolveReviewViewId = async (
+    target: CloseReviewViewTarget = {},
+  ): Promise<string> => {
+    if (target.reviewViewId) return target.reviewViewId;
+
+    const reviewViewName = await target.resolveReviewViewName?.();
+    return reviewViewName || CR_TMUX_WINDOW_NAME_PREFIX;
+  };
+
+  const closeResolvedReviewView = async (
+    reviewViewId: string,
+  ): Promise<ExecResult> => {
     const closeResult = (await pi.exec("herdr", [
       "tab",
       "close",
@@ -101,6 +114,11 @@ export const createHerdrMultiplexer = (
       matchingTab.tabId,
     ]) as Promise<ExecResult>;
   };
+
+  const closeReviewView = async (
+    target?: CloseReviewViewTarget,
+  ): Promise<ExecResult> =>
+    closeResolvedReviewView(await resolveReviewViewId(target));
 
   return {
     type: "herdr",
@@ -143,7 +161,7 @@ export const createHerdrMultiplexer = (
       ])) as ExecResult;
 
       if (runResult.code !== 0) {
-        await closeReviewView(created.tabId);
+        await closeResolvedReviewView(created.tabId);
       }
 
       return {

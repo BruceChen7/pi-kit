@@ -38,7 +38,8 @@
       "./extensions/cache-graph",
       "./extensions/librarian",
       "./extensions/btw",
-      "./extensions/opencode-go-provider"
+      "./extensions/opencode-go-provider",
+      "./extensions/qmd-search"
     ]
   },
   "scripts": {

@@ -1,10 +1,11 @@
 #!/bin/bash
-# Install pi-kit opencli adapters into ~/.opencli/clis/.
+# Install pi-kit opencli adapters and site memory into ~/.opencli/.
 #
 # Usage: ./install-opencli-adapters.sh
 #
-# This script creates symlinks from ~/.opencli/clis/<site>/<cmd>.js
-# to the adapter source files in pi-kit/opencli/clis/<site>/<cmd>.js
+# This script creates symlinks from:
+#   ~/.opencli/clis/<site>/<cmd>.js         →  pi-kit/opencli/clis/<site>/<cmd>.js
+#   ~/.opencli/sites/<site>/<file>          →  pi-kit/opencli/sites/<site>/<file>
 # so that opencli can discover and load them.
 #
 # Prerequisites:
@@ -12,8 +13,10 @@
 #   - @jackwener/opencli must be resolvable from pi-kit (it's a devDependency)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_DIR="$SCRIPT_DIR/opencli/clis"
-TARGET_BASE="$HOME/.opencli/clis"
+CLIS_SOURCE_DIR="$SCRIPT_DIR/opencli/clis"
+SITES_SOURCE_DIR="$SCRIPT_DIR/opencli/sites"
+CLIS_TARGET_BASE="$HOME/.opencli/clis"
+SITES_TARGET_BASE="$HOME/.opencli/sites"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -24,13 +27,13 @@ newly_installed=()
 overwritten=()
 failed=()
 
-install_adapter_symlink() {
+install_symlink() {
     local source_file="$1"
-    local site_name="$2"
-    local cmd_name="$3"
-    local target_dir="$TARGET_BASE/$site_name"
-    local target_file="$target_dir/$cmd_name"
+    local target_file="$2"
+    local label="$3"
+    local target_dir
 
+    target_dir="$(dirname "$target_file")"
     mkdir -p "$target_dir"
 
     local existed="false"
@@ -41,29 +44,24 @@ install_adapter_symlink() {
 
     if ln -s "$source_file" "$target_file"; then
         if [ "$existed" = "true" ]; then
-            overwritten+=("$site_name/$cmd_name")
-            echo -e "${GREEN}✓${NC} Updated: $site_name/$cmd_name"
+            overwritten+=("$label")
+            echo -e "${GREEN}✓${NC} Updated: $label"
         else
-            newly_installed+=("$site_name/$cmd_name")
-            echo -e "${GREEN}✓${NC} Installed: $site_name/$cmd_name"
+            newly_installed+=("$label")
+            echo -e "${GREEN}✓${NC} Installed: $label"
         fi
         return 0
     fi
 
-    failed+=("$site_name/$cmd_name")
-    echo -e "${RED}✗${NC} Failed: $site_name/$cmd_name"
+    failed+=("$label")
+    echo -e "${RED}✗${NC} Failed: $label"
     return 1
 }
 
 echo "=========================================="
-echo "  OpenCLI Adapters Installer"
+echo "  OpenCLI Adapters & Site Memory Installer"
 echo "=========================================="
 echo ""
-
-if [ ! -d "$SOURCE_DIR" ]; then
-    echo -e "${RED}Error: Adapter source directory not found: $SOURCE_DIR${NC}"
-    exit 1
-fi
 
 # Verify @jackwener/opencli is resolvable
 if ! node -e "require.resolve('@jackwener/opencli/registry')" 2>/dev/null && \
@@ -73,23 +71,50 @@ if ! node -e "require.resolve('@jackwener/opencli/registry')" 2>/dev/null && \
     echo ""
 fi
 
-# Walk through all site directories in opencli/clis/
-for site_dir in "$SOURCE_DIR"/*/; do
-    if [ ! -d "$site_dir" ]; then
-        continue
-    fi
+# ── Part 1: Adapter symlinks ──────────────────────────────────
+echo "--- Adapters ---"
 
-    site_name="$(basename "$site_dir")"
-
-    for adapter_file in "$site_dir"*.js; do
-        if [ ! -f "$adapter_file" ]; then
+if [ -d "$CLIS_SOURCE_DIR" ]; then
+    for site_dir in "$CLIS_SOURCE_DIR"/*/; do
+        if [ ! -d "$site_dir" ]; then
             continue
         fi
 
-        cmd_name="$(basename "$adapter_file")"
-        install_adapter_symlink "$adapter_file" "$site_name" "$cmd_name"
+        site_name="$(basename "$site_dir")"
+
+        for adapter_file in "$site_dir"*.js; do
+            if [ ! -f "$adapter_file" ]; then
+                continue
+            fi
+
+            cmd_name="$(basename "$adapter_file")"
+            target_file="$CLIS_TARGET_BASE/$site_name/$cmd_name"
+            install_symlink "$adapter_file" "$target_file" "$site_name/$cmd_name"
+        done
     done
-done
+else
+    echo -e "${YELLOW}  (no opencli/clis/ directory)${NC}"
+fi
+
+# ── Part 2: Site memory symlinks ───────────────────────────────
+echo ""
+echo "--- Site Memory ---"
+
+if [ -d "$SITES_SOURCE_DIR" ]; then
+    # Walk through opencli/sites/<site>/ and symlink all files/dirs recursively
+    # Use process substitution so shell arrays are preserved in the parent shell
+    while read -r source_file; do
+        relative_path="${source_file#$SITES_SOURCE_DIR/}"
+        site_name="$(echo "$relative_path" | cut -d/ -f1)"
+        file_subpath="$(echo "$relative_path" | cut -d/ -f2-)"
+        target_file="$SITES_TARGET_BASE/$relative_path"
+        label="$site_name/…/$file_subpath"
+
+        install_symlink "$source_file" "$target_file" "$label"
+    done < <(find "$SITES_SOURCE_DIR" -type f)
+else
+    echo -e "${YELLOW}  (no opencli/sites/ directory)${NC}"
+fi
 
 echo ""
 echo "=========================================="
@@ -121,8 +146,8 @@ if [ "${#failed[@]}" -gt 0 ]; then
     echo ""
 fi
 
-echo "Target directory: $TARGET_BASE"
 echo ""
-echo "Adapters previously in pi-kit (deploy, cancel) have been migrated to personal-agent-staff."
-echo ""
-echo "To verify: opencli browser verify space/user-token"
+echo "To verify:"
+echo "  opencli browser verify space/user-token"
+echo "  opencli browser verify leetcode/problems --seed-args '[\"--limit\",\"3\"]'"
+echo "  opencli leetcode problems --limit 5"

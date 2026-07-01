@@ -1,0 +1,36 @@
+{
+  "user-token": {
+    "url": "https://space.shopee.io/",
+    "method": "NA",
+    "description": "从页面 localStorage['session'].token 读取 JWT token",
+    "auth": "UI — 需要用户已在 Chrome 中登录 space.shopee.io",
+    "response": {
+      "token": "JWT string"
+    },
+    "verified_at": "2026-06-04",
+    "notes": "读取 localStorage['session'].token。无 HTTP API endpoint，直接浏览器 eval。SPA 需等待 3s 确保初始化完成。"
+  },
+  "trace-detail": {
+    "url": "https://log.shopee.io/openapi/v1/trace/search/trace/detail",
+    "method": "POST",
+    "params": {
+      "required": ["trace_id"],
+      "optional": []
+    },
+    "headers": {
+      "x-openapi-key": "OpenAPI Personal Access Token",
+      "Content-Type": "application/json"
+    },
+    "auth": "x-openapi-key header — 从 log.shopee.io → Avatar → Personal Access Tokens 获取",
+    "response": {
+      "trace_id": "string",
+      "spans": "array of span objects",
+      "duration_unix_nano": "string (ns)",
+      "services": "number",
+      "depth": "number",
+      "total_spans": "number"
+    },
+    "verified_at": "2026-06-05",
+    "notes": "OpenAPI 端点，非 SPA 内部 API。test 环境: https://log.test.shopee.io。Token 可配置在 ~/.space/trace-token (JSON: {test: '...', live: '...'}) 或 fallback 到 ~/.config/cursor_config_be/.env。内置默认 token 作为 fallback。响应 key 为 camelCase。"
+  }
+}

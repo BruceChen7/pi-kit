@@ -1,0 +1,33 @@
+{
+  "args": {
+    "limit": 3
+  },
+  "expect": {
+    "rowCount": {
+      "min": 2,
+      "max": 3
+    },
+    "columns": [
+      "id",
+      "title",
+      "difficulty",
+      "acRate",
+      "topicTags",
+      "solutionNum"
+    ],
+    "types": {
+      "id": "string",
+      "title": "string",
+      "difficulty": "string",
+      "acRate": "number",
+      "topicTags": "string",
+      "solutionNum": "number"
+    },
+    "patterns": {
+      "id": "^\\d+$",
+      "difficulty": "^(EASY|MEDIUM|HARD)$",
+      "acRate": "^0\\.\\d+$"
+    },
+    "notEmpty": ["id", "title", "difficulty"]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "args": ["--slug", "two-sum"],
+  "expect": {
+    "rowCount": {
+      "min": 1,
+      "max": 1
+    },
+    "columns": [
+      "id",
+      "title",
+      "difficulty",
+      "acRate",
+      "accepted",
+      "submitted",
+      "topicTags"
+    ],
+    "types": {
+      "id": "string",
+      "title": "string",
+      "difficulty": "string",
+      "acRate": "number",
+      "accepted": "string",
+      "submitted": "string",
+      "topicTags": "string"
+    },
+    "patterns": {
+      "id": "^\\d+$",
+      "difficulty": "^(Easy|Medium|Hard)$",
+      "accepted": "^[\\d.]+[MK]?$",
+      "submitted": "^[\\d.]+[MK]?$"
+    },
+    "notEmpty": ["id", "title", "difficulty"]
+  }
+}

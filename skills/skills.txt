@@ -41,6 +41,7 @@ improve-codebase-architecture|local|skills/improve-codebase-architecture
 to-go-style-design|local|skills/to-go-style-design
 to-prd|local|skills/to-prd
 to-issues|local|skills/to-issues
+writing-great-skills|local|skills/writing-great-skills
 coding-style-line-length/|local|skills/coding-style-line-length
 opencli-usage|local|skills/opencli-usage
 opencli-browser|local|skills/opencli-browser

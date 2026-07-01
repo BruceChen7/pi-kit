@@ -39,19 +39,6 @@ boundaries-refactor/
 └── README.md             # This file
 ```
 
-## Validation
-
-```bash
-# Structure validation
-make -C skills validate SKILL=boundaries-refactor
-
-# Trigger evaluation (requires evals/)
-make -C skills eval SKILL=boundaries-refactor
-
-# Skill interpretation report
-make -C skills interpretation SKILL=boundaries-refactor
-```
-
 ## References
 
 - [Go Patterns](references/go-patterns.md) — code examples for core/shell shape

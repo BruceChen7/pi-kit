@@ -3,12 +3,13 @@ name: boundaries-refactor
 description: >-
   Refactor code toward Functional Core, Imperative Shell: extract pure
   decision functions, thin the imperative shell, create boundary DTOs,
-  and reduce mock-heavy tests. Use when code mixes business rules with
-  database queries, HTTP handlers, RPC, CLI commands, cron jobs, queue
-  consumers, network clients, mailers, clocks, env vars, or global state.
-  Inputs: source code with tangled logic. Outputs: extracted core functions,
-  thinned shell, boundary DTOs, focused tests. Not for: greenfield design,
-  pure IO plumbing, or one-off script refactors.
+  and reduce mock-heavy tests. Use when business rules are tangled with
+  IO or side effects — handlers, workers, databases, network calls,
+  clocks, env vars, or globals, or when tests assert mock choreography
+  instead of behavior. Inputs: source code with tangled logic. Outputs:
+  extracted core functions, thinned shell, boundary DTOs, focused tests.
+  Not for: greenfield design, pure IO plumbing, or one-off script
+  refactors.
 ---
 
 # Boundaries Refactor
@@ -19,15 +20,6 @@ Refactor toward **Functional Core, Imperative Shell**:
 - Shell performs IO, mutation, logging, metrics, retries.
 - Boundaries are plain data structures, not live service objects.
 - Tests focus on decision logic without excessive mocks.
-
-## Use When
-
-Business rules are mixed with:
-
-- DB queries, ORM models, HTTP/RPC handlers, CLI commands, cron jobs, queue consumers
-- Network clients, mailers, payment providers, filesystem calls
-- `time.Now`, random IDs, env vars, globals, caches
-- Mocks that assert call choreography instead of behavior
 
 ## Workflow
 

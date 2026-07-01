@@ -1,0 +1,65 @@
+{
+  "problemsetQuestionList": {
+    "url": "https://leetcode.cn/graphql",
+    "method": "POST",
+    "params": {
+      "required": ["query", "variables"],
+      "optional": []
+    },
+    "response": {
+      "data": {
+        "problemsetQuestionList": {
+          "total": "number (total questions count)",
+          "questions": [
+            {
+              "acRate": "number (0-1)",
+              "difficulty": "EASY | MEDIUM | HARD",
+              "frontendQuestionId": "string (题号)",
+              "paidOnly": "boolean",
+              "solutionNum": "number (题解数)",
+              "title": "string (英文标题)",
+              "titleCn": "string (中文标题)",
+              "titleSlug": "string (URL slug)",
+              "topicTags": [
+                {
+                  "slug": "string",
+                  "name": "string (英文标签名)",
+                  "nameTranslated": "string (中文标签名)"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "verified_at": "2026-07-01",
+    "notes": "GraphQL POST. No auth needed for public data, but COOKIE required for user login state (used via browser bridge). Supports filters: orderBy (FRONTEND_ID | AC_RATE | SOLUTION_NUM), sortOrder (ASCENDING | DESCENDING), difficulty (EASY | MEDIUM | HARD)."
+  },
+  "questionDetail": {
+    "url": "https://leetcode.cn/graphql",
+    "method": "POST",
+    "params": {
+      "required": ["query", "variables.titleSlug"],
+      "optional": []
+    },
+    "response": {
+      "data": {
+        "question": {
+          "questionFrontendId": "string",
+          "translatedTitle": "string (中文标题)",
+          "translatedContent": "string (HTML 中文描述)",
+          "difficulty": "EASY | MEDIUM | HARD",
+          "acRate": "number (0-1)",
+          "stats": "string (JSON: totalAccepted, totalSubmission, totalAcceptedRaw, totalSubmissionRaw, acRate)",
+          "topicTags": [{ "slug": "string", "name": "string" }],
+          "codeSnippets": [
+            { "lang": "string", "langSlug": "string", "code": "string" }
+          ],
+          "similarQuestions": "string (JSON array)"
+        }
+      }
+    },
+    "verified_at": "2026-07-01",
+    "notes": "GraphQL POST. Uses question(titleSlug: String!) root field. Full detail including description, code templates, and similar questions."
+  }
+}

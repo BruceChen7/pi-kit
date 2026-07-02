@@ -19,13 +19,13 @@ const KNOWLEDGE_DIR = (() => {
   process.exit(1);
 })();
 
-const CALENDAR_DIR = path.join(KNOWLEDGE_DIR, "Calendar", "Daily Notes");
+const CALENDAR_DIR = path.join(KNOWLEDGE_DIR, "Calendar", "DailyNotes");
 const SUMMARIES_BASE = path.join(
   KNOWLEDGE_DIR,
   "Wiki",
   "Summaries",
   "Calendar",
-  "Daily Notes",
+  "DailyNotes",
 );
 
 function sha256(text) {
@@ -95,12 +95,21 @@ function summarizeBody(body, tags, headings) {
   const meaningfulLines = lines.filter(
     (l) => !l.startsWith("[") && !l.startsWith("!") && !l.match(/^https?:\/\//),
   );
-  const firstContent = meaningfulLines
-    .slice(0, 20)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 300);
+
+  // Keep first meaningful lines with original line breaks, limit total length
+  const previewLines = [];
+  let remaining = 400;
+  for (const line of meaningfulLines.slice(0, 15)) {
+    const trimmed = line.trim();
+    if (remaining <= 0) break;
+    if (trimmed.length <= remaining) {
+      previewLines.push(trimmed);
+      remaining -= trimmed.length;
+    } else {
+      previewLines.push(trimmed.slice(0, Math.max(0, remaining - 1)) + "…");
+      break;
+    }
+  }
 
   const parts = [];
   if (tags.length > 0) {
@@ -108,11 +117,11 @@ function summarizeBody(body, tags, headings) {
   }
   if (headings.length > 0) {
     parts.push(
-      `**Topics:** ${headings.slice(0, 8).join(", ")}${headings.length > 8 ? "..." : ""}`,
+      `**Topics:** ${headings.slice(0, 8).join(", ")}${headings.length > 8 ? "…" : ""}`,
     );
   }
-  if (firstContent) {
-    parts.push(`\n${firstContent}${firstContent.length >= 300 ? "…" : ""}`);
+  if (previewLines.length > 0) {
+    parts.push(previewLines.join("\n"));
   } else if (lines.length === 0) {
     parts.push("*(Empty daily note)*");
   }
@@ -135,7 +144,7 @@ function processFile(filePath) {
   const yearDir = path.basename(path.dirname(filePath));
   const summaryRel = path.join(
     "Calendar",
-    "Daily Notes",
+    "DailyNotes",
     yearDir,
     `${sourceName}.summary.md`,
   );
@@ -178,7 +187,7 @@ function processFile(filePath) {
     "",
     "## Backlinks",
     "",
-    `- Source file: [[Calendar/Daily Notes/${yearDir}/${sourceName}]]`,
+    `- Source file: [[Calendar/DailyNotes/${yearDir}/${sourceName}]]`,
     "",
   ].join("\n");
 

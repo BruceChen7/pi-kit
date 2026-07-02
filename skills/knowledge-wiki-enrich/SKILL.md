@@ -1,3 +1,11 @@
+---
+name: knowledge-wiki-enrich
+description: >
+  Finds wiki files and index entries needing attention: unsummarized sources, missing index
+  entries, and stale summaries. Use during wiki maintenance to identify gaps and sync the
+  index.
+---
+
 # knowledge-wiki-enrich
 
 Finds wiki files and index entries that need attention: unsummarized sources, missing index entries, and stale summaries. Uses `wiki-summary.mjs list-stale` and `wiki-index.mjs find-missing-*`.

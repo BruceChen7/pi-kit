@@ -2,7 +2,7 @@
  * qmd-search — Pi native query interface for qmd knowledge bases.
  *
  * Detects `qmd` CLI (npm install -g @tobilu/qmd) at session startup and
- * registers 4 search/retrieval tools + 3 maintenance slash commands.
+ * registers 5 search/retrieval tools + 3 maintenance slash commands.
  * Knowledge base directories are configured under
  * `qmdSearch.knowledgeBases` in third_extension_settings.json.
  *
@@ -74,15 +74,17 @@ function loadKnowledgeBases(cwd: string): Record<string, KnowledgeBase> {
   return settings?.qmdSearch?.knowledgeBases ?? {};
 }
 
-function getWatchDirs(knowledgeBases: Record<string, KnowledgeBase>): string[] {
-  const seen = new Set<string>();
-  for (const kb of Object.values(knowledgeBases)) {
+function getWatchDirs(
+  knowledgeBases: Record<string, KnowledgeBase>,
+): Array<{ dir: string; name: string }> {
+  const seen = new Map<string, string>();
+  for (const [name, kb] of Object.entries(knowledgeBases)) {
     if (kb.path) {
       const resolved = path.resolve(kb.path);
-      seen.add(resolved);
+      seen.set(resolved, name);
     }
   }
-  return [...seen];
+  return [...seen.entries()].map(([dir, name]) => ({ dir, name }));
 }
 
 // ── Auto-indexing ──────────────────────────────────────────────────────────
@@ -94,7 +96,7 @@ function setupWatchers(
   const debounced = new Map<string, ReturnType<typeof setTimeout>>();
   const watchers: fs.FSWatcher[] = [];
 
-  function scheduleUpdate(kbDir: string): void {
+  function scheduleUpdate(kbDir: string, kbName: string): void {
     const existing = debounced.get(kbDir);
     if (existing) clearTimeout(existing);
 
@@ -103,7 +105,7 @@ function setupWatchers(
       setTimeout(async () => {
         debounced.delete(kbDir);
         try {
-          await execFileAsync("qmd", ["update"], {
+          await execFileAsync("qmd", ["update", "-c", kbName], {
             cwd: kbDir,
             timeout: 120_000,
           });
@@ -115,16 +117,20 @@ function setupWatchers(
     );
   }
 
-  for (const dir of getWatchDirs(knowledgeBases)) {
+  for (const { dir, name: kbName } of getWatchDirs(knowledgeBases)) {
     if (!fs.existsSync(dir)) {
       log.info("KB dir missing, skip watch", { dir });
       continue;
     }
     try {
-      const w = fs.watch(dir, { recursive: true }, (_ev, name) => {
-        if (!name || name.startsWith(".") || name.includes("node_modules"))
+      const w = fs.watch(dir, { recursive: true }, (_ev, filename) => {
+        if (
+          !filename ||
+          filename.startsWith(".") ||
+          filename.includes("node_modules")
+        )
           return;
-        scheduleUpdate(dir);
+        scheduleUpdate(dir, kbName);
       });
       watchers.push(w);
       log.info("watching", { dir });
@@ -148,7 +154,7 @@ function setupWatchers(
 }
 
 /** Track last-known mtime per KB directory to avoid redundant updates */
-const dirMtimes = new Map<string, number>();
+let dirMtimes = new Map<string, number>();
 
 async function getDirMtime(dir: string): Promise<number | null> {
   try {
@@ -159,21 +165,47 @@ async function getDirMtime(dir: string): Promise<number | null> {
   }
 }
 
+/**
+ * Determine whether any KB directories need an index update.
+ *
+ * Pure decision: given current directory mtimes and previously recorded
+ * mtimes, returns whether any dir has changed and the updated mtime map.
+ */
+export function computeNeedsUpdate(
+  dirs: Array<{ dir: string }>,
+  currentMtimes: Map<string, number>,
+  previousMtimes: Map<string, number>,
+): { needsUpdate: boolean; updatedMtimes: Map<string, number> } {
+  const updated = new Map(previousMtimes);
+  let needsUpdate = false;
+  for (const { dir } of dirs) {
+    const mtime = currentMtimes.get(dir);
+    if (mtime === undefined) continue;
+    const prev = previousMtimes.get(dir);
+    if (prev === undefined || mtime > prev) {
+      updated.set(dir, mtime);
+      needsUpdate = true;
+    }
+  }
+  return { needsUpdate, updatedMtimes: updated };
+}
+
 async function stalenessCheck(
   knowledgeBases: Record<string, KnowledgeBase>,
 ): Promise<void> {
   const dirs = getWatchDirs(knowledgeBases);
-  let needsUpdate = false;
-
-  for (const dir of dirs) {
+  const currentMtimes = new Map<string, number>();
+  for (const { dir } of dirs) {
     const mtime = await getDirMtime(dir);
-    if (mtime === null) continue;
-    const prev = dirMtimes.get(dir);
-    if (prev === undefined || mtime > prev) {
-      dirMtimes.set(dir, mtime);
-      needsUpdate = true;
-    }
+    if (mtime !== null) currentMtimes.set(dir, mtime);
   }
+
+  const { needsUpdate, updatedMtimes } = computeNeedsUpdate(
+    dirs,
+    currentMtimes,
+    dirMtimes,
+  );
+  dirMtimes = updatedMtimes;
 
   if (!needsUpdate) {
     log.info("staleness check: no changes since last check, skipping");
@@ -201,11 +233,12 @@ async function runQmd(
   args: string[],
   cwd: string,
   signal?: AbortSignal,
+  timeout = 30_000,
 ): Promise<string> {
   const { stdout } = await execFileAsync("qmd", args, {
     cwd,
     signal,
-    timeout: 30_000,
+    timeout,
     maxBuffer: 5 * 1024 * 1024,
   });
   return stdout;
@@ -220,6 +253,42 @@ export function safeJson<T>(
   } catch {
     return { parseError: "invalid JSON", preview: raw.slice(0, 500) };
   }
+}
+
+function toolLabel(suffix: string): string {
+  return suffix.charAt(0).toUpperCase() + suffix.slice(1);
+}
+
+/**
+ * Format a structured search/query result into text + metadata details.
+ *
+ * Pure function: takes tool suffix, query, and parsed data, returns
+ * the formatted text and details map.  Used by execQuery, execSearch,
+ * etc. to avoid duplicating the markdown formatting logic.
+ */
+export function formatToolResult(
+  toolSuffix: string,
+  query: string,
+  data: unknown,
+): { text: string; details: Record<string, unknown> } {
+  const count = Array.isArray(data) ? data.length : 1;
+  return {
+    text: [
+      `### QMD ${toolLabel(toolSuffix)}: ${query}`,
+      count > 0
+        ? `Found ${count} result${count === 1 ? "" : "s"}.`
+        : "No results found.",
+      "```json",
+      JSON.stringify(data, null, 2),
+      "```",
+    ].join("\n"),
+    details: {
+      tool: `qmd_${toolSuffix}`,
+      query,
+      resultCount: count,
+      results: data,
+    },
+  };
 }
 
 // ── Args builders (pure) ──────────────────────────────────────────────────
@@ -274,7 +343,7 @@ export function buildGetArgs(opts: {
   maxLines?: number;
   lineNumbers?: boolean;
 }): string[] {
-  const args = ["get", opts.file, "--json"];
+  const args = ["get", opts.file];
   if (opts.fromLine) args.push("--from", String(opts.fromLine));
   if (opts.maxLines) args.push("-l", String(opts.maxLines));
   if (opts.lineNumbers === false) args.push("--no-line-numbers");
@@ -294,7 +363,29 @@ export function buildMultiGetArgs(opts: {
   return args;
 }
 
+export function buildSearchArgs(opts: {
+  query: string;
+  collections?: string[];
+  limit?: number;
+}): string[] {
+  const args = ["search", opts.query, "--json"];
+  if (opts.limit) args.push("-n", String(opts.limit));
+  if (opts.collections) for (const c of opts.collections) args.push("-c", c);
+  return args;
+}
+
 // ── Tool: qmd_query ────────────────────────────────────────────────────────
+
+/**
+ * Result handling strategy:
+ *
+ * - execGet / execStatus: raw stdout pass-through.  qmd get returns
+ *   document content (markdown text), qmd status returns human-readable
+ *   CLI output — parsing JSON adds no value and loses formatting.
+ * - execQuery / execSearch / execMultiGet: safeJson parse + structured
+ *   details.  Search results benefit from structured metadata
+ *   (resultCount, results array) for agent consumption.
+ */
 
 const QuerySchema = Type.Object({
   query: Type.String({
@@ -368,7 +459,7 @@ async function execQuery(
   const args = buildQueryArgs(opts);
 
   try {
-    const stdout = await runQmd(args, ctx.cwd, ctx.signal);
+    const stdout = await runQmd(args, ctx.cwd, ctx.signal, 300_000);
     const data = safeJson<unknown>(stdout);
 
     if (data && typeof data === "object" && "parseError" in data) {
@@ -379,24 +470,8 @@ async function execQuery(
       );
     }
 
-    const count = Array.isArray(data) ? data.length : 1;
-    return textResult(
-      [
-        `### QMD Query: ${opts.query}`,
-        count > 0
-          ? `Found ${count} result${count === 1 ? "" : "s"}.`
-          : "No results found.",
-        "```json",
-        JSON.stringify(data, null, 2),
-        "```",
-      ].join("\n"),
-      {
-        tool: "qmd_query",
-        query: opts.query,
-        resultCount: count,
-        results: data,
-      },
-    );
+    const { text, details } = formatToolResult("query", opts.query, data);
+    return textResult(text, details);
   } catch (err) {
     return textResult(
       `qmd query failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -442,15 +517,7 @@ async function execGet(
 
   try {
     const stdout = await runQmd(args, ctx.cwd, ctx.signal);
-    const data = safeJson<unknown>(stdout);
-    if (typeof data === "object" && data !== null && "parseError" in data) {
-      return textResult(stdout, { tool: "qmd_get", file: opts.file });
-    }
-    return textResult(`\`\`\`json\n${JSON.stringify(data)}\n\`\`\``, {
-      tool: "qmd_get",
-      file: opts.file,
-      result: data,
-    });
+    return textResult(stdout, { tool: "qmd_get", file: opts.file });
   } catch (err) {
     return textResult(
       `qmd get failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -515,6 +582,61 @@ async function execMultiGet(
   }
 }
 
+// ── Tool: qmd_search ───────────────────────────────────────────────────────
+
+const SearchSchema = Type.Object({
+  query: Type.String({
+    minLength: 1,
+    description: "Full-text BM25 keyword query (no LLM expansion).",
+  }),
+  collections: Type.Optional(
+    Type.Array(Type.String(), {
+      description: "Collection names to restrict to (OR).",
+    }),
+  ),
+  limit: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: 100,
+      description: "Max results (default 10).",
+    }),
+  ),
+});
+
+type SearchOpts = {
+  query: string;
+  collections?: string[];
+  limit?: number;
+};
+
+async function execSearch(
+  ctx: ExtensionContext,
+  opts: SearchOpts,
+): Promise<AgentToolResult<Record<string, unknown>>> {
+  const args = buildSearchArgs(opts);
+
+  try {
+    const stdout = await runQmd(args, ctx.cwd, ctx.signal);
+    const data = safeJson<unknown>(stdout);
+
+    if (data && typeof data === "object" && "parseError" in data) {
+      const errorData = data as { parseError: string; preview: string };
+      return textResult(
+        `qmd search returned non-JSON output.\n${errorData.preview}`,
+        { tool: "qmd_search", query: opts.query, raw: stdout.slice(0, 1000) },
+      );
+    }
+
+    const { text, details } = formatToolResult("search", opts.query, data);
+    return textResult(text, details);
+  } catch (err) {
+    return textResult(
+      `qmd search failed: ${err instanceof Error ? err.message : String(err)}`,
+      { tool: "qmd_search", query: opts.query, error: String(err) },
+    );
+  }
+}
+
 // ── Tool: qmd_status ───────────────────────────────────────────────────────
 
 const StatusSchema = Type.Object({});
@@ -531,8 +653,7 @@ async function execStatus(
   }));
 
   try {
-    const stdout = await runQmd(["status", "--json"], ctx.cwd, ctx.signal);
-    const data = safeJson<unknown>(stdout);
+    const stdout = await runQmd(["status"], ctx.cwd, ctx.signal);
     const lines = [
       "## QMD Status",
       "",
@@ -540,24 +661,16 @@ async function execStatus(
       ...(kbs.length
         ? kbs.map((kb) => `- **${kb.name}**: \`${kb.path}\` (${kb.pattern})`)
         : ["  _(none configured)_"]),
+      "",
+      "### QMD CLI Output",
+      "```",
+      stdout.trim(),
+      "```",
     ];
-
-    if (typeof data === "object" && data !== null && !("parseError" in data)) {
-      lines.push(
-        "",
-        "### QMD Index Status",
-        "```json",
-        JSON.stringify(data, null, 2),
-        "```",
-      );
-    } else {
-      lines.push("", "### QMD CLI Output", "```", stdout.slice(0, 2000), "```");
-    }
 
     return textResult(lines.join("\n"), {
       tool: "qmd_status",
       knowledgeBases: kbs,
-      qmdStatus: data,
     });
   } catch (err) {
     return textResult(
@@ -669,6 +782,25 @@ export default function qmdSearchExtension(pi: ExtensionAPI): void {
       parameters: MultiGetSchema,
       execute(_id, params, _signal, _onUpdate, ctx) {
         return execMultiGet(ctx, params as MultiGetOpts);
+      },
+    });
+
+    pi.registerTool({
+      name: "qmd_search",
+      label: "QMD Search",
+      description:
+        "Full-text BM25 keyword search across qmd knowledge bases (no LLM). Fast and reliable for keyword lookups.",
+      promptSnippet:
+        "qmd_search: full-text keyword search across knowledge bases (no LLM).",
+      promptGuidelines: [
+        "Use qmd_search for fast keyword/BM25 search when you know exact terms.",
+        "Unlike qmd_query, this does NOT use LLM query expansion or reranking.",
+        "Use collections to restrict to specific collections.",
+        "When you find relevant documents, use qmd_get to read the full content.",
+      ],
+      parameters: SearchSchema,
+      execute(_id, params, _signal, _onUpdate, ctx) {
+        return execSearch(ctx, params as SearchOpts);
       },
     });
 

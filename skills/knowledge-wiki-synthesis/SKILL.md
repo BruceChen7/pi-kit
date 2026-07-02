@@ -1,3 +1,11 @@
+---
+name: knowledge-wiki-synthesis
+description: >
+  Creates synthesis-type wiki concepts — higher-level abstractions derived from multiple
+  source summaries. Uses wiki-concept.mjs with --type Synthesis. Run after processing
+  source summaries to create cross-cutting concept views.
+---
+
 # knowledge-wiki-synthesis
 
 Creates synthesis-type wiki concepts — higher-level abstractions derived from multiple source summaries. Uses `wiki-concept.mjs` with `--type Synthesis`.

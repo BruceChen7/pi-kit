@@ -1,3 +1,10 @@
+---
+name: knowledge-wiki-merge
+description: >
+  Suggests concept merge candidates where two concepts share multiple sources, and updates
+  wikilinks after merging. Use for deduplicating wiki concepts.
+---
+
 # knowledge-wiki-merge
 
 Suggests concept merge candidates and updates backlinks after merging. Uses `candidates.mjs` and `wiki-backlinks.mjs`.

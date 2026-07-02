@@ -12,9 +12,9 @@ Creates synthesis-type wiki concepts — higher-level abstractions derived from 
 
 ## Dependencies
 
-- `scripts/wiki/wiki-concept.mjs` — the concept management script
-- `scripts/wiki/wiki-state.mjs` — for tracking unprocessed summaries
-- `scripts/wiki/lib/` — shared library
+- `../scripts/wiki-concept.mjs` — the concept management script
+- `../scripts/wiki-state.mjs` — for tracking unprocessed summaries
+- `../scripts/lib/` — shared library
 - qmd knowledge base with Wiki/Concepts/ and Wiki/Summaries/ directories
 
 ## Workflow
@@ -24,7 +24,7 @@ Creates synthesis-type wiki concepts — higher-level abstractions derived from 
 Check which summaries have been created/updated since the last synthesis run:
 
 ```bash
-node scripts/wiki/wiki-state.mjs find-unprocessed-summaries knowledge-wiki-synthesis --base-path /path/to/knowledge-base
+node ../scripts/wiki-state.mjs find-unprocessed-summaries knowledge-wiki-synthesis --base-path /path/to/knowledge-base
 ```
 
 ### 2. Create the synthesis concept
@@ -32,7 +32,7 @@ node scripts/wiki/wiki-state.mjs find-unprocessed-summaries knowledge-wiki-synth
 Use `wiki-concept.mjs create` with `--type Synthesis`:
 
 ```bash
-node scripts/wiki/wiki-concept.mjs create <slug> "<display-name>" --type Synthesis --icon notepad --base-path /path/to/knowledge-base
+node ../scripts/wiki-concept.mjs create <slug> "<display-name>" --type Synthesis --icon notepad --base-path /path/to/knowledge-base
 ```
 
 ### 3. Insert synthesized content
@@ -42,5 +42,5 @@ Add source links to the concept. The body should be written by the LLM based on 
 ### 4. Record the run timestamp
 
 ```bash
-node scripts/wiki/wiki-state.mjs set-last-run knowledge-wiki-synthesis --base-path /path/to/knowledge-base
+node ../scripts/wiki-state.mjs set-last-run knowledge-wiki-synthesis --base-path /path/to/knowledge-base
 ```

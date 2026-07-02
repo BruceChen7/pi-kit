@@ -11,8 +11,8 @@ Creates and manages wiki summary files using the `wiki-summary.mjs` script.
 
 ## Dependencies
 
-- `scripts/wiki/wiki-summary.mjs` — the summary management script
-- `scripts/wiki/lib/` — shared library
+- `../scripts/wiki-summary.mjs` — the summary management script
+- `../scripts/lib/` — shared library
 - qmd knowledge base with Wiki/Summaries/ directory
 
 ## Commands
@@ -22,7 +22,7 @@ Creates and manages wiki summary files using the `wiki-summary.mjs` script.
 Find source files whose summary is missing or whose content has changed:
 
 ```bash
-node scripts/wiki/wiki-summary.mjs list-stale --base-path /path/to/knowledge-base
+node ../scripts/wiki-summary.mjs list-stale --base-path /path/to/knowledge-base
 ```
 
 ### create
@@ -30,7 +30,7 @@ node scripts/wiki/wiki-summary.mjs list-stale --base-path /path/to/knowledge-bas
 Create (or overwrite) a summary file for a source path. Pipe the summary body via stdin:
 
 ```bash
-node scripts/wiki/wiki-summary.mjs create "Posts/Foo.md" --tags "[ai, writing]" --base-path /path/to/knowledge-base < /tmp/body.md
+node ../scripts/wiki-summary.mjs create "Posts/Foo.md" --tags "[ai, writing]" --base-path /path/to/knowledge-base < /tmp/body.md
 ```
 
 ### insert-concept
@@ -38,7 +38,7 @@ node scripts/wiki/wiki-summary.mjs create "Posts/Foo.md" --tags "[ai, writing]" 
 Add a [[Wiki/Concepts/...]] entry to the `## Key Concepts` section of a summary:
 
 ```bash
-node scripts/wiki/wiki-summary.mjs insert-concept - --base-path /path/to/knowledge-base <<'EOF'
+node ../scripts/wiki-summary.mjs insert-concept - --base-path /path/to/knowledge-base <<'EOF'
 Wiki/Summaries/Posts/Foo.summary.md
 feature-gating
 Feature Gating
@@ -51,7 +51,7 @@ EOF
 Remove a [[Wiki/Concepts/...]] entry from the `## Key Concepts` section:
 
 ```bash
-node scripts/wiki/wiki-summary.mjs delete-concept - --base-path /path/to/knowledge-base <<'EOF'
+node ../scripts/wiki-summary.mjs delete-concept - --base-path /path/to/knowledge-base <<'EOF'
 Wiki/Summaries/Posts/Foo.summary.md
 feature-gating
 EOF

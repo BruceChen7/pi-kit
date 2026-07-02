@@ -11,8 +11,8 @@ Wiki integrity checking. Uses `wiki-lint.mjs` to audit the wiki for broken links
 
 ## Dependencies
 
-- `scripts/wiki/wiki-lint.mjs` — the lint script
-- `scripts/wiki/lib/` — shared library
+- `../scripts/wiki-lint.mjs` — the lint script
+- `../scripts/lib/` — shared library
 - qmd knowledge base with Wiki/ directory
 
 ## Commands
@@ -20,13 +20,13 @@ Wiki integrity checking. Uses `wiki-lint.mjs` to audit the wiki for broken links
 All commands output JSON to stdout.
 
 ```bash
-node scripts/wiki/wiki-lint.mjs find-broken-concept-links --base-path /path/to/knowledge-base
-node scripts/wiki/wiki-lint.mjs find-broken-summary-links --base-path /path/to/knowledge-base
-node scripts/wiki/wiki-lint.mjs find-orphan-concepts --base-path /path/to/knowledge-base
-node scripts/wiki/wiki-lint.mjs find-orphan-summaries --base-path /path/to/knowledge-base
-node scripts/wiki/wiki-lint.mjs find-ungrounded-concepts --base-path /path/to/knowledge-base
-node scripts/wiki/wiki-lint.mjs find-self-links --base-path /path/to/knowledge-base
-node scripts/wiki/wiki-lint.mjs find-duplicate-concept-links --base-path /path/to/knowledge-base
+node ../scripts/wiki-lint.mjs find-broken-concept-links --base-path /path/to/knowledge-base
+node ../scripts/wiki-lint.mjs find-broken-summary-links --base-path /path/to/knowledge-base
+node ../scripts/wiki-lint.mjs find-orphan-concepts --base-path /path/to/knowledge-base
+node ../scripts/wiki-lint.mjs find-orphan-summaries --base-path /path/to/knowledge-base
+node ../scripts/wiki-lint.mjs find-ungrounded-concepts --base-path /path/to/knowledge-base
+node ../scripts/wiki-lint.mjs find-self-links --base-path /path/to/knowledge-base
+node ../scripts/wiki-lint.mjs find-duplicate-concept-links --base-path /path/to/knowledge-base
 ```
 
 ## Checks

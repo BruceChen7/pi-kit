@@ -41,6 +41,8 @@ const EXCLUDE = [
   ".clawpatch/",
   ".git/",
   "node_modules/",
+  ".pi/",
+  "TODO/",
 ];
 
 function isExcluded(relPath, isDir) {

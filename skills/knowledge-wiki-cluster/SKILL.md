@@ -1,3 +1,11 @@
+---
+name: knowledge-wiki-cluster
+description: >
+  Suggests parent-concept clusters where multiple child concepts imply a missing parent
+  concept. Uses candidates.mjs find-implied-parent-concepts to detect groups like
+  react-auth + react-routing implying react. Use when maintaining wiki concept hierarchies.
+---
+
 # knowledge-wiki-cluster
 
 Suggests parent-concept clusters where multiple child concepts imply a missing parent concept. Uses `candidates.mjs find-implied-parent-concepts`.

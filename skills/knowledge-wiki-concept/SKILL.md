@@ -1,3 +1,11 @@
+---
+name: knowledge-wiki-concept
+description: >
+  Creates and manages wiki concept files — create skeleton concepts, insert/delete source
+  links and connected concept links. Use when building or maintaining wiki knowledge base
+  concepts.
+---
+
 # knowledge-wiki-concept
 
 Creates and manages wiki concept files using the `wiki-concept.mjs` script.

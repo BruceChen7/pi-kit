@@ -1,3 +1,10 @@
+---
+name: knowledge-wiki-summary
+description: >
+  Creates and manages wiki summary files: list stale summaries, create/overwrite summaries,
+  insert/delete concept references. Use when building or updating wiki summaries.
+---
+
 # knowledge-wiki-summary
 
 Creates and manages wiki summary files using the `wiki-summary.mjs` script.

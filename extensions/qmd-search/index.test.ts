@@ -53,6 +53,9 @@ import extension, {
   buildGetArgs,
   buildMultiGetArgs,
   buildQueryArgs,
+  buildSearchArgs,
+  computeNeedsUpdate,
+  formatToolResult,
   safeJson,
 } from "./index.js";
 
@@ -233,6 +236,46 @@ describe("safeJson", () => {
   });
 });
 
+// ── Pure functions: formatToolResult ──────────────────────────────────
+
+describe("formatToolResult", () => {
+  it("formats array data with count", () => {
+    const result = formatToolResult("search", "ipc", [
+      { file: "docs/ipc.md", score: 0.95 },
+    ]);
+    expect(result.text).toContain("QMD Search: ipc");
+    expect(result.text).toContain("Found 1 result.");
+    expect(result.details.tool).toBe("qmd_search");
+    expect(result.details.resultCount).toBe(1);
+  });
+
+  it("formats empty array as no results", () => {
+    const result = formatToolResult("query", "nothing", []);
+    expect(result.text).toContain("No results found.");
+    expect(result.details.resultCount).toBe(0);
+  });
+
+  it("formats non-array data with count 1", () => {
+    const data = { file: "docs/guide.md", title: "Guide" };
+    const result = formatToolResult("get", "guide", data);
+    expect(result.text).toContain("QMD Get: guide");
+    expect(result.details.resultCount).toBe(1);
+  });
+
+  it("includes JSON code block in output", () => {
+    const data = [{ id: 1 }];
+    const result = formatToolResult("search", "test", data);
+    expect(result.text).toContain("```json");
+    expect(result.text).toContain('"id"');
+  });
+
+  it("handles plural count", () => {
+    const data = [{ id: 1 }, { id: 2 }];
+    const result = formatToolResult("query", "multi", data);
+    expect(result.text).toContain("Found 2 results.");
+  });
+});
+
 // ── Pure functions: args builders ─────────────────────────────────────
 
 describe("buildQueryArgs", () => {
@@ -301,21 +344,19 @@ describe("buildGetArgs", () => {
     expect(buildGetArgs({ file: "docs/api.md" })).toEqual([
       "get",
       "docs/api.md",
-      "--json",
     ]);
   });
 
   it("includes fromLine and maxLines", () => {
     expect(
       buildGetArgs({ file: "docs/api.md", fromLine: 10, maxLines: 50 }),
-    ).toEqual(["get", "docs/api.md", "--json", "--from", "10", "-l", "50"]);
+    ).toEqual(["get", "docs/api.md", "--from", "10", "-l", "50"]);
   });
 
   it("includes --no-line-numbers", () => {
     expect(buildGetArgs({ file: "docs/api.md", lineNumbers: false })).toEqual([
       "get",
       "docs/api.md",
-      "--json",
       "--no-line-numbers",
     ]);
   });
@@ -345,6 +386,32 @@ describe("buildMultiGetArgs", () => {
       "20480",
       "-l",
       "100",
+    ]);
+  });
+});
+
+describe("buildSearchArgs", () => {
+  it("builds minimal args", () => {
+    expect(buildSearchArgs({ query: "ipc" })).toEqual([
+      "search",
+      "ipc",
+      "--json",
+    ]);
+  });
+
+  it("includes collection filters", () => {
+    expect(
+      buildSearchArgs({ query: "ipc", collections: ["my_notes"] }),
+    ).toEqual(["search", "ipc", "--json", "-c", "my_notes"]);
+  });
+
+  it("includes limit", () => {
+    expect(buildSearchArgs({ query: "ipc", limit: 5 })).toEqual([
+      "search",
+      "ipc",
+      "--json",
+      "-n",
+      "5",
     ]);
   });
 });
@@ -395,7 +462,7 @@ describe("binary detection", () => {
     );
   });
 
-  it("registers 4 tools when qmd binary is found", async () => {
+  it("registers 5 tools when qmd binary is found", async () => {
     mockExecFile(qmdAvailableMatchers());
 
     const ext = registerExtension();
@@ -407,10 +474,73 @@ describe("binary detection", () => {
         "qmd_query",
         "qmd_get",
         "qmd_multi_get",
+        "qmd_search",
         "qmd_status",
       ]),
     );
-    expect(ext.tools).toHaveLength(4);
+    expect(ext.tools).toHaveLength(5);
+  });
+});
+
+// ── Pure functions: computeNeedsUpdate ────────────────────────────────
+
+describe("computeNeedsUpdate", () => {
+  it("returns needsUpdate=false when no dirs provided", () => {
+    const result = computeNeedsUpdate([], new Map(), new Map());
+    expect(result.needsUpdate).toBe(false);
+    expect(result.updatedMtimes.size).toBe(0);
+  });
+
+  it("returns needsUpdate=true when dir has no previous mtime", () => {
+    const dirs = [{ dir: "/kb/wiki" }];
+    const current = new Map([["/kb/wiki", 1000]]);
+    const result = computeNeedsUpdate(dirs, current, new Map());
+    expect(result.needsUpdate).toBe(true);
+    expect(result.updatedMtimes.get("/kb/wiki")).toBe(1000);
+  });
+
+  it("returns needsUpdate=true when mtime increased", () => {
+    const dirs = [{ dir: "/kb/wiki" }];
+    const current = new Map([["/kb/wiki", 2000]]);
+    const previous = new Map([["/kb/wiki", 1000]]);
+    const result = computeNeedsUpdate(dirs, current, previous);
+    expect(result.needsUpdate).toBe(true);
+    expect(result.updatedMtimes.get("/kb/wiki")).toBe(2000);
+  });
+
+  it("returns needsUpdate=false when mtime unchanged", () => {
+    const dirs = [{ dir: "/kb/wiki" }];
+    const current = new Map([["/kb/wiki", 1000]]);
+    const previous = new Map([["/kb/wiki", 1000]]);
+    const result = computeNeedsUpdate(dirs, current, previous);
+    expect(result.needsUpdate).toBe(false);
+    expect(result.updatedMtimes.get("/kb/wiki")).toBe(1000);
+  });
+
+  it("skips dirs with no current mtime (stat failed)", () => {
+    const dirs = [{ dir: "/kb/missing" }];
+    const current = new Map();
+    const previous = new Map();
+    const result = computeNeedsUpdate(dirs, current, previous);
+    expect(result.needsUpdate).toBe(false);
+  });
+
+  it("handles multiple dirs with mixed states", () => {
+    const dirs = [{ dir: "/kb/a" }, { dir: "/kb/b" }, { dir: "/kb/c" }];
+    const current = new Map([
+      ["/kb/a", 100],
+      ["/kb/b", 200],
+      ["/kb/c", 300],
+    ]);
+    const previous = new Map([
+      ["/kb/a", 100],
+      ["/kb/b", 150],
+    ]);
+    const result = computeNeedsUpdate(dirs, current, previous);
+    expect(result.needsUpdate).toBe(true);
+    expect(result.updatedMtimes.get("/kb/a")).toBe(100);
+    expect(result.updatedMtimes.get("/kb/b")).toBe(200);
+    expect(result.updatedMtimes.get("/kb/c")).toBe(300);
   });
 });
 
@@ -467,9 +597,8 @@ describe("tool execution", () => {
       maxLines: 100,
     });
 
-    expect((result.details.result as { file: string }).file).toBe(
-      "docs/api.md",
-    );
+    expect(result.details.file).toBe("docs/api.md");
+    expect(result.content[0].text).toContain("API Reference");
   });
 
   it("executes qmd multi_get and returns batch results", async () => {
@@ -496,6 +625,70 @@ describe("tool execution", () => {
     expect(docs).toHaveLength(2);
     expect(docs[0].file).toBe("docs/api.md");
     expect(docs[1].file).toBe("docs/auth.md");
+  });
+
+  it("executes qmd search and returns results in details", async () => {
+    const searchOutput = JSON.stringify([
+      { file: "docs/ipc.md", title: "IPC Overview", score: 0.95 },
+      { file: "docs/pipe.md", title: "Pipes", score: 0.82 },
+    ]);
+
+    const tool = await getToolAfterStart("qmd_search", [
+      ...qmdAvailableMatchers(),
+      {
+        cmd: "qmd",
+        subcommand: "search",
+        handle: (cb) => cb(null, searchOutput, ""),
+      },
+    ]);
+
+    const result = await callTool(tool, "call-search", {
+      query: "ipc",
+      limit: 5,
+    });
+
+    expect(result.details.resultCount).toBe(2);
+    expect((result.details.results as Array<{ file: string }>)[0].file).toBe(
+      "docs/ipc.md",
+    );
+  });
+
+  it("returns error details when qmd search returns non-JSON output", async () => {
+    const tool = await getToolAfterStart("qmd_search", [
+      ...qmdAvailableMatchers(),
+      {
+        cmd: "qmd",
+        subcommand: "search",
+        handle: (cb) => cb(null, "Not JSON output", ""),
+      },
+    ]);
+
+    const result = await callTool(tool, "call-search-nonjson", {
+      query: "test",
+    });
+
+    expect(result.details.tool).toBe("qmd_search");
+    expect(result.content[0].text).toBeDefined();
+    expect(result.content[0].text.length).toBeGreaterThan(0);
+    // Raw CLI output should appear in the error message
+    expect(result.content[0].text).toContain("Not JSON output");
+  });
+
+  it("handles qmd search failure gracefully", async () => {
+    const tool = await getToolAfterStart("qmd_search", [
+      ...qmdAvailableMatchers(),
+      {
+        cmd: "qmd",
+        subcommand: "search",
+        handle: (cb) => cb(new Error("search failed"), "", ""),
+      },
+    ]);
+
+    const result = await callTool(tool, "call-search-fail", {
+      query: "broken",
+    });
+
+    expect(result.details.error).toContain("search failed");
   });
 
   it("executes qmd status and includes knowledge base info", async () => {
@@ -815,5 +1008,19 @@ describe("tool definitions", () => {
     expect(params.properties?.pattern).toBeDefined();
     expect(params.properties?.maxBytes).toBeDefined();
     expect(params.properties?.maxLines).toBeDefined();
+  });
+
+  it("qmd_search has query, collections, limit params", async () => {
+    mockExecFile(qmdAvailableMatchers());
+    const ext = registerExtension();
+    await triggerSessionStart(ext);
+
+    const tool = ext.tools.find(
+      (t) => t.name === "qmd_search",
+    ) as RegisteredTool;
+    const params = tool.parameters as { properties?: Record<string, unknown> };
+    expect(params.properties?.query).toBeDefined();
+    expect(params.properties?.collections).toBeDefined();
+    expect(params.properties?.limit).toBeDefined();
   });
 });

@@ -1,3 +1,10 @@
+---
+name: knowledge-wiki-state
+description: >
+  Manages wiki state: .state.json read/write, index maintenance (upsert/delete/sort/find
+  gaps), and processed-summary tracking. Utility skill used by other knowledge-wiki skills.
+---
+
 # knowledge-wiki-state
 
 Manages wiki state: reads/writes Wiki/.state.json, index maintenance, and processed-summary tracking. Used as a utility by other knowledge-wiki skills.

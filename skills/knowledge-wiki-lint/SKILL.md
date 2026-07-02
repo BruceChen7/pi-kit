@@ -1,3 +1,10 @@
+---
+name: knowledge-wiki-lint
+description: >
+  Wiki integrity checking: broken concept links, broken summary links, orphan files,
+  ungrounded concepts, self-links, and duplicate links. Use to audit wiki health.
+---
+
 # knowledge-wiki-lint
 
 Wiki integrity checking. Uses `wiki-lint.mjs` to audit the wiki for broken links, orphan files, and structural issues.

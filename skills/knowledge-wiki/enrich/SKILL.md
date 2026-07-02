@@ -12,9 +12,9 @@ Finds wiki files and index entries that need attention: unsummarized sources, mi
 
 ## Dependencies
 
-- `scripts/wiki/wiki-summary.mjs` — staleness detection
-- `scripts/wiki/wiki-index.mjs` — index gap detection
-- `scripts/wiki/lib/` — shared library
+- `../scripts/wiki-summary.mjs` — staleness detection
+- `../scripts/wiki-index.mjs` — index gap detection
+- `../scripts/lib/` — shared library
 - qmd knowledge base with Wiki/ and source directories
 
 ## Commands
@@ -22,7 +22,7 @@ Finds wiki files and index entries that need attention: unsummarized sources, mi
 ### Find stale and missing summaries
 
 ```bash
-node scripts/wiki/wiki-summary.mjs list-stale --base-path /path/to/knowledge-base
+node ../scripts/wiki-summary.mjs list-stale --base-path /path/to/knowledge-base
 ```
 
 Output: `{ "sources": ["rel/path.md", ...] }` — source files whose summary is missing or whose content hash has changed.
@@ -31,19 +31,19 @@ Output: `{ "sources": ["rel/path.md", ...] }` — source files whose summary is 
 
 ```bash
 # Summary files on disk that have no entry in Wiki/index.md
-node scripts/wiki/wiki-index.mjs find-missing-summaries --base-path /path/to/knowledge-base
+node ../scripts/wiki-index.mjs find-missing-summaries --base-path /path/to/knowledge-base
 
 # Concept files on disk that have no entry in Wiki/index.md
-node scripts/wiki/wiki-index.mjs find-missing-concepts --base-path /path/to/knowledge-base
+node ../scripts/wiki-index.mjs find-missing-concepts --base-path /path/to/knowledge-base
 
 # Dead index entries where the file no longer exists
-node scripts/wiki/wiki-index.mjs delete-dead-links --base-path /path/to/knowledge-base
+node ../scripts/wiki-index.mjs delete-dead-links --base-path /path/to/knowledge-base
 ```
 
 ### Sort index
 
 ```bash
-node scripts/wiki/wiki-index.mjs sort --base-path /path/to/knowledge-base
+node ../scripts/wiki-index.mjs sort --base-path /path/to/knowledge-base
 ```
 
 ## Workflow

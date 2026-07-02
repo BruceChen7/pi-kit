@@ -12,8 +12,8 @@ Creates and manages wiki concept files using the `wiki-concept.mjs` script.
 
 ## Dependencies
 
-- `scripts/wiki/wiki-concept.mjs` — the concept management script
-- `scripts/wiki/lib/` — shared library
+- `../scripts/wiki-concept.mjs` — the concept management script
+- `../scripts/lib/` — shared library
 - qmd knowledge base with Wiki/Concepts/ directory
 
 ## Commands
@@ -23,7 +23,7 @@ Creates and manages wiki concept files using the `wiki-concept.mjs` script.
 Create a skeleton concept file:
 
 ```bash
-node scripts/wiki/wiki-concept.mjs create <slug> "<display-name>" --base-path /path/to/knowledge-base
+node ../scripts/wiki-concept.mjs create <slug> "<display-name>" --base-path /path/to/knowledge-base
 ```
 
 Optional: `--type <Concept|Synthesis>` (default Concept), `--icon <note|notepad>` (default note).
@@ -33,7 +33,7 @@ Optional: `--type <Concept|Synthesis>` (default Concept), `--icon <note|notepad>
 Append a source link to the `## Sources` section:
 
 ```bash
-node scripts/wiki/wiki-concept.mjs insert-source <slug> "Wiki/Summaries/Posts/Foo.summary" --base-path /path/to/knowledge-base
+node ../scripts/wiki-concept.mjs insert-source <slug> "Wiki/Summaries/Posts/Foo.summary" --base-path /path/to/knowledge-base
 ```
 
 ### delete-source
@@ -41,7 +41,7 @@ node scripts/wiki/wiki-concept.mjs insert-source <slug> "Wiki/Summaries/Posts/Fo
 Remove a source link from the `## Sources` section:
 
 ```bash
-node scripts/wiki/wiki-concept.mjs delete-source <slug> "Wiki/Summaries/Posts/Foo.summary" --base-path /path/to/knowledge-base
+node ../scripts/wiki-concept.mjs delete-source <slug> "Wiki/Summaries/Posts/Foo.summary" --base-path /path/to/knowledge-base
 ```
 
 ### insert-connected-concept
@@ -49,7 +49,7 @@ node scripts/wiki/wiki-concept.mjs delete-source <slug> "Wiki/Summaries/Posts/Fo
 Add a connected concept link to the `## Connected Concepts` section:
 
 ```bash
-node scripts/wiki/wiki-concept.mjs insert-connected-concept <slug> <linked-slug> "<display-name>" --base-path /path/to/knowledge-base
+node ../scripts/wiki-concept.mjs insert-connected-concept <slug> <linked-slug> "<display-name>" --base-path /path/to/knowledge-base
 ```
 
 ### delete-connected-concept
@@ -57,5 +57,5 @@ node scripts/wiki/wiki-concept.mjs insert-connected-concept <slug> <linked-slug>
 Remove a connected concept link:
 
 ```bash
-node scripts/wiki/wiki-concept.mjs delete-connected-concept <slug> <linked-slug> --base-path /path/to/knowledge-base
+node ../scripts/wiki-concept.mjs delete-connected-concept <slug> <linked-slug> --base-path /path/to/knowledge-base
 ```

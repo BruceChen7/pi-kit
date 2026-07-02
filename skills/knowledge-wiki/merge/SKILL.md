@@ -11,9 +11,9 @@ Suggests concept merge candidates and updates backlinks after merging. Uses `can
 
 ## Dependencies
 
-- `scripts/wiki/candidates.mjs` — candidate detection
-- `scripts/wiki/wiki-backlinks.mjs` — backlink updates after merge
-- `scripts/wiki/lib/` — shared library
+- `../scripts/candidates.mjs` — candidate detection
+- `../scripts/wiki-backlinks.mjs` — backlink updates after merge
+- `../scripts/lib/` — shared library
 - qmd knowledge base with Wiki/Concepts/, Wiki/Summaries/ directories
 
 ## Workflow
@@ -23,7 +23,7 @@ Suggests concept merge candidates and updates backlinks after merging. Uses `can
 Concepts that share 2+ source summaries may be candidates for merging:
 
 ```bash
-node scripts/wiki/candidates.mjs find-shared-source-concepts --base-path /path/to/knowledge-base
+node ../scripts/candidates.mjs find-shared-source-concepts --base-path /path/to/knowledge-base
 ```
 
 ### 2. Dismiss a false positive
@@ -31,7 +31,7 @@ node scripts/wiki/candidates.mjs find-shared-source-concepts --base-path /path/t
 If the pair should NOT be merged, dismiss it so it never appears again:
 
 ```bash
-node scripts/wiki/wiki-state.mjs dismiss-pair knowledge-wiki-merge \
+node ../scripts/wiki-state.mjs dismiss-pair knowledge-wiki-merge \
   "Wiki/Concepts/concept-a.md" "Wiki/Concepts/concept-b.md" \
   --base-path /path/to/knowledge-base
 ```
@@ -41,7 +41,7 @@ node scripts/wiki/wiki-state.mjs dismiss-pair knowledge-wiki-merge \
 After merging concept files, update all wikilinks pointing to the secondary concept:
 
 ```bash
-node scripts/wiki/wiki-backlinks.mjs update-after-merge \
+node ../scripts/wiki-backlinks.mjs update-after-merge \
   Wiki/Concepts/secondary.md \
   Wiki/Concepts/primary.md \
   "Primary Display Name" \
@@ -53,5 +53,5 @@ node scripts/wiki/wiki-backlinks.mjs update-after-merge \
 Remove dismissed pairs where at least one concept file no longer exists:
 
 ```bash
-node scripts/wiki/wiki-state.mjs prune-merge-pairs --base-path /path/to/knowledge-base
+node ../scripts/wiki-state.mjs prune-merge-pairs --base-path /path/to/knowledge-base
 ```

@@ -20,126 +20,50 @@ qmd search "your query"
 
 Once qmd is installed, the extension automatically detects it at session startup and registers 4 tools + 3 slash commands.
 
-## Workflow: create → update → query
+## Workflow: daily cycle
 
-### 1. Prepare your wiki directory
+A knowledge wiki repo follows a 5-step daily loop (source folders → summaries → concepts):
 
-Put markdown files anywhere you like. A typical wiki looks like:
+### 1. Write notes
+Put `.md` files in source folders (`Notes/`, `Ideas/`, `Docs/`, etc.).
+Each file should focus on one topic. Standard Markdown recommended.
 
-```
-~/work/my-wiki/
-├── Wiki/
-│   ├── Concepts/
-│   │   └── feature-gating.md
-│   ├── Summaries/
-│   │   └── Posts/
-│   │       └── my-post.summary.md
-│   └── index.md
-└── Posts/
-    └── my-post.md
-```
+### 2. Index
+Run `qmd update` (full-text) + `qmd embed` (vectors) to index new content.
+If you configured auto-indexing (see below), changes are picked up automatically within 3 seconds.
 
-You can also start simpler — just a flat folder of `.md` files. The `Wiki/` structure is optional and only needed if you use the `knowledge-wiki-*` skills.
+### 3. /knowledge-wiki-summary
+Run this in Pi chat. It scans source files, computes content hashes (skips unchanged ones), and writes structured summaries (tags, abstract, key concepts) to `Wiki/Summaries/`.
 
-### 2. Register the collection with qmd
+### 4. /knowledge-wiki-concept
+Run after summary. It reads `## Key Concepts` from each summary and creates/updates concept articles in `Wiki/Concepts/`, with backlinks to source summaries.
 
-```bash
-# Replace with your actual path
-qmd collection add ~/work/my-wiki --name my-wiki
-```
+### 5. Review
+Quick-check `Wiki/Summaries/`, `Wiki/Concepts/`, and `Wiki/index.md` for correctness.
 
-Verify it shows up:
+### Periodic maintenance
 
-```bash
-qmd collection list
-```
+| Scenario | Command | Frequency |
+|----------|---------|-----------|
+| 5+ new concepts accumulated | `/knowledge-wiki-synthesis` | weekly |
+| Source files moved/deleted | `/knowledge-wiki-lint` | after reorganization |
+| Thin concepts (< 150 字，≤ 2 sources) | `/knowledge-wiki-enrich` | monthly |
+| Duplicate concepts found | `/knowledge-wiki-merge` | as needed |
+| Too fragmented / missing parent topic | `/knowledge-wiki-cluster` | as needed |
 
-### 3. Index the content
+### Searching
 
-```bash
-# Full-text index (fast)
-qmd update
-
-# Vector embeddings for semantic search (slower, one-time)
-qmd embed
-```
-
-### 4. (Optional) Register for auto-indexing
-
-Add the directory to your Pi config so the extension watches for changes:
-
-```json
-// .pi/third_extension_settings.json
-{
-  "qmdSearch": {
-    "knowledgeBases": {
-      "my-wiki": {
-        "path": "/Users/you/work/my-wiki",
-        "pattern": "**/*.md"
-      }
-    }
-  }
-}
-```
-
-After this, every time you save a `.md` file in `~/work/my-wiki/`, the extension automatically runs `qmd update` within 3 seconds.
-
-### 5. Query from Pi chat
-
-Once indexed, the agent will use `qmd_query` whenever you ask wiki-related questions:
+Agent uses `qmd_query` by default for knowledge base search. Falls back to `rg` (ripgrep) when qmd finds no results.
 
 ```text
-> Search my wiki for authentication patterns
-# Agent runs qmd_query → returns ranked results → reads top matches → answers
-
-> What does the wiki say about deployment?
-# Agent runs qmd_query → finds relevant docs → answers from content
-
-> Check my knowledge base status
-# Agent runs qmd_status → shows collection health
+> What does the wiki say about authentication patterns?
+# Agent: qmd_query → reads top matches → answers
 ```
 
-You can also trigger an explicit update manually:
+Manual search:
 
 ```text
-/qmd-update
-```
-
-### 6. Enrich the wiki (optional)
-
-Use the `knowledge-wiki-*` skills to build a proper wiki with summaries, concepts, and cross-links:
-
-```bash
-# Activate the skills
-/skill:knowledge-wiki-summary
-/skill:knowledge-wiki-concept
-```
-
-Then ask the agent to create summaries or concepts from your source documents.
-
-### Example: end-to-end session
-
-```text
-# 1. Prepare
-$ mkdir -p ~/work/my-wiki/Posts
-$ echo "# Hello World" > ~/work/my-wiki/Posts/intro.md
-
-# 2. Register & index
-$ qmd collection add ~/work/my-wiki --name my-wiki
-$ qmd update
-$ qmd embed
-
-# 3. In Pi chat
-> /qmd-doctor
-> Search my wiki for introduction
-> /qmd-update
-
-# 4. Add a new file
-$ echo "# Authentication" > ~/work/my-wiki/Posts/auth.md
-
-# 5. (Auto-indexed if configured) or manual
-> /qmd-update
-> What does the wiki say about authentication?
+rg "向量数据库" --type md
 ```
 
 ## Prerequisites

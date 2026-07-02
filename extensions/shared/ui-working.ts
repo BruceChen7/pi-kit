@@ -19,10 +19,12 @@ type WorkingLoaderDismissedResult = {
 
 export type WorkingLoaderControls = {
   dismiss: () => void;
+  signal: AbortSignal;
 };
 
 type WorkingLoaderOptions = {
   message?: string;
+  cancellable?: boolean;
 };
 
 export async function runWithWorkingLoader<T>(
@@ -30,17 +32,14 @@ export async function runWithWorkingLoader<T>(
   workflow: (controls: WorkingLoaderControls) => Promise<T>,
   options: WorkingLoaderOptions = {},
 ): Promise<T> {
-  const controls: WorkingLoaderControls = {
-    dismiss() {
-      // no-op without a custom loader
-    },
-  };
+  const { message = "Working...", cancellable = false } = options;
 
+  // Headless fallback: no UI, run workflow directly with a never-aborted signal
   if (!ctx.hasUI || typeof ctx.ui.custom !== "function") {
-    return workflow(controls);
+    const signal = new AbortController().signal;
+    return workflow({ dismiss() {}, signal });
   }
 
-  const { message = "Working..." } = options;
   let closeLoader:
     | ((result: WorkingLoaderResult<T> | WorkingLoaderDismissedResult) => void)
     | null = null;
@@ -58,8 +57,11 @@ export async function runWithWorkingLoader<T>(
     closeLoader?.(result);
   };
 
-  controls.dismiss = () => {
-    finishLoader({ dismissed: true });
+  const controls: WorkingLoaderControls = {
+    dismiss() {
+      finishLoader({ dismissed: true });
+    },
+    signal: undefined as unknown as AbortSignal,
   };
 
   const uiResult = await ctx.ui.custom<
@@ -68,8 +70,14 @@ export async function runWithWorkingLoader<T>(
     closeLoader = done;
 
     const loader = new BorderedLoader(tui, theme, message, {
-      cancellable: false,
+      cancellable,
     });
+
+    if (cancellable) {
+      loader.onAbort = () => done({ dismissed: true });
+    }
+
+    controls.signal = loader.signal;
 
     workflowPromise = (async (): Promise<WorkingLoaderResult<T>> => {
       try {

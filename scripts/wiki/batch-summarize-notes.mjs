@@ -90,12 +90,21 @@ function summarizeBody(body, tags, headings) {
       !l.match(/^https?:\/\//) &&
       !l.match(/^#+ /),
   );
-  const firstContent = meaningfulLines
-    .slice(0, 20)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 300);
+
+  // Keep first meaningful lines with original line breaks, limit total length
+  const previewLines = [];
+  let remaining = 400;
+  for (const line of meaningfulLines.slice(0, 15)) {
+    const trimmed = line.trim();
+    if (remaining <= 0) break;
+    if (trimmed.length <= remaining) {
+      previewLines.push(trimmed);
+      remaining -= trimmed.length;
+    } else {
+      previewLines.push(trimmed.slice(0, Math.max(0, remaining - 1)) + "…");
+      break;
+    }
+  }
 
   const parts = [];
   if (tags.length > 0) {
@@ -103,11 +112,11 @@ function summarizeBody(body, tags, headings) {
   }
   if (headings.length > 0) {
     parts.push(
-      `**Topics:** ${headings.slice(0, 8).join(", ")}${headings.length > 8 ? "..." : ""}`,
+      `**Topics:** ${headings.slice(0, 8).join(", ")}${headings.length > 8 ? "…" : ""}`,
     );
   }
-  if (firstContent) {
-    parts.push(`\n${firstContent}${firstContent.length >= 300 ? "…" : ""}`);
+  if (previewLines.length > 0) {
+    parts.push(previewLines.join("\n"));
   } else if (lines.length === 0) {
     parts.push("*(Empty note)*");
   }

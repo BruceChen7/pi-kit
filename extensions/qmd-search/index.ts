@@ -25,6 +25,7 @@ import type {
 import { Type } from "typebox";
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
+import { runWithWorkingLoader } from "../shared/ui-working.ts";
 
 const execFileAsync = promisify(execFile);
 const log = createLogger("qmd-search", { stderr: null });
@@ -839,7 +840,38 @@ export default function qmdSearchExtension(pi: ExtensionAPI): void {
 
     pi.registerCommand("qmd-embed", {
       description: "Generate vector embeddings for all qmd indexed documents.",
-      handler: makeQmdCommandHandler("embed", 300_000),
+      handler: async (_args: string, ctx: ExtensionCommandContext) => {
+        const env = {
+          ...process.env,
+          QMD_EMBED_MODEL:
+            "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf",
+        };
+
+        try {
+          const output = await runWithWorkingLoader(
+            ctx,
+            async (controls) => {
+              const { stdout, stderr } = await execFileAsync("qmd", ["embed"], {
+                cwd: ctx.cwd,
+                timeout: 300_000,
+                signal: controls.signal,
+                env,
+              });
+              return [stdout, stderr].filter(Boolean).join("\n").trim();
+            },
+            {
+              message: "Running qmd embed (generating vector embeddings)...",
+              cancellable: true,
+            },
+          );
+          ctx.ui.notify(output || "embed done (no output)", "info");
+        } catch (err) {
+          ctx.ui.notify(
+            `embed failed: ${err instanceof Error ? err.message : String(err)}`,
+            "warning",
+          );
+        }
+      },
     });
 
     pi.registerCommand("qmd-doctor", {

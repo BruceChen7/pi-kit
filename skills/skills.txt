@@ -48,11 +48,11 @@ opencli-browser|local|skills/opencli-browser
 opencli-autofix|local|skills/opencli-autofix
 opencli-adapter-author|local|skills/opencli-adapter-author
 # knowledge-wiki — wiki knowledge base management skills for qmd
-knowledge-wiki-summary|local|skills/knowledge-wiki-summary
-knowledge-wiki-concept|local|skills/knowledge-wiki-concept
-knowledge-wiki-synthesis|local|skills/knowledge-wiki-synthesis
-knowledge-wiki-merge|local|skills/knowledge-wiki-merge
-knowledge-wiki-cluster|local|skills/knowledge-wiki-cluster
-knowledge-wiki-lint|local|skills/knowledge-wiki-lint
-knowledge-wiki-state|local|skills/knowledge-wiki-state
-knowledge-wiki-enrich|local|skills/knowledge-wiki-enrich
+knowledge-wiki-summary|local|skills/knowledge-wiki/summary
+knowledge-wiki-concept|local|skills/knowledge-wiki/concept
+knowledge-wiki-synthesis|local|skills/knowledge-wiki/synthesis
+knowledge-wiki-merge|local|skills/knowledge-wiki/merge
+knowledge-wiki-cluster|local|skills/knowledge-wiki/cluster
+knowledge-wiki-lint|local|skills/knowledge-wiki/lint
+knowledge-wiki-state|local|skills/knowledge-wiki/state
+knowledge-wiki-enrich|local|skills/knowledge-wiki/enrich

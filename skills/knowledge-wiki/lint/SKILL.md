@@ -11,22 +11,34 @@ Wiki integrity checking. Uses `wiki-lint.mjs` to audit the wiki for broken links
 
 ## Dependencies
 
-- `../scripts/wiki-lint.mjs` — the lint script
-- `../scripts/lib/` — shared library
+- `./wiki-lint.mjs` — the lint script
+- `./lib/` — local helper modules for this skill
 - qmd knowledge base with Wiki/ directory
+
+## Path Resolution
+
+Resolve every local path (`./*.mjs`, `./lib/*.mjs`) relative to the source skill directory that contains this `SKILL.md`.
+
+Do not resolve these paths relative to `~/.pi/skills/...` or the current working directory.
+
+Example for this skill:
+
+- source skill directory: `skills/knowledge-wiki/lint/`
+- `./wiki-lint.mjs` resolves to `skills/knowledge-wiki/lint/wiki-lint.mjs`
+- `./lib/` resolves inside the same skill directory
 
 ## Commands
 
 All commands output JSON to stdout.
 
 ```bash
-node ../scripts/wiki-lint.mjs find-broken-concept-links --base-path /path/to/knowledge-base
-node ../scripts/wiki-lint.mjs find-broken-summary-links --base-path /path/to/knowledge-base
-node ../scripts/wiki-lint.mjs find-orphan-concepts --base-path /path/to/knowledge-base
-node ../scripts/wiki-lint.mjs find-orphan-summaries --base-path /path/to/knowledge-base
-node ../scripts/wiki-lint.mjs find-ungrounded-concepts --base-path /path/to/knowledge-base
-node ../scripts/wiki-lint.mjs find-self-links --base-path /path/to/knowledge-base
-node ../scripts/wiki-lint.mjs find-duplicate-concept-links --base-path /path/to/knowledge-base
+node ./wiki-lint.mjs find-broken-concept-links --base-path /path/to/knowledge-base
+node ./wiki-lint.mjs find-broken-summary-links --base-path /path/to/knowledge-base
+node ./wiki-lint.mjs find-orphan-concepts --base-path /path/to/knowledge-base
+node ./wiki-lint.mjs find-orphan-summaries --base-path /path/to/knowledge-base
+node ./wiki-lint.mjs find-ungrounded-concepts --base-path /path/to/knowledge-base
+node ./wiki-lint.mjs find-self-links --base-path /path/to/knowledge-base
+node ./wiki-lint.mjs find-duplicate-concept-links --base-path /path/to/knowledge-base
 ```
 
 ## Checks

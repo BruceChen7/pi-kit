@@ -12,17 +12,30 @@ Finds wiki files and index entries that need attention: unsummarized sources, mi
 
 ## Dependencies
 
-- `../scripts/wiki-summary.mjs` — staleness detection
-- `../scripts/wiki-index.mjs` — index gap detection
-- `../scripts/lib/` — shared library
+- `./wiki-summary.mjs` — staleness detection
+- `./wiki-index.mjs` — index gap detection
+- `./lib/` — local helper modules for this skill
 - qmd knowledge base with Wiki/ and source directories
+
+## Path Resolution
+
+Resolve every local path (`./*.mjs`, `./lib/*.mjs`) relative to the source skill directory that contains this `SKILL.md`.
+
+Do not resolve these paths relative to `~/.pi/skills/...` or the current working directory.
+
+Example for this skill:
+
+- source skill directory: `skills/knowledge-wiki/enrich/`
+- `./wiki-summary.mjs` resolves to `skills/knowledge-wiki/enrich/wiki-summary.mjs`
+- `./wiki-index.mjs` resolves to `skills/knowledge-wiki/enrich/wiki-index.mjs`
+- `./lib/` resolves inside the same skill directory
 
 ## Commands
 
 ### Find stale and missing summaries
 
 ```bash
-node ../scripts/wiki-summary.mjs list-stale --base-path /path/to/knowledge-base
+node ./wiki-summary.mjs list-stale --base-path /path/to/knowledge-base
 ```
 
 Output: `{ "sources": ["rel/path.md", ...] }` — source files whose summary is missing or whose content hash has changed.
@@ -31,19 +44,19 @@ Output: `{ "sources": ["rel/path.md", ...] }` — source files whose summary is 
 
 ```bash
 # Summary files on disk that have no entry in Wiki/index.md
-node ../scripts/wiki-index.mjs find-missing-summaries --base-path /path/to/knowledge-base
+node ./wiki-index.mjs find-missing-summaries --base-path /path/to/knowledge-base
 
 # Concept files on disk that have no entry in Wiki/index.md
-node ../scripts/wiki-index.mjs find-missing-concepts --base-path /path/to/knowledge-base
+node ./wiki-index.mjs find-missing-concepts --base-path /path/to/knowledge-base
 
 # Dead index entries where the file no longer exists
-node ../scripts/wiki-index.mjs delete-dead-links --base-path /path/to/knowledge-base
+node ./wiki-index.mjs delete-dead-links --base-path /path/to/knowledge-base
 ```
 
 ### Sort index
 
 ```bash
-node ../scripts/wiki-index.mjs sort --base-path /path/to/knowledge-base
+node ./wiki-index.mjs sort --base-path /path/to/knowledge-base
 ```
 
 ## Workflow

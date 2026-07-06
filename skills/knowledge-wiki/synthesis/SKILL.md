@@ -12,10 +12,23 @@ Creates synthesis-type wiki concepts — higher-level abstractions derived from 
 
 ## Dependencies
 
-- `../scripts/wiki-concept.mjs` — the concept management script
-- `../scripts/wiki-state.mjs` — for tracking unprocessed summaries
-- `../scripts/lib/` — shared library
+- `./wiki-concept.mjs` — the concept management script
+- `./wiki-state.mjs` — for tracking unprocessed summaries
+- `./lib/` — local helper modules for this skill
 - qmd knowledge base with Wiki/Concepts/ and Wiki/Summaries/ directories
+
+## Path Resolution
+
+Resolve every local path (`./*.mjs`, `./lib/*.mjs`) relative to the source skill directory that contains this `SKILL.md`.
+
+Do not resolve these paths relative to `~/.pi/skills/...` or the current working directory.
+
+Example for this skill:
+
+- source skill directory: `skills/knowledge-wiki/synthesis/`
+- `./wiki-concept.mjs` resolves to `skills/knowledge-wiki/synthesis/wiki-concept.mjs`
+- `./wiki-state.mjs` resolves to `skills/knowledge-wiki/synthesis/wiki-state.mjs`
+- `./lib/` resolves inside the same skill directory
 
 ## Workflow
 
@@ -24,7 +37,7 @@ Creates synthesis-type wiki concepts — higher-level abstractions derived from 
 Check which summaries have been created/updated since the last synthesis run:
 
 ```bash
-node ../scripts/wiki-state.mjs find-unprocessed-summaries knowledge-wiki-synthesis --base-path /path/to/knowledge-base
+node ./wiki-state.mjs find-unprocessed-summaries knowledge-wiki-synthesis --base-path /path/to/knowledge-base
 ```
 
 ### 2. Create the synthesis concept
@@ -32,7 +45,7 @@ node ../scripts/wiki-state.mjs find-unprocessed-summaries knowledge-wiki-synthes
 Use `wiki-concept.mjs create` with `--type Synthesis`:
 
 ```bash
-node ../scripts/wiki-concept.mjs create <slug> "<display-name>" --type Synthesis --icon notepad --base-path /path/to/knowledge-base
+node ./wiki-concept.mjs create <slug> "<display-name>" --type Synthesis --icon notepad --base-path /path/to/knowledge-base
 ```
 
 ### 3. Insert synthesized content
@@ -42,5 +55,5 @@ Add source links to the concept. The body should be written by the LLM based on 
 ### 4. Record the run timestamp
 
 ```bash
-node ../scripts/wiki-state.mjs set-last-run knowledge-wiki-synthesis --base-path /path/to/knowledge-base
+node ./wiki-state.mjs set-last-run knowledge-wiki-synthesis --base-path /path/to/knowledge-base
 ```

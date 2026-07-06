@@ -11,9 +11,21 @@ Creates and manages wiki summary files using the `wiki-summary.mjs` script.
 
 ## Dependencies
 
-- `../scripts/wiki-summary.mjs` — the summary management script
-- `../scripts/lib/` — shared library
+- `./wiki-summary.mjs` — the summary management script
+- `./lib/` — local helper modules for this skill
 - qmd knowledge base with Wiki/Summaries/ directory
+
+## Path Resolution
+
+Resolve every local path (`./*.mjs`, `./lib/*.mjs`) relative to the source skill directory that contains this `SKILL.md`.
+
+Do not resolve these paths relative to `~/.pi/skills/...` or the current working directory.
+
+Example for this skill:
+
+- source skill directory: `skills/knowledge-wiki/summary/`
+- `./wiki-summary.mjs` resolves to `skills/knowledge-wiki/summary/wiki-summary.mjs`
+- `./lib/` resolves inside the same skill directory
 
 ## Commands
 
@@ -22,7 +34,7 @@ Creates and manages wiki summary files using the `wiki-summary.mjs` script.
 Find source files whose summary is missing or whose content has changed:
 
 ```bash
-node ../scripts/wiki-summary.mjs list-stale --base-path /path/to/knowledge-base
+node ./wiki-summary.mjs list-stale --base-path /path/to/knowledge-base
 ```
 
 ### create
@@ -30,7 +42,7 @@ node ../scripts/wiki-summary.mjs list-stale --base-path /path/to/knowledge-base
 Create (or overwrite) a summary file for a source path. Pipe the summary body via stdin:
 
 ```bash
-node ../scripts/wiki-summary.mjs create "Posts/Foo.md" --tags "[ai, writing]" --base-path /path/to/knowledge-base < /tmp/body.md
+node ./wiki-summary.mjs create "Posts/Foo.md" --tags "[ai, writing]" --base-path /path/to/knowledge-base < /tmp/body.md
 ```
 
 ### insert-concept
@@ -38,7 +50,7 @@ node ../scripts/wiki-summary.mjs create "Posts/Foo.md" --tags "[ai, writing]" --
 Add a [[Wiki/Concepts/...]] entry to the `## Key Concepts` section of a summary:
 
 ```bash
-node ../scripts/wiki-summary.mjs insert-concept - --base-path /path/to/knowledge-base <<'EOF'
+node ./wiki-summary.mjs insert-concept - --base-path /path/to/knowledge-base <<'EOF'
 Wiki/Summaries/Posts/Foo.summary.md
 feature-gating
 Feature Gating
@@ -51,7 +63,7 @@ EOF
 Remove a [[Wiki/Concepts/...]] entry from the `## Key Concepts` section:
 
 ```bash
-node ../scripts/wiki-summary.mjs delete-concept - --base-path /path/to/knowledge-base <<'EOF'
+node ./wiki-summary.mjs delete-concept - --base-path /path/to/knowledge-base <<'EOF'
 Wiki/Summaries/Posts/Foo.summary.md
 feature-gating
 EOF

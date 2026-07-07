@@ -340,7 +340,7 @@ describe("herdr transport", () => {
 
   it("fails closed when herdr CLI errors", async () => {
     process.env.HERDR_PANE_ID = "pane-789";
-    const execFile = await mockHerdrExec(new Error("herdr not found"));
+    const _execFile = await mockHerdrExec(new Error("herdr not found"));
     const harness = await buildNotifyHarness();
 
     await emitAgentEnd(harness, {

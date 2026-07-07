@@ -64,6 +64,7 @@ function createSubagentHandler(): ExecContext["subagent"] {
     const {
       prompt,
       extensionPaths,
+      promptTemplatePaths,
       timeoutMs = 30_000,
       spawnOptions,
     } = options;
@@ -80,6 +81,12 @@ function createSubagentHandler(): ExecContext["subagent"] {
     if (extensionPaths && extensionPaths.length > 0) {
       for (const ext of extensionPaths) {
         args.push("-e", ext);
+      }
+    }
+
+    if (promptTemplatePaths && promptTemplatePaths.length > 0) {
+      for (const pt of promptTemplatePaths) {
+        args.push("--prompt-template", pt);
       }
     }
 

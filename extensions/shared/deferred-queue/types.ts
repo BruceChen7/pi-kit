@@ -26,6 +26,11 @@ export interface SubagentOptions {
    * If empty, the subagent runs with minimal extensions (--no-extensions).
    */
   extensionPaths?: string[];
+  /**
+   * Optional list of prompt template paths to load via --prompt-template.
+   * Pi's native mechanism for loading reusable prompt instructions.
+   */
+  promptTemplatePaths?: string[];
   /** Optional spawn options override. */
   spawnOptions?: Partial<SpawnOptions>;
   /** Timeout in ms (default: 30_000). */

@@ -11,53 +11,46 @@ import { defineTask } from "../../shared/deferred-queue/define-task.ts";
 import { log } from "../../shared/deferred-queue/logger.ts";
 import { sendTelegramNotification } from "../../shared/telegram.ts";
 
-const CHUNK_MAX_LENGTH = 3800;
 const TELEGRAM_MAX_LENGTH = 4096;
-const CHUNK_PREFIX = "📑 X Bookmarks\n\n";
 const LIMIT = 50;
 const CHECKPOINT_PATH = join(
   homedir(),
   ".pi",
   "agent",
-  "x-bookmarks-checkpoint.json",
+  "raindrop-bookmarks-checkpoint.json",
 );
-const CHECKPOINT_FIELD = "lastHeadTweetId";
+const CHECKPOINT_FIELD = "lastCreatedAt";
 
 // ── Types ──────────────────────────────────────────────
 
 /** A single bookmark entry from the opencli JSON output. */
 export interface BookmarkItem {
-  id: string;
-  author: string;
-  name: string;
-  text: string;
-  likes: number;
-  retweets: number;
-  bookmarks: number;
-  created_at: string;
-  url: string;
-  has_media: boolean;
-  media_urls: string[];
+  title: string;
+  link: string;
+  domain: string;
+  created: string;
+  tags: string[];
+  excerpt: string;
 }
 
 /** On-disk checkpoint state (persisted to JSON). */
 export interface CheckpointState {
-  /** id of the most recently seen bookmark (null = first run). */
-  lastHeadTweetId: string | null;
+  /** ISO 8601 timestamp of the most recently seen bookmark (null = first run). */
+  lastCreatedAt: string | null;
 }
 
 /**
  * Result of the incremental decision logic.
  *
  * - `init` — first run, checkpoint recorded; **do not push** anything.
- * - `increment` — checkpoint found in the fetched range; push items before it.
+ * - `increment` — checkpoint found in the fetched range; push items after it.
  * - `warning` — checkpoint not found; push all fetched items with a truncation warning.
  * - `skip` — no new items, do nothing.
  */
 export type IncrementDecision =
-  | { kind: "init"; items: BookmarkItem[]; headId: string }
-  | { kind: "increment"; items: BookmarkItem[]; headId: string }
-  | { kind: "warning"; items: BookmarkItem[]; headId: string }
+  | { kind: "init"; items: BookmarkItem[]; headCreated: string }
+  | { kind: "increment"; items: BookmarkItem[]; headCreated: string }
+  | { kind: "warning"; items: BookmarkItem[]; headCreated: string }
   | { kind: "skip" };
 
 // ── Pure core: incremental decision ────────────────────
@@ -65,9 +58,8 @@ export type IncrementDecision =
 /**
  * Given the current fetch result and the persisted checkpoint, decide what to do.
  *
- * The opencli bookmarks API returns items newest-first. Any items that
- * appear *before* the checkpoint (earlier in the array) are newer bookmarks
- * we haven't seen yet.
+ * The opencli bookmarks API returns items newest-first (most recent bookmark
+ * at index 0). Items with `created > lastCreatedAt` are new.
  *
  * No IO, no side effects — fully testable.
  */
@@ -77,32 +69,33 @@ export function computeIncrement(
 ): IncrementDecision {
   if (items.length === 0) return { kind: "skip" };
 
-  const headId = items[0].id;
+  const headCreated = items[0].created;
 
-  if (state.lastHeadTweetId === null) {
-    return { kind: "init", items, headId };
+  if (state.lastCreatedAt === null) {
+    return { kind: "init", items, headCreated };
   }
 
+  // Find the index where created <= lastCreatedAt (items we've seen before)
+  // lastCreatedAt is non-null here because we returned `init` above when null.
+  const lastCreatedAt = state.lastCreatedAt;
   const checkpointIdx = items.findIndex(
-    (item) => item.id === state.lastHeadTweetId,
+    (item) => item.created <= lastCreatedAt,
   );
 
   if (checkpointIdx === -1) {
-    return { kind: "warning", items, headId };
+    return { kind: "warning", items, headCreated };
   }
 
   const newItems = items.slice(0, checkpointIdx);
   if (newItems.length === 0) return { kind: "skip" };
 
-  return { kind: "increment", items: newItems, headId };
+  return { kind: "increment", items: newItems, headCreated };
 }
 
 // ── Pure core: format items as Markdown ─────────────────
 
 /**
  * Convert a list of bookmark items into reading-friendly Markdown.
- *
- * If `warning` is provided, prepend it above the list in a blockquote.
  */
 export function formatIncrement(
   items: BookmarkItem[],
@@ -116,14 +109,14 @@ export function formatIncrement(
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    const truncated =
-      item.text.length > 300 ? `${item.text.slice(0, 300)}…` : item.text;
+    const excerpt = item.excerpt ? `\n💬 ${item.excerpt.slice(0, 200)}` : "";
+    const tags = item.tags.length > 0 ? ` 🏷️ ${item.tags.join(", ")}` : "";
+
     parts.push(
-      `## ${i + 1}.`,
-      `- 作者：@${item.author}`,
-      `- 时间：${item.created_at}`,
-      `- 内容：${truncated}`,
-      `- 链接：${item.url}`,
+      `## ${i + 1}. **${item.title}**`,
+      `🔗 ${item.link}`,
+      `📍 ${item.domain}${tags}`,
+      excerpt,
     );
   }
 
@@ -133,15 +126,15 @@ export function formatIncrement(
 // ── Task handler ───────────────────────────────────────
 
 export default defineTask({
-  id: "x-bookmarks-fetch",
-  every: "24h",
-  description: "Fetch X bookmarks daily via Pi agent",
+  id: "raindrop-bookmarks-fetch",
+  every: "1h",
+  description: "获取 Raindrop.io 新增书签并通过 Telegram 推送",
   handler: async (exec) => {
-    log.info("starting bookmarks fetch via opencli");
+    log.info("starting raindrop bookmarks fetch via opencli");
 
     // ── 1. Shell: run opencli ──────────────────────────────
     const result = await exec.exec("opencli", [
-      "twitter",
+      "raindrop",
       "bookmarks",
       "--limit",
       String(LIMIT),
@@ -150,7 +143,7 @@ export default defineTask({
     ]);
 
     if (result.code !== 0) {
-      log.warn("opencli bookmarks failed", {
+      log.warn("opencli raindrop bookmarks failed", {
         exitCode: result.code,
         stderr: result.stderr.slice(0, 500),
       });
@@ -169,11 +162,11 @@ export default defineTask({
       return;
     }
 
-    log.info("opencli bookmarks fetched", { count: items.length });
+    log.info("opencli raindrop bookmarks fetched", { count: items.length });
 
     // ── 3. Pure: decide what to push ────────────────────────
-    const lastHeadTweetId = loadCheckpoint(CHECKPOINT_PATH, CHECKPOINT_FIELD);
-    const state: CheckpointState = { lastHeadTweetId };
+    const lastCreatedAt = loadCheckpoint(CHECKPOINT_PATH, CHECKPOINT_FIELD);
+    const state: CheckpointState = { lastCreatedAt };
     const decision = computeIncrement(items, state);
 
     log.info("increment decision", { kind: decision.kind });
@@ -185,22 +178,25 @@ export default defineTask({
 
     if (decision.kind === "init") {
       log.info("first run — pushing all bookmarks", {
-        headId: decision.headId,
+        headCreated: decision.headCreated,
         count: decision.items.length,
       });
     }
 
     // ── 4. Pure: format items as Markdown ──────────────────
+    const isInit = decision.kind === "init";
     const warning =
       decision.kind === "warning" ? buildTruncationWarning(LIMIT) : undefined;
 
     const markdown = formatIncrement(decision.items, warning);
+    const prefix = isInit
+      ? `📑 Raindrop 首次全量同步（共 ${decision.items.length} 篇）\n\n`
+      : `📑 Raindrop 新增书签（${decision.items.length} 篇）\n\n`;
 
     // ── 5. Pure: chunk Markdown into Telegram HTML ──────────
     const chunks = prepareBookmarkChunks({
       rawOutput: markdown,
-      prefix: CHUNK_PREFIX,
-      maxChunkLength: CHUNK_MAX_LENGTH,
+      prefix,
       maxHtmlLength: TELEGRAM_MAX_LENGTH,
     });
 
@@ -225,9 +221,9 @@ export default defineTask({
     }
 
     // ── 7. All sent — persist new checkpoint ───────────────
-    saveCheckpoint(CHECKPOINT_FIELD, decision.headId, CHECKPOINT_PATH);
-    log.info("bookmarks fetch complete, checkpoint updated", {
-      headId: decision.headId,
+    saveCheckpoint(CHECKPOINT_FIELD, decision.headCreated, CHECKPOINT_PATH);
+    log.info("raindrop bookmarks fetch complete, checkpoint updated", {
+      headCreated: decision.headCreated,
     });
   },
 });

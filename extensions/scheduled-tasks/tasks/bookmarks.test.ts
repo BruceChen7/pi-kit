@@ -3,14 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  type BookmarkItem,
   buildTruncationWarning,
-  computeIncrement,
-  formatIncrement,
   loadCheckpoint,
   parseBookmarkItems,
   prepareBookmarkChunks,
   saveCheckpoint,
+} from "../../shared/bookmark-pipeline.ts";
+import {
+  type BookmarkItem,
+  computeIncrement,
+  formatIncrement,
 } from "./bookmarks.ts";
 
 const TELEGRAM_MAX = 4096;
@@ -56,10 +58,11 @@ describe("computeIncrement", () => {
     });
   });
 
-  it("returns init when no checkpoint exists and sets headId to first (most recent) item", () => {
+  it("returns init with all items when no checkpoint exists", () => {
     const items = [sampleItem({ id: "3" }), sampleItem({ id: "2" })];
     expect(computeIncrement(items, { lastHeadTweetId: null })).toEqual({
       kind: "init",
+      items,
       headId: "3",
     });
   });
@@ -167,30 +170,29 @@ describe("buildTruncationWarning", () => {
 });
 
 describe("loadCheckpoint / saveCheckpoint", () => {
-  it("returns null state when path does not exist", () => {
-    const state = loadCheckpoint("/nonexistent/path.json");
-    expect(state).toEqual({ lastHeadTweetId: null });
+  const FIELD = "lastHeadTweetId";
+
+  it("returns null when path does not exist", () => {
+    expect(loadCheckpoint("/nonexistent/path.json", FIELD)).toBeNull();
   });
 
   it("round-trips a checkpoint value", () => {
     const dir = tempDir();
     const path = join(dir, "checkpoint.json");
     try {
-      saveCheckpoint("abc123", path);
-      const state = loadCheckpoint(path);
-      expect(state).toEqual({ lastHeadTweetId: "abc123" });
+      saveCheckpoint(FIELD, "abc123", path);
+      expect(loadCheckpoint(path, FIELD)).toBe("abc123");
     } finally {
       cleanupDir(dir);
     }
   });
 
-  it("returns null state for corrupt JSON", () => {
+  it("returns null for corrupt JSON", () => {
     const dir = tempDir();
     const path = join(dir, "corrupt.json");
     try {
       writeFileSync(path, "not-json{", "utf-8");
-      const state = loadCheckpoint(path);
-      expect(state).toEqual({ lastHeadTweetId: null });
+      expect(loadCheckpoint(path, FIELD)).toBeNull();
     } finally {
       cleanupDir(dir);
     }
@@ -200,10 +202,9 @@ describe("loadCheckpoint / saveCheckpoint", () => {
     const dir = tempDir();
     const nested = join(dir, "sub", "nested", "checkpoint.json");
     try {
-      saveCheckpoint("xyz", nested);
+      saveCheckpoint(FIELD, "xyz", nested);
       expect(existsSync(nested)).toBe(true);
-      const state = loadCheckpoint(nested);
-      expect(state).toEqual({ lastHeadTweetId: "xyz" });
+      expect(loadCheckpoint(nested, FIELD)).toBe("xyz");
     } finally {
       cleanupDir(dir);
     }

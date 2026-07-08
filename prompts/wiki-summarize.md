@@ -96,7 +96,26 @@ After processing all files, run `list-stale` again:
 node <path-to-wiki-summary.mjs> list-stale --base-path <cwd>
 ```
 
-Confirm the output is `"sources": []`. Report a summary table of what was created/updated.
+Confirm the output is `"sources": []`.
+
+### Final output format
+
+End your response with a single JSON object on its own line. Use this exact schema:
+
+```json
+{
+  "ok": true,
+  "done": "Phase 1: N stale files. Phase 2: N summaries created. Phase 3: N concepts linked.",
+  "summaries": [
+    "Wiki/Summaries/Calendar/DailyNotes/2026/2026-07-06.summary.md",
+    "Wiki/Summaries/Calendar/DailyNotes/2026/2026-07-08.summary.md"
+  ]
+}
+```
+
+- `summaries`: array of **relative paths** to the summary files you created or updated (under `Wiki/Summaries/`). If nothing was created, use an empty array `[]`.
+- Include ALL summary files created — not a truncated list.
+- On failure, omit `summaries` and use `"done"` to describe the failure.
 
 ## Concept matching guidelines
 

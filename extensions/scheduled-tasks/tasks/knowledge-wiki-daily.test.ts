@@ -21,35 +21,60 @@ const WIKI_SUMMARIZE_FILE = path.resolve(
 
 describe("buildSubagentPrompt", () => {
   it("should include the knowledge base path", () => {
-    const result = buildSubagentPrompt();
+    const result = buildSubagentPrompt([]);
     expect(result).toContain("work/notes");
     expect(result).toContain("wiki-summary.mjs");
     expect(result).toContain("wiki-concept.mjs");
   });
 
   it("should include path replacement instructions", () => {
-    const result = buildSubagentPrompt();
+    const result = buildSubagentPrompt([]);
     expect(result).toContain("<cwd>");
     expect(result).toContain("<path-to-wiki-summary.mjs>");
     expect(result).toContain("<path-to-wiki-concept.mjs>");
   });
 
   it("should mention the 4-phase workflow", () => {
-    const result = buildSubagentPrompt();
+    const result = buildSubagentPrompt([]);
     expect(result).toContain("4 phases");
     expect(result).toContain("list-stale");
     expect(result).toContain("verify");
   });
 
-  it("should require a JSON output summary", () => {
-    const result = buildSubagentPrompt();
+  it("should require a JSON output summary with summaries field", () => {
+    const result = buildSubagentPrompt([]);
     expect(result).toContain('"ok"');
     expect(result).toContain('"done"');
+    expect(result).toContain('"summaries"');
   });
 
   it("should not contain @prompts/ reference (template is loaded via CLI arg)", () => {
-    const result = buildSubagentPrompt();
+    const result = buildSubagentPrompt([]);
     expect(result).not.toContain("@prompts/");
+  });
+
+  it("should list stale files when provided", () => {
+    const files = ["Notes/Foo.md", "Notes/Bar.md"];
+    const result = buildSubagentPrompt(files);
+    expect(result).toContain("Stale Files");
+    expect(result).toContain("2 total");
+    expect(result).toContain("Notes/Foo.md");
+    expect(result).toContain("Notes/Bar.md");
+  });
+
+  it("should show 'No stale files found' for empty list", () => {
+    const result = buildSubagentPrompt([]);
+    expect(result).toContain("No stale files found");
+  });
+
+  it("should truncate long stale file list beyond limit", () => {
+    const manyFiles = Array.from({ length: 25 }, (_, i) => `Notes/File${i}.md`);
+    const result = buildSubagentPrompt(manyFiles);
+    expect(result).toContain("25 stale files");
+    expect(result).toContain("listing first 20");
+    expect(result).toContain("Notes/File0.md");
+    expect(result).toContain("Notes/File19.md");
+    expect(result).not.toContain("Notes/File20.md");
   });
 });
 
@@ -128,6 +153,50 @@ describe("parseResultJson", () => {
     expect(result).not.toBeNull();
     expect(result?.ok).toBe(false);
     expect(result?.done).toContain("Something failed");
+  });
+
+  it("should parse summaries field when present", () => {
+    const text = JSON.stringify({
+      ok: true,
+      done: "Phase 1: 2 stale files. Phase 2: 2 summaries created. Phase 3: 5 concepts linked.",
+      summaries: [
+        "Wiki/Summaries/Foo.summary.md",
+        "Wiki/Summaries/Bar.summary.md",
+      ],
+    });
+
+    const result = parseResultJson(text);
+    expect(result).not.toBeNull();
+    expect(result?.ok).toBe(true);
+    expect(result?.summaries).toEqual([
+      "Wiki/Summaries/Foo.summary.md",
+      "Wiki/Summaries/Bar.summary.md",
+    ]);
+  });
+
+  it("should return undefined summaries when field is missing", () => {
+    const text = JSON.stringify({
+      ok: true,
+      done: "All done",
+    });
+
+    const result = parseResultJson(text);
+    expect(result).not.toBeNull();
+    expect(result?.ok).toBe(true);
+    expect(result?.summaries).toBeUndefined();
+  });
+
+  it("should return undefined summaries when field is not an array", () => {
+    const text = JSON.stringify({
+      ok: true,
+      done: "All done",
+      summaries: "not-an-array",
+    });
+
+    const result = parseResultJson(text);
+    expect(result).not.toBeNull();
+    expect(result?.ok).toBe(true);
+    expect(result?.summaries).toBeUndefined();
   });
 });
 

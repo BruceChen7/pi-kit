@@ -135,9 +135,13 @@ export function convertMarkdownToTelegramHtml(text: string): string {
  * Load Telegram config from global settings (remoteApproval.botToken / remoteApproval.chatId).
  *
  * IO function: reads settings from disk.
+ *
+ * @param cwd - Working directory for resolving project-level settings.
+ *              Defaults to process.cwd(). Pass explicitly to avoid implicit
+ *              dependency when called from non-session contexts.
  */
-export function loadTelegramConfig(): TelegramConfig {
-  const { global } = loadSettings(process.cwd());
+export function loadTelegramConfig(cwd?: string): TelegramConfig {
+  const { global } = loadSettings(cwd ?? process.cwd());
   const remoteApproval = global.remoteApproval as
     | Record<string, unknown>
     | undefined;
@@ -156,6 +160,26 @@ export function loadTelegramConfig(): TelegramConfig {
   }
 
   return { botToken, chatId };
+}
+
+/**
+ * Check whether Telegram is configured (botToken + chatId present in settings).
+ *
+ * Pure semantic wrapper around loadTelegramConfig() — callers don't need to
+ * know the config path or field names. Returns false when not configured
+ * instead of throwing.
+ *
+ * @param cwd - Working directory for resolving project-level settings.
+ *              Defaults to process.cwd(). Pass explicitly when calling from
+ *              non-session contexts to avoid implicit cwd dependency.
+ */
+export function isTelegramConfigured(cwd?: string): boolean {
+  try {
+    loadTelegramConfig(cwd);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

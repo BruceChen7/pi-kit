@@ -16,6 +16,7 @@ import {
 import { createQueue } from "../shared/deferred-queue/index.ts";
 import { log } from "../shared/deferred-queue/logger.ts";
 import type { TaskDefinition } from "../shared/deferred-queue/types.ts";
+import { isTelegramConfigured } from "../shared/telegram.ts";
 
 const WIDGET_KEY = "deferred-queue";
 const PERSIST_FILE = join(os.homedir(), ".pi", "agent", "deferred-queue.json");
@@ -76,6 +77,16 @@ export function formatRelativeTime(epochMs: number): string {
 }
 
 export default async function (pi: ExtensionAPI) {
+  // ── Telegram config guard ─────────────────────────────────────────────
+  // Most tasks depend on Telegram notifications. If not configured,
+  // skip the entire extension to avoid silent failures at runtime.
+  if (!isTelegramConfigured()) {
+    log.info(
+      "Telegram not configured (missing botToken/chatId), skipping scheduled-tasks extension",
+    );
+    return;
+  }
+
   const tasksDir = new URL("tasks", import.meta.url).pathname;
 
   log.info("extension loading", { tasksDir });

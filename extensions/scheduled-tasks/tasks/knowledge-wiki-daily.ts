@@ -2,8 +2,9 @@
  * knowledge-wiki-daily.ts — Daily knowledge base maintenance task.
  *
  * Pipeline:
+ *   Pre-step: run wiki-summary list-stale to get file list
  *   Step 1-3: Pi subagent with --prompt-template prompts/wiki-summarize.md
- *             - Phase 1: list-stale
+ *             - Phase 1: list-stale (from prompt)
  *             - Phase 2: AI summary generation
  *             - Phase 3: concept linking + auto-create concept files
  *             - Phase 4: verify
@@ -18,6 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineTask } from "../../shared/deferred-queue/define-task.ts";
 import { log } from "../../shared/deferred-queue/logger.ts";
+import { sendTelegramNotification } from "../../shared/telegram.ts";
 
 // ── Paths ──────────────────────────────────────────────────────────────────
 
@@ -49,13 +51,37 @@ const QMD_EMBED_MODEL =
 // ── Subagent prompt builder ───────────────────────────────────────────────
 
 /**
+ * Maximum number of stale files to list individually in the prompt.
+ * Beyond this, use a count summary to keep prompt length manageable.
+ */
+const STALE_FILES_PROMPT_LIMIT = 20;
+
+/**
  * Build the subagent user message (context only).
  *
  * The template itself is loaded by Pi's native --prompt-template mechanism.
- * This message provides the runtime configuration (KB path, script paths)
+ * This message provides the runtime configuration (KB path, script paths, stale file list)
  * that the agent uses to replace <cwd>, <path-to-wiki-summary.mjs>, etc.
+ *
+ * @param staleFiles - List of stale file paths (relative to knowledge base root)
+ *                     from the pre-step `list-stale` scan.
  */
-export function buildSubagentPrompt(): string {
+export function buildSubagentPrompt(staleFiles: string[]): string {
+  const fileList: string[] = [];
+
+  if (staleFiles.length === 0) {
+    fileList.push("No stale files found — nothing to update.");
+  } else if (staleFiles.length <= STALE_FILES_PROMPT_LIMIT) {
+    fileList.push(...staleFiles.map((f) => `  - ${f}`));
+  } else {
+    fileList.push(
+      `  (${staleFiles.length} stale files — listing first ${STALE_FILES_PROMPT_LIMIT})`,
+    );
+    for (const f of staleFiles.slice(0, STALE_FILES_PROMPT_LIMIT)) {
+      fileList.push(`  - ${f}`);
+    }
+  }
+
   return [
     `## Task Configuration`,
     "",
@@ -67,11 +93,16 @@ export function buildSubagentPrompt(): string {
     "Replace `<path-to-wiki-summary.mjs>` with the absolute path above when running node commands.",
     "Replace `<path-to-wiki-concept.mjs>` with the absolute path above when running node commands.",
     "",
+    `## Stale Files (${staleFiles.length} total)`,
+    "",
+    ...fileList,
+    "",
     "Proceed through all 4 phases (list-stale → generate summaries → link concepts → verify).",
     "",
     "When complete, output a JSON summary line matching this format:",
-    `{"ok": true, "done": "Phase 1: N stale files. Phase 2: N summaries created. Phase 3: N concepts linked."}`,
+    `{"ok": true, "done": "Phase 1: N stale files. Phase 2: N summaries created. Phase 3: N concepts linked.", "summaries": ["Wiki/Summaries/.../file.summary.md", "..."]}`,
     `On failure: {"ok": false, "done": "Phase X failed: <reason>"}`,
+    `Include the "summaries" field with the actual relative paths of all summary files created/updated.`,
     "",
     "Begin.",
   ].join("\n");
@@ -89,7 +120,7 @@ export function buildSubagentPrompt(): string {
  */
 export function parseResultJson(
   summary: string | undefined,
-): { ok: boolean; done?: string } | null {
+): { ok: boolean; done?: string; summaries?: string[] } | null {
   if (!summary) return null;
 
   for (let i = 0; i < summary.length; i++) {
@@ -127,7 +158,13 @@ export function parseResultJson(
     try {
       const parsed = JSON.parse(summary.slice(i, j + 1));
       if (typeof parsed.ok === "boolean") {
-        return { ok: parsed.ok, done: parsed.done };
+        return {
+          ok: parsed.ok,
+          done: parsed.done,
+          summaries: Array.isArray(parsed.summaries)
+            ? parsed.summaries
+            : undefined,
+        };
       }
     } catch {
       // Not valid JSON, try next {
@@ -137,9 +174,134 @@ export function parseResultJson(
   return null;
 }
 
-// ── Pi agent notification ─────────────────────────────────────────────────
+// ── Stale file listing ────────────────────────────────────────────────────
 
-// Uses exec.notify() — the Pi-supported agent notification channel.
+/**
+ * Run `wiki-summary.mjs list-stale` to get the list of stale source files.
+ *
+ * Returns an array of relative paths (e.g. `["Notes/Foo.md", "Notes/Bar.md"]`).
+ * On failure, returns an empty array and logs the error.
+ */
+async function listStaleFiles(exec: {
+  exec: (
+    cmd: string,
+    args?: string[],
+  ) => Promise<{ code: number; stdout: string; stderr: string }>;
+}): Promise<string[]> {
+  try {
+    const result = await exec.exec("node", [
+      SUMMARY_SCRIPT,
+      "list-stale",
+      "--base-path",
+      KNOWLEDGE_DIR,
+    ]);
+
+    if (result.code !== 0) {
+      log.warn("list-stale failed", {
+        exitCode: result.code,
+        stderr: result.stderr.slice(0, 500),
+      });
+      return [];
+    }
+
+    const parsed = JSON.parse(result.stdout) as { sources?: string[] };
+    if (!Array.isArray(parsed?.sources)) {
+      log.warn("list-stale returned unexpected format", {
+        stdout: result.stdout.slice(0, 500),
+      });
+      return [];
+    }
+
+    return parsed.sources;
+  } catch (err) {
+    log.warn("list-stale threw", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return [];
+  }
+}
+
+// ── Telegram message builders ─────────────────────────────────────────────
+
+/**
+ * Build a Telegram-safe HTML message for the final success notification.
+ *
+ * @param staleFiles - Source files that were stale (from pre-step list-stale).
+ * @param summaries - Summary files actually created/updated (from subagent output; authoritative when present).
+ * @param wikiSummary - Human-readable summary string from subagent.
+ * @param qmdUpdateOk - Whether qmd update succeeded.
+ * @param qmdEmbedOk - Whether qmd embed succeeded.
+ */
+function buildTelegramSuccessMessage(
+  staleFiles: string[],
+  summaries: string[] | undefined,
+  wikiSummary: string,
+  qmdUpdateOk: boolean,
+  qmdEmbedOk: boolean,
+): string {
+  const lines: string[] = ["✅ 知识库维护完成", ""];
+
+  // Show processed source files with their summaries
+  if (staleFiles.length > 0) {
+    lines.push(`📄 已处理的源文件（${staleFiles.length}个）：`);
+    // Truncate to keep Telegram message under 4096 chars
+    const maxFiles = 10;
+    const displayed = staleFiles.slice(0, maxFiles);
+    for (let i = 0; i < displayed.length; i++) {
+      lines.push(`<code>${escapeTelegramHtml(displayed[i])}</code>`);
+      // Use authoritative summaries from subagent when available, skip derivation
+      if (summaries && i < summaries.length) {
+        lines.push(`  └→ <code>${escapeTelegramHtml(summaries[i])}</code>`);
+      }
+    }
+    if (staleFiles.length > maxFiles) {
+      lines.push(`<code>... 还有 ${staleFiles.length - maxFiles} 个</code>`);
+    }
+    lines.push("");
+  }
+
+  lines.push(`📝 wiki-summarize：${wikiSummary}`);
+  lines.push(`🔍 qmd update：${qmdUpdateOk ? "✓" : "✗"}`);
+  lines.push(`🧠 qmd embed：${qmdEmbedOk ? "✓" : "✗"}`);
+
+  return lines.join("\n");
+}
+
+/**
+ * Build a Telegram-safe HTML message for failure notifications.
+ */
+function buildTelegramFailureMessage(
+  step: string,
+  error: string,
+  extra?: { exitCode?: number; stderr?: string },
+): string {
+  const lines: string[] = [
+    `❌ 知识库维护失败 — ${step}`,
+    "",
+    `错误：${escapeTelegramHtml(error)}`,
+  ];
+
+  if (extra?.exitCode !== undefined) {
+    lines.push(`exitCode：${extra.exitCode}`);
+  }
+  if (extra?.stderr) {
+    const snippet = extra.stderr.slice(0, 500);
+    lines.push(`stderr：${escapeTelegramHtml(snippet)}`);
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * Escape text for Telegram HTML (only & < > ").
+ */
+function escapeTelegramHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
 
 // ── Task handler ──────────────────────────────────────────────────────────
 
@@ -150,15 +312,26 @@ export default defineTask({
     "每日知识库维护：过期摘要重新生成、概念自动链接、qmd 索引和向量嵌入更新",
 
   handler: async (exec) => {
+    // ── Pre-step: list stale files ──────────────────────────────────────
+    log.info("Pre-step: list-stale");
+    const staleFiles = await listStaleFiles(exec);
+    log.info("stale files found", { count: staleFiles.length });
+
     // ── Step 1-3: Pi subagent with wiki-summarize prompt template ──────
     log.info("Step 1-3: subagent — wiki-summarize full pipeline");
 
+    let wikiSummaryDone = "unknown";
+    let qmdUpdateOk = false;
+    let qmdEmbedOk = false;
+    let createdSummaries: string[] | undefined;
+
     try {
-      const prompt = buildSubagentPrompt();
+      const prompt = buildSubagentPrompt(staleFiles);
       log.info("subagent prompt", {
         templatePath: PROMPT_TEMPLATE_PATH,
         promptLength: prompt.length,
         knowledgeDir: KNOWLEDGE_DIR,
+        staleFileCount: staleFiles.length,
       });
 
       const result = await exec.subagent({
@@ -176,21 +349,35 @@ export default defineTask({
       if (result.exitCode !== 0 || parsed?.ok === false) {
         const errorMsg =
           parsed?.done ?? result.stderr.slice(0, 500) ?? "unknown error";
-        exec.notify("知识库维护失败", `摘要/概念处理出错：${errorMsg}`);
         log.warn("wiki-summarize subagent failed", {
           exitCode: result.exitCode,
           error: errorMsg,
         });
+
+        await sendTelegramNotification(
+          buildTelegramFailureMessage("Step 1-3 (wiki-summarize)", errorMsg, {
+            exitCode: result.exitCode,
+            stderr: result.stderr,
+          }),
+        ).catch((e) =>
+          log.warn("telegram notify failed", { error: String(e) }),
+        );
         return;
       }
 
-      log.info("wiki-summarize pipeline completed", { summary: parsed?.done });
+      wikiSummaryDone = parsed?.done ?? "completed";
+      createdSummaries = parsed?.summaries;
+      log.info("wiki-summarize pipeline completed", {
+        summary: wikiSummaryDone,
+        summariesCount: createdSummaries?.length ?? 0,
+      });
     } catch (err) {
-      exec.notify(
-        "知识库维护异常",
-        `subagent 异常：${err instanceof Error ? err.message : String(err)}`,
-      );
-      log.warn("subagent call threw", { error: String(err) });
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      log.warn("subagent call threw", { error: errorMsg });
+
+      await sendTelegramNotification(
+        buildTelegramFailureMessage("Step 1-3 (wiki-summarize)", errorMsg),
+      ).catch((e) => log.warn("telegram notify failed", { error: String(e) }));
       return;
     }
 
@@ -200,17 +387,30 @@ export default defineTask({
     try {
       const { code } = await exec.exec("qmd", ["update"]);
       if (code !== 0) {
-        exec.notify("知识库维护失败", "qmd update 返回非零退出码");
         log.warn("qmd update failed", { exitCode: code });
+
+        await sendTelegramNotification(
+          buildTelegramFailureMessage(
+            "Step 4 (qmd update)",
+            "qmd update 返回非零退出码",
+            {
+              exitCode: code,
+            },
+          ),
+        ).catch((e) =>
+          log.warn("telegram notify failed", { error: String(e) }),
+        );
         return;
       }
+      qmdUpdateOk = true;
       log.info("qmd update completed");
     } catch (err) {
-      exec.notify(
-        "知识库维护失败",
-        `qmd update 异常：${err instanceof Error ? err.message : String(err)}`,
-      );
-      log.warn("qmd update threw", { error: String(err) });
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      log.warn("qmd update threw", { error: errorMsg });
+
+      await sendTelegramNotification(
+        buildTelegramFailureMessage("Step 4 (qmd update)", errorMsg),
+      ).catch((e) => log.warn("telegram notify failed", { error: String(e) }));
       return;
     }
 
@@ -223,17 +423,30 @@ export default defineTask({
     try {
       const { code } = await exec.exec("qmd", ["embed"]);
       if (code !== 0) {
-        exec.notify("知识库维护失败", "qmd embed 返回非零退出码");
         log.warn("qmd embed failed", { exitCode: code });
+
+        await sendTelegramNotification(
+          buildTelegramFailureMessage(
+            "Step 5 (qmd embed)",
+            "qmd embed 返回非零退出码",
+            {
+              exitCode: code,
+            },
+          ),
+        ).catch((e) =>
+          log.warn("telegram notify failed", { error: String(e) }),
+        );
         return;
       }
+      qmdEmbedOk = true;
       log.info("qmd embed completed");
     } catch (err) {
-      exec.notify(
-        "知识库维护失败",
-        `qmd embed 异常：${err instanceof Error ? err.message : String(err)}`,
-      );
-      log.warn("qmd embed threw", { error: String(err) });
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      log.warn("qmd embed threw", { error: errorMsg });
+
+      await sendTelegramNotification(
+        buildTelegramFailureMessage("Step 5 (qmd embed)", errorMsg),
+      ).catch((e) => log.warn("telegram notify failed", { error: String(e) }));
       return;
     } finally {
       if (prevModel === undefined) {
@@ -243,6 +456,18 @@ export default defineTask({
       }
     }
 
+    // ── Success: send Telegram notification ─────────────────────────────
+    const successMsg = buildTelegramSuccessMessage(
+      staleFiles,
+      createdSummaries,
+      wikiSummaryDone,
+      qmdUpdateOk,
+      qmdEmbedOk,
+    );
     log.info("knowledge-wiki-daily task completed successfully");
+
+    await sendTelegramNotification(successMsg).catch((e) =>
+      log.warn("telegram notify failed", { error: String(e) }),
+    );
   },
 });

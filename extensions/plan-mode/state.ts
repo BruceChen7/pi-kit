@@ -506,7 +506,11 @@ export class PlanModeState {
     this.clearContinuationTracking();
   }
 
-  switchApprovedPlanToAct(): void {
+  switchApprovedPlanToAct(preserveDirectAct = false): void {
+    if (preserveDirectAct) {
+      this.phase = PLAN_MODE_ACT;
+      return;
+    }
     this.mode = PLAN_MODE_PLAN;
     this.phase = PLAN_MODE_ACT;
   }

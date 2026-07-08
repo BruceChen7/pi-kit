@@ -621,7 +621,8 @@ export class PlanModeController {
         : "executing";
       this.state.activeRun.approvedAt = new Date().toISOString();
     }
-    this.state.switchApprovedPlanToAct();
+    const wasDirectAct = this.state.mode === "act";
+    this.state.switchApprovedPlanToAct(wasDirectAct);
     this.applyMode(ctx);
     this.persist();
   }

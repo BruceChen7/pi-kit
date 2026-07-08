@@ -382,7 +382,7 @@ describe("plan-mode extension: review lifecycle", () => {
         { deliverAs: "followUp" },
       );
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-        mode: "plan",
+        mode: "act",
         phase: "plan",
         activePlanPath: null,
         latestReviewArtifactPath: demoPlanPath,
@@ -408,7 +408,7 @@ describe("plan-mode extension: review lifecycle", () => {
 
       expectNoApprovedArtifactChangedFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-        mode: "plan",
+        mode: "act",
         phase: "act",
         activePlanPath: demoPlanPath,
         latestReviewArtifactPath: demoPlanPath,
@@ -434,7 +434,7 @@ describe("plan-mode extension: review lifecycle", () => {
 
       expectNoApprovedArtifactChangedFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-        mode: "plan",
+        mode: "act",
         phase: "act",
         activePlanPath: demoPlanPath,
         latestReviewArtifactPath: demoPlanPath,
@@ -463,7 +463,7 @@ describe("plan-mode extension: review lifecycle", () => {
         { deliverAs: "followUp" },
       );
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-        mode: "plan",
+        mode: "act",
         phase: "plan",
         activePlanPath: null,
         latestReviewArtifactPath: demoPlanPath,

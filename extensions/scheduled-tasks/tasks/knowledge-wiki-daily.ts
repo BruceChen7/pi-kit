@@ -226,8 +226,14 @@ async function listStaleFiles(exec: {
 /**
  * Build a Telegram-safe HTML message for the final success notification.
  *
- * @param staleFiles - Source files that were stale (from pre-step list-stale).
- * @param summaries - Summary files actually created/updated (from subagent output; authoritative when present).
+ * Uses the subagent's `summaries` as the authoritative data source for
+ * created/updated summary files. The pre-step `staleFiles` is shown as
+ * supplementary context when available.
+ *
+ * @param staleFiles - Source files that were stale (from pre-step list-stale;
+ *                     may be empty if pre-step failed).
+ * @param summaries - Summary files actually created/updated (from subagent
+ *                    output; authoritative when present).
  * @param wikiSummary - Human-readable summary string from subagent.
  * @param qmdUpdateOk - Whether qmd update succeeded.
  * @param qmdEmbedOk - Whether qmd embed succeeded.
@@ -240,22 +246,30 @@ function buildTelegramSuccessMessage(
   qmdEmbedOk: boolean,
 ): string {
   const lines: string[] = ["✅ 知识库维护完成", ""];
+  const maxFiles = 10;
 
-  // Show processed source files with their summaries
+  // ── Section: created summary files (authoritative, from subagent) ────
+  if (summaries && summaries.length > 0) {
+    lines.push(`<b>📄 已创建 / 更新（${summaries.length} 个 summary）</b>`);
+    const displayed = summaries.slice(0, maxFiles);
+    for (const s of displayed) {
+      lines.push(`  <code>${escapeTelegramHtml(s)}</code>`);
+    }
+    if (summaries.length > maxFiles) {
+      lines.push(`  <code>... 还有 ${summaries.length - maxFiles} 个</code>`);
+    }
+    lines.push("");
+  }
+
+  // ── Section: stale source files (supplementary, from pre-step) ───────
   if (staleFiles.length > 0) {
-    lines.push(`📄 已处理的源文件（${staleFiles.length}个）：`);
-    // Truncate to keep Telegram message under 4096 chars
-    const maxFiles = 10;
+    lines.push(`<b>📄 源文件（${staleFiles.length} 个 stale 文件）</b>`);
     const displayed = staleFiles.slice(0, maxFiles);
-    for (let i = 0; i < displayed.length; i++) {
-      lines.push(`<code>${escapeTelegramHtml(displayed[i])}</code>`);
-      // Use authoritative summaries from subagent when available, skip derivation
-      if (summaries && i < summaries.length) {
-        lines.push(`  └→ <code>${escapeTelegramHtml(summaries[i])}</code>`);
-      }
+    for (const f of displayed) {
+      lines.push(`  <code>${escapeTelegramHtml(f)}</code>`);
     }
     if (staleFiles.length > maxFiles) {
-      lines.push(`<code>... 还有 ${staleFiles.length - maxFiles} 个</code>`);
+      lines.push(`  <code>... 还有 ${staleFiles.length - maxFiles} 个</code>`);
     }
     lines.push("");
   }
@@ -466,7 +480,7 @@ export default defineTask({
     );
     log.info("knowledge-wiki-daily task completed successfully");
 
-    await sendTelegramNotification(successMsg).catch((e) =>
+    await sendTelegramNotification(successMsg, undefined, true).catch((e) =>
       log.warn("telegram notify failed", { error: String(e) }),
     );
   },

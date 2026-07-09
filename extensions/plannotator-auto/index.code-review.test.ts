@@ -4,6 +4,7 @@ import {
   createFakePi,
   createTestContext,
   flushMicrotasks,
+  mockHangingPlannotatorSpawn,
   mockPlannotatorSpawn,
 } from "./test-helpers.js";
 
@@ -222,5 +223,33 @@ describe("code review trigger timing", () => {
     } finally {
       await emit("session_shutdown", {}, ctx);
     }
+  });
+
+  it("kills hanging plannotator children on session_shutdown", async () => {
+    vi.resetModules();
+    const { spawn: hangingSpawn, getChild } = mockHangingPlannotatorSpawn();
+    mockCodeReviewApi();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit } = createFakePi();
+    plannotatorAuto(api as never);
+    const ctx = createTestContext("/repo");
+
+    await emit("session_start", {}, ctx);
+
+    // Fire-and-forget an annotate CLI call that hangs (child never exits).
+    const { runPlannotatorAnnotateCli } = await import("./cli.js");
+    void runPlannotatorAnnotateCli(ctx, "test.md", { timeoutMs: 60_000 });
+    await flushMicrotasks();
+
+    const child = getChild();
+    expect(child).not.toBeNull();
+    expect(hangingSpawn).toHaveBeenCalled();
+    expect(child?.kill).not.toHaveBeenCalled();
+
+    // session_shutdown should kill the hanging child
+    await emit("session_shutdown", {}, ctx);
+
+    expect(child?.kill).toHaveBeenCalled();
   });
 });

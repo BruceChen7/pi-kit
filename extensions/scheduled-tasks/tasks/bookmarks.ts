@@ -1,27 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  buildTruncationWarning,
-  loadCheckpoint,
-  parseBookmarkItems,
-  prepareBookmarkChunks,
-  saveCheckpoint,
+  type CheckpointState,
+  createBookmarkTask,
+  type IncrementDecision,
 } from "../../shared/bookmark-pipeline.ts";
-import { defineTask } from "../../shared/deferred-queue/define-task.ts";
-import { log } from "../../shared/deferred-queue/logger.ts";
-import { sendTelegramNotification } from "../../shared/telegram.ts";
-
-const CHUNK_MAX_LENGTH = 3800;
-const TELEGRAM_MAX_LENGTH = 4096;
-const CHUNK_PREFIX = "📑 X Bookmarks\n\n";
-const LIMIT = 50;
-const CHECKPOINT_PATH = join(
-  homedir(),
-  ".pi",
-  "agent",
-  "x-bookmarks-checkpoint.json",
-);
-const CHECKPOINT_FIELD = "lastHeadTweetId";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -40,26 +23,6 @@ export interface BookmarkItem {
   media_urls: string[];
 }
 
-/** On-disk checkpoint state (persisted to JSON). */
-export interface CheckpointState {
-  /** id of the most recently seen bookmark (null = first run). */
-  lastHeadTweetId: string | null;
-}
-
-/**
- * Result of the incremental decision logic.
- *
- * - `init` — first run, checkpoint recorded; **do not push** anything.
- * - `increment` — checkpoint found in the fetched range; push items before it.
- * - `warning` — checkpoint not found; push all fetched items with a truncation warning.
- * - `skip` — no new items, do nothing.
- */
-export type IncrementDecision =
-  | { kind: "init"; items: BookmarkItem[]; headId: string }
-  | { kind: "increment"; items: BookmarkItem[]; headId: string }
-  | { kind: "warning"; items: BookmarkItem[]; headId: string }
-  | { kind: "skip" };
-
 // ── Pure core: incremental decision ────────────────────
 
 /**
@@ -74,27 +37,27 @@ export type IncrementDecision =
 export function computeIncrement(
   items: BookmarkItem[],
   state: CheckpointState,
-): IncrementDecision {
+): IncrementDecision<BookmarkItem> {
   if (items.length === 0) return { kind: "skip" };
 
-  const headId = items[0].id;
+  const headValue = items[0].id;
 
-  if (state.lastHeadTweetId === null) {
-    return { kind: "init", items, headId };
+  if (state.lastCheckpointValue === null) {
+    return { kind: "init", items, headValue };
   }
 
   const checkpointIdx = items.findIndex(
-    (item) => item.id === state.lastHeadTweetId,
+    (item) => item.id === state.lastCheckpointValue,
   );
 
   if (checkpointIdx === -1) {
-    return { kind: "warning", items, headId };
+    return { kind: "warning", items, headValue };
   }
 
   const newItems = items.slice(0, checkpointIdx);
   if (newItems.length === 0) return { kind: "skip" };
 
-  return { kind: "increment", items: newItems, headId };
+  return { kind: "increment", items: newItems, headValue };
 }
 
 // ── Pure core: format items as Markdown ─────────────────
@@ -130,104 +93,24 @@ export function formatIncrement(
   return parts.join("\n");
 }
 
-// ── Task handler ───────────────────────────────────────
+// ── Task definition ────────────────────────────────────
 
-export default defineTask({
+const CHECKPOINT_PATH = join(
+  homedir(),
+  ".pi",
+  "agent",
+  "x-bookmarks-checkpoint.json",
+);
+
+export default createBookmarkTask<BookmarkItem>({
   id: "x-bookmarks-fetch",
   every: "24h",
   description: "Fetch X bookmarks daily via Pi agent",
-  handler: async (exec) => {
-    log.info("starting bookmarks fetch via opencli");
-
-    // ── 1. Shell: run opencli ──────────────────────────────
-    const result = await exec.exec("opencli", [
-      "twitter",
-      "bookmarks",
-      "--limit",
-      String(LIMIT),
-      "-f",
-      "json",
-    ]);
-
-    if (result.code !== 0) {
-      log.warn("opencli bookmarks failed", {
-        exitCode: result.code,
-        stderr: result.stderr.slice(0, 500),
-      });
-      return;
-    }
-
-    // ── 2. Parse JSON ──────────────────────────────────────
-    let items: BookmarkItem[];
-    try {
-      items = parseBookmarkItems<BookmarkItem>(result.stdout);
-    } catch (err) {
-      log.warn("failed to parse opencli JSON output", {
-        error: String(err),
-        stdoutSnippet: result.stdout.slice(0, 500),
-      });
-      return;
-    }
-
-    log.info("opencli bookmarks fetched", { count: items.length });
-
-    // ── 3. Pure: decide what to push ────────────────────────
-    const lastHeadTweetId = loadCheckpoint(CHECKPOINT_PATH, CHECKPOINT_FIELD);
-    const state: CheckpointState = { lastHeadTweetId };
-    const decision = computeIncrement(items, state);
-
-    log.info("increment decision", { kind: decision.kind });
-
-    if (decision.kind === "skip") {
-      log.info("no new bookmarks to push");
-      return;
-    }
-
-    if (decision.kind === "init") {
-      log.info("first run — pushing all bookmarks", {
-        headId: decision.headId,
-        count: decision.items.length,
-      });
-    }
-
-    // ── 4. Pure: format items as Markdown ──────────────────
-    const warning =
-      decision.kind === "warning" ? buildTruncationWarning(LIMIT) : undefined;
-
-    const markdown = formatIncrement(decision.items, warning);
-
-    // ── 5. Pure: chunk Markdown into Telegram HTML ──────────
-    const chunks = prepareBookmarkChunks({
-      rawOutput: markdown,
-      prefix: CHUNK_PREFIX,
-      maxChunkLength: CHUNK_MAX_LENGTH,
-      maxHtmlLength: TELEGRAM_MAX_LENGTH,
-    });
-
-    log.info("sending bookmark chunks", {
-      chunkCount: chunks.length,
-      newItems: decision.items.length,
-      decisionKind: decision.kind,
-    });
-
-    // ── 6. Shell: send each chunk via Telegram ─────────────
-    for (let i = 0; i < chunks.length; i++) {
-      try {
-        await sendTelegramNotification(chunks[i].html, undefined, true);
-        log.info("chunk sent", { chunkIndex: i });
-      } catch (err) {
-        log.warn("failed to send bookmark chunk", {
-          chunkIndex: i,
-          error: String(err),
-        });
-        return;
-      }
-    }
-
-    // ── 7. All sent — persist new checkpoint ───────────────
-    saveCheckpoint(CHECKPOINT_FIELD, decision.headId, CHECKPOINT_PATH);
-    log.info("bookmarks fetch complete, checkpoint updated", {
-      headId: decision.headId,
-    });
-  },
+  command: "opencli",
+  args: ["twitter", "bookmarks"],
+  checkpointPath: CHECKPOINT_PATH,
+  checkpointField: "lastHeadTweetId",
+  buildPrefix: () => "📑 X Bookmarks\n\n",
+  computeIncrement,
+  formatIncrement,
 });

@@ -218,7 +218,48 @@ export const scanPlanFiles = (ctx: ExtensionContext): FileItem[] => {
     }
   }
 
-  // 3. Pure core: merge, dedup, sort, cap — easily testable
+  // 3. Scan .pi/teach/<topic>/lessons/ directories for teach lesson files
+  const teachRoot = path.join(ctx.cwd, ".pi", "teach");
+  let topicDirs: string[];
+  try {
+    topicDirs = fs.readdirSync(teachRoot);
+  } catch {
+    topicDirs = [];
+  }
+
+  for (const topicDir of topicDirs) {
+    const lessonsDir = path.join(teachRoot, topicDir, "lessons");
+    let lessonEntries: string[];
+    try {
+      lessonEntries = fs.readdirSync(lessonsDir);
+    } catch {
+      continue;
+    }
+
+    for (const entry of lessonEntries) {
+      if (!entry.endsWith(".html") && !entry.endsWith(".md")) {
+        continue;
+      }
+
+      const fullPath = path.join(lessonsDir, entry);
+
+      try {
+        if (!fs.statSync(fullPath).isFile()) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+
+      scannedEntries.push({
+        absolutePath: fullPath,
+        relativePath: path.relative(ctx.cwd, fullPath),
+        mtimeMs: fs.statSync(fullPath).mtimeMs,
+      });
+    }
+  }
+
+  // 4. Pure core: merge, dedup, sort, cap — easily testable
   return pickTopPlanFiles(pendingEntries, scannedEntries, MAX_PLAN_FILES);
 };
 

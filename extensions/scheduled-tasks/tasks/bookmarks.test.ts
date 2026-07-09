@@ -50,51 +50,51 @@ const sampleItem = (overrides: Partial<BookmarkItem> = {}): BookmarkItem => {
 
 describe("computeIncrement", () => {
   it("returns skip for empty items regardless of checkpoint", () => {
-    expect(computeIncrement([], { lastHeadTweetId: null })).toEqual({
+    expect(computeIncrement([], { lastCheckpointValue: null })).toEqual({
       kind: "skip",
     });
-    expect(computeIncrement([], { lastHeadTweetId: "1" })).toEqual({
+    expect(computeIncrement([], { lastCheckpointValue: "1" })).toEqual({
       kind: "skip",
     });
   });
 
   it("returns init with all items when no checkpoint exists", () => {
     const items = [sampleItem({ id: "3" }), sampleItem({ id: "2" })];
-    expect(computeIncrement(items, { lastHeadTweetId: null })).toEqual({
+    expect(computeIncrement(items, { lastCheckpointValue: null })).toEqual({
       kind: "init",
       items,
-      headId: "3",
+      headValue: "3",
     });
   });
 
   it("returns increment with items before checkpoint", () => {
     const items = [
-      sampleItem({ id: "3" }), // most recent bookmark → new headId
+      sampleItem({ id: "3" }), // most recent bookmark → new headValue
       sampleItem({ id: "2" }), // new bookmark (before old head)
       sampleItem({ id: "1" }), // old checkpoint
     ];
-    const result = computeIncrement(items, { lastHeadTweetId: "1" });
+    const result = computeIncrement(items, { lastCheckpointValue: "1" });
     expect(result).toEqual({
       kind: "increment",
       items: [items[0], items[1]],
-      headId: "3",
+      headValue: "3",
     });
   });
 
   it("returns skip when first item is the checkpoint (nothing new)", () => {
     const items = [sampleItem({ id: "1" }), sampleItem({ id: "0" })];
-    expect(computeIncrement(items, { lastHeadTweetId: "1" })).toEqual({
+    expect(computeIncrement(items, { lastCheckpointValue: "1" })).toEqual({
       kind: "skip",
     });
   });
 
   it("returns warning when checkpoint not found in fetched range", () => {
     const items = [sampleItem({ id: "3" }), sampleItem({ id: "2" })];
-    const result = computeIncrement(items, { lastHeadTweetId: "1" });
+    const result = computeIncrement(items, { lastCheckpointValue: "1" });
     expect(result).toEqual({
       kind: "warning",
       items,
-      headId: "3",
+      headValue: "3",
     });
   });
 });

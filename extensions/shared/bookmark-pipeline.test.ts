@@ -96,7 +96,7 @@ describe("createBookmarkTask", () => {
       stderr: "",
     });
 
-    await task.handler({ exec } as ExecContext);
+    await task.handler({ exec } as unknown as unknown as ExecContext);
 
     expect(exec).toHaveBeenCalledWith("opencli", [
       "test",
@@ -119,7 +119,7 @@ describe("createBookmarkTask", () => {
     });
 
     // Should not throw — handler logs and returns
-    await task.handler({ exec } as ExecContext);
+    await task.handler({ exec } as unknown as ExecContext);
   });
 
   it("handler returns early on skip decision", async () => {
@@ -134,7 +134,7 @@ describe("createBookmarkTask", () => {
       stderr: "",
     });
 
-    await task.handler({ exec } as ExecContext);
+    await task.handler({ exec } as unknown as ExecContext);
     // Handler should complete without errors
   });
 
@@ -152,7 +152,7 @@ describe("createBookmarkTask", () => {
     });
 
     await expect(
-      task.handler({ exec } as ExecContext),
+      task.handler({ exec } as unknown as ExecContext),
     ).resolves.toBeUndefined();
   });
 
@@ -182,7 +182,7 @@ describe("createBookmarkTask", () => {
 
     // Should complete without errors (will try telegram, which may fail
     // due to missing config, but handler catches that)
-    await task.handler({ exec } as ExecContext);
+    await task.handler({ exec } as unknown as ExecContext);
   });
 
   it("chunks the output correctly", () => {

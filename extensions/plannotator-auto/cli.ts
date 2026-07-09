@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 
 export type CliReviewDecision = {
   approved: boolean;
@@ -11,6 +11,64 @@ export type CliReviewResult =
   | { status: "error"; error: string }
   | { status: "aborted" };
 
+// --- Session child tracking ---
+//
+// Track spawned plannotator children per session key so they can be killed on
+// session_shutdown when the user closes the browser tab without completing
+// the review (the plannotator CLI hangs on an unresolved Promise).
+//
+// Keyed by sessionKey (not cwd) to correctly isolate sessions that share the
+// same working directory.
+
+import { getSessionKey } from "./session.ts";
+
+/** Minimal ctx shape required to derive a session key. */
+type CliCtx = {
+  cwd: string;
+  sessionManager: { getSessionFile: () => string | null | undefined };
+};
+
+const childrenBySessionKey = new Map<string, Set<ChildProcess>>();
+
+const trackChild = (sessionKey: string, child: ChildProcess): void => {
+  let children = childrenBySessionKey.get(sessionKey);
+  if (!children) {
+    children = new Set();
+    childrenBySessionKey.set(sessionKey, children);
+  }
+  children.add(child);
+  child.on("close", () => {
+    children.delete(child);
+    if (children.size === 0) {
+      childrenBySessionKey.delete(sessionKey);
+    }
+  });
+};
+
+/**
+ * Count tracked children for the given session key (pure — no side effect).
+ */
+export const countTrackedChildren = (sessionKey: string): number =>
+  childrenBySessionKey.get(sessionKey)?.size ?? 0;
+
+/**
+ * Kill all tracked plannotator children for the given session key.
+ * Uses SIGTERM to match the existing timeout/abort pattern in this file.
+ */
+export const killTrackedChildren = (sessionKey: string): void => {
+  const children = childrenBySessionKey.get(sessionKey);
+  if (!children || children.size === 0) {
+    return;
+  }
+
+  for (const child of children) {
+    if (!child.killed) {
+      child.kill(); // SIGTERM (default)
+    }
+  }
+  childrenBySessionKey.delete(sessionKey);
+};
+
 type RunPlannotatorCliOptions = {
   input?: string;
   parseStdout: (stdout: string) => CliReviewDecision;
@@ -19,7 +77,7 @@ type RunPlannotatorCliOptions = {
 };
 
 const runPlannotatorCli = async (
-  ctx: { cwd: string },
+  ctx: CliCtx,
   args: string[],
   options: RunPlannotatorCliOptions,
 ): Promise<CliReviewResult> =>
@@ -91,6 +149,11 @@ const runPlannotatorCli = async (
       abort();
     }
 
+    // Track child so it can be killed on session_shutdown if the user closes
+    // the browser tab without completing the review.
+    const sessionKey = getSessionKey(ctx);
+    trackChild(sessionKey, child);
+
     child.stdin.end(options.input ?? "");
   });
 
@@ -161,7 +224,7 @@ const parseCliPlanReviewResult = (stdout: string): CliReviewDecision => {
 };
 
 export const runPlannotatorPlanReviewCli = async (
-  ctx: { cwd: string },
+  ctx: CliCtx,
   planContent: string,
   options: { signal?: AbortSignal; timeoutMs: number },
 ): Promise<CliReviewResult> => {
@@ -180,7 +243,7 @@ export const runPlannotatorPlanReviewCli = async (
 };
 
 export const runPlannotatorAnnotateCli = async (
-  ctx: { cwd: string },
+  ctx: CliCtx,
   filePath: string,
   options: {
     gate?: boolean;
@@ -214,7 +277,7 @@ const parseCliCodeReviewResult = (stdout: string): CliReviewDecision => {
 };
 
 export const runPlannotatorCodeReviewCli = async (
-  ctx: { cwd: string; signal?: AbortSignal },
+  ctx: CliCtx & { signal?: AbortSignal },
   timeoutMs: number,
 ): Promise<CliReviewResult> =>
   runPlannotatorCli(ctx, ["review"], {

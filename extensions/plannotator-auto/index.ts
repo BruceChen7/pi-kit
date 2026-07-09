@@ -9,6 +9,7 @@ export { getSessionKey } from "./session.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createLogger } from "../shared/logger.ts";
+import { countTrackedChildren, killTrackedChildren } from "./cli.ts";
 import {
   recordSessionReviewDocumentWrites,
   registerCodeReviewHandlers,
@@ -73,6 +74,18 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       cwd: ctx.cwd,
       sessionKey,
     });
+
+    // Kill any orphan plannotator child processes left hanging when the user
+    // closed the browser tab without completing the review.
+    const count = countTrackedChildren(sessionKey);
+    killTrackedChildren(sessionKey);
+    if (count > 0) {
+      log.info("cleaned up orphan plannotator processes", {
+        cwd: ctx.cwd,
+        sessionKey,
+        count,
+      });
+    }
 
     clearReviewWidget(ctx);
     clearSessionContext(sessionKey);

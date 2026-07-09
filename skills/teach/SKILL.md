@@ -80,6 +80,21 @@ Each lesson should recommend a primary source for the user to read or watch. Thi
 
 Each lesson should contain a reminder to ask followup questions to the agent. The agent is their teacher, and can assist with anything that's unclear.
 
+### Plannotator HTML structure
+
+Lessons and reference documents are often reviewed through Plannotator's `--render-html`
+mode (via `plannotator_auto_submit_review`), which renders the HTML inside a sandboxed
+`<iframe>` with an annotation overlay. To render correctly in both contexts:
+
+- **Always** include `<meta name="plannotator-theme" content="host">` in the `<head>`.
+  Without this, Plannotator cannot sync its host theme into the iframe and dark/light
+  mismatch is likely.
+- **Inline the CSS** in a `<style>` tag — do NOT use `<link>` to an external `.css` file.
+  Plannotator's security model rejects parent-directory paths (`../`) so the CSS won't
+  load from `href="../assets/shared.css"`. See [Assets](#assets) for details.
+- **The shared stylesheet must use the CSS variable chain pattern** described in
+  [Assets > Plannotator compatibility](#plannotator-compatibility).
+
 ### Lesson structure
 
 Each lesson should:
@@ -98,7 +113,124 @@ Lessons are built from reusable **components**, stored in `./assets/`: styleshee
 
 Reuse is the default, not the exception. Before authoring a lesson, read `./assets/` and build from the components already there. When a lesson needs something new and reusable, write it as a component in `./assets/` and link to it — never inline code a future lesson would duplicate.
 
-A shared stylesheet is the first component every workspace earns: every lesson links it, so the lessons look like one consistent course rather than a pile of one-offs. As the workspace grows, so should the component library.
+A shared stylesheet is the first component every workspace earns, maintained at `./assets/shared.css` as the canonical source. When generating each lesson or reference document, **inline the CSS content into a `<style>` tag** — do NOT use `<link rel="stylesheet" href="../assets/shared.css">`. Plannotator's asset path security rejects parent-directory (`../`) paths, so the external CSS won't load inside its sandboxed iframe. Inlining avoids this and makes each lesson fully self-contained. Keep the `./assets/shared.css` file as the source of truth for editing; the inlining happens at generation time.
+
+### Plannotator compatibility
+
+Lessons and reference documents are often reviewed through Plannotator's `--render-html`
+mode, which renders them inside a sandboxed `<iframe>` with an annotation overlay.
+The shared stylesheet must let lessons render correctly in both standalone and
+Plannotator contexts.
+
+The CSS variable chain pattern handles this without coupling to Plannotator internals.
+It uses a **private intermediate variable** to avoid circular references:
+
+```css
+/* ═══════════════════════════════════════════
+ * Layer 1 — Standalone light defaults
+ * ═══════════════════════════════════════════ */
+:root {
+  --_bg: #fafafa;
+  --_card-bg: #ffffff;
+  --_text: #1a1a2e;
+  --_muted: #6b7280;
+  --_accent: #3b82f6;
+  --_border: #e5e7eb;
+  --_code-bg: #f3f4f6;
+  --_accent-light: #eff6ff;
+  --_table-stripe: #f8fafc;
+  --_success-bg: #ecfdf5;
+  --_error-bg: #fef2f2;
+}
+
+/* ═══════════════════════════════════════════
+ * Layer 2 — Standalone dark mode
+ * (only applies when NOT inside Plannotator)
+ * ═══════════════════════════════════════════ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --_bg: #0f172a;
+    --_card-bg: #1e293b;
+    --_text: #e2e8f0;
+    --_muted: #94a3b8;
+    --_border: #334155;
+    --_code-bg: #1e293b;
+    --_accent-light: #1e3a5f;
+    --_table-stripe: #1e293b;
+    --_success-bg: #064e3b;
+    --_error-bg: #7f1d1d;
+  }
+}
+
+/* ═══════════════════════════════════════════
+ * Layer 3 — Plannotator host-theme chain
+ * Plannotator unconditionally injects --pn-*
+ * into the iframe at runtime. When present they
+ * override; when absent (standalone) they fall
+ * back to the private --_* variables from L1/L2.
+ *
+ * ⚠️  Never reference a public variable within
+ * its own definition — that creates a circular
+ * reference (CSS spec invalidates it).
+ * ═══════════════════════════════════════════ */
+:root {
+  --bg: var(--pn-background, var(--_bg));
+  --card-bg: var(--pn-card, var(--_card-bg));
+  --text: var(--pn-foreground, var(--_text));
+  --muted: var(--pn-muted, var(--_muted));
+  --accent: var(--pn-primary, var(--_accent));
+  --border: var(--pn-border, var(--_border));
+  --code-bg: var(--pn-code-bg, var(--_code-bg));
+}
+```
+
+**然后，必须把所有硬编码的 `background: white` 替换为 `background: var(--card-bg)`**，
+以及所有硬编码的彩色背景（如 `#ecfdf5`、`#fef2f2`）替换为对应的变量。
+没有这些替换，暗色模式下白底会残留，页面就是"一块块白的拼在暗色背景上"。
+
+**Why the `--_` private variable?** CSS custom properties that reference themselves
+in their own fallback are invalid. If layer 3 said `--bg: var(--pn-background, var(--bg))`,
+the `var(--bg)` fallback creates a cycle → the declaration is ignored.
+By separating the storage (`--_bg`) from the public API (`--bg`), the chain is
+always a DAG and always resolves.
+
+**Variable mapping reference:**
+| Teach variable | Plannotator `--pn-*` | Note |
+|---|---|---|
+| `--bg` | `--pn-background` | Page background |
+| `--card-bg` | `--pn-card` | Card/box background (replaces `background: white`) |
+| `--text` | `--pn-foreground` | Body text |
+| `--muted` | `--pn-muted` | Muted/secondary text |
+| `--accent` | `--pn-primary` | Links, borders, headings |
+| `--border` | `--pn-border` | Table/block borders |
+| `--code-bg` | `--pn-code-bg` | Code/inline-code background |
+| `--_table-stripe` | (no `--pn-*`; standalone only) | Alternating table row |
+| `--_success-bg` | (no `--pn-*`; standalone only) | Quiz correct bg |
+| `--_error-bg` | (no `--pn-*`; standalone only) | Quiz wrong bg |
+
+Variables prefixed `--_` are private to the chain pattern; they don't have
+`--pn-*` equivalents, so they only change between light/dark in standalone mode.
+
+**When inlining the CSS into the lesson HTML, also strip `@import` rules**
+(typically for external fonts). Google Fonts `@import` can fail or be delayed
+inside the sandboxed iframe, leaving the page briefly unstyled. Instead:
+
+- Use a system font stack as primary fallback (e.g. `-apple-system, system-ui, sans-serif`)
+- Optionally include a `<link rel="stylesheet" href="https://fonts.googleapis.com/...">`
+  in the `<head>` **if** fonts are essential — Plannotator rewrites `<link>` tags for
+  external URLs correctly, unlike CSS `@import`.
+
+**Every lesson's `<head>` must also include:**
+```html
+<meta name="plannotator-theme" content="host">
+```
+
+This lets Plannotator know the document is aware of host theming. Without it,
+Plannotator skips bare `--background` / `--foreground` injection and the
+`--pn-*` chain won't receive host values.
+
+See [Lessons > Plannotator HTML structure](#plannotator-html-structure) for the
+per-lesson requirements.
 
 ## The Mission
 

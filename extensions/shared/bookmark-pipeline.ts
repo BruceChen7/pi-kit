@@ -17,6 +17,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { defineTask } from "./deferred-queue/define-task.ts";
 import { log } from "./deferred-queue/logger.ts";
+import type { Duration } from "./deferred-queue/types.ts";
 import {
   convertMarkdownToTelegramHtml,
   sendTelegramNotification,
@@ -243,7 +244,7 @@ export interface BookmarkTaskConfig<B> {
   /** Unique task identifier (e.g. "x-bookmarks-fetch"). */
   id: string;
   /** Cron-like interval (e.g. "24h", "1h"). */
-  every: string;
+  every: Duration;
   /** Human-readable task description. */
   description: string;
 

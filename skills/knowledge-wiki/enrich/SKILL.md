@@ -1,68 +1,82 @@
 ---
 name: knowledge-wiki-enrich
 description: >
-  Finds wiki files and index entries needing attention: unsummarized sources, missing index
-  entries, and stale summaries. Use during wiki maintenance to identify gaps and sync the
-  index.
+  Expand thin concept articles in the knowledge wiki using web search. Targets concepts
+  with minimal prose assembled from few sources and supplements them with authoritative
+  external information. Run after accumulating new concepts or when articles feel sparse.
 ---
 
-# knowledge-wiki-enrich
+# Knowledge Wiki Enrich
 
-Finds wiki files and index entries that need attention: unsummarized sources, missing index entries, and stale summaries. Uses `wiki-summary.mjs list-stale` and `wiki-index.mjs find-missing-*`.
+Find concept articles that are thin relative to their source material and expand them using web search. Each article is supplemented with authoritative external information integrated naturally into the existing prose.
 
 ## Dependencies
 
-- `./wiki-summary.mjs` — staleness detection
-- `./wiki-index.mjs` — index gap detection
+- `../cluster/candidates.mjs` — thin-concept detection (find-thin-concepts)
+- `../state/wiki-index.mjs` — index management (upsert-concept)
 - `./lib/` — local helper modules for this skill
-- qmd knowledge base with Wiki/ and source directories
+- qmd knowledge base with `Wiki/Concepts/` directory
 
 ## Path Resolution
 
-Resolve every local path (`./*.mjs`, `./lib/*.mjs`) relative to the source skill directory that contains this `SKILL.md`.
+Resolve every local path (`../cluster/*.mjs`, `../state/*.mjs`, `./lib/*.mjs`) relative to the source skill directory that contains this `SKILL.md`.
 
 Do not resolve these paths relative to `~/.pi/skills/...` or the current working directory.
 
 Example for this skill:
 
 - source skill directory: `skills/knowledge-wiki/enrich/`
-- `./wiki-summary.mjs` resolves to `skills/knowledge-wiki/enrich/wiki-summary.mjs`
-- `./wiki-index.mjs` resolves to `skills/knowledge-wiki/enrich/wiki-index.mjs`
+- `../cluster/candidates.mjs` resolves to `skills/knowledge-wiki/cluster/candidates.mjs`
+- `../state/wiki-index.mjs` resolves to `skills/knowledge-wiki/state/wiki-index.mjs`
 - `./lib/` resolves inside the same skill directory
 
-## Commands
+## Steps
 
-### Find stale and missing summaries
+### 1. Establish the working directory
 
-```bash
-node ./wiki-summary.mjs list-stale --base-path /path/to/knowledge-base
-```
+The knowledge base root is the Git repository root. Run `git rev-parse --show-toplevel` and store the result as `KNOWLEDGE_PATH`.
 
-Output: `{ "sources": ["rel/path.md", ...] }` — source files whose summary is missing or whose content hash has changed.
+Use `KNOWLEDGE_PATH` for all subsequent steps. Append `--base-path "{KNOWLEDGE_PATH}"` to every `node ./...` command that accepts it.
 
-### Find missing index entries
+### 2. Find thin concepts
 
-```bash
-# Summary files on disk that have no entry in Wiki/index.md
-node ./wiki-index.mjs find-missing-summaries --base-path /path/to/knowledge-base
-
-# Concept files on disk that have no entry in Wiki/index.md
-node ./wiki-index.mjs find-missing-concepts --base-path /path/to/knowledge-base
-
-# Dead index entries where the file no longer exists
-node ./wiki-index.mjs delete-dead-links --base-path /path/to/knowledge-base
-```
-
-### Sort index
+Run:
 
 ```bash
-node ./wiki-index.mjs sort --base-path /path/to/knowledge-base
+node ../cluster/candidates.mjs find-thin-concepts --base-path "{KNOWLEDGE_PATH}"
 ```
 
-## Workflow
+Output is `{ "concepts": [...] }` — an array of concept file paths sorted by word count ascending, so the thinnest concepts come first. A concept is thin if it has fewer than 150 words in its body AND at most 2 entries in its `## Sources` section.
 
-1. Run `list-stale` to find source files needing new/updated summaries
-2. Create summaries with `knowledge-wiki-summary` skill
-3. Run `find-missing-summaries` / `find-missing-concepts` to sync index
-4. Add missing entries with `knowledge-wiki-state` skill (`wiki-index.mjs upsert-*`)
-5. Run `delete-dead-links` and `sort` to clean up the index
+If the array is empty, print `No thin concepts found.` and stop.
+
+### 3. Expand each thin concept
+
+For each path in the `concepts` array:
+
+1. Read the concept file. Note the display name from its `# Title` line, and derive the slug (basename without `.md`).
+2. Use the WebSearch tool to search for the concept name. Choose 1–2 queries that would find authoritative reference material.
+3. Fetch or read the most relevant search results.
+4. Integrate new information into the article body: extend existing paragraphs or add new ones. Concept articles are written in English, but the concepts themselves may have originated from Chinese-language notes — use English terminology consistently when expanding. Use American English spelling (e.g. "organize" not "organise", "recognize" not "recognise"). Do not add content that contradicts existing text — flag contradictions in the print summary instead.
+5. Write the updated file back to disk.
+6. Derive a fresh one-line English description from the enriched article. Run:
+   ```bash
+   node ../state/wiki-index.mjs upsert-concept "{slug}" "{display name from step 1}" "{fresh one-line description}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+
+Write in American English: use **-ize** not -ise, **-or** not -our, **-er** not -re. Do not modify frontmatter or the `## Sources` / `## Connected Concepts` sections.
+
+### 4. Print summary
+
+```
+Knowledge Wiki Enrich
+
+Expanded {N} concept(s):
+  - {Display Name}
+  - {Display Name}
+  ...
+
+Contradictions flagged:
+  - {Display Name}: {brief description of conflict}
+  [omit section if none]
+```

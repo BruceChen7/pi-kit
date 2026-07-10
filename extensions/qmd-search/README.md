@@ -176,19 +176,18 @@ The `path` is watched for changes. `pattern` and `collections` are informational
 
 ## Knowledge base skills
 
-The 7 `knowledge-wiki-*` skills (registered in `skills/skills.txt`) provide wiki management workflows:
+All 8 `knowledge-wiki-*` skills (registered in `skills/skills.txt`) use `--base-path <dir>` to point at the knowledge base root.
 
-| Skill | What it does |
+| Skill | Description |
 |-------|-------------|
-| `knowledge-wiki-summary` | Create/update summary files from source documents |
-| `knowledge-wiki-concept` | Create/manage wiki concept files |
-| `knowledge-wiki-synthesis` | Create synthesis-type concepts from multiple summaries |
-| `knowledge-wiki-merge` | Suggest concept merges + update backlinks |
-| `knowledge-wiki-cluster` | Detect implied parent concepts |
-| `knowledge-wiki-lint` | Wiki integrity checks (broken links, orphans) |
-| `knowledge-wiki-state` | Manage wiki state and index |
-
-All skills accept `--base-path <dir>` to point at the knowledge base root.
+| `knowledge-wiki-summary` | Batch process stale/new source files — read, generate summary content with language-aware LLM prompting, and write structured summaries (tags, abstract, key concepts) to `Wiki/Summaries/`. Supports subagent dispatch for files >1500 lines. |
+| `knowledge-wiki-concept` | Create or update concept articles in `Wiki/Concepts/` from summary `## Key Concepts` entries. Handles both new concept creation (article body generation) and incremental updates (tag merge, prose extension). |
+| `knowledge-wiki-synthesis` | Two-phase discovery: scan index for cross-cutting connections, relationships, contradictions, and gaps, then synthesize 3–5 paragraph concept articles with bidirectional Connected Concepts links. |
+| `knowledge-wiki-merge` | Interactive session — detects duplicate concept pairs by shared sources and semantic overlap, presents one pair at a time with 4-option decision (Merge A→B, Merge B→A, Dismiss, Skip). Handles prose integration, tag merging, source/backlink updates. |
+| `knowledge-wiki-cluster` | Detects implied-parent clusters (e.g. `react-auth` + `react-routing` → `react`). Supports Fold (absorb thin child into parent), Link (bidirectional standalone), and sibling merging. Interactive session with LLM pre-filter for meaningless prefixes. |
+| `knowledge-wiki-lint` | 12 sequential integrity checks: orphan summaries → broken wikilinks → ungrounded concepts → orphan concepts → dead index links → missing index entries → stale dismissals → self-links → duplicate concept links. Each check repairs before the next runs. |
+| `knowledge-wiki-enrich` | Finds thin concept articles (<150 words, ≤2 sources) and expands them via web search. Integrates authoritative external information into existing prose while flagging contradictions. |
+| `knowledge-wiki-state` | Utility skill: manages `Wiki/.state.json` (unprocessed-summary tracking, last-run timestamps, pair dismissal/pruning) and `Wiki/index.md` (upsert/delete/sort/find gaps). Used by all other knowledge-wiki skills.
 
 ## What makes qmd-search different from cs_search
 

@@ -13,9 +13,10 @@ Default to Chinese for questions, recommendations, and summaries unless the user
 
 - Ask **one question at a time** and wait for the user's answer before continuing. Asking multiple questions at once is bewildering.
 - For each question, include your recommended answer and why.
-- If a question can be answered by exploring the codebase, docs, or git history, investigate instead of asking the user.
+- **Facts vs decisions.** If a question is a *fact* that can be found by exploring the codebase, docs, or git history, look it up rather than asking the user. If it's a *decision*, put it to the user with your recommendation and wait for their answer before continuing.
 - Challenge contradictions, overloaded terms, unclear success criteria, and hidden trade-offs.
 - Do not implement from this skill directly — grilling is for planning, not building.
+- Do not enact the plan until the user confirms we have reached a shared understanding.
 
 ## Relationship to other skills
 
@@ -26,4 +27,4 @@ Default to Chinese for questions, recommendations, and summaries unless the user
 
 ## Attribution
 
-Adapted from the `grilling` skill in https://github.com/mattpocock/skills (v1.0.0+) under the MIT License.
+Adapted from the `grilling` skill in https://github.com/mattpocock/skills (v1.1.0+) under the MIT License.

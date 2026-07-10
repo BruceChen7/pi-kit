@@ -1,25 +1,28 @@
 ---
 name: knowledge-wiki-merge
 description: >
-  Suggests concept merge candidates where two concepts share multiple sources, and updates
-  wikilinks after merging. Use for deduplicating wiki concepts.
+  Interactively find and merge duplicate concept files in the knowledge wiki. Presents
+  candidate pairs one at a time and asks whether to merge, dismiss, or skip each one. Run
+  after accumulating new concepts or when the wiki feels redundant.
 ---
 
-# knowledge-wiki-merge
+# Knowledge Wiki Merge
 
-Suggests concept merge candidates and updates backlinks after merging. Uses `candidates.mjs` and `wiki-backlinks.mjs`.
+Detect duplicate concept pairs and interactively merge them. Presents one pair at a time — you decide whether to merge, dismiss (never show again), or skip. Merging is destructive and irreversible, so each decision is confirmed before execution.
 
 ## Dependencies
 
-- `./candidates.mjs` — candidate detection
-- `./wiki-state.mjs` — dismissal and pruning
+- `./candidates.mjs` — candidate detection (find-shared-source-concepts)
+- `./wiki-state.mjs` — state tracking (dismiss-pair, prune-merge-pairs)
 - `./wiki-backlinks.mjs` — backlink updates after merge
+- `../state/wiki-index.mjs` — index management (read-concepts, delete-concept, upsert-concept)
+- `../concept/wiki-concept.mjs` — concept management (insert-source, insert-connected-concept)
 - `./lib/` — local helper modules for this skill
-- qmd knowledge base with Wiki/Concepts/, Wiki/Summaries/ directories
+- qmd knowledge base with `Wiki/Concepts/`, `Wiki/Summaries/` directories
 
 ## Path Resolution
 
-Resolve every local path (`./*.mjs`, `./lib/*.mjs`) relative to the source skill directory that contains this `SKILL.md`.
+Resolve every local path (`./*.mjs`, `../state/*.mjs`, `../concept/*.mjs`, `./lib/*.mjs`) relative to the source skill directory that contains this `SKILL.md`.
 
 Do not resolve these paths relative to `~/.pi/skills/...` or the current working directory.
 
@@ -29,44 +32,182 @@ Example for this skill:
 - `./candidates.mjs` resolves to `skills/knowledge-wiki/merge/candidates.mjs`
 - `./wiki-state.mjs` resolves to `skills/knowledge-wiki/merge/wiki-state.mjs`
 - `./wiki-backlinks.mjs` resolves to `skills/knowledge-wiki/merge/wiki-backlinks.mjs`
+- `../state/wiki-index.mjs` resolves to `skills/knowledge-wiki/state/wiki-index.mjs`
+- `../concept/wiki-concept.mjs` resolves to `skills/knowledge-wiki/concept/wiki-concept.mjs`
 - `./lib/` resolves inside the same skill directory
 
-## Workflow
+## Steps
 
-### 1. Find merge candidates
+### 1. Establish the working directory
 
-Concepts that share 2+ source summaries may be candidates for merging:
+The knowledge base root is the Git repository root. Run `git rev-parse --show-toplevel` and store the result as `KNOWLEDGE_PATH`.
+
+Use `KNOWLEDGE_PATH` for all subsequent steps. Append `--base-path "{KNOWLEDGE_PATH}"` to every `node ./...` command that accepts it.
+
+### 2. Find and filter duplicate candidates
+
+**Structural candidates** are pairs detected by shared source material — concept files that share two or more `## Sources` entries. Run:
 
 ```bash
-node ./candidates.mjs find-shared-source-concepts --base-path /path/to/knowledge-base
+node ./candidates.mjs find-shared-source-concepts --base-path "{KNOWLEDGE_PATH}"
 ```
 
-### 2. Dismiss a false positive
+This script automatically filters out previously dismissed pairs from `Wiki/.state.json`. Output is `{ "candidates": [...] }` sorted by shared source count descending. Tag each as `detection: "structural"`. **Do not pipe through `head` or any other truncating command** — every candidate must be evaluated.
 
-If the pair should NOT be merged, dismiss it so it never appears again:
+**LLM pre-filter (structural only):** Before proceeding, review the structural candidates and eliminate any pair that is clearly about different topics despite sharing sources — pairs where the shared sources happen to cover two unrelated ideas (e.g. `applescript` and `email-marketing` appearing in the same AppleScript email tutorial). For each eliminated pair, call:
 
 ```bash
-node ./wiki-state.mjs dismiss-pair knowledge-wiki-merge \
-  "Wiki/Concepts/concept-a.md" "Wiki/Concepts/concept-b.md" \
-  --base-path /path/to/knowledge-base
+node ./wiki-state.mjs dismiss-pair knowledge-wiki-merge "Wiki/Concepts/{pathA}" "Wiki/Concepts/{pathB}" --base-path "{KNOWLEDGE_PATH}"
 ```
 
-### 3. Update backlinks after merge
+where `pathA` and `pathB` are the slugs (e.g. `applescript`, `email-marketing`). Be conservative: only dismiss pairs you are confident are unrelated. A wrongly auto-dismissed pair is hidden from all future runs and requires manually editing `Wiki/.state.json` to recover.
 
-After merging concept files, update all wikilinks pointing to the secondary concept:
+**Semantic candidates** are pairs identified by conceptual overlap — synonyms, one being a strict subset of the other, or articles that would naturally be merged — without necessarily sharing sources. Perform this pass by running:
 
 ```bash
-node ./wiki-backlinks.mjs update-after-merge \
-  Wiki/Concepts/secondary.md \
-  Wiki/Concepts/primary.md \
-  "Primary Display Name" \
-  --base-path /path/to/knowledge-base
+node ../state/wiki-index.mjs read-concepts --base-path "{KNOWLEDGE_PATH}" > /tmp/wiki-concepts.md
 ```
 
-### 4. Prune stale dismissals
+Then read `/tmp/wiki-concepts.md` in full using the Read tool, using `offset`/`limit` to page through it if the file exceeds the Read tool's line limit. **Do not pipe through `head` or any other truncating command** — the concept list may be thousands of lines, and truncating it means missing potential duplicate pairs. Use your judgment to identify semantically overlapping pairs from the complete list. Tag each as `detection: "semantic"`. Pairs found by both structural and semantic methods are tagged `detection: "structural+semantic"`. Skip the LLM pre-filter for semantic candidates — they were already identified by LLM judgment.
 
-Remove dismissed pairs where at least one concept file no longer exists:
+If no candidates remain, print `No duplicate candidates found.` and stop.
 
+### 3. Present and resolve each candidate
+
+Process one candidate at a time. Use a **separate interaction for each pair** — never combine multiple pairs into a single question, even if you intend to recommend the same action for several in a row.
+
+For each remaining candidate pair, work through the following sub-steps in order.
+
+---
+
+#### 3a. Summarize the pair
+
+Read both concept files. Present a brief summary as a markdown table (not in a code block) so it renders:
+
+---
+**Candidate pair** (shared sources: {N}, detection: {structural | semantic | structural+semantic})
+
+| Concept | Description |
+|---------|-------------|
+| **{Display Name A}** | {one-sentence description} |
+| **{Display Name B}** | {one-sentence description} |
+
+---
+
+#### 3b. Determine recommended direction and ask what to do
+
+Before asking, determine which concept should be the primary by applying these factors in order:
+
+1. **Semantic scope** (primary factor): the broader or more general concept is the primary; the narrower or more specific concept merges into it
+2. **Prose depth**: if scope is similar, more paragraphs → likely primary
+3. **Source count**: if prose is similar, more sources → likely primary
+
+Ask the user what to do using **exactly four options** as follows.
+
+**Always include both merge directions.** Never drop one because you think it is obviously wrong — the user makes that call.
+
+**Never add "(Recommended)" to Dismiss or Skip** — not in the label, not in the description, not anywhere. These options are always neutral.
+
+**If a clear primary can be determined**, put `(Recommended)` after the recommended merge option and place it first:
+
+| # | Option | Description |
+|---|--------|-------------|
+| 1 | `Merge {Secondary} → {Primary} (Recommended)` | `{Secondary}` is deleted; its content is merged into `{Primary}` |
+| 2 | `Merge {Primary} → {Secondary}` | `{Primary}` is deleted; reverse direction |
+| 3 | `Dismiss` | They are distinct; never show this pair again |
+| 4 | `Skip` | Leave for now; show again next run |
+
+**If no clear primary can be determined** (both concepts are similarly scoped, similarly long, and have similar source counts), state this explicitly. Do not add `(Recommended)` to any option:
+
+| # | Option | Description |
+|---|--------|-------------|
+| 1 | `Merge {Display Name A} → {Display Name B}` | `{A}` is deleted; its content is merged into `{B}` |
+| 2 | `Merge {Display Name B} → {Display Name A}` | `{B}` is deleted; its content is merged into `{A}` |
+| 3 | `Dismiss` | They are distinct; never show this pair again |
+| 4 | `Skip` | Leave for now; show again next run |
+
+Render the summary, reasoning, numbered options, and reply instructions as one normal markdown message, then wait for the user's reply. Accept 1, 2, 3, or 4 (or `stop` to halt all remaining pairs).
+
+#### 3c. If a Merge option was selected
+
+State the direction explicitly before executing:
+
+> **Primary:** {Display Name} (`{primary-path}`)
+> **Secondary:** {Display Name} (`{secondary-path}`) — will be merged in and deleted
+
+Then execute:
+
+1. **Integrate prose**: Add any information from the secondary's body not already covered in the primary — extend existing paragraphs or add new ones. Write in the primary's established voice and style, using American English spelling (e.g. "organize" not "organise", "recognize" not "recognise"). Convert any British spellings from the secondary's text before integrating.
+
+2. **Merge tags**: Take the union of the `tags` arrays from both concepts' frontmatter. Preserve the primary's existing tag order, then append any tags from the secondary that are not already present. If either concept's frontmatter omits the `tags` field entirely, treat it as an empty array. Use this combined list as the primary's new `tags` value.
+
+3. **Write the primary file** back to disk with the integrated prose from step 1 and the merged tags from step 2 — Sources and Connected Concepts will be handled by the scripts below.
+
+4. **Merge Sources**: For each `## Sources` entry in the secondary, extract the summary path (the content between `[[` and `]]`) and run:
+   ```bash
+   node ../concept/wiki-concept.mjs insert-source "{primary-slug}" "{summary-path}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+   The command is idempotent — entries already in the primary are skipped automatically.
+
+5. **Merge Connected Concepts**: For each `## Connected Concepts` entry in the secondary, extract the linked slug and display name (from `[[Wiki/Concepts/{slug}|{Display Name}]]`), then run:
+   ```bash
+   node ../concept/wiki-concept.mjs insert-connected-concept "{primary-slug}" "{linked-slug}" "{Display Name}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+   The command is idempotent — entries already in the primary are skipped automatically.
+
+6. **Update backlinks**: Run:
+   ```bash
+   node ./wiki-backlinks.mjs update-after-merge "Wiki/Concepts/{secondary-slug}.md" "Wiki/Concepts/{primary-slug}.md" "{primary display name}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+   This finds every wiki file that links to the secondary concept and handles each one correctly: if the file already has a link to the primary, it removes the secondary link line to avoid creating a duplicate; otherwise it replaces the secondary wikilink with the primary.
+
+7. **Delete the secondary file**:
+   ```bash
+   rm "{KNOWLEDGE_PATH}/Wiki/Concepts/{secondary-slug}.md"
+   ```
+
+8. **Update the index**: Run:
+   ```bash
+   node ../state/wiki-index.mjs delete-concept "{secondary-slug}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+   If the primary's one-line description has changed meaningfully, also run:
+   ```bash
+   node ../state/wiki-index.mjs upsert-concept "{primary-slug}" "{primary display name}" "{updated one-line description}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+
+#### 3d. If Dismiss
+
+Call:
 ```bash
-node ./wiki-state.mjs prune-merge-pairs --base-path /path/to/knowledge-base
+node ./wiki-state.mjs dismiss-pair knowledge-wiki-merge "Wiki/Concepts/{slugA}.md" "Wiki/Concepts/{slugB}.md" --base-path "{KNOWLEDGE_PATH}"
+```
+
+Continue to the next candidate.
+
+#### 3e. If Skip
+
+Continue to the next candidate without recording anything.
+
+#### 3f. If "stop" (typed in Other field)
+
+Exit the loop immediately. Proceed to step 4.
+
+---
+
+### 4. Print summary
+
+```
+Knowledge Wiki Merge
+
+Auto-dismissed {N} pair(s) (clearly unrelated):
+  - {Display Name A} / {Display Name B}
+
+Merged {N} pair(s):
+  - {Secondary Display Name} → {Primary Display Name}
+
+Dismissed {N} pair(s):
+  - {Display Name A} / {Display Name B}
+
+Skipped {N} pair(s).
+[Omit any section with 0 items.]
 ```

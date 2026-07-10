@@ -31,7 +31,7 @@ Example for this skill:
 
 ## Commands
 
-### State Management
+### State Management (wiki-state.mjs)
 
 ```bash
 # Find summaries not yet processed by a skill
@@ -41,6 +41,16 @@ node ./wiki-state.mjs find-unprocessed-summaries knowledge-wiki-synthesis --base
 # Record when a skill last ran
 node ./wiki-state.mjs set-last-run knowledge-wiki-concept --base-path /path/to/knowledge-base
 node ./wiki-state.mjs set-last-run knowledge-wiki-synthesis --base-path /path/to/knowledge-base
+
+# Dismiss a pair (merge or cluster) so it never appears again
+node ./wiki-state.mjs dismiss-pair knowledge-wiki-merge "Wiki/Concepts/slug-a.md" "Wiki/Concepts/slug-b.md" --base-path /path/to/knowledge-base
+node ./wiki-state.mjs dismiss-pair knowledge-wiki-cluster "Wiki/Concepts/parent.md" "Wiki/Concepts/child.md" --base-path /path/to/knowledge-base
+
+# Prune stale dismissed merge pairs (one or both concept files no longer exist)
+node ./wiki-state.mjs prune-merge-pairs --base-path /path/to/knowledge-base
+
+# Prune stale dismissed cluster pairs (child concept file no longer exists)
+node ./wiki-state.mjs prune-cluster-pairs --base-path /path/to/knowledge-base
 ```
 
 ### Index Management (wiki-index.mjs)

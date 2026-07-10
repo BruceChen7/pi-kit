@@ -1,23 +1,29 @@
 ---
 name: knowledge-wiki-lint
 description: >
-  Wiki integrity checking: broken concept links, broken summary links, orphan files,
-  ungrounded concepts, self-links, and duplicate links. Use to audit wiki health.
+  Health-check and repair the knowledge wiki. Detects orphan summaries (source deleted),
+  broken wikilinks, orphan concepts, ungrounded concepts, self-links, and duplicate
+  concept links. Run periodically after accumulating new content or reorganizing source
+  files.
 ---
 
-# knowledge-wiki-lint
+# Knowledge Wiki Lint
 
-Wiki integrity checking. Uses `wiki-lint.mjs` to audit the wiki for broken links, orphan files, and structural issues.
+Health-check and repair the wiki. Runs twelve checks in sequence — each builds on a clean state left by the previous one. JavaScript handles all file-system detection; the LLM handles any repair that requires judgment.
 
 ## Dependencies
 
-- `./wiki-lint.mjs` — the lint script
-- `./lib/` — local helper modules for this skill
-- qmd knowledge base with Wiki/ directory
+- `./wiki-lint.mjs` — lint detection scripts (all find-* subcommands)
+- `./lib/` — local helper modules
+- `../state/wiki-index.mjs` — index management (delete-summary, delete-concept, upsert-*, find-missing-*, delete-dead-links)
+- `../state/wiki-state.mjs` — state management (prune-merge-pairs, prune-cluster-pairs)
+- `../concept/wiki-concept.mjs` — concept management (delete-source, delete-connected-concept, insert-source)
+- `../summary/wiki-summary.mjs` — summary management (delete-concept, insert-concept)
+- qmd knowledge base with `Wiki/` directory
 
 ## Path Resolution
 
-Resolve every local path (`./*.mjs`, `./lib/*.mjs`) relative to the source skill directory that contains this `SKILL.md`.
+Resolve every local path (`./*.mjs`, `../state/*.mjs`, `../concept/*.mjs`, `../summary/*.mjs`, `./lib/*.mjs`) relative to the source skill directory that contains this `SKILL.md`.
 
 Do not resolve these paths relative to `~/.pi/skills/...` or the current working directory.
 
@@ -25,30 +31,355 @@ Example for this skill:
 
 - source skill directory: `skills/knowledge-wiki/lint/`
 - `./wiki-lint.mjs` resolves to `skills/knowledge-wiki/lint/wiki-lint.mjs`
+- `../state/wiki-index.mjs` resolves to `skills/knowledge-wiki/state/wiki-index.mjs`
+- `../state/wiki-state.mjs` resolves to `skills/knowledge-wiki/state/wiki-state.mjs`
+- `../concept/wiki-concept.mjs` resolves to `skills/knowledge-wiki/concept/wiki-concept.mjs`
+- `../summary/wiki-summary.mjs` resolves to `skills/knowledge-wiki/summary/wiki-summary.mjs`
 - `./lib/` resolves inside the same skill directory
 
-## Commands
+## Setup
 
-All commands output JSON to stdout.
+### 1. Establish the working directory
+
+The knowledge base root is the Git repository root. Run `git rev-parse --show-toplevel` and store the result as `KNOWLEDGE_PATH`.
+
+Use `KNOWLEDGE_PATH` for all subsequent steps. Append `--base-path "{KNOWLEDGE_PATH}"` to every `node ./...` command that accepts it.
+
+---
+
+## Check 1 — Orphan Summaries
+
+_Deletes summary files whose source document has been moved or deleted._
+
+### 2. Find orphan summaries
 
 ```bash
-node ./wiki-lint.mjs find-broken-concept-links --base-path /path/to/knowledge-base
-node ./wiki-lint.mjs find-broken-summary-links --base-path /path/to/knowledge-base
-node ./wiki-lint.mjs find-orphan-concepts --base-path /path/to/knowledge-base
-node ./wiki-lint.mjs find-orphan-summaries --base-path /path/to/knowledge-base
-node ./wiki-lint.mjs find-ungrounded-concepts --base-path /path/to/knowledge-base
-node ./wiki-lint.mjs find-self-links --base-path /path/to/knowledge-base
-node ./wiki-lint.mjs find-duplicate-concept-links --base-path /path/to/knowledge-base
+node ./wiki-lint.mjs find-orphan-summaries --base-path "{KNOWLEDGE_PATH}"
 ```
 
-## Checks
+Output is a JSON object keyed by orphan summary file path (relative to `KNOWLEDGE_PATH`). Each value has a `source` field with the path the summary expected to find, or `null` if the frontmatter had no `source` field.
 
-| subcommand | what it finds |
-|---|---|
-| `find-broken-concept-links` | Concept wikilinks to files that don't exist |
-| `find-broken-summary-links` | Summary wikilinks to missing concept files |
-| `find-orphan-concepts` | Concept files with zero inbound links |
-| `find-orphan-summaries` | Summary files whose source document is missing |
-| `find-ungrounded-concepts` | Concepts with no valid source summaries |
-| `find-self-links` | Concepts that link to themselves in Connected Concepts |
-| `find-duplicate-concept-links` | Summaries linking the same concept more than once |
+If the object is empty (`{}`), skip to Check 2 and print `Check 1: no orphan summaries.`
+
+### 3. Delete orphan summary files and remove their index entries
+
+For each key in the output:
+
+1. Delete the file at `{KNOWLEDGE_PATH}/{key}`.
+2. Derive the summary's rel-path by stripping the `Wiki/Summaries/` prefix and the `.md` extension from the key. Example: `Wiki/Summaries/Posts/Foo.summary.md` → `Posts/Foo.summary`. Then run:
+   ```bash
+   node ../state/wiki-index.mjs delete-summary "{rel-path}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+
+After processing all orphans, delete any now-empty directories under `Wiki/Summaries/`:
+
+```bash
+find "{KNOWLEDGE_PATH}/Wiki/Summaries" -type d -empty -delete
+```
+
+---
+
+## Check 2 — Broken Summary → Concept Links
+
+_Creates missing concept files referenced by summaries._
+
+### 4. Find and repair broken summary → concept links
+
+```bash
+node ./wiki-lint.mjs find-broken-summary-links --base-path "{KNOWLEDGE_PATH}"
+```
+
+Output is a JSON object keyed by missing concept file path. Each value has a `referencedBy` array listing the summary files that link to that missing concept.
+
+If the object is empty (`{}`), skip to Check 3 and print `Check 2: no broken summary → concept links.`
+
+For each missing concept:
+
+#### 4a. Read referencing summaries
+
+Read each file listed in the `referencedBy` array.
+
+#### 4b. Create the concept file
+
+Create `{KNOWLEDGE_PATH}/{key}` following the process from the `knowledge-wiki-concept` skill (create skeleton, write article body, add source, update index). Draw on all referencing summary files to write the article.
+
+#### 4c. Update the index
+
+Derive the slug from the concept file path (basename without `.md`), and the display name from the `# Title` line of the file just created. Then run:
+
+```bash
+node ../state/wiki-index.mjs upsert-concept "{slug}" "{Display Name}" "{one-line English description}" --base-path "{KNOWLEDGE_PATH}"
+```
+
+---
+
+## Check 3 — Broken Concept → * Links
+
+_Removes dead bullet points from concept files that link to missing targets._
+
+### 5. Find and remove dead bullet points
+
+```bash
+node ./wiki-lint.mjs find-broken-concept-links --base-path "{KNOWLEDGE_PATH}"
+```
+
+Output is a JSON object keyed by concept file path. Each value has a `brokenLinks` array of raw wikilink target strings (the text between `[[` and `]]`) that resolve to missing files.
+
+If the object is empty (`{}`), skip to Check 4 and print `Check 3: no broken concept links.`
+
+For each concept file in the output:
+
+1. Derive the slug (basename of the concept file path without `.md`). Example: `Wiki/Concepts/foo-bar.md` → `foo-bar`.
+2. For each string in `brokenLinks`, inspect the target to determine which command to run:
+   - **If the target starts with `Wiki/Summaries/`** — it is a broken source link. Run:
+     ```bash
+     node ../concept/wiki-concept.mjs delete-source "{slug}" "{broken-link-target}" --base-path "{KNOWLEDGE_PATH}"
+     ```
+   - **If the target starts with `Wiki/Concepts/`** — it is a broken connected-concept link. Extract the linked slug by stripping the `Wiki/Concepts/` prefix from the target. Example: `Wiki/Concepts/foo-bar` → `foo-bar`. Run:
+     ```bash
+     node ../concept/wiki-concept.mjs delete-connected-concept "{slug}" "{linked-slug}" --base-path "{KNOWLEDGE_PATH}"
+     ```
+   Double-quote all arguments to protect special characters.
+
+---
+
+## Check 4 — Ungrounded Concepts
+
+_Deletes source-grounded concept files that no longer have any valid source summaries._
+
+### 6. Find and delete ungrounded concepts
+
+```bash
+node ./wiki-lint.mjs find-ungrounded-concepts --base-path "{KNOWLEDGE_PATH}"
+```
+
+Output is a JSON array of `type: Concept` file paths whose `## Sources` section has no bullet linking to an existing `Wiki/Summaries/...` file. `type: Synthesis` files are not included.
+
+If the array is empty (`[]`), skip to Check 5 and print `Check 4: no ungrounded concepts.`
+
+For each path in the array:
+
+1. Delete the file at `{KNOWLEDGE_PATH}/{path}`.
+2. Derive the slug (basename of `{path}` without `.md`). Run:
+   ```bash
+   node ../state/wiki-index.mjs delete-concept "{slug}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+
+If any ungrounded concepts were deleted, rerun Check 3 once before continuing to Check 5. The rerun removes any newly broken Connected Concepts entries that pointed to the deleted files. Record removals from the rerun together with the original Check 3 result in the final summary.
+
+---
+
+## Check 5 — Orphan Concepts
+
+_Deletes concept files that nothing links to._
+
+### 7. Find and delete orphan concepts
+
+```bash
+node ./wiki-lint.mjs find-orphan-concepts --base-path "{KNOWLEDGE_PATH}"
+```
+
+Output is a JSON object keyed by orphan concept file path.
+
+If the object is empty (`{}`), skip to Check 6 and print `Check 5: no orphan concepts.`
+
+For each key in the output:
+
+1. Delete the file at `{KNOWLEDGE_PATH}/{key}`.
+2. Derive the slug (basename of `{key}` without `.md`). Run:
+   ```bash
+   node ../state/wiki-index.mjs delete-concept "{slug}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+
+---
+
+## Check 6 — Dead Index Links
+
+_Removes entries from `Wiki/index.md` that point to files that no longer exist on disk._
+
+### 8. Remove dead index links
+
+```bash
+node ../state/wiki-index.mjs delete-dead-links --base-path "{KNOWLEDGE_PATH}"
+```
+
+Output is a JSON object `{ "concepts": N, "summaries": N }` with the count of deleted entries in each section. The script writes the updated index automatically.
+
+If both counts are zero, print `Check 6: no dead index links.` and skip to Check 7.
+
+Otherwise record the counts for the final summary — no further action required.
+
+---
+
+## Check 7 — Missing Summary Index Entries
+
+_Adds index entries for summary files on disk that have no Wikilink in `Wiki/index.md`._
+
+### 9. Find summaries missing from the index
+
+```bash
+node ../state/wiki-index.mjs find-missing-summaries --base-path "{KNOWLEDGE_PATH}"
+```
+
+Output is a JSON array of rel-paths (e.g. `["AvocadoToast/foo.summary"]`).
+
+If the array is empty, print `Check 7: no summary index entries missing.` and skip to Check 8.
+
+### 10. Generate and insert missing summary entries
+
+For each rel-path in the array:
+
+1. Read the summary file at `{KNOWLEDGE_PATH}/Wiki/Summaries/{rel-path}.md`.
+2. Generate a one-line English description of the source document from the `## Summary` section.
+3. Run:
+   ```bash
+   node ../state/wiki-index.mjs upsert-summary "{rel-path}" "{description}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+   If `upsert-summary` fails with `summary file not found`, use the exact rel-path string from the `find-missing-summaries` JSON output verbatim — do not retype it.
+
+---
+
+## Check 8 — Missing Concept Index Entries
+
+_Adds index entries for concept files on disk that have no Wikilink in `Wiki/index.md`._
+
+### 11. Find concepts missing from the index
+
+```bash
+node ../state/wiki-index.mjs find-missing-concepts --base-path "{KNOWLEDGE_PATH}"
+```
+
+Output is a JSON array of slugs (e.g. `["autonomous-driving"]`).
+
+If the array is empty, print `Check 8: no concept index entries missing.` and skip to Check 9.
+
+### 12. Generate and insert missing concept entries
+
+For each slug in the array:
+
+1. Read the concept file at `{KNOWLEDGE_PATH}/Wiki/Concepts/{slug}.md`.
+2. Extract the display name from the `# Title` line of the file.
+3. Generate a one-line English description from the file's opening prose.
+4. Run:
+   ```bash
+   node ../state/wiki-index.mjs upsert-concept "{slug}" "{display-name}" "{description}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+
+---
+
+## Check 9 — Stale Dismissed Merge Pairs
+
+_Removes entries from the merge dismissal list in `Wiki/.state.json` whose concept files no longer exist._
+
+### 13. Prune stale dismissed pairs
+
+```bash
+node ../state/wiki-state.mjs prune-merge-pairs --base-path "{KNOWLEDGE_PATH}"
+```
+
+Output is a single integer: the number of pairs pruned. If `0`, print `Check 9: no stale dismissed pairs.`
+
+---
+
+## Check 10 — Stale Dismissed Cluster Pairs
+
+_Removes entries from the cluster dismissal list in `Wiki/.state.json` where the child concept file no longer exists on disk. Parent absence is allowed — a pair may have been recorded before the parent was created._
+
+### 14. Prune stale dismissed cluster pairs
+
+```bash
+node ../state/wiki-state.mjs prune-cluster-pairs --base-path "{KNOWLEDGE_PATH}"
+```
+
+Output is a single integer: the number of entries pruned. If `0`, print `Check 10: no stale dismissed cluster pairs.`
+
+---
+
+## Check 11 — Self-Links in Connected Concepts
+
+_Removes Connected Concepts entries where a concept links to itself._
+
+### 15. Find and remove self-links
+
+```bash
+node ./wiki-lint.mjs find-self-links --base-path "{KNOWLEDGE_PATH}"
+```
+
+Output is a JSON object keyed by concept file path. If empty (`{}`), print `Check 11: no self-links.` and skip to Check 12.
+
+For each concept file in the output:
+
+1. Derive the slug (basename without `.md`). Example: `Wiki/Concepts/foo-bar.md` → `foo-bar`.
+2. Remove the self-referencing Connected Concepts entry:
+   ```bash
+   node ../concept/wiki-concept.mjs delete-connected-concept "{slug}" "{slug}" --base-path "{KNOWLEDGE_PATH}"
+   ```
+
+---
+
+## Check 12 — Duplicate Concept Links in Summaries
+
+_Consolidates Key Concepts entries where the same concept wikilink appears more than once in the same summary, typically caused by merging or folding multiple concepts into a single parent._
+
+### 16. Find summaries with duplicate concept links
+
+```bash
+node ./wiki-lint.mjs find-duplicate-concept-links --base-path "{KNOWLEDGE_PATH}"
+```
+
+Output is a JSON object keyed by summary file path. Each value is an array of `{ conceptPath, lines }` objects — one per duplicated concept, listing all the lines that reference it. If empty (`{}`), print `Check 12: no duplicate concept links.` and skip to Final Steps.
+
+### 17. Consolidate duplicate entries
+
+For each summary file and each duplicated concept within it:
+
+1. Read all duplicate lines for that concept.
+2. Derive the concept slug from `conceptPath` (basename without `.md`). Example: `Wiki/Concepts/hong-kong.md` → `hong-kong`.
+3. Extract the display name from any duplicate line (the `|Display Name` part of the wikilink). If the links are bare (no `|` alias), read the concept file's `# Title` line and use that as the display name.
+4. Write a single combined description that merges the key facts from all duplicate entries. **Write the description in the same language as the original entries.**
+5. Delete all duplicate entries for that concept:
+   ```bash
+   node ../summary/wiki-summary.mjs delete-concept - --base-path "{KNOWLEDGE_PATH}" <<'EOF'
+   {summary-rel-path}
+   {concept-slug}
+   EOF
+   ```
+6. Insert the single combined entry:
+   ```bash
+   node ../summary/wiki-summary.mjs insert-concept - --base-path "{KNOWLEDGE_PATH}" <<'EOF'
+   {summary-rel-path}
+   {concept-slug}
+   {display-name}
+   {combined-description}
+   EOF
+   ```
+
+---
+
+## Final Steps
+
+### 18. Print summary
+
+Print the header, then a markdown table (not in a code block) with one row per check:
+
+---
+**Knowledge Wiki Lint**
+
+| Check | Result | Details |
+|-------|--------|---------|
+| 1 · Orphan Summaries | Deleted {N} \| None | {comma-separated Display Names, or omit cell if none} |
+| 2 · Broken Summary → Concept Links | Created {N} \| None | {comma-separated Display Names, or omit cell if none} |
+| 3 · Broken Concept → * Links | Removed {N} \| None | {M} concept file(s) affected, or omit cell if none |
+| 4 · Ungrounded Concepts | Deleted {N} \| None | {comma-separated Display Names, or omit cell if none} |
+| 5 · Orphan Concepts | Deleted {N} \| None | {comma-separated Display Names, or omit cell if none} |
+| 6 · Dead Index Links | Removed {N} \| None | {M} concept(s), {K} summary(s), or omit cell if none |
+| 7 · Missing Summary Index Entries | Added {N} \| None |  |
+| 8 · Missing Concept Index Entries | Added {N} \| None |  |
+| 9 · Stale Dismissed Merge Pairs | Pruned {N} \| None |  |
+| 10 · Stale Dismissed Cluster Pairs | Pruned {N} \| None |  |
+| 11 · Self-Links in Connected Concepts | Removed {N} \| None | {M} concept file(s) affected, or omit cell if none |
+| 12 · Duplicate Concept Links in Summaries | Consolidated {N} \| None | across {M} summary file(s), or omit cell if none |
+
+---
+
+Use `None` in the Result column when a check found nothing to fix. Omit the Details cell content (leave the cell empty) when there are no meaningful details beyond what the Result column already conveys.

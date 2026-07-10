@@ -14,6 +14,7 @@
  * Knowledge base root: ~/work/notes
  */
 
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,7 +24,7 @@ import { sendTelegramNotification } from "../../shared/telegram.ts";
 
 // ── Paths ──────────────────────────────────────────────────────────────────
 
-const TASK_DIR = dirname(fileURLToPath(import.meta.url));
+const TASK_DIR = realpathSync(dirname(fileURLToPath(import.meta.url)));
 const PI_KIT_DIR = resolve(TASK_DIR, "..", "..", "..");
 const HOME = homedir();
 const KNOWLEDGE_DIR = join(HOME, "work", "notes");

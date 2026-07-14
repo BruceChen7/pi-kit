@@ -27,7 +27,6 @@
       "./extensions/todo-workflow",
       "./extensions/cr-diffview",
       "./extensions/session-path-copy",
-      "./extensions/remote-approval",
       "./extensions/codex-web-search",
       "./extensions/deepseek-search",
       "./extensions/file-watcher",

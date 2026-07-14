@@ -113,7 +113,12 @@ switch (cmd) {
 
   case "upsert-concept": {
     const [slug, displayName, ...descParts] = args;
-    const description = descParts.join(" ");
+    // Filter out --base-path <value> leaked into trailing description args
+    const description = descParts
+      .filter(
+        (_, i, a) => !(a[i] === "--base-path" || a[i - 1] === "--base-path"),
+      )
+      .join(" ");
     if (!slug || !displayName || !description) {
       console.error(
         'Usage: upsert-concept <slug> "<display-name>" "<description>"',
@@ -155,7 +160,12 @@ switch (cmd) {
 
   case "upsert-summary": {
     const [relPath, ...descParts] = args;
-    const description = descParts.join(" ");
+    // Filter out --base-path <value> leaked into trailing description args
+    const description = descParts
+      .filter(
+        (_, i, a) => !(a[i] === "--base-path" || a[i - 1] === "--base-path"),
+      )
+      .join(" ");
     if (!relPath || !description) {
       console.error('Usage: upsert-summary "<rel-path>" "<description>"');
       process.exit(1);

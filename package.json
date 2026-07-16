@@ -38,7 +38,8 @@
       "./extensions/librarian",
       "./extensions/btw",
       "./extensions/opencode-go-provider",
-      "./extensions/qmd-search"
+      "./extensions/qmd-search",
+      "./extensions/herdr-squad"
     ]
   },
   "scripts": {

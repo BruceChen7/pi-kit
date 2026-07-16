@@ -4,6 +4,7 @@ description: >
   Interactively find and merge duplicate concept files in the knowledge wiki. Presents
   candidate pairs one at a time and asks whether to merge, dismiss, or skip each one. Run
   after accumulating new concepts or when the wiki feels redundant.
+disable-model-invocation: true
 ---
 
 # Knowledge Wiki Merge

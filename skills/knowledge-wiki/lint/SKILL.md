@@ -5,6 +5,7 @@ description: >
   broken wikilinks, orphan concepts, ungrounded concepts, self-links, and duplicate
   concept links. Run periodically after accumulating new content or reorganizing source
   files.
+disable-model-invocation: true
 ---
 
 # Knowledge Wiki Lint

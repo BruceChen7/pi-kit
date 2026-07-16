@@ -39,8 +39,8 @@ grill-me|local|skills/grill-me
 improve-codebase-architecture|local|skills/improve-codebase-architecture
 # https://colobu.com/2026/06/23/2026-06-23-how-to-write-design-doc/
 to-go-style-design|local|skills/to-go-style-design
-to-prd|local|skills/to-prd
-to-issues|local|skills/to-issues
+to-spec|local|skills/to-spec
+to-tickets|local|skills/to-tickets
 writing-great-skills|local|skills/writing-great-skills
 # https://github.com/mattpocock/skills (v1.0.0+)
 resolving-merge-conflicts|local|skills/resolving-merge-conflicts
@@ -57,3 +57,5 @@ knowledge-wiki-cluster|local|skills/knowledge-wiki/cluster
 knowledge-wiki-lint|local|skills/knowledge-wiki/lint
 knowledge-wiki-state|local|skills/knowledge-wiki/state
 knowledge-wiki-enrich|local|skills/knowledge-wiki/enrich
+# https://github.com/jillesme/pi-herdr-squad (v0.1.3)
+herdr-squad|local|skills/herdr-squad

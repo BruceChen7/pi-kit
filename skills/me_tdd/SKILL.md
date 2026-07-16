@@ -40,6 +40,19 @@ RIGHT (vertical):
   ...
 ```
 
+## Anti-Pattern: Tautological Tests
+
+**A tautological test** is one whose assertion recomputes the expected value the same way the code does — so it passes by construction and can never disagree with the code.
+
+Examples:
+- `expect(add(a, b)).toBe(a + b)` — the assertion uses the same arithmetic as the implementation
+- A snapshot derived by manually running the same logic
+- A constant asserted equal to itself
+
+This gives **zero confidence**: if the code is wrong, the test is wrong in exactly the same way.
+
+**The fix**: expected values must come from an independent source of truth — a known-good literal, a worked example, or the spec. Treat the expected value as a fixed constant derived from the problem, not recomputed from the implementation.
+
 ## Workflow
 
 ### 1. Planning

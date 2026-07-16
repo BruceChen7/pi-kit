@@ -1,11 +1,10 @@
 ---
 name: prototype
 description: >
-  Build a throwaway prototype to flesh out a design before committing to it. Routes between two
-  branches — a runnable terminal app for state/business-logic questions, or several radically
-  different UI variations toggleable from one route. Use when the user wants to prototype,
-  sanity-check a data model or state machine, mock up a UI, explore design options, or says
-  "prototype this", "let me play with it", "try a few designs".
+  Build a throwaway prototype to answer a design question. Routes between two branches — a
+  runnable terminal app for state/logic questions, or UI variations toggleable from one route.
+  Use when the user wants to sanity-check a state model or data model, mock up a UI, or says
+  "prototype this" or "let me play with it".
 ---
 
 # Prototype
@@ -30,14 +29,14 @@ The two branches produce very different artifacts — getting this wrong wastes 
 3. **No persistence by default.** State lives in memory. Persistence is the thing the prototype is _checking_, not something it should depend on. If the question explicitly involves a database, hit a scratch DB or a local file with a clear "PROTOTYPE — wipe me" name.
 4. **Skip the polish.** No tests, no error handling beyond what makes the prototype _runnable_, no abstractions. The point is to learn something fast and then delete it.
 5. **Surface the state.** After every action (logic) or on every variant switch (UI), print or render the full relevant state so the user can see what changed.
-6. **Delete or absorb when done.** When the prototype has answered its question, either delete it or fold the validated decision into the real code — don't leave it rotting in the repo.
+6. **Capture when done.** Fold any validated decision into the real code, then capture the prototype itself as a **primary source**: commit it to a throwaway branch, out of main, and leave a context pointer to that branch on the implementation issue. Capture the answer too — the verdict and the question it settled. The main branch keeps only the validated decision.
 
 ## When done
 
-The _answer_ is the only thing worth keeping from a prototype. Capture it somewhere durable before deleting the prototype:
+The _answer_ is the only thing worth keeping from a prototype. Capture it somewhere durable:
 
-- If the user is around: ask what it taught them and write it down.
-- If working AFK: leave a `NOTES.md` next to the prototype for the user to fill in.
+- If the user is around: ask what it taught them and write it down, referencing the throwaway branch for the prototype source.
+- If working AFK: leave a `NOTES.md` next to the prototype for the user to fill in; commit the prototype to a throwaway branch so the code doesn't rot on main.
 - For significant decisions that affect module boundaries or domain language: record the answer as an ADR under `.pi/contexts/**/adr/`.
 - For less formal outcomes: a commit message or a reference in the relevant `.pi/plans/<repo>/plan/` or `.pi/plans/<repo>/specs/` file is sufficient.
 

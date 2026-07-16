@@ -396,7 +396,7 @@ export default function (pi: ExtensionAPI) {
         model = validateExplicitModel(params.model);
         modelSource = "explicit";
       } else {
-        const configuredModel = await resolveConfiguredModel(
+        const configuredModel = resolveConfiguredModel(
           ctx.cwd,
           ctx.isProjectTrusted(),
         );

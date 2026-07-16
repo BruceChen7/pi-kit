@@ -1,6 +1,4 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { loadSettings } from "../shared/settings.ts";
 
 export interface HerdrSquadConfig {
   defaultModel?: string | null;
@@ -9,85 +7,55 @@ export interface HerdrSquadConfig {
 export interface ResolvedModelConfig {
   model?: string;
   source: "global" | "project" | "pi-default";
-  path?: string;
 }
 
-function validateModel(value: unknown, path: string): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "string")
-    throw new Error(`defaultModel in ${path} must be a string or null`);
-  const model = value.trim();
-  if (!model) throw new Error(`defaultModel in ${path} must not be empty`);
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional input sanitization
-  if (model.length > 200 || /[\u0000-\u001f\u007f]/.test(model)) {
-    throw new Error(
-      `defaultModel in ${path} contains invalid characters or exceeds 200 characters`,
-    );
-  }
-  return model;
-}
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-async function readConfig(
-  path: string,
-): Promise<{ exists: boolean; model?: string; explicitlyDisabled: boolean }> {
-  let source: string;
-  try {
-    source = await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT")
-      return { exists: false, explicitlyDisabled: false };
-    throw new Error(
-      `Could not read Herdr squad config ${path}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+const sanitizeModel = (value: unknown): string | null | undefined => {
+  if (value === null) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length > 0 && trimmed.length <= 200) return trimmed;
   }
+  return undefined;
+};
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(source);
-  } catch (error) {
-    throw new Error(
-      `Could not parse Herdr squad config ${path}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Herdr squad config ${path} must contain a JSON object`);
-  }
-  const config = parsed as HerdrSquadConfig;
-  return {
-    exists: true,
-    model: validateModel(config.defaultModel, path),
-    explicitlyDisabled: config.defaultModel === null,
-  };
-}
-
-export async function resolveConfiguredModel(
+export function resolveConfiguredModel(
   cwd: string,
   projectTrusted: boolean,
-): Promise<ResolvedModelConfig> {
-  const globalPath = join(getAgentDir(), "herdr-squad.json");
-  const globalConfig = await readConfig(globalPath);
-  let resolved: ResolvedModelConfig = globalConfig.model
-    ? { model: globalConfig.model, source: "global", path: globalPath }
-    : { source: "pi-default" };
+): ResolvedModelConfig {
+  const { global, project } = loadSettings(cwd);
 
-  if (!projectTrusted) return resolved;
-  const projectPath = join(cwd, CONFIG_DIR_NAME, "herdr-squad.json");
-  const projectConfig = await readConfig(projectPath);
-  if (!projectConfig.exists) return resolved;
-  if (projectConfig.explicitlyDisabled)
-    return { source: "pi-default", path: projectPath };
-  if (projectConfig.model)
-    resolved = {
-      model: projectConfig.model,
-      source: "project",
-      path: projectPath,
-    };
-  return resolved;
+  // 1. Project config (trusted only)
+  if (projectTrusted) {
+    const projectSection = isRecord(project.herdrSquad)
+      ? (project.herdrSquad as Record<string, unknown>)
+      : {};
+    const projectModel = sanitizeModel(projectSection.defaultModel);
+    if (projectModel === null) return { source: "pi-default" };
+    if (projectModel !== undefined) {
+      return { model: projectModel, source: "project" };
+    }
+  }
+
+  // 2. Global config
+  const globalSection = isRecord(global.herdrSquad)
+    ? (global.herdrSquad as Record<string, unknown>)
+    : {};
+  const globalModel = sanitizeModel(globalSection.defaultModel);
+  if (globalModel !== undefined) {
+    return { model: globalModel, source: "global" };
+  }
+
+  // 3. Pi default
+  return { source: "pi-default" };
 }
 
 export function validateExplicitModel(value: string): string {
-  const result = validateModel(value, "herdr_squad_start.model");
-  if (result === undefined)
-    throw new Error("Explicit model value resolved to undefined");
-  return result;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 200) {
+    throw new Error("Explicit model value is empty or exceeds 200 characters");
+  }
+  return trimmed;
 }

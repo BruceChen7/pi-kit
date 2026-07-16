@@ -12,6 +12,7 @@ exclude_when:
   - 非 Go 语言的性能问题
   - 只需要代码生成而不需要性能诊断或优化验证
 version: 1.0.0
+disable-model-invocation: true
 ---
 
 # Go 性能分析专家

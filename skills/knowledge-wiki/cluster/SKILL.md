@@ -7,6 +7,7 @@ description: >
   linked to parent), or merge into a sibling that already covers its content. Run after
   accumulating new concepts or when the wiki has clusters of narrowly-named sub-concepts
   without a parent.
+disable-model-invocation: true
 ---
 
 # Knowledge Wiki Cluster

@@ -4,6 +4,7 @@ description: >
   Create or update wiki concept articles from knowledge base summaries. Use when the user
   wants to build or refresh concept articles, populate Wiki/Concepts, or run the
   concept-creation step after summarizing new files.
+disable-model-invocation: true
 ---
 
 # Knowledge Wiki Concept

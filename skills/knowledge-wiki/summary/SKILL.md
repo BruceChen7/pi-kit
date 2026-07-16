@@ -4,6 +4,7 @@ description: >
   Generate or refresh wiki summaries for knowledge base markdown files. Use when the user
   wants to summarize notes, update the wiki, compile stale summaries, or process new
   knowledge base files into Wiki/Summaries.
+disable-model-invocation: true
 ---
 
 # Knowledge Wiki Summary

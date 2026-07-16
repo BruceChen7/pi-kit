@@ -4,6 +4,7 @@ description: >
   Expand thin concept articles in the knowledge wiki using web search. Targets concepts
   with minimal prose assembled from few sources and supplements them with authoritative
   external information. Run after accumulating new concepts or when articles feel sparse.
+disable-model-invocation: true
 ---
 
 # Knowledge Wiki Enrich

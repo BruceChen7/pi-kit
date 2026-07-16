@@ -3,6 +3,7 @@ name: knowledge-wiki-state
 description: >
   Manages wiki state: .state.json read/write, index maintenance (upsert/delete/sort/find
   gaps), and processed-summary tracking. Utility skill used by other knowledge-wiki skills.
+disable-model-invocation: true
 ---
 
 # knowledge-wiki-state

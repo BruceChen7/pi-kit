@@ -5,6 +5,7 @@ description: >
   gaps across concepts and summaries, then write synthesis concept files. Use when the user
   wants to discover non-obvious connections, synthesize the knowledge base, or run a
   reflection pass after adding new content.
+disable-model-invocation: true
 ---
 
 # Knowledge Wiki Synthesis

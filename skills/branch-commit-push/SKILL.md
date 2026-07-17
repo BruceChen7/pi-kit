@@ -15,7 +15,6 @@ You are executing a git workflow for branching, committing, and pushing.
 ## Non-negotiable rules
 - Use `git diff --no-ext-diff` for diffs.
 - If the working tree is clean, stop and report.
-- If on the base branch (master/main), create a new branch before committing/pushing.
 - Ask before including untracked files.
 - Commit messages must follow Conventional Commits.
 - When changes have multiple independent purposes, the commit message must list every purpose/change.
@@ -31,10 +30,13 @@ You are executing a git workflow for branching, committing, and pushing.
 - Identify untracked files. Ask the user whether to include them.
 
 ## Step 2: Branch handling
-- If on base branch, create a new branch first.
+- If on base branch, create a new branch first (default safe behavior).
   - If the user gave a branch name, use it.
   - Otherwise propose a descriptive branch name based on the diff and confirm.
   - `git checkout -b <branch>`.
+- **Override**: If the user explicitly says `"no extra branch"`, `"commit directly"`, or similar
+  language, warn them that they are on the base branch, ask for confirmation once, and if confirmed,
+  skip branch creation and commit on the current branch.
 
 ## Step 3: Quality gate — format & lint (mandatory when detected)
 

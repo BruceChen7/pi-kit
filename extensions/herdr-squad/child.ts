@@ -5,6 +5,7 @@ import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { createLogger } from "../shared/logger.ts";
 import {
   MANIFEST_FILE,
   RUN_DIR_PREFIX,
@@ -75,17 +76,34 @@ async function loadValidatedManifest(
     !agent ||
     agent.token !== token
   ) {
+    childLog.error("Child identity verification failed", {
+      squadId,
+      agentId,
+      manifestSquadId: manifest.squadId,
+      manifestVersion: manifest.version,
+      agentFound: !!agent,
+    });
     throw new Error("Herdr squad child identity could not be verified");
   }
+  childLog.info("Child identity verified", {
+    label: agent.label,
+    scope: agent.scope.slice(0, 60),
+  });
   return { manifest, agent };
 }
+
+const childLog = createLogger("herdr-squad", { stderr: null });
 
 export function registerChildReportTool(pi: ExtensionAPI): boolean {
   const runDir = process.env.HERDR_SQUAD_DIR;
   const squadId = process.env.HERDR_SQUAD_ID;
   const agentId = process.env.HERDR_SQUAD_AGENT_ID;
   const token = process.env.HERDR_SQUAD_TOKEN;
-  if (!runDir || !squadId || !agentId || !token) return false;
+  if (!runDir || !squadId || !agentId || !token) {
+    childLog.debug("Not a child agent — skipping child tool registration");
+    return false;
+  }
+  childLog.info("Child identity detected", { squadId, agentId, runDir });
 
   pi.registerTool({
     name: "herdr_squad_report",
@@ -131,6 +149,14 @@ export function registerChildReportTool(pi: ExtensionAPI): boolean {
           mode: 0o600,
         });
         await rename(temporaryPath, reportPath);
+      });
+
+      childLog.info("Report submitted", {
+        agentId,
+        label: report.label,
+        findingsLength: report.findings.length,
+        evidenceCount: report.evidence.length,
+        reportPath,
       });
 
       return {

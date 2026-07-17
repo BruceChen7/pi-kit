@@ -11,6 +11,7 @@ import {
   withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { createLogger } from "../shared/logger.ts";
 import { registerChildReportTool } from "./child.ts";
 import { resolveConfiguredModel } from "./config.ts";
 import {
@@ -193,8 +194,14 @@ function formatReport(
   ].join("\n");
 }
 
+const log = createLogger("herdr-squad", { stderr: null });
+
 export default function (pi: ExtensionAPI) {
-  if (registerChildReportTool(pi)) return;
+  if (registerChildReportTool(pi)) {
+    log.info("Loaded in child-agent mode — parent tools skipped");
+    return;
+  }
+  log.info("Loaded in parent mode — registering orchestrator tools");
 
   const squads = new Map<string, SquadState>();
 
@@ -215,8 +222,14 @@ export default function (pi: ExtensionAPI) {
     signal?: AbortSignal,
     timeout = 15_000,
   ) {
+    log.debug("herdr exec", { args: args.slice(0, 3), timeout });
     const result = await pi.exec("herdr", args, { signal, timeout });
     if (result.code !== 0) {
+      log.error("herdr CLI failed", {
+        args: args.slice(0, 3),
+        code: result.code,
+        stderr: (result.stderr || "").trim().slice(0, 200),
+      });
       throw new Error(
         [
           `herdr ${args.slice(0, 2).join(" ")} failed:`,
@@ -236,6 +249,10 @@ export default function (pi: ExtensionAPI) {
     try {
       return JSON.parse(result.stdout) as JsonObject;
     } catch {
+      log.error("herdr JSON parse failed", {
+        args: args.slice(0, 3),
+        stdout: (result.stdout || "").slice(0, 200),
+      });
       throw new Error(
         `herdr ${args.slice(0, 2).join(" ")} returned invalid JSON`,
       );
@@ -324,12 +341,18 @@ export default function (pi: ExtensionAPI) {
           state.version === STATE_VERSION && typeof state.squadId === "string",
       )
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+    log.info(`Restored ${snapshots.length} squad(s) from session`);
     for (const state of snapshots) {
       state.modelSource ??= "pi-default";
       squads.set(state.squadId, state);
+      log.debug(`Restored squad ${state.squadId}`, {
+        status: state.status,
+        agents: state.agents.length,
+      });
     }
   });
 
+  log.info("Registering tool: herdr_squad_start");
   pi.registerTool({
     name: "herdr_squad_start",
     label: "Start Herdr Squad",
@@ -366,18 +389,34 @@ export default function (pi: ExtensionAPI) {
           model: params.model,
         },
         process.env,
-        { randomUUID: crypto.randomUUID, randomBytes },
+        { randomUUID: () => crypto.randomUUID(), randomBytes },
         () => resolveConfiguredModel(ctx.cwd, ctx.isProjectTrusted()),
       );
+
+      log.info(`Squad ${v.squadId} validation passed`, {
+        model: v.model,
+        modelSource: v.modelSource,
+        count: params.count,
+        agents: v.agents.map((a) => a.label),
+      });
 
       const parentResponse = await herdr(
         ["pane", "get", v.parentPaneId],
         signal,
       );
       const parentPane = parentResponse.result?.pane;
-      if (!parentPane?.workspace_id || parentPane.pane_id !== v.parentPaneId)
+      if (!parentPane?.workspace_id || parentPane.pane_id !== v.parentPaneId) {
+        log.error("Parent pane validation failed", {
+          parentPaneId: v.parentPaneId,
+          pane: parentPane,
+        });
         throw new Error("Could not validate the parent Herdr pane");
+      }
       const workspaceId = String(parentPane.workspace_id);
+      log.info("Parent pane validated", {
+        workspaceId,
+        paneId: v.parentPaneId,
+      });
       const runDir = await mkdtemp(join(tmpdir(), RUN_DIR_PREFIX));
       const manifest: SquadManifest = {
         version: 1,
@@ -438,11 +477,21 @@ export default function (pi: ExtensionAPI) {
         );
         const tab = tabResponse.result?.tab;
         const rootPane = tabResponse.result?.root_pane;
-        if (!tab?.tab_id || !rootPane?.pane_id)
+        if (!tab?.tab_id || !rootPane?.pane_id) {
+          log.error("Tab creation response missing IDs", {
+            tab,
+            rootPane,
+          });
           throw new Error(
             "Herdr tab creation response did not include tab and root pane IDs",
           );
+        }
         createdTab = true;
+        log.info("Tab created", {
+          tabId: tab.tab_id,
+          tabLabel: v.tabLabel,
+          rootPaneId: rootPane.pane_id,
+        });
         agents[0].paneId = String(rootPane.pane_id);
         state = {
           version: STATE_VERSION,
@@ -478,8 +527,11 @@ export default function (pi: ExtensionAPI) {
             signal,
           );
           agents[1].paneId = String(split.result?.pane?.pane_id || "");
-          if (!agents[1].paneId)
+          if (!agents[1].paneId) {
+            log.error("Right split failed — no pane ID returned");
             throw new Error("Right split did not return a pane ID");
+          }
+          log.debug("Right split done", { paneId: agents[1].paneId });
         }
         if (params.count >= 3) {
           const split = await herdr(
@@ -496,8 +548,11 @@ export default function (pi: ExtensionAPI) {
             signal,
           );
           agents[2].paneId = String(split.result?.pane?.pane_id || "");
-          if (!agents[2].paneId)
+          if (!agents[2].paneId) {
+            log.error("Lower-left split failed — no pane ID returned");
             throw new Error("Lower-left split did not return a pane ID");
+          }
+          log.debug("Lower-left split done", { paneId: agents[2].paneId });
         }
         if (params.count >= 4) {
           const split = await herdr(
@@ -514,15 +569,23 @@ export default function (pi: ExtensionAPI) {
             signal,
           );
           agents[3].paneId = String(split.result?.pane?.pane_id || "");
-          if (!agents[3].paneId)
+          if (!agents[3].paneId) {
+            log.error("Lower-right split failed — no pane ID returned");
             throw new Error("Lower-right split did not return a pane ID");
+          }
+          log.debug("Lower-right split done", { paneId: agents[3].paneId });
         }
 
-        for (const agent of agents)
+        for (const agent of agents) {
           await runHerdr(
             ["pane", "rename", agent.paneId, agent.paneLabel],
             signal,
           );
+          log.debug("Pane renamed", {
+            paneId: agent.paneId,
+            label: agent.paneLabel,
+          });
+        }
 
         for (let index = 0; index < agents.length; index++) {
           const agent = agents[index];
@@ -547,12 +610,20 @@ export default function (pi: ExtensionAPI) {
           );
           const command = commandArguments.map(shellQuote).join(" ");
           await runHerdr(["pane", "run", agent.paneId, command], signal);
+          log.debug(`Agent ${agent.label} launched`, {
+            paneId: agent.paneId,
+            agentId: agent.agentId,
+          });
         }
 
         state.status = "running";
         if (params.focus === true)
           await runHerdr(["tab", "focus", state.tabId], signal);
         saveState(state);
+        log.info(`Squad ${v.squadId} started successfully`, {
+          agents: state.agents.length,
+          tab: v.tabLabel,
+        });
         return {
           content: [
             {
@@ -571,6 +642,10 @@ export default function (pi: ExtensionAPI) {
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        log.error(`Squad ${v.squadId} launch failed`, {
+          error: message,
+          createdTab,
+        });
         if (!createdTab) {
           await rm(runDir, { recursive: true, force: true });
           throw error;
@@ -599,6 +674,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  log.info("Registering tool: herdr_squad_wait");
   pi.registerTool({
     name: "herdr_squad_wait",
     label: "Wait for Herdr Squad",
@@ -621,8 +697,16 @@ export default function (pi: ExtensionAPI) {
       const deadline = Date.now() + timeoutMs;
       const blockedSince = new Map<string, number>();
 
+      log.info(`Waiting for squad ${params.squadId}`, {
+        timeoutMs,
+        agents: state.agents.length,
+      });
+
       while (true) {
-        if (signal?.aborted) throw new Error("Herdr squad wait cancelled");
+        if (signal?.aborted) {
+          log.warn(`Squad ${params.squadId} wait cancelled by signal`);
+          throw new Error("Herdr squad wait cancelled");
+        }
         const reports = await Promise.all(
           state.agents.map((agent) => readSquadReport(agent.reportPath)),
         );
@@ -631,6 +715,9 @@ export default function (pi: ExtensionAPI) {
           state.status = "completed";
           delete state.failure;
           saveState(state);
+          log.info(
+            `Squad ${params.squadId} all ${completeCount} reports ready`,
+          );
           return {
             content: [
               {
@@ -656,6 +743,10 @@ export default function (pi: ExtensionAPI) {
             ? "Squad tab is no longer available"
             : `Missing panes: ${live.missing.join(", ")}`;
           saveState(state);
+          log.warn(`Squad ${params.squadId} partial`, {
+            failure: state.failure,
+            completeCount,
+          });
           return {
             content: [
               {
@@ -685,6 +776,9 @@ export default function (pi: ExtensionAPI) {
               `Herdr status done without submitting a report`,
             ].join(" ");
             saveState(state);
+            log.warn(
+              `Squad ${params.squadId}: ${agent.label} done without report`,
+            );
             return {
               content: [
                 {
@@ -711,6 +805,7 @@ export default function (pi: ExtensionAPI) {
               state.status = "partial";
               state.failure = `${agent.label} is blocked`;
               saveState(state);
+              log.warn(`Squad ${params.squadId}: ${agent.label} blocked`);
               return {
                 content: [
                   {
@@ -729,6 +824,9 @@ export default function (pi: ExtensionAPI) {
                 },
               };
             }
+            log.debug(
+              `Squad ${params.squadId}: ${agent.label} blocked (grace)`,
+            );
           } else {
             blockedSince.delete(agent.agentId);
           }
@@ -747,6 +845,10 @@ export default function (pi: ExtensionAPI) {
           state.status = "partial";
           state.failure = `Timed out after ${timeoutMs}ms`;
           saveState(state);
+          log.warn(`Squad ${params.squadId} timed out`, {
+            completeCount,
+            timeoutMs,
+          });
           return {
             content: [
               {
@@ -770,6 +872,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  log.info("Registering tool: herdr_squad_collect");
   pi.registerTool({
     name: "herdr_squad_collect",
     label: "Collect Herdr Squad",
@@ -787,9 +890,18 @@ export default function (pi: ExtensionAPI) {
     parameters: CollectParams,
     async execute(_toolCallId, params, signal) {
       const state = getSquad(params.squadId);
+      log.info(`Collecting squad ${params.squadId}`, {
+        agents: state.agents.length,
+        status: state.status,
+      });
       const lines = params.lines ?? 240;
       const live = await refreshLivePanes(state, signal);
       const missingPanes = new Set(live.missing);
+      if (live.missing.length > 0) {
+        log.warn(
+          `Squad ${params.squadId}: ${live.missing.length} pane(s) missing`,
+        );
+      }
       const perAgentBytes = Math.max(
         8_000,
         Math.floor((DEFAULT_MAX_BYTES - 4_000) / state.agents.length),
@@ -918,6 +1030,11 @@ export default function (pi: ExtensionAPI) {
       if (structuredCount === state.agents.length) delete state.failure;
       state.collectedAt = new Date().toISOString();
       saveState(state);
+      log.info(`Squad ${params.squadId} collected`, {
+        structuredCount,
+        total: state.agents.length,
+        truncated: !!fullOutputPath,
+      });
       return {
         content: [{ type: "text", text: output }],
         details: {

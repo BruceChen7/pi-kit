@@ -223,20 +223,20 @@ describe("scanPlanFiles (shell integration)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// showReviewPicker — UI mode guard
+// showPlanFilePicker — UI mode guard
 // ---------------------------------------------------------------------------
 
-describe("showReviewPicker (no UI)", () => {
+describe("showPlanFilePicker (no UI)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it("shows warning when UI mode is unavailable", async () => {
-    const { showReviewPicker } = await import("./review-picker.js");
+    const { showPlanFilePicker } = await import("./review-picker.js");
     const { api } = createFakePi();
     const ctx = createTestContext("/repo", { hasUI: false });
 
-    await showReviewPicker(api as never, ctx as never);
+    await showPlanFilePicker(api as never, ctx as never);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       "Review picker requires UI mode.",
@@ -246,72 +246,10 @@ describe("showReviewPicker (no UI)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// showReviewPicker — code review path (through mock CLI)
+// showPlanFilePicker — plan review path (with temp filesystem + mock CLI)
 // ---------------------------------------------------------------------------
 
-describe("showReviewPicker (code review path)", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  });
-
-  it("executes code review when user selects code", async () => {
-    vi.resetModules();
-    const spawn = mockPlannotatorSpawn({
-      status: 0,
-      stdout: "",
-      stderr: "",
-    });
-
-    const { showReviewPicker } = await import("./review-picker.js");
-    const { api } = createFakePi();
-    const ctx = createTestContext("/repo", {
-      uiCustom: vi.fn(async () => "code"),
-    });
-
-    await showReviewPicker(api as never, ctx as never);
-    await flushMicrotasks();
-
-    expect(spawn).toHaveBeenCalledWith(
-      "plannotator",
-      ["review"],
-      expect.objectContaining({ cwd: "/repo" }),
-    );
-    expect(api.sendUserMessage).toHaveBeenCalledWith(
-      "# Code Review\n\nCode review completed — no changes requested.",
-      { deliverAs: "followUp" },
-    );
-  });
-
-  it("notifies on code review CLI error", async () => {
-    vi.resetModules();
-    mockPlannotatorSpawn({
-      status: 1,
-      stderr: "Plannotator not found",
-    });
-
-    const { showReviewPicker } = await import("./review-picker.js");
-    const { api } = createFakePi();
-    const ctx = createTestContext("/repo", {
-      uiCustom: vi.fn(async () => "code"),
-    });
-
-    await showReviewPicker(api as never, ctx as never);
-    await flushMicrotasks();
-
-    expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringMatching(/Plannotator/i),
-      "warning",
-    );
-    expect(api.sendUserMessage).not.toHaveBeenCalled();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// showReviewPicker — plan review path (with temp filesystem + mock CLI)
-// ---------------------------------------------------------------------------
-
-describe("showReviewPicker (plan review path)", () => {
+describe("showPlanFilePicker (plan review path)", () => {
   let repoRoot: string;
 
   afterEach(async () => {
@@ -350,16 +288,13 @@ describe("showReviewPicker (plan review path)", () => {
     }));
     vi.resetModules();
 
-    const { showReviewPicker } = await import("./review-picker.js");
+    const { showPlanFilePicker } = await import("./review-picker.js");
     const { api } = createFakePi();
     const ctx = createTestContext(repoRoot, {
-      uiCustom: vi
-        .fn()
-        .mockResolvedValueOnce("plan" as const)
-        .mockResolvedValueOnce(null as never),
+      uiCustom: vi.fn().mockResolvedValueOnce(null as never),
     });
 
-    await showReviewPicker(api as never, ctx as never);
+    await showPlanFilePicker(api as never, ctx as never);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       expect.stringMatching(/No plan or spec files found/i),
@@ -403,16 +338,13 @@ describe("showReviewPicker (plan review path)", () => {
     });
     vi.resetModules();
 
-    const { showReviewPicker } = await import("./review-picker.js");
+    const { showPlanFilePicker } = await import("./review-picker.js");
     const { api } = createFakePi();
     const ctx = createTestContext(repoRoot, {
-      uiCustom: vi
-        .fn()
-        .mockResolvedValueOnce("plan" as const)
-        .mockResolvedValueOnce(planFile),
+      uiCustom: vi.fn().mockResolvedValueOnce(planFile),
     });
 
-    await showReviewPicker(api as never, ctx as never);
+    await showPlanFilePicker(api as never, ctx as never);
     await flushMicrotasks();
 
     // The plan review CLI (PermissionRequest hook) — spawn with no args, content via stdin
@@ -460,16 +392,13 @@ describe("showReviewPicker (plan review path)", () => {
     mockPlannotatorSpawn({ status: 1, stderr: "CLI error" });
     vi.resetModules();
 
-    const { showReviewPicker } = await import("./review-picker.js");
+    const { showPlanFilePicker } = await import("./review-picker.js");
     const { api } = createFakePi();
     const ctx = createTestContext(repoRoot, {
-      uiCustom: vi
-        .fn()
-        .mockResolvedValueOnce("plan" as const)
-        .mockResolvedValueOnce(planFile),
+      uiCustom: vi.fn().mockResolvedValueOnce(planFile),
     });
 
-    await showReviewPicker(api as never, ctx as never);
+    await showPlanFilePicker(api as never, ctx as never);
     await flushMicrotasks();
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(

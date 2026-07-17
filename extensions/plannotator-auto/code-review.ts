@@ -4,12 +4,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_GIT_TIMEOUT_MS, getRepoRoot } from "../shared/git.ts";
-import { createLogger } from "../shared/logger.ts";
-import {
-  runPlannotatorAnnotateCli,
-  runPlannotatorCodeReviewCli,
-} from "./cli.ts";
+import { runPlannotatorAnnotateCli } from "./cli.ts";
 import { extractBashPathCandidates, resolveToolPaths } from "./helpers.ts";
 import {
   isHtmlPath,
@@ -17,55 +12,11 @@ import {
   isReviewDocumentPath,
   toRepoRelativePath,
 } from "./paths.ts";
-import { isPlanReviewSettled, setReviewWidget } from "./plan-review.ts";
 import type { SessionReviewDocument, SessionRuntimeState } from "./session.ts";
-import {
-  getSessionContextByKey,
-  getSessionKey,
-  getSessionState,
-} from "./session.ts";
+import { getSessionState } from "./session.ts";
 
-const DEFAULT_CODE_REVIEW_RETRY_DELAY_MS = 1_000;
 const SYNC_ANNOTATE_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
-const SYNC_CODE_REVIEW_TIMEOUT_MS = SYNC_ANNOTATE_TIMEOUT_MS;
-const MANUAL_CODE_REVIEW_COMMAND = "plannotator-review";
-const MANUAL_CODE_REVIEW_SHORTCUT = "ctrl+shift+r";
 const ANNOTATE_LATEST_DOCUMENT_SHORTCUT = "ctrl+alt+l";
-const _REVIEW_WIDGET_KEY = "plannotator-auto-review";
-
-type ActiveCodeReview = {
-  requestKey: string;
-  startedAt: number;
-};
-
-type CodeReviewDecision = {
-  approved: boolean;
-  feedback?: string;
-  annotations?: unknown[];
-};
-
-const createCodeReviewRequestKey = (): string =>
-  `sync:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
-
-export const formatCodeReviewMessage = (result: {
-  approved: boolean;
-  feedback?: string;
-  annotations?: unknown[];
-}): string | null => {
-  if (result.approved) {
-    return "# Code Review\n\nCode review completed — no changes requested.";
-  }
-
-  if (!result.feedback?.trim()) {
-    if ((result.annotations?.length ?? 0) > 0) {
-      return "# Code Review\n\nCode review completed with inline annotations. Please address the review comments.";
-    }
-
-    return null;
-  }
-
-  return `${result.feedback}\n\nPlease address this feedback.`;
-};
 
 const formatAnnotationMessage = (options: {
   filePath: string;
@@ -215,7 +166,6 @@ const annotateLatestReviewDocument = async (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> => {
-  const log = createLogger("plannotator-auto", { stderr: null });
   if (!ctx.hasUI) {
     ctx.ui.notify("Latest document annotation requires UI mode.", "warning");
     return;
@@ -231,14 +181,6 @@ const annotateLatestReviewDocument = async (
   }
 
   const renderHtml = isHtmlPath(latestDocument.absolutePath);
-
-  log.info("plannotator-auto annotating latest session document", {
-    cwd: ctx.cwd,
-    documentFile: latestDocument.repoRelativePath,
-    renderHtml,
-    sessionKey: getSessionKey(ctx),
-    shortcut: ANNOTATE_LATEST_DOCUMENT_SHORTCUT,
-  });
 
   try {
     const response = await runPlannotatorAnnotateCli(
@@ -281,262 +223,22 @@ const annotateLatestReviewDocument = async (
   }
 };
 
-export const markReviewPending = (ctx: ExtensionContext): void => {
-  const state = getSessionState(ctx);
-  state.pendingReviewByCwd.add(ctx.cwd);
-};
-
-const clearReviewPending = (ctx: ExtensionContext): void => {
-  getSessionState(ctx).pendingReviewByCwd.delete(ctx.cwd);
-};
-
-const notifyCodeReviewUnavailable = (
-  ctx: ExtensionContext,
-  state: SessionRuntimeState,
-  log: ReturnType<typeof createLogger>,
-  message: string,
-): void => {
-  if (state.plannotatorUnavailableNotified) {
-    log.debug(
-      "plannotator-auto suppressed duplicate unavailable notification",
-      {
-        cwd: ctx.cwd,
-        sessionKey: getSessionKey(ctx),
-        message,
-      },
-    );
-    return;
-  }
-
-  state.plannotatorUnavailableNotified = true;
-  log.warn("plannotator-auto notified plannotator unavailable", {
-    cwd: ctx.cwd,
-    sessionKey: getSessionKey(ctx),
-    message,
-  });
-  ctx.ui.notify(message, "warning");
-};
-
-const handleCodeReviewCompletion = (
-  pi: ExtensionAPI,
-  ctx: Pick<ExtensionContext, "cwd"> & {
-    ui?: Pick<ExtensionContext["ui"], "notify">;
-  },
-  state: SessionRuntimeState,
-  active: ActiveCodeReview,
-  result: CodeReviewDecision,
-  log: ReturnType<typeof createLogger>,
-  onStateChanged?: () => void,
-): void => {
-  const superseded = state.pendingReviewByCwd.has(ctx.cwd);
-
-  state.activeCodeReviewByCwd.delete(ctx.cwd);
-  state.plannotatorUnavailableNotified = false;
-  onStateChanged?.();
-
-  if (superseded) {
-    log.info("plannotator-auto suppressed stale code-review completion", {
-      cwd: ctx.cwd,
-      requestKey: active.requestKey,
-      approved: result.approved,
-    });
-    return;
-  }
-
-  const message = formatCodeReviewMessage(result);
-  if (message) {
-    pi.sendUserMessage(message, { deliverAs: "followUp" });
-    return;
-  }
-
-  ctx.ui?.notify("Code review closed (no feedback).", "info");
-};
-
-const clearActiveCodeReview = (
-  ctx: Pick<ExtensionContext, "cwd">,
-  state: SessionRuntimeState,
-  onStateChanged?: () => void,
-): void => {
-  if (state.activeCodeReviewByCwd.delete(ctx.cwd)) {
-    onStateChanged?.();
-  }
-};
-
-const maybeStartCodeReview = async (
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  reason: string,
-  log: ReturnType<typeof createLogger>,
-  explicitRequest = false,
-): Promise<void> => {
-  const state = getSessionState(ctx);
-  const hasPending = state.pendingReviewByCwd.has(ctx.cwd);
-  const active = state.activeCodeReviewByCwd.get(ctx.cwd);
-
-  if (!explicitRequest && !active) {
-    if (hasPending) {
-      log.debug(
-        "plannotator-auto skipped review (code-review auto trigger removed)",
-        {
-          cwd: ctx.cwd,
-          reason,
-          sessionKey: getSessionKey(ctx),
-        },
-      );
-      clearReviewPending(ctx);
-    }
-    return;
-  }
-
-  if (state.reviewInFlight) {
-    return;
-  }
-
-  if (!ctx.hasUI) {
-    log.debug("plannotator-auto skipped review (no UI)", {
-      cwd: ctx.cwd,
-      reason,
-      sessionKey: getSessionKey(ctx),
-    });
-    clearReviewPending(ctx);
-    return;
-  }
-
-  if (!ctx.isIdle()) {
-    scheduleReviewRetry(pi, ctx, "busy-review", log, explicitRequest);
-    return;
-  }
-
-  if (!isPlanReviewSettled(state, ctx.cwd)) {
-    log.debug(
-      "plannotator-auto deferring code review until plan review settles",
-      {
-        cwd: ctx.cwd,
-        reason,
-        sessionKey: getSessionKey(ctx),
-      },
-    );
-    scheduleReviewRetry(
-      pi,
-      ctx,
-      "review-after-plan-review",
-      log,
-      explicitRequest,
-    );
-    return;
-  }
-
-  const repoRoot = getRepoRoot(ctx.cwd, DEFAULT_GIT_TIMEOUT_MS);
-  if (!repoRoot) {
-    log.debug("plannotator-auto skipped review (not a git repo)", {
-      cwd: ctx.cwd,
-      reason,
-      sessionKey: getSessionKey(ctx),
-    });
-    clearReviewPending(ctx);
-    return;
-  }
-
-  state.reviewInFlight = true;
-  const activeReview: ActiveCodeReview = {
-    requestKey: createCodeReviewRequestKey(),
-    startedAt: Date.now(),
-  };
-  state.activeCodeReviewByCwd.set(ctx.cwd, activeReview);
-  setReviewWidget(ctx);
-
-  try {
-    log.info("plannotator-auto starting code review via CLI", {
-      cwd: ctx.cwd,
-      repoRoot,
-      reason,
-      sessionKey: getSessionKey(ctx),
-    });
-
-    const response = await runPlannotatorCodeReviewCli(
-      ctx,
-      SYNC_CODE_REVIEW_TIMEOUT_MS,
-    );
-    if (response.status === "error") {
-      clearActiveCodeReview(ctx, state, () => setReviewWidget(ctx));
-      notifyCodeReviewUnavailable(ctx, state, log, response.error);
-      return;
-    }
-    if (response.status === "aborted") {
-      clearActiveCodeReview(ctx, state, () => setReviewWidget(ctx));
-      return;
-    }
-
-    clearReviewPending(ctx);
-    state.plannotatorUnavailableNotified = false;
-    handleCodeReviewCompletion(
-      pi,
-      ctx,
-      state,
-      activeReview,
-      response.result,
-      log,
-      () => setReviewWidget(ctx),
-    );
-  } finally {
-    state.reviewInFlight = false;
-    setReviewWidget(ctx);
-  }
-};
-
-const scheduleReviewRetry = (
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  reason: string,
-  log: ReturnType<typeof createLogger>,
-  explicitRequest: boolean,
-  delayMs = DEFAULT_CODE_REVIEW_RETRY_DELAY_MS,
-): void => {
-  const sessionKey = getSessionKey(ctx);
-  const state = getSessionState(ctx);
-  if (state.pendingReviewRetry) {
-    return;
-  }
-
-  state.pendingReviewRetry = setTimeout(() => {
-    const currentState = getSessionState(ctx);
-    const ctxMap =
-      getSessionContextByKey<
-        Pick<ExtensionContext, "cwd" | "hasUI" | "isIdle" | "signal" | "ui">
-      >();
-    const currentCtx = ctxMap.get(sessionKey);
-    if (!currentState || !currentCtx) {
-      return;
-    }
-
-    currentState.pendingReviewRetry = null;
-    void maybeStartCodeReview(
-      pi,
-      currentCtx as ExtensionContext,
-      reason,
-      log,
-      explicitRequest,
-    );
-  }, delayMs);
-};
-
-export const registerCodeReviewHandlers = (
-  pi: ExtensionAPI,
-  _log: ReturnType<typeof createLogger>,
-): void => {
-  pi.registerCommand(MANUAL_CODE_REVIEW_COMMAND, {
-    description: "Interactively review code or plan (Ctrl+Shift+R equivalent)",
+export const registerCodeReviewHandlers = (pi: ExtensionAPI): void => {
+  pi.registerCommand("plannotator-review", {
+    description:
+      "Select and submit a plan/spec document for Plannotator review",
     handler: async (_args, ctx) => {
-      const { showReviewPicker } = await import("./review-picker.ts");
-      await showReviewPicker(pi, ctx);
+      const { showPlanFilePicker } = await import("./review-picker.ts");
+      await showPlanFilePicker(pi, ctx);
     },
   });
 
-  pi.registerShortcut(MANUAL_CODE_REVIEW_SHORTCUT, {
-    description: "Interactively review code or plan",
+  pi.registerShortcut("ctrl+shift+r", {
+    description:
+      "Select and submit a plan/spec document for Plannotator review",
     handler: async (ctx) => {
-      const { showReviewPicker } = await import("./review-picker.ts");
-      await showReviewPicker(pi, ctx);
+      const { showPlanFilePicker } = await import("./review-picker.ts");
+      await showPlanFilePicker(pi, ctx);
     },
   });
 
@@ -546,12 +248,4 @@ export const registerCodeReviewHandlers = (
       await annotateLatestReviewDocument(pi, ctx);
     },
   });
-};
-
-export const maybeStartCodeReviewOnAgentEnd = async (
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  log: ReturnType<typeof createLogger>,
-): Promise<void> => {
-  await maybeStartCodeReview(pi, ctx, "agent_end", log);
 };

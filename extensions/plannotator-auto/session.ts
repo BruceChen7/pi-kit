@@ -8,11 +8,6 @@ type PendingPlanReviewEventHandle = {
   markHandled: () => void;
 };
 
-type ActiveCodeReview = {
-  requestKey: string;
-  startedAt: number;
-};
-
 export type SessionReviewDocument = {
   absolutePath: string;
   mtimeMs: number;
@@ -22,7 +17,6 @@ export type SessionReviewDocument = {
 export type SessionRuntimeState = {
   activePlanReviewByCwd: Map<string, ActivePlanReview>;
   settledPlanReviewPaths: Set<string>;
-  plannotatorUnavailableNotified: boolean;
   pendingPlanReviewEventsByCwd: Map<
     string,
     Map<string, PendingPlanReviewEventHandle>
@@ -31,10 +25,6 @@ export type SessionRuntimeState = {
   pendingPlanReviewTargetsByCwd: Map<string, Map<string, PendingPlanReview>>;
   toolArgsByCallId: Map<string, unknown>;
   reviewDocumentsByCwd: Map<string, Map<string, SessionReviewDocument>>;
-  pendingReviewByCwd: Set<string>;
-  activeCodeReviewByCwd: Map<string, ActiveCodeReview>;
-  pendingReviewRetry: ReturnType<typeof setTimeout> | null;
-  reviewInFlight: boolean;
 };
 
 const sessionRuntimeState = new Map<string, SessionRuntimeState>();
@@ -48,11 +38,6 @@ const createSessionRuntimeState = (): SessionRuntimeState => ({
   reviewDocumentsByCwd: new Map(),
   activePlanReviewByCwd: new Map(),
   settledPlanReviewPaths: new Set(),
-  plannotatorUnavailableNotified: false,
-  pendingReviewByCwd: new Set<string>(),
-  activeCodeReviewByCwd: new Map<string, ActiveCodeReview>(),
-  pendingReviewRetry: null,
-  reviewInFlight: false,
 });
 
 export const getSessionKey = (ctx: {
@@ -78,10 +63,6 @@ export const clearSessionState = (sessionKey: string): void => {
   const state = sessionRuntimeState.get(sessionKey);
   if (!state) {
     return;
-  }
-
-  if (state.pendingReviewRetry) {
-    clearTimeout(state.pendingReviewRetry);
   }
 
   sessionRuntimeState.delete(sessionKey);

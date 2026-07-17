@@ -18,10 +18,8 @@ import {
 import {
   type CliReviewResult,
   runPlannotatorAnnotateCli,
-  runPlannotatorCodeReviewCli,
   runPlannotatorPlanReviewCli,
 } from "./cli.ts";
-import { formatCodeReviewMessage } from "./code-review.ts";
 import { getPlanFileConfig } from "./paths.ts";
 import {
   listPendingPlanReviews,
@@ -33,21 +31,6 @@ import { getSessionState } from "./session.ts";
 const SYNC_REVIEW_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const MAX_PLAN_FILES = 5;
 const SELECT_LIST_MAX_VISIBLE = 10;
-
-type ReviewKind = "code" | "plan";
-
-const REVIEW_KIND_ITEMS: SelectItem[] = [
-  {
-    value: "code",
-    label: "Review Code",
-    description: "Run plannotator code review on current git changes",
-  },
-  {
-    value: "plan",
-    label: "Review Plan",
-    description: "Submit a plan/spec document for Plannotator review",
-  },
-];
 
 // ---------------------------------------------------------------------------
 // Public: FileItem type (exported for tests)
@@ -112,48 +95,6 @@ const buildSelectListTheme = (theme: {
   scrollInfo: (text: string) => theme.fg("dim", text),
   noMatch: (text: string) => theme.fg("warning", text),
 });
-
-// ---------------------------------------------------------------------------
-// Level 1: pick review kind
-// ---------------------------------------------------------------------------
-
-const showKindSelector = async (
-  ctx: ExtensionContext,
-): Promise<ReviewKind | null> =>
-  ctx.ui.custom<ReviewKind | null>((tui, theme, _kb, done) => {
-    const container = new Container();
-    container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
-    container.addChild(
-      new Text(theme.fg("accent", theme.bold("Select Review Type"))),
-    );
-
-    const selectList = new SelectList(
-      REVIEW_KIND_ITEMS,
-      Math.min(REVIEW_KIND_ITEMS.length, SELECT_LIST_MAX_VISIBLE),
-      buildSelectListTheme(theme),
-    );
-    selectList.onSelect = (item) => done(item.value as ReviewKind);
-    selectList.onCancel = () => done(null);
-
-    container.addChild(selectList);
-    container.addChild(
-      new Text(theme.fg("dim", "↑/↓ navigate • enter select • esc cancel")),
-    );
-    container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
-
-    return {
-      render(width: number) {
-        return container.render(width);
-      },
-      invalidate() {
-        container.invalidate();
-      },
-      handleInput(data: string) {
-        selectList.handleInput(data);
-        tui.requestRender();
-      },
-    };
-  });
 
 // ---------------------------------------------------------------------------
 // Shell: scan plan/spec directories (P1 — IO kept here, filtering delegated)
@@ -346,24 +287,6 @@ const handleCliResult = async (
 };
 
 // ---------------------------------------------------------------------------
-// Execute code review (direct CLI, no state mgmt)
-// ---------------------------------------------------------------------------
-
-const runCodeReview = async (
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-): Promise<void> => {
-  ctx.ui.notify("Starting code review…", "info");
-
-  const response = await runPlannotatorCodeReviewCli(
-    ctx,
-    SYNC_REVIEW_TIMEOUT_MS,
-  );
-
-  await handleCliResult(pi, ctx, response, formatCodeReviewMessage);
-};
-
-// ---------------------------------------------------------------------------
 // Execute plan review (direct CLI, skip pending gate)
 // ---------------------------------------------------------------------------
 
@@ -438,14 +361,13 @@ const runPlanReview = async (
 // ---------------------------------------------------------------------------
 
 /**
- * Show the two-level review picker:
- *   1. Choose "Review Code" or "Review Plan"
- *   2. If Plan, choose which file from pending + filesystem scan (max 5)
+ * Show the plan/spec file picker:
+ *   Choose a plan/spec file from pending + filesystem scan (max 5)
  *
  * Execute the selected review directly with Plannotator CLI, bypassing the
  * auto pending-gate flow for plan reviews.
  */
-export const showReviewPicker = async (
+export const showPlanFilePicker = async (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> => {
@@ -454,18 +376,7 @@ export const showReviewPicker = async (
     return;
   }
 
-  // Level 1
-  const kind = await showKindSelector(ctx);
-  if (!kind) {
-    return;
-  }
-
-  if (kind === "code") {
-    await runCodeReview(pi, ctx);
-    return;
-  }
-
-  // Level 2 — find plan/spec files
+  // Find plan/spec files
   const files = scanPlanFiles(ctx);
   if (files.length === 0) {
     ctx.ui.notify(

@@ -1,34 +1,21 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { loadCheckpoint, saveCheckpoint } from "../../shared/checkpoint.ts";
+import { splitEntries } from "../../shared/chunking.ts";
 import {
   buildTruncationWarning,
   computeIncrement,
   extractPostIdFromUrl,
   formatSavedPost,
   formatSavedPosts,
-  loadCheckpoint,
   parseSavedItems,
   prepareSavedChunks,
   type SavedPost,
-  saveCheckpoint,
-  splitEntries,
 } from "./reddit-saved.ts";
+import { cleanupDir, tempDir } from "./test-utils.ts";
 
 const TELEGRAM_MAX = 4096;
-
-function tempDir(): string {
-  return mkdtempSync(join(tmpdir(), "reddit-saved-test-"));
-}
-
-function cleanupDir(dir: string): void {
-  try {
-    rmSync(dir, { recursive: true, force: true });
-  } catch {
-    // ignore cleanup failures
-  }
-}
 
 function samplePost(overrides: Partial<SavedPost> = {}): SavedPost {
   const id = overrides.url ? extractPostIdFromUrl(overrides.url) : "1u5g1wo";
@@ -72,10 +59,10 @@ describe("extractPostIdFromUrl", () => {
 
 describe("computeIncrement", () => {
   it("returns skip for empty items regardless of checkpoint", () => {
-    expect(computeIncrement([], { lastHeadPostId: null })).toEqual({
+    expect(computeIncrement([], null)).toEqual({
       kind: "skip",
     });
-    expect(computeIncrement([], { lastHeadPostId: "1" })).toEqual({
+    expect(computeIncrement([], "1")).toEqual({
       kind: "skip",
     });
   });
@@ -85,7 +72,7 @@ describe("computeIncrement", () => {
       samplePost({ url: "https://www.reddit.com/r/a/comments/3/t/" }),
       samplePost({ url: "https://www.reddit.com/r/a/comments/2/t/" }),
     ];
-    const result = computeIncrement(items, { lastHeadPostId: null });
+    const result = computeIncrement(items, null);
     expect(result).toEqual({
       kind: "init",
       items,
@@ -97,7 +84,7 @@ describe("computeIncrement", () => {
     const items = [
       samplePost({ url: "https://www.reddit.com/r/a/comments/1/t/" }),
     ];
-    const result = computeIncrement(items, { lastHeadPostId: null });
+    const result = computeIncrement(items, null);
     expect(result).toEqual({
       kind: "init",
       items,
@@ -111,7 +98,7 @@ describe("computeIncrement", () => {
       samplePost({ url: "https://www.reddit.com/r/a/comments/2/t/" }), // new saved post
       samplePost({ url: "https://www.reddit.com/r/a/comments/1/t/" }), // old checkpoint
     ];
-    const result = computeIncrement(items, { lastHeadPostId: "1" });
+    const result = computeIncrement(items, "1");
     expect(result).toEqual({
       kind: "increment",
       items: [items[0], items[1]],
@@ -124,7 +111,7 @@ describe("computeIncrement", () => {
       samplePost({ url: "https://www.reddit.com/r/a/comments/1/t/" }),
       samplePost({ url: "https://www.reddit.com/r/a/comments/0/t/" }),
     ];
-    expect(computeIncrement(items, { lastHeadPostId: "1" })).toEqual({
+    expect(computeIncrement(items, "1")).toEqual({
       kind: "skip",
     });
   });
@@ -134,7 +121,7 @@ describe("computeIncrement", () => {
       samplePost({ url: "https://www.reddit.com/r/a/comments/3/t/" }),
       samplePost({ url: "https://www.reddit.com/r/a/comments/2/t/" }),
     ];
-    const result = computeIncrement(items, { lastHeadPostId: "1" });
+    const result = computeIncrement(items, "1");
     expect(result).toEqual({
       kind: "warning",
       items,
@@ -251,51 +238,51 @@ describe("buildTruncationWarning", () => {
   });
 });
 
-describe("loadCheckpoint / saveCheckpoint", () => {
-  it("returns null state when path does not exist", () => {
-    const state = loadCheckpoint("/nonexistent/path.json");
-    expect(state).toEqual({ lastHeadPostId: null });
+describe("loadCheckpoint / saveCheckpoint (shared)", () => {
+  it("returns null when path does not exist", () => {
+    const value = loadCheckpoint("/nonexistent/path.json", "lastHeadPostId");
+    expect(value).toBeNull();
   });
 
   it("round-trips a checkpoint value", () => {
-    const dir = tempDir();
+    const dir = tempDir("reddit-saved-test-");
     const path = join(dir, "checkpoint.json");
     try {
-      saveCheckpoint("abc123", path);
-      const state = loadCheckpoint(path);
-      expect(state).toEqual({ lastHeadPostId: "abc123" });
+      saveCheckpoint("lastHeadPostId", "abc123", path);
+      const value = loadCheckpoint(path, "lastHeadPostId");
+      expect(value).toBe("abc123");
     } finally {
       cleanupDir(dir);
     }
   });
 
-  it("returns null state for corrupt JSON", () => {
-    const dir = tempDir();
+  it("returns null for corrupt JSON", () => {
+    const dir = tempDir("reddit-saved-test-");
     const path = join(dir, "corrupt.json");
     try {
       writeFileSync(path, "not-json{", "utf-8");
-      const state = loadCheckpoint(path);
-      expect(state).toEqual({ lastHeadPostId: null });
+      const value = loadCheckpoint(path, "lastHeadPostId");
+      expect(value).toBeNull();
     } finally {
       cleanupDir(dir);
     }
   });
 
   it("creates parent directories on save", () => {
-    const dir = tempDir();
+    const dir = tempDir("reddit-saved-test-");
     const nested = join(dir, "sub", "nested", "checkpoint.json");
     try {
-      saveCheckpoint("xyz", nested);
+      saveCheckpoint("lastHeadPostId", "xyz", nested);
       expect(existsSync(nested)).toBe(true);
-      const state = loadCheckpoint(nested);
-      expect(state).toEqual({ lastHeadPostId: "xyz" });
+      const value = loadCheckpoint(nested, "lastHeadPostId");
+      expect(value).toBe("xyz");
     } finally {
       cleanupDir(dir);
     }
   });
 });
 
-describe("splitEntries", () => {
+describe("splitEntries (shared)", () => {
   it("splits entries by ## N. heading markers", () => {
     const text = ["## 1. First", "content 1", "## 2. Second", "content 2"].join(
       "\n",
@@ -307,9 +294,6 @@ describe("splitEntries", () => {
   });
 
   it("splits entries at heading lines without trailing space (as produced by formatSavedPosts)", () => {
-    // formatSavedPosts joins entries with \n, so heading lines like "## 1." end at EOL.
-    // The regex must match both "## 1. text" (with space) and "## 1." (no trailing space).
-    // Before the fix, /^## \d+\.\s/ required whitespace after the period and would skip EOL.
     const text = ["## 1.", "content line 1", "## 2.", "content line 2"].join(
       "\n",
     );
@@ -331,30 +315,22 @@ describe("splitEntries", () => {
   });
 
   it("handles text with only whitespace", () => {
-    // Whitespace-only text is trimmed to empty, resulting in no entries.
     expect(splitEntries("   \n  ")).toEqual([]);
   });
 });
 
 describe("prepareSavedChunks", () => {
   it("returns empty array for empty output", () => {
-    const result = prepareSavedChunks({
-      rawOutput: "",
-      prefix: "📑 Reddit Saved\n\n",
-      maxChunkLength: 3800,
-      maxHtmlLength: TELEGRAM_MAX,
-    });
-
+    const result = prepareSavedChunks("", "📑 Reddit Saved\n\n", TELEGRAM_MAX);
     expect(result).toEqual([]);
   });
 
   it("returns one chunk with prefix for a single entry", () => {
-    const result = prepareSavedChunks({
-      rawOutput: "# Saved Posts\n\nplain text",
-      prefix: "📑 Reddit Saved\n\n",
-      maxChunkLength: 3800,
-      maxHtmlLength: TELEGRAM_MAX,
-    });
+    const result = prepareSavedChunks(
+      "# Saved Posts\n\nplain text",
+      "📑 Reddit Saved\n\n",
+      TELEGRAM_MAX,
+    );
 
     expect(result).toHaveLength(1);
     expect(result[0].html).toContain("📑 Reddit Saved");
@@ -362,12 +338,11 @@ describe("prepareSavedChunks", () => {
   });
 
   it("strips **bold** markers inside headings", () => {
-    const result = prepareSavedChunks({
-      rawOutput: "## 1. AI **coding** agents\ncontent",
-      prefix: "",
-      maxChunkLength: 3800,
-      maxHtmlLength: TELEGRAM_MAX,
-    });
+    const result = prepareSavedChunks(
+      "## 1. AI **coding** agents\ncontent",
+      "",
+      TELEGRAM_MAX,
+    );
 
     expect(result).toHaveLength(1);
     const html = result[0].html;
@@ -385,12 +360,7 @@ describe("prepareSavedChunks", () => {
 
     const rawOutput = [entry, entry].join("\n");
 
-    const result = prepareSavedChunks({
-      rawOutput,
-      prefix: "",
-      maxChunkLength: 5000,
-      maxHtmlLength: 4096,
-    });
+    const result = prepareSavedChunks(rawOutput, "", 4096);
 
     expect(result.length).toBeGreaterThanOrEqual(2);
     for (const { html } of result) {
@@ -407,12 +377,7 @@ describe("prepareSavedChunks", () => {
       "content 2",
     ].join("\n");
 
-    const result = prepareSavedChunks({
-      rawOutput,
-      prefix: "",
-      maxChunkLength: 3800,
-      maxHtmlLength: 4096,
-    });
+    const result = prepareSavedChunks(rawOutput, "", 4096);
 
     expect(result).toHaveLength(1);
     expect(result[0].html).toContain("<b>1. First</b>");
@@ -420,28 +385,24 @@ describe("prepareSavedChunks", () => {
   });
 
   it("preserves inline code and links in the conversion", () => {
-    const result = prepareSavedChunks({
-      rawOutput:
-        "# Summary\nSee `code & stuff` and [docs](https://example.com)",
-      prefix: "",
-      maxChunkLength: 3800,
-      maxHtmlLength: TELEGRAM_MAX,
-    });
+    const result = prepareSavedChunks(
+      "# Summary\nSee `code & stuff` and [docs](https://example.com)",
+      "",
+      TELEGRAM_MAX,
+    );
 
     expect(result).toHaveLength(1);
     const html = result[0].html;
-    // Inline code content is preserved as-is (no HTML escaping inside backticks)
     expect(html).toContain("<code>code & stuff</code>");
     expect(html).toContain('<a href="https://example.com">docs</a>');
   });
 
   it("handles raw HTML characters by escaping them", () => {
-    const result = prepareSavedChunks({
-      rawOutput: "# Title\na < b & c > d",
-      prefix: "",
-      maxChunkLength: 3800,
-      maxHtmlLength: TELEGRAM_MAX,
-    });
+    const result = prepareSavedChunks(
+      "# Title\na < b & c > d",
+      "",
+      TELEGRAM_MAX,
+    );
 
     expect(result).toHaveLength(1);
     const html = result[0].html;
@@ -458,12 +419,7 @@ describe("prepareSavedChunks", () => {
       entryLines(3, "c"),
     ].join("\n");
 
-    const result = prepareSavedChunks({
-      rawOutput,
-      prefix: "📑 Reddit Saved\n\n",
-      maxChunkLength: 500,
-      maxHtmlLength: 150,
-    });
+    const result = prepareSavedChunks(rawOutput, "📑 Reddit Saved\n\n", 150);
 
     expect(result.length).toBeGreaterThan(1);
     expect(result[0].html).toContain("📑 Reddit Saved");
@@ -475,12 +431,7 @@ describe("prepareSavedChunks", () => {
   it("handles a single oversized entry gracefully (no infinite loop)", () => {
     const singleHugeEntry = ["## 1. Huge entry", "x".repeat(5000)].join("\n");
 
-    const result = prepareSavedChunks({
-      rawOutput: singleHugeEntry,
-      prefix: "",
-      maxChunkLength: 5000,
-      maxHtmlLength: 100,
-    });
+    const result = prepareSavedChunks(singleHugeEntry, "", 100);
 
     expect(result).toHaveLength(1);
     expect(result[0].html.length).toBeGreaterThan(100);

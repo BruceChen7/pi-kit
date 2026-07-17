@@ -151,3 +151,163 @@ ${instructions}
 Your final action must be exactly one call to the herdr_squad_report tool. Put your complete result in that tool call. Do not finish with an ordinary prose response instead.
 `;
 }
+
+// ─── Start validation (pure, testable) ────────────────────────────────
+
+export type ValidatedStartParams = {
+  task: string;
+  normalizedAssignments: { label: string; scope: string; prompt: string }[];
+  parentPaneId: string;
+  model?: string;
+  modelSource: SquadState["modelSource"];
+  squadId: string;
+  shortId: string;
+  title: string;
+  tabLabel: string;
+  manifestAgents: SquadManifest["agents"];
+  agents: SquadAgentState[];
+};
+
+export type StartCrypto = {
+  randomUUID: () => string;
+  randomBytes: (size: number) => Buffer;
+};
+
+export type StartEnv = {
+  HERDR_ENV?: string;
+  HERDR_PANE_ID?: string;
+};
+
+const MAX_TASK_LENGTH = 50_000;
+const MAX_SCOPE_LENGTH = 8_000;
+const MAX_PROMPT_LENGTH = 16_000;
+
+function cleanBody(value: string, maxLength: number): string {
+  return (
+    value
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional null character stripping
+      .replace(/\u0000/g, "")
+      .trim()
+      .slice(0, maxLength)
+  );
+}
+
+export function validateStartParams(
+  params: {
+    task: string;
+    count: number;
+    assignments: { label: string; scope: string; prompt: string }[];
+    title?: string;
+    model?: string;
+  },
+  env: StartEnv,
+  crypto: StartCrypto,
+  resolveModel: () => { model?: string; source: SquadState["modelSource"] },
+): ValidatedStartParams {
+  if (env.HERDR_ENV !== "1") {
+    throw new Error(
+      "Herdr squads are available only inside a Herdr-managed Pi pane",
+    );
+  }
+
+  if (!Number.isInteger(params.count) || params.count < 1 || params.count > 4) {
+    throw new Error("count must be an integer from 1 through 4");
+  }
+  if (params.assignments.length !== params.count) {
+    throw new Error(`Expected exactly ${params.count} assignments`);
+  }
+
+  const task = cleanBody(params.task, MAX_TASK_LENGTH);
+  if (!task) throw new Error("task must not be empty");
+
+  const normalizedAssignments = params.assignments.map((a) => ({
+    label: normalizeDisplayText(a.label, 30),
+    scope: cleanBody(a.scope, MAX_SCOPE_LENGTH),
+    prompt: cleanBody(a.prompt, MAX_PROMPT_LENGTH),
+  }));
+
+  if (normalizedAssignments.some((a) => !a.label || !a.scope || !a.prompt)) {
+    throw new Error(
+      "Every assignment requires a non-empty label, scope, and prompt",
+    );
+  }
+
+  const labels = normalizedAssignments.map((a) => a.label.toLocaleLowerCase());
+  if (new Set(labels).size !== labels.length) {
+    throw new Error("Assignment labels must be unique");
+  }
+
+  const scopes = normalizedAssignments.map((a) => a.scope.toLocaleLowerCase());
+  if (new Set(scopes).size !== scopes.length) {
+    throw new Error("Assignment scopes must not be exact duplicates");
+  }
+
+  const parentPaneId = env.HERDR_PANE_ID;
+  if (!parentPaneId) {
+    throw new Error(
+      "HERDR_PANE_ID is unavailable; cannot identify the parent pane safely",
+    );
+  }
+
+  let model: string | undefined;
+  let modelSource: SquadState["modelSource"];
+  if (params.model) {
+    const trimmed = params.model.trim();
+    if (!trimmed || trimmed.length > 200) {
+      throw new Error(
+        "Explicit model value is empty or exceeds 200 characters",
+      );
+    }
+    model = trimmed;
+    modelSource = "explicit";
+  } else {
+    const configured = resolveModel();
+    model = configured.model;
+    modelSource = configured.source;
+  }
+
+  const squadId = crypto.randomUUID();
+  const shortId = squadId.replaceAll("-", "").slice(0, 6);
+  const title =
+    normalizeDisplayText(params.title || `Investigation ${shortId}`, 38) ||
+    `Investigation ${shortId}`;
+  const tabLabel = `${title} · sq-${shortId}`;
+
+  const manifestAgents: SquadManifest["agents"] = normalizedAssignments.map(
+    (assignment, index) => ({
+      agentId: `${shortId}-${index + 1}`,
+      token: crypto.randomBytes(24).toString("hex"),
+      label: assignment.label,
+      scope: assignment.scope,
+    }),
+  );
+
+  const agents: SquadAgentState[] = normalizedAssignments.map(
+    (assignment, index) => {
+      const identity = manifestAgents[index];
+      return {
+        agentId: identity.agentId,
+        label: assignment.label,
+        paneLabel: `${normalizeDisplayText(assignment.label, 25)} · ${shortId}-${index + 1}`,
+        scope: assignment.scope,
+        paneId: "",
+        reportPath: reportFileName(identity.agentId),
+        promptPath: `prompt-${identity.agentId}.md`,
+      };
+    },
+  );
+
+  return {
+    task,
+    normalizedAssignments,
+    parentPaneId,
+    model,
+    modelSource,
+    squadId,
+    shortId,
+    title,
+    tabLabel,
+    manifestAgents,
+    agents,
+  };
+}

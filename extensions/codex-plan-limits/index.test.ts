@@ -1,5 +1,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => {
+  const mod = await importOriginal();
+  return {
+    ...(mod as object),
+    readStoredCredential: vi.fn(() => ({ access: "token", accountId: "acct" })),
+  };
+});
+
 import codexPlanLimitsExtension from "./index.js";
 
 const STALE_MESSAGE =
@@ -51,9 +60,6 @@ const buildCtx = (overrides?: Record<string, unknown>) => {
     modelRegistry: {
       isUsingOAuth: vi.fn(() => true),
       getApiKeyAndHeaders: vi.fn(async () => ({ ok: true })),
-      authStorage: {
-        get: vi.fn(() => ({ access: "token", accountId: "acct" })),
-      },
     },
     sessionManager: {
       getSessionName: vi.fn(() => undefined),

@@ -1,6 +1,7 @@
-import type {
-  ExtensionAPI,
-  ExtensionContext,
+import {
+  type ExtensionAPI,
+  type ExtensionContext,
+  readStoredCredential,
 } from "@earendil-works/pi-coding-agent";
 
 const STATUS_KEY = "codex-plan-limits";
@@ -261,7 +262,7 @@ async function fetchLiveSnapshotFromPiAuth(
     throw new Error(authResult.error);
   }
 
-  const credential = ctx.modelRegistry.authStorage.get(OPENAI_CODEX_PROVIDER) as
+  const credential = readStoredCredential(OPENAI_CODEX_PROVIDER) as
     | PiOpenAICodexOAuthCredential
     | undefined;
   const accessToken = credential?.access;

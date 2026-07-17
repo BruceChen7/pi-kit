@@ -162,6 +162,9 @@ export const createHerdrMultiplexer = (
 
       if (runResult.code !== 0) {
         await closeResolvedReviewView(created.tabId);
+      } else {
+        // Focus the review tab so the user sees Neovim, matching tmux new-window behavior.
+        await pi.exec("herdr", ["tab", "focus", created.tabId]);
       }
 
       return {

@@ -1,4 +1,3 @@
-import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,25 +11,21 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { registerChildReportTool } from "./child.ts";
-import { resolveConfiguredModel, validateExplicitModel } from "./config.ts";
+import { resolveConfiguredModel } from "./config.ts";
 import {
   buildChildPrompt,
   MANIFEST_FILE,
-  normalizeDisplayText,
   RUN_DIR_PREFIX,
   readSquadReport,
-  reportFileName,
   SQUAD_ENTRY_TYPE,
   type SquadAgentState,
   type SquadManifest,
   type SquadState,
   STATE_VERSION,
   shellQuote,
+  validateStartParams,
 } from "./shared.ts";
 
-const MAX_TASK_LENGTH = 50_000;
-const MAX_SCOPE_LENGTH = 8_000;
-const MAX_PROMPT_LENGTH = 16_000;
 const DEFAULT_WAIT_MS = 5 * 60_000;
 const MAX_WAIT_MS = 30 * 60_000;
 const BLOCKED_GRACE_MS = 1_500;
@@ -117,16 +112,6 @@ const CollectParams = Type.Object({
 
 // biome-ignore lint/suspicious/noExplicitAny: Herdr JSON responses are loosely typed
 type JsonObject = Record<string, any>;
-
-function cleanBody(value: string, maxLength: number): string {
-  return (
-    value
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional null character stripping
-      .replace(/\u0000/g, "")
-      .trim()
-      .slice(0, maxLength)
-  );
-}
 
 function publicSquadDetails(state: SquadState) {
   return {
@@ -336,93 +321,36 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: StartParams,
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      if (process.env.HERDR_ENV !== "1")
-        throw new Error(
-          "Herdr squads are available only inside a Herdr-managed Pi pane",
-        );
-      if (
-        !Number.isInteger(params.count) ||
-        params.count < 1 ||
-        params.count > 4
-      )
-        throw new Error("count must be an integer from 1 through 4");
-      if (params.assignments.length !== params.count)
-        throw new Error(`Expected exactly ${params.count} assignments`);
-
-      const task = cleanBody(params.task, MAX_TASK_LENGTH);
-      if (!task) throw new Error("task must not be empty");
-      const normalizedAssignments = params.assignments.map((assignment) => ({
-        label: normalizeDisplayText(assignment.label, 30),
-        scope: cleanBody(assignment.scope, MAX_SCOPE_LENGTH),
-        prompt: cleanBody(assignment.prompt, MAX_PROMPT_LENGTH),
-      }));
-      if (
-        normalizedAssignments.some(
-          (assignment) =>
-            !assignment.label || !assignment.scope || !assignment.prompt,
-        )
-      ) {
-        throw new Error(
-          "Every assignment requires a non-empty label, scope, and prompt",
-        );
-      }
-      const labels = normalizedAssignments.map((assignment) =>
-        assignment.label.toLocaleLowerCase(),
+      const v = validateStartParams(
+        {
+          task: params.task,
+          count: params.count,
+          assignments: params.assignments.map((a) => ({
+            label: a.label,
+            scope: a.scope,
+            prompt: a.prompt,
+          })),
+          title: params.title,
+          model: params.model,
+        },
+        process.env,
+        { randomUUID: crypto.randomUUID, randomBytes: crypto.randomBytes },
+        () => resolveConfiguredModel(ctx.cwd, ctx.isProjectTrusted()),
       );
-      if (new Set(labels).size !== labels.length)
-        throw new Error("Assignment labels must be unique");
-      const scopes = normalizedAssignments.map((assignment) =>
-        normalizeDisplayText(
-          assignment.scope,
-          MAX_SCOPE_LENGTH,
-        ).toLocaleLowerCase(),
-      );
-      if (new Set(scopes).size !== scopes.length)
-        throw new Error("Assignment scopes must not be exact duplicates");
 
-      const parentPaneId = process.env.HERDR_PANE_ID;
-      if (!parentPaneId)
-        throw new Error(
-          "HERDR_PANE_ID is unavailable; cannot identify the parent pane safely",
-        );
-      const parentResponse = await herdr(["pane", "get", parentPaneId], signal);
+      const parentResponse = await herdr(
+        ["pane", "get", v.parentPaneId],
+        signal,
+      );
       const parentPane = parentResponse.result?.pane;
-      if (!parentPane?.workspace_id || parentPane.pane_id !== parentPaneId)
+      if (!parentPane?.workspace_id || parentPane.pane_id !== v.parentPaneId)
         throw new Error("Could not validate the parent Herdr pane");
       const workspaceId = String(parentPane.workspace_id);
-      let model: string | undefined;
-      let modelSource: SquadState["modelSource"];
-      if (params.model) {
-        model = validateExplicitModel(params.model);
-        modelSource = "explicit";
-      } else {
-        const configuredModel = resolveConfiguredModel(
-          ctx.cwd,
-          ctx.isProjectTrusted(),
-        );
-        model = configuredModel.model;
-        modelSource = configuredModel.source;
-      }
-
-      const squadId = randomUUID();
-      const shortId = squadId.replaceAll("-", "").slice(0, 6);
-      const title =
-        normalizeDisplayText(params.title || `Investigation ${shortId}`, 38) ||
-        `Investigation ${shortId}`;
-      const tabLabel = `${title} · sq-${shortId}`;
       const runDir = await mkdtemp(join(tmpdir(), RUN_DIR_PREFIX));
-      const manifestAgents: SquadManifest["agents"] = normalizedAssignments.map(
-        (assignment, index) => ({
-          agentId: `${shortId}-${index + 1}`,
-          token: randomBytes(24).toString("hex"),
-          label: assignment.label,
-          scope: assignment.scope,
-        }),
-      );
       const manifest: SquadManifest = {
         version: 1,
-        squadId,
-        agents: manifestAgents,
+        squadId: v.squadId,
+        agents: v.manifestAgents,
       };
       await writeFile(
         join(runDir, MANIFEST_FILE),
@@ -430,33 +358,24 @@ export default function (pi: ExtensionAPI) {
         { encoding: "utf8", mode: 0o600 },
       );
 
-      const agents: SquadAgentState[] = [];
-      for (let index = 0; index < normalizedAssignments.length; index++) {
-        const assignment = normalizedAssignments[index];
-        const identity = manifestAgents[index];
-        const promptPath = join(runDir, `prompt-${identity.agentId}.md`);
+      const agents: SquadAgentState[] = v.agents.map((agent) => ({
+        ...agent,
+        reportPath: join(runDir, agent.reportPath),
+        promptPath: join(runDir, agent.promptPath),
+      }));
+
+      for (const agent of agents) {
         await writeFile(
-          promptPath,
+          agent.promptPath,
           buildChildPrompt(
-            task,
-            assignment.label,
-            assignment.scope,
-            assignment.prompt,
+            v.task,
+            agent.label,
+            agent.scope,
+            v.normalizedAssignments.find((a) => a.label === agent.label)
+              ?.prompt ?? "",
           ),
-          {
-            encoding: "utf8",
-            mode: 0o600,
-          },
+          { encoding: "utf8", mode: 0o600 },
         );
-        agents.push({
-          agentId: identity.agentId,
-          label: assignment.label,
-          paneLabel: `${normalizeDisplayText(assignment.label, 25)} · ${shortId}-${index + 1}`,
-          scope: assignment.scope,
-          paneId: "",
-          reportPath: join(runDir, reportFileName(identity.agentId)),
-          promptPath,
-        });
       }
 
       let state: SquadState | undefined;
@@ -494,19 +413,19 @@ export default function (pi: ExtensionAPI) {
         agents[0].paneId = String(rootPane.pane_id);
         state = {
           version: STATE_VERSION,
-          squadId,
+          squadId: v.squadId,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           cwd: ctx.cwd,
           workspaceId,
           tabId: String(tab.tab_id),
-          tabLabel,
+          tabLabel: v.tabLabel,
           rootPaneId: String(rootPane.pane_id),
           runDir,
-          task,
-          title,
-          model,
-          modelSource,
+          task: v.task,
+          title: v.title,
+          model: v.model,
+          modelSource: v.modelSource,
           status: "launching",
           agents,
         };

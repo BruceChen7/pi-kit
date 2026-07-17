@@ -303,7 +303,9 @@ export default function (pi: ExtensionAPI) {
       )
       .filter(
         (state) =>
-          state.version === STATE_VERSION && typeof state.squadId === "string",
+          state.version === STATE_VERSION &&
+          typeof state.squadId === "string" &&
+          state.status !== "disposed",
       )
       .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
     log.info(`Restored ${snapshots.length} squad(s) from session`);
@@ -1001,12 +1003,41 @@ export default function (pi: ExtensionAPI) {
         total: state.agents.length,
         truncated: !!fullOutputPath,
       });
+
+      // ── Cleanup: close tab, dispose state ──────────────────────────
+      let tabCloseFailed = false;
+      try {
+        await runHerdr(["tab", "close", state.tabId]);
+        log.info(`Squad ${params.squadId} tab closed`, {
+          tabId: state.tabId,
+        });
+      } catch (error) {
+        tabCloseFailed = true;
+        const msg = error instanceof Error ? error.message : String(error);
+        log.warn(`Squad ${params.squadId} tab close failed`, {
+          tabId: state.tabId,
+          error: msg,
+        });
+      }
+
+      const disposedState: SquadState = {
+        ...state,
+        status: "disposed",
+        disposedAt: new Date().toISOString(),
+      };
+      pi.appendEntry(SQUAD_ENTRY_TYPE, { state: disposedState });
+      squads.delete(state.squadId);
+      log.info(`Squad ${params.squadId} disposed`, {
+        tabCloseFailed,
+      });
+
       return {
         content: [{ type: "text", text: output }],
         details: {
-          ...publicSquadDetails(state),
+          ...publicSquadDetails(disposedState),
           structuredCount,
           fullOutputPath,
+          tabCloseFailed,
         },
       };
     },

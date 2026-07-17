@@ -8,7 +8,8 @@ export type SquadLifecycle =
   | "running"
   | "partial"
   | "completed"
-  | "collected";
+  | "collected"
+  | "disposed";
 
 export interface SquadAgentState {
   agentId: string;
@@ -40,6 +41,7 @@ export interface SquadState {
   agents: SquadAgentState[];
   failure?: string;
   collectedAt?: string;
+  disposedAt?: string;
 }
 
 export interface SquadManifestAgent {

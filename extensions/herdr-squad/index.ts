@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,9 @@ import { resolveConfiguredModel } from "./config.ts";
 import {
   buildChildPrompt,
   MANIFEST_FILE,
+  MAX_PROMPT_LENGTH,
+  MAX_SCOPE_LENGTH,
+  MAX_TASK_LENGTH,
   RUN_DIR_PREFIX,
   readSquadReport,
   SQUAD_ENTRY_TYPE,
@@ -172,7 +176,21 @@ function formatReport(
     report.risksOrUnknowns.length > 0
       ? report.risksOrUnknowns.map((item) => `- ${item}`).join("\n")
       : "- None reported";
-  return `# Squad Report: ${report.label}\n## Scope\n${report.scope}\n## Recommended next step\n${report.recommendedNextStep}\n## Findings\n${report.findings}\n## Evidence\n${evidence}\n## Risks / Unknowns\n${risks}\n\nStructured report: ${sourcePath}`;
+  return [
+    `# Squad Report: ${report.label}`,
+    `## Scope`,
+    report.scope,
+    `## Recommended next step`,
+    report.recommendedNextStep,
+    `## Findings`,
+    report.findings,
+    `## Evidence`,
+    evidence,
+    `## Risks / Unknowns`,
+    risks,
+    ``,
+    `Structured report: ${sourcePath}`,
+  ].join("\n");
 }
 
 export default function (pi: ExtensionAPI) {
@@ -200,7 +218,10 @@ export default function (pi: ExtensionAPI) {
     const result = await pi.exec("herdr", args, { signal, timeout });
     if (result.code !== 0) {
       throw new Error(
-        `herdr ${args.slice(0, 2).join(" ")} failed: ${(result.stderr || result.stdout).trim() || `exit ${result.code}`}`,
+        [
+          `herdr ${args.slice(0, 2).join(" ")} failed:`,
+          (result.stderr || result.stdout).trim() || `exit ${result.code}`,
+        ].join(" "),
       );
     }
     return result;
@@ -312,12 +333,23 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "herdr_squad_start",
     label: "Start Herdr Squad",
-    description:
-      "Create and launch 1-4 visible, strictly read-only Pi investigation agents in a new Herdr tab. An explicit model overrides project/global Herdr squad config; otherwise Pi's default is used. Returns an opaque squadId. Call this tool alone; wait for its result before calling herdr_squad_wait.",
+    description: [
+      "Create and launch 1-4 visible, strictly read-only Pi investigation agents",
+      "in a new Herdr tab. An explicit model overrides project/global Herdr squad",
+      "config; otherwise Pi's default is used. Returns an opaque squadId. Call this",
+      "tool alone; wait for its result before calling herdr_squad_wait.",
+    ].join(" "),
     promptSnippet: "Launch a visible read-only Herdr investigation squad",
     promptGuidelines: [
-      "Call herdr_squad_start only after defining distinct non-overlapping scopes, and call it in a separate tool round before herdr_squad_wait.",
-      "Always include task with the full parent request (copied or faithfully summarized), plus count and exactly count assignments. task is required even when assignment prompts are self-contained.",
+      [
+        "Call herdr_squad_start only after defining distinct non-overlapping scopes,",
+        "and call it in a separate tool round before herdr_squad_wait.",
+      ].join(" "),
+      [
+        "Always include task with the full parent request (copied or faithfully",
+        "summarized), plus count and exactly count assignments. task is required",
+        "even when assignment prompts are self-contained.",
+      ].join(" "),
     ],
     parameters: StartParams,
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -334,7 +366,7 @@ export default function (pi: ExtensionAPI) {
           model: params.model,
         },
         process.env,
-        { randomUUID: crypto.randomUUID, randomBytes: crypto.randomBytes },
+        { randomUUID: crypto.randomUUID, randomBytes },
         () => resolveConfiguredModel(ctx.cwd, ctx.isProjectTrusted()),
       );
 
@@ -388,6 +420,7 @@ export default function (pi: ExtensionAPI) {
               text: `Creating Herdr squad tab with ${params.count} pane(s)...`,
             },
           ],
+          details: {},
         });
         const tabResponse = await herdr(
           [
@@ -398,7 +431,7 @@ export default function (pi: ExtensionAPI) {
             "--cwd",
             ctx.cwd,
             "--label",
-            tabLabel,
+            v.tabLabel,
             "--no-focus",
           ],
           signal,
@@ -493,11 +526,11 @@ export default function (pi: ExtensionAPI) {
 
         for (let index = 0; index < agents.length; index++) {
           const agent = agents[index];
-          const identity = manifestAgents[index];
+          const identity = v.manifestAgents[index];
           const commandArguments = [
             "env",
             `HERDR_SQUAD_DIR=${runDir}`,
-            `HERDR_SQUAD_ID=${squadId}`,
+            `HERDR_SQUAD_ID=${v.squadId}`,
             `HERDR_SQUAD_AGENT_ID=${agent.agentId}`,
             `HERDR_SQUAD_TOKEN=${identity.token}`,
             "pi",
@@ -524,7 +557,14 @@ export default function (pi: ExtensionAPI) {
           content: [
             {
               type: "text",
-              text: `Started read-only Herdr squad ${squadId}.\nTab: ${tabLabel}\nModel: ${state.model ?? "Pi default"} (${state.modelSource})\n${formatAgentList(state)}\n\nCall herdr_squad_wait with this squadId in the next tool round.`,
+              text: [
+                `Started read-only Herdr squad ${v.squadId}.`,
+                `Tab: ${v.tabLabel}`,
+                `Model: ${state.model ?? "Pi default"} (${state.modelSource})`,
+                formatAgentList(state),
+                ``,
+                `Call herdr_squad_wait with this squadId in the next tool round.`,
+              ].join("\n"),
             },
           ],
           details: publicSquadDetails(state),
@@ -543,7 +583,12 @@ export default function (pi: ExtensionAPI) {
             content: [
               {
                 type: "text",
-                text: `Herdr squad ${state.squadId} launch was partial: ${message}\n${formatAgentList(state)}\nThe created tab was left open for inspection. Use this squadId to wait for or collect any agents that did launch.`,
+                text: [
+                  `Herdr squad ${state.squadId} launch was partial: ${message}`,
+                  formatAgentList(state),
+                  `The created tab was left open for inspection. Use this squadId to` +
+                    ` wait for or collect any agents that did launch.`,
+                ].join("\n"),
               },
             ],
             details: publicSquadDetails(state),
@@ -557,11 +602,17 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "herdr_squad_wait",
     label: "Wait for Herdr Squad",
-    description:
-      "Wait for every child in a previously started Herdr squad to submit its structured report. Uses one overall timeout and reports blockers. Call alone after herdr_squad_start has returned.",
+    description: [
+      "Wait for every child in a previously started Herdr squad to submit its",
+      "structured report. Uses one overall timeout and reports blockers. Call",
+      "alone after herdr_squad_start has returned.",
+    ].join(" "),
     promptSnippet: "Wait for a Herdr squad's structured reports",
     promptGuidelines: [
-      "Call herdr_squad_wait only after herdr_squad_start has returned a squadId, and wait for its result before calling herdr_squad_collect.",
+      [
+        "Call herdr_squad_wait only after herdr_squad_start has returned a squadId,",
+        "and wait for its result before calling herdr_squad_collect.",
+      ].join(" "),
     ],
     parameters: SquadIdParams,
     async execute(_toolCallId, params, signal, onUpdate) {
@@ -584,7 +635,10 @@ export default function (pi: ExtensionAPI) {
             content: [
               {
                 type: "text",
-                text: `All ${completeCount} Herdr squad reports are ready. Call herdr_squad_collect with squadId ${state.squadId} in the next tool round.`,
+                text: [
+                  `All ${completeCount} Herdr squad reports are ready.`,
+                  `Call herdr_squad_collect with squadId ${state.squadId} in the next tool round.`,
+                ].join(" "),
               },
             ],
             details: {
@@ -606,7 +660,10 @@ export default function (pi: ExtensionAPI) {
             content: [
               {
                 type: "text",
-                text: `${completeCount}/${state.agents.length} reports are ready. ${state.failure}. Collect the available reports now.`,
+                text: [
+                  `${completeCount}/${state.agents.length} reports are ready.`,
+                  `${state.failure}. Collect the available reports now.`,
+                ].join(" "),
               },
             ],
             details: {
@@ -623,13 +680,19 @@ export default function (pi: ExtensionAPI) {
           const agent = state.agents[index];
           if (agent.lastAgentStatus === "done") {
             state.status = "partial";
-            state.failure = `${agent.label} (pane ${agent.paneId}) terminated with Herdr status done without submitting a report`;
+            state.failure = [
+              `${agent.label} (pane ${agent.paneId}) terminated with`,
+              `Herdr status done without submitting a report`,
+            ].join(" ");
             saveState(state);
             return {
               content: [
                 {
                   type: "text",
-                  text: `${completeCount}/${state.agents.length} reports are ready. ${state.failure}. Collect available reports and terminal output now.`,
+                  text: [
+                    `${completeCount}/${state.agents.length} reports are ready.`,
+                    `${state.failure}. Collect available reports and terminal output now.`,
+                  ].join(" "),
                 },
               ],
               details: {
@@ -652,7 +715,10 @@ export default function (pi: ExtensionAPI) {
                 content: [
                   {
                     type: "text",
-                    text: `${completeCount}/${state.agents.length} reports are ready. ${agent.label} is blocked; collect available output and report the blocker.`,
+                    text: [
+                      `${completeCount}/${state.agents.length} reports are ready.`,
+                      `${agent.label} is blocked; collect available output and report the blocker.`,
+                    ].join(" "),
                   },
                 ],
                 details: {
@@ -685,7 +751,11 @@ export default function (pi: ExtensionAPI) {
             content: [
               {
                 type: "text",
-                text: `${completeCount}/${state.agents.length} reports were ready before the overall timeout. Collect available reports and terminal fallbacks now.`,
+                text: [
+                  `${completeCount}/${state.agents.length} reports were ready`,
+                  `before the overall timeout. Collect available reports and`,
+                  `terminal fallbacks now.`,
+                ].join(" "),
               },
             ],
             details: {
@@ -703,7 +773,12 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "herdr_squad_collect",
     label: "Collect Herdr Squad",
-    description: `Collect structured reports from a Herdr squad, with bounded terminal-tail fallbacks. Output is limited to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}; complete collected output is saved when truncation is needed. Call only after herdr_squad_wait returns.`,
+    description: [
+      `Collect structured reports from a Herdr squad, with bounded terminal-tail`,
+      `fallbacks. Output is limited to ${DEFAULT_MAX_LINES} lines or`,
+      `${formatSize(DEFAULT_MAX_BYTES)}; complete collected output is saved when`,
+      `truncation is needed. Call only after herdr_squad_wait returns.`,
+    ].join(" "),
     promptSnippet:
       "Collect a Herdr squad's reports and fallback terminal output",
     promptGuidelines: [
@@ -758,7 +833,9 @@ export default function (pi: ExtensionAPI) {
               else if (result.stderr.trim())
                 transcript = `Terminal read failed: ${result.stderr.trim()}`;
             } catch (error) {
-              transcript = `Terminal read failed: ${error instanceof Error ? error.message : String(error)}`;
+              transcript = `Terminal read failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`;
             }
           }
           const transcriptPath = join(
@@ -769,7 +846,20 @@ export default function (pi: ExtensionAPI) {
             encoding: "utf8",
             mode: 0o600,
           });
-          section = `# Squad Report Missing: ${agent.label}\n## Scope\n${agent.scope}\n## Status\nNo valid structured report was submitted. Last Herdr status: ${agent.lastAgentStatus ?? "unknown"}.\n## Terminal tail\n${transcript}\n\nTerminal snapshot: ${transcriptPath}`;
+          section = [
+            `# Squad Report Missing: ${agent.label}`,
+            `## Scope`,
+            agent.scope,
+            `## Status`,
+            [
+              `No valid structured report was submitted.`,
+              `Last Herdr status: ${agent.lastAgentStatus ?? "unknown"}.`,
+            ].join(" "),
+            `## Terminal tail`,
+            transcript,
+            ``,
+            `Terminal snapshot: ${transcriptPath}`,
+          ].join("\n");
         }
 
         const limited = truncateHead(section, {
@@ -778,12 +868,29 @@ export default function (pi: ExtensionAPI) {
         });
         sections.push(
           limited.truncated
-            ? `${limited.content}\n\n[Agent section truncated. Full source is available at ${report ? agent.reportPath : join(state.runDir, `terminal-${agent.agentId}.txt`)}]`
+            ? [
+                limited.content,
+                ``,
+                `[Agent section truncated. Full source is available at ${
+                  report
+                    ? agent.reportPath
+                    : join(state.runDir, `terminal-${agent.agentId}.txt`)
+                }]`,
+              ].join("\n")
             : limited.content,
         );
       }
 
-      const fullCollection = `## Herdr squad collection\n- Squad: ${state.squadId}\n- Tab: ${state.tabLabel}\n- Model: ${state.model ?? "Pi default"} (${state.modelSource})\n- Mode: read-only investigation\n- Structured reports: ${structuredCount}/${state.agents.length}\n\n${sections.join("\n\n---\n\n")}`;
+      const fullCollection = [
+        `## Herdr squad collection`,
+        `- Squad: ${state.squadId}`,
+        `- Tab: ${state.tabLabel}`,
+        `- Model: ${state.model ?? "Pi default"} (${state.modelSource})`,
+        `- Mode: read-only investigation`,
+        `- Structured reports: ${structuredCount}/${state.agents.length}`,
+        ``,
+        sections.join("\n\n---\n\n"),
+      ].join("\n");
       const truncation = truncateHead(fullCollection, {
         maxBytes: DEFAULT_MAX_BYTES,
         maxLines: DEFAULT_MAX_LINES,
@@ -799,7 +906,12 @@ export default function (pi: ExtensionAPI) {
             mode: 0o600,
           });
         });
-        output += `\n\n[Collection truncated: showing ${truncation.outputLines}/${truncation.totalLines} lines and ${formatSize(truncation.outputBytes)}/${formatSize(truncation.totalBytes)}. Full collection: ${fullOutputPath}]`;
+        output += [
+          ``,
+          `[Collection truncated: showing ${truncation.outputLines}/${truncation.totalLines}`,
+          `lines and ${formatSize(truncation.outputBytes)}/${formatSize(truncation.totalBytes)}.`,
+          `Full collection: ${fullOutputPath}]`,
+        ].join(" ");
       }
 
       state.status = "collected";

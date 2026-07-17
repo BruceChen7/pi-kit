@@ -13,15 +13,15 @@
  * No IO, no side effects — fully testable. 工厂函数处理所有编排。
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import {
+  loadCheckpoint as _loadCheckpoint,
+  saveCheckpoint as _saveCheckpoint,
+} from "./checkpoint.ts";
+import { type HtmlChunk, prepareChunks, splitEntries } from "./chunking.ts";
 import { defineTask } from "./deferred-queue/define-task.ts";
 import { log } from "./deferred-queue/logger.ts";
 import type { Duration } from "./deferred-queue/types.ts";
-import {
-  convertMarkdownToTelegramHtml,
-  sendTelegramNotification,
-} from "./telegram.ts";
+import { sendTelegramNotification } from "./telegram.ts";
 
 // ── JSON parsing ───────────────────────────────────────
 
@@ -39,7 +39,7 @@ export function parseBookmarkItems<T>(jsonString: string): T[] {
   return parsed as T[];
 }
 
-// ── Telegram chunking ───────────────────────────────────
+// ── Telegram chunking (delegates to chunking.ts) ────────
 
 /**
  * Input for the pure core decision: how to chunk bookmark output.
@@ -65,137 +65,48 @@ export interface BookmarkChunkInput {
 /**
  * A single HTML chunk ready to send to Telegram.
  */
-export interface BookmarkChunk {
-  /** HTML string safe for Telegram parse_mode=HTML. */
-  html: string;
-}
+export type BookmarkChunk = HtmlChunk;
 
 /**
- * Pure core: converts raw Markdown into HTML chunks ready to send.
+ * Converts raw Markdown into HTML chunks.
  *
- * - Splits output at entry boundaries (`## N.` headings) to keep whole entries intact.
- * - Accumulates entries into chunks by **HTML length** (not raw length), so the
- *   output never exceeds Telegram's sendMessage limit even after
- *   Markdown→HTML tag expansion.
- * - Prepends the prefix only to the first chunk.
- *
- * Edge case: a single entry whose HTML exceeds `maxHtmlLength` is still sent as
- * one chunk (Telegram will reject it, but this is extremely rare — a single
- * bookmark entry would need to be thousands of characters long).
- *
- * No IO, no side effects — fully testable.
+ * Delegates to the shared {@link prepareChunks} after calling
+ * `splitEntries` on `rawOutput`. Kept for backward compatibility.
  */
 export function prepareBookmarkChunks(
   input: BookmarkChunkInput,
 ): BookmarkChunk[] {
-  const entries = splitEntries(input.rawOutput);
-  const result: BookmarkChunk[] = [];
-
-  let buffer: string[] = [];
-
-  const flushBuffer = () => {
-    if (buffer.length === 0) return;
-    const raw = buffer.join("\n");
-    const text = result.length === 0 ? input.prefix + raw : raw;
-    result.push({ html: convertMarkdownToTelegramHtml(text) });
-    buffer = [];
-  };
-
-  for (const entry of entries) {
-    const candidateBuffer = [...buffer, entry];
-    const raw = candidateBuffer.join("\n");
-    const text =
-      result.length === 0 && buffer.length === 0 ? input.prefix + raw : raw;
-
-    if (
-      convertMarkdownToTelegramHtml(text).length > input.maxHtmlLength &&
-      buffer.length > 0
-    ) {
-      flushBuffer();
-    }
-
-    buffer.push(entry);
-  }
-
-  flushBuffer();
-
-  return result;
+  return prepareChunks({
+    sections: splitEntries(input.rawOutput),
+    prefix: input.prefix,
+    maxHtmlLength: input.maxHtmlLength,
+  });
 }
 
-/**
- * Split raw Markdown text into individual bookmark entries.
- *
- * Entries are delimited by `## N.` heading lines.
- */
-export function splitEntries(text: string): string[] {
-  const entries: string[] = [];
-  let buffer = "";
+// Re‑export for convenience
+export { HtmlChunk, prepareChunks, splitEntries } from "./chunking.ts";
 
-  for (const line of text.split("\n")) {
-    if (/^## \d+\.(?:\s|$)/.test(line) && buffer) {
-      entries.push(buffer.trim());
-      buffer = line;
-    } else {
-      buffer += (buffer ? "\n" : "") + line;
-    }
-  }
-
-  if (buffer.trim()) {
-    entries.push(buffer.trim());
-  }
-
-  return entries;
-}
-
-// ── Checkpoint management ──────────────────────────────
+// ── Checkpoint management (delegates to checkpoint.ts) ───
 
 /**
- * Load a checkpoint from disk.
- *
- * @param checkpointPath - Absolute path to the JSON checkpoint file.
- * @param fieldName - The key in the JSON object to read (e.g. "lastHeadId").
- * @returns The stored string value, or null when the file doesn't exist or is corrupt.
- *
- * No IO aside from the read — tests accept a temp path.
+ * @deprecated Use `loadCheckpoint` from `../../shared/checkpoint.ts` instead.
  */
 export function loadCheckpoint(
   checkpointPath: string,
   fieldName: string,
 ): string | null {
-  try {
-    const raw = readFileSync(checkpointPath, "utf-8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return typeof parsed[fieldName] === "string"
-      ? (parsed[fieldName] as string)
-      : null;
-  } catch {
-    return null;
-  }
+  return _loadCheckpoint(checkpointPath, fieldName);
 }
 
 /**
- * Persist a checkpoint value to disk.
- *
- * @param fieldName - The key in the JSON object to write.
- * @param value - The string value to persist.
- * @param checkpointPath - Absolute path to the JSON checkpoint file.
- *
- * No IO aside from the write — tests accept a temp path.
+ * @deprecated Use `saveCheckpoint` from `../../shared/checkpoint.ts` instead.
  */
 export function saveCheckpoint(
   fieldName: string,
   value: string,
   checkpointPath: string,
 ): void {
-  const dir = dirname(checkpointPath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(
-    checkpointPath,
-    JSON.stringify({ [fieldName]: value }, null, 2),
-    "utf-8",
-  );
+  _saveCheckpoint(fieldName, value, checkpointPath);
 }
 
 // ── Warning messages ───────────────────────────────────

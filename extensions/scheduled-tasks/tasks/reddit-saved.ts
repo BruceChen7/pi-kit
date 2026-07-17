@@ -1,14 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { loadCheckpoint, saveCheckpoint } from "../../shared/checkpoint.ts";
+import { prepareChunks, splitEntries } from "../../shared/chunking.ts";
 import { defineTask } from "../../shared/deferred-queue/define-task.ts";
 import { log } from "../../shared/deferred-queue/logger.ts";
-import {
-  convertMarkdownToTelegramHtml,
-  sendTelegramNotification,
-} from "../../shared/telegram.ts";
+import { sendTelegramNotification } from "../../shared/telegram.ts";
 
-const CHUNK_MAX_LENGTH = 3800;
 const TELEGRAM_MAX_LENGTH = 4096;
 const CHUNK_PREFIX = "📑 Reddit Saved\n\n";
 const LIMIT = 50;
@@ -18,6 +15,7 @@ const CHECKPOINT_PATH = join(
   "agent",
   "reddit-saved-checkpoint.json",
 );
+const CHECKPOINT_FIELD = "lastHeadPostId";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -28,12 +26,6 @@ export interface SavedPost {
   score: number;
   comments: number;
   url: string;
-}
-
-/** On-disk checkpoint state (persisted to JSON). */
-export interface CheckpointState {
-  /** post ID of the most recently seen saved post (null = first run). */
-  lastHeadPostId: string | null;
 }
 
 /**
@@ -84,19 +76,19 @@ export function extractPostIdFromUrl(url: string): string {
  */
 export function computeIncrement(
   items: SavedPost[],
-  state: CheckpointState,
+  lastHeadPostId: string | null,
 ): IncrementDecision {
   if (items.length === 0) return { kind: "skip" };
 
   const headId = extractPostIdFromUrl(items[0].url);
 
-  if (state.lastHeadPostId === null) {
+  if (lastHeadPostId === null) {
     // First run: push all items and record the most recent post as checkpoint.
     return { kind: "init", items, headId };
   }
 
   const checkpointIdx = items.findIndex(
-    (item) => extractPostIdFromUrl(item.url) === state.lastHeadPostId,
+    (item) => extractPostIdFromUrl(item.url) === lastHeadPostId,
   );
 
   if (checkpointIdx === -1) {
@@ -168,141 +160,26 @@ export function parseSavedItems(jsonString: string): SavedPost[] {
   return parsed as SavedPost[];
 }
 
-// ── Chunking ──────────────────────────────────────────
-
-/**
- * Input for the pure core decision: how to chunk output.
- */
-export interface SavedChunkInput {
-  /** Raw Markdown output. */
-  rawOutput: string;
-  /** Prefix prepended to the first chunk. */
-  prefix: string;
-  /**
-   * Maximum character length of the raw content per chunk.
-   * Used as a first-pass limit; the output HTML is further constrained
-   * by `maxHtmlLength` to account for tag expansion.
-   */
-  maxChunkLength: number;
-  /**
-   * Maximum HTML length per chunk (Telegram's sendMessage limit is 4096).
-   */
-  maxHtmlLength: number;
-}
-
-/**
- * A single HTML chunk ready to send to Telegram.
- */
-export interface SavedChunk {
-  /** HTML string safe for Telegram parse_mode=HTML. */
-  html: string;
-}
+// ── Chunking (delegates to shared chunking.ts) ─────────
 
 /**
  * Pure core: converts raw Markdown into HTML chunks ready to send.
  *
- * Same strategy as `prepareBookmarkChunks`:
- * - Splits output at entry boundaries (`## N.` headings) to keep whole entries intact.
- * - Accumulates entries into chunks by **HTML length**.
- * - Prepends the prefix only to the first chunk.
+ * Delegates to the shared {@link prepareChunks} after calling
+ * {@link splitEntries} on `rawOutput`.
  *
  * No IO, no side effects — fully testable with string inputs.
  */
-export function prepareSavedChunks(input: SavedChunkInput): SavedChunk[] {
-  const entries = splitEntries(input.rawOutput);
-  const result: SavedChunk[] = [];
-
-  let buffer: string[] = [];
-
-  const flushBuffer = () => {
-    if (buffer.length === 0) return;
-    const raw = buffer.join("\n");
-    const text = result.length === 0 ? input.prefix + raw : raw;
-    result.push({ html: convertMarkdownToTelegramHtml(text) });
-    buffer = [];
-  };
-
-  for (const entry of entries) {
-    const candidateBuffer = [...buffer, entry];
-    const raw = candidateBuffer.join("\n");
-    const text =
-      result.length === 0 && buffer.length === 0 ? input.prefix + raw : raw;
-
-    if (
-      convertMarkdownToTelegramHtml(text).length > input.maxHtmlLength &&
-      buffer.length > 0
-    ) {
-      flushBuffer();
-    }
-
-    buffer.push(entry);
-  }
-
-  flushBuffer();
-
-  return result;
-}
-
-/**
- * Split raw Markdown text into individual entries.
- *
- * Entries are delimited by `## N.` heading lines.
- */
-export function splitEntries(text: string): string[] {
-  const entries: string[] = [];
-  let buffer = "";
-
-  for (const line of text.split("\n")) {
-    if (/^## \d+\.(?:\s|$)/.test(line) && buffer) {
-      entries.push(buffer.trim());
-      buffer = line;
-    } else {
-      buffer += (buffer ? "\n" : "") + line;
-    }
-  }
-
-  if (buffer.trim()) {
-    entries.push(buffer.trim());
-  }
-
-  return entries;
-}
-
-// ── IO: checkpoint management ──────────────────────────
-
-/**
- * Load checkpoint from disk.
- * Returns `lastHeadPostId: null` when the file doesn't exist or is corrupt.
- */
-export function loadCheckpoint(checkpointPath: string): CheckpointState {
-  try {
-    const raw = readFileSync(checkpointPath, "utf-8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    return {
-      lastHeadPostId:
-        typeof parsed.lastHeadPostId === "string"
-          ? parsed.lastHeadPostId
-          : null,
-    };
-  } catch {
-    return { lastHeadPostId: null };
-  }
-}
-
-/**
- * Persist the latest head post ID to disk.
- * Creates the directory if it doesn't exist.
- */
-export function saveCheckpoint(headId: string, checkpointPath: string): void {
-  const dir = dirname(checkpointPath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  writeFileSync(
-    checkpointPath,
-    JSON.stringify({ lastHeadPostId: headId }, null, 2),
-    "utf-8",
-  );
+export function prepareSavedChunks(
+  rawOutput: string,
+  prefix: string,
+  maxHtmlLength: number,
+): { html: string }[] {
+  return prepareChunks({
+    sections: splitEntries(rawOutput),
+    prefix,
+    maxHtmlLength,
+  });
 }
 
 // ── Shell: warning message construction ─────────────────
@@ -357,8 +234,8 @@ export default defineTask({
     log.info("opencli reddit saved fetched", { count: items.length });
 
     // ── 3. Pure: decide what to push ────────────────────────
-    const state = loadCheckpoint(CHECKPOINT_PATH);
-    const decision = computeIncrement(items, state);
+    const lastHeadPostId = loadCheckpoint(CHECKPOINT_PATH, CHECKPOINT_FIELD);
+    const decision = computeIncrement(items, lastHeadPostId);
 
     log.info("increment decision", { kind: decision.kind });
 
@@ -374,12 +251,11 @@ export default defineTask({
     const markdown = formatSavedPosts(decision.items, warning);
 
     // ── 5. Pure: chunk Markdown into Telegram HTML ──────────
-    const chunks = prepareSavedChunks({
-      rawOutput: markdown,
-      prefix: CHUNK_PREFIX,
-      maxChunkLength: CHUNK_MAX_LENGTH,
-      maxHtmlLength: TELEGRAM_MAX_LENGTH,
-    });
+    const chunks = prepareSavedChunks(
+      markdown,
+      CHUNK_PREFIX,
+      TELEGRAM_MAX_LENGTH,
+    );
 
     log.info("sending saved post chunks", {
       chunkCount: chunks.length,
@@ -397,12 +273,18 @@ export default defineTask({
           chunkIndex: i,
           error: String(err),
         });
-        return; // do NOT update checkpoint
+        // Save checkpoint to avoid duplicate resend of already-sent chunks
+        saveCheckpoint(CHECKPOINT_FIELD, decision.headId, CHECKPOINT_PATH);
+        log.info("partial checkpoint saved to avoid duplicate resend", {
+          headId: decision.headId,
+          lastSentIndex: i - 1,
+        });
+        return;
       }
     }
 
     // ── 7. All sent — persist new checkpoint ───────────────
-    saveCheckpoint(decision.headId, CHECKPOINT_PATH);
+    saveCheckpoint(CHECKPOINT_FIELD, decision.headId, CHECKPOINT_PATH);
     log.info("reddit saved fetch complete, checkpoint updated", {
       headId: decision.headId,
     });

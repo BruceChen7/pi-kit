@@ -12,6 +12,7 @@ import {
   reportFileName,
   type SquadManifest,
   type SquadReport,
+  verifyManifestAgent,
 } from "./shared.ts";
 
 const ReportParams = Type.Object({
@@ -64,24 +65,15 @@ async function loadValidatedManifest(
     throw new Error("Unsafe Herdr squad run directory");
   }
 
-  const manifest = JSON.parse(
-    await readFile(join(realRunDir, MANIFEST_FILE), "utf8"),
-  ) as SquadManifest;
-  const agent = manifest.agents?.find(
-    (candidate) => candidate.agentId === agentId,
-  );
-  if (
-    manifest.version !== 1 ||
-    manifest.squadId !== squadId ||
-    !agent ||
-    agent.token !== token
-  ) {
+  const raw = await readFile(join(realRunDir, MANIFEST_FILE), "utf8");
+  const manifest = JSON.parse(raw) as SquadManifest;
+  const agent = verifyManifestAgent(manifest, squadId, agentId, token);
+  if (!agent) {
     childLog.error("Child identity verification failed", {
       squadId,
       agentId,
       manifestSquadId: manifest.squadId,
       manifestVersion: manifest.version,
-      agentFound: !!agent,
     });
     throw new Error("Herdr squad child identity could not be verified");
   }
@@ -94,11 +86,21 @@ async function loadValidatedManifest(
 
 const childLog = createLogger("herdr-squad", { stderr: null });
 
-export function registerChildReportTool(pi: ExtensionAPI): boolean {
-  const runDir = process.env.HERDR_SQUAD_DIR;
-  const squadId = process.env.HERDR_SQUAD_ID;
-  const agentId = process.env.HERDR_SQUAD_AGENT_ID;
-  const token = process.env.HERDR_SQUAD_TOKEN;
+export function registerChildReportTool(
+  pi: ExtensionAPI,
+  env: {
+    HERDR_SQUAD_DIR?: string;
+    HERDR_SQUAD_ID?: string;
+    HERDR_SQUAD_AGENT_ID?: string;
+    HERDR_SQUAD_TOKEN?: string;
+  } = process.env,
+): boolean {
+  const {
+    HERDR_SQUAD_DIR: runDir,
+    HERDR_SQUAD_ID: squadId,
+    HERDR_SQUAD_AGENT_ID: agentId,
+    HERDR_SQUAD_TOKEN: token,
+  } = env;
   if (!runDir || !squadId || !agentId || !token) {
     childLog.debug("Not a child agent — skipping child tool registration");
     return false;

@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-
 export const SQUAD_ENTRY_TYPE = "herdr-squad";
 export const RUN_DIR_PREFIX = "pi-herdr-squad-";
 export const MANIFEST_FILE = "manifest.json";
@@ -87,12 +85,10 @@ export function reportFileName(agentId: string): string {
   return `report-${agentId}.json`;
 }
 
-export async function readSquadReport(
-  path: string,
-): Promise<SquadReport | undefined> {
+export function parseSquadReportJSON(raw: string): SquadReport | undefined {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await readFile(path, "utf8"));
+    parsed = JSON.parse(raw);
   } catch {
     return undefined;
   }
@@ -182,6 +178,23 @@ export const MAX_TASK_LENGTH = 50_000;
 export const MAX_SCOPE_LENGTH = 8_000;
 export const MAX_PROMPT_LENGTH = 16_000;
 
+export const HERDR_CLI_TIMEOUT_MS = 15_000;
+export const DEFAULT_WAIT_MS = 5 * 60_000;
+export const MAX_WAIT_MS = 30 * 60_000;
+export const BLOCKED_GRACE_MS = 1_500;
+export const POLL_INTERVAL_MS = 500;
+export const COLLECT_DEFAULT_LINES = 240;
+export const COLLECT_PER_AGENT_MIN_BYTES = 8_000;
+export const COLLECT_HEADROOM_BYTES = 4_000;
+
+export function validateExplicitModel(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 200) {
+    throw new Error("Explicit model value is empty or exceeds 200 characters");
+  }
+  return trimmed;
+}
+
 function cleanBody(value: string, maxLength: number): string {
   return (
     value
@@ -252,13 +265,7 @@ export function validateStartParams(
   let model: string | undefined;
   let modelSource: SquadState["modelSource"];
   if (params.model) {
-    const trimmed = params.model.trim();
-    if (!trimmed || trimmed.length > 200) {
-      throw new Error(
-        "Explicit model value is empty or exceeds 200 characters",
-      );
-    }
-    model = trimmed;
+    model = validateExplicitModel(params.model);
     modelSource = "explicit";
   } else {
     const configured = resolveModel();
@@ -310,4 +317,126 @@ export function validateStartParams(
     manifestAgents,
     agents,
   };
+}
+
+export function publicSquadDetails(state: SquadState) {
+  return {
+    squadId: state.squadId,
+    status: state.status,
+    tabId: state.tabId,
+    tabLabel: state.tabLabel,
+    cwd: state.cwd,
+    model: state.model,
+    modelSource: state.modelSource,
+    agents: state.agents.map((agent) => ({
+      paneId: agent.paneId,
+      label: agent.label,
+      scope: agent.scope,
+      status: agent.lastAgentStatus,
+    })),
+    failure: state.failure,
+  };
+}
+
+export function formatAgentList(state: SquadState): string {
+  return state.agents
+    .map(
+      (agent) =>
+        `- ${agent.label}: ${agent.scope} (pane ${agent.paneId || "not created"})`,
+    )
+    .join("\n");
+}
+
+export function formatReport(
+  report: SquadReport | undefined,
+  sourcePath: string,
+): string {
+  if (!report) return "";
+  const evidence =
+    report.evidence.length > 0
+      ? report.evidence.map((item) => `- ${item}`).join("\n")
+      : "- None reported";
+  const risks =
+    report.risksOrUnknowns.length > 0
+      ? report.risksOrUnknowns.map((item) => `- ${item}`).join("\n")
+      : "- None reported";
+  return [
+    `# Squad Report: ${report.label}`,
+    `## Scope`,
+    report.scope,
+    `## Recommended next step`,
+    report.recommendedNextStep,
+    `## Findings`,
+    report.findings,
+    `## Evidence`,
+    evidence,
+    `## Risks / Unknowns`,
+    risks,
+    ``,
+    `Structured report: ${sourcePath}`,
+  ].join("\n");
+}
+
+export function verifyManifestAgent(
+  manifest: SquadManifest,
+  squadId: string,
+  agentId: string,
+  token: string,
+): SquadManifest["agents"][number] | undefined {
+  if (manifest.version !== 1 || manifest.squadId !== squadId) {
+    return undefined;
+  }
+  const agent = manifest.agents?.find((a) => a.agentId === agentId);
+  if (!agent || agent.token !== token) return undefined;
+  return agent;
+}
+
+export type SplitOperation = {
+  direction: "right" | "down";
+  targetIndex: number;
+  dependsOnAgentOne: boolean;
+};
+
+export function buildSplitPlan(count: number): SplitOperation[] {
+  if (count <= 1) return [];
+  const plan: SplitOperation[] = [
+    { direction: "right", targetIndex: 1, dependsOnAgentOne: false },
+  ];
+  if (count >= 3) {
+    plan.push({ direction: "down", targetIndex: 2, dependsOnAgentOne: false });
+  }
+  if (count >= 4) {
+    plan.push({ direction: "down", targetIndex: 3, dependsOnAgentOne: true });
+  }
+  return plan;
+}
+
+export function buildAgentCommand(
+  runDir: string,
+  squadId: string,
+  agentId: string,
+  token: string,
+  label: string,
+  promptPath: string,
+  model?: string,
+): string {
+  const args = [
+    "env",
+    `HERDR_SQUAD_DIR=${runDir}`,
+    `HERDR_SQUAD_ID=${squadId}`,
+    `HERDR_SQUAD_AGENT_ID=${agentId}`,
+    `HERDR_SQUAD_TOKEN=${token}`,
+    "pi",
+    "--name",
+    `Squad ${label}`,
+  ];
+  if (model) args.push("--model", model);
+  args.push(
+    "--tools",
+    "read,grep,find,ls,herdr_squad_report",
+    "--no-skills",
+    "--no-prompt-templates",
+    `@${promptPath}`,
+  );
+  return args.map(shellQuote).join(" ");
 }

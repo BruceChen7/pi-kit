@@ -30,7 +30,6 @@
       "./extensions/codex-web-search",
       "./extensions/deepseek-search",
       "./extensions/file-watcher",
-      "./extensions/agent-end-code-simplifier",
       "./extensions/review-feedback",
       "./extensions/scheduled-tasks",
       "./extensions/brainstorm-events",

@@ -5,6 +5,7 @@ const mockLoadSettings = vi.hoisted(() => vi.fn());
 
 vi.mock("../shared/settings.ts", () => ({
   loadSettings: mockLoadSettings,
+  loadGlobalSettings: () => ({ global: {} }),
 }));
 
 describe("resolveConfiguredModel", () => {

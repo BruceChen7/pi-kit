@@ -1,3 +1,4 @@
+import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
 
 export interface HerdrSquadConfig {
@@ -21,6 +22,13 @@ const sanitizeModel = (value: unknown): string | null | undefined => {
   return undefined;
 };
 
+let configLog: ReturnType<typeof createLogger> | null = null;
+
+function getConfigLog(): ReturnType<typeof createLogger> {
+  if (!configLog) configLog = createLogger("herdr-squad", { stderr: null });
+  return configLog;
+}
+
 export function resolveConfiguredModel(
   cwd: string,
   projectTrusted: boolean,
@@ -33,10 +41,22 @@ export function resolveConfiguredModel(
       ? (project.herdrSquad as Record<string, unknown>)
       : {};
     const projectModel = sanitizeModel(projectSection.defaultModel);
-    if (projectModel === null) return { source: "pi-default" };
+    if (projectModel === null) {
+      getConfigLog().debug(
+        "Model: project config set to null, fall through to pi-default",
+      );
+      return { source: "pi-default" };
+    }
     if (projectModel !== undefined) {
+      getConfigLog().info("Model resolved from project config", {
+        model: projectModel,
+        source: "project",
+      });
       return { model: projectModel, source: "project" };
     }
+    getConfigLog().debug("Model: no project config found");
+  } else {
+    getConfigLog().debug("Model: project not trusted, skipping project config");
   }
 
   // 2. Global config
@@ -45,10 +65,16 @@ export function resolveConfiguredModel(
     : {};
   const globalModel = sanitizeModel(globalSection.defaultModel);
   if (globalModel !== undefined) {
+    getConfigLog().info("Model resolved from global config", {
+      model: globalModel,
+      source: "global",
+    });
     return { model: globalModel, source: "global" };
   }
+  getConfigLog().debug("Model: no global config found, using pi-default");
 
   // 3. Pi default
+  getConfigLog().info("Model resolved as pi-default");
   return { source: "pi-default" };
 }
 

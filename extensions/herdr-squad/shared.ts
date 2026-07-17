@@ -178,9 +178,9 @@ export type StartEnv = {
   HERDR_PANE_ID?: string;
 };
 
-const MAX_TASK_LENGTH = 50_000;
-const MAX_SCOPE_LENGTH = 8_000;
-const MAX_PROMPT_LENGTH = 16_000;
+export const MAX_TASK_LENGTH = 50_000;
+export const MAX_SCOPE_LENGTH = 8_000;
+export const MAX_PROMPT_LENGTH = 16_000;
 
 function cleanBody(value: string, maxLength: number): string {
   return (

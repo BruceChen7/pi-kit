@@ -12,29 +12,37 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createLogger } from "../shared/logger.ts";
+import { loadSettings } from "../shared/settings.ts";
 import { registerChildReportTool } from "./child.ts";
 import { resolveConfiguredModel } from "./config.ts";
+import { readSquadReport } from "./io.ts";
 import {
+  BLOCKED_GRACE_MS,
+  buildAgentCommand,
   buildChildPrompt,
+  buildSplitPlan,
+  COLLECT_DEFAULT_LINES,
+  COLLECT_HEADROOM_BYTES,
+  COLLECT_PER_AGENT_MIN_BYTES,
+  DEFAULT_WAIT_MS,
+  formatAgentList,
+  formatReport,
+  HERDR_CLI_TIMEOUT_MS,
   MANIFEST_FILE,
   MAX_PROMPT_LENGTH,
   MAX_SCOPE_LENGTH,
   MAX_TASK_LENGTH,
+  MAX_WAIT_MS,
+  POLL_INTERVAL_MS,
+  publicSquadDetails,
   RUN_DIR_PREFIX,
-  readSquadReport,
   SQUAD_ENTRY_TYPE,
   type SquadAgentState,
   type SquadManifest,
   type SquadState,
   STATE_VERSION,
-  shellQuote,
   validateStartParams,
 } from "./shared.ts";
-
-const DEFAULT_WAIT_MS = 5 * 60_000;
-const MAX_WAIT_MS = 30 * 60_000;
-const BLOCKED_GRACE_MS = 1_500;
-const POLL_INTERVAL_MS = 500;
 
 const AssignmentSchema = Type.Object({
   label: Type.String({
@@ -118,34 +126,6 @@ const CollectParams = Type.Object({
 // biome-ignore lint/suspicious/noExplicitAny: Herdr JSON responses are loosely typed
 type JsonObject = Record<string, any>;
 
-function publicSquadDetails(state: SquadState) {
-  return {
-    squadId: state.squadId,
-    status: state.status,
-    tabId: state.tabId,
-    tabLabel: state.tabLabel,
-    cwd: state.cwd,
-    model: state.model,
-    modelSource: state.modelSource,
-    agents: state.agents.map((agent) => ({
-      paneId: agent.paneId,
-      label: agent.label,
-      scope: agent.scope,
-      status: agent.lastAgentStatus,
-    })),
-    failure: state.failure,
-  };
-}
-
-function formatAgentList(state: SquadState): string {
-  return state.agents
-    .map(
-      (agent) =>
-        `- ${agent.label}: ${agent.scope} (pane ${agent.paneId || "not created"})`,
-    )
-    .join("\n");
-}
-
 function delay(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
@@ -164,36 +144,6 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function formatReport(
-  report: Awaited<ReturnType<typeof readSquadReport>>,
-  sourcePath: string,
-): string {
-  if (!report) return "";
-  const evidence =
-    report.evidence.length > 0
-      ? report.evidence.map((item) => `- ${item}`).join("\n")
-      : "- None reported";
-  const risks =
-    report.risksOrUnknowns.length > 0
-      ? report.risksOrUnknowns.map((item) => `- ${item}`).join("\n")
-      : "- None reported";
-  return [
-    `# Squad Report: ${report.label}`,
-    `## Scope`,
-    report.scope,
-    `## Recommended next step`,
-    report.recommendedNextStep,
-    `## Findings`,
-    report.findings,
-    `## Evidence`,
-    evidence,
-    `## Risks / Unknowns`,
-    risks,
-    ``,
-    `Structured report: ${sourcePath}`,
-  ].join("\n");
-}
-
 const log = createLogger("herdr-squad", { stderr: null });
 
 export default function (pi: ExtensionAPI) {
@@ -205,22 +155,37 @@ export default function (pi: ExtensionAPI) {
 
   const squads = new Map<string, SquadState>();
 
+  function updateSquad(
+    squadId: string,
+    updater: (state: SquadState) => SquadState,
+  ): SquadState {
+    const state = squads.get(squadId);
+    if (!state) throw new Error(`Unknown Herdr squad ID: ${squadId}`);
+    const snapshot = structuredClone(state);
+    const updated = updater(snapshot);
+    updated.updatedAt = new Date().toISOString();
+    squads.set(squadId, updated);
+    pi.appendEntry(SQUAD_ENTRY_TYPE, { state: structuredClone(updated) });
+    return updated;
+  }
+
   function saveState(state: SquadState): void {
-    state.updatedAt = new Date().toISOString();
-    squads.set(state.squadId, state);
-    pi.appendEntry(SQUAD_ENTRY_TYPE, { state: structuredClone(state) });
+    const snapshot = structuredClone(state);
+    snapshot.updatedAt = new Date().toISOString();
+    squads.set(snapshot.squadId, snapshot);
+    pi.appendEntry(SQUAD_ENTRY_TYPE, { state: structuredClone(snapshot) });
   }
 
   function getSquad(squadId: string): SquadState {
     const state = squads.get(squadId);
     if (!state) throw new Error(`Unknown Herdr squad ID: ${squadId}`);
-    return state;
+    return structuredClone(state);
   }
 
   async function runHerdr(
     args: string[],
     signal?: AbortSignal,
-    timeout = 15_000,
+    timeout = HERDR_CLI_TIMEOUT_MS,
   ) {
     log.debug("herdr exec", { args: args.slice(0, 3), timeout });
     const result = await pi.exec("herdr", args, { signal, timeout });
@@ -243,7 +208,7 @@ export default function (pi: ExtensionAPI) {
   async function herdr(
     args: string[],
     signal?: AbortSignal,
-    timeout = 15_000,
+    timeout = HERDR_CLI_TIMEOUT_MS,
   ): Promise<JsonObject> {
     const result = await runHerdr(args, signal, timeout);
     try {
@@ -390,7 +355,14 @@ export default function (pi: ExtensionAPI) {
         },
         process.env,
         { randomUUID: () => crypto.randomUUID(), randomBytes },
-        () => resolveConfiguredModel(ctx.cwd, ctx.isProjectTrusted()),
+        () => {
+          const { global, project } = loadSettings(ctx.cwd);
+          return resolveConfiguredModel(
+            global as Record<string, unknown>,
+            project as Record<string, unknown>,
+            ctx.isProjectTrusted(),
+          );
+        },
       );
 
       log.info(`Squad ${v.squadId} validation passed`, {
@@ -512,68 +484,38 @@ export default function (pi: ExtensionAPI) {
           agents,
         };
 
-        if (params.count >= 2) {
+        const splitPlan = buildSplitPlan(params.count);
+        for (const op of splitPlan) {
+          const targetPaneId = op.dependsOnAgentOne
+            ? agents[1].paneId
+            : state.rootPaneId;
           const split = await herdr(
             [
               "pane",
               "split",
-              state.rootPaneId,
+              targetPaneId,
               "--direction",
-              "right",
+              op.direction,
               "--cwd",
               ctx.cwd,
               "--no-focus",
             ],
             signal,
           );
-          agents[1].paneId = String(split.result?.pane?.pane_id || "");
-          if (!agents[1].paneId) {
-            log.error("Right split failed — no pane ID returned");
-            throw new Error("Right split did not return a pane ID");
-          }
-          log.debug("Right split done", { paneId: agents[1].paneId });
-        }
-        if (params.count >= 3) {
-          const split = await herdr(
-            [
-              "pane",
-              "split",
-              state.rootPaneId,
-              "--direction",
-              "down",
-              "--cwd",
-              ctx.cwd,
-              "--no-focus",
-            ],
-            signal,
+          agents[op.targetIndex].paneId = String(
+            split.result?.pane?.pane_id || "",
           );
-          agents[2].paneId = String(split.result?.pane?.pane_id || "");
-          if (!agents[2].paneId) {
-            log.error("Lower-left split failed — no pane ID returned");
-            throw new Error("Lower-left split did not return a pane ID");
+          if (!agents[op.targetIndex].paneId) {
+            log.error("Pane split failed — no pane ID returned", {
+              direction: op.direction,
+              targetIndex: op.targetIndex,
+            });
+            throw new Error("Pane split did not return a pane ID");
           }
-          log.debug("Lower-left split done", { paneId: agents[2].paneId });
-        }
-        if (params.count >= 4) {
-          const split = await herdr(
-            [
-              "pane",
-              "split",
-              agents[1].paneId,
-              "--direction",
-              "down",
-              "--cwd",
-              ctx.cwd,
-              "--no-focus",
-            ],
-            signal,
-          );
-          agents[3].paneId = String(split.result?.pane?.pane_id || "");
-          if (!agents[3].paneId) {
-            log.error("Lower-right split failed — no pane ID returned");
-            throw new Error("Lower-right split did not return a pane ID");
-          }
-          log.debug("Lower-right split done", { paneId: agents[3].paneId });
+          log.debug("Split done", {
+            paneId: agents[op.targetIndex].paneId,
+            direction: op.direction,
+          });
         }
 
         for (const agent of agents) {
@@ -590,25 +532,15 @@ export default function (pi: ExtensionAPI) {
         for (let index = 0; index < agents.length; index++) {
           const agent = agents[index];
           const identity = v.manifestAgents[index];
-          const commandArguments = [
-            "env",
-            `HERDR_SQUAD_DIR=${runDir}`,
-            `HERDR_SQUAD_ID=${v.squadId}`,
-            `HERDR_SQUAD_AGENT_ID=${agent.agentId}`,
-            `HERDR_SQUAD_TOKEN=${identity.token}`,
-            "pi",
-            "--name",
-            `Squad ${agent.label}`,
-          ];
-          if (state.model) commandArguments.push("--model", state.model);
-          commandArguments.push(
-            "--tools",
-            "read,grep,find,ls,herdr_squad_report",
-            "--no-skills",
-            "--no-prompt-templates",
-            `@${agent.promptPath}`,
+          const command = buildAgentCommand(
+            runDir,
+            v.squadId,
+            agent.agentId,
+            identity.token,
+            agent.label,
+            agent.promptPath,
+            state.model,
           );
-          const command = commandArguments.map(shellQuote).join(" ");
           await runHerdr(["pane", "run", agent.paneId, command], signal);
           log.debug(`Agent ${agent.label} launched`, {
             paneId: agent.paneId,
@@ -692,7 +624,7 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: SquadIdParams,
     async execute(_toolCallId, params, signal, onUpdate) {
-      const state = getSquad(params.squadId);
+      let state = getSquad(params.squadId);
       const timeoutMs = params.timeoutMs ?? DEFAULT_WAIT_MS;
       const deadline = Date.now() + timeoutMs;
       const blockedSince = new Map<string, number>();
@@ -702,172 +634,204 @@ export default function (pi: ExtensionAPI) {
         agents: state.agents.length,
       });
 
-      while (true) {
-        if (signal?.aborted) {
-          log.warn(`Squad ${params.squadId} wait cancelled by signal`);
-          throw new Error("Herdr squad wait cancelled");
-        }
-        const reports = await Promise.all(
-          state.agents.map((agent) => readSquadReport(agent.reportPath)),
-        );
-        const completeCount = reports.filter(Boolean).length;
-        if (completeCount === state.agents.length) {
-          state.status = "completed";
-          delete state.failure;
-          saveState(state);
-          log.info(
-            `Squad ${params.squadId} all ${completeCount} reports ready`,
+      try {
+        while (true) {
+          if (signal?.aborted) {
+            log.warn(`Squad ${params.squadId} wait cancelled by signal`);
+            throw new Error("Herdr squad wait cancelled");
+          }
+          const results = await Promise.allSettled(
+            state.agents.map((agent) => readSquadReport(agent.reportPath)),
           );
-          return {
-            content: [
-              {
-                type: "text",
-                text: [
-                  `All ${completeCount} Herdr squad reports are ready.`,
-                  `Call herdr_squad_collect with squadId ${state.squadId} in the next tool round.`,
-                ].join(" "),
-              },
-            ],
-            details: {
-              ...publicSquadDetails(state),
-              completeCount,
-              timedOut: false,
-            },
-          };
-        }
-
-        const live = await refreshLivePanes(state, signal);
-        if (!live.tabFound || live.missing.length > 0) {
-          state.status = "partial";
-          state.failure = !live.tabFound
-            ? "Squad tab is no longer available"
-            : `Missing panes: ${live.missing.join(", ")}`;
-          saveState(state);
-          log.warn(`Squad ${params.squadId} partial`, {
-            failure: state.failure,
-            completeCount,
-          });
-          return {
-            content: [
-              {
-                type: "text",
-                text: [
-                  `${completeCount}/${state.agents.length} reports are ready.`,
-                  `${state.failure}. Collect the available reports now.`,
-                ].join(" "),
-              },
-            ],
-            details: {
-              ...publicSquadDetails(state),
-              completeCount,
-              timedOut: false,
-            },
-          };
-        }
-
-        const now = Date.now();
-        for (let index = 0; index < state.agents.length; index++) {
-          if (reports[index]) continue;
-          const agent = state.agents[index];
-          if (agent.lastAgentStatus === "done") {
-            state.status = "partial";
-            state.failure = [
-              `${agent.label} (pane ${agent.paneId}) terminated with`,
-              `Herdr status done without submitting a report`,
-            ].join(" ");
+          const reports = results.map((r) =>
+            r.status === "fulfilled" ? r.value : undefined,
+          );
+          const completeCount = reports.filter(Boolean).length;
+          if (completeCount === state.agents.length) {
+            state.status = "completed";
+            delete state.failure;
             saveState(state);
-            log.warn(
-              `Squad ${params.squadId}: ${agent.label} done without report`,
+            log.info(
+              `Squad ${params.squadId} all ${completeCount} reports ready`,
             );
             return {
               content: [
                 {
                   type: "text",
                   text: [
-                    `${completeCount}/${state.agents.length} reports are ready.`,
-                    `${state.failure}. Collect available reports and terminal output now.`,
+                    `All ${completeCount} Herdr squad reports are ready.`,
+                    `Call herdr_squad_collect with squadId ${state.squadId} in the next tool round.`,
                   ].join(" "),
                 },
               ],
               details: {
                 ...publicSquadDetails(state),
                 completeCount,
-                terminated: agent.label,
-                terminalStatus: "done",
                 timedOut: false,
               },
             };
           }
-          if (agent.lastAgentStatus === "blocked") {
-            const since = blockedSince.get(agent.agentId) ?? now;
-            blockedSince.set(agent.agentId, since);
-            if (now - since >= BLOCKED_GRACE_MS) {
+
+          const live = await refreshLivePanes(state, signal);
+          if (!live.tabFound || live.missing.length > 0) {
+            state.status = "partial";
+            state.failure = !live.tabFound
+              ? "Squad tab is no longer available"
+              : `Missing panes: ${live.missing.join(", ")}`;
+            saveState(state);
+            log.warn(`Squad ${params.squadId} partial`, {
+              failure: state.failure,
+              completeCount,
+            });
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: [
+                    `${completeCount}/${state.agents.length} reports are ready.`,
+                    `${state.failure}. Collect the available reports now.`,
+                  ].join(" "),
+                },
+              ],
+              details: {
+                ...publicSquadDetails(state),
+                completeCount,
+                timedOut: false,
+              },
+            };
+          }
+
+          const now = Date.now();
+          for (let index = 0; index < state.agents.length; index++) {
+            if (reports[index]) continue;
+            const agent = state.agents[index];
+            if (agent.lastAgentStatus === "done") {
               state.status = "partial";
-              state.failure = `${agent.label} is blocked`;
+              state.failure = [
+                `${agent.label} (pane ${agent.paneId}) terminated with`,
+                `Herdr status done without submitting a report`,
+              ].join(" ");
               saveState(state);
-              log.warn(`Squad ${params.squadId}: ${agent.label} blocked`);
+              log.warn(
+                `Squad ${params.squadId}: ${agent.label} done without report`,
+              );
               return {
                 content: [
                   {
                     type: "text",
                     text: [
                       `${completeCount}/${state.agents.length} reports are ready.`,
-                      `${agent.label} is blocked; collect available output and report the blocker.`,
+                      `${state.failure}. Collect available reports and terminal output now.`,
                     ].join(" "),
                   },
                 ],
                 details: {
                   ...publicSquadDetails(state),
                   completeCount,
-                  blocked: agent.label,
+                  terminated: agent.label,
+                  terminalStatus: "done",
                   timedOut: false,
                 },
               };
             }
-            log.debug(
-              `Squad ${params.squadId}: ${agent.label} blocked (grace)`,
-            );
-          } else {
-            blockedSince.delete(agent.agentId);
+            if (agent.lastAgentStatus === "blocked") {
+              const since = blockedSince.get(agent.agentId) ?? now;
+              blockedSince.set(agent.agentId, since);
+              if (now - since >= BLOCKED_GRACE_MS) {
+                state.status = "partial";
+                state.failure = `${agent.label} is blocked`;
+                saveState(state);
+                log.warn(`Squad ${params.squadId}: ${agent.label} blocked`);
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: [
+                        `${completeCount}/${state.agents.length} reports are ready.`,
+                        `${agent.label} is blocked; collect available output and report the blocker.`,
+                      ].join(" "),
+                    },
+                  ],
+                  details: {
+                    ...publicSquadDetails(state),
+                    completeCount,
+                    blocked: agent.label,
+                    timedOut: false,
+                  },
+                };
+              }
+              log.debug(
+                `Squad ${params.squadId}: ${agent.label} blocked (grace)`,
+              );
+            } else {
+              blockedSince.delete(agent.agentId);
+            }
           }
-        }
 
-        onUpdate?.({
-          content: [
-            {
-              type: "text",
-              text: `Herdr squad: ${completeCount}/${state.agents.length} reports ready...`,
-            },
-          ],
-          details: { squadId: state.squadId, completeCount },
-        });
-        if (Date.now() >= deadline) {
-          state.status = "partial";
-          state.failure = `Timed out after ${timeoutMs}ms`;
-          saveState(state);
-          log.warn(`Squad ${params.squadId} timed out`, {
-            completeCount,
-            timeoutMs,
-          });
-          return {
+          onUpdate?.({
             content: [
               {
                 type: "text",
-                text: [
-                  `${completeCount}/${state.agents.length} reports were ready`,
-                  `before the overall timeout. Collect available reports and`,
-                  `terminal fallbacks now.`,
-                ].join(" "),
+                text: `Herdr squad: ${completeCount}/${state.agents.length} reports ready...`,
               },
             ],
-            details: {
-              ...publicSquadDetails(state),
+            details: { squadId: state.squadId, completeCount },
+          });
+          if (Date.now() >= deadline) {
+            state.status = "partial";
+            state.failure = `Timed out after ${timeoutMs}ms`;
+            saveState(state);
+            log.warn(`Squad ${params.squadId} timed out`, {
               completeCount,
-              timedOut: true,
-            },
-          };
+              timeoutMs,
+            });
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: [
+                    `${completeCount}/${state.agents.length} reports were ready`,
+                    `before the overall timeout. Collect available reports and`,
+                    `terminal fallbacks now.`,
+                  ].join(" "),
+                },
+              ],
+              details: {
+                ...publicSquadDetails(state),
+                completeCount,
+                timedOut: true,
+              },
+            };
+          }
+          await delay(
+            Math.min(POLL_INTERVAL_MS, deadline - Date.now()),
+            signal,
+          );
         }
-        await delay(Math.min(POLL_INTERVAL_MS, deadline - Date.now()), signal);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        state = updateSquad(params.squadId, (s) => {
+          s.status = "partial";
+          s.failure = message;
+          return s;
+        });
+        log.error(`Squad ${params.squadId} wait failed`, { error: message });
+        return {
+          content: [
+            {
+              type: "text",
+              text: [
+                `Herdr squad wait failed: ${message}`,
+                `Collect available reports now.`,
+              ].join(" "),
+            },
+          ],
+          details: {
+            ...publicSquadDetails(state),
+            completeCount: 0,
+            timedOut: false,
+          },
+        };
       }
     },
   });
@@ -894,7 +858,7 @@ export default function (pi: ExtensionAPI) {
         agents: state.agents.length,
         status: state.status,
       });
-      const lines = params.lines ?? 240;
+      const lines = params.lines ?? COLLECT_DEFAULT_LINES;
       const live = await refreshLivePanes(state, signal);
       const missingPanes = new Set(live.missing);
       if (live.missing.length > 0) {
@@ -903,8 +867,10 @@ export default function (pi: ExtensionAPI) {
         );
       }
       const perAgentBytes = Math.max(
-        8_000,
-        Math.floor((DEFAULT_MAX_BYTES - 4_000) / state.agents.length),
+        COLLECT_PER_AGENT_MIN_BYTES,
+        Math.floor(
+          (DEFAULT_MAX_BYTES - COLLECT_HEADROOM_BYTES) / state.agents.length,
+        ),
       );
       const sections: string[] = [];
       let structuredCount = 0;
@@ -938,7 +904,7 @@ export default function (pi: ExtensionAPI) {
                   "--lines",
                   String(lines),
                 ],
-                { signal, timeout: 15_000 },
+                { signal, timeout: HERDR_CLI_TIMEOUT_MS },
               );
               if (result.code === 0 && result.stdout.trim())
                 transcript = result.stdout.trim();

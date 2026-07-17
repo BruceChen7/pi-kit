@@ -374,6 +374,13 @@ describe("cr-diffview command", () => {
     expect(paneCommand).toContain("nvim --listen");
     expect(paneCommand).not.toContain("cd ");
 
+    // Verify the review tab is focused after creation, matching tmux new-window behavior.
+    expect(exec).toHaveBeenCalledWith("herdr", [
+      "tab",
+      "focus",
+      HERDR_REVIEW_TAB_ID,
+    ]);
+
     expect(notify).toHaveBeenCalledWith(
       "Opened CR diffview for main...HEAD",
       "info",

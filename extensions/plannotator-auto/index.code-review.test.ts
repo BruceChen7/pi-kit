@@ -34,44 +34,12 @@ function mockCodeReviewApi() {
   }));
 }
 
-function expectCodeReviewCliNotStarted(spawn: ReturnType<typeof mockSpawn>) {
-  expect(spawn).not.toHaveBeenCalledWith(
-    "plannotator",
-    ["review"],
-    expect.anything(),
-  );
-}
-
-async function triggerCodeReview(
-  emit: (name: string, event: unknown, ctx: unknown) => Promise<unknown>,
-  ctx: unknown,
-): Promise<void> {
-  await emit(
-    "tool_execution_start",
-    {
-      toolName: "write",
-      toolCallId: "call-1",
-      args: { path: "src/app.ts" },
-    },
-    ctx,
-  );
-  await emit(
-    "tool_execution_end",
-    {
-      toolName: "write",
-      toolCallId: "call-1",
-      isError: false,
-    },
-    ctx,
-  );
-}
-
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
-describe("code review trigger timing", () => {
+describe("code review trigger (removed)", () => {
   it("does not automatically start code review after tracked file writes", async () => {
     vi.resetModules();
     const spawn = mockSpawn({
@@ -89,115 +57,36 @@ describe("code review trigger timing", () => {
 
     try {
       await emit("session_start", {}, ctx);
-      await triggerCodeReview(emit, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: "src/app.ts" },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
 
       await emit("agent_end", {}, ctx);
 
-      expectCodeReviewCliNotStarted(spawn);
+      expect(spawn).not.toHaveBeenCalledWith(
+        "plannotator",
+        ["review"],
+        expect.anything(),
+      );
       expect(api.sendUserMessage).not.toHaveBeenCalled();
       expect(ctx.ui.notify).not.toHaveBeenCalledWith(
         "Plannotator request timed out.",
         "warning",
-      );
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-    }
-  });
-
-  it("runs CLI code review from the manual command", async () => {
-    vi.resetModules();
-    const spawn = mockSpawn({
-      status: 0,
-      stdout: "Manual feedback.",
-      stderr: "",
-    });
-    mockCodeReviewApi();
-
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit, runCommand } = createFakePi();
-    plannotatorAuto(api as never);
-    const ctx = createTestContext("/repo", {
-      uiCustom: vi.fn(async () => "code"),
-    });
-
-    try {
-      await emit("session_start", {}, ctx);
-      await runCommand("plannotator-review", "", ctx);
-      // flush for the dynamic import of review-picker
-      await flushMicrotasks();
-
-      expect(spawn).toHaveBeenCalledWith(
-        "plannotator",
-        ["review"],
-        expect.objectContaining({ cwd: "/repo" }),
-      );
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        "Manual feedback.\n\nPlease address this feedback.",
-        { deliverAs: "followUp" },
-      );
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-    }
-  });
-
-  it("runs CLI code review from the manual shortcut", async () => {
-    vi.resetModules();
-    const spawn = mockSpawn({ status: 0, stdout: "", stderr: "" });
-    mockCodeReviewApi();
-
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit, runShortcut } = createFakePi();
-    plannotatorAuto(api as never);
-    const ctx = createTestContext("/repo", {
-      uiCustom: vi.fn(async () => "code"),
-    });
-
-    try {
-      await emit("session_start", {}, ctx);
-      await runShortcut("ctrl+shift+r", ctx);
-      await flushMicrotasks();
-
-      expect(spawn).toHaveBeenCalledWith(
-        "plannotator",
-        ["review"],
-        expect.objectContaining({ cwd: "/repo" }),
-      );
-      const child = spawn.mock.results[0]?.value;
-      expect(child.stdin.end).toHaveBeenCalledWith("");
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        "# Code Review\n\nCode review completed — no changes requested.",
-        { deliverAs: "followUp" },
-      );
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-    }
-  });
-
-  it("runs manual shortcut review without prechecking repo dirtiness", async () => {
-    vi.resetModules();
-    const spawn = mockSpawn({ status: 0, stdout: "", stderr: "" });
-    mockCodeReviewApi();
-
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { api, emit, runShortcut } = createFakePi();
-    plannotatorAuto(api as never);
-    const ctx = createTestContext("/repo", {
-      uiCustom: vi.fn(async () => "code"),
-    });
-
-    try {
-      await emit("session_start", {}, ctx);
-      await runShortcut("ctrl+shift+r", ctx);
-      await flushMicrotasks();
-
-      expect(spawn).toHaveBeenCalledWith(
-        "plannotator",
-        ["review"],
-        expect.objectContaining({ cwd: "/repo" }),
-      );
-      expect(api.sendUserMessage).toHaveBeenCalledWith(
-        "# Code Review\n\nCode review completed — no changes requested.",
-        { deliverAs: "followUp" },
       );
     } finally {
       await emit("session_shutdown", {}, ctx);
@@ -216,10 +105,31 @@ describe("code review trigger timing", () => {
 
     try {
       await emit("session_start", {}, ctx);
-      await triggerCodeReview(emit, ctx);
+      await emit(
+        "tool_execution_start",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          args: { path: "src/app.ts" },
+        },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        {
+          toolName: "write",
+          toolCallId: "call-1",
+          isError: false,
+        },
+        ctx,
+      );
       await emit("agent_end", {}, ctx);
 
-      expectCodeReviewCliNotStarted(spawn);
+      expect(spawn).not.toHaveBeenCalledWith(
+        "plannotator",
+        ["review"],
+        expect.anything(),
+      );
     } finally {
       await emit("session_shutdown", {}, ctx);
     }

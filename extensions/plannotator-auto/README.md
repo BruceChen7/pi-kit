@@ -28,8 +28,8 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 - When a plan/spec/issue review target is pending, emit a handled pending-review event and use a hidden next-turn gate that requires `plannotator_auto_submit_review`.
 - Multiple review-target writes before submission are tracked by target path and shown together in the pending gate.
 - `plannotator_auto_submit_review` is the only plan/spec review runner. While it waits for a result, the same session will not ask for another submit; approval clears the pending target, while denial keeps it pending for a later retry. Denied retries should revise the same file and preserve the first `#` heading so Plannotator can show version diffs.
-- `/plannotator-review` runs `plannotator review` manually; change selection is handled by the Plannotator CLI.
-- `Ctrl+Shift+R` runs `plannotator review`; branch selection is handled by the Plannotator CLI.
+- `/plannotator-review` opens an interactive plan/spec file picker and submits the selected file for Plannotator review.
+- `Ctrl+Shift+R` opens the same plan/spec file picker.
 - `Ctrl+Alt+L` annotates the latest Markdown or HTML file modified in the current session with `plannotator annotate <file> --json`.
 - Markdown plan/spec/issue submissions use Plannotator's plan-review hook mode so version history and plan diffs are available. HTML submissions use `plannotator annotate <file> --render-html --gate --json`.
 
@@ -72,7 +72,6 @@ Plannotator Auto requires the `plannotator` CLI to be available on `PATH`.
 - `plannotator` with a PermissionRequest hook payload on stdin for Markdown plan/spec/issue review
 - `plannotator annotate <file> --render-html --gate --json`
 - `plannotator annotate <file> --json`
-- `plannotator review`
 
 ## Logging
 

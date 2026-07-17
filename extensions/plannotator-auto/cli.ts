@@ -267,21 +267,3 @@ export const runPlannotatorAnnotateCli = async (
     timeoutMs: options.timeoutMs,
   });
 };
-
-const parseCliCodeReviewResult = (stdout: string): CliReviewDecision => {
-  const trimmed = stdout.trim();
-  if (!trimmed || /no changes requested/i.test(trimmed)) {
-    return { approved: true };
-  }
-  return { approved: false, feedback: trimmed };
-};
-
-export const runPlannotatorCodeReviewCli = async (
-  ctx: CliCtx & { signal?: AbortSignal },
-  timeoutMs: number,
-): Promise<CliReviewResult> =>
-  runPlannotatorCli(ctx, ["review"], {
-    parseStdout: parseCliCodeReviewResult,
-    signal: ctx.signal,
-    timeoutMs,
-  });

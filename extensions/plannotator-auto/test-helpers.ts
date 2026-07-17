@@ -132,11 +132,9 @@ type FakeReviewResult = {
 type FakePlannotatorApiOptions = {
   createRequestPlannotator?: ReturnType<typeof vi.fn>;
   startPlanReview?: ReturnType<typeof vi.fn>;
-  requestCodeReview?: ReturnType<typeof vi.fn>;
   requestReviewStatus?: ReturnType<typeof vi.fn>;
   waitForReviewResult?: ReturnType<typeof vi.fn>;
   getStatus?: ReturnType<typeof vi.fn>;
-  formatCodeReviewMessage?: ReturnType<typeof vi.fn>;
   formatPlanReviewMessage?: ReturnType<typeof vi.fn>;
   formatAnnotationMessage?: ReturnType<typeof vi.fn>;
 };
@@ -144,10 +142,8 @@ type FakePlannotatorApiOptions = {
 export type FakePlannotatorApiMock = {
   createRequestPlannotator: ReturnType<typeof vi.fn>;
   startPlanReview: ReturnType<typeof vi.fn>;
-  requestCodeReview: ReturnType<typeof vi.fn>;
   requestReviewStatus: ReturnType<typeof vi.fn>;
   waitForReviewResult: ReturnType<typeof vi.fn>;
-  formatCodeReviewMessage: ReturnType<typeof vi.fn>;
   formatPlanReviewMessage: ReturnType<typeof vi.fn>;
   formatAnnotationMessage: ReturnType<typeof vi.fn>;
   emitReviewResult: (result: FakeReviewResult) => void;
@@ -218,15 +214,6 @@ export function mockPlannotatorApi(
         status: "missing" as const,
       },
     }));
-  const requestCodeReview =
-    options.requestCodeReview ??
-    vi.fn(async () => ({
-      status: "handled" as const,
-      result: {
-        status: "pending" as const,
-        reviewId: "code-review-1",
-      },
-    }));
   const waitForReviewResult =
     options.waitForReviewResult ??
     vi.fn(
@@ -240,19 +227,6 @@ export function mockPlannotatorApi(
           });
         }),
     );
-  const formatCodeReviewMessage =
-    options.formatCodeReviewMessage ??
-    vi.fn((result: { approved?: boolean; feedback?: string }) => {
-      if (result.approved) {
-        return "# Code Review\n\nCode review completed — no changes requested.";
-      }
-
-      if (!result.feedback?.trim()) {
-        return null;
-      }
-
-      return `${result.feedback}\n\nPlease address this feedback.`;
-    });
   const formatPlanReviewMessage =
     options.formatPlanReviewMessage ?? vi.fn(() => "Plan review approved.");
   const formatAnnotationMessage =
@@ -276,12 +250,9 @@ export function mockPlannotatorApi(
       markCompleted: vi.fn(),
     })),
     formatAnnotationMessage,
-    formatCodeReviewMessage,
     formatPlanReviewMessage,
     requestAnnotation: vi.fn(),
-    requestCodeReview,
     requestReviewStatus,
-    startCodeReview: vi.fn(),
     startPlanReview,
     waitForReviewResult,
   }));
@@ -289,10 +260,8 @@ export function mockPlannotatorApi(
   return {
     createRequestPlannotator,
     startPlanReview,
-    requestCodeReview,
     requestReviewStatus,
     waitForReviewResult,
-    formatCodeReviewMessage,
     formatPlanReviewMessage,
     formatAnnotationMessage,
     emitReviewResult(result) {

@@ -54,7 +54,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
   const log = createLogger("plannotator-auto", { stderr: null });
 
   registerPlanReviewSubmitTool(pi, planReviewSubmitToolParameters);
-  registerCodeReviewHandlers(pi, log);
+  registerCodeReviewHandlers(pi);
 
   pi.on("session_start", (_event, ctx) => {
     const sessionKey = getSessionKey(ctx);

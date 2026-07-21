@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readSquadReport } from "./io.ts";
-import type { SquadReport, SquadState } from "./shared.ts";
+import type { SquadAgentState, SquadReport, SquadState } from "./shared.ts";
 import {
   buildAgentCommand,
   buildChildPrompt,
@@ -11,6 +11,7 @@ import {
   parseSquadReportJSON,
   publicSquadDetails,
   reportFileName,
+  resolveSplitTarget,
   shellQuote,
   validateExplicitModel,
   validateStartParams,
@@ -696,11 +697,15 @@ describe("buildSplitPlan", () => {
     expect(buildSplitPlan(1)).toEqual([]);
   });
 
-  it("returns one right split for count 2", () => {
+  it("returns two splits for count 2 (in-tab mode)", () => {
     const plan = buildSplitPlan(2);
-    expect(plan).toHaveLength(1);
+    expect(plan).toHaveLength(2);
     expect(plan[0].direction).toBe("right");
-    expect(plan[0].targetIndex).toBe(1);
+    expect(plan[0].targetIndex).toBe(0);
+    expect(plan[0].targetRef).toBe("parent");
+    expect(plan[1].direction).toBe("down");
+    expect(plan[1].targetIndex).toBe(1);
+    expect(plan[1].targetRef).toBe(0);
   });
 
   it("returns right + bottom splits for count 3", () => {
@@ -718,6 +723,86 @@ describe("buildSplitPlan", () => {
     expect(plan[2].dependsOnAgentOne).toBe(true);
     expect(plan[2].direction).toBe("down");
     expect(plan[2].targetIndex).toBe(3);
+  });
+
+  it("count 2 plan has consistent dependency chain", () => {
+    const plan = buildSplitPlan(2);
+    // Step 0: split parent pane right → agent[0]'s pane
+    expect(plan[0].targetRef).toBe("parent");
+    expect(plan[0].targetIndex).toBe(0);
+    // Step 1: split agent[0]'s pane down → agent[1]'s pane
+    expect(plan[1].targetRef).toBe(0);
+    expect(plan[1].targetIndex).toBe(1);
+    // Both agents are created exactly once
+    const agentIndices = plan.map((op) => op.targetIndex);
+    expect(new Set(agentIndices)).toEqual(new Set([0, 1]));
+  });
+});
+
+// ─── resolveSplitTarget ──────────────────────────────────────────────
+
+describe("resolveSplitTarget", () => {
+  const parentPaneId = "parent-42";
+  const rootPaneId = "root-1";
+  const agents: SquadAgentState[] = [
+    { paneId: "pane-0" } as SquadAgentState,
+    { paneId: "pane-1" } as SquadAgentState,
+  ];
+  const emptyAgents: SquadAgentState[] = [];
+
+  it("returns parentPaneId when targetRef is 'parent'", () => {
+    expect(
+      resolveSplitTarget(
+        { direction: "right", targetIndex: 0, targetRef: "parent" },
+        parentPaneId,
+        emptyAgents,
+        rootPaneId,
+      ),
+    ).toBe("parent-42");
+  });
+
+  it("returns agents[N].paneId when targetRef is a number", () => {
+    expect(
+      resolveSplitTarget(
+        { direction: "down", targetIndex: 1, targetRef: 0 },
+        parentPaneId,
+        agents,
+        rootPaneId,
+      ),
+    ).toBe("pane-0");
+  });
+
+  it("throws when targetRef agent has no paneId", () => {
+    expect(() =>
+      resolveSplitTarget(
+        { direction: "down", targetIndex: 1, targetRef: 0 },
+        parentPaneId,
+        [{ paneId: "" } as SquadAgentState],
+        rootPaneId,
+      ),
+    ).toThrow("not yet created");
+  });
+
+  it("returns agents[1].paneId when dependsOnAgentOne is true", () => {
+    expect(
+      resolveSplitTarget(
+        { direction: "down", targetIndex: 3, dependsOnAgentOne: true },
+        parentPaneId,
+        agents,
+        rootPaneId,
+      ),
+    ).toBe("pane-1");
+  });
+
+  it("falls back to rootPaneId when no special target", () => {
+    expect(
+      resolveSplitTarget(
+        { direction: "right", targetIndex: 1 },
+        parentPaneId,
+        emptyAgents,
+        rootPaneId,
+      ),
+    ).toBe("root-1");
   });
 });
 

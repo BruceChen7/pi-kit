@@ -36,6 +36,7 @@ import {
   POLL_INTERVAL_MS,
   publicSquadDetails,
   RUN_DIR_PREFIX,
+  resolveSplitTarget,
   SQUAD_ENTRY_TYPE,
   type SquadAgentState,
   type SquadManifest,
@@ -228,6 +229,44 @@ export default function (pi: ExtensionAPI) {
     state: SquadState,
     signal?: AbortSignal,
   ): Promise<{ tabFound: boolean; missing: string[] }> {
+    if (state.inTab) {
+      // In-tab mode: tabId is already known (user's own tab), just verify panes
+      let panes: JsonObject[] = [];
+      try {
+        const response = await herdr(
+          ["pane", "list", "--workspace", state.workspaceId],
+          signal,
+        );
+        panes = (response.result?.panes ?? []).filter(
+          (pane: JsonObject) => pane.tab_id === state.tabId,
+        );
+      } catch {
+        if (signal?.aborted) throw new Error("Herdr squad operation cancelled");
+        return {
+          tabFound: false,
+          missing: state.agents.map((agent) => agent.label),
+        };
+      }
+      const missing: string[] = [];
+      for (const agent of state.agents) {
+        const pane =
+          panes.find((candidate) => candidate.label === agent.paneLabel) ??
+          panes.find(
+            (candidate) =>
+              candidate.pane_id === agent.paneId &&
+              candidate.label === undefined,
+          );
+        if (!pane?.pane_id) {
+          missing.push(agent.label);
+          continue;
+        }
+        agent.paneId = String(pane.pane_id);
+        agent.lastAgentStatus =
+          typeof pane.agent_status === "string" ? pane.agent_status : "unknown";
+      }
+      return { tabFound: true, missing };
+    }
+
     let tabs: JsonObject[] = [];
     try {
       const response = await herdr(
@@ -387,9 +426,11 @@ export default function (pi: ExtensionAPI) {
         throw new Error("Could not validate the parent Herdr pane");
       }
       const workspaceId = String(parentPane.workspace_id);
+      const parentTabId = String(parentPane.tab_id);
       log.info("Parent pane validated", {
         workspaceId,
         paneId: v.parentPaneId,
+        tabId: parentTabId,
       });
       const runDir = await mkdtemp(join(tmpdir(), RUN_DIR_PREFIX));
       const manifest: SquadManifest = {
@@ -423,60 +464,24 @@ export default function (pi: ExtensionAPI) {
         );
       }
 
+      const splitPlan = buildSplitPlan(params.count);
+      const inTab = splitPlan.some((op) => op.targetRef === "parent");
+
       let state: SquadState | undefined;
       let createdTab = false;
       try {
-        onUpdate?.({
-          content: [
-            {
-              type: "text",
-              text: `Creating Herdr squad tab with ${params.count} pane(s)...`,
-            },
-          ],
-          details: {},
-        });
-        const tabResponse = await herdr(
-          [
-            "tab",
-            "create",
-            "--workspace",
-            workspaceId,
-            "--cwd",
-            ctx.cwd,
-            "--label",
-            v.tabLabel,
-            "--no-focus",
-          ],
-          signal,
-        );
-        const tab = tabResponse.result?.tab;
-        const rootPane = tabResponse.result?.root_pane;
-        if (!tab?.tab_id || !rootPane?.pane_id) {
-          log.error("Tab creation response missing IDs", {
-            tab,
-            rootPane,
-          });
-          throw new Error(
-            "Herdr tab creation response did not include tab and root pane IDs",
-          );
-        }
-        createdTab = true;
-        log.info("Tab created", {
-          tabId: tab.tab_id,
-          tabLabel: v.tabLabel,
-          rootPaneId: rootPane.pane_id,
-        });
-        agents[0].paneId = String(rootPane.pane_id);
-        state = {
+        const buildInitState = (
+          overrides: Partial<
+            Pick<SquadState, "tabId" | "rootPaneId" | "inTab">
+          >,
+        ): SquadState => ({
           version: STATE_VERSION,
           squadId: v.squadId,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           cwd: ctx.cwd,
           workspaceId,
-          tabId: String(tab.tab_id),
           tabLabel: v.tabLabel,
-          rootPaneId: String(rootPane.pane_id),
           runDir,
           task: v.task,
           title: v.title,
@@ -484,13 +489,78 @@ export default function (pi: ExtensionAPI) {
           modelSource: v.modelSource,
           status: "launching",
           agents,
-        };
+          ...overrides,
+        });
 
-        const splitPlan = buildSplitPlan(params.count);
+        if (inTab) {
+          state = buildInitState({
+            tabId: parentTabId,
+            rootPaneId: "",
+            inTab: true,
+          });
+          onUpdate?.({
+            content: [
+              {
+                type: "text",
+                text: `Splitting current pane for ${params.count} agent(s)...`,
+              },
+            ],
+            details: {},
+          });
+        } else {
+          onUpdate?.({
+            content: [
+              {
+                type: "text",
+                text: `Creating Herdr squad tab with ${params.count} pane(s)...`,
+              },
+            ],
+            details: {},
+          });
+          const tabResponse = await herdr(
+            [
+              "tab",
+              "create",
+              "--workspace",
+              workspaceId,
+              "--cwd",
+              ctx.cwd,
+              "--label",
+              v.tabLabel,
+              "--no-focus",
+            ],
+            signal,
+          );
+          const tab = tabResponse.result?.tab;
+          const rootPane = tabResponse.result?.root_pane;
+          if (!tab?.tab_id || !rootPane?.pane_id) {
+            log.error("Tab creation response missing IDs", {
+              tab,
+              rootPane,
+            });
+            throw new Error(
+              "Herdr tab creation response did not include tab and root pane IDs",
+            );
+          }
+          createdTab = true;
+          log.info("Tab created", {
+            tabId: tab.tab_id,
+            tabLabel: v.tabLabel,
+            rootPaneId: rootPane.pane_id,
+          });
+          agents[0].paneId = String(rootPane.pane_id);
+          state = buildInitState({
+            tabId: String(tab.tab_id),
+            rootPaneId: String(rootPane.pane_id),
+          });
+        }
         for (const op of splitPlan) {
-          const targetPaneId = op.dependsOnAgentOne
-            ? agents[1].paneId
-            : state.rootPaneId;
+          const targetPaneId = resolveSplitTarget(
+            op,
+            v.parentPaneId,
+            agents,
+            state.rootPaneId,
+          );
           const split = await herdr(
             [
               "pane",
@@ -1004,20 +1074,42 @@ export default function (pi: ExtensionAPI) {
         truncated: !!fullOutputPath,
       });
 
-      // ── Cleanup: close tab, dispose state ──────────────────────────
+      // ── Cleanup: close tab / panes, dispose state ──────────────────
       let tabCloseFailed = false;
-      try {
-        await runHerdr(["tab", "close", state.tabId]);
-        log.info(`Squad ${params.squadId} tab closed`, {
-          tabId: state.tabId,
-        });
-      } catch (error) {
-        tabCloseFailed = true;
-        const msg = error instanceof Error ? error.message : String(error);
-        log.warn(`Squad ${params.squadId} tab close failed`, {
-          tabId: state.tabId,
-          error: msg,
-        });
+      if (state.inTab) {
+        // In-tab mode: close agent panes only; herdr auto-collapses the layout
+        for (const agent of state.agents) {
+          try {
+            if (agent.paneId) {
+              await runHerdr(["pane", "close", agent.paneId]);
+              log.debug(`Agent pane closed`, {
+                paneId: agent.paneId,
+                label: agent.label,
+              });
+            }
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            log.warn(`Agent pane close failed`, {
+              paneId: agent.paneId,
+              label: agent.label,
+              error: msg,
+            });
+          }
+        }
+      } else {
+        try {
+          await runHerdr(["tab", "close", state.tabId]);
+          log.info(`Squad ${params.squadId} tab closed`, {
+            tabId: state.tabId,
+          });
+        } catch (error) {
+          tabCloseFailed = true;
+          const msg = error instanceof Error ? error.message : String(error);
+          log.warn(`Squad ${params.squadId} tab close failed`, {
+            tabId: state.tabId,
+            error: msg,
+          });
+        }
       }
 
       const disposedState: SquadState = {

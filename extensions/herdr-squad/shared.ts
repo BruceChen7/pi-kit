@@ -32,6 +32,7 @@ export interface SquadState {
   tabId: string;
   tabLabel: string;
   rootPaneId: string;
+  inTab?: boolean;
   runDir: string;
   task: string;
   title: string;
@@ -396,16 +397,29 @@ export function verifyManifestAgent(
 export type SplitOperation = {
   direction: "right" | "down";
   targetIndex: number;
-  dependsOnAgentOne: boolean;
+  /** @deprecated Use targetRef = 1 instead. */
+  dependsOnAgentOne?: boolean;
+  /**
+   * Override the default split target resolution:
+   * - "parent": split the parent pane (user's Pi pane) — used for in-tab count=2
+   * - number N: split agents[N].paneId
+   * When omitted, falls back to dependsOnAgentOne / rootPaneId.
+   */
+  targetRef?: "parent" | number;
 };
 
 export function buildSplitPlan(count: number): SplitOperation[] {
   if (count <= 1) return [];
-  const plan: SplitOperation[] = [
-    { direction: "right", targetIndex: 1, dependsOnAgentOne: false },
-  ];
+  if (count === 2) {
+    // In-tab mode: split user's pane right, then split that pane down
+    return [
+      { direction: "right", targetIndex: 0, targetRef: "parent" },
+      { direction: "down", targetIndex: 1, targetRef: 0 },
+    ];
+  }
+  const plan: SplitOperation[] = [{ direction: "right", targetIndex: 1 }];
   if (count >= 3) {
-    plan.push({ direction: "down", targetIndex: 2, dependsOnAgentOne: false });
+    plan.push({ direction: "down", targetIndex: 2 });
   }
   if (count >= 4) {
     plan.push({ direction: "down", targetIndex: 3, dependsOnAgentOne: true });
@@ -441,4 +455,24 @@ export function buildAgentCommand(
     `@${promptPath}`,
   );
   return args.map(shellQuote).join(" ");
+}
+
+export function resolveSplitTarget(
+  op: SplitOperation,
+  parentPaneId: string,
+  agents: SquadAgentState[],
+  rootPaneId: string,
+): string {
+  if (op.targetRef === "parent") return parentPaneId;
+  if (typeof op.targetRef === "number") {
+    const paneId = agents[op.targetRef]?.paneId;
+    if (!paneId) {
+      throw new Error(
+        `Agent ${op.targetRef} pane not yet created for split operation`,
+      );
+    }
+    return paneId;
+  }
+  if (op.dependsOnAgentOne) return agents[1]?.paneId ?? "";
+  return rootPaneId;
 }

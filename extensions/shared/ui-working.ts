@@ -95,14 +95,14 @@ export async function runWithWorkingLoader<T>(
     return loader;
   });
 
-  const result = "dismissed" in uiResult ? await workflowPromise : uiResult;
-  if (!result) {
-    throw new Error("Working loader finished without a workflow result.");
-  }
+  const reportResult = (r: WorkingLoaderResult<T>): T => {
+    if ("error" in r) throw r.error;
+    return r.value;
+  };
 
-  if (!result.ok) {
-    throw result.error;
-  }
-
-  return result.value;
+  return reportResult(
+    "dismissed" in uiResult
+      ? await (workflowPromise as Promise<WorkingLoaderResult<T>>)
+      : uiResult,
+  );
 }

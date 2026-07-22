@@ -912,24 +912,6 @@ function formatManagedList(
   return truncateToWidth(label, maxWidth, "…", true);
 }
 
-function updateStatus(
-  ctx: ExtensionContext,
-  state: ToggleState,
-  skills?: Skill[],
-): void {
-  if (!ctx.hasUI) return;
-
-  const visibleCount = skills
-    ? getEnabledSkillDisplayNames(state.enabledSkills, skills).length
-    : state.enabledSkills.size;
-
-  if (visibleCount === 0) {
-    ctx.ui.setStatus("skill-toggle", undefined);
-    return;
-  }
-  ctx.ui.setStatus("skill-toggle", `Skill toggle: ${visibleCount} enabled`);
-}
-
 function isAppliedSkillLinkToggle(result: SkillLinkToggleResult): boolean {
   return result.status === "enabled" || result.status === "disabled";
 }
@@ -1216,7 +1198,6 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
     pruneSettingsFiles(ctx.cwd, skills);
     const nextState = loadToggleState(ctx.cwd);
     state = nextState;
-    updateStatus(ctx, nextState, skills);
     return nextState;
   };
 
@@ -1244,7 +1225,6 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
             activeState.enabledSkills,
             (skill) => {
               const result = toggleSkillLink(activeState, skill);
-              updateStatus(ctx, activeState, skills);
               notifySkillLinkResult(ctx, skill, result);
               didToggle = didToggle || isAppliedSkillLinkToggle(result);
               tui.requestRender();
@@ -1284,7 +1264,6 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
       const skills = loadSkills(ctx.cwd);
       state = loadToggleState(ctx.cwd);
       const activeState = state;
-      updateStatus(ctx, activeState, skills);
       ctx.ui.notify(
         formatDisabledSkillsMessage(activeState.enabledSkills, skills),
         "info",

@@ -84,14 +84,6 @@ function isGlobalAutoloadPlugin(entry: string): boolean {
   );
 }
 
-function updateStatus(ctx: ExtensionContext, enabledCount: number): void {
-  if (!ctx.hasUI) return;
-  ctx.ui.setStatus(
-    "plugin-toggle",
-    enabledCount > 0 ? `Plugin toggle: ${enabledCount} enabled` : undefined,
-  );
-}
-
 function notifyResult(
   ctx: ExtensionContext,
   plugin: PluginEntry,
@@ -135,7 +127,6 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
             enabled,
             (plugin) => {
               const result = toggleManagedPlugin(ctx.cwd, plugin, enabled);
-              updateStatus(ctx, enabled.size);
               notifyResult(ctx, plugin, result);
               tui.requestRender();
             },
@@ -161,7 +152,6 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
     handler: async (_args: string, ctx: ExtensionContext) => {
       const plugins = discoverPlugins();
       const enabled = getEnabledManagedPlugins(ctx.cwd, plugins);
-      updateStatus(ctx, enabled.length);
       ctx.ui.notify(formatEnabledPluginsMessage(enabled), "info");
     },
   });
@@ -204,8 +194,6 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
       }
       return;
     }
-    const enabled = getEnabledManagedPlugins(ctx.cwd, plugins);
-    updateStatus(ctx, enabled.length);
     if (fs.existsSync(GLOBAL_EXTENSION_DIR)) {
       const globals = fs
         .readdirSync(GLOBAL_EXTENSION_DIR)

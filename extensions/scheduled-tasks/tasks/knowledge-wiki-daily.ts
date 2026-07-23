@@ -49,6 +49,14 @@ const PROMPT_TEMPLATE_PATH = join(PI_KIT_DIR, "prompts", "wiki-summarize.md");
 const QMD_EMBED_MODEL =
   "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf";
 
+/**
+ * Maximum number of stale files to process in a single subagent call.
+ * Smaller batches reduce per-subagent context window pressure,
+ * preventing the agent from exhausting its token budget on large workloads.
+ * Higher values improve throughput but risk context exhaustion.
+ */
+const BATCH_SIZE = 3;
+
 // ── Subagent prompt builder ───────────────────────────────────────────────
 
 /**
@@ -121,7 +129,7 @@ export function buildSubagentPrompt(staleFiles: string[]): string {
  */
 export function parseResultJson(
   summary: string | undefined,
-): { ok: boolean; done?: string; summaries?: string[] } | null {
+): BatchResult | null {
   if (!summary) return null;
 
   for (let i = 0; i < summary.length; i++) {
@@ -318,7 +326,290 @@ function escapeTelegramHtml(text: string): string {
     .replaceAll('"', "&quot;");
 }
 
-// ── Task handler ──────────────────────────────────────────────────────────
+// ── Batch subagent processing ────────────────────────────────────────────
+
+/**
+ * Structured result from a subagent batch / parseResultJson.
+ */
+export interface BatchResult {
+  ok: boolean;
+  done?: string;
+  summaries?: string[];
+}
+
+/**
+ * Pure: split an array into fixed-size batches.
+ *
+ * Pure — no side effects, no IO. Easy to test with table tests.
+ *
+ * @param items - Array of items to split
+ * @param batchSize - Maximum size of each batch
+ * @returns Array of batches
+ */
+function partitionIntoBatches<T>(items: T[], batchSize: number): T[][] {
+  const batches: T[][] = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    batches.push(items.slice(i, i + batchSize));
+  }
+  return batches;
+}
+
+/**
+ * Process a batch of stale files through a single Pi subagent call.
+ *
+ * Builds a scoped prompt for the batch, runs the wiki-summarize pipeline
+ * (Phase 1-4), and returns the parsed result.
+ *
+ * The subagent has a generous timeout and the prompt template loaded via
+ * --prompt-template. Each batch is independent — the subagent does not know
+ * about other batches.
+ */
+async function processBatch(
+  exec: {
+    subagent: (opts: {
+      prompt: string;
+      promptTemplatePaths?: string[];
+      timeoutMs?: number;
+    }) => Promise<{
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      summary?: string;
+    }>;
+  },
+  batch: string[],
+  batchIndex: number,
+  totalBatches: number,
+): Promise<BatchResult> {
+  const prompt = buildSubagentPrompt(batch);
+  log.info("subagent batch starting", {
+    templatePath: PROMPT_TEMPLATE_PATH,
+    promptLength: prompt.length,
+    batch: `${batchIndex + 1}/${totalBatches}`,
+    staleFileCount: batch.length,
+  });
+
+  const result = await exec.subagent({
+    prompt,
+    promptTemplatePaths: [PROMPT_TEMPLATE_PATH],
+    timeoutMs: 300_000,
+  });
+
+  const parsed = parseResultJson(result.summary);
+  log.info("subagent batch completed", {
+    exitCode: result.exitCode,
+    parsedOk: parsed?.ok,
+    batch: `${batchIndex + 1}/${totalBatches}`,
+  });
+
+  if (result.exitCode !== 0 || parsed?.ok === false) {
+    return {
+      ok: false,
+      done: parsed?.done ?? result.stderr.slice(0, 500) ?? "unknown error",
+    };
+  }
+
+  return {
+    ok: true,
+    done: parsed?.done,
+    summaries: parsed?.summaries,
+  };
+}
+
+// ── Shell: run a qmd CLI step with error handling ────────────────────────
+
+/**
+ * Run a qmd CLI command, handling failures with logging and Telegram notification.
+ *
+ * Pure IO shell — no decision logic. Returns true on success, false on failure.
+ * The caller is responsible for returning early on failure.
+ *
+ * @param exec - Task exec API
+ * @param stepNumber - Step number for logging (e.g. "4")
+ * @param label - Human-readable step name (e.g. "qmd update")
+ * @param args - CLI arguments for the qmd command
+ * @param envOverrides - Optional environment variables to set before running
+ */
+/** @internal Exported for testing only. */
+export async function runQmdStep(
+  exec: {
+    exec: (
+      cmd: string,
+      args?: string[],
+    ) => Promise<{ code: number; stdout: string; stderr: string }>;
+  },
+  stepNumber: string,
+  label: string,
+  args: string[],
+  envOverrides?: Record<string, string>,
+): Promise<boolean> {
+  // Save and override env vars if specified
+  const savedEnv: Record<string, string | undefined> = {};
+  if (envOverrides) {
+    for (const key of Object.keys(envOverrides)) {
+      savedEnv[key] = process.env[key];
+      process.env[key] = envOverrides[key];
+    }
+  }
+
+  log.info(`Step ${stepNumber}: ${label}`);
+  try {
+    const { code } = await exec.exec("qmd", args);
+    if (code !== 0) {
+      log.warn(`${label} failed`, { exitCode: code });
+
+      await sendTelegramNotification(
+        buildTelegramFailureMessage(
+          `Step ${stepNumber} (${label})`,
+          `${label} 返回非零退出码`,
+          { exitCode: code },
+        ),
+      ).catch((e) => log.warn("telegram notify failed", { error: String(e) }));
+      return false;
+    }
+    log.info(`${label} completed`);
+    return true;
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log.warn(`${label} threw`, { error: errorMsg });
+
+    await sendTelegramNotification(
+      buildTelegramFailureMessage(`Step ${stepNumber} (${label})`, errorMsg),
+    ).catch((e) => log.warn("telegram notify failed", { error: String(e) }));
+    return false;
+  } finally {
+    // Restore env vars
+    if (envOverrides) {
+      for (const key of Object.keys(envOverrides)) {
+        if (savedEnv[key] === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = savedEnv[key] as string;
+        }
+      }
+    }
+  }
+}
+
+// ── Shell: run the wiki-summarize pipeline across all batches ────────────
+
+/**
+ * Result of the wiki-summarize pipeline.
+ */
+interface SummarizePipelineResult {
+  createdSummaries: string[];
+  wikiSummaryDone: string;
+}
+
+/**
+ * Run the wiki-summarize pipeline for all stale files, processing them
+ * in independent batches via the Pi subagent.
+ *
+ * Pure shell — handles IO (subagent calls, logging, Telegram notifications).
+ * Returns accumulated results for the handler to use in subsequent steps.
+ */
+/** @internal Exported for testing only. */
+export async function runSummarizePipeline(
+  exec: {
+    subagent: (opts: {
+      prompt: string;
+      promptTemplatePaths?: string[];
+      timeoutMs?: number;
+    }) => Promise<{
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      summary?: string;
+    }>;
+  },
+  staleFiles: string[],
+): Promise<SummarizePipelineResult> {
+  const createdSummaries: string[] = [];
+
+  if (staleFiles.length === 0) {
+    log.info("no stale files, skipping subagent");
+    return { createdSummaries, wikiSummaryDone: "No stale files found." };
+  }
+
+  // ── Build batches ──
+  const batches = partitionIntoBatches(staleFiles, BATCH_SIZE);
+  log.info("subagent batches", {
+    totalFiles: staleFiles.length,
+    batchCount: batches.length,
+    batchSize: BATCH_SIZE,
+  });
+
+  // ── Process batches sequentially ──
+  let batchFailed = false;
+  let wikiSummaryDone = "";
+
+  try {
+    for (let i = 0; i < batches.length; i++) {
+      const batchResult = await processBatch(
+        exec,
+        batches[i],
+        i,
+        batches.length,
+      );
+
+      if (!batchResult.ok) {
+        const errorMsg = batchResult.done ?? "unknown error";
+        log.warn("wiki-summarize batch failed", {
+          batch: `${i + 1}/${batches.length}`,
+          error: errorMsg,
+        });
+
+        await sendTelegramNotification(
+          buildTelegramFailureMessage(
+            `Step 1-3 (wiki-summarize batch ${i + 1}/${batches.length})`,
+            errorMsg,
+          ),
+        ).catch((e) =>
+          log.warn("telegram notify failed", { error: String(e) }),
+        );
+        batchFailed = true;
+        // Continue with remaining batches — each batch is independent
+        continue;
+      }
+
+      if (batchResult.summaries) {
+        createdSummaries.push(...batchResult.summaries);
+      }
+      if (batchResult.done) {
+        if (wikiSummaryDone) wikiSummaryDone += " | ";
+        wikiSummaryDone += `Batch ${i + 1}: ${batchResult.done}`;
+      }
+
+      log.info("wiki-summarize batch completed", {
+        batch: `${i + 1}/${batches.length}`,
+        summariesCount: batchResult.summaries?.length ?? 0,
+      });
+    }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log.warn("subagent batch iteration threw", { error: errorMsg });
+
+    await sendTelegramNotification(
+      buildTelegramFailureMessage("Step 1-3 (wiki-summarize)", errorMsg),
+    ).catch((e) => log.warn("telegram notify failed", { error: String(e) }));
+    batchFailed = true;
+  }
+
+  if (batchFailed) {
+    log.warn("wiki-summarize pipeline partially completed", {
+      summariesCount: createdSummaries.length,
+      note: "some batches failed, see previous warnings",
+    });
+  } else {
+    log.info("wiki-summarize pipeline completed", {
+      summariesCount: createdSummaries.length,
+    });
+  }
+
+  return { createdSummaries, wikiSummaryDone };
+}
+
+// ── Task handler (thin orchestration shell) ──────────────────────────────
 
 export default defineTask({
   id: "knowledge-wiki-daily",
@@ -327,151 +618,29 @@ export default defineTask({
     "每日知识库维护：过期摘要重新生成、概念自动链接、qmd 索引和向量嵌入更新",
 
   handler: async (exec) => {
-    // ── Pre-step: list stale files ──────────────────────────────────────
+    // ── Pre-step: list stale files ──
     log.info("Pre-step: list-stale");
     const staleFiles = await listStaleFiles(exec);
     log.info("stale files found", { count: staleFiles.length });
 
-    // ── Step 1-3: Pi subagent with wiki-summarize prompt template ──────
+    // ── Step 1-3: wiki-summarize pipeline ──
     log.info("Step 1-3: subagent — wiki-summarize full pipeline");
+    const { createdSummaries, wikiSummaryDone } = await runSummarizePipeline(
+      exec,
+      staleFiles,
+    );
 
-    let wikiSummaryDone = "unknown";
-    let qmdUpdateOk = false;
-    let qmdEmbedOk = false;
-    let createdSummaries: string[] | undefined;
+    // ── Step 4: qmd update ──
+    const qmdUpdateOk = await runQmdStep(exec, "4", "qmd update", ["update"]);
+    if (!qmdUpdateOk) return;
 
-    try {
-      const prompt = buildSubagentPrompt(staleFiles);
-      log.info("subagent prompt", {
-        templatePath: PROMPT_TEMPLATE_PATH,
-        promptLength: prompt.length,
-        knowledgeDir: KNOWLEDGE_DIR,
-        staleFileCount: staleFiles.length,
-      });
+    // ── Step 5: qmd embed ──
+    const qmdEmbedOk = await runQmdStep(exec, "5", "qmd embed", ["embed"], {
+      QMD_EMBED_MODEL,
+    });
+    if (!qmdEmbedOk) return;
 
-      const result = await exec.subagent({
-        prompt,
-        promptTemplatePaths: [PROMPT_TEMPLATE_PATH],
-        timeoutMs: 300_000,
-      });
-
-      const parsed = parseResultJson(result.summary);
-      log.info("subagent completed", {
-        exitCode: result.exitCode,
-        parsedOk: parsed?.ok,
-      });
-
-      if (result.exitCode !== 0 || parsed?.ok === false) {
-        const errorMsg =
-          parsed?.done ?? result.stderr.slice(0, 500) ?? "unknown error";
-        log.warn("wiki-summarize subagent failed", {
-          exitCode: result.exitCode,
-          error: errorMsg,
-        });
-
-        await sendTelegramNotification(
-          buildTelegramFailureMessage("Step 1-3 (wiki-summarize)", errorMsg, {
-            exitCode: result.exitCode,
-            stderr: result.stderr,
-          }),
-        ).catch((e) =>
-          log.warn("telegram notify failed", { error: String(e) }),
-        );
-        return;
-      }
-
-      wikiSummaryDone = parsed?.done ?? "completed";
-      createdSummaries = parsed?.summaries;
-      log.info("wiki-summarize pipeline completed", {
-        summary: wikiSummaryDone,
-        summariesCount: createdSummaries?.length ?? 0,
-      });
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      log.warn("subagent call threw", { error: errorMsg });
-
-      await sendTelegramNotification(
-        buildTelegramFailureMessage("Step 1-3 (wiki-summarize)", errorMsg),
-      ).catch((e) => log.warn("telegram notify failed", { error: String(e) }));
-      return;
-    }
-
-    // ── Step 4: qmd update ──────────────────────────────────────────────
-    log.info("Step 4: qmd update");
-
-    try {
-      const { code } = await exec.exec("qmd", ["update"]);
-      if (code !== 0) {
-        log.warn("qmd update failed", { exitCode: code });
-
-        await sendTelegramNotification(
-          buildTelegramFailureMessage(
-            "Step 4 (qmd update)",
-            "qmd update 返回非零退出码",
-            {
-              exitCode: code,
-            },
-          ),
-        ).catch((e) =>
-          log.warn("telegram notify failed", { error: String(e) }),
-        );
-        return;
-      }
-      qmdUpdateOk = true;
-      log.info("qmd update completed");
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      log.warn("qmd update threw", { error: errorMsg });
-
-      await sendTelegramNotification(
-        buildTelegramFailureMessage("Step 4 (qmd update)", errorMsg),
-      ).catch((e) => log.warn("telegram notify failed", { error: String(e) }));
-      return;
-    }
-
-    // ── Step 5: qmd embed ───────────────────────────────────────────────
-    log.info("Step 5: qmd embed");
-
-    const prevModel = process.env.QMD_EMBED_MODEL;
-    process.env.QMD_EMBED_MODEL = QMD_EMBED_MODEL;
-
-    try {
-      const { code } = await exec.exec("qmd", ["embed"]);
-      if (code !== 0) {
-        log.warn("qmd embed failed", { exitCode: code });
-
-        await sendTelegramNotification(
-          buildTelegramFailureMessage(
-            "Step 5 (qmd embed)",
-            "qmd embed 返回非零退出码",
-            {
-              exitCode: code,
-            },
-          ),
-        ).catch((e) =>
-          log.warn("telegram notify failed", { error: String(e) }),
-        );
-        return;
-      }
-      qmdEmbedOk = true;
-      log.info("qmd embed completed");
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      log.warn("qmd embed threw", { error: errorMsg });
-
-      await sendTelegramNotification(
-        buildTelegramFailureMessage("Step 5 (qmd embed)", errorMsg),
-      ).catch((e) => log.warn("telegram notify failed", { error: String(e) }));
-      return;
-    } finally {
-      if (prevModel === undefined) {
-        delete process.env.QMD_EMBED_MODEL;
-      } else {
-        process.env.QMD_EMBED_MODEL = prevModel;
-      }
-    }
-
-    // ── Success: send Telegram notification ─────────────────────────────
+    // ── Success notification ──
     const successMsg = buildTelegramSuccessMessage(
       staleFiles,
       createdSummaries,
@@ -480,7 +649,6 @@ export default defineTask({
       qmdEmbedOk,
     );
     log.info("knowledge-wiki-daily task completed successfully");
-
     await sendTelegramNotification(successMsg, undefined, true).catch((e) =>
       log.warn("telegram notify failed", { error: String(e) }),
     );

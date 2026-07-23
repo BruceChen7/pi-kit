@@ -49,6 +49,7 @@
     "update:pi-agent": "node scripts/update-pi-coding-agent.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:wiki-concept": "vitest run skills/knowledge-wiki/concept/wiki-concept.test.ts",
     "kanban-worktree:ui:build": "vite build --config extensions/kanban-worktree/vite.config.mts",
     "cache-graph:ui:build": "vite build --config extensions/cache-graph/vite.config.mts",
     "pi-webterm:dev": "cd pi-webterm/server && npx tsx watch src/index.ts",

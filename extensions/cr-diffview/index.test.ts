@@ -440,6 +440,28 @@ describe("cr-diffview command", () => {
     );
   });
 
+  it("toggles to close an active review when Alt+R is pressed again", async () => {
+    const repoRoot = createRepoRoot();
+    const { ctx, exec, notify, setWidget, startShortcutHandler } =
+      await startCrReview({
+        args: "main",
+        repoRoot,
+      });
+
+    exec.mockClear();
+    notify.mockClear();
+    setWidget.mockClear();
+
+    await startShortcutHandler(ctx);
+
+    expect(exec).toHaveBeenCalledWith(
+      "tmux",
+      buildCrTmuxKillWindowArgs(buildCrTmuxWindowName(repoRoot)),
+    );
+    expect(notify).toHaveBeenCalledWith("Closed CR Neovim view", "info");
+    expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
+  });
+
   it("accepts CR annotations through the CR socket", async () => {
     const { exec, sendUserMessage } = await startCrReview();
 

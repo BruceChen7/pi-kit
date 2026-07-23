@@ -719,14 +719,65 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     ctx.ui.notify(`Opened CR diffview for ${session.label}`, "info");
   };
 
+  const closeSession = async (
+    session: CrSession | null,
+    multiplexer: CrMultiplexer,
+    ctx: WidgetContext,
+  ): Promise<ExecResult> => {
+    if (session) {
+      sendArtifactAnnotationsToPi(pi, session);
+    }
+    stopCrFileWatcher(session, ctx);
+
+    return multiplexer.closeReviewView({
+      reviewViewId: session?.reviewViewId,
+      resolveReviewViewName: () => resolveFallbackReviewViewName(pi, session),
+    });
+  };
+
+  const stopHandler = async (ctx: ExtensionContext): Promise<void> => {
+    const env = getExtensionEnv(ctx);
+    const multiplexer = createMultiplexer(pi, env);
+    if (!multiplexer) {
+      ctx.ui.notify(`/${STOP_COMMAND} requires tmux or herdr`, "error");
+      return;
+    }
+    const widgetCtx = ctx as WidgetContext;
+    const closeResult = await closeSession(
+      activeSession,
+      multiplexer,
+      widgetCtx,
+    );
+
+    activeSession = null;
+    clearVisibleCrWidget(widgetCtx);
+
+    if (closeResult.code !== 0) {
+      ctx.ui.notify(
+        closeResult.stderr.trim() || "Failed to close CR Neovim view",
+        "error",
+      );
+      return;
+    }
+
+    ctx.ui.notify("Closed CR Neovim view", "info");
+  };
+
   pi.registerCommand(START_COMMAND, {
     description: "Open a Neovim diffview code review workflow",
     handler: startHandler,
   });
 
   pi.registerShortcut(START_SHORTCUT, {
-    description: "Open a Neovim diffview code review workflow (Alt+R)",
-    handler: (ctx) => startHandler("", ctx),
+    description:
+      "Toggle Neovim diffview code review — open picker or close active view (Alt+R)",
+    handler: async (ctx) => {
+      if (activeSession) {
+        await stopHandler(ctx);
+      } else {
+        await startHandler("", ctx);
+      }
+    },
   });
 
   pi.on("input", (event, ctx) => {
@@ -741,38 +792,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
   pi.registerCommand(STOP_COMMAND, {
     description: "Close the Neovim code review view",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      const env = getExtensionEnv(ctx);
-      const multiplexer = createMultiplexer(pi, env);
-      if (!multiplexer) {
-        ctx.ui.notify(`/${STOP_COMMAND} requires tmux or herdr`, "error");
-        return;
-      }
-      const widgetCtx = ctx as WidgetContext;
-      const sessionToClose = activeSession;
-
-      if (sessionToClose) {
-        sendArtifactAnnotationsToPi(pi, sessionToClose);
-      }
-      stopCrFileWatcher(sessionToClose, ctx);
-
-      const closeResult = await multiplexer.closeReviewView({
-        reviewViewId: sessionToClose?.reviewViewId,
-        resolveReviewViewName: () =>
-          resolveFallbackReviewViewName(pi, sessionToClose),
-      });
-
-      activeSession = null;
-      clearVisibleCrWidget(widgetCtx);
-
-      if (closeResult.code !== 0) {
-        ctx.ui.notify(
-          closeResult.stderr.trim() || "Failed to close CR Neovim view",
-          "error",
-        );
-        return;
-      }
-
-      ctx.ui.notify("Closed CR Neovim view", "info");
+      await stopHandler(ctx);
     },
   });
 }

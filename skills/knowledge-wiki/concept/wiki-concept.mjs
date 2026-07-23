@@ -5,7 +5,9 @@
  * wikilinks containing file paths by hand.
  *
  * Usage:
- *   node scripts/wiki/wiki-concept.mjs create <slug> <display-name> [--type <Concept|Synthesis>] [--icon <note|notepad>]
+ *   node scripts/wiki/wiki-concept.mjs create <slug> <display-name> [--type <Concept|Synthesis>] [--icon <note|notepad>] [--tags <JSON-array>]
+ *     Pipe body content via stdin to create a fully populated concept file.
+ *     Without stdin, creates a skeleton (frontmatter + title + empty Sources).
  *   node scripts/wiki/wiki-concept.mjs insert-source <slug> <summary-path>
  *   node scripts/wiki/wiki-concept.mjs delete-source <slug> <summary-path>
  *   node scripts/wiki/wiki-concept.mjs insert-connected-concept <slug> <linked-slug> <display-name>
@@ -16,6 +18,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   CONCEPTS_DIR,
   conceptFullPath,
@@ -45,6 +48,46 @@ function writeConcept(slug, content) {
   fs.writeFileSync(conceptFullPath(slug), content, "utf8");
 }
 
+// ── Pure: build concept file content ─────────────────────────────────────
+
+/**
+ * Build the full content of a concept markdown file.
+ *
+ * Pure function — no IO, no side effects. Returns the string that should
+ * be written to the concept file. Can be tested without mocking the
+ * filesystem or stdin.
+ *
+ * When `body` is empty, produces a skeleton (frontmatter + title + empty
+ * Sources section). When `body` is provided, it is inserted between the
+ * title and Sources.
+ *
+ * @param {object} params
+ * @param {string} params.displayName - Human-readable concept name
+ * @param {string} params.type - "Concept" or "Synthesis"
+ * @param {string} params.icon - Frontmatter _icon value
+ * @param {string} params.tags - JSON array string like '["tag1","tag2"]'
+ * @param {string} params.body - Markdown body content (empty string for skeleton)
+ * @returns {string} Full concept file content
+ */
+export function buildConceptContent({ displayName, type, icon, tags, body }) {
+  const parts = [
+    "---",
+    `type: ${type}`,
+    `_icon: ${icon}`,
+    `tags: ${tags}`,
+    "---",
+    "",
+    `# ${displayName}`,
+  ];
+
+  if (body) {
+    parts.push("", body);
+  }
+
+  parts.push("", "## Sources", "");
+  return parts.join("\n");
+}
+
 // --- Subcommands ---
 
 function cmdCreate(args) {
@@ -52,16 +95,18 @@ function cmdCreate(args) {
   const displayName = args[1];
   if (!slug || !displayName) {
     console.error(
-      "Usage: node scripts/wiki/wiki-concept.mjs create <slug> <display-name> [--type <Concept|Synthesis>] [--icon <note|notepad>]",
+      "Usage: node scripts/wiki/wiki-concept.mjs create <slug> <display-name> [--type <Concept|Synthesis>] [--icon <note|notepad>] [--tags <JSON-array>]",
     );
     process.exit(1);
   }
 
   const typeIdx = args.indexOf("--type");
   const iconIdx = args.indexOf("--icon");
+  const tagsIdx = args.indexOf("--tags");
   const type =
     typeIdx !== -1 && args[typeIdx + 1] ? args[typeIdx + 1] : "Concept";
   const icon = iconIdx !== -1 && args[iconIdx + 1] ? args[iconIdx + 1] : "note";
+  const tags = tagsIdx !== -1 && args[tagsIdx + 1] ? args[tagsIdx + 1] : "[]";
 
   if (fs.existsSync(conceptFullPath(slug))) {
     console.error(`Concept file already exists: ${conceptRelPath(slug)}`);
@@ -73,20 +118,24 @@ function cmdCreate(args) {
 
   fs.mkdirSync(CONCEPTS_DIR, { recursive: true });
 
-  const skeleton = [
-    "---",
-    `type: ${type}`,
-    `_icon: ${icon}`,
-    "tags: []",
-    "---",
-    "",
-    `# ${displayName}`,
-    "",
-    "## Sources",
-    "",
-  ].join("\n");
+  // Read body content from stdin when data is piped (non-TTY stdin).
+  // This allows the caller to pipe body text: `echo "body" | node ... create ...`
+  // or redirect from a temp file: `node ... create ... < temp-body-file`
+  let body = "";
+  if (!process.stdin.isTTY) {
+    const piped = fs.readFileSync(0, "utf8").trimEnd();
+    if (piped) body = piped;
+  }
 
-  fs.writeFileSync(conceptFullPath(slug), skeleton, "utf8");
+  const content = buildConceptContent({
+    displayName,
+    type,
+    icon,
+    tags,
+    body,
+  });
+
+  fs.writeFileSync(conceptFullPath(slug), content, "utf8");
   console.log(conceptRelPath(slug));
 }
 
@@ -211,28 +260,35 @@ function cmdDeleteConnectedConcept(args) {
 
 // --- Dispatch ---
 
-const [, , subcommand, ...rest] = process.argv;
+// ── Dispatch (guarded: runs only when this file is the entry point) ─────
 
-switch (subcommand) {
-  case "create":
-    cmdCreate(rest);
-    break;
-  case "insert-source":
-    cmdInsertSource(rest);
-    break;
-  case "delete-source":
-    cmdDeleteSource(rest);
-    break;
-  case "insert-connected-concept":
-    cmdInsertConnectedConcept(rest);
-    break;
-  case "delete-connected-concept":
-    cmdDeleteConnectedConcept(rest);
-    break;
-  default:
-    console.error(`Unknown subcommand: ${subcommand}`);
-    console.error(
-      "Subcommands: create, insert-source, delete-source, insert-connected-concept, delete-connected-concept",
-    );
-    process.exit(1);
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  const [, , subcommand, ...rest] = process.argv;
+
+  switch (subcommand) {
+    case "create":
+      cmdCreate(rest);
+      break;
+    case "insert-source":
+      cmdInsertSource(rest);
+      break;
+    case "delete-source":
+      cmdDeleteSource(rest);
+      break;
+    case "insert-connected-concept":
+      cmdInsertConnectedConcept(rest);
+      break;
+    case "delete-connected-concept":
+      cmdDeleteConnectedConcept(rest);
+      break;
+    default:
+      console.error(`Unknown subcommand: ${subcommand}`);
+      console.error(
+        "Subcommands: create, insert-source, delete-source, insert-connected-concept, delete-connected-concept",
+      );
+      process.exit(1);
+  }
 }

@@ -21,6 +21,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   parseFrontmatterField,
   parseLooseFrontmatterField,
@@ -218,18 +219,25 @@ const COMMANDS = {
   "find-duplicate-concept-links": findDuplicateConceptLinks,
 };
 
-const subcommand = process.argv[2];
+// ── Dispatch (guarded: runs only when this file is the entry point) ─────
 
-if (!subcommand || subcommand === "--help") {
-  console.error("Usage: node scripts/wiki/wiki-lint.mjs <subcommand>");
-  console.error(`Subcommands: ${Object.keys(COMMANDS).join(", ")}`);
-  process.exit(1);
-}
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  const subcommand = process.argv[2];
 
-if (COMMANDS[subcommand]) {
-  console.log(JSON.stringify(COMMANDS[subcommand](), null, 2));
-} else {
-  console.error(`Unknown subcommand: ${subcommand}`);
-  console.error(`Subcommands: ${Object.keys(COMMANDS).join(", ")}`);
-  process.exit(1);
+  if (!subcommand || subcommand === "--help") {
+    console.error("Usage: node scripts/wiki/wiki-lint.mjs <subcommand>");
+    console.error(`Subcommands: ${Object.keys(COMMANDS).join(", ")}`);
+    process.exit(1);
+  }
+
+  if (COMMANDS[subcommand]) {
+    console.log(JSON.stringify(COMMANDS[subcommand](), null, 2));
+  } else {
+    console.error(`Unknown subcommand: ${subcommand}`);
+    console.error(`Subcommands: ${Object.keys(COMMANDS).join(", ")}`);
+    process.exit(1);
+  }
 }

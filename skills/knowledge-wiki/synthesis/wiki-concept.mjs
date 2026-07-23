@@ -16,6 +16,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   CONCEPTS_DIR,
   conceptFullPath,
@@ -211,28 +212,35 @@ function cmdDeleteConnectedConcept(args) {
 
 // --- Dispatch ---
 
-const [, , subcommand, ...rest] = process.argv;
+// ── Dispatch (guarded: runs only when this file is the entry point) ─────
 
-switch (subcommand) {
-  case "create":
-    cmdCreate(rest);
-    break;
-  case "insert-source":
-    cmdInsertSource(rest);
-    break;
-  case "delete-source":
-    cmdDeleteSource(rest);
-    break;
-  case "insert-connected-concept":
-    cmdInsertConnectedConcept(rest);
-    break;
-  case "delete-connected-concept":
-    cmdDeleteConnectedConcept(rest);
-    break;
-  default:
-    console.error(`Unknown subcommand: ${subcommand}`);
-    console.error(
-      "Subcommands: create, insert-source, delete-source, insert-connected-concept, delete-connected-concept",
-    );
-    process.exit(1);
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  const [, , subcommand, ...rest] = process.argv;
+
+  switch (subcommand) {
+    case "create":
+      cmdCreate(rest);
+      break;
+    case "insert-source":
+      cmdInsertSource(rest);
+      break;
+    case "delete-source":
+      cmdDeleteSource(rest);
+      break;
+    case "insert-connected-concept":
+      cmdInsertConnectedConcept(rest);
+      break;
+    case "delete-connected-concept":
+      cmdDeleteConnectedConcept(rest);
+      break;
+    default:
+      console.error(`Unknown subcommand: ${subcommand}`);
+      console.error(
+        "Subcommands: create, insert-source, delete-source, insert-connected-concept, delete-connected-concept",
+      );
+      process.exit(1);
+  }
 }

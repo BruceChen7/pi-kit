@@ -21,7 +21,7 @@ Two skill scripts in this project's `.pi/skills/`:
 | Script | Location | Commands used |
 |--------|----------|---------------|
 | `wiki-summary.mjs` | `.pi/skills/knowledge-wiki-summary/wiki-summary.mjs` | `list-stale`, `create`, `insert-concept` |
-| `wiki-concept.mjs` | `.pi/skills/knowledge-wiki-concept/wiki-concept.mjs` | `create`, `insert-source` |
+| `wiki-concept.mjs` | `.pi/skills/knowledge-wiki-concept/wiki-concept.mjs` | `create` (with `--tags` + stdin body), `insert-source` |
 
 Resolve all relative paths (`./*.mjs`, `./lib/*.mjs`) relative to the source skill directory (same as `SKILL.md`). Pass `--base-path <cwd>` to every command.
 
@@ -61,12 +61,21 @@ After creating each summary, determine 1-3 relevant concepts based on the source
 
 For each relevant concept:
 
-1. **Check if the concept slug already exists** in `Wiki/Concepts/<slug>.md`. If not, create it:
+1. **Check if the concept slug already exists** in `Wiki/Concepts/<slug>.md`. If not, create it with a body describing the concept:
+
+   Generate a body text (2-8 sentences) that covers the concept's definition, key ideas, and use cases. Structure it with one or more `##` sections as appropriate (e.g. `## Core Concepts`, `## How It Works`, `## Use Cases`). Write the body in Chinese.
+
+   Write the body to a temp file, then create the concept by piping it through stdin with `--tags`:
 
    ```bash
    node <path-to-wiki-concept.mjs> create <slug> "<display-name>" \
-     --base-path <cwd>
+     --tags "[<comma-separated-tags>]" \
+     --base-path <cwd> < /tmp/concept-body-$$.md
    ```
+
+   Derive tags from the concept's domain (e.g. `[concurrency, memory-model, c-cpp]`, `[distributed-systems, hashing]`, `[data-structure, cryptography]`). Use the same tag convention as existing concepts in `Wiki/Concepts/`.
+
+   If the concept already exists (file exists error), skip creation and proceed to step 2.
 
 2. **Insert concept link into the summary** (summary → concept direction):
 
@@ -134,3 +143,4 @@ End your response with a single JSON object on its own line. Use this exact sche
 - Use `--tags` with the bracket format like `[tag1, tag2]` (must be valid JSON array)
 - The `insert-concept` command reads all fields from stdin when `-` is passed as the first argument, with one field per line: summary-rel-path, slug, display-name, description (the last field spans the rest and is trimmed)
 - For `insert-source`, the summary path is without the `.summary.md` suffix (e.g. `Wiki/Summaries/Notes/Foo.summary`)
+- For `wiki-concept.mjs create`: pipe body content via stdin to create a fully populated concept file. Without stdin, it creates a skeleton (frontmatter + title + empty Sources). Use `--tags` to populate the frontmatter tags field, e.g. `--tags "[concurrency, memory-model]"`.

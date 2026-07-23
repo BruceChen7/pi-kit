@@ -90,7 +90,7 @@ describe("plan-mode extension: tool guards", () => {
     });
   });
 
-  it("allows read-only tools outside cwd while still blocking writes", async () => {
+  it("allows reads and writes outside cwd in act phase", async () => {
     const { harness, ctx } = await startPlanModeSession("act");
     const outsidePath = "/tmp/outside-cwd.txt";
 
@@ -99,16 +99,7 @@ describe("plan-mode extension: tool guards", () => {
     }
 
     for (const toolName of ["write", "edit"]) {
-      await expectToolBlocked(
-        harness,
-        ctx,
-        toolName,
-        { path: outsidePath },
-        {
-          block: true,
-          reason: expect.stringContaining("path is outside cwd"),
-        },
-      );
+      await expectToolAllowed(harness, ctx, toolName, { path: outsidePath });
     }
   });
 
@@ -216,24 +207,15 @@ describe("plan-mode extension: tool guards", () => {
     });
   });
 
-  it("blocks patch add-file writes outside cwd", async () => {
+  it("allows patch add-file writes outside cwd in act phase", async () => {
     const { harness, ctx } = await startPlanModeSession("act");
 
-    await expectToolBlocked(
-      harness,
-      ctx,
-      "edit",
-      {
-        patch: `*** Begin Patch
+    await expectToolAllowed(harness, ctx, "edit", {
+      patch: `*** Begin Patch
 *** Add File: /tmp/outside-plan-mode.ts
 +export const value = 1;
 *** End Patch`,
-      },
-      {
-        block: true,
-        reason: expect.stringContaining("path is outside cwd"),
-      },
-    );
+    });
   });
 
   it("requires patch delete-file targets to be read first", async () => {

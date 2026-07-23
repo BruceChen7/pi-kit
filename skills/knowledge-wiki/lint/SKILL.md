@@ -231,7 +231,7 @@ If the array is empty, print `Check 7: no summary index entries missing.` and sk
 For each rel-path in the array:
 
 1. Read the summary file at `{KNOWLEDGE_PATH}/Wiki/Summaries/{rel-path}.md`.
-2. Generate a one-line English description of the source document from the `## Summary` section.
+2. Generate a **one-line English description** (under 200 characters) from the summary file's `## Summary` section. **Do NOT re-read the original source note** — use only the summary file's content. If the description exceeds 200 characters, truncate it at a word boundary and append "…".
 3. Run:
    ```bash
    node ../state/wiki-index.mjs upsert-summary "{rel-path}" "{description}" --base-path "{KNOWLEDGE_PATH}"

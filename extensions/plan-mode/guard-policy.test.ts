@@ -54,17 +54,21 @@ describe("plan-mode guard policy", () => {
     ).toBe(undefined);
   });
 
-  it("blocks writes outside cwd before read-before-write checks", () => {
+  it("allows writes outside cwd in act phase (no plan-phase write guard)", () => {
     expect(
       decideToolBlock(
         input({
-          targets: [target({ isInsideCwd: false, rawPath: "/tmp/outside.ts" })],
+          isPlanPhase: false,
+          targets: [
+            target({
+              isInsideCwd: false,
+              exists: false,
+              rawPath: "/tmp/outside.ts",
+            }),
+          ],
         }),
       ),
-    ).toMatchObject({
-      block: true,
-      reason: expect.stringContaining("path is outside cwd"),
-    });
+    ).toBeUndefined();
   });
 
   it("allows read-only tools outside cwd", () => {

@@ -79,15 +79,11 @@ export const decideToolBlock = (
   }
 
   for (const target of input.targets) {
-    if (!target.isInsideCwd) {
-      return {
-        block: true,
-        reason:
-          `plan-mode blocked ${input.toolName}: path is outside cwd: ` +
-          target.rawPath,
-      };
-    }
-
+    // No outside-cwd check — in plan phase writes are already blocked above,
+    // and in act phase the user has approved a plan so the agent should be
+    // trusted to write where it needs (including /tmp or other legitimate
+    // locations outside the project). The read-before-write check below
+    // still protects existing files.
     if (target.exists && !target.wasRead && !target.wasFreshlyWritten) {
       return {
         block: true,

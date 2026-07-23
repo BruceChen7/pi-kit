@@ -1060,7 +1060,7 @@ export class SkillTogglePicker {
       border("│");
     const emptyRow = () => border("│") + " ".repeat(innerW) + border("│");
 
-    const titleText = " Skill Picker ";
+    const titleText = ` Skill Picker (${this.enabled.size}) `;
     const borderLen = innerW - visibleWidth(titleText);
     const leftBorder = Math.floor(borderLen / 2);
     const rightBorder = borderLen - leftBorder;

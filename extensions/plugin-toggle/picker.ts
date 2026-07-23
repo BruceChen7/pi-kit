@@ -93,7 +93,7 @@ export class PluginTogglePicker {
       }
       return `${marker} ${active(enabledMark)} ${plugin.name}`;
     };
-    const title = " Plugin Picker ";
+    const title = ` Plugin Picker (${this.enabled.size}) `;
     const borderLen = Math.max(0, innerW - visibleWidth(title));
     const left = Math.floor(borderLen / 2);
     const right = borderLen - left;

@@ -334,7 +334,7 @@ function cmdInsertConcept(args) {
 
 if (
   process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const [, , subcommand, ...rest] = process.argv;
 

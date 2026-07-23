@@ -24,19 +24,35 @@ Health-check and repair the wiki. Runs twelve checks in sequence — each builds
 
 ## Path Resolution
 
-Resolve every local path (`./*.mjs`, `../state/*.mjs`, `../concept/*.mjs`, `../summary/*.mjs`, `./lib/*.mjs`) relative to the source skill directory that contains this `SKILL.md`.
+This skill lives in the `pi-kit` repository at `skills/knowledge-wiki/lint/`. It is installed into your project's `.pi/skills/` via a **two-level symlink chain** (project → `~/.agents/me-skills/` → `pi-kit/skills/...`).
+
+Resolve every local path (`./*.mjs`, `../state/*.mjs`, `../concept/*.mjs`, `../summary/*.mjs`, `./lib/*.mjs`) relative to the source skill directory (`pi-kit/skills/knowledge-wiki/lint/`).
 
 Do not resolve these paths relative to `~/.pi/skills/...` or the current working directory.
 
 Example for this skill:
 
-- source skill directory: `skills/knowledge-wiki/lint/`
-- `./wiki-lint.mjs` resolves to `skills/knowledge-wiki/lint/wiki-lint.mjs`
-- `../state/wiki-index.mjs` resolves to `skills/knowledge-wiki/state/wiki-index.mjs`
-- `../state/wiki-state.mjs` resolves to `skills/knowledge-wiki/state/wiki-state.mjs`
-- `../concept/wiki-concept.mjs` resolves to `skills/knowledge-wiki/concept/wiki-concept.mjs`
-- `../summary/wiki-summary.mjs` resolves to `skills/knowledge-wiki/summary/wiki-summary.mjs`
+- source skill directory: `pi-kit/skills/knowledge-wiki/lint/`
+- `./wiki-lint.mjs` resolves to `pi-kit/skills/knowledge-wiki/lint/wiki-lint.mjs`
+- `../state/wiki-index.mjs` resolves to `pi-kit/skills/knowledge-wiki/state/wiki-index.mjs`
+- `../state/wiki-state.mjs` resolves to `pi-kit/skills/knowledge-wiki/state/wiki-state.mjs`
+- `../concept/wiki-concept.mjs` resolves to `pi-kit/skills/knowledge-wiki/concept/wiki-concept.mjs`
+- `../summary/wiki-summary.mjs` resolves to `pi-kit/skills/knowledge-wiki/summary/wiki-summary.mjs`
 - `./lib/` resolves inside the same skill directory
+
+### ⚠️ Important: symlinks and guard clauses
+
+All dispatch scripts (`wiki-lint.mjs`, `wiki-index.mjs`, `wiki-concept.mjs`, `wiki-summary.mjs`) use a **guard clause** that checks whether the script is being run directly (not imported). Use `fs.realpathSync()` to compare the entry path against `import.meta.url`, ensuring the check works correctly through symlink chains.
+
+When running these scripts from the command line, use the **real path** (not the symlink path):
+
+```bash
+# ✅ Correct — uses real path via pi-kit:
+node /path/to/pi-kit/skills/knowledge-wiki/lint/wiki-lint.mjs <subcommand> --base-path /path/to/notes
+
+# ❌ Wrong — symlink path will fail the guard clause:
+node /path/to/notes/.pi/skills/knowledge-wiki-lint/wiki-lint.mjs <subcommand> --base-path /path/to/notes
+```
 
 ## Setup
 

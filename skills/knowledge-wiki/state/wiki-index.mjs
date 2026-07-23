@@ -24,6 +24,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -92,7 +93,7 @@ function writeIndex(concepts, summaries) {
 
 if (
   process.argv[1] &&
-  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const [, , cmd, ...args] = process.argv;
 

@@ -571,6 +571,11 @@ const startCrSocketServer = async (
             void multiplexer.focusView(session.originViewId);
           }
           onFinish?.();
+          if (session.reviewViewId) {
+            void multiplexer.closeReviewView({
+              reviewViewId: session.reviewViewId,
+            });
+          }
           closeCrSocketServer(server, session.crSocketPath);
         }
       }

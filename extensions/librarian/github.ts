@@ -125,7 +125,15 @@ export async function ghApi(
     timeout: 90_000,
   });
   if (result.code !== 0) {
-    throw new Error((result.stderr || result.stdout || "gh api failed").trim());
+    const message = (result.stderr || result.stdout || "gh api failed").trim();
+    // gh exits with code 127 when the binary is not found; also catch
+    // ENOENT-style messages from the shell or spawn implementation.
+    if (result.code === 127 || /command not found/i.test(message)) {
+      throw new Error(
+        `GitHub CLI (gh) not found. Install with: brew install gh\n${message}`,
+      );
+    }
+    throw new Error(message);
   }
 
   const out = result.stdout.trim();
@@ -159,7 +167,10 @@ export function summarizeGithubToolCall(toolName: string, args: any): string {
       return `Globbing ${truncateInline(pattern, 52)}${repo ? ` in ${repo}` : ""}`;
     }
     case "list_directory_github": {
-      const p = typeof args?.path === "string" ? args.path || "/" : "/";
+      const p =
+        typeof args?.path === "string"
+          ? args.path.replace(/^["'`《》]{1,2}$/, "") || "/"
+          : "/";
       return `Listing directory ${p}${repo ? ` in ${repo}` : ""}`;
     }
     case "commit_search": {
@@ -347,7 +358,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
       "List files and directories for a path in a GitHub repository.",
     parameters: Type.Object({
       path: Type.String({
-        description: "Directory path to list (use empty string for root)",
+        description: `Directory path to list (pass "/" for root)`,
       }),
       repository: Type.String({ description: "Repository URL or owner/repo" }),
       ref: Type.Optional(
@@ -365,7 +376,11 @@ export function registerGithubTools(pi: ExtensionAPI) {
     async execute(_id, params, signal) {
       try {
         const repo = parseRepository(params.repository);
-        const normalizedPath = normalizePath(params.path || "");
+        // Some LLMs encode empty-string tool parameters as literal '""'
+        // instead of a true empty string.  Strip such encoding artifacts.
+        const rawPath = params.path || "";
+        const cleanedPath = rawPath.replace(/^["'`《》]{1,2}$/, "");
+        const normalizedPath = normalizePath(cleanedPath || "/");
         const encodedPath = encodeGitHubPath(normalizedPath);
         const endpoint = `repos/${repo.fullName}/contents/${encodedPath}`;
         const data = await ghApi(pi, endpoint, {

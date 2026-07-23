@@ -20,6 +20,7 @@ import { discoverPlugins } from "./library.ts";
 import { migrateGlobalPlugins } from "./migration.ts";
 import { PluginTogglePicker } from "./picker.ts";
 import {
+  cleanupBrokenPluginSymlinks,
   formatEnabledPluginsMessage,
   formatInstalledPluginsMessage,
   getEnabledManagedPlugins,
@@ -43,6 +44,7 @@ export {
 export { migrateGlobalPlugins } from "./migration.ts";
 export { PluginTogglePicker } from "./picker.ts";
 export {
+  cleanupBrokenPluginSymlinks,
   disablePlugin,
   enablePlugin,
   formatEnabledPluginsMessage,
@@ -117,6 +119,8 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
         return;
       }
 
+      cleanupBrokenPluginSymlinks(ctx.cwd, plugins);
+
       const enabled = new Set(
         getEnabledManagedPlugins(ctx.cwd, plugins).map(normalizeName),
       );
@@ -186,6 +190,7 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (_event, ctx) => {
     const plugins = discoverPlugins();
+    cleanupBrokenPluginSymlinks(ctx.cwd, plugins);
     const bootstrap = bootstrapDefaultManagedPlugins(ctx.cwd, plugins);
     notifyDefaultBootstrapWarnings(ctx, bootstrap);
     if (bootstrap.enabled.length > 0) {

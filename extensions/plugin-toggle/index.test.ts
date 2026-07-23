@@ -405,6 +405,29 @@ describe("project symlink management", () => {
     expect(fs.realpathSync(target)).toBe(fs.realpathSync(otherPlugin));
   });
 
+  it("replaces a broken symlink with a valid one when enabling", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createTempDir("pi-kit-plugin-toggle-library-");
+    createPluginDir(library, "alpha");
+
+    const { discoverPlugins, enablePlugin } = await importPluginToggle();
+    const [plugin] = discoverPlugins(library);
+    const target = projectPluginPath(cwd, "alpha");
+
+    // Create a valid symlink first
+    enablePlugin(cwd, plugin);
+    // Delete the source to create a broken symlink
+    fs.rmSync(plugin.sourcePath, { recursive: true, force: true });
+
+    // Re-enable: should clean up the broken symlink and create a new one
+    const result = enablePlugin(cwd, plugin);
+
+    expect(result.status).toBe("enabled");
+    expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(target)).toBe(plugin.sourcePath);
+  });
+
   it("does not overwrite an existing user plugin when enabling", async () => {
     createTempHome();
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
@@ -422,6 +445,44 @@ describe("project symlink management", () => {
     expect(fs.readFileSync(path.join(projectPlugin, "index.ts"), "utf-8")).toBe(
       "// user plugin\n",
     );
+  });
+
+  it("removes a broken symlink that matches a known plugin source via cleanupBrokenPluginSymlinks", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createTempDir("pi-kit-plugin-toggle-library-");
+    createPluginDir(library, "alpha");
+
+    const { discoverPlugins, enablePlugin, cleanupBrokenPluginSymlinks } =
+      await importPluginToggle();
+    const [plugin] = discoverPlugins(library);
+    const target = projectPluginPath(cwd, "alpha");
+
+    enablePlugin(cwd, plugin);
+    fs.rmSync(plugin.sourcePath, { recursive: true, force: true });
+
+    cleanupBrokenPluginSymlinks(cwd, discoverPlugins(library));
+
+    expect(() => fs.lstatSync(target)).toThrow();
+  });
+
+  it("does not remove a valid symlink in cleanupBrokenPluginSymlinks", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createTempDir("pi-kit-plugin-toggle-library-");
+    createPluginDir(library, "alpha");
+
+    const { discoverPlugins, enablePlugin, cleanupBrokenPluginSymlinks } =
+      await importPluginToggle();
+    const [plugin] = discoverPlugins(library);
+    const target = projectPluginPath(cwd, "alpha");
+
+    enablePlugin(cwd, plugin);
+
+    cleanupBrokenPluginSymlinks(cwd, discoverPlugins(library));
+
+    expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(target)).toBe(fs.realpathSync(plugin.sourcePath));
   });
 });
 

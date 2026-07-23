@@ -32,15 +32,27 @@ function symlinkPointsToPlugin(
   );
 }
 
+function symlinkTargetMatchesExpected(
+  linkTarget: string,
+  linkDir: string,
+  expectedPath: string,
+): boolean {
+  const resolvedTarget = path.isAbsolute(linkTarget)
+    ? linkTarget
+    : path.resolve(linkDir, linkTarget);
+  return path.resolve(resolvedTarget) === path.resolve(expectedPath);
+}
+
 function symlinkTargetMatchesPath(
   targetPath: string,
   expectedPath: string,
 ): boolean {
   const linkTarget = fs.readlinkSync(targetPath);
-  const resolvedTarget = path.isAbsolute(linkTarget)
-    ? linkTarget
-    : path.resolve(path.dirname(targetPath), linkTarget);
-  return path.resolve(resolvedTarget) === path.resolve(expectedPath);
+  return symlinkTargetMatchesExpected(
+    linkTarget,
+    path.dirname(targetPath),
+    expectedPath,
+  );
 }
 
 function symlinkReferencesPlugin(
@@ -114,14 +126,26 @@ export function enablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
 
   try {
     const stat = fs.lstatSync(targetPath);
-    if (stat.isSymbolicLink() && symlinkPointsToPlugin(targetPath, plugin)) {
-      const sharedConflict = ensureSharedDependency(cwd, plugin);
-      if (sharedConflict) return sharedConflict;
+    if (stat.isSymbolicLink()) {
+      if (symlinkPointsToPlugin(targetPath, plugin)) {
+        const sharedConflict = ensureSharedDependency(cwd, plugin);
+        if (sharedConflict) return sharedConflict;
 
-      settingsStore.markEnabled(plugin.name);
-      return { status: "already-enabled" };
+        settingsStore.markEnabled(plugin.name);
+        return { status: "already-enabled" };
+      }
+
+      // Broken symlink or symlink pointing elsewhere
+      if (symlinkTargetMatchesPath(targetPath, plugin.sourcePath)) {
+        // Broken symlink pointing to our source — remove and re-enable
+        fs.unlinkSync(targetPath);
+        return enablePlugin(cwd, plugin);
+      } else {
+        return { status: "conflict", path: targetPath };
+      }
+    } else {
+      return { status: "conflict", path: targetPath };
     }
-    return { status: "conflict", path: targetPath };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") throw error;
@@ -163,6 +187,49 @@ export function disablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
   fs.unlinkSync(targetPath);
   settingsStore.markDisabled(plugin.name);
   return { status: "disabled" };
+}
+
+export function cleanupBrokenPluginSymlinks(
+  cwd: string,
+  plugins: PluginEntry[],
+): void {
+  const extensionDir = projectExtensionsDir(cwd);
+  if (!fs.existsSync(extensionDir)) return;
+
+  for (const entryName of fs.readdirSync(extensionDir)) {
+    if (entryName.startsWith(".") || entryName === SHARED_EXTENSION_NAME) {
+      continue;
+    }
+    const targetPath = path.join(extensionDir, entryName);
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(targetPath);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") throw error;
+      continue;
+    }
+    if (!stat.isSymbolicLink()) continue;
+
+    // existsSync follows symlinks — returns false when target is missing
+    if (fs.existsSync(targetPath)) continue;
+
+    // Broken symlink; find matching plugin to confirm it's ours
+    const matchingPlugin = plugins.find(
+      (p) =>
+        p.enabledName === entryName ||
+        normalizeName(p.name) === normalizeName(entryName),
+    );
+    if (
+      matchingPlugin &&
+      !symlinkTargetMatchesPath(targetPath, matchingPlugin.sourcePath)
+    ) {
+      continue; // points elsewhere, not ours
+    }
+
+    fs.unlinkSync(targetPath);
+  }
 }
 
 export function getEnabledManagedPlugins(

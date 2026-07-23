@@ -10,19 +10,10 @@ argument-hint: "<topic>"
 
 > **不适用于**：用户只想要一个简短的概念定义（几百字）——那种情况应该用 `wiki-synthesis` 或其他流程直接写 Concepts/。
 
-## 输入
-
-主题通过 `$@` 传入，作为 qmd_query 的搜索词：
-
-```
-$@
-```
-
-例如 `"GitHub L4 负载均衡器"`、`"epoll 的工作原理"`。
-
 ## Phase 1: 调研
 
-1. 用 `qmd_query(query, {collections: ["my_notes"]})` 搜索相关笔记
+主题 "$@" 已提供。
+1. 用 `qmd_query("$@", {collections: ["my_notes"]})` 搜索相关笔记
 2. 阅读每篇匹配笔记的完整内容
 3. 如果搜索结果不够（少于 2 篇强相关笔记），用不同的 query 再试一次
 4. 如果仍不足，如实告知用户并建议补充笔记

@@ -6,7 +6,7 @@ Resume learning this repo by opening previously created lessons. Detect `.pi/tea
 
 ## Topic detection
 
-- **With argument** (`$1`): use the given topic name directly (e.g. `repo-learn`, `pi-agent-design`)
+- **With argument**: use the given topic name directly (e.g. `repo-learn`, `pi-agent-design`)
 - **No argument**: scan for available topics and present options
 
 ## Topic scanning

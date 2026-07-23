@@ -22,6 +22,7 @@ Two skill scripts in this project's `.pi/skills/`:
 |--------|----------|---------------|
 | `wiki-summary.mjs` | `.pi/skills/knowledge-wiki-summary/wiki-summary.mjs` | `list-stale`, `create`, `insert-concept` |
 | `wiki-concept.mjs` | `.pi/skills/knowledge-wiki-concept/wiki-concept.mjs` | `create` (with `--tags` + stdin body), `insert-source` |
+| `wiki-index.mjs` (state) | `.pi/skills/knowledge-wiki-state/wiki-index.mjs` | `upsert-summary` |
 
 Resolve all relative paths (`./*.mjs`, `./lib/*.mjs`) relative to the source skill directory (same as `SKILL.md`). Pass `--base-path <cwd>` to every command.
 
@@ -45,6 +46,8 @@ For each stale source file in the list (or the single file from `$1`):
 
 2. **Generate a summary body** — a concise Chinese paragraph (2-6 sentences) that captures the core topic, key insights, and structure of the note. Use specific terms and concepts from the content. Do NOT use generic templates like "关于...的笔记" or "关键洞察：...".
 
+   **Line length:** Keep each line under 100 characters. When writing paragraphs, start a new line at each sentence boundary or comma to prevent ultra-long lines. The `create` command will preserve your line breaks.
+
 3. **Create the summary**:
 
    ```bash
@@ -54,6 +57,20 @@ For each stale source file in the list (or the single file from `$1`):
    ```
 
    Derive tags from the file's frontmatter `tags` field and the content topics. Use the same tag convention as existing summaries (e.g. `[cpp/learning, cpp/11]`, `[ebpf/learning]`).
+
+4. **Update the index** — Register or update the summary entry in `Wiki/index.md`:
+
+   Derive the summary's rel-path by stripping the `Wiki/Summaries/` prefix and the `.md` extension from the output path printed by the `create` command.
+
+   Read the `## Summary` section from the summary file you just created (NOT the original source file), and generate a **one-line English description** (under 200 characters) from it.
+
+   Then run:
+
+   ```bash
+   node <path-to-wiki-index.mjs> upsert-summary "{rel-path}" "{one-line description}" --base-path <cwd>
+   ```
+
+   The sumary file will have a path like `Wiki/Summaries/...` — derive `{rel-path}` by removing the `Wiki/Summaries/` prefix and the `.md` extension.
 
 ### Phase 3: Link concepts
 
@@ -139,6 +156,7 @@ End your response with a single JSON object on its own line. Use this exact sche
 
 - The path to `wiki-summary.mjs` is `.pi/skills/knowledge-wiki-summary/wiki-summary.mjs`
 - The path to `wiki-concept.mjs` is `.pi/skills/knowledge-wiki-concept/wiki-concept.mjs`
+- The path to `wiki-index.mjs` (state) is `.pi/skills/knowledge-wiki-state/wiki-index.mjs`
 - Always pass `--base-path` as the current working directory so the scripts resolve the knowledge base root correctly
 - Use `--tags` with the bracket format like `[tag1, tag2]` (must be valid JSON array)
 - The `insert-concept` command reads all fields from stdin when `-` is passed as the first argument, with one field per line: summary-rel-path, slug, display-name, description (the last field spans the rest and is trimmed)

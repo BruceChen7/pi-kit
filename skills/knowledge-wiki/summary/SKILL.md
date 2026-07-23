@@ -136,13 +136,15 @@ Derive the summary's rel-path by stripping the `Wiki/Summaries/` prefix and the 
 
 Example: `Wiki/Summaries/Posts/Buy Me a Coffee.summary.md` → `Posts/Buy Me a Coffee.summary`
 
-Generate a one-line English description of the source document from the `## Summary` section of the content you just wrote.
+Read the summary file you just generated at `{summary_path}`. Extract a **one-line English description** (under 200 characters) from its `## Summary` section. **Do NOT re-read the original source file** — use only the summary file content.
 
-Run:
+Then run:
 
 ```bash
 node ../state/wiki-index.mjs upsert-summary "{rel-path}" "{one-line description}" --base-path "{KNOWLEDGE_PATH}"
 ```
+
+If the one-line description exceeds 200 characters, truncate it at a word boundary and append "…". The `upsert-summary` command itself also truncates, but it's better to be concise upfront.
 
 ---
 

@@ -28,6 +28,55 @@ process.stdout.on("error", (err) => {
   if (err.code === "EPIPE") process.exit(0);
 });
 
+/**
+ * Soft-wrap a block of text at approximately `maxLen` characters,
+ * breaking at word boundaries (whitespace or CJK character boundaries).
+ * Preserves existing newlines, indentation, wikilinks [[...]], and code fences.
+ */
+function wrapText(text, maxLen = 100) {
+  const lines = text.split("\n");
+  const result = [];
+
+  for (const line of lines) {
+    // Preserve empty lines, code fences, and list items intact
+    if (
+      line.length <= maxLen ||
+      line === "" ||
+      line.startsWith("```") ||
+      line.startsWith("    ") ||
+      line.startsWith("\t")
+    ) {
+      result.push(line);
+      continue;
+    }
+
+    // Break the line at word boundaries
+    let remaining = line;
+    const wrapped = [];
+
+    while (remaining.length > maxLen) {
+      // Find a good break point within maxLen: prefer whitespace, then CJK char boundary
+      let breakAt = remaining.lastIndexOf(" ", maxLen + 1);
+      if (breakAt <= 0) breakAt = maxLen;
+      // Avoid breaking wikilinks [[...]]
+      const openBracket = remaining.lastIndexOf("[[", breakAt);
+      const closeBracket = remaining.lastIndexOf("]]", breakAt);
+      if (openBracket > closeBracket && breakAt > openBracket + 2) {
+        // Inside a wikilink — look backward from openBracket for a break point
+        const prevSpace = remaining.lastIndexOf(" ", openBracket - 1);
+        breakAt = prevSpace > 0 ? prevSpace : openBracket;
+      }
+      wrapped.push(remaining.slice(0, breakAt).trimEnd());
+      remaining = remaining.slice(breakAt).trimStart();
+    }
+
+    if (remaining) wrapped.push(remaining);
+    result.push(wrapped.join("\n"));
+  }
+
+  return result.join("\n");
+}
+
 const EXCLUDE = [
   "Wiki/",
   "Types/",
@@ -153,6 +202,8 @@ function cmdCreate(args) {
     process.exit(1);
   }
 
+  const wrappedBody = wrapText(body);
+
   const content = [
     "---",
     `source: ${sourceRel}`,
@@ -163,7 +214,7 @@ function cmdCreate(args) {
     `tags: ${tags}`,
     "---",
     "",
-    body,
+    wrappedBody,
     "",
     backlinksSection,
   ].join("\n");

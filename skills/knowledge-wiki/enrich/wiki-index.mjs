@@ -135,7 +135,12 @@ if (
       }
       const { concepts, summaries } = parseIndex();
       const idx = concepts.findIndex((l) => CONCEPT_RE.exec(l)?.[1] === slug);
-      const newLine = `- [[Wiki/Concepts/${slug}|${displayName}]] — ${description}`;
+      // Truncate description to prevent ultra-long lines in the index
+      const truncated =
+        description.length <= 200
+          ? description
+          : description.slice(0, description.lastIndexOf(" ", 197)) + " …";
+      const newLine = `- [[Wiki/Concepts/${slug}|${displayName}]] — ${truncated}`;
       if (idx === -1) {
         concepts.push(newLine);
         writeIndex(concepts, summaries);
@@ -185,11 +190,18 @@ if (
         );
         process.exit(1);
       }
+      // Truncate description to prevent ultra-long lines in the index.
+      // Truncate at 200 chars at word boundary, appending "…" if truncated.
+      const truncated =
+        description.length <= 200
+          ? description
+          : description.slice(0, description.lastIndexOf(" ", 197)) + " …";
+
       const { concepts, summaries } = parseIndex();
       const idx = summaries.findIndex(
         (l) => SUMMARY_RE.exec(l)?.[1] === relPath,
       );
-      const newLine = `- [[Wiki/Summaries/${relPath}]] — ${description}`;
+      const newLine = `- [[Wiki/Summaries/${relPath}]] — ${truncated}`;
       if (idx === -1) {
         summaries.push(newLine);
         writeIndex(concepts, summaries);

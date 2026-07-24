@@ -4,27 +4,37 @@ import {
   validateArtifactPolicy,
 } from "./artifact-policy.js";
 
-const planPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
-const specPath = ".pi/plans/pi-kit/specs/2026-05-08-demo-design.md";
-const reviewDetailsFixSnippet =
-  "最终 review 将记录改动点、验证结果、剩余风险，以及 bug/根因原因。";
+const planPath = ".pi/plans/pi-kit/plan/2026-07-24-demo.md";
+const specPath = ".pi/plans/pi-kit/specs/2026-07-24-demo-design.md";
 
-const validPlan = `## Context
-- 用户希望实现 Plan Artifact Policy，确保计划文件格式稳定。
-
-## Steps
-- [ ] 新增 policy 测试
-- [ ] 实现 policy 模块
-
-## Verification
-- 运行 npm test -- extensions/plan-mode
-
-## Review
-- 待实现后记录改动点、验证结果、风险，以及 bug 修复原因。
-`;
+const validPlan = [
+  "## Goal",
+  "- 用户希望实现 UX-Flow-Tree 风格的 Plan 模板。",
+  "",
+  "## Current Flow",
+  "- 当前从用户请求到数据返回的全链路流程。",
+  "",
+  "## Desired Flow",
+  "- 目标状态的变化和新增节点。",
+  "",
+  "## Boundaries",
+  "- 展示层间交互和 ownership。",
+  "",
+  "## Implementation",
+  "- 关键数据结构和函数签名。",
+  "",
+  "## Testing",
+  "- 核心 value in / value out 测试场景。",
+  "",
+  "## Decisions",
+  "- 推荐方案和被拒原因。",
+  "",
+  "## Non-goals",
+  "- 不处理存量格式迁移。",
+].join("\n");
 
 describe("plan artifact policy", () => {
-  it("approves a standard Chinese plan with checkbox steps", () => {
+  it("approves a standard plan with all 8 required sections", () => {
     const result = validateArtifactPolicy({
       path: planPath,
       content: validPlan,
@@ -34,69 +44,172 @@ describe("plan artifact policy", () => {
     expect(result.issues).toEqual([]);
   });
 
-  it("rejects a plan missing a required top-level section", () => {
+  it("approves a plan using Out of scope alias for Non-goals", () => {
     const result = validateArtifactPolicy({
       path: planPath,
-      content: validPlan.replace("## Review", "## Notes"),
+      content: validPlan.replace("## Non-goals", "## Out of scope"),
+    });
+
+    expect(result.approved).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  it("rejects a plan missing a required top-level section", () => {
+    const content = [
+      "## Goal",
+      "- Product goal.",
+      "",
+      "## Current Flow",
+      "- Current flow.",
+      "",
+      "## Boundaries",
+      "- Boundaries.",
+      "",
+      "## Implementation",
+      "- Implementation.",
+      "",
+      "## Testing",
+      "- Testing.",
+      "",
+      "## Decisions",
+      "- Decisions.",
+      "",
+      "## Non-goals",
+      "- Non-goals.",
+    ].join("\n");
+
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content,
     });
 
     expect(result.approved).toBe(false);
     expect(result.issues).toContainEqual(
       expect.objectContaining({
         code: "missing_section",
-        section: "Review",
+        section: "Desired Flow",
       }),
     );
   });
 
-  it("rejects a plan whose Steps section has no checkbox item", () => {
+  it("rejects a plan with wrong section order", () => {
+    const content = [
+      "## Goal",
+      "- Product goal.",
+      "",
+      "## Boundaries",
+      "- Boundaries before flow.",
+      "",
+      "## Current Flow",
+      "- Current flow after boundaries.",
+      "",
+      "## Desired Flow",
+      "- Desired flow.",
+      "",
+      "## Implementation",
+      "- Implementation.",
+      "",
+      "## Testing",
+      "- Testing.",
+      "",
+      "## Decisions",
+      "- Decisions.",
+      "",
+      "## Non-goals",
+      "- Non-goals.",
+    ].join("\n");
+
     const result = validateArtifactPolicy({
       path: planPath,
-      content: validPlan
-        .replace("- [ ] 新增 policy 测试", "- 新增 policy 测试")
-        .replace("- [ ] 实现 policy 模块", "- 实现 policy 模块"),
+      content,
     });
 
     expect(result.approved).toBe(false);
     expect(result.issues).toContainEqual(
       expect.objectContaining({
-        code: "missing_steps_checkbox",
-        section: "Steps",
+        code: "section_order",
       }),
     );
   });
 
-  it("includes copyable snippets for common plan format issues", () => {
-    const checkboxResult = validateArtifactPolicy({
-      path: planPath,
-      content: validPlan
-        .replace("- [ ] 新增 policy 测试", "- 新增 policy 测试")
-        .replace("- [ ] 实现 policy 模块", "- 实现 policy 模块"),
-    });
+  it("rejects a plan with an empty required section", () => {
+    const content = [
+      "## Goal",
+      "- Product goal.",
+      "",
+      "## Current Flow",
+      "",
+      "## Desired Flow",
+      "- Desired flow.",
+      "",
+      "## Boundaries",
+      "- Boundaries.",
+      "",
+      "## Implementation",
+      "- Implementation.",
+      "",
+      "## Testing",
+      "- Testing.",
+      "",
+      "## Decisions",
+      "- Decisions.",
+      "",
+      "## Non-goals",
+      "- Non-goals.",
+    ].join("\n");
 
-    expect(
-      formatArtifactPolicyFailure(planPath, checkboxResult.issues),
-    ).toContain("- [ ] 描述一个可验证的执行步骤");
-  });
-
-  it("includes a copyable Review fix snippet", () => {
     const result = validateArtifactPolicy({
       path: planPath,
-      content: validPlan.replace(
-        "- 待实现后记录改动点、验证结果、风险，以及 bug 修复原因。",
-        "- 待实现后补充结果。",
-      ),
+      content,
+    });
+
+    expect(result.approved).toBe(false);
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "empty_section",
+        section: "Current Flow",
+      }),
+    );
+  });
+
+  it("includes a copyable suggestion for missing section", () => {
+    const content = [
+      "## Goal",
+      "- Product goal.",
+      "",
+      "## Current Flow",
+      "- Current flow.",
+      "",
+      "## Desired Flow",
+      "- Desired flow.",
+      "",
+      "## Implementation",
+      "- Implementation.",
+      "",
+      "## Testing",
+      "- Testing.",
+      "",
+      "## Decisions",
+      "- Decisions.",
+      "",
+      "## Non-goals",
+      "- Non-goals.",
+    ].join("\n");
+
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content,
     });
 
     expect(formatArtifactPolicyFailure(planPath, result.issues)).toContain(
-      reviewDetailsFixSnippet,
+      "## Boundaries",
     );
   });
 
   it("does not apply standard markdown plan policy to HTML plan artifacts", () => {
     const result = validateArtifactPolicy({
-      path: ".pi/plans/pi-kit/plan/2026-05-08-demo.html",
-      content: "<html><body><h1>视觉计划</h1></body></html>",
+      path: ".pi/plans/pi-kit/plan/2026-07-24-demo.html",
+      content: "<html><body><h1>Plan</h1></body></html>",
     });
 
     expect(result.applied).toBe(false);
@@ -106,10 +219,121 @@ describe("plan artifact policy", () => {
   it("does not apply standard plan policy to spec artifacts", () => {
     const result = validateArtifactPolicy({
       path: specPath,
-      content: "# PRD\n\n## Problem Statement\n\n需要写 PRD。\n",
+      content: "# PRD\n\n## Problem Statement\n\nNeed to write PRD.\n",
     });
 
     expect(result.applied).toBe(false);
     expect(result.approved).toBe(true);
+  });
+
+  it("allows extra sections beyond the required 8", () => {
+    const content = [
+      "## Goal",
+      "- Product goal.",
+      "",
+      "## Current Flow",
+      "- Current flow.",
+      "",
+      "## Desired Flow",
+      "- Desired flow.",
+      "",
+      "## Boundaries",
+      "- Boundaries.",
+      "",
+      "## Implementation",
+      "- Implementation.",
+      "",
+      "## Testing",
+      "- Testing.",
+      "",
+      "## Decisions",
+      "- Decisions.",
+      "",
+      "## Non-goals",
+      "- Non-goals.",
+      "",
+      "## Notes",
+      "- An extra section that should be allowed.",
+    ].join("\n");
+
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content,
+    });
+
+    expect(result.approved).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  it("does not require Chinese content", () => {
+    const content = [
+      "## Goal",
+      "- A product goal written in English.",
+      "",
+      "## Current Flow",
+      "- Current flow description in English.",
+      "",
+      "## Desired Flow",
+      "- Desired flow description in English.",
+      "",
+      "## Boundaries",
+      "- Boundaries in English.",
+      "",
+      "## Implementation",
+      "- Implementation details in English.",
+      "",
+      "## Testing",
+      "- Testing strategy in English.",
+      "",
+      "## Decisions",
+      "- Decisions in English.",
+      "",
+      "## Non-goals",
+      "- Non-goals in English.",
+    ].join("\n");
+
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content,
+    });
+
+    expect(result.approved).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  it("does not require checkbox steps", () => {
+    const content = [
+      "## Goal",
+      "- Product goal.",
+      "",
+      "## Current Flow",
+      "- Current flow.",
+      "",
+      "## Desired Flow",
+      "- Desired flow.",
+      "",
+      "## Boundaries",
+      "- Boundaries.",
+      "",
+      "## Implementation",
+      "- Implementation.",
+      "",
+      "## Testing",
+      "- Testing.",
+      "",
+      "## Decisions",
+      "- Decisions.",
+      "",
+      "## Non-goals",
+      "- Non-goals.",
+    ].join("\n");
+
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content,
+    });
+
+    expect(result.approved).toBe(true);
+    expect(result.issues).toEqual([]);
   });
 });

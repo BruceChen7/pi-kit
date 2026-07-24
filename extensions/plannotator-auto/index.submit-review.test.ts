@@ -18,21 +18,37 @@ async function importPlannotatorAuto() {
 const mockSpawn = mockPlannotatorSpawn;
 const PLAN_DRAFT_CONTENT = `# Plan
 
-## Context
+## Goal
 
 这是一个用于测试的计划草稿，描述提交 Plannotator 审核前的上下文。
 
-## Steps
+## Current Flow
 
-- [ ] 中文检查：执行一个测试步骤。
+当前流程描述。
 
-## Verification
+## Desired Flow
 
-- [ ] 中文验证：确认测试审核流程按预期完成。
+目标流程描述。
 
-## Review
+## Boundaries
 
-- [ ] 中文复核：后续结果记录包含改动点、验证结果、剩余风险和 bug 修复原因。
+层间交互描述。
+
+## Implementation
+
+关键数据结构和函数签名。
+
+## Testing
+
+核心 value in / value out 测试场景。
+
+## Decisions
+
+推荐方案和被拒原因。
+
+## Non-goals
+
+不做什么。
 `;
 
 const INVALID_STANDARD_PLAN_CONTENT = "# Plan\n\n- [ ] test\n";

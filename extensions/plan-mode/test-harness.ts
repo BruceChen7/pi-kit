@@ -386,22 +386,33 @@ export const commitWithoutBranchPrompt = "commit and no extra branch";
 export const directActTodoGuidance =
   "In direct act mode, create concrete TODOs before using tools or making changes.";
 
-export const validPlanContent = `## Context
-- 用户希望用中文描述计划背景、成功标准和受影响模块。
+export const validPlanContent = `## Goal
+- 用户希望实现 UX-Flow-Tree 风格的 Plan 模板。
 
-## Steps
-- [ ] 编写失败测试
-- [ ] 实现最小代码
+## Current Flow
+- 当前从用户请求到数据返回的全链路流程。
 
-## Verification
-- 运行 npm test -- extensions/plan-mode
+## Desired Flow
+- 目标状态的变化和新增节点。
 
-## Review
-- 待实现后记录改动点、验证结果、剩余风险和 bug 修复原因。
+## Boundaries
+- 展示层间交互和 ownership。
+
+## Implementation
+- 关键数据结构和函数签名。
+
+## Testing
+- 核心 value in / value out 测试场景。
+
+## Decisions
+- 推荐方案和被拒原因。
+
+## Non-goals
+- 不处理存量格式迁移。
 `;
 
 export const invalidPlanContent = validPlanContent.replace(
-  "## Review",
+  "## Non-goals",
   "## Notes",
 );
 export const oneItemCompletedSummary = "✅ 任务已完成 · 1/1 项任务已交付";
@@ -456,7 +467,7 @@ export const approvedPlanPolicyFixPrompt = [
   `Path: ${demoPlanPath}`,
   "",
   "Fix the plan format before continuing with the approved plan:",
-  "- ## Review 缺少后续结果记录要求。 (Review)",
+  "- Missing ## Goal section. (Goal)",
 ].join("\n");
 
 export const emitApprovedReview = async (

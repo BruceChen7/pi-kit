@@ -15,7 +15,8 @@ You are executing a git workflow for branching, committing, and pushing.
 ## Non-negotiable rules
 - Use `git diff --no-ext-diff` for diffs.
 - If the working tree is clean, stop and report.
-- Ask before including untracked files.
+- Ask before including untracked files — unless the user already said `"all files"`,
+  `"extra requirements: all files"`, or similar that covers untracked files.
 - Commit messages must follow Conventional Commits.
 - When changes have multiple independent purposes, the commit message must list every purpose/change.
 - Do not write a result file; respond with a Markdown summary in-chat.
@@ -27,16 +28,17 @@ You are executing a git workflow for branching, committing, and pushing.
 ## Step 1: Inspect changes
 - `git status --short`
 - `git diff --no-ext-diff`
-- Identify untracked files. Ask the user whether to include them.
+- Identify untracked files. Ask the user whether to include them — unless the user already said
+  `"all files"`, `"extra requirements: all files"`, or similar that covers untracked files.
 
 ## Step 2: Branch handling
 - If on base branch, create a new branch first (default safe behavior).
   - If the user gave a branch name, use it.
   - Otherwise propose a descriptive branch name based on the diff and confirm.
   - `git checkout -b <branch>`.
-- **Override**: If the user explicitly says `"no extra branch"`, `"commit directly"`, or similar
-  language, warn them that they are on the base branch, ask for confirmation once, and if confirmed,
-  skip branch creation and commit on the current branch.
+- **Override**: If the user explicitly says `"no extra branch"`, `"commit directly"`,
+  `"do it directly"`, or similar language, **skip the confirmation entirely** — just skip branch
+  creation and commit on the current branch. The user has already made their intent clear.
 
 ## Step 3: Quality gate — format & lint (mandatory when detected)
 
@@ -60,7 +62,10 @@ Read `references/format-lint-check.md` for the full detection and execution guid
     overall commit and add a body with bullet points listing every purpose/change.
   - If the user supplied a message that only describes one purpose while the diff shows several,
     propose a fuller message/body and ask for confirmation before committing.
-- Draft the commit message (confirm if not provided).
+- Draft the commit message.
+  - If the user said `"do it directly"` or similar "go ahead" language, use the AI-generated
+    message directly without asking for confirmation — the user has already authorized it.
+  - Otherwise, confirm the message before committing.
   - Single purpose: `type(scope): summary`.
   - Multiple purposes: `type(scope): summary` plus body bullets.
   - Never put literal `\n` sequences in a `git commit -m` argument; GitHub will display them as

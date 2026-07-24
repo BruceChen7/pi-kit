@@ -12,6 +12,11 @@
  * (lua/pi/edit-bridge/) connects automatically.
  */
 
+import { randomBytes } from "node:crypto";
+import { chmodSync, unlinkSync } from "node:fs";
+import { createServer, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -20,11 +25,6 @@ import type {
   AutocompleteItem,
   AutocompleteProvider,
 } from "@earendil-works/pi-tui";
-import { randomBytes } from "node:crypto";
-import { chmodSync, unlinkSync } from "node:fs";
-import { createServer, type Socket } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 // ─────────────────────────────────────────────────────────────────────
 // State
@@ -73,13 +73,13 @@ interface RpcNotification {
 
 interface RpcSuccessResponse {
   jsonrpc: "2.0";
-  id: string | number;
+  id: string | number | null;
   result: unknown;
 }
 
 interface RpcErrorResponse {
   jsonrpc: "2.0";
-  id: string | number;
+  id: string | number | null;
   error: { code: number; message: string; data?: unknown };
 }
 
@@ -137,10 +137,10 @@ function sendResult(
 ): void {
   const res: RpcSuccessResponse = {
     jsonrpc: "2.0",
-    id: id!,
+    id,
     result,
   };
-  sock.write(JSON.stringify(res) + "\n");
+  sock.write(`${JSON.stringify(res)}\n`);
 }
 
 function sendError(
@@ -152,10 +152,10 @@ function sendError(
 ): void {
   const res: RpcErrorResponse = {
     jsonrpc: "2.0",
-    id: id!,
+    id,
     error: { code, message, data },
   };
-  sock.write(JSON.stringify(res) + "\n");
+  sock.write(`${JSON.stringify(res)}\n`);
 }
 
 function sendNotification(
@@ -168,10 +168,10 @@ function sendNotification(
     method,
     params,
   };
-  sock.write(JSON.stringify(notif) + "\n");
+  sock.write(`${JSON.stringify(notif)}\n`);
 }
 
-function broadcastNotification(method: string, params?: unknown): void {
+function _broadcastNotification(method: string, params?: unknown): void {
   for (const [sock, state] of connections) {
     if (state.handshakeComplete) {
       sendNotification(sock, method, params);
@@ -247,7 +247,7 @@ function handleHello(
 ): void {
   const p = params as { token?: string } | undefined;
 
-  if (!p || !p.token || p.token !== token) {
+  if (!p?.token || p.token !== token) {
     sendError(sock, id, -32600, "bad token");
     sock.end();
     return;

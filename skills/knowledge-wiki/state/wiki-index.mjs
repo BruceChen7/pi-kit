@@ -140,7 +140,7 @@ if (
       const truncated =
         description.length <= 200
           ? description
-          : description.slice(0, description.lastIndexOf(" ", 197)) + " …";
+          : `${description.slice(0, description.lastIndexOf(" ", 197))} …`;
       const newLine = `- [[Wiki/Concepts/${slug}|${displayName}]] — ${truncated}`;
       if (idx === -1) {
         concepts.push(newLine);
@@ -196,7 +196,7 @@ if (
       const truncated =
         description.length <= 200
           ? description
-          : description.slice(0, description.lastIndexOf(" ", 197)) + " …";
+          : `${description.slice(0, description.lastIndexOf(" ", 197))} …`;
 
       const { concepts, summaries } = parseIndex();
       const idx = summaries.findIndex(

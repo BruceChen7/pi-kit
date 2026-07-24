@@ -6,9 +6,9 @@
     "pi-package"
   ],
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^0.81.1",
-    "@earendil-works/pi-coding-agent": "^0.81.1",
-    "@earendil-works/pi-tui": "^0.81.1"
+    "@earendil-works/pi-ai": "^0.82.0",
+    "@earendil-works/pi-coding-agent": "^0.82.0",
+    "@earendil-works/pi-tui": "^0.82.0"
   },
   "pi": {
     "extensions": [
@@ -37,6 +37,7 @@
       "./extensions/librarian",
       "./extensions/btw",
       "./extensions/opencode-go-provider",
+      "./extensions/tools_intercepted",
       "./extensions/qmd-search",
       "./extensions/herdr-squad"
     ]

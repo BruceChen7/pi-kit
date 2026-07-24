@@ -48,7 +48,7 @@ Herdr Squad skill
   ③ herdr_squad_collect  → 收集结构化报告 + 终端兜底
 ```
 
-子 agent 是**严格只读**的，只拿到 `read`、`grep`、`find`、`ls`、`herdr_squad_report` 五个工具。
+子 agent 是**严格只读**的，只拿到 `read`、`rg`、`fd`、`ls`、`herdr_squad_report` 五个工具。
 
 ## 配置
 

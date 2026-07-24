@@ -100,20 +100,32 @@ plannotator_auto_submit_review({ path })
 Markdown plan files should use this standard shape:
 
 ```markdown
-## Context
-- Goal, success criteria, constraints, affected files/modules, non-goals, and open questions. Use Chinese by default.
+## Goal
+- Product goal in user language.
 
-## Steps
-- [ ] Outcome-oriented, verifiable checkbox steps.
+## Current Flow
+- Module-level UX/system flow tree + Mermaid sequenceDiagram.
 
-## Verification
-- Test commands, manual checks, or skipped checks with reasons.
+## Desired Flow
+- Target state flow with added/removed/changed nodes highlighted.
 
-## Review
-- Final review notes: change points, verification results, remaining risks, and bug/root-cause reasons when relevant.
+## Boundaries
+- Mermaid sequenceDiagram showing inter-layer interaction and ownership (detection, side effects, state/UI updates, persistence).
+
+## Implementation
+- Key data structures (types / interfaces / data models), function signatures, file anchors.
+
+## Testing
+- Core value in / value out, thin imperative shell. Function signatures + key test scenarios.
+
+## Decisions
+- ADR-worthy decisions: recommended approach, rejected alternatives, open questions.
+
+## Non-goals
+- Explicitly what is out of scope.
 ```
 
-For code-changing Markdown plans/specs that affect logic, state, data models, control flow, or process flow, include before/after diagrams and a small key code sketch. Put extra plan details inside the four standard sections instead of adding new top-level `##` sections.
+Flow trees use Mermaid sequenceDiagram + tree format. Module boundaries are the granularity, not code-line level. Extra plan details should go inside the standard eight sections instead of adding new top-level `##` sections (though the policy allows them when needed).
 
 HTML plan files are first-class plan artifacts only under `plan/`, not `specs/`. Switch the current session with:
 

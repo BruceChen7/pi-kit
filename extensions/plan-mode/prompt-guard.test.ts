@@ -31,19 +31,7 @@ describe("plan-mode extension: prompt guards and reminders", () => {
     ]);
   });
 
-  it("injects mandatory diagrams guidance into plan prompts", async () => {
-    const { harness, ctx } = await startPlanModeSession();
-
-    const result = await sendAgentPrompt(
-      harness,
-      ctx,
-      "implement the guard bug fix",
-    );
-
-    expectPromptContract(result.systemPrompt, ["流程变更", "变更前后"]);
-  });
-
-  it("requires color-coded diagram changes in plan prompts", async () => {
+  it("injects flow tree and diagrams guidance into plan prompts", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
     const result = await sendAgentPrompt(
@@ -53,16 +41,25 @@ describe("plan-mode extension: prompt guards and reminders", () => {
     );
 
     expectPromptContract(result.systemPrompt, [
-      "颜色",
-      "数据变更",
-      "逻辑变更",
-      "新增",
-      "删除",
-      "修改",
+      "flow tree",
+      "sequenceDiagram",
+      "新增、删除、修改",
     ]);
   });
 
-  it("requires key code sketches in plan prompts", async () => {
+  it("requires change annotations in desired flow diagram", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    const result = await sendAgentPrompt(
+      harness,
+      ctx,
+      "implement the guard bug fix",
+    );
+
+    expectPromptContract(result.systemPrompt, ["新增", "删除", "修改"]);
+  });
+
+  it("requires key data structures and code anchors in plan prompts", async () => {
     const { harness, ctx } = await startPlanModeSession();
     const result = await sendAgentPrompt(
       harness,
@@ -71,14 +68,11 @@ describe("plan-mode extension: prompt guards and reminders", () => {
     );
 
     expectPromptContract(result.systemPrompt, [
-      "关键代码草案",
+      "关键数据结构",
       "类型",
       "函数签名",
       "条件判断",
       "状态迁移",
-      "测试断言",
-      "## Context",
-      "不能新增顶层章节",
     ]);
   });
 

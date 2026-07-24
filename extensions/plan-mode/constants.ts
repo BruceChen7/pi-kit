@@ -151,35 +151,44 @@ export const PLAN_INSPECTION_TOOL_SLASH_LIST =
   PLAN_INSPECTION_TOOL_NAMES.join("/");
 export const PLAN_INSPECTION_TOOL_COMMA_LIST =
   PLAN_INSPECTION_TOOL_NAMES.join(", ");
-export const ARCHITECTURE_TEST_GUIDANCE =
-  "- 写测试时按 improve-codebase-architecture：Module 的 Interface " +
-  "is the test surface; test seam/Adapter behavior, not Implementation details.";
-export const DIAGRAM_CHANGE_COLOR_GUIDANCE =
-  "- 画流程图/数据模型图时，必须用颜色或图例区分数据变更与逻辑变更，" +
-  "并标明新增、删除、修改。";
-export const LOGIC_CHANGE_DIAGRAM_GUIDANCE = [
-  "- For any code-writing plan/spec that changes logic, state, data models, " +
-    "control flow, or process flow, the artifact must include before/after " +
-    "diagrams for the affected data model and flow.",
-  "- 写代码且涉及逻辑、状态、数据模型、控制流或流程变更的 plan/spec " +
-    "必须包含变更前后数据模型与流程图。",
-  DIAGRAM_CHANGE_COLOR_GUIDANCE,
+export const FC_IS_TEST_GUIDANCE =
+  "- 写测试时按 Functional Core, Imperative Shell: " +
+  "核心 value in / value out, shell 尽量薄。 " +
+  "Module 的 Interface is the test surface; " +
+  "test seam/Adapter behavior, not Implementation details.";
+export const FLOW_TREE_GUIDANCE = [
+  "- Current Flow / Desired Flow 使用 Mermaid sequenceDiagram + tree 格式。",
+  "- Module 是边界，不要太细到代码行级。",
+  "- Desired Flow 标注新增、删除、修改的变化部分。",
 ];
-export const KEY_CODE_SKETCH_GUIDANCE = [
-  "- 写 code-changing plan/spec 时，plan 文件必须包含关键代码草案；" +
-    "包括关键类型、函数签名、条件判断、状态迁移或测试断言的最小片段。",
-  "- 关键代码草案应放在标准 plan 的 ## Context 内，不能新增顶层章节；" +
-    "避免粘贴完整实现，只展示能让 reviewer 判断方向的代码。",
+export const BOUNDARIES_SEQUENCE_GUIDANCE =
+  "- Boundaries 用 Mermaid sequenceDiagram 表达层间交互和 ownership。" +
+  " 展示谁检测、谁副作用、谁更新状态、谁持久化。";
+export const IMPLEMENTATION_DATA_STRUCTURE_GUIDANCE = [
+  "- Implementation 强调关键数据结构（types / interfaces / data models），",
+  "  而不是文件路径列表。",
+  "- 包括关键类型、函数签名、条件判断、状态迁移的最小片段。",
+  "- 避免粘贴完整实现，只展示能让 reviewer 判断方向的代码。",
 ];
-export const REVIEW_SECTION_DETAILS_GUIDANCE =
-  "- ## Review 占位内容必须说明最终 review 会记录改动点、验证结果、" +
-  "剩余风险，以及 bug/根因原因。";
+export const TESTING_VALUE_IN_OUT_GUIDANCE = [
+  "- Testing 围绕核心 value in / value out，",
+  "  写出核心函数签名 + 关键测试场景。",
+  "- Shell 层尽量薄，不要测 shell 的编排逻辑。",
+];
+export const DECISIONS_ADR_GUIDANCE =
+  "- Decisions 记录 ADR-worthy 的决策原因，包括推荐方案、被拒方案以及原因。";
+export const NON_GOALS_GUIDANCE =
+  "- Non-goals（或 Out of scope）明确不做什么。";
 export const PLAN_REVIEW_ARTIFACT_GUIDANCE = [
-  ARCHITECTURE_TEST_GUIDANCE,
-  ...LOGIC_CHANGE_DIAGRAM_GUIDANCE,
-  ...KEY_CODE_SKETCH_GUIDANCE,
-  REVIEW_SECTION_DETAILS_GUIDANCE,
+  "- 从 UX/system flow 出发，先画 flow tree，再确定 architecture boundary。",
+  ...FLOW_TREE_GUIDANCE,
+  BOUNDARIES_SEQUENCE_GUIDANCE,
+  ...IMPLEMENTATION_DATA_STRUCTURE_GUIDANCE,
+  ...TESTING_VALUE_IN_OUT_GUIDANCE,
+  DECISIONS_ADR_GUIDANCE,
+  NON_GOALS_GUIDANCE,
+  FC_IS_TEST_GUIDANCE,
 ];
-export const ACT_CODE_WRITING_GUIDANCE = [ARCHITECTURE_TEST_GUIDANCE];
+export const ACT_CODE_WRITING_GUIDANCE = [FC_IS_TEST_GUIDANCE];
 export const DIRECT_ACT_TODO_GUIDANCE =
   "- In direct act mode, create concrete TODOs before using tools or making changes.";

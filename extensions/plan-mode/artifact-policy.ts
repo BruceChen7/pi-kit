@@ -13,10 +13,7 @@ export type ArtifactPolicyIssueCode =
   | "missing_section"
   | "section_order"
   | "extra_section"
-  | "empty_section"
-  | "missing_steps_checkbox"
-  | "missing_chinese_content"
-  | "missing_review_details";
+  | "empty_section";
 
 export type ArtifactPolicyIssue = {
   code: ArtifactPolicyIssueCode;
@@ -43,21 +40,29 @@ type MarkdownSection = {
 };
 
 const REQUIRED_PLAN_SECTIONS = [
-  "Context",
-  "Steps",
-  "Verification",
-  "Review",
+  "Goal",
+  "Current Flow",
+  "Desired Flow",
+  "Boundaries",
+  "Implementation",
+  "Testing",
+  "Decisions",
+  "Non-goals",
 ] as const;
+
+const SECTION_ALIASES: Record<string, string> = {
+  "Out of scope": "Non-goals",
+};
 
 type RequiredPlanSection = (typeof REQUIRED_PLAN_SECTIONS)[number];
 
 const DEFAULT_ARTIFACT_POLICY_CONFIG: ArtifactPolicyConfig = {
   enabled: true,
   planFormat: "pi-standard",
-  allowExtraSections: false,
+  allowExtraSections: true,
   requireSectionOrder: true,
-  requireChinese: true,
-  requireReviewDetails: true,
+  requireChinese: false,
+  requireReviewDetails: false,
 };
 
 const mergeConfig = (
@@ -66,9 +71,6 @@ const mergeConfig = (
   ...DEFAULT_ARTIFACT_POLICY_CONFIG,
   ...config,
 });
-
-const isRequiredPlanSection = (name: string): name is RequiredPlanSection =>
-  REQUIRED_PLAN_SECTIONS.includes(name as RequiredPlanSection);
 
 export const getDefaultArtifactPolicyConfig = (): ArtifactPolicyConfig => ({
   ...DEFAULT_ARTIFACT_POLICY_CONFIG,
@@ -119,24 +121,13 @@ const parseTopLevelSections = (content: string): MarkdownSection[] => {
   });
 };
 
-const hasChineseText = (text: string): boolean => {
-  // CJK Unified Ideographs indicate Chinese-language content in plan sections.
-  return /[\u4e00-\u9fff]/u.test(text);
-};
+const normalizeSectionName = (name: string): string =>
+  SECTION_ALIASES[name] ?? name;
 
-const hasCheckboxStep = (text: string): boolean => {
-  // Steps must use Markdown task-list checkboxes for progress tracking.
-  return /^\s*-\s+\[[ xX]\]\s+\S+/m.test(text);
-};
-
-const hasReviewDetailsPlaceholder = (text: string): boolean => {
-  const requiredSignals = ["改动", "验证", "风险"];
-  const hasRootCauseSignal = text.includes("原因") || text.includes("根因");
-  return (
-    requiredSignals.every((signal) => text.includes(signal)) &&
-    hasRootCauseSignal
+const isRequiredPlanSection = (name: string): name is RequiredPlanSection =>
+  REQUIRED_PLAN_SECTIONS.includes(
+    normalizeSectionName(name) as RequiredPlanSection,
   );
-};
 
 const buildSectionMap = (
   sections: MarkdownSection[],
@@ -151,21 +142,28 @@ const validateStandardPlan = (
   const sections = parseTopLevelSections(content);
   const sectionByName = buildSectionMap(sections);
 
+  // Check required sections (with alias support)
   for (const sectionName of REQUIRED_PLAN_SECTIONS) {
-    if (!sectionByName.has(sectionName)) {
+    const hasExact = sectionByName.has(sectionName);
+    const hasAlias =
+      sectionName === "Non-goals"
+        ? Object.keys(SECTION_ALIASES).some((alias) => sectionByName.has(alias))
+        : false;
+    if (!hasExact && !hasAlias) {
       issues.push({
         code: "missing_section",
         section: sectionName,
-        message: `缺少 ## ${sectionName} 章节。`,
-        suggestion: `添加 ## ${sectionName} 章节并使用中文描述内容。`,
+        message: `Missing ## ${sectionName} section.`,
+        suggestion: `Add a ## ${sectionName} section (or "Out of scope" for Non-goals).`,
       });
     }
   }
 
+  // Section order validation
   if (config.requireSectionOrder) {
     const actualRequiredSections = sections
       .filter((section) => isRequiredPlanSection(section.name))
-      .map((section) => section.name);
+      .map((section) => normalizeSectionName(section.name));
     const expectedPrefix = REQUIRED_PLAN_SECTIONS.slice(
       0,
       actualRequiredSections.length,
@@ -177,69 +175,40 @@ const validateStandardPlan = (
     ) {
       issues.push({
         code: "section_order",
-        message: "plan 顶层章节顺序不符合标准模板。",
-        suggestion: "按 Context、Steps、Verification、Review 的顺序排列章节。",
+        message:
+          "Plan top-level section order does not match the standard template.",
+        suggestion:
+          "Arrange sections in order: Goal, Current Flow, Desired Flow, " +
+          "Boundaries, Implementation, Testing, Decisions, Non-goals.",
       });
     }
   }
 
-  if (!config.allowExtraSections) {
-    for (const section of sections) {
-      if (!isRequiredPlanSection(section.name)) {
-        issues.push({
-          code: "extra_section",
-          section: section.name,
-          message: `不允许额外的 ## ${section.name} 顶层章节。`,
-          suggestion:
-            "把额外信息合并到 Context、Steps、Verification 或 Review 中。",
-        });
-      }
-    }
-  }
-
-  for (const sectionName of ["Context", "Steps", "Verification"] as const) {
-    const section = sectionByName.get(sectionName);
+  // Check for empty required sections
+  const emptyCheckSections: RequiredPlanSection[] = [
+    "Goal",
+    "Current Flow",
+    "Desired Flow",
+    "Boundaries",
+    "Implementation",
+    "Testing",
+    "Decisions",
+    "Non-goals",
+  ];
+  for (const sectionName of emptyCheckSections) {
+    const section =
+      sectionByName.get(sectionName) ??
+      (sectionName === "Non-goals"
+        ? sectionByName.get("Out of scope")
+        : undefined);
     if (section && section.content.length === 0) {
       issues.push({
         code: "empty_section",
-        section: sectionName,
-        message: `## ${sectionName} 章节不能为空。`,
-        suggestion: `用中文补充 ## ${sectionName} 的具体内容。`,
+        section: section.name,
+        message: `## ${section.name} section cannot be empty.`,
+        suggestion: `Add content to ## ${section.name}.`,
       });
     }
-    if (config.requireChinese && section && !hasChineseText(section.content)) {
-      issues.push({
-        code: "missing_chinese_content",
-        section: sectionName,
-        message: `## ${sectionName} 章节需要使用中文描述。`,
-        suggestion: "除非用户明确要求其他语言，否则请改为中文内容。",
-      });
-    }
-  }
-
-  const steps = sectionByName.get("Steps");
-  if (steps && !hasCheckboxStep(steps.content)) {
-    issues.push({
-      code: "missing_steps_checkbox",
-      section: "Steps",
-      message: "## Steps 章节缺少 Markdown checkbox 步骤。",
-      suggestion: "添加 `- [ ]` 或 `- [x]` 开头的可执行步骤。",
-    });
-  }
-
-  const review = sectionByName.get("Review");
-  if (
-    config.requireReviewDetails &&
-    review &&
-    review.content.length > 0 &&
-    !hasReviewDetailsPlaceholder(review.content)
-  ) {
-    issues.push({
-      code: "missing_review_details",
-      section: "Review",
-      message: "## Review 占位内容缺少后续结果记录要求。",
-      suggestion: "说明后续会记录改动点、验证结果、剩余风险和 bug 修复原因。",
-    });
   }
 
   return issues;
@@ -268,12 +237,11 @@ export const validateArtifactPolicy = ({
 };
 
 const FIX_SNIPPETS: Partial<Record<ArtifactPolicyIssueCode, string>> = {
-  missing_section: "## Context\n- 用中文描述目标、约束、影响范围和非目标。",
-  missing_steps_checkbox: "- [ ] 描述一个可验证的执行步骤",
-  missing_chinese_content: "请用中文补充本章节的目标、约束或验证方式。",
-  missing_review_details:
-    "最终 review 将记录改动点、验证结果、剩余风险，以及 bug/根因原因。",
-  section_order: "## Context\n\n## Steps\n\n## Verification\n\n## Review",
+  missing_section: "## Goal\n- Describe the product goal in user language.",
+  section_order:
+    "## Goal\n\n## Current Flow\n\n## Desired Flow\n\n" +
+    "## Boundaries\n\n## Implementation\n\n## Testing\n\n" +
+    "## Decisions\n\n## Non-goals",
 };
 
 const fixSnippetForIssue = (issue: ArtifactPolicyIssue): string | null =>

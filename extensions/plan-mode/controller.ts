@@ -220,8 +220,9 @@ export class PlanModeController {
       ...(format === "html"
         ? HTML_PLAN_FORMAT_GUIDANCE
         : [
-            "- Standard plan artifacts must use ## Context, ## Steps, " +
-              "## Verification, and ## Review with Chinese checkbox steps.",
+            "- Standard plan artifacts must use the following sections: " +
+              "## Goal, ## Current Flow, ## Desired Flow, ## Boundaries, " +
+              "## Implementation, ## Testing, ## Decisions, ## Non-goals.",
           ]),
       "- If Plannotator denies the plan, revise the same file and submit again.",
       `- ${PLAN_HEADING_REVIEW_GUIDANCE}`,

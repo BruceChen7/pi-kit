@@ -75,18 +75,21 @@ describe("plan-mode extension: commands and prompt basics", () => {
     );
   });
 
-  it("keeps review placeholder details in plan artifact guidance", async () => {
+  it("keeps flow-tree plan guidance in plan artifact guidance", async () => {
     const { harness, ctx } = await startPlanModeSession("act");
 
     await harness.runCommand("plan-mode", "plan", ctx);
     const result = await sendAgentPrompt(harness, ctx, "plan this change");
 
     expectPromptContract(result.systemPrompt, [
-      "## Review",
-      "改动点",
-      "验证结果",
-      "剩余风险",
-      "根因原因",
+      "Goal",
+      "Current Flow",
+      "Desired Flow",
+      "Boundaries",
+      "Implementation",
+      "Testing",
+      "Decisions",
+      "Non-goals",
     ]);
   });
 
@@ -95,10 +98,11 @@ describe("plan-mode extension: commands and prompt basics", () => {
 
     const result = await sendAgentPrompt(harness, ctx, "implement this change");
 
+    expect(result.systemPrompt).toContain("Functional Core, Imperative Shell");
     expect(result.systemPrompt).toContain("Module 的 Interface");
-    expect(result.systemPrompt).not.toContain("## Review 占位内容必须说明");
-    expect(result.systemPrompt).not.toContain("关键代码草案");
-    expect(result.systemPrompt).not.toContain("必须包含变更前后");
+    expect(result.systemPrompt).not.toContain("flow tree");
+    expect(result.systemPrompt).not.toContain("sequenceDiagram");
+    expect(result.systemPrompt).not.toContain("关键数据结构");
   });
 
   it("completes format arguments from pure command values", () => {

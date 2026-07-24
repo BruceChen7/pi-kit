@@ -15,4 +15,17 @@ describe("tools_intercepted package manifest", () => {
 
     expect(packageJson.dependencies?.["@sinclair/typebox"]).toBeTruthy();
   });
+
+  it("declares tools_intercepted as a Pi extension so rg/fd are available", () => {
+    const packageJsonPath = path.resolve(process.cwd(), "package.json");
+    const packageJson = JSON.parse(
+      fs.readFileSync(packageJsonPath, "utf8"),
+    ) as {
+      pi?: { extensions?: string[] };
+    };
+
+    expect(packageJson.pi?.extensions).toContain(
+      "./extensions/tools_intercepted",
+    );
+  });
 });

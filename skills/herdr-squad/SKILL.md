@@ -12,7 +12,7 @@ Default to Chinese unless the user explicitly asks for another language.
 ## Preconditions
 
 - Herdr squads require `HERDR_ENV=1`.
-- Children are strictly read-only and receive only `read`, `grep`, `find`, `ls`, and the extension-owned final-report tool.
+- Children are strictly read-only and receive only `read`, `rg`, `fd`, `ls`, and the extension-owned final-report tool.
 - Children cannot run tests or shell diagnostics. Never imply that they did.
 
 ## Planning

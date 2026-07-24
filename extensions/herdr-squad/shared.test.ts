@@ -826,7 +826,7 @@ describe("buildAgentCommand", () => {
     expect(cmd).toContain("claude-sonnet-4");
     expect(cmd).toContain("Squad Agent A");
     expect(cmd).toContain("/tmp/prompt.md");
-    expect(cmd).toContain("read,grep,find,ls,herdr_squad_report");
+    expect(cmd).toContain("read,rg,fd,ls,herdr_squad_report");
   });
 
   it("omits --model when not provided", () => {

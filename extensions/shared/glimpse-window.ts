@@ -37,7 +37,7 @@ type StderrWriteArgs = [
 ];
 
 const GLIMPSE_STDERR_LOG_PATH = path.join(
-  os.homedir(),
+  process.env.HOME || process.env.USERPROFILE || "/tmp",
   ".pi",
   "agent",
   "visual-artifact",

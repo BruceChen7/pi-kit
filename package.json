@@ -6,9 +6,9 @@
     "pi-package"
   ],
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^0.82.0",
-    "@earendil-works/pi-coding-agent": "^0.82.0",
-    "@earendil-works/pi-tui": "^0.82.0"
+    "@earendil-works/pi-ai": "^0.82.1",
+    "@earendil-works/pi-coding-agent": "^0.82.1",
+    "@earendil-works/pi-tui": "^0.82.1"
   },
   "pi": {
     "extensions": [
@@ -34,6 +34,7 @@
       "./extensions/scheduled-tasks",
       "./extensions/brainstorm-events",
       "./extensions/cache-graph",
+      "./extensions/visual-artifact",
       "./extensions/librarian",
       "./extensions/btw",
       "./extensions/opencode-go-provider",
@@ -53,11 +54,12 @@
     "test:wiki-concept": "vitest run skills/knowledge-wiki/concept/wiki-concept.test.ts",
     "kanban-worktree:ui:build": "vite build --config extensions/kanban-worktree/vite.config.mts",
     "cache-graph:ui:build": "vite build --config extensions/cache-graph/vite.config.mts",
+    "visual-artifact:ui:build": "vite build --config extensions/visual-artifact/vite.config.mts",
     "pi-webterm:dev": "cd pi-webterm/server && npx tsx watch src/index.ts",
     "pi-webterm:start": "cd pi-webterm/server && npx tsx src/index.ts --cwd ~/work --username 123 --password my654321",
     "pi-webterm:ui:build": "cd pi-webterm/ui && npx vite build",
     "pi-webterm:install": "cd pi-webterm/server && npm install && cd ../ui && npm install",
-    "prepack": "npm run kanban-worktree:ui:build && npm run cache-graph:ui:build",
+    "prepack": "npm run kanban-worktree:ui:build && npm run cache-graph:ui:build && npm run visual-artifact:ui:build",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -79,6 +81,7 @@
     "defuddle": "0.14.0",
     "diff": "^8.0.4",
     "glimpseui": "^0.8.1",
+    "mermaid": "^11.16.0",
     "typebox": "^1.1.38"
   }
 }

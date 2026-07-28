@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { createLogger } from "../shared/logger.ts";
 import { type VisualArtifactSpec, validate } from "./artifact-schema.ts";
 import {
   listArtifacts,
@@ -12,6 +13,8 @@ import {
   validateMermaidNodesInSpec,
 } from "./mermaid-boundary.ts";
 import { deriveProjectName, getDefaultProjectRoot } from "./paths.ts";
+
+const log = createLogger("visual-artifact");
 
 /* ------------------------------------------------------------------ */
 /*  Parameter schemas (TypeBox)                                        */
@@ -178,9 +181,7 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(
-          `[visual-artifact] Failed to open Glimpse window for "${slug}": ${message}`,
-        );
+        log.error(`Failed to open Glimpse window for "${slug}": ${message}`);
         return errorResult(
           `Artifact saved, but failed to open Glimpse window: ${message}. ` +
             "The artifact can still be opened later via the /visual-artifact command.",

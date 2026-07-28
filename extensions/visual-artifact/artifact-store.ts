@@ -171,6 +171,64 @@ export function deleteArtifact(
   }
 }
 
+/**
+ * Delete all artifacts in a project (remove the project directory).
+ */
+export function cleanProject(projectRoot: string, projectName: string): void {
+  const projectDir = path.join(getArtifactsRoot(projectRoot), projectName);
+  if (!existsSync(projectDir)) return;
+
+  try {
+    const entries = readdirSync(projectDir);
+    for (const entry of entries) {
+      const entryPath = path.join(projectDir, entry);
+      if (isDirectory(entryPath)) {
+        const files = readdirSync(entryPath);
+        for (const file of files) {
+          unlinkSync(path.join(entryPath, file));
+        }
+        rmdirSync(entryPath);
+      } else {
+        unlinkSync(entryPath);
+      }
+    }
+    rmdirSync(projectDir);
+  } catch {
+    // best effort
+  }
+}
+
+/**
+ * Delete all artifacts across all projects.
+ */
+export function cleanAll(projectRoot: string): void {
+  const root = getArtifactsRoot(projectRoot);
+  if (!existsSync(root)) return;
+
+  let projects: string[];
+  try {
+    projects = readdirSync(root);
+  } catch (err) {
+    console.error(`[cleanAll] Failed to read artifacts root "${root}":`, err);
+    return;
+  }
+
+  for (const projectName of projects) {
+    const projectDir = path.join(root, projectName);
+    if (!isDirectory(projectDir)) continue;
+
+    try {
+      cleanProject(projectRoot, projectName);
+    } catch (err) {
+      console.error(
+        `[cleanAll] Failed to clean project "${projectName}":`,
+        err,
+      );
+      // Continue cleaning other projects
+    }
+  }
+}
+
 function getCreationTime(filePath: string): string {
   try {
     const stat = statSync(filePath);

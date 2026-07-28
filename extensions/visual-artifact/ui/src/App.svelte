@@ -31,6 +31,9 @@ let bootData = $state<BootData>(boot as BootData);
 let theme = $state<VisualArtifactTheme>("dark");
 let projects = $state<ProjectSummary[]>([]);
 let artifacts = $state<ArtifactSummary[]>([]);
+let totalArtifactCount = $derived(
+  projects.reduce((sum, project) => sum + project.artifactCount, 0),
+);
 
 /* ---- Navigation ---- */
 
@@ -92,6 +95,12 @@ function setupListeners(): void {
   window.addEventListener("visual-artifact:artifacts", onArtifacts);
   window.addEventListener("visual-artifact:artifact", onArtifact);
   window.addEventListener("visual-artifact:error", onError);
+  window.addEventListener("visual-artifact:deleted", handleCleanupResult);
+  window.addEventListener(
+    "visual-artifact:project-cleaned",
+    handleCleanupResult,
+  );
+  window.addEventListener("visual-artifact:all-cleaned", handleCleanupResult);
 }
 
 /* ---- Init ---- */
@@ -146,6 +155,73 @@ function onCommentModeChange(active: boolean, count: number): void {
   commentModeActive = active;
   commentThreadCount = count;
 }
+
+/* ---- Cleanup actions ---- */
+
+type ConfirmAction =
+  | { kind: "delete-artifact"; projectName: string; slug: string }
+  | { kind: "clean-project"; projectName: string }
+  | { kind: "clean-all" };
+
+let pendingCleanupAction = $state<ConfirmAction | null>(null);
+
+function requestDeleteArtifact(projectName: string, slug: string): void {
+  pendingCleanupAction = { kind: "delete-artifact", projectName, slug };
+}
+
+function requestCleanProject(projectName: string): void {
+  pendingCleanupAction = { kind: "clean-project", projectName };
+}
+
+function requestCleanAll(): void {
+  pendingCleanupAction = { kind: "clean-all" };
+}
+
+function executeConfirmed(): void {
+  const action = pendingCleanupAction;
+  if (!action) return;
+
+  switch (action.kind) {
+    case "delete-artifact":
+      window.glimpse?.send({
+        type: "delete-artifact",
+        projectName: action.projectName,
+        slug: action.slug,
+      });
+      break;
+    case "clean-project":
+      window.glimpse?.send({
+        type: "clean-project",
+        projectName: action.projectName,
+      });
+      break;
+    case "clean-all":
+      window.glimpse?.send({ type: "clean-all" });
+      break;
+  }
+  pendingCleanupAction = null;
+}
+
+function cancelConfirmed(): void {
+  pendingCleanupAction = null;
+}
+
+function handleCleanupResult(e: Event): void {
+  if (e.type === "visual-artifact:deleted") {
+    // Refresh current view
+    if (bootData.projectName) {
+      window.glimpse?.send({
+        type: "list-artifacts",
+        projectName: bootData.projectName,
+      });
+    }
+  } else if (e.type === "visual-artifact:project-cleaned") {
+    goHome();
+  } else if (e.type === "visual-artifact:all-cleaned") {
+    projects = [];
+    artifacts = [];
+  }
+}
 </script>
 
 <main class="app" data-theme={theme}>
@@ -162,6 +238,13 @@ function onCommentModeChange(active: boolean, count: number): void {
     <div class="spacer"></div>
 
     {#if currentView === "artifact"}
+      <button
+        type="button"
+        class="clean-btn"
+        onclick={() => requestDeleteArtifact(bootData.projectName ?? "", bootData.artifactSlug ?? "")}
+      >
+        Delete
+      </button>
       <button
         type="button"
         class="comments-button"
@@ -186,13 +269,38 @@ function onCommentModeChange(active: boolean, count: number): void {
   <section class="content">
     {#if currentView === "home"}
       {#if projects.length > 0}
-        <div class="grid">
-          {#each projects as project}
-            <button type="button" class="card-btn" onclick={() => goProject(project.name)}>
-              <strong>{project.name}</strong>
-              <span class="muted">{project.artifactCount} artifact{project.artifactCount !== 1 ? "s" : ""}</span>
+        <div class="list-shell">
+          <div class="list-summary">
+            <div>
+              <h2>Projects</h2>
+              <p class="muted">Browse generated visual artifacts by workspace.</p>
+            </div>
+            <div class="summary-meta">
+              <span class="meta-pill">{projects.length} project{projects.length !== 1 ? "s" : ""}</span>
+              <span class="meta-pill">
+                {totalArtifactCount} artifact{totalArtifactCount !== 1 ? "s" : ""}
+              </span>
+            </div>
+          </div>
+
+          <div class="grid">
+            {#each projects as project}
+              <button type="button" class="card-btn" onclick={() => goProject(project.name)}>
+                <span>
+                  <strong>{project.name}</strong>
+                  <span class="muted">Open project artifacts</span>
+                </span>
+                <span class="count-pill">
+                  {project.artifactCount} artifact{project.artifactCount !== 1 ? "s" : ""}
+                </span>
+              </button>
+            {/each}
+          </div>
+          <div class="clean-bar">
+            <button type="button" class="clean-btn clean-action" onclick={requestCleanAll}>
+              Clean All Artifacts
             </button>
-          {/each}
+          </div>
         </div>
       {:else}
         <p class="empty">No projects yet. Create an artifact first.</p>
@@ -200,20 +308,57 @@ function onCommentModeChange(active: boolean, count: number): void {
 
     {:else if currentView === "project"}
       {#if artifacts.length > 0}
-        <div class="list">
-          {#each artifacts as artifact}
+        <div class="list-shell">
+          <div class="list-summary">
+            <div>
+              <h2>Artifacts in {bootData.projectName}</h2>
+              <p class="muted">Browse generated visual artifacts and open one to inspect the rendered result.</p>
+            </div>
+            <div class="summary-meta">
+              <span class="meta-pill">{artifacts.length} artifact{artifacts.length !== 1 ? "s" : ""}</span>
+              {#if bootData.projectName}
+                <span class="meta-pill">{bootData.projectName}</span>
+              {/if}
+            </div>
+          </div>
+
+          <div class="list">
+            {#each artifacts as artifact}
+              <div class="row-wrap">
+                <button
+                  type="button"
+                  class="row-btn"
+                  onclick={() => goArtifact(bootData.projectName ?? "", artifact.slug)}
+                >
+                  <span class="row-copy">
+                    <strong>{artifact.title}</strong>
+                    {#if artifact.description}
+                      <span class="muted">{artifact.description}</span>
+                    {/if}
+                  </span>
+                  <span class="slug">{artifact.slug}</span>
+                </button>
+                <button
+                  type="button"
+                  class="clean-btn row-clean-btn"
+                  onclick={() => requestDeleteArtifact(bootData.projectName ?? "", artifact.slug)}
+                  title="Delete this artifact"
+                  aria-label={`Delete ${artifact.title}`}
+                >
+                  &times;
+                </button>
+              </div>
+            {/each}
+          </div>
+          <div class="clean-bar">
             <button
               type="button"
-              class="row-btn"
-              onclick={() => goArtifact(bootData.projectName ?? "", artifact.slug)}
+              class="clean-btn clean-action"
+              onclick={() => requestCleanProject(bootData.projectName ?? "")}
             >
-              <strong>{artifact.title}</strong>
-              {#if artifact.description}
-                <span class="muted">{artifact.description}</span>
-              {/if}
-              <span class="slug">{artifact.slug}</span>
+              Clean All in {bootData.projectName}
             </button>
-          {/each}
+          </div>
         </div>
       {:else}
         <p class="empty">No artifacts in this project.</p>
@@ -243,6 +388,27 @@ function onCommentModeChange(active: boolean, count: number): void {
       {/if}
     {/if}
   </section>
+
+  {#if pendingCleanupAction}
+    <div class="confirm-overlay" role="dialog" aria-modal="true">
+      <div class="confirm-dialog">
+        <p>
+          {#if pendingCleanupAction.kind === "delete-artifact"}
+            Delete artifact <strong>{pendingCleanupAction.slug}</strong>?
+          {:else if pendingCleanupAction.kind === "clean-project"}
+            Delete all artifacts in <strong>{pendingCleanupAction.projectName}</strong>?
+          {:else if pendingCleanupAction.kind === "clean-all"}
+            Delete <strong>all artifacts</strong> across all projects?
+          {/if}
+        </p>
+        <p class="confirm-hint">This cannot be undone.</p>
+        <div class="confirm-actions">
+          <button type="button" class="clean-btn" onclick={executeConfirmed}>Delete</button>
+          <button type="button" class="cancel-btn" onclick={cancelConfirmed}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </main>
 
 <style>
@@ -274,9 +440,21 @@ function onCommentModeChange(active: boolean, count: number): void {
   }
 
   .slug {
-    color: var(--va-text-subtle);
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    max-width: 260px;
+    min-height: 28px;
+    padding: 0 9px;
+    border: 1px solid var(--va-border-default);
+    border-radius: var(--va-radius-sm);
+    background: var(--va-bg-code);
+    color: var(--va-text-muted);
     font-size: 11px;
-    font-family: monospace;
+    font-family: var(--va-font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .spacer {
@@ -328,7 +506,7 @@ function onCommentModeChange(active: boolean, count: number): void {
   }
 
   .content {
-    padding: 4px;
+    padding: 4px 0;
   }
 
   .artifact-layout {
@@ -348,22 +526,33 @@ function onCommentModeChange(active: boolean, count: number): void {
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 12px;
   }
 
   .card-btn {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
     text-align: left;
+    min-height: 78px;
     padding: 16px;
     border: 1px solid var(--va-border-default);
-    border-radius: var(--va-radius-lg);
+    border-radius: var(--va-radius-md);
     background: var(--va-bg-surface);
+    color: inherit;
     cursor: pointer;
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease,
+      transform 0.15s ease;
   }
 
   .card-btn:hover {
     border-color: var(--va-accent-primary);
+    background: var(--va-bg-hover);
+    transform: translateY(-1px);
   }
 
   .card-btn strong {
@@ -375,28 +564,102 @@ function onCommentModeChange(active: boolean, count: number): void {
 
   .list {
     display: grid;
+    gap: 10px;
+  }
+
+  .list-shell {
+    width: min(100%, 1120px);
+    margin: 0 auto;
+  }
+
+  .list-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 16px;
+    margin-bottom: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--va-border-default);
+  }
+
+  .list-summary h2 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    font-weight: 650;
+    line-height: 1.3;
+    color: var(--va-text-primary);
+  }
+
+  .summary-meta {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
     gap: 8px;
   }
 
+  .meta-pill,
+  .count-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 0 10px;
+    border: 1px solid var(--va-border-default);
+    border-radius: 999px;
+    background: var(--va-bg-code);
+    color: var(--va-text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .count-pill {
+    background: var(--va-bg-info-subtle);
+    border-color: var(--va-border-info-subtle);
+    color: var(--va-accent-primary-text);
+  }
+
   .row-btn {
-    display: block;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 18px;
+    min-height: 74px;
     text-align: left;
-    padding: 12px 14px;
+    padding: 14px 16px;
     border: 1px solid var(--va-border-default);
     border-radius: var(--va-radius-md);
     background: var(--va-bg-surface);
+    color: inherit;
     cursor: pointer;
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease;
   }
 
   .row-btn:hover {
     border-color: var(--va-accent-primary);
+    background: var(--va-bg-hover);
   }
 
   .row-btn strong {
     display: block;
-    margin-bottom: 2px;
-    font-size: 14px;
+    margin-bottom: 4px;
+    font-size: 15px;
     color: var(--va-text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .row-copy {
+    display: block;
+    min-width: 0;
+  }
+
+  .row-copy .muted {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .empty {
@@ -406,5 +669,146 @@ function onCommentModeChange(active: boolean, count: number): void {
     padding: 48px 12px;
     border: 1px dashed var(--va-border-default);
     border-radius: var(--va-radius-md);
+  }
+
+  /* ---- Cleanup buttons ---- */
+
+  .clean-btn {
+    background: none;
+    border: 1px solid var(--va-border-strong);
+    border-radius: var(--va-radius-md);
+    padding: 5px 12px;
+    font-size: 12px;
+    color: var(--va-text-muted);
+    cursor: pointer;
+  }
+
+  .clean-btn:hover {
+    background: var(--va-bg-hover);
+    color: var(--va-text-danger, #e74c3c);
+    border-color: var(--va-text-danger, #e74c3c);
+  }
+
+  .clean-bar {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 14px;
+  }
+
+  .clean-action {
+    min-height: 32px;
+  }
+
+  .row-wrap {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 42px;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .row-wrap .row-btn {
+    min-width: 0;
+  }
+
+  .row-clean-btn {
+    width: 42px;
+    height: auto;
+    min-height: 74px;
+    padding: 0;
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--va-radius-md);
+    border: 1px solid var(--va-border-default);
+  }
+
+  @media (max-width: 720px) {
+    .app {
+      padding: 16px;
+    }
+
+    .titlebar {
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .list-summary {
+      grid-template-columns: 1fr;
+      align-items: start;
+    }
+
+    .summary-meta,
+    .clean-bar {
+      justify-content: flex-start;
+    }
+
+    .row-wrap,
+    .row-btn {
+      grid-template-columns: 1fr;
+    }
+
+    .row-clean-btn {
+      width: 100%;
+      min-height: 36px;
+    }
+
+    .slug {
+      width: fit-content;
+      max-width: 100%;
+    }
+  }
+
+  /* ---- Confirmation dialog ---- */
+
+  .confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .confirm-dialog {
+    background: var(--va-bg-surface, #1e1e1e);
+    border: 1px solid var(--va-border-strong);
+    border-radius: var(--va-radius-lg);
+    padding: 24px;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+
+  .confirm-dialog p {
+    margin: 0 0 8px;
+  }
+
+  .confirm-hint {
+    color: var(--va-text-subtle);
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+
+  .confirm-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .cancel-btn {
+    background: none;
+    border: 1px solid var(--va-border-default);
+    border-radius: 999px;
+    padding: 4px 16px;
+    font-size: 12px;
+    color: var(--va-text-primary);
+    cursor: pointer;
+  }
+
+  .cancel-btn:hover {
+    background: var(--va-bg-hover);
   }
 </style>

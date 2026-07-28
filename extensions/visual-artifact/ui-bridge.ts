@@ -15,6 +15,9 @@ import {
 import type { VisualArtifactSpec } from "./artifact-schema.ts";
 import {
   type ArtifactSummary,
+  cleanAll,
+  cleanProject,
+  deleteArtifact,
   listArtifacts,
   listProjects,
   readArtifact,
@@ -40,7 +43,10 @@ export type BridgeInboundMessage =
       projectName: string;
       slug: string;
       mutations: AnnotationMutation[];
-    };
+    }
+  | { type: "delete-artifact"; projectName: string; slug: string }
+  | { type: "clean-project"; projectName: string }
+  | { type: "clean-all" };
 
 export type BridgeOutboundEvent =
   | { type: "projects"; projects: { name: string; artifactCount: number }[] }
@@ -63,7 +69,10 @@ export type BridgeOutboundEvent =
       slug: string;
       annotations: unknown;
     }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | { type: "deleted"; projectName: string; slug: string }
+  | { type: "project-cleaned"; projectName: string }
+  | { type: "all-cleaned" };
 
 /* ------------------------------------------------------------------ */
 /*  Message Routing                                                    */
@@ -122,6 +131,25 @@ function readInboundMessage(message: unknown): BridgeInboundMessage | null {
         slug: message.slug,
         mutations: message.mutations as AnnotationMutation[],
       };
+
+    case "delete-artifact":
+      if (
+        typeof message.projectName !== "string" ||
+        typeof message.slug !== "string"
+      )
+        return null;
+      return {
+        type: "delete-artifact",
+        projectName: message.projectName,
+        slug: message.slug,
+      };
+
+    case "clean-project":
+      if (typeof message.projectName !== "string") return null;
+      return { type: "clean-project", projectName: message.projectName };
+
+    case "clean-all":
+      return { type: "clean-all" };
 
     default:
       return null;
@@ -221,6 +249,31 @@ async function handleMessage(
           slug: message.slug,
           annotations: result,
         });
+        break;
+      }
+
+      case "delete-artifact": {
+        deleteArtifact(projectRoot, message.projectName, message.slug);
+        dispatchEvent(window, {
+          type: "deleted",
+          projectName: message.projectName,
+          slug: message.slug,
+        });
+        break;
+      }
+
+      case "clean-project": {
+        cleanProject(projectRoot, message.projectName);
+        dispatchEvent(window, {
+          type: "project-cleaned",
+          projectName: message.projectName,
+        });
+        break;
+      }
+
+      case "clean-all": {
+        cleanAll(projectRoot);
+        dispatchEvent(window, { type: "all-cleaned" });
         break;
       }
     }

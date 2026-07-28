@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  cleanAll,
+  cleanProject,
   deleteArtifact,
   listArtifacts,
   listProjects,
@@ -12,6 +14,7 @@ import { getArtifactJsonPath } from "./paths.ts";
 
 const TEST_ROOT = path.join(process.cwd(), ".test-tmp", "artifact-store-test");
 const TEST_PROJECT = "test-project";
+const SECOND_PROJECT = "second-project";
 const TEST_SLUG = "test-artifact";
 
 const sampleSpec = {
@@ -33,12 +36,14 @@ describe("artifact-store", () => {
     deleteArtifact(TEST_ROOT, TEST_PROJECT, TEST_SLUG);
     deleteArtifact(TEST_ROOT, TEST_PROJECT, "artifact-2");
     deleteArtifact(TEST_ROOT, TEST_PROJECT, "legacy-mermaid");
+    deleteArtifact(TEST_ROOT, SECOND_PROJECT, TEST_SLUG);
   });
 
   afterEach(() => {
     deleteArtifact(TEST_ROOT, TEST_PROJECT, TEST_SLUG);
     deleteArtifact(TEST_ROOT, TEST_PROJECT, "artifact-2");
     deleteArtifact(TEST_ROOT, TEST_PROJECT, "legacy-mermaid");
+    deleteArtifact(TEST_ROOT, SECOND_PROJECT, TEST_SLUG);
   });
 
   it("writes and reads an artifact", () => {
@@ -123,5 +128,49 @@ describe("artifact-store", () => {
   it("handles empty artifact listing", () => {
     const artifacts = listArtifacts(TEST_ROOT, TEST_PROJECT);
     expect(artifacts).toEqual([]);
+  });
+
+  /* ---- cleanProject / cleanAll ---- */
+
+  it("cleanProject removes all artifacts in a project", () => {
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec as never);
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec2 as never);
+
+    cleanProject(TEST_ROOT, TEST_PROJECT);
+
+    const artifacts = listArtifacts(TEST_ROOT, TEST_PROJECT);
+    expect(artifacts).toEqual([]);
+  });
+
+  it("cleanAll removes all artifacts across all projects", () => {
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec as never);
+    writeArtifact(TEST_ROOT, SECOND_PROJECT, sampleSpec as never);
+
+    cleanAll(TEST_ROOT);
+
+    expect(listProjects(TEST_ROOT)).not.toContain(TEST_PROJECT);
+    expect(listProjects(TEST_ROOT)).not.toContain(SECOND_PROJECT);
+  });
+
+  it("cleanProject on non-existent project does not throw", () => {
+    expect(() => cleanProject(TEST_ROOT, "does-not-exist")).not.toThrow();
+  });
+
+  it("cleanAll on empty root does not throw", () => {
+    // Ensure empty
+    cleanAll(TEST_ROOT);
+    expect(() => cleanAll(TEST_ROOT)).not.toThrow();
+  });
+
+  it("cleanProject only removes the specified project", () => {
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec as never);
+    writeArtifact(TEST_ROOT, SECOND_PROJECT, sampleSpec as never);
+
+    cleanProject(TEST_ROOT, TEST_PROJECT);
+
+    // First project should be gone
+    expect(listProjects(TEST_ROOT)).not.toContain(TEST_PROJECT);
+    // Second project should remain
+    expect(listProjects(TEST_ROOT)).toContain(SECOND_PROJECT);
   });
 });

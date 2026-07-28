@@ -49,6 +49,11 @@ type VisualArtifactErrorEvent = CustomEvent<{
   message: string;
 }>;
 
+type VisualArtifactFeedbackSentEvent = CustomEvent<{
+  projectName: string;
+  slug: string;
+}>;
+
 declare global {
   interface Window {
     __VISUAL_ARTIFACT_BOOT__?: VisualArtifactBootData;
@@ -65,6 +70,7 @@ declare global {
     "visual-artifact:annotations": VisualArtifactAnnotationsEvent;
     "visual-artifact:annotation-result": VisualArtifactAnnotationResultEvent;
     "visual-artifact:error": VisualArtifactErrorEvent;
+    "visual-artifact:feedback-sent": VisualArtifactFeedbackSentEvent;
   }
 }
 

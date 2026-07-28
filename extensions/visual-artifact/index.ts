@@ -156,17 +156,35 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
         );
       }
 
-      const mermaidErrors = await validateMermaidNodesInSpec(validated.spec);
+      const { errors: mermaidErrors, fixedSpec: mermaidFixedSpec } =
+        await validateMermaidNodesInSpec(validated.spec);
+
+      // If auto-fix saved the day, use the fixed spec seamlessly
+      const finalSpec = mermaidFixedSpec ?? validated.spec;
+
       if (mermaidErrors.length > 0) {
-        return errorResult(
-          `Mermaid validation failed:\n- ${mermaidErrors.join("\n- ")}`,
-        );
+        // Check if every error was auto-fixed
+        const logMessage = `Mermaid validation failed (auto-fix applied to ${mermaidFixedSpec ? "some nodes" : "none"}):\n${mermaidErrors.join("\n")}`;
+        log.warn(logMessage);
+
+        if (!mermaidFixedSpec) {
+          // No auto-fix succeeded — return error with actionable hint
+          const hint =
+            "Common fixes:\n" +
+            '- Wrap label text containing `|`, `[`, `]`, `{`, `}`, `<`, `>` in quotes: `N["text"]`\n' +
+            '- For diamond nodes use `{"text"}` syntax\n' +
+            "- Escape double quotes inside labels with `&quot;`";
+          return errorResult(
+            `Mermaid validation failed:\n- ${mermaidErrors.join("\n- ")}\n\n${hint}`,
+          );
+        }
+        // Auto-fix succeeded for some/all errors — log it but proceed
       }
 
       const projectRoot = getDefaultProjectRoot();
       const projectName = deriveProjectName(projectRoot);
 
-      writeArtifact(projectRoot, projectName, validated.spec);
+      writeArtifact(projectRoot, projectName, finalSpec);
 
       try {
         await openVisualArtifactWindow({
@@ -174,10 +192,13 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
             view: "artifact",
             projectName,
             artifactSlug: slug,
-            artifactSpec: validated.spec,
+            artifactSpec: finalSpec,
           },
           projectRoot,
           projectName,
+          sendFeedback: async (text) => {
+            pi.sendUserMessage(text, { deliverAs: "followUp" });
+          },
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -243,6 +264,9 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
               },
           projectRoot,
           projectName,
+          sendFeedback: async (text) => {
+            pi.sendUserMessage(text, { deliverAs: "followUp" });
+          },
         });
 
         ctx.ui.notify(

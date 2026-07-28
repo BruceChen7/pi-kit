@@ -26,7 +26,9 @@ describe("createVisualArtifactHtml", () => {
       },
     });
 
-    expect(html).not.toMatch(/import\(["'](?:\/assets\/|\.\/)[^"']+\.js["']\)/);
+    expect(html).not.toMatch(
+      /import\s*\(\s*["'`](?:\/assets\/|\.\/)[^"'`]+\.js["'`]\s*\)/,
+    );
   });
 
   it("escapes closing tags inside inlined js bundles and injects boot data at the real head close", async () => {

@@ -29,6 +29,6 @@ describe("codex-web-search package integration", () => {
   it("declares defuddle as a runtime dependency", () => {
     const packageJson = readRootPackageJson();
 
-    expect(packageJson.dependencies?.defuddle).toBe("0.14.0");
+    expect(packageJson.dependencies?.defuddle).toBe("^0.19.2");
   });
 });

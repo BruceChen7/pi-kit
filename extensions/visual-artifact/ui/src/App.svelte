@@ -142,18 +142,12 @@ function artifactNodes(): { type: string; props: Record<string, unknown> }[] {
   return normalizeArtifactNodes(spec?.nodes, spec?.data);
 }
 
-/* ---- Comments toggle ---- */
+/* ---- Feedback panel ---- */
 
-let commentModeActive = $state(false);
-let commentThreadCount = $state(0);
+let feedbackOpen = $state(false);
 
-function toggleComments(): void {
-  commentModeActive = !commentModeActive;
-}
-
-function onCommentModeChange(active: boolean, count: number): void {
-  commentModeActive = active;
-  commentThreadCount = count;
+function toggleFeedback(): void {
+  feedbackOpen = !feedbackOpen;
 }
 
 /* ---- Cleanup actions ---- */
@@ -247,15 +241,12 @@ function handleCleanupResult(e: Event): void {
       </button>
       <button
         type="button"
-        class="comments-button"
-        class:comments-active={commentModeActive}
-        onclick={toggleComments}
-        aria-pressed={commentModeActive}
+        class="feedback-button"
+        class:feedback-active={feedbackOpen}
+        onclick={toggleFeedback}
+        aria-pressed={feedbackOpen}
       >
-        Comments
-        {#if commentThreadCount > 0}
-          <span class="comment-count">{commentThreadCount}</span>
-        {/if}
+        Feedback
       </button>
     {/if}
 
@@ -370,10 +361,9 @@ function handleCleanupResult(e: Event): void {
           <AnnotationProvider
             project={bootData.projectName}
             slug={bootData.artifactSlug}
-            bind:commentModeActive
-            onThreadCountChange={(n: number) => commentThreadCount = n}
+            bind:feedbackOpen
           >
-            <div class="artifact-layout" class:with-panel={commentModeActive}>
+            <div class="artifact-layout" class:with-panel={feedbackOpen}>
               <div class="artifact-main">
                 <VisualArtifactRenderer nodes={artifactNodes()} />
               </div>
@@ -413,6 +403,9 @@ function handleCleanupResult(e: Event): void {
 
 <style>
   .app {
+    --va-app-gutter: 24px;
+    --va-comment-panel-width: 360px;
+
     font-family: var(--va-font-sans);
     padding: 24px;
     color: var(--va-text-primary);
@@ -470,7 +463,7 @@ function handleCleanupResult(e: Event): void {
     padding: 0 4px;
   }
 
-  .comments-button {
+  .feedback-button {
     background: none;
     border: 1px solid var(--va-border-strong);
     border-radius: 999px;
@@ -478,31 +471,16 @@ function handleCleanupResult(e: Event): void {
     font-size: 12px;
     color: var(--va-text-primary);
     cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 6px;
   }
 
-  .comments-button:hover {
+  .feedback-button:hover {
     background: var(--va-bg-hover);
   }
 
-  .comments-active {
+  .feedback-active {
     background: var(--va-accent-primary);
     color: var(--va-text-inverse);
     border-color: var(--va-accent-primary);
-  }
-
-  .comment-count {
-    background: var(--va-bg-inverse-subtle);
-    border-radius: 999px;
-    padding: 0 6px;
-    font-size: 10px;
-    line-height: 16px;
-  }
-
-  .comments-active .comment-count {
-    background: var(--va-bg-inverse-strong);
   }
 
   .content {
@@ -517,11 +495,13 @@ function handleCleanupResult(e: Event): void {
   .artifact-main {
     flex: 1;
     min-width: 0;
-    transition: padding-right 0.2s ease;
+    transition: margin-right 0.2s ease;
   }
 
   .with-panel .artifact-main {
-    padding-right: 320px;
+    margin-right: calc(
+      var(--va-comment-panel-width) - var(--va-app-gutter)
+    );
   }
 
   .grid {
@@ -726,7 +706,13 @@ function handleCleanupResult(e: Event): void {
 
   @media (max-width: 720px) {
     .app {
+      --va-app-gutter: 16px;
+
       padding: 16px;
+    }
+
+    .with-panel .artifact-main {
+      margin-right: 0;
     }
 
     .titlebar {

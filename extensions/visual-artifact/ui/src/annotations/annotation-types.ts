@@ -1,9 +1,8 @@
 /**
- * Annotation types for the Glimpse UI.
+ * Simplified feedback types for the Glimpse UI.
  *
- * Shared types (AnnotationAuthor, AnnotationAnchor, etc.) are re-exported
- * from the canonical source at extensions/visual-artifact/shared/.
- * Frontend-only types (NodeIdentity, filter/view types) live here.
+ * No more thread/mutation/view/filter complexity.
+ * Just what's needed for: pick node → write note → add to list → send all.
  */
 
 export type {
@@ -22,6 +21,7 @@ export type NodeIdentity = {
   textSnippet?: string;
 };
 
-export type ThreadFilter = "all" | "open" | "resolved";
-export type PanelView = "list" | "composer" | "thread";
-export type AuthorStatus = "loading" | "ready" | "fallback";
+export type FeedbackItem = {
+  nodePath: string;
+  body: string;
+};

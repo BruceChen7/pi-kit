@@ -38,21 +38,19 @@ function fallbackMessage(type: string): string {
   return `[Unsupported node type: "${type}"]`;
 }
 
-/* ---- Annotation context ---- */
+/* ---- Feedback context (optional) ---- */
 
-// We use a try/getContext pattern so the renderer works both with and without
-// an annotation provider present (e.g. home/project views).
-let annotationCtx: {
-  store: import("../annotations/annotation-store.ts").AnnotationStoreHandle;
-  selectNodeForComment: (
-    node: import("../annotations/annotation-store.ts").NodeIdentity,
-  ) => void;
+let feedbackCtx: {
+  store: {
+    selectedNode: { nodePath: string } | null;
+    handleNodeClick: (e: MouseEvent) => void;
+  };
 } | null = $state(null);
 
 try {
-  annotationCtx = getContext("annotation");
+  feedbackCtx = getContext("feedback");
 } catch {
-  // No annotation provider — that's fine for home/project views.
+  // No feedback provider — that's fine for home/project views.
 }
 </script>
 
@@ -60,89 +58,59 @@ try {
   {@const Adapter = getAdapter(node.type)}
   {@const nId = nodeId(node, i)}
   {@const nPath = nodePath(i)}
-  {#if annotationCtx}
-    {@const store = annotationCtx.store}
-    {@const isCommentMode = store.isCommentMode}
-    {@const isPicking = store.isPickingNode}
-    {@const threadCount = store.getThreadCount(nId, nPath)}
-    {@const isHovered = store.hoveredNode?.nodePath === nPath}
-    {@const isCandidate = store.pickCandidateNode?.nodePath === nPath}
-    {@const isSelected = (store.selectedNode?.nodePath === nPath) || (store.highlightedNode?.nodePath === nPath) || isCandidate}
-    {@const isPreview = store.previewNode?.nodePath === nPath}
-    {@const annotationState = isSelected ? "selected" : (isHovered || isPreview) ? "hovered" : threadCount > 0 ? "has-thread" : "idle"}
-    {@const isClickable = isCommentMode || isPicking}
+  {@const isSelected = feedbackCtx?.store.selectedNode?.nodePath === nPath}
 
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-    <div
-      class="va-node"
-      class:va-clickable={isClickable}
-      data-va-type={node.type}
-      data-va-id={nId}
-      data-va-node-id={nId}
-      data-va-node-path={nPath}
-      data-va-node-type={node.type}
-      data-va-node-label={nodeLabel(node)}
-      data-annotation-state={annotationState}
-      onclick={(e) => {
-        if (!isClickable) return;
-        // In pick mode, find the closest VA node and select it.
-        const found = findClosestVaNode(e.target);
-        if (found) {
-          e.preventDefault();
-          e.stopPropagation();
-          annotationCtx.selectNodeForComment(found);
-        }
-      }}
-      onmouseenter={() => {
-        if (isClickable) store.setHoveredNode({ nodeId: nId, nodePath: nPath });
-      }}
-      onmouseleave={() => {
-        if (isClickable) store.setHoveredNode(null);
-      }}
-      role={isClickable ? "button" : undefined}
-      tabindex={isClickable ? 0 : undefined}
-      aria-label={isClickable ? `Comment on ${node.type} node` : undefined}
-    >
-      <!-- Annotation overlay ring -->
-      <div
-        class="va-annotation-ring"
-        class:va-ring-hovered={annotationState === "hovered"}
-        class:va-ring-selected={annotationState === "selected"}
-        class:va-ring-has-thread={annotationState === "has-thread"}
-      ></div>
-
-      {#if Adapter}
-        <Adapter {...node.props} _nodePath={nPath} />
-      {:else}
-        <p class="va-fallback">{fallbackMessage(node.type)}</p>
-      {/if}
-
-      <!-- Thread count badge -->
-      {#if isCommentMode && threadCount > 0}
-        <span class="va-thread-badge">{threadCount}</span>
-      {/if}
-    </div>
-  {:else}
-    <!-- No annotation context — plain renderer -->
-    <div class="va-node" data-va-type={node.type} data-va-id={nId}>
-      {#if Adapter}
-        <Adapter {...node.props} _nodePath={nPath} />
-      {:else}
-        <p class="va-fallback">{fallbackMessage(node.type)}</p>
-      {/if}
-    </div>
-  {/if}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div
+    class="va-node"
+    class:va-clickable={!!feedbackCtx}
+    class:va-selected={isSelected}
+    data-va-type={node.type}
+    data-va-id={nId}
+    data-va-node-id={nId}
+    data-va-node-path={nPath}
+    data-va-node-type={node.type}
+    data-va-node-label={nodeLabel(node)}
+    onclick={(e) => {
+      if (!feedbackCtx) return;
+      e.preventDefault();
+      e.stopPropagation();
+      feedbackCtx.store.handleNodeClick(e);
+    }}
+  >
+    {#if Adapter}
+      <Adapter {...node.props} _nodePath={nPath} />
+    {:else}
+      <p class="va-fallback">{fallbackMessage(node.type)}</p>
+    {/if}
+  </div>
 {/each}
 
 <style>
   .va-node {
     position: relative;
     width: 100%;
+    transition:
+      background 0.12s ease,
+      box-shadow 0.12s ease;
   }
 
   .va-clickable {
     cursor: pointer;
+  }
+
+  .va-clickable:hover {
+    box-shadow: inset 3px 0 0 var(--va-accent-primary);
+    border-radius: var(--va-radius-lg);
+  }
+
+  .va-selected {
+    box-shadow:
+      inset 3px 0 0 var(--va-accent-primary),
+      inset 0 0 0 1px var(--va-border-info-subtle);
+    border-radius: var(--va-radius-lg);
+    background: var(--va-bg-selected);
   }
 
   .va-fallback {
@@ -153,52 +121,5 @@ try {
     border-radius: 6px;
     font-size: 13px;
     font-family: monospace;
-  }
-
-  /* ---- Annotation ring overlay ---- */
-  .va-annotation-ring {
-    pointer-events: none;
-    position: absolute;
-    inset: 0;
-    border-radius: var(--va-radius-lg);
-    transition: all 0.12s ease;
-    opacity: 0;
-  }
-
-  .va-ring-hovered {
-    opacity: 1;
-    box-shadow: 0 0 0 2px var(--va-accent-primary);
-    background: var(--va-bg-info-subtle);
-  }
-
-  .va-ring-selected {
-    opacity: 1;
-    box-shadow: 0 0 0 2px var(--va-accent-primary);
-    background: var(--va-bg-selected);
-  }
-
-  .va-ring-has-thread {
-    opacity: 1;
-    box-shadow: 0 0 0 1px var(--va-accent-primary);
-    background: var(--va-bg-info-subtle);
-  }
-
-  /* ---- Thread count badge ---- */
-  .va-thread-badge {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    border-radius: 999px;
-    background: var(--va-accent-primary);
-    color: var(--va-text-inverse);
-    font-size: 10px;
-    font-weight: 600;
-    z-index: 10;
-    box-shadow: var(--va-shadow-badge);
   }
 </style>

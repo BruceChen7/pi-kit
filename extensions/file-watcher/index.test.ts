@@ -155,14 +155,12 @@ describe("file-watcher delay parsing", () => {
     expect(parseDelay(spec)).toBe(expected);
   });
 
-  it.each([
-    "badspec",
-    "",
-    "25:00",
-    "12:60",
-  ])("rejects invalid delay %s", (spec) => {
-    expect(parseDelay(spec)).toBeNull();
-  });
+  it.each(["badspec", "", "25:00", "12:60"])(
+    "rejects invalid delay %s",
+    (spec) => {
+      expect(parseDelay(spec)).toBeNull();
+    },
+  );
 
   it("parses absolute time later today", () => {
     const now = new Date("2026-05-21T08:00:00").getTime();

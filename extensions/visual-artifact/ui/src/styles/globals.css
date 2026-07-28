@@ -2,6 +2,13 @@
 /*  Visual Artifact — Design Tokens & Theme System                    */
 /* ------------------------------------------------------------------ */
 
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+  background: var(--va-bg-app);
+}
+
 :root,
 [data-theme="dark"] {
   /* Backgrounds */

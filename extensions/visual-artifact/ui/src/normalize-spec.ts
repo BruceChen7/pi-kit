@@ -253,11 +253,16 @@ export function normalizeArtifactNode(
   }
 
   if (type === "card" || type === "section") {
-    if (!Array.isArray(props.nodes) && children.length > 0) {
+    const propNodes = normalizeArtifactNodes(props.nodes, data);
+    const contentNodes = normalizeArtifactNodes(props.content, data);
+
+    if (propNodes.length > 0) {
+      props.nodes = propNodes;
+    } else if (children.length > 0) {
       props.nodes = children;
-    }
-    if (
-      !Array.isArray(props.nodes) &&
+    } else if (contentNodes.length > 0) {
+      props.nodes = contentNodes;
+    } else if (
       typeof props.content === "string" &&
       props.content.trim().length > 0
     ) {

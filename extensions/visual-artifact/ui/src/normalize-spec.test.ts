@@ -45,6 +45,44 @@ describe("normalizeArtifactNode", () => {
     ]);
   });
 
+  it("maps array content to props.nodes for nested containers", () => {
+    const node = normalizeArtifactNode({
+      type: "section",
+      props: {
+        title: "Architecture",
+        content: [
+          {
+            type: "mermaid",
+            props: { code: "flowchart LR\nA-->B" },
+          },
+          {
+            type: "callout",
+            props: { type: "info", content: "Nested content" },
+          },
+        ],
+      },
+    });
+
+    expect(node.props.nodes).toEqual([
+      {
+        type: "mermaid",
+        props: {
+          code: "flowchart LR\nA-->B",
+          definition: "flowchart LR\nA-->B",
+        },
+      },
+      {
+        type: "callout",
+        props: {
+          type: "info",
+          content: "Nested content",
+          variant: "info",
+          text: "Nested content",
+        },
+      },
+    ]);
+  });
+
   it("maps callout content and type aliases", () => {
     const node = normalizeArtifactNode({
       type: "callout",

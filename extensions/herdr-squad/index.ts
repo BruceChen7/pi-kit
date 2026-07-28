@@ -24,15 +24,20 @@ import {
   COLLECT_DEFAULT_LINES,
   COLLECT_HEADROOM_BYTES,
   COLLECT_PER_AGENT_MIN_BYTES,
+  DEFAULT_CLOSE_RETRIES,
+  DEFAULT_CLOSE_VERIFY_DELAY_MS,
   DEFAULT_WAIT_MS,
   formatAgentList,
   formatReport,
   HERDR_CLI_TIMEOUT_MS,
+  isPaneClosed,
   MANIFEST_FILE,
   MAX_PROMPT_LENGTH,
   MAX_SCOPE_LENGTH,
   MAX_TASK_LENGTH,
   MAX_WAIT_MS,
+  needsTabFallback,
+  type PaneCloseStatus,
   POLL_INTERVAL_MS,
   publicSquadDetails,
   RUN_DIR_PREFIX,
@@ -42,6 +47,7 @@ import {
   type SquadManifest,
   type SquadState,
   STATE_VERSION,
+  shouldRetry,
   validateStartParams,
 } from "./shared.ts";
 
@@ -1075,40 +1081,111 @@ export default function (pi: ExtensionAPI) {
       });
 
       // ── Cleanup: close tab / panes, dispose state ──────────────────
+      const cleanupResults: PaneCloseStatus[] = [];
       let tabCloseFailed = false;
+
       if (state.inTab) {
-        // In-tab mode: close agent panes only; herdr auto-collapses the layout
+        // In-tab mode: close agent panes with verification and retry.
+        // Allow ~1s total verification window (3 retries × ~300ms each).
         for (const agent of state.agents) {
-          try {
-            if (agent.paneId) {
+          if (!agent.paneId) {
+            cleanupResults.push({ agentLabel: agent.label, closed: false });
+            continue;
+          }
+          let closed = false;
+          for (let attempt = 0; attempt < DEFAULT_CLOSE_RETRIES; attempt++) {
+            try {
               await runHerdr(["pane", "close", agent.paneId]);
-              log.debug(`Agent pane closed`, {
-                paneId: agent.paneId,
-                label: agent.label,
-              });
+              await delay(DEFAULT_CLOSE_VERIFY_DELAY_MS, signal);
+              const live = await refreshLivePanes(state, signal);
+              const wasClosed = isPaneClosed(live.missing, agent.label);
+              if (wasClosed) {
+                closed = true;
+                log.debug(`Agent pane closed and verified`, {
+                  paneId: agent.paneId,
+                  label: agent.label,
+                });
+                break;
+              }
+              if (shouldRetry(attempt, DEFAULT_CLOSE_RETRIES, false)) {
+                log.debug(
+                  `Pane close retry ${attempt + 1}/${DEFAULT_CLOSE_RETRIES} for ${agent.label}`,
+                  { paneId: agent.paneId },
+                );
+              }
+            } catch (error) {
+              if (attempt === DEFAULT_CLOSE_RETRIES - 1) {
+                const msg =
+                  error instanceof Error ? error.message : String(error);
+                log.warn(
+                  `Agent pane close failed after ${DEFAULT_CLOSE_RETRIES} attempts`,
+                  { paneId: agent.paneId, label: agent.label, error: msg },
+                );
+              }
             }
+          }
+          cleanupResults.push({ agentLabel: agent.label, closed });
+        }
+
+        if (needsTabFallback(cleanupResults)) {
+          // Fallback: close the entire tab if some panes failed
+          log.warn(`Falling back to tab close for squad ${state.squadId}`, {
+            tabId: state.tabId,
+          });
+          try {
+            await runHerdr(["tab", "close", state.tabId]);
+            log.info(`Squad ${params.squadId} tab closed (fallback)`, {
+              tabId: state.tabId,
+            });
           } catch (error) {
+            tabCloseFailed = true;
             const msg = error instanceof Error ? error.message : String(error);
-            log.warn(`Agent pane close failed`, {
-              paneId: agent.paneId,
-              label: agent.label,
+            log.warn(`Squad ${params.squadId} tab close failed (fallback)`, {
+              tabId: state.tabId,
               error: msg,
             });
           }
         }
       } else {
-        try {
-          await runHerdr(["tab", "close", state.tabId]);
-          log.info(`Squad ${params.squadId} tab closed`, {
-            tabId: state.tabId,
-          });
-        } catch (error) {
-          tabCloseFailed = true;
-          const msg = error instanceof Error ? error.message : String(error);
-          log.warn(`Squad ${params.squadId} tab close failed`, {
-            tabId: state.tabId,
-            error: msg,
-          });
+        // Non-in-tab mode: close tab with verification and retry
+        for (let attempt = 0; attempt < DEFAULT_CLOSE_RETRIES; attempt++) {
+          try {
+            await runHerdr(["tab", "close", state.tabId]);
+            await delay(DEFAULT_CLOSE_VERIFY_DELAY_MS, signal);
+            // Verify the tab is actually gone
+            const tabResponse = await herdr(
+              ["tab", "list", "--workspace", state.workspaceId],
+              signal,
+            );
+            const tabs = (tabResponse.result?.tabs ?? []) as Array<{
+              tab_id: string;
+            }>;
+            const tabRemoved = !tabs.some(
+              (t: { tab_id: string }) => t.tab_id === state.tabId,
+            );
+            if (tabRemoved) {
+              log.info(`Squad ${params.squadId} tab closed and verified`, {
+                tabId: state.tabId,
+              });
+              break;
+            }
+            if (shouldRetry(attempt, DEFAULT_CLOSE_RETRIES, false)) {
+              log.debug(
+                `Tab close retry ${attempt + 1}/${DEFAULT_CLOSE_RETRIES}`,
+                { tabId: state.tabId },
+              );
+            }
+          } catch (error) {
+            if (attempt === DEFAULT_CLOSE_RETRIES - 1) {
+              tabCloseFailed = true;
+              const msg =
+                error instanceof Error ? error.message : String(error);
+              log.warn(
+                `Tab close failed after ${DEFAULT_CLOSE_RETRIES} attempts`,
+                { tabId: state.tabId, error: msg },
+              );
+            }
+          }
         }
       }
 
@@ -1120,6 +1197,7 @@ export default function (pi: ExtensionAPI) {
       pi.appendEntry(SQUAD_ENTRY_TYPE, { state: disposedState });
       squads.delete(state.squadId);
       log.info(`Squad ${params.squadId} disposed`, {
+        paneStatuses: cleanupResults.map((r) => `${r.agentLabel}=${r.closed}`),
         tabCloseFailed,
       });
 
@@ -1129,6 +1207,7 @@ export default function (pi: ExtensionAPI) {
           ...publicSquadDetails(disposedState),
           structuredCount,
           fullOutputPath,
+          paneCloseResults: cleanupResults,
           tabCloseFailed,
         },
       };

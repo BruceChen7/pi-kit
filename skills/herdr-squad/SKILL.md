@@ -61,7 +61,13 @@ Tool calls must be sequential across separate model turns because Pi may execute
 3. In the next tool round, call `herdr_squad_wait` by itself.
 4. Wait for the wait result, including timeout or blocker information.
 5. In the next tool round, call `herdr_squad_collect` by itself, even if a child timed out, blocked, or failed to submit a structured report.
-6. Synthesize only after collection returns.
+6. **Verify cleanup**: After `herdr_squad_collect` returns, inspect the
+   `tabCloseFailed` field in the result details.
+   - If `tabCloseFailed` is `true`, the squad's tab or agent panes could not be
+     fully closed — note this as a risk in the synthesis.
+   - If the details do not contain `tabCloseFailed` (e.g. legacy extension
+     version), assume cleanup was best-effort and proceed.
+7. Synthesize only after the cleanup verification in step 6 is complete.
 
 Never construct tabs or panes with raw `herdr` commands when the squad tools are available. Do not pass guessed Herdr IDs between tools; use only the `squadId`.
 

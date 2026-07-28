@@ -8,6 +8,7 @@ dist/
 build/
 extensions/kanban-worktree/ui-dist/
 extensions/cache-graph/ui-dist/
+extensions/visual-artifact/ui-dist/
 .pi-memory/
 package-lock.json
 pnpm-lock.yaml

@@ -82,6 +82,24 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
     props: { text: "string", level: '"h1" | "h2" | "h3" | "h4"' },
   },
   {
+    type: "list",
+    label: "List",
+    description: "Bulleted or numbered list of prose items.",
+    props: {
+      items: '(string | { content: string; type?: "bullet" | "number" })[]',
+      ordered: "boolean",
+    },
+    example: {
+      type: "list",
+      props: {
+        items: [
+          { type: "bullet", content: "First item" },
+          { type: "bullet", content: "Second item" },
+        ],
+      },
+    },
+  },
+  {
     type: "card",
     label: "Card",
     description: "Bordered container with optional title and description.",
@@ -237,6 +255,7 @@ const SUPPORTED_NODE_TYPES = new Set(
 const REQUIRED_NODE_PROPS: Record<string, string[]> = {
   text: ["text"],
   heading: ["text", "level"],
+  list: ["items"],
   table: ["headers", "rows"],
   "code-block": ["code"],
   link: ["text"],

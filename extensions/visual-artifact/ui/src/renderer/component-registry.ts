@@ -23,6 +23,7 @@ import LinkAdapter from "./adapters/meta/link.svelte";
 import BlockquoteAdapter from "./adapters/prose/blockquote.svelte";
 import CalloutAdapter from "./adapters/prose/callout.svelte";
 import HeadingAdapter from "./adapters/prose/heading.svelte";
+import ListAdapter from "./adapters/prose/list.svelte";
 import QuoteAdapter from "./adapters/prose/quote.svelte";
 import TextAdapter from "./adapters/prose/text.svelte";
 import StepAdapter from "./adapters/timeline/step.svelte";
@@ -38,6 +39,7 @@ const registry: Record<string, AdapterComponent> = {
   quote: QuoteAdapter,
   callout: CalloutAdapter,
   blockquote: BlockquoteAdapter,
+  list: ListAdapter,
   // data
   table: TableAdapter,
   "stat-card": StatCardAdapter,

@@ -185,15 +185,48 @@ describe("validate", () => {
     }
   });
 
-  it("rejects unsupported node types", () => {
+  it("accepts list nodes", () => {
     const result = validate({
       ...minimalValidSpec,
-      nodes: [{ type: "list", props: { items: ["a", "b"] } }],
+      nodes: [
+        {
+          type: "list",
+          props: {
+            items: [
+              "Plain item",
+              { type: "bullet", content: "Structured item" },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("requires list items", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [{ type: "list", props: {} }],
     });
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.errors).toContain('Unsupported node type: "list".');
+      expect(result.errors).toContain('Node "list" requires prop "items".');
+    }
+  });
+
+  it("rejects unsupported node types", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [{ type: "unknown-widget", props: {} }],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContain(
+        'Unsupported node type: "unknown-widget".',
+      );
     }
   });
 

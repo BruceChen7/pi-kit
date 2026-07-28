@@ -380,6 +380,49 @@ export function formatReport(
   ].join("\n");
 }
 
+// ─── Cleanup decision helpers (pure, testable) ───────────────────────
+
+export type PaneCloseStatus = {
+  agentLabel: string;
+  closed: boolean;
+};
+
+export type CleanupResult = {
+  paneStatuses: PaneCloseStatus[];
+  tabCloseFailed: boolean;
+};
+
+/**
+ * Maximum close attempts per pane before escalating to tab-level fallback.
+ * 3 attempts × 300ms delay ≈ 1s total verification window.
+ */
+export const DEFAULT_CLOSE_RETRIES = 3;
+
+/** Delay (ms) between a pane close command and the verification check. */
+export const DEFAULT_CLOSE_VERIFY_DELAY_MS = 300;
+
+/** Determine whether a specific agent's pane is confirmed closed. */
+export function isPaneClosed(
+  missingAgentLabels: string[],
+  agentLabel: string,
+): boolean {
+  return missingAgentLabels.includes(agentLabel);
+}
+
+/** Decide whether cleanup should escalate to tab-level close. */
+export function needsTabFallback(results: PaneCloseStatus[]): boolean {
+  return results.some((r) => !r.closed);
+}
+
+/** Decide whether another close attempt should be made. */
+export function shouldRetry(
+  attempt: number,
+  maxRetries: number,
+  paneWasClosed: boolean,
+): boolean {
+  return !paneWasClosed && attempt < maxRetries - 1;
+}
+
 export function verifyManifestAgent(
   manifest: SquadManifest,
   squadId: string,

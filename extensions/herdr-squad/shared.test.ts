@@ -1,18 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { readSquadReport } from "./io.ts";
-import type { SquadAgentState, SquadReport, SquadState } from "./shared.ts";
+import type {
+  PaneCloseStatus,
+  SquadAgentState,
+  SquadReport,
+  SquadState,
+} from "./shared.ts";
 import {
   buildAgentCommand,
   buildChildPrompt,
   buildSplitPlan,
   formatAgentList,
   formatReport,
+  isPaneClosed,
+  needsTabFallback,
   normalizeDisplayText,
   parseSquadReportJSON,
   publicSquadDetails,
   reportFileName,
   resolveSplitTarget,
   shellQuote,
+  shouldRetry,
   validateExplicitModel,
   validateStartParams,
   verifyManifestAgent,
@@ -839,5 +847,79 @@ describe("buildAgentCommand", () => {
       "/tmp/prompt.md",
     );
     expect(cmd).not.toContain("--model");
+  });
+});
+
+// ─── isPaneClosed ────────────────────────────────────────────────────
+
+describe("isPaneClosed", () => {
+  it("returns true when agent label is in missing list", () => {
+    expect(isPaneClosed(["Agent A", "Agent B"], "Agent A")).toBe(true);
+  });
+
+  it("returns false when agent label is not in missing list", () => {
+    expect(isPaneClosed(["Agent B"], "Agent A")).toBe(false);
+  });
+
+  it("returns false when missing list is empty", () => {
+    expect(isPaneClosed([], "Agent A")).toBe(false);
+  });
+
+  it("returns false for partial label match", () => {
+    expect(isPaneClosed(["Agent Apple"], "Agent A")).toBe(false);
+  });
+});
+
+// ─── needsTabFallback ────────────────────────────────────────────────
+
+describe("needsTabFallback", () => {
+  it("returns true when any pane is not closed", () => {
+    const results: PaneCloseStatus[] = [
+      { agentLabel: "A", closed: true },
+      { agentLabel: "B", closed: false },
+    ];
+    expect(needsTabFallback(results)).toBe(true);
+  });
+
+  it("returns false when all panes are closed", () => {
+    const results: PaneCloseStatus[] = [
+      { agentLabel: "A", closed: true },
+      { agentLabel: "B", closed: true },
+    ];
+    expect(needsTabFallback(results)).toBe(false);
+  });
+
+  it("returns false when results array is empty", () => {
+    expect(needsTabFallback([])).toBe(false);
+  });
+});
+
+// ─── shouldRetry ─────────────────────────────────────────────────────
+
+describe("shouldRetry", () => {
+  it("returns true when pane not closed and attempt < maxRetries - 1", () => {
+    expect(shouldRetry(0, 3, false)).toBe(true);
+    expect(shouldRetry(1, 3, false)).toBe(true);
+  });
+
+  it("returns false when pane is already closed", () => {
+    expect(shouldRetry(0, 3, true)).toBe(false);
+    expect(shouldRetry(1, 3, true)).toBe(false);
+  });
+
+  it("returns false on the final attempt even if pane not closed", () => {
+    expect(shouldRetry(2, 3, false)).toBe(false);
+  });
+
+  it("returns false when attempt >= maxRetries - 1", () => {
+    expect(shouldRetry(3, 3, false)).toBe(false);
+    expect(shouldRetry(5, 3, false)).toBe(false);
+  });
+
+  it("handles different maxRetries values", () => {
+    expect(shouldRetry(0, 1, false)).toBe(false); // maxRetries=1 → no retries
+    expect(shouldRetry(0, 5, false)).toBe(true); // maxRetries=5 → first 3 can retry
+    expect(shouldRetry(3, 5, false)).toBe(true);
+    expect(shouldRetry(4, 5, false)).toBe(false); // last attempt
   });
 });

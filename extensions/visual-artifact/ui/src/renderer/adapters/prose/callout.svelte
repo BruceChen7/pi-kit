@@ -4,24 +4,24 @@ let { text = "", variant = "info" }: { text?: string; variant?: string } =
 
 const styles: Record<string, { bg: string; border: string; color: string }> = {
   info: {
-    bg: "rgba(59, 130, 246, 0.08)",
-    border: "rgba(59, 130, 246, 0.25)",
-    color: "#93c5fd",
+    bg: "var(--va-bg-info-subtle)",
+    border: "var(--va-border-info-subtle)",
+    color: "var(--va-accent-primary-text)",
   },
   success: {
-    bg: "rgba(34, 197, 94, 0.08)",
-    border: "rgba(34, 197, 94, 0.25)",
-    color: "#86efac",
+    bg: "var(--va-bg-success-subtle)",
+    border: "var(--va-border-success-subtle)",
+    color: "var(--va-accent-success-text)",
   },
   warning: {
-    bg: "rgba(234, 179, 8, 0.08)",
-    border: "rgba(234, 179, 8, 0.25)",
-    color: "#fde68a",
+    bg: "var(--va-bg-warning-subtle)",
+    border: "var(--va-border-warning-subtle)",
+    color: "var(--va-accent-warning-text)",
   },
   danger: {
-    bg: "rgba(239, 68, 68, 0.08)",
-    border: "rgba(239, 68, 68, 0.25)",
-    color: "#fca5a5",
+    bg: "var(--va-bg-danger-subtle)",
+    border: "var(--va-border-danger-subtle)",
+    color: "var(--va-accent-danger-text)",
   },
 };
 
@@ -37,7 +37,7 @@ const s = $derived(styles[variant] ?? styles.info);
     padding: 10px 14px;
     margin: 12px 0;
     border: 1px solid;
-    border-radius: 7px;
+    border-radius: var(--va-radius-sm);
     font-size: 13px;
     line-height: 1.5;
   }

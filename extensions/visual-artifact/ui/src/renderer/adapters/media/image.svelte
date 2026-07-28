@@ -22,13 +22,13 @@ let {
   img {
     max-width: 100%;
     height: auto;
-    border-radius: 8px;
-    border: 1px solid #334155;
+    border-radius: var(--va-radius-md);
+    border: 1px solid var(--va-border-default);
   }
 
   figcaption {
     margin-top: 6px;
-    color: #64748b;
+    color: var(--va-text-subtle);
     font-size: 12px;
   }
 </style>

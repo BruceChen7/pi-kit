@@ -16,68 +16,17 @@ import path from "node:path";
 import { getArtifactBundleDir, getTempDir } from "./paths.ts";
 
 /* ------------------------------------------------------------------ */
-/*  Types                                                              */
+/*  Types — re-exported from shared canonical source                   */
 /* ------------------------------------------------------------------ */
 
-export type AnnotationAuthor = {
-  name: string;
-  email?: string;
-};
-
-export type AnnotationAnchor = {
-  nodeId: string;
-  nodePath?: string;
-  nodeType?: string;
-  textSnippet?: string;
-};
-
-export type AnnotationMessage = {
-  id: string;
-  author: AnnotationAuthor;
-  body: string;
-  createdAt: string;
-  editedAt?: string;
-};
-
-export type AnnotationThread = {
-  id: string;
-  anchor: AnnotationAnchor;
-  status: "open" | "resolved";
-  messages: AnnotationMessage[];
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type AnnotationMutation =
-  | {
-      type: "createThread";
-      threadId: string;
-      anchor: AnnotationAnchor;
-      author: AnnotationAuthor;
-      body: string;
-    }
-  | {
-      type: "addMessage";
-      threadId: string;
-      messageId: string;
-      author: AnnotationAuthor;
-      body: string;
-    }
-  | {
-      type: "resolveThread";
-      threadId: string;
-    }
-  | {
-      type: "reopenThread";
-      threadId: string;
-    };
-
-export type AnnotationDocument = {
-  version: number;
-  project: string;
-  slug: string;
-  threads: AnnotationThread[];
-};
+export type {
+  AnnotationAnchor,
+  AnnotationAuthor,
+  AnnotationDocument,
+  AnnotationMessage,
+  AnnotationMutation,
+  AnnotationThread,
+} from "./shared/annotation-types.ts";
 
 /* ------------------------------------------------------------------ */
 /*  Store                                                              */
@@ -117,9 +66,19 @@ export function readAnnotations(
 }
 
 /**
+ * Create an empty annotation document (pure, no IO).
+ */
+export function createEmptyAnnotations(
+  project: string,
+  slug: string,
+): AnnotationDocument {
+  return { version: 1, project, slug, threads: [] };
+}
+
+/**
  * Ensure the annotations.json exists for an artifact, creating an empty one if needed.
  */
-function ensureAnnotationsExist(
+export function getOrCreateAnnotations(
   projectRoot: string,
   projectName: string,
   slug: string,
@@ -127,18 +86,31 @@ function ensureAnnotationsExist(
   const existing = readAnnotations(projectRoot, projectName, slug);
   if (existing) return existing;
 
-  const doc: AnnotationDocument = {
-    version: 1,
-    project: projectName,
-    slug,
-    threads: [],
-  };
+  const doc = createEmptyAnnotations(projectName, slug);
   writeAnnotationsAtomic(projectRoot, projectName, slug, doc);
   return doc;
 }
 
 /**
- * Apply mutations to an annotation document.
+ * Apply a batch of mutations to an in-memory document.
+ *
+ * This is the pure decision core — no IO, no clock reads.
+ * Timestamps must be injected via the `now` parameter.
+ */
+export function applyMutationsToDoc(
+  doc: AnnotationDocument,
+  mutations: AnnotationMutation[],
+  now: string,
+): AnnotationDocument {
+  for (const mutation of mutations) {
+    applyMutation(doc, mutation, now);
+  }
+  doc.version += 1;
+  return doc;
+}
+
+/**
+ * Apply mutations to an annotation document, persisting to disk.
  * Returns the updated document.
  */
 export function applyMutations(
@@ -147,20 +119,17 @@ export function applyMutations(
   slug: string,
   mutations: AnnotationMutation[],
 ): AnnotationDocument {
-  const doc = ensureAnnotationsExist(projectRoot, projectName, slug);
-
-  for (const mutation of mutations) {
-    applyMutation(doc, mutation);
-  }
-
-  doc.version += 1;
-  writeAnnotationsAtomic(projectRoot, projectName, slug, doc);
-  return doc;
+  const doc = getOrCreateAnnotations(projectRoot, projectName, slug);
+  const now = new Date().toISOString();
+  const updated = applyMutationsToDoc(doc, mutations, now);
+  writeAnnotationsAtomic(projectRoot, projectName, slug, updated);
+  return updated;
 }
 
 function applyMutation(
   doc: AnnotationDocument,
   mutation: AnnotationMutation,
+  now: string,
 ): void {
   switch (mutation.type) {
     case "createThread": {
@@ -173,11 +142,11 @@ function applyMutation(
             id: `${mutation.threadId}-msg-1`,
             author: mutation.author,
             body: mutation.body,
-            createdAt: new Date().toISOString(),
+            createdAt: now,
           },
         ],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: now,
+        updatedAt: now,
       };
       doc.threads.push(thread);
       break;
@@ -190,9 +159,9 @@ function applyMutation(
         id: mutation.messageId,
         author: mutation.author,
         body: mutation.body,
-        createdAt: new Date().toISOString(),
+        createdAt: now,
       });
-      thread.updatedAt = new Date().toISOString();
+      thread.updatedAt = now;
       break;
     }
 
@@ -200,7 +169,7 @@ function applyMutation(
       const thread = doc.threads.find((t) => t.id === mutation.threadId);
       if (!thread || thread.status === "resolved") break;
       thread.status = "resolved";
-      thread.updatedAt = new Date().toISOString();
+      thread.updatedAt = now;
       break;
     }
 
@@ -208,7 +177,7 @@ function applyMutation(
       const thread = doc.threads.find((t) => t.id === mutation.threadId);
       if (!thread || thread.status === "open") break;
       thread.status = "open";
-      thread.updatedAt = new Date().toISOString();
+      thread.updatedAt = now;
       break;
     }
   }

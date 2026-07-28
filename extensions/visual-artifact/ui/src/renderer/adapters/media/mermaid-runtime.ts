@@ -1,4 +1,4 @@
-export type MermaidAppTheme = "dark" | "light";
+export type MermaidAppTheme = string;
 
 export type MermaidRuntimeApi = {
   initialize(config: Record<string, unknown>): void;
@@ -6,7 +6,7 @@ export type MermaidRuntimeApi = {
   render(id: string, code: string): Promise<{ svg: string }> | { svg: string };
 };
 
-const MERMAID_THEME_VARIABLES = {
+const MERMAID_THEME_VARIABLES: Record<string, Record<string, string>> = {
   dark: {
     background: "#0f172a",
     primaryColor: "#1e293b",
@@ -57,6 +57,12 @@ export function getMermaidTheme(theme: MermaidAppTheme): "base" {
   return "base";
 }
 
+export function getMermaidThemeVariables(
+  theme: MermaidAppTheme,
+): Record<string, string> {
+  return MERMAID_THEME_VARIABLES[theme] ?? MERMAID_THEME_VARIABLES.dark;
+}
+
 export function getMermaidRenderConfig(
   theme: MermaidAppTheme,
   fontFamily = "var(--va-font-sans)",
@@ -66,7 +72,7 @@ export function getMermaidRenderConfig(
     theme: getMermaidTheme(theme),
     securityLevel: "strict",
     fontFamily,
-    themeVariables: MERMAID_THEME_VARIABLES[theme],
+    themeVariables: getMermaidThemeVariables(theme),
   };
 }
 

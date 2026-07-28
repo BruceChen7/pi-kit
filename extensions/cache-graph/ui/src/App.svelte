@@ -1,4 +1,5 @@
 <script lang="ts">
+import { registerGlimpseCloseShortcuts } from "../../../shared/glimpse-ui-shortcuts.ts";
 import {
   buildChartBarDetail,
   type ChartBarDetail,
@@ -219,16 +220,7 @@ function clearStatusDismissTimer(): void {
   statusDismissTimer = null;
 }
 
-function handleCloseShortcut(event: KeyboardEvent): void {
-  if (!event.metaKey || event.key.toLowerCase() !== "w") return;
-  event.preventDefault();
-  window.glimpse?.close();
-}
-
-$effect(() => {
-  window.addEventListener("keydown", handleCloseShortcut);
-  return () => window.removeEventListener("keydown", handleCloseShortcut);
-});
+$effect(() => registerGlimpseCloseShortcuts());
 
 $effect(() => {
   window.addEventListener("cache-graph:metrics", handleDashboardResult);

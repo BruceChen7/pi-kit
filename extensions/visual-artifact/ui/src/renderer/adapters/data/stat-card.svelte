@@ -12,9 +12,9 @@ const trendIcons: Record<string, string> = {
 };
 
 const trendColors: Record<string, string> = {
-  up: "#22c55e",
-  down: "#ef4444",
-  neutral: "#94a3b8",
+  up: "var(--va-accent-success)",
+  down: "var(--va-accent-danger)",
+  neutral: "var(--va-accent-neutral)",
 };
 </script>
 
@@ -23,7 +23,7 @@ const trendColors: Record<string, string> = {
   <p class="va-stat-value">
     {value}
     {#if trend && trendIcons[trend]}
-      <span class="va-trend" style="color: {trendColors[trend] ?? '#94a3b8'}">
+      <span class="va-trend" style="color: {trendColors[trend] ?? 'var(--va-accent-neutral)'}">
         {trendIcons[trend]}
       </span>
     {/if}
@@ -33,15 +33,15 @@ const trendColors: Record<string, string> = {
 <style>
   .va-stat-card {
     padding: 16px;
-    border: 1px solid #334155;
-    border-radius: 9px;
-    background: #1e293b;
+    border: 1px solid var(--va-border-default);
+    border-radius: var(--va-radius-md);
+    background: var(--va-bg-surface);
     margin: 8px 0;
   }
 
   .va-stat-label {
     margin: 0 0 6px;
-    color: #64748b;
+    color: var(--va-text-subtle);
     font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
@@ -52,7 +52,7 @@ const trendColors: Record<string, string> = {
     margin: 0;
     font-size: 24px;
     font-weight: 700;
-    color: #f1f5f9;
+    color: var(--va-text-primary);
     line-height: 1.2;
   }
 

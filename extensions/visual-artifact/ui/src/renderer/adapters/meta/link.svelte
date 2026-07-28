@@ -12,18 +12,18 @@ let { text = "", href = "" }: { text?: string; href?: string } = $props();
 
 <style>
   .va-link {
-    color: #60a5fa;
+    color: var(--va-accent-primary-text);
     text-decoration: none;
     font-size: 13px;
   }
 
   .va-link:hover {
     text-decoration: underline;
-    color: #93c5fd;
+    color: var(--va-accent-primary);
   }
 
   .va-link-text {
-    color: #e2e8f0;
+    color: var(--va-text-secondary);
     cursor: default;
   }
 

@@ -86,13 +86,18 @@ if (!validated.ok) {
   process.exit(1);
 }
 
-const vspec = validated.ok ? validated.spec : null;
+if (!validated.ok || !validated.spec) {
+  console.error("Validation failed, cannot write artifact");
+  process.exit(1);
+}
+
+const vspec = validated.spec;
 
 /* ------------------------------------------------------------------ */
 /*  3. Write artifact                                                 */
 /* ------------------------------------------------------------------ */
 console.log("\n3. Writing artifact...");
-writeArtifact(PROJECT_ROOT, PROJECT, vspec!);
+writeArtifact(PROJECT_ROOT, PROJECT, vspec);
 console.log(`  wrote to ${PROJECT_ROOT}/.pi/visual-artifact/artifacts/`);
 
 const readBack = readArtifact(PROJECT_ROOT, PROJECT, SLUG);

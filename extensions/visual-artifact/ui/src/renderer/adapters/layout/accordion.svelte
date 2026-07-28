@@ -1,11 +1,13 @@
 <script lang="ts">
 let {
   items = [],
+  _nodePath = "",
 }: {
   items?: {
     title: string;
     nodes: { type: string; props: Record<string, unknown> }[];
   }[];
+  _nodePath?: string;
 } = $props();
 
 let openIndex = $state<number | null>(null);
@@ -29,7 +31,10 @@ function toggle(i: number): void {
         </button>
         {#if openIndex === i}
           <div class="va-accordion-body">
-            <VisualArtifactRenderer nodes={item.nodes} />
+            <VisualArtifactRenderer
+              nodes={item.nodes}
+              basePath={`${_nodePath}.props.items.${i}.nodes`}
+            />
           </div>
         {/if}
       </div>
@@ -40,13 +45,13 @@ function toggle(i: number): void {
 <style>
   .va-accordion {
     margin: 12px 0;
-    border: 1px solid #334155;
-    border-radius: 8px;
+    border: 1px solid var(--va-border-default);
+    border-radius: var(--va-radius-md);
     overflow: hidden;
   }
 
   .va-accordion-item {
-    border-bottom: 1px solid #334155;
+    border-bottom: 1px solid var(--va-border-default);
   }
 
   .va-accordion-item:last-child {
@@ -61,7 +66,7 @@ function toggle(i: number): void {
     padding: 10px 14px;
     background: transparent;
     border: none;
-    color: #e2e8f0;
+    color: var(--va-text-secondary);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -69,15 +74,15 @@ function toggle(i: number): void {
   }
 
   button:hover {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--va-bg-hover);
   }
 
   .va-accordion-open {
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--va-bg-selected);
   }
 
   .va-chevron {
-    color: #64748b;
+    color: var(--va-text-subtle);
     font-size: 11px;
     margin-left: 8px;
   }

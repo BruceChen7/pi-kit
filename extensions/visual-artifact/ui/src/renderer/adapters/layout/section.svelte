@@ -2,9 +2,11 @@
 let {
   title = "",
   nodes = [],
+  _nodePath = "",
 }: {
   title?: string;
   nodes?: { type: string; props: Record<string, unknown> }[];
+  _nodePath?: string;
 } = $props();
 </script>
 
@@ -13,7 +15,7 @@ let {
     <h2 class="va-section-title">{title}</h2>
   {/if}
   <div class="va-section-body">
-    <VisualArtifactRenderer {nodes} />
+    <VisualArtifactRenderer {nodes} basePath={`${_nodePath}.props.nodes`} />
   </div>
 </section>
 
@@ -26,9 +28,9 @@ let {
     margin: 0 0 8px;
     font-size: 16px;
     font-weight: 700;
-    color: #f1f5f9;
+    color: var(--va-text-primary);
     padding-bottom: 6px;
-    border-bottom: 1px solid #334155;
+    border-bottom: 1px solid var(--va-border-default);
   }
 
   .va-section-body {

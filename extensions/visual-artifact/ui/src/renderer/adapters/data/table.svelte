@@ -41,11 +41,11 @@ let { headers = [], rows = [] }: { headers?: string[]; rows?: string[][] } =
   th, td {
     padding: 8px 12px;
     text-align: left;
-    border-bottom: 1px solid #334155;
+    border-bottom: 1px solid var(--va-border-default);
   }
 
   th {
-    color: #94a3b8;
+    color: var(--va-text-muted);
     font-weight: 600;
     font-size: 11px;
     text-transform: uppercase;
@@ -53,10 +53,10 @@ let { headers = [], rows = [] }: { headers?: string[]; rows?: string[][] } =
   }
 
   td {
-    color: #e2e8f0;
+    color: var(--va-text-secondary);
   }
 
   tbody tr:hover {
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--va-bg-hover);
   }
 </style>

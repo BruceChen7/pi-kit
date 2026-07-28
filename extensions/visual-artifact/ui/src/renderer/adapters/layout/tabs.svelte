@@ -2,15 +2,21 @@
 let {
   tabs = [],
   activeIndex = 0,
+  _nodePath = "",
 }: {
   tabs?: {
     label: string;
     nodes: { type: string; props: Record<string, unknown> }[];
   }[];
   activeIndex?: number;
+  _nodePath?: string;
 } = $props();
 
-let activeTab = $state<number>(0);
+function initialActiveTab(): number {
+  return activeIndex;
+}
+
+let activeTab = $state<number>(initialActiveTab());
 
 function selectTab(index: number): void {
   activeTab = index;
@@ -34,7 +40,10 @@ function selectTab(index: number): void {
     </div>
     <div class="va-tab-content" role="tabpanel">
       {#if tabs[activeTab]}
-        <VisualArtifactRenderer nodes={tabs[activeTab].nodes} />
+        <VisualArtifactRenderer
+          nodes={tabs[activeTab].nodes}
+          basePath={`${_nodePath}.props.tabs.${activeTab}.nodes`}
+        />
       {/if}
     </div>
   </div>
@@ -48,7 +57,7 @@ function selectTab(index: number): void {
   .va-tab-bar {
     display: flex;
     gap: 2px;
-    border-bottom: 1px solid #334155;
+    border-bottom: 1px solid var(--va-border-default);
     padding: 0;
   }
 
@@ -57,19 +66,19 @@ function selectTab(index: number): void {
     background: transparent;
     border: none;
     border-bottom: 2px solid transparent;
-    color: #94a3b8;
+    color: var(--va-text-muted);
     font-size: 13px;
     cursor: pointer;
     transition: color 0.15s, border-color 0.15s;
   }
 
   button:hover {
-    color: #e2e8f0;
+    color: var(--va-text-secondary);
   }
 
   .va-tab-active {
-    color: #60a5fa;
-    border-bottom-color: #3b82f6;
+    color: var(--va-accent-primary-text);
+    border-bottom-color: var(--va-accent-primary);
   }
 
   .va-tab-content {

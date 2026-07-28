@@ -161,6 +161,42 @@ describe("validate", () => {
     }
   });
 
+  it("rejects known node types with legacy prop names", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [
+        { type: "text", props: { content: "legacy text" } },
+        { type: "mermaid", props: { chart: "flowchart LR\nA-->B" } },
+        { type: "link", props: { label: "legacy link", url: "" } },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContain(
+        'Node "text" requires prop "text" (legacy prop "content" is not supported).',
+      );
+      expect(result.errors).toContain(
+        'Node "mermaid" requires prop "definition" (legacy prop "chart" is not supported).',
+      );
+      expect(result.errors).toContain(
+        'Node "link" requires prop "text" (legacy prop "label" is not supported).',
+      );
+    }
+  });
+
+  it("rejects unsupported node types", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [{ type: "list", props: { items: ["a", "b"] } }],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContain('Unsupported node type: "list".');
+    }
+  });
+
   it("defaults layout to vertical when not set", () => {
     const result = validate(minimalValidSpec);
     expect(result.ok).toBe(true);

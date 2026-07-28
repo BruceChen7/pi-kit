@@ -43,19 +43,19 @@ const maxLines = $derived(Math.max(beforeLines.length, afterLines.length));
 <style>
   .va-diff {
     margin: 12px 0;
-    border: 1px solid #334155;
-    border-radius: 8px;
+    border: 1px solid var(--va-border-default);
+    border-radius: var(--va-radius-md);
     overflow: hidden;
   }
 
   .va-diff-lang {
     margin: 0;
     padding: 6px 12px;
-    background: #1e293b;
-    color: #64748b;
+    background: var(--va-bg-surface);
+    color: var(--va-text-subtle);
     font-size: 11px;
     font-family: monospace;
-    border-bottom: 1px solid #334155;
+    border-bottom: 1px solid var(--va-border-default);
   }
 
   .va-diff-grid {
@@ -68,19 +68,19 @@ const maxLines = $derived(Math.max(beforeLines.length, afterLines.length));
   }
 
   .va-diff-panel:first-child {
-    border-right: 1px solid #334155;
+    border-right: 1px solid var(--va-border-default);
   }
 
   .va-diff-panel-label {
     margin: 0;
     padding: 4px 10px;
-    background: #0f172a;
-    color: #64748b;
+    background: var(--va-bg-code);
+    color: var(--va-text-subtle);
     font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    border-bottom: 1px solid #334155;
+    border-bottom: 1px solid var(--va-border-default);
   }
 
   pre {
@@ -89,18 +89,18 @@ const maxLines = $derived(Math.max(beforeLines.length, afterLines.length));
     font-size: 12px;
     font-family: monospace;
     line-height: 1.5;
-    color: #cbd5e1;
+    color: var(--va-text-secondary);
     white-space: pre;
   }
 
   .va-diff-removed {
-    background: rgba(239, 68, 68, 0.08);
-    color: #fca5a5;
+    background: var(--va-bg-danger-subtle);
+    color: var(--va-accent-danger-text);
   }
 
   .va-diff-added {
-    background: rgba(34, 197, 94, 0.08);
-    color: #86efac;
+    background: var(--va-bg-success-subtle);
+    color: var(--va-accent-success-text);
   }
 
   .va-diff-empty {

@@ -26,7 +26,7 @@ const sizes: Record<string, string> = {
     margin: 20px 0 8px;
     font-weight: 700;
     line-height: 1.3;
-    color: #f1f5f9;
+    color: var(--va-text-primary);
   }
 
   h1.va-heading { font-size: 24px; }

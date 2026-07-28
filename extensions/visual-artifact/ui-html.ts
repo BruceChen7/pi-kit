@@ -28,10 +28,24 @@ export async function createVisualArtifactHtml(
   options: CreateVisualArtifactHtmlOptions,
 ): Promise<string> {
   const uiDistDir = options.uiDistDir ?? DEFAULT_UI_DIST_DIR;
-  return injectBootData(
-    await inlineBuiltAssets(await readUiHtml(uiDistDir), uiDistDir),
-    options.bootData,
+  const rawHtml = await readUiHtml(uiDistDir);
+  const bootData = options.bootData;
+
+  console.log(
+    `[visual-artifact] ui-dist: ${uiDistDir}, raw HTML: ${rawHtml.length} bytes`,
   );
+
+  const built = await inlineBuiltAssets(rawHtml, uiDistDir);
+  const result = injectBootData(built, bootData);
+
+  const bootJsonSize = JSON.stringify(bootData).length;
+  console.log(
+    `[visual-artifact] Final HTML: ${result.length} bytes, ` +
+      `boot data: ${bootJsonSize} bytes, ` +
+      `view: ${bootData.view}`,
+  );
+
+  return result;
 }
 
 async function readUiHtml(uiDistDir: string): Promise<string> {
@@ -57,6 +71,11 @@ async function inlineScriptAssets(
       const content = escapeInlineScriptContent(
         await readAsset(uiDistDir, src),
       );
+      if (!content) {
+        console.warn(
+          `[visual-artifact] Script asset is empty or missing: ${src}`,
+        );
+      }
       return `<script${before}${after}>${content}</script>`;
     },
   );
@@ -71,6 +90,11 @@ async function inlineStyleAssets(
     /<link\b([^>]*)\bhref="([^"]+)"([^>]*)>/g,
     async (_match, before: string, href: string) => {
       const content = await readAsset(uiDistDir, href);
+      if (!content) {
+        console.warn(
+          `[visual-artifact] Style asset is empty or missing: ${href}`,
+        );
+      }
       return `<style${before}>${content}</style>`;
     },
   );

@@ -36,6 +36,14 @@ type StderrWriteArgs = [
   callback?: StderrWriteCallback,
 ];
 
+const GLIMPSE_STDERR_LOG_PATH = path.join(
+  os.homedir(),
+  ".pi",
+  "agent",
+  "visual-artifact",
+  "glimpse-stderr.log",
+);
+
 export function openGlimpseWindow(
   html: string,
   options: GlimpseWindowOptions,
@@ -43,9 +51,28 @@ export function openGlimpseWindow(
   const host = getNativeHostInfo() as NativeHostInfo;
   const args = [...(host.extraArgs ?? []), ...glimpseWindowArgs(options)];
   const proc = spawn(host.path, args, {
-    stdio: ["pipe", "pipe", "ignore"],
+    stdio: ["pipe", "pipe", "pipe"],
     windowsHide: process.platform === "win32",
   });
+
+  // Collect child process stderr for diagnostics
+  const stderrChunks: Buffer[] = [];
+  proc.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+  proc.on("close", () => {
+    if (stderrChunks.length > 0) {
+      try {
+        mkdirSync(path.dirname(GLIMPSE_STDERR_LOG_PATH), { recursive: true });
+        const msg = Buffer.concat(stderrChunks).toString("utf8");
+        appendFileSync(
+          GLIMPSE_STDERR_LOG_PATH,
+          `--- ${new Date().toISOString()} ---\n${msg}\n`,
+        );
+      } catch {
+        // Best-effort diagnostic logging
+      }
+    }
+  });
+
   return new PiKitGlimpseWindow(proc, html);
 }
 

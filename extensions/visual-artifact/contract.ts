@@ -32,5 +32,7 @@ export const CONTRACT = {
     label: entry.label,
     description: entry.description,
     props: entry.props,
+    // Include per-type guidelines where defined (e.g., mermaid)
+    ...(entry.guidelines ? { guidelines: entry.guidelines } : {}),
   })),
 } as const;

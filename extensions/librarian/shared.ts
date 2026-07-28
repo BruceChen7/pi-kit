@@ -172,7 +172,7 @@ export function readRangeSlice(
   content: string,
   range?: number[],
 ): { content: string; startLine: number } {
-  if (!range || range.length !== 2) {
+  if (range?.length !== 2) {
     return { content, startLine: 1 };
   }
 

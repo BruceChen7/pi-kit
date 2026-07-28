@@ -96,8 +96,7 @@ function collectUserPromptsFromEntries(entries: SessionEntry[]): PromptEntry[] {
   for (const entry of entries) {
     if (entry?.type !== "message") continue;
     const message = entry?.message;
-    if (!message || message.role !== "user" || !Array.isArray(message.content))
-      continue;
+    if (message?.role !== "user" || !Array.isArray(message.content)) continue;
     const text = extractText(message.content);
     if (!text) continue;
     const timestamp = Number(
@@ -198,12 +197,7 @@ async function loadPromptHistoryForCwd(
       }
       if (entry?.type !== "message") continue;
       const message = entry?.message;
-      if (
-        !message ||
-        message.role !== "user" ||
-        !Array.isArray(message.content)
-      )
-        continue;
+      if (message?.role !== "user" || !Array.isArray(message.content)) continue;
       const text = extractText(message.content);
       if (!text) continue;
       const timestamp = Number(

@@ -44,6 +44,14 @@ function goHome(): void {
   window.glimpse?.send({ type: "list-projects" });
 }
 
+function goBack(): void {
+  if (currentView === "artifact") {
+    goProject(bootData.projectName ?? "");
+  } else {
+    goHome();
+  }
+}
+
 function goProject(name: string): void {
   currentView = "project";
   bootData = { ...bootData, view: "project", projectName: name };
@@ -221,7 +229,7 @@ function handleCleanupResult(e: Event): void {
 <main class="app" data-theme={theme}>
   <header class="titlebar">
     {#if currentView !== "home"}
-      <button type="button" class="back-button" onclick={goHome}>&larr;</button>
+      <button type="button" class="back-button" onclick={goBack}>&larr;</button>
     {/if}
     <h1>Visual Artifact</h1>
     {#if currentView === "artifact" && bootData.artifactSlug}

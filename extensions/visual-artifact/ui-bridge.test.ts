@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { GlimpseWindow } from "../shared/glimpse-window.ts";
-import { applyMutations } from "./annotation-store.ts";
 import { writeArtifact } from "./artifact-store.ts";
 import visualArtifactExtension from "./index.ts";
 import { attachVisualArtifactBridge } from "./ui-bridge.ts";

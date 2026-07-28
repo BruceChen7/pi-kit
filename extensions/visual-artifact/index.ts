@@ -163,22 +163,35 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
       const finalSpec = mermaidFixedSpec ?? validated.spec;
 
       if (mermaidErrors.length > 0) {
-        // Check if every error was auto-fixed
-        const logMessage = `Mermaid validation failed (auto-fix applied to ${mermaidFixedSpec ? "some nodes" : "none"}):\n${mermaidErrors.join("\n")}`;
-        log.warn(logMessage);
+        log.warn(
+          `Mermaid validation failed (auto-fix applied to ${mermaidFixedSpec ? "some nodes" : "none"}):\n${mermaidErrors.join("\n")}`,
+        );
 
-        if (!mermaidFixedSpec) {
-          // No auto-fix succeeded — return error with actionable hint
-          const hint =
-            "Common fixes:\n" +
-            '- Wrap label text containing `|`, `[`, `]`, `{`, `}`, `<`, `>` in quotes: `N["text"]`\n' +
-            '- For diamond nodes use `{"text"}` syntax\n' +
-            "- Escape double quotes inside labels with `&quot;`";
-          return errorResult(
-            `Mermaid validation failed:\n- ${mermaidErrors.join("\n- ")}\n\n${hint}`,
-          );
-        }
-        // Auto-fix succeeded for some/all errors — log it but proceed
+        // Build agent-readable error with context
+        const details = mermaidErrors
+          .map((err) => {
+            // err looks like "nodes[14]<mermaid>: Expecting ..."
+            const match = err.match(/^(.*?<mermaid>):\s*(.*)$/u);
+            if (!match) return `  • ${err}`;
+            const [, location, parseMsg] = match;
+            return [
+              `  • ${location}`,
+              `    Problem: unquoted special characters (like parentheses) in label`,
+              `    Fix: wrap the label with quotes: N["label with ()"] instead of N[label with ()]`,
+              `    Parse error: ${parseMsg}`,
+            ].join("\n");
+          })
+          .join("\n");
+
+        return errorResult(
+          `MERMAID_VALIDATION_ERROR: ${mermaidErrors.length} diagram(s) failed to parse.\n\n${details}\n\nSUGGESTED_FIX: Rewrite each failing diagram with ALL labels quoted using N["label"] syntax. ` +
+            `Ensure ( ) [ ] | and other special characters are inside quoted labels:\n` +
+            `  Before: WRITE_ENTRY[writeSessionEntry(key, snapshot)]:::storage\n` +
+            `  After:  WRITE_ENTRY["writeSessionEntry(key, snapshot)"]:::storage\n` +
+            `Also avoid inline ::: after bracket — use separate lines:\n` +
+            `  Before: N[label]:::class\n` +
+            `  After:  N["label"]\n  N:::class`,
+        );
       }
 
       const projectRoot = getDefaultProjectRoot();

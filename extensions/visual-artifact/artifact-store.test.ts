@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { VisualArtifactSpec } from "./artifact-schema.ts";
 import {
   cleanAll,
   cleanProject,
@@ -17,14 +18,14 @@ const TEST_PROJECT = "test-project";
 const SECOND_PROJECT = "second-project";
 const TEST_SLUG = "test-artifact";
 
-const sampleSpec = {
+const sampleSpec: VisualArtifactSpec = {
   slug: TEST_SLUG,
   title: "Test Artifact",
   description: "For testing.",
   nodes: [{ type: "text", props: { text: "Hello.", size: "md" } }],
 };
 
-const sampleSpec2 = {
+const sampleSpec2: VisualArtifactSpec = {
   slug: "artifact-2",
   title: "Artifact Two",
   nodes: [{ type: "text", props: { text: "Second.", size: "sm" } }],
@@ -47,7 +48,7 @@ describe("artifact-store", () => {
   });
 
   it("writes and reads an artifact", () => {
-    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec as never);
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec);
     const read = readArtifact(TEST_ROOT, TEST_PROJECT, TEST_SLUG);
     expect(read).not.toBeNull();
     expect(read?.slug).toBe(TEST_SLUG);
@@ -60,7 +61,7 @@ describe("artifact-store", () => {
   });
 
   it("normalizes legacy mermaid syntax when reading an artifact", () => {
-    writeArtifact(TEST_ROOT, TEST_PROJECT, {
+    const legacySpec: VisualArtifactSpec = {
       slug: "legacy-mermaid",
       title: "Legacy Mermaid",
       nodes: [
@@ -75,21 +76,21 @@ describe("artifact-store", () => {
           },
         },
       ],
-    } as never);
+    };
+    writeArtifact(TEST_ROOT, TEST_PROJECT, legacySpec);
 
     const read = readArtifact(TEST_ROOT, TEST_PROJECT, "legacy-mermaid");
     const code = read?.nodes[0]?.props.code;
 
     expect(typeof code).toBe("string");
-    expect(String(code)).toContain(
-      'SHOW_TODO["#id [✓/~/!] text<br/>progress bar"]',
-    );
+    expect(String(code)).toContain('SHOW_TODO["#id [✓/~/!] text');
+    expect(String(code)).toContain("progress bar");
 
     deleteArtifact(TEST_ROOT, TEST_PROJECT, "legacy-mermaid");
   });
 
   it("writes atomically (file exists after write)", () => {
-    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec as never);
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec);
     const targetPath = getArtifactJsonPath(TEST_ROOT, TEST_PROJECT, TEST_SLUG);
     expect(existsSync(targetPath)).toBe(true);
 
@@ -98,14 +99,14 @@ describe("artifact-store", () => {
   });
 
   it("lists projects", () => {
-    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec as never);
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec);
     const projects = listProjects(TEST_ROOT);
     expect(projects).toContain(TEST_PROJECT);
   });
 
   it("lists artifacts in a project", () => {
-    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec as never);
-    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec2 as never);
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec);
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec2);
 
     const artifacts = listArtifacts(TEST_ROOT, TEST_PROJECT);
     expect(artifacts).toHaveLength(2);
@@ -114,7 +115,7 @@ describe("artifact-store", () => {
   });
 
   it("deletes an artifact", () => {
-    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec as never);
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec);
     deleteArtifact(TEST_ROOT, TEST_PROJECT, TEST_SLUG);
     const read = readArtifact(TEST_ROOT, TEST_PROJECT, TEST_SLUG);
     expect(read).toBeNull();
@@ -133,8 +134,8 @@ describe("artifact-store", () => {
   /* ---- cleanProject / cleanAll ---- */
 
   it("cleanProject removes all artifacts in a project", () => {
-    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec as never);
-    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec2 as never);
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec);
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec2);
 
     cleanProject(TEST_ROOT, TEST_PROJECT);
 
@@ -143,8 +144,8 @@ describe("artifact-store", () => {
   });
 
   it("cleanAll removes all artifacts across all projects", () => {
-    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec as never);
-    writeArtifact(TEST_ROOT, SECOND_PROJECT, sampleSpec as never);
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec);
+    writeArtifact(TEST_ROOT, SECOND_PROJECT, sampleSpec);
 
     cleanAll(TEST_ROOT);
 
@@ -163,8 +164,8 @@ describe("artifact-store", () => {
   });
 
   it("cleanProject only removes the specified project", () => {
-    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec as never);
-    writeArtifact(TEST_ROOT, SECOND_PROJECT, sampleSpec as never);
+    writeArtifact(TEST_ROOT, TEST_PROJECT, sampleSpec);
+    writeArtifact(TEST_ROOT, SECOND_PROJECT, sampleSpec);
 
     cleanProject(TEST_ROOT, TEST_PROJECT);
 

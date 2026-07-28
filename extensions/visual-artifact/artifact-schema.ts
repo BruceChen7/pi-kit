@@ -65,6 +65,11 @@ export type NodeTypeEntry = {
   description: string;
   props: Record<string, string>;
   example?: Record<string, unknown>;
+  /**
+   * Agent-facing guidelines to help generate correct code for this node type.
+   * These are included in the LLM-facing contract.
+   */
+  guidelines?: string[];
 };
 
 export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
@@ -138,6 +143,14 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
     label: "Mermaid Diagram",
     description: "Mermaid diagram definition rendered as SVG.",
     props: { definition: "string" },
+    guidelines: [
+      'Always use double-quoted labels in square brackets: N["label text"] not N[label text]',
+      "Never use parentheses () inside unquoted labels — they confuse the parser",
+      'Use ::: class application on a separate line, NOT inline: write N["label"] then N:::class',
+      "Avoid <br/> in labels — use shorter text or split into multiple nodes instead",
+      'For sequenceDiagram, quote participant names with special chars: participant A as "my name"',
+      "Keep diagram type declaration simple: flowchart LR, sequenceDiagram, stateDiagram-v2, etc.",
+    ],
   },
   {
     type: "log",

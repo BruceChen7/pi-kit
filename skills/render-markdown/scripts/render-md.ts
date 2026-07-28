@@ -70,7 +70,7 @@ async function validateMermaidBlocks(src: string): Promise<MermaidIssue[]> {
 	for (let i = 0; i < blocks.length; i++) {
 		const code = blocks[i][1]
 		if (/<br\s*\/?>/i.test(code)) {
-			issues.push({ index: i + 1, message: "uses <br/> in label — forbidden; use a shorter label or split nodes" })
+			issues.push({ index: i + 1, message: "uses <br/> in label — use literal newlines inside quoted labels instead of <br/> for multiline text" })
 			continue
 		}
 		try {

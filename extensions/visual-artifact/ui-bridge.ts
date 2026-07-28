@@ -11,7 +11,6 @@ import {
   type AnnotationMutation,
   applyMutations,
   getOrCreateAnnotations,
-  readAnnotationsFlat,
 } from "./annotation-store.ts";
 import type { VisualArtifactSpec } from "./artifact-schema.ts";
 import {

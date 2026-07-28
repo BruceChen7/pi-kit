@@ -93,14 +93,21 @@ itself; that's working as intended.
 
 **Rules for mermaid blocks:**
 
-- **Never use `<br/>` (or `<br>`) inside node labels.** It renders
-  inconsistently across mermaid versions and the validator rejects it.
-  Use a shorter label, split into two nodes, or put the second line in
-  prose below the diagram.
-- **Quote any label that starts with `/`, contains `(`, `)`, `[`, `]`,
-  `:`, or other shape-syntax characters.** `A["/tmp/x.html"]` not
-  `A[/tmp/x.html]` — the latter parses as a trapezoid shape and lexes
-  badly.
+- **Never use `<br/>` (or `<br>`) inside node labels.** The validator
+  rejects it. Use a shorter label, split into two nodes, put the second
+  line in prose below the diagram, or — for multiline labels inside
+  a visual artifact — rely on the auto-normalizer which uses literal
+  newlines (which modern mermaid supports inside quoted labels).
+- **Always quote labels that contain special characters:**
+  `N["label with () or [] or | or :"]` not `N[label with ()]`.
+  Unquoted parentheses `()` in labels cause parse errors with the
+  `:::` class operator. `aggressiveQuoteLabels` auto-fix handles this,
+  but it's better to start correct.
+- **Quote labels that start with `/`:** `A["/tmp/x.html"]` not
+  `A[/tmp/x.html]` — the latter parses as a trapezoid shape.
+- **Use `:::` on a separate line, not inline:** write
+  `N["label"]` then on the next line `N:::class`, instead of
+  `N[label]:::class`.
 
 ### Shared rendering
 

@@ -5,7 +5,7 @@
  * Layout:
  *   Title bar ("Feedback" + close)
  *   Selected node display
- *   Textarea + [Add] button
+ *   Textarea with keyboard shortcut
  *   Pending items list
  *   [Send all (n)] button
  */
@@ -39,8 +39,14 @@ $effect(() => {
   const firstRenderedNode = layout?.querySelector<HTMLElement>(
     ".artifact-main > .va-node",
   );
+  const firstContentNode =
+    firstRenderedNode?.dataset.vaType === "section"
+      ? (firstRenderedNode.querySelector<HTMLElement>(
+          ".va-section-body > .va-node",
+        ) ?? firstRenderedNode)
+      : firstRenderedNode;
   const updatePanelTop = () => {
-    const alignmentTarget = firstRenderedNode ?? layout;
+    const alignmentTarget = firstContentNode ?? layout;
     panelTop = Math.max(0, alignmentTarget?.getBoundingClientRect().top ?? 0);
   };
   const observer =
@@ -50,7 +56,7 @@ $effect(() => {
 
   updatePanelTop();
   if (layout) observer?.observe(layout);
-  if (firstRenderedNode) observer?.observe(firstRenderedNode);
+  if (firstContentNode) observer?.observe(firstContentNode);
   window.addEventListener("scroll", updatePanelTop, { passive: true });
   window.addEventListener("resize", updatePanelTop);
 
@@ -65,19 +71,30 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === "Escape" && s().draftText.trim()) {
     e.preventDefault();
     s().setDraftText("");
-    return;
   }
-  // Cmd+Enter or Ctrl+Enter → send feedback
-  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+}
+
+function handleComposerKeydown(e: KeyboardEvent) {
+  if (e.isComposing) return;
+
+  // Ctrl+Enter: add current text as pending item
+  if (e.ctrlKey && e.key === "Enter") {
     e.preventDefault();
-    // Add draft text first if any
     if (s().draftText.trim()) {
       s().addItem();
     }
-    // Then send all pending items
-    if (s().pendingItems.length > 0) {
-      s().sendFeedback();
+  }
+
+  // Cmd+Enter (macOS): add current text + send all to agent
+  if (e.metaKey && e.key === "Enter") {
+    e.preventDefault();
+    if (s().draftText.trim()) {
+      s().addItem();
     }
+    // Small delay to let the item be added before sending
+    requestAnimationFrame(() => {
+      s().sendFeedback();
+    });
   }
 }
 </script>
@@ -132,21 +149,20 @@ function handleKeydown(e: KeyboardEvent) {
 
     <!-- Composer -->
     <div class="va-composer">
-      <textarea
-        class="va-textarea"
-        value={s().draftText}
-        oninput={(e) => s().setDraftText(e.currentTarget.value)}
-        placeholder="Write feedback..."
-        aria-label="Feedback text"
-      ></textarea>
-      <button
-        type="button"
-        class="va-add-btn"
-        disabled={!s().draftText.trim()}
-        onclick={s().addItem}
-      >
-        Add
-      </button>
+      <div class="va-textarea-wrap">
+        <textarea
+          class="va-textarea"
+          value={s().draftText}
+          oninput={(e) => s().setDraftText(e.currentTarget.value)}
+          onkeydown={handleComposerKeydown}
+          placeholder="Write feedback..."
+          aria-label="Feedback text"
+          aria-describedby="va-feedback-shortcut"
+        ></textarea>
+        <span id="va-feedback-shortcut" class="va-composer-shortcut">
+          Ctrl+Enter to add · Cmd+Enter to add &amp; send all
+        </span>
+      </div>
     </div>
 
     <!-- Pending list -->
@@ -188,9 +204,6 @@ function handleKeydown(e: KeyboardEvent) {
           ? "Sending..."
           : `Send all (${s().pendingItems.length}) to agent`}
       </button>
-      {#if s().pendingItems.length > 0}
-        <span class="va-shortcut-hint">Cmd+Enter</span>
-      {/if}
     </div>
   </aside>
 {/if}
@@ -204,6 +217,7 @@ function handleKeydown(e: KeyboardEvent) {
     height: calc(100vh - var(--va-panel-top, 0px));
     background: var(--va-bg-surface);
     border-left: 1px solid var(--va-border-default);
+    border-radius: var(--va-radius-lg) 0 0 var(--va-radius-lg);
     box-shadow: -12px 0 32px rgba(2, 6, 23, 0.24);
     display: flex;
     flex-direction: column;
@@ -311,20 +325,21 @@ function handleKeydown(e: KeyboardEvent) {
 
   /* ---- Composer ---- */
   .va-composer {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: end;
-    gap: 10px;
     padding: 14px 16px;
     border-bottom: 1px solid var(--va-border-default);
     flex-shrink: 0;
   }
 
+  .va-textarea-wrap {
+    position: relative;
+  }
+
   .va-textarea {
+    display: block;
     width: 100%;
     min-width: 0;
-    min-height: 72px;
-    padding: 10px 12px;
+    min-height: 96px;
+    padding: 10px 12px 32px;
     border: 1px solid var(--va-border-default);
     border-radius: var(--va-radius-sm);
     background: var(--va-bg-app);
@@ -340,26 +355,15 @@ function handleKeydown(e: KeyboardEvent) {
     border-color: var(--va-accent-primary);
   }
 
-  .va-add-btn {
-    min-width: 64px;
-    min-height: 36px;
-    background: var(--va-accent-primary);
-    color: var(--va-text-inverse);
-    border: none;
-    border-radius: var(--va-radius-sm);
-    padding: 8px 14px;
-    font-size: 13px;
-    cursor: pointer;
+  .va-composer-shortcut {
+    position: absolute;
+    right: 10px;
+    bottom: 9px;
+    color: var(--va-text-subtle);
+    font-size: 10px;
+    line-height: 1;
     white-space: nowrap;
-  }
-
-  .va-add-btn:hover:not(:disabled) {
-    opacity: 0.9;
-  }
-
-  .va-add-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+    pointer-events: none;
   }
 
   /* ---- Pending list ---- */
@@ -467,12 +471,4 @@ function handleKeydown(e: KeyboardEvent) {
     cursor: not-allowed;
   }
 
-  .va-shortcut-hint {
-    display: block;
-    text-align: center;
-    color: var(--va-text-subtle);
-    font-size: 10px;
-    margin-top: 4px;
-    letter-spacing: 0.04em;
-  }
 </style>

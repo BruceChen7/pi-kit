@@ -176,8 +176,15 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
           projectRoot,
           projectName,
         });
-      } catch {
-        // Artifact creation should still succeed when Glimpse is unavailable.
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(
+          `[visual-artifact] Failed to open Glimpse window for "${slug}": ${message}`,
+        );
+        return errorResult(
+          `Artifact saved, but failed to open Glimpse window: ${message}. ` +
+            "The artifact can still be opened later via the /visual-artifact command.",
+        );
       }
 
       return result(`Visual artifact "${title}" created. Slug: ${slug}`);

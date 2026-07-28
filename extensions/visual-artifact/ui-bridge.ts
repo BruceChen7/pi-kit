@@ -11,6 +11,7 @@ import {
   type AnnotationMutation,
   applyMutations,
   getOrCreateAnnotations,
+  readAnnotationsFlat,
 } from "./annotation-store.ts";
 import type { VisualArtifactSpec } from "./artifact-schema.ts";
 import {
@@ -22,6 +23,7 @@ import {
   listProjects,
   readArtifact,
 } from "./artifact-store.ts";
+import { getArtifactJsonPath } from "./paths.ts";
 
 /* ------------------------------------------------------------------ */
 /*  Message Protocol Types                                             */
@@ -31,6 +33,7 @@ export type BridgeContext = {
   window: GlimpseWindow;
   projectRoot: string;
   projectName: string;
+  sendFeedback: (text: string) => Promise<void>;
 };
 
 export type BridgeInboundMessage =
@@ -46,7 +49,12 @@ export type BridgeInboundMessage =
     }
   | { type: "delete-artifact"; projectName: string; slug: string }
   | { type: "clean-project"; projectName: string }
-  | { type: "clean-all" };
+  | { type: "clean-all" }
+  | {
+      type: "feedback";
+      items: { nodePath: string; body: string }[];
+      slug?: string;
+    };
 
 export type BridgeOutboundEvent =
   | { type: "projects"; projects: { name: string; artifactCount: number }[] }
@@ -72,7 +80,8 @@ export type BridgeOutboundEvent =
   | { type: "error"; message: string }
   | { type: "deleted"; projectName: string; slug: string }
   | { type: "project-cleaned"; projectName: string }
-  | { type: "all-cleaned" };
+  | { type: "all-cleaned" }
+  | { type: "feedback-sent"; projectName: string; slug: string };
 
 /* ------------------------------------------------------------------ */
 /*  Message Routing                                                    */
@@ -150,6 +159,15 @@ function readInboundMessage(message: unknown): BridgeInboundMessage | null {
 
     case "clean-all":
       return { type: "clean-all" };
+
+    case "feedback":
+      return {
+        type: "feedback",
+        items: Array.isArray(message.items)
+          ? (message.items as { nodePath: string; body: string }[])
+          : [],
+        slug: typeof message.slug === "string" ? message.slug : undefined,
+      };
 
     default:
       return null;
@@ -274,6 +292,51 @@ async function handleMessage(
       case "clean-all": {
         cleanAll(projectRoot);
         dispatchEvent(window, { type: "all-cleaned" });
+        break;
+      }
+
+      case "feedback": {
+        const slug = message.slug ?? "";
+        const items = message.items ?? [];
+        if (items.length === 0) {
+          dispatchEvent(window, {
+            type: "error",
+            message: "No feedback items to send.",
+          });
+          break;
+        }
+
+        const specPath = getArtifactJsonPath(
+          projectRoot,
+          context.projectName,
+          slug,
+        );
+        const lines: string[] = [
+          "## 🎨 Visual Artifact Feedback",
+          "",
+          `**Project:** ${context.projectName}`,
+          `**Slug:** ${slug}`,
+          `**Spec path:** ${specPath}`,
+          "",
+          "Please modify `artifact.json` (the spec path above) to address the following feedback, then call `create_visual_artifact` with the same slug and updated nodes/data to re-open the artifact.",
+          "",
+        ];
+
+        lines.push("### Feedback");
+        lines.push("");
+        for (const item of items) {
+          lines.push(`- (${item.nodePath}) ${item.body}`);
+        }
+
+        const text = lines.join("\n");
+        await context.sendFeedback(text);
+
+        dispatchEvent(window, {
+          type: "feedback-sent",
+          projectName: context.projectName,
+          slug,
+        });
+        window.close();
         break;
       }
     }

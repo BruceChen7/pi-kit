@@ -27,6 +27,7 @@ export type OpenVisualArtifactWindowOptions = {
   bootData: VisualArtifactBootData;
   projectRoot: string;
   projectName: string;
+  sendFeedback: (text: string) => Promise<void>;
   openWindow?: OpenWindowFn;
   glimpseStderrLogPath?: string;
   uiDistDir?: string;
@@ -86,6 +87,7 @@ export async function openVisualArtifactWindow(
     window,
     projectRoot: options.projectRoot,
     projectName: options.projectName,
+    sendFeedback: options.sendFeedback,
   };
 
   attachVisualArtifactBridge(bridgeContext);

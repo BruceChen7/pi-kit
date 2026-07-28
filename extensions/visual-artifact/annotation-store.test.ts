@@ -7,6 +7,7 @@ import {
   createEmptyAnnotations,
   getOrCreateAnnotations,
   readAnnotations,
+  readAnnotationsFlat,
 } from "./annotation-store.ts";
 import { deleteArtifact, writeArtifact } from "./artifact-store.ts";
 
@@ -222,6 +223,96 @@ describe("applyMutationsToDoc", () => {
     expect(updated.threads[1].status).toBe("open");
     expect(updated.version).toBe(2);
   });
+
+  it("edits a message body", () => {
+    const doc = createEmptyAnnotations("p", "s");
+    applyMutationsToDoc(
+      doc,
+      [
+        {
+          type: "createThread",
+          threadId: "t1",
+          anchor: { nodeId: "n1" },
+          author: { name: "A" },
+          body: "Original text",
+        } satisfies AnnotationMutation,
+      ],
+      NOW,
+    );
+
+    const edited = applyMutationsToDoc(
+      doc,
+      [
+        {
+          type: "editMessage",
+          threadId: "t1",
+          messageId: doc.threads[0].messages[0].id,
+          body: "Edited text",
+        } satisfies AnnotationMutation,
+      ],
+      "2025-02-01T00:00:00.000Z",
+    );
+
+    expect(edited.threads).toHaveLength(1);
+    expect(edited.threads[0].messages).toHaveLength(1);
+    expect(edited.threads[0].messages[0].body).toBe("Edited text");
+    expect(edited.threads[0].updatedAt).toBe("2025-02-01T00:00:00.000Z");
+    expect(edited.version).toBe(3);
+  });
+
+  it("does nothing when editing a non-existent message", () => {
+    const doc = createEmptyAnnotations("p", "s");
+    applyMutationsToDoc(
+      doc,
+      [
+        {
+          type: "createThread",
+          threadId: "t1",
+          anchor: { nodeId: "n1" },
+          author: { name: "A" },
+          body: "Hello",
+        } satisfies AnnotationMutation,
+      ],
+      NOW,
+    );
+
+    const vBefore = doc.version;
+    const edited = applyMutationsToDoc(
+      doc,
+      [
+        {
+          type: "editMessage",
+          threadId: "t1",
+          messageId: "nonexistent-message",
+          body: "Noop",
+        } satisfies AnnotationMutation,
+      ],
+      NOW,
+    );
+
+    expect(edited.threads[0].messages[0].body).toBe("Hello");
+    expect(edited.version).toBe(vBefore + 1);
+    // updatedAt unchanged because the guard skips the write
+    expect(edited.threads[0].updatedAt).toBe(NOW);
+  });
+
+  it("does nothing when editing a non-existent thread", () => {
+    const doc = createEmptyAnnotations("p", "s");
+    const edited = applyMutationsToDoc(
+      doc,
+      [
+        {
+          type: "editMessage",
+          threadId: "nonexistent",
+          messageId: "m1",
+          body: "Noop",
+        } satisfies AnnotationMutation,
+      ],
+      NOW,
+    );
+    expect(edited.threads).toHaveLength(0);
+    expect(edited.version).toBe(2);
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -345,5 +436,40 @@ describe("annotation-store (integration)", () => {
     const read = readAnnotations(TEST_ROOT, TEST_PROJECT, "no-annotations");
     expect(read).not.toBeNull();
     expect(read?.threads).toHaveLength(0);
+  });
+
+  it("returns flat annotations for existing threads", () => {
+    applyMutations(TEST_ROOT, TEST_PROJECT, TEST_SLUG, [
+      {
+        type: "createThread",
+        threadId: "flat-thread-1",
+        anchor: { nodePath: "nodes.0" },
+        author: defaultAuthor,
+        body: "Comment on nodes.0",
+      },
+      {
+        type: "createThread",
+        threadId: "flat-thread-2",
+        anchor: { nodePath: "nodes.1" },
+        author: defaultAuthor,
+        body: "Comment on nodes.1",
+      },
+    ]);
+
+    const flat = readAnnotationsFlat(TEST_ROOT, TEST_PROJECT, TEST_SLUG);
+    expect(flat).toHaveLength(2);
+    expect(flat[0]).toEqual({
+      nodePath: "nodes.0",
+      body: "Comment on nodes.0",
+    });
+    expect(flat[1]).toEqual({
+      nodePath: "nodes.1",
+      body: "Comment on nodes.1",
+    });
+  });
+
+  it("readAnnotationsFlat returns [] for artifact without annotations file", () => {
+    const flat = readAnnotationsFlat(TEST_ROOT, TEST_PROJECT, "never-created");
+    expect(flat).toEqual([]);
   });
 });

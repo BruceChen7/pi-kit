@@ -1,64 +1,8 @@
 /**
- * DOM helpers for annotation anchors and node identity matching.
- *
- * Mirrors the reference implementation in app/src/components/annotations/annotation-helpers.ts
- * but scoped to Glimpse DOM conventions.
+ * DOM helpers for node selection in the Feedback panel.
  */
 
-import type {
-  AnnotationAnchor,
-  AnnotationThread,
-  NodeIdentity,
-} from "./annotation-types.ts";
-
-/**
- * Check whether an anchor matches a given node identity.
- * Prefers explicit nodeId when both sides have one; falls back to nodePath.
- */
-export function nodeIdentityMatches(
-  anchor: AnnotationAnchor,
-  nodeId: string | undefined,
-  nodePath: string,
-): boolean {
-  if (anchor.nodeId && nodeId) {
-    return anchor.nodeId === nodeId;
-  }
-  return anchor.nodePath === nodePath;
-}
-
-/**
- * Derive a minimal NodeIdentity from a thread's anchor.
- */
-export function threadNodeIdentity(thread: AnnotationThread): NodeIdentity {
-  return {
-    nodeId: thread.anchor.nodeId,
-    nodePath: thread.anchor.nodePath,
-  };
-}
-
-/**
- * Get all threads anchored to a given node.
- */
-export function getThreadsForNode(
-  threads: AnnotationThread[],
-  nodeId: string | undefined,
-  nodePath: string,
-): AnnotationThread[] {
-  return threads.filter((thread) =>
-    nodeIdentityMatches(thread.anchor, nodeId, nodePath),
-  );
-}
-
-/**
- * Count threads anchored to a given node.
- */
-export function getThreadCount(
-  threads: AnnotationThread[],
-  nodeId: string | undefined,
-  nodePath: string,
-): number {
-  return getThreadsForNode(threads, nodeId, nodePath).length;
-}
+import type { NodeIdentity } from "./annotation-types.ts";
 
 /**
  * Escape a string for use in a CSS selector.
@@ -72,7 +16,6 @@ export function cssEscape(value: string): string {
 
 /**
  * Find the DOM element for a node anchor.
- * Tries nodeId first (more stable), then falls back to nodePath.
  */
 export function findAnchorElement(
   nodeId: string | undefined,
@@ -83,16 +26,6 @@ export function findAnchorElement(
     ? `[data-va-node-id="${cssEscape(nodeId)}"]`
     : `[data-va-node-path="${cssEscape(nodePath)}"]`;
   return document.querySelector(selector);
-}
-
-/**
- * Check whether a node anchor still exists in the DOM.
- */
-export function isAnchorOrphaned(
-  nodeId: string | undefined,
-  nodePath: string,
-): boolean {
-  return !findAnchorElement(nodeId, nodePath);
 }
 
 /**

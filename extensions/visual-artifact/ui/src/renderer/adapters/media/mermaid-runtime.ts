@@ -76,11 +76,54 @@ export function getMermaidRenderConfig(
   };
 }
 
+function getContrastingTextColor(fill: string): string | null {
+  const compactHex = fill.slice(1);
+  const hex =
+    compactHex.length === 3
+      ? compactHex
+          .split("")
+          .map((part) => `${part}${part}`)
+          .join("")
+      : compactHex;
+
+  if (!/^[\da-f]{6}$/i.test(hex)) return null;
+
+  const channels = [0, 2, 4].map((offset) => {
+    const channel = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return channel <= 0.04045
+      ? channel / 12.92
+      : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  const luminance =
+    0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+
+  return luminance > 0.42 ? "#0f172a" : "#f8fafc";
+}
+
+function ensureClassDefTextContrast(line: string): string {
+  if (!/^\s*classDef\b/i.test(line)) return line;
+  if (/(?:^|,)\s*color\s*:/i.test(line)) return line;
+
+  const fill = line.match(/(?:^|[,\s])fill\s*:\s*(#[\da-f]{3,6})\b/i)?.[1];
+  if (!fill) return line;
+
+  const color = getContrastingTextColor(fill);
+  if (!color) return line;
+
+  const semicolonIndex = line.lastIndexOf(";");
+  if (semicolonIndex < 0) return `${line},color:${color}`;
+
+  return `${line.slice(0, semicolonIndex)},color:${color}${line.slice(semicolonIndex)}`;
+}
+
 export function normalizeMermaidDefinition(definition: string): string {
   return definition
     .replace(/\\n/g, "\n")
     .replace(/\\t/g, "\t")
-    .replace(/\\\\/g, "\\");
+    .replace(/\\\\/g, "\\")
+    .split("\n")
+    .map(ensureClassDefTextContrast)
+    .join("\n");
 }
 
 async function runWithTimeout<T>(fn: () => Promise<T>, ms: number): Promise<T> {

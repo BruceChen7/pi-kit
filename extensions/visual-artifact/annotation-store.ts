@@ -76,6 +76,28 @@ export function createEmptyAnnotations(
 }
 
 /**
+ * Read annotations flattened to a simple list of { nodePath, body }.
+ * Each thread contributes its first message only. Returns [] if no file or empty.
+ */
+export function readAnnotationsFlat(
+  projectRoot: string,
+  projectName: string,
+  slug: string,
+): { nodePath: string; body: string }[] {
+  const doc = readAnnotations(projectRoot, projectName, slug);
+  if (!doc) return [];
+
+  const result: { nodePath: string; body: string }[] = [];
+  for (const thread of doc.threads) {
+    if (thread.messages.length === 0) continue;
+    const message = thread.messages[0];
+    const nodePath = thread.anchor.nodePath || "(artifact)";
+    result.push({ nodePath, body: message.body });
+  }
+  return result;
+}
+
+/**
  * Ensure the annotations.json exists for an artifact, creating an empty one if needed.
  */
 export function getOrCreateAnnotations(
@@ -113,6 +135,18 @@ export function applyMutationsToDoc(
  * Apply mutations to an annotation document, persisting to disk.
  * Returns the updated document.
  */
+/**
+ * Clear all annotation threads for an artifact, writing an empty document.
+ */
+export function clearAnnotations(
+  projectRoot: string,
+  projectName: string,
+  slug: string,
+): void {
+  const doc = createEmptyAnnotations(projectName, slug);
+  writeAnnotationsAtomic(projectRoot, projectName, slug, doc);
+}
+
 export function applyMutations(
   projectRoot: string,
   projectName: string,
@@ -177,6 +211,16 @@ function applyMutation(
       const thread = doc.threads.find((t) => t.id === mutation.threadId);
       if (!thread || thread.status === "open") break;
       thread.status = "open";
+      thread.updatedAt = now;
+      break;
+    }
+
+    case "editMessage": {
+      const thread = doc.threads.find((t) => t.id === mutation.threadId);
+      if (!thread) break;
+      const message = thread.messages.find((m) => m.id === mutation.messageId);
+      if (!message) break;
+      message.body = mutation.body;
       thread.updatedAt = now;
       break;
     }

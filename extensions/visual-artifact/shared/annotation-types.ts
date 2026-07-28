@@ -57,6 +57,12 @@ export type AnnotationMutation =
   | {
       type: "reopenThread";
       threadId: string;
+    }
+  | {
+      type: "editMessage";
+      threadId: string;
+      messageId: string;
+      body: string;
     };
 
 export type AnnotationDocument = {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   getMermaidRenderConfig,
   getMermaidTheme,
+  normalizeMermaidDefinition,
   renderMermaidDiagram,
 } from "./mermaid-runtime.ts";
 
@@ -42,6 +43,31 @@ describe("getMermaidRenderConfig", () => {
         lineColor: "#475569",
       }),
     });
+  });
+});
+
+describe("normalizeMermaidDefinition", () => {
+  it("adds dark text to class definitions with a light fill", () => {
+    expect(
+      normalizeMermaidDefinition(
+        "flowchart TD\\nclassDef plan fill:#e3f2fd,stroke:#1565c0",
+      ),
+    ).toContain("classDef plan fill:#e3f2fd,stroke:#1565c0,color:#0f172a");
+  });
+
+  it("adds light text to class definitions with a dark fill", () => {
+    expect(
+      normalizeMermaidDefinition(
+        "flowchart TD\nclassDef dark fill:#172033,stroke:#94a3b8;",
+      ),
+    ).toContain("classDef dark fill:#172033,stroke:#94a3b8,color:#f8fafc;");
+  });
+
+  it("preserves an explicit class definition text color", () => {
+    const definition =
+      "classDef custom fill:#ffffff,color:#be123c,stroke:#be123c";
+
+    expect(normalizeMermaidDefinition(definition)).toBe(definition);
   });
 });
 

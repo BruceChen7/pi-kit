@@ -13,9 +13,9 @@ export default async (): Promise<Record<string, unknown>> => {
       emptyOutDir: true,
       modulePreload: false,
       chunkSizeWarningLimit: 4000,
-      rollupOptions: {
+      rolldownOptions: {
         output: {
-          inlineDynamicImports: true,
+          codeSplitting: false,
         },
       },
     },

@@ -182,6 +182,113 @@ function normalizeFlowchartSquareLabels(code: string): string {
   return out.join("\n");
 }
 
+/* ------------------------------------------------------------------ */
+/*  Auto-fix helpers for common mermaid parsing failures               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Wrap unquoted diamond `{...}` labels in `{"..."}` when they contain
+ * special characters that confuse the mermaid parser.
+ *
+ * Before:  A{text <br/> more}
+ * After:   A{"text <br/> more"}
+ */
+function fixDiamondLabels(code: string): string {
+  return code.replace(
+    /\b([A-Za-z0-9_]+)\{([^}]*[|<>{}[\]()"'][^}]*)\}/gu,
+    (_match, nodeName: string, label: string) => {
+      // Already quoted with {"..."} ? skip
+      if (label.startsWith('"') && label.endsWith('"')) return _match;
+      return `${nodeName}{${escapeQuotedLabel(label)}}`;
+    },
+  );
+}
+
+/**
+ * Wrap ALL arrow link text in quotes (not just those with parentheses).
+ * Mermaid requires quoted link text when it contains special characters.
+ *
+ * Before:  -->|text with | pipe or [bracket]|
+ * After:   -->|"text with | pipe or [bracket]"|
+ *
+ * NOTE: If the link text itself contains `|`, the regex uses a non-greedy
+ *       `.+?` so it matches the FIRST closing `|` that is followed by a
+ *       word boundary (node name) or end-of-line — which is the heuristic
+ *       for "this | closes the link text, not a character inside it".
+ */
+function wrapAllLinkText(code: string): string {
+  return code.replace(
+    /(-->|==>|-->>|==>>|-\.->|-\.>>|--o|--x)\|(.+?)\|(?=\b|$)/gu,
+    (_match, arrow: string, text: string) => {
+      const trimmed = text.trim();
+      // Already quoted? skip
+      if (/^"[^"]*"$/u.test(trimmed)) return _match;
+      return `${arrow}|"${trimmed}"|`;
+    },
+  );
+}
+
+/**
+ * Aggressively quote all square-bracket labels that aren't already
+ * quoted with `["...""]`.  This is a broader version of
+ * `normalizeFlowchartSquareLabels` — it doesn't check for specific
+ * special characters; it quotes everything.
+ */
+function aggressiveQuoteLabels(code: string): string {
+  return code.replace(
+    /\b([A-Za-z0-9_]+)\[(?!["`])([^\]]+)\]/gu,
+    (_match, nodeName: string, label: string) => {
+      return `${nodeName}["${escapeQuotedLabel(label)}"]`;
+    },
+  );
+}
+
+/**
+ * HTML entities inside mermaid labels can confuse the parser.
+ * Decode common entities to literal characters.
+ */
+function decodeLabelHtmlEntities(code: string): string {
+  return code
+    .replace(/&amp;/gu, "&")
+    .replace(/&lt;/gu, "<")
+    .replace(/&gt;/gu, ">")
+    .replace(/&quot;/gu, '"');
+}
+
+/** Auto-fix strategies, ordered from least to most invasive. */
+const FIX_STRATEGIES: ((code: string) => string)[] = [
+  (c) => normalizeFlowchartSquareLabels(normalizeLinkText(fixDiamondLabels(c))),
+  (c) => normalizeFlowchartSquareLabels(wrapAllLinkText(fixDiamondLabels(c))),
+  (c) => aggressiveQuoteLabels(wrapAllLinkText(fixDiamondLabels(c))),
+  (c) =>
+    decodeLabelHtmlEntities(
+      aggressiveQuoteLabels(wrapAllLinkText(fixDiamondLabels(c))),
+    ),
+];
+
+/**
+ * Try each auto-fix strategy until one produces valid mermaid.
+ * Returns the fixed code, or null if none worked.
+ */
+export async function autoFixMermaidCode(code: string): Promise<string | null> {
+  const mermaid = await getMermaid();
+  // re-initialisation is safe; the module is cached after the first call
+  mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
+
+  for (const strategy of FIX_STRATEGIES) {
+    try {
+      const fixed = strategy(code);
+      if (fixed === code) continue; // no change — skip
+      await mermaid.parse(fixed);
+      return fixed; // this strategy produced valid mermaid
+    } catch {
+      continue; // try next strategy
+    }
+  }
+
+  return null;
+}
+
 export function normalizeMermaidCode(code: string): string {
   const normalized = code.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const diagramType = detectDiagramType(normalized);
@@ -255,9 +362,13 @@ function formatMermaidError(error: unknown): string {
     .trim();
 }
 
+export type MermaidValidationResultWithFix =
+  | { ok: true; fixedCode?: string }
+  | { ok: false; error: string; fixedCode?: string };
+
 export async function validateMermaidCode(
   code: string,
-): Promise<MermaidValidationResult> {
+): Promise<MermaidValidationResultWithFix> {
   try {
     const mermaid = await getMermaid();
     mermaid.initialize({
@@ -267,33 +378,66 @@ export async function validateMermaidCode(
     await mermaid.parse(code);
     return { ok: true };
   } catch (error) {
+    const originalError = formatMermaidError(error);
+
+    // Try auto-fix strategies
+    const fixed = await autoFixMermaidCode(code);
+    if (fixed) {
+      return { ok: true, fixedCode: fixed };
+    }
+
     return {
       ok: false,
-      error: formatMermaidError(error),
+      error: originalError,
     };
   }
 }
 
+type CollectedErrors = {
+  errors: string[];
+  /** Deep clone of the spec with auto-fixed mermaid code applied. */
+  fixedSpec: VisualArtifactSpec | null;
+};
+
 async function collectMermaidErrors(
   value: unknown,
   path: string,
-): Promise<string[]> {
+): Promise<CollectedErrors> {
   if (Array.isArray(value)) {
-    const nested = await Promise.all(
+    const results = await Promise.all(
       value.map((entry, index) =>
         collectMermaidErrors(entry, `${path}[${index}]`),
       ),
     );
-    return nested.flat();
+    const allErrors = results.flatMap((r) => r.errors);
+    let mergedFixed: unknown;
+    let hasFix = false;
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].fixedSpec) {
+        if (!mergedFixed) mergedFixed = [...value];
+        (mergedFixed as unknown[])[i] = results[i].fixedSpec;
+        hasFix = true;
+      }
+    }
+    // If any child was fixed but we didn't track the fix
+    if (hasFix) {
+      return {
+        errors: allErrors,
+        fixedSpec: mergedFixed as VisualArtifactSpec | null,
+      };
+    }
+    return { errors: allErrors, fixedSpec: null };
   }
 
   if (!value || typeof value !== "object") {
-    return [];
+    return { errors: [], fixedSpec: null };
   }
 
   const record = value as Record<string, unknown>;
-  const errors: string[] = [];
+  let errors: string[] = [];
+  let mutated: Record<string, unknown> | null = null;
 
+  // Check mermaid nodes
   if (
     record.type === "mermaid" &&
     record.props &&
@@ -301,40 +445,79 @@ async function collectMermaidErrors(
     !Array.isArray(record.props)
   ) {
     const props = record.props as Record<string, unknown>;
-    if (typeof props.code === "string") {
-      const result = await validateMermaidCode(props.code);
+    const codeKey =
+      typeof props.code === "string"
+        ? "code"
+        : typeof props.definition === "string"
+          ? "definition"
+          : null;
+    if (codeKey) {
+      const originalCode = props[codeKey] as string;
+      const result = await validateMermaidCode(originalCode);
       if (!result.ok) {
         errors.push(
           `${path}<mermaid>: ${(result as { ok: false; error: string }).error}`,
         );
       }
+      // Even if ok returned with fixedCode, apply the fix
+      if (
+        "fixedCode" in result &&
+        result.fixedCode &&
+        result.fixedCode !== originalCode
+      ) {
+        if (!mutated) {
+          mutated = { ...record, props: { ...props } };
+        }
+        (mutated.props as Record<string, unknown>)[codeKey] = result.fixedCode;
+      }
     }
   }
 
+  // Recurse into other keys — apply any fixes found in children
   for (const [key, entry] of Object.entries(record)) {
     if (key === "type" || key === "props") continue;
-    errors.push(...(await collectMermaidErrors(entry, `${path}.${key}`)));
+    const childResult = await collectMermaidErrors(entry, `${path}.${key}`);
+    errors.push(...childResult.errors);
+    if (childResult.fixedSpec) {
+      if (!mutated) mutated = { ...record };
+      (mutated as Record<string, unknown>)[key] = childResult.fixedSpec;
+    }
   }
 
+  // Recurse into props
   if (
     record.props &&
     typeof record.props === "object" &&
     !Array.isArray(record.props)
   ) {
-    for (const [key, entry] of Object.entries(
+    const propsResult = await collectMermaidErrors(
       record.props as Record<string, unknown>,
-    )) {
-      errors.push(
-        ...(await collectMermaidErrors(entry, `${path}.props.${key}`)),
-      );
+      `${path}.props`,
+    );
+    errors.push(...propsResult.errors);
+    if (propsResult.fixedSpec) {
+      if (!mutated) mutated = { ...record };
+      (mutated as Record<string, unknown>).props = propsResult.fixedSpec;
     }
   }
 
-  return errors;
+  return {
+    errors,
+    fixedSpec: mutated ? (mutated as VisualArtifactSpec) : null,
+  };
 }
 
 export async function validateMermaidNodesInSpec(
   spec: VisualArtifactSpec,
-): Promise<string[]> {
-  return collectMermaidErrors(spec.nodes, "nodes");
+): Promise<{
+  errors: string[];
+  fixedSpec: VisualArtifactSpec | null;
+}> {
+  const result = await collectMermaidErrors(spec, "");
+  // When the top-level spec itself was mutated, return it
+  const fixedTopLevel =
+    result.fixedSpec && "nodes" in (result.fixedSpec as Record<string, unknown>)
+      ? (result.fixedSpec as VisualArtifactSpec)
+      : null;
+  return { errors: result.errors, fixedSpec: fixedTopLevel };
 }

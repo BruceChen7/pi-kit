@@ -24,10 +24,12 @@ let error = $state("");
 let isRendering = $state(false);
 let theme = $state<MermaidAppTheme>("dark");
 let renderVersion = 0;
+let host: HTMLElement | undefined = $state();
 
 function readThemeFromDom(): MermaidAppTheme {
-  const root = document.querySelector("[data-theme]");
-  return root?.getAttribute("data-theme") === "light" ? "light" : "dark";
+  const root =
+    host?.closest("[data-theme]") ?? document.querySelector("[data-theme]");
+  return root?.getAttribute("data-theme") ?? "dark";
 }
 
 async function renderCurrentDiagram(version: number): Promise<void> {
@@ -75,7 +77,8 @@ async function renderCurrentDiagram(version: number): Promise<void> {
 onMount(() => {
   theme = readThemeFromDom();
 
-  const root = document.querySelector("[data-theme]");
+  const root =
+    host?.closest("[data-theme]") ?? document.querySelector("[data-theme]");
   const observer = root
     ? new MutationObserver(() => {
         const nextTheme = readThemeFromDom();
@@ -101,7 +104,7 @@ $effect(() => {
 });
 </script>
 
-<figure class="va-mermaid">
+<figure class="va-mermaid" bind:this={host}>
   {#if error}
     <div class="va-mermaid-error">
       <p class="va-mermaid-notice">Mermaid render failed. Definition shown as source:</p>

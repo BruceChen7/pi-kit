@@ -55,20 +55,20 @@ let { events = [] }: { events?: TimelineEvent[] } = $props();
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #3b82f6;
-    border: 2px solid #1e293b;
+    background: var(--va-accent-primary);
+    border: 2px solid var(--va-bg-surface);
     flex-shrink: 0;
     margin-top: 4px;
   }
 
   .va-tl-dot-last {
-    background: #22c55e;
+    background: var(--va-accent-success);
   }
 
   .va-tl-line {
     width: 2px;
     flex: 1;
-    background: #334155;
+    background: var(--va-border-default);
     margin: 2px 0;
   }
 
@@ -79,21 +79,21 @@ let { events = [] }: { events?: TimelineEvent[] } = $props();
 
   .va-tl-date {
     margin: 0 0 2px;
-    color: #64748b;
+    color: var(--va-text-subtle);
     font-size: 11px;
     font-family: monospace;
   }
 
   .va-tl-title {
     margin: 0;
-    color: #f1f5f9;
+    color: var(--va-text-primary);
     font-size: 14px;
     font-weight: 600;
   }
 
   .va-tl-desc {
     margin: 4px 0 0;
-    color: #94a3b8;
+    color: var(--va-text-muted);
     font-size: 13px;
     line-height: 1.5;
   }

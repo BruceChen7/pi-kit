@@ -144,8 +144,114 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
     description: "Horizontal separator between sections.",
     props: {},
   },
-  // More node types will be added as adapters are implemented.
+  {
+    type: "link",
+    label: "Link",
+    description: "A link or link-like text row.",
+    props: { text: "string", href: "string" },
+  },
+  {
+    type: "file-tree",
+    label: "File Tree",
+    description: "Nested file/directory tree.",
+    props: { items: "FileTreeItem[]" },
+  },
+  {
+    type: "card-grid",
+    label: "Card Grid",
+    description: "Grid layout containing cards or nested nodes.",
+    props: { cards: "array", nodes: "ArtifactNode[]" },
+  },
+  {
+    type: "tabs",
+    label: "Tabs",
+    description: "Tabbed groups of nested nodes.",
+    props: { tabs: "{ label: string; nodes: ArtifactNode[] }[]" },
+  },
+  {
+    type: "accordion",
+    label: "Accordion",
+    description: "Collapsible groups of nested nodes.",
+    props: { items: "{ title: string; nodes: ArtifactNode[] }[]" },
+  },
+  {
+    type: "section",
+    label: "Section",
+    description: "Semantic section with nested nodes.",
+    props: { title: "string", nodes: "ArtifactNode[]" },
+  },
+  {
+    type: "svg-diagram",
+    label: "SVG Diagram",
+    description: "Inline SVG diagram.",
+    props: { svg: "string" },
+  },
+  {
+    type: "image",
+    label: "Image",
+    description: "Image media block.",
+    props: { src: "string", alt: "string" },
+  },
+  {
+    type: "video",
+    label: "Video",
+    description: "Video media block.",
+    props: { src: "string", title: "string" },
+  },
+  {
+    type: "timeline",
+    label: "Timeline",
+    description: "Timeline with ordered events.",
+    props: { items: "array" },
+  },
+  {
+    type: "step",
+    label: "Step",
+    description: "Single process step.",
+    props: { title: "string", description: "string" },
+  },
+  {
+    type: "quote",
+    label: "Quote",
+    description: "Quoted prose.",
+    props: { text: "string", attribution: "string" },
+  },
+  {
+    type: "callout",
+    label: "Callout",
+    description: "Highlighted note/warning/info block.",
+    props: { title: "string", text: "string", variant: "string" },
+  },
+  {
+    type: "blockquote",
+    label: "Blockquote",
+    description: "Indented quote/prose block.",
+    props: { text: "string" },
+  },
 ];
+
+const SUPPORTED_NODE_TYPES = new Set(
+  NODE_TYPE_CATALOG.map((entry) => entry.type),
+);
+
+const REQUIRED_NODE_PROPS: Record<string, string[]> = {
+  text: ["text"],
+  heading: ["text", "level"],
+  table: ["headers", "rows"],
+  "code-block": ["code"],
+  link: ["text"],
+  log: ["lines"],
+  badge: ["text"],
+  diff: ["before", "after"],
+  "stat-card": ["label", "value"],
+};
+
+const LEGACY_PROP_NAMES: Record<string, Record<string, string>> = {
+  text: { text: "content" },
+  mermaid: { definition: "chart" },
+  link: { text: "label", href: "url" },
+  card: { description: "content" },
+};
 
 /* ------------------------------------------------------------------ */
 /*  Validation                                                          */
@@ -175,6 +281,50 @@ function countNodes(node: ArtifactNode, depth: number): number {
     }
   }
   return count;
+}
+
+function validateNodeProps(
+  type: string,
+  props: Record<string, unknown>,
+  errors: string[],
+): void {
+  if (!SUPPORTED_NODE_TYPES.has(type)) {
+    errors.push(`Unsupported node type: "${type}".`);
+    return;
+  }
+
+  const requiredProps = REQUIRED_NODE_PROPS[type] ?? [];
+  const legacyProps = LEGACY_PROP_NAMES[type] ?? {};
+
+  for (const propName of requiredProps) {
+    if (props[propName] !== undefined) continue;
+
+    const legacyName = legacyProps[propName];
+    if (legacyName && props[legacyName] !== undefined) {
+      errors.push(
+        `Node "${type}" requires prop "${propName}" ` +
+          `(legacy prop "${legacyName}" is not supported).`,
+      );
+      continue;
+    }
+
+    errors.push(`Node "${type}" requires prop "${propName}".`);
+  }
+
+  if (
+    type === "mermaid" &&
+    props.definition === undefined &&
+    props.code === undefined
+  ) {
+    if (props.chart !== undefined) {
+      errors.push(
+        'Node "mermaid" requires prop "definition" ' +
+          '(legacy prop "chart" is not supported).',
+      );
+    } else {
+      errors.push('Node "mermaid" requires prop "definition".');
+    }
+  }
 }
 
 function _countFileTreeDepth(items: unknown[], currentDepth: number): number {
@@ -243,6 +393,8 @@ export function validate(input: unknown): ValidationResult {
     }
     if (!isRecord(node.props)) {
       errors.push(`Node "${node.type}" is missing props.`);
+    } else {
+      validateNodeProps(node.type, node.props, errors);
     }
     totalNodes += countNodes(node as ArtifactNode, 1);
   }

@@ -12,6 +12,7 @@ export default async (): Promise<Record<string, unknown>> => {
       outDir: "../ui-dist",
       emptyOutDir: true,
       modulePreload: false,
+      chunkSizeWarningLimit: 4000,
       rollupOptions: {
         output: {
           inlineDynamicImports: true,

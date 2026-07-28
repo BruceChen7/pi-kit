@@ -25,9 +25,9 @@ let { html = "" }: { html?: string } = $props();
 
   .va-svg-inline {
     padding: 8px;
-    border: 1px solid #334155;
-    border-radius: 8px;
-    background: #1e293b;
+    border: 1px solid var(--va-border-default);
+    border-radius: var(--va-radius-md);
+    background: var(--va-bg-surface);
   }
 
   .va-svg-inline :global(svg) {
@@ -37,19 +37,19 @@ let { html = "" }: { html?: string } = $props();
 
   .va-svg-fallback {
     margin: 0 0 8px;
-    color: #f59e0b;
+    color: var(--va-accent-warning);
     font-size: 12px;
   }
 
   .va-svg-source {
     margin: 0;
     padding: 10px;
-    background: #0f172a;
-    border-radius: 6px;
+    background: var(--va-bg-code);
+    border-radius: var(--va-radius-sm);
     font-family: monospace;
     font-size: 12px;
     line-height: 1.5;
-    color: #cbd5e1;
+    color: var(--va-text-secondary);
     white-space: pre-wrap;
   }
 </style>

@@ -1,30 +1,30 @@
 <script lang="ts">
+import type { VisualArtifactThemeOption } from "./themes.ts";
+
 let {
   theme = "dark",
+  themes = [
+    { id: "dark", label: "Dark" },
+    { id: "light", label: "Light" },
+  ],
   onToggle,
-}: { theme?: string; onToggle?: (t: string) => void } = $props();
-
-function toggle(): void {
-  const next = theme === "dark" ? "light" : "dark";
-  onToggle?.(next);
-}
+}: {
+  theme?: string;
+  themes?: VisualArtifactThemeOption[];
+  onToggle?: (t: string) => void;
+} = $props();
 </script>
 
 <div class="va-theme-toggle" role="radiogroup" aria-label="Theme">
-  <button
-    type="button"
-    class:active={theme === "dark"}
-    onclick={() => onToggle?.("dark")}
-    role="radio"
-    aria-checked={theme === "dark"}
-  >Dark</button>
-  <button
-    type="button"
-    class:active={theme === "light"}
-    onclick={() => onToggle?.("light")}
-    role="radio"
-    aria-checked={theme === "light"}
-  >Light</button>
+  {#each themes as option (option.id)}
+    <button
+      type="button"
+      class:active={theme === option.id}
+      onclick={() => onToggle?.(option.id)}
+      role="radio"
+      aria-checked={theme === option.id}
+    >{option.label}</button>
+  {/each}
 </div>
 
 <style>
@@ -49,7 +49,7 @@ function toggle(): void {
   }
 
   button.active {
-    color: #fff;
+    color: var(--va-text-inverse);
     background: var(--va-accent-primary);
   }
 </style>

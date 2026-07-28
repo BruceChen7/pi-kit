@@ -14,21 +14,21 @@ let { text = "", attribution = "" }: { text?: string; attribution?: string } =
   .va-quote {
     margin: 12px 0;
     padding: 12px 16px;
-    border-left: 3px solid #3b82f6;
-    background: rgba(59, 130, 246, 0.05);
+    border-left: 3px solid var(--va-accent-primary);
+    background: var(--va-bg-info-subtle);
     border-radius: 0 6px 6px 0;
   }
 
   blockquote {
     margin: 0;
     font-style: italic;
-    color: #cbd5e1;
+    color: var(--va-text-secondary);
     line-height: 1.6;
   }
 
   figcaption {
     margin-top: 6px;
-    color: #64748b;
+    color: var(--va-text-subtle);
     font-size: 12px;
   }
 </style>

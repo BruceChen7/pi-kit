@@ -8,8 +8,8 @@ let { text = "" }: { text?: string } = $props();
   .va-blockquote {
     margin: 12px 0;
     padding: 8px 14px;
-    border-left: 3px solid #475569;
-    color: #94a3b8;
+    border-left: 3px solid var(--va-border-strong);
+    color: var(--va-text-muted);
     font-style: italic;
     line-height: 1.6;
   }

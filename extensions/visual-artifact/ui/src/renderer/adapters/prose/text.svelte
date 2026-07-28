@@ -17,7 +17,7 @@ const fontSize = $derived(sizeMap[size] ?? sizeMap.md);
   .va-text {
     margin: 0 0 12px;
     line-height: 1.65;
-    color: #e2e8f0;
+    color: var(--va-text-secondary);
     white-space: pre-wrap;
   }
 </style>

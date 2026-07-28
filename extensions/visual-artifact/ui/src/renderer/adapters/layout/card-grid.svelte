@@ -5,6 +5,7 @@ import VisualArtifactRenderer from "../../visual-artifact-renderer.svelte";
 let {
   cards = [],
   columns = 2,
+  _nodePath = "",
 }: {
   cards?: {
     title?: string;
@@ -12,12 +13,13 @@ let {
     nodes?: { type: string; props: Record<string, unknown> }[];
   }[];
   columns?: number;
+  _nodePath?: string;
 } = $props();
 </script>
 
 {#if cards.length > 0}
   <div class="va-card-grid" style="grid-template-columns: repeat({columns}, 1fr)">
-    {#each cards as card}
+    {#each cards as card, i}
       <div class="va-card-grid-item">
         {#if card.title}
           <h4 class="va-card-grid-title">{card.title}</h4>
@@ -27,7 +29,10 @@ let {
         {/if}
         {#if card.nodes && card.nodes.length > 0}
           <div class="va-card-grid-body">
-            <VisualArtifactRenderer nodes={card.nodes} />
+            <VisualArtifactRenderer
+              nodes={card.nodes}
+              basePath={`${_nodePath}.props.cards.${i}.nodes`}
+            />
           </div>
         {/if}
       </div>
@@ -44,21 +49,21 @@ let {
 
   .va-card-grid-item {
     padding: 14px;
-    border: 1px solid #334155;
-    border-radius: 9px;
-    background: #1e293b;
+    border: 1px solid var(--va-border-default);
+    border-radius: var(--va-radius-md);
+    background: var(--va-bg-surface);
   }
 
   .va-card-grid-title {
     margin: 0 0 4px;
     font-size: 14px;
     font-weight: 700;
-    color: #f1f5f9;
+    color: var(--va-text-primary);
   }
 
   .va-card-grid-desc {
     margin: 0 0 8px;
-    color: #94a3b8;
+    color: var(--va-text-muted);
     font-size: 12px;
   }
 

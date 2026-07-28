@@ -1,7 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { type VisualArtifactSpec, validate } from "./artifact-schema.ts";
-import { listProjects, writeArtifact } from "./artifact-store.ts";
+import {
+  listArtifacts,
+  readArtifact,
+  writeArtifact,
+} from "./artifact-store.ts";
 import { openVisualArtifactWindow } from "./glimpse-host.ts";
 import {
   normalizeMermaidNodesInSpec,
@@ -67,18 +71,6 @@ function tryParseJson(raw: string): unknown {
     return JSON.parse(raw);
   } catch {
     return null;
-  }
-}
-
-async function canOpenGlimpse(): Promise<boolean> {
-  try {
-    const glimpseui = (await import("glimpseui")) as {
-      getNativeHostInfo: () => { path: string };
-    };
-    const info = glimpseui.getNativeHostInfo();
-    return typeof info.path === "string" && info.path.length > 0;
-  } catch {
-    return false;
   }
 }
 
@@ -173,7 +165,7 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
 
       writeArtifact(projectRoot, projectName, validated.spec);
 
-      if (await canOpenGlimpse()) {
+      try {
         await openVisualArtifactWindow({
           bootData: {
             view: "artifact",
@@ -184,6 +176,8 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
           projectRoot,
           projectName,
         });
+      } catch {
+        // Artifact creation should still succeed when Glimpse is unavailable.
       }
 
       return result(`Visual artifact "${title}" created. Slug: ${slug}`);
@@ -199,26 +193,60 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
         .filter((item) => item.startsWith(prefix))
         .map((item) => ({ label: item, value: item }));
     },
-    async handler(_args: string, ctx) {
+    async handler(args: string, ctx) {
       const projectRoot = getDefaultProjectRoot();
       const projectName = deriveProjectName(projectRoot);
+      const [subcommand = "open", maybeSlug = ""] = args.trim().split(/\s+/u);
 
-      if (!(await canOpenGlimpse())) {
-        const projects = listProjects(projectRoot);
-        const lines =
-          projects.length > 0 ? projects.join("\n") : "(no projects yet)";
-        ctx.ui.notify(`Visual Artifacts (${projectRoot}):\n${lines}`, "info");
+      if (subcommand === "list") {
+        const artifacts = listArtifacts(projectRoot, projectName);
+        const lines = artifacts.length
+          ? artifacts.map((artifact) => artifact.slug).join("\n")
+          : "(no artifacts yet)";
+        ctx.ui.notify(`Visual Artifacts (${projectName}):\n${lines}`, "info");
         return;
       }
 
-      await openVisualArtifactWindow({
-        bootData: {
-          view: "home",
+      if (subcommand !== "open") {
+        ctx.ui.notify(
+          `Unknown visual-artifact command: ${subcommand}. Use open or list.`,
+          "warning",
+        );
+        return;
+      }
+
+      const artifacts = listArtifacts(projectRoot, projectName);
+      const slug =
+        maybeSlug || (artifacts.length === 1 ? artifacts[0].slug : "");
+      const spec = slug ? readArtifact(projectRoot, projectName, slug) : null;
+
+      try {
+        await openVisualArtifactWindow({
+          bootData: spec
+            ? {
+                view: "artifact",
+                projectName,
+                artifactSlug: slug,
+                artifactSpec: spec,
+              }
+            : {
+                view: artifacts.length > 0 ? "project" : "home",
+                projectName,
+              },
+          projectRoot,
           projectName,
-        },
-        projectRoot,
-        projectName,
-      });
+        });
+
+        ctx.ui.notify(
+          spec
+            ? `Opened Visual Artifact: ${slug}`
+            : `Opened Visual Artifact browser for ${projectName}`,
+          "info",
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.ui.notify(`Failed to open Glimpse: ${message}`, "error");
+      }
     },
   });
 }

@@ -10,7 +10,7 @@ import type { GlimpseWindow } from "../shared/glimpse-window.ts";
 import {
   type AnnotationMutation,
   applyMutations,
-  readAnnotations,
+  getOrCreateAnnotations,
 } from "./annotation-store.ts";
 import type { VisualArtifactSpec } from "./artifact-schema.ts";
 import {
@@ -194,7 +194,7 @@ async function handleMessage(
       }
 
       case "list-annotations": {
-        const annotations = readAnnotations(
+        const annotations = getOrCreateAnnotations(
           projectRoot,
           message.projectName,
           message.slug,

@@ -121,13 +121,14 @@ function normalizeFlowchartSquareLabels(code: string): string {
       }
 
       const nodeName = match[1];
-      const beforeNode = remaining.slice(0, match.index! + nodeName.length);
+      const matchIndex = match.index as number;
+      const beforeNode = remaining.slice(0, matchIndex + nodeName.length);
       parts.push(beforeNode);
 
       let depth = 1;
       const labelBuffer: string[] = [];
       let foundClose = false;
-      const afterBracketIdx = scanPos + match.index! + nodeName.length + 1;
+      const afterBracketIdx = scanPos + matchIndex + nodeName.length + 1;
 
       // First try to close on the same line
       for (let ci = afterBracketIdx; ci < line.length; ci += 1) {

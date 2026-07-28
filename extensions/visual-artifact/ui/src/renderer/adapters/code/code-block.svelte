@@ -26,24 +26,24 @@ const lines = $derived(code.split("\n"));
 <style>
   .va-code-block {
     margin: 12px 0;
-    border: 1px solid #334155;
-    border-radius: 8px;
+    border: 1px solid var(--va-border-default);
+    border-radius: var(--va-radius-md);
     overflow: hidden;
   }
 
   .va-code-lang {
     padding: 4px 12px;
-    background: #1e293b;
-    color: #64748b;
+    background: var(--va-bg-surface);
+    color: var(--va-text-subtle);
     font-size: 11px;
     font-family: monospace;
-    border-bottom: 1px solid #334155;
+    border-bottom: 1px solid var(--va-border-default);
   }
 
   .va-code-pre {
     margin: 0;
     padding: 12px;
-    background: #0f172a;
+    background: var(--va-bg-code);
     font-family: monospace;
     font-size: 13px;
     line-height: 1.6;
@@ -51,14 +51,14 @@ const lines = $derived(code.split("\n"));
   }
 
   code {
-    color: #e2e8f0;
+    color: var(--va-text-secondary);
     white-space: pre;
   }
 
   .va-line-num {
     display: inline-block;
     width: 32px;
-    color: #475569;
+    color: var(--va-text-subtle);
     user-select: none;
     text-align: right;
     padding-right: 12px;

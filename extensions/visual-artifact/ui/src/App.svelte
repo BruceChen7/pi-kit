@@ -1,8 +1,16 @@
 <script lang="ts">
-// biome-ignore lint/correctness/noUnusedImports: used in template
-
 import { onMount } from "svelte";
+import { registerGlimpseCloseShortcuts } from "../../../shared/glimpse-ui-shortcuts.ts";
+// biome-ignore lint/correctness/noUnusedImports: used in template
+import AnnotationPanel from "./annotations/annotation-panel.svelte";
+// biome-ignore lint/correctness/noUnusedImports: used in template
+import AnnotationProvider from "./annotations/annotation-provider.svelte";
 import { normalizeArtifactNodes } from "./normalize-spec.ts";
+// biome-ignore lint/correctness/noUnusedImports: used in template
+import ThemeToggle from "./renderer/theme-toggle.svelte";
+import type { VisualArtifactTheme } from "./renderer/themes.ts";
+// biome-ignore lint/correctness/noUnusedImports: used in template
+import { VISUAL_ARTIFACT_THEMES } from "./renderer/themes.ts";
 // biome-ignore lint/correctness/noUnusedImports: used in template
 import VisualArtifactRenderer from "./renderer/visual-artifact-renderer.svelte";
 
@@ -20,7 +28,7 @@ const boot = window.__VISUAL_ARTIFACT_BOOT__ ?? { view: "home" as ViewType };
 
 let currentView = $state<ViewType>((boot as BootData).view);
 let bootData = $state<BootData>(boot as BootData);
-let theme = $state<"dark" | "light">("dark");
+let theme = $state<VisualArtifactTheme>("dark");
 let projects = $state<ProjectSummary[]>([]);
 let artifacts = $state<ArtifactSummary[]>([]);
 
@@ -89,6 +97,7 @@ function setupListeners(): void {
 /* ---- Init ---- */
 
 onMount(() => {
+  const unregisterCloseShortcuts = registerGlimpseCloseShortcuts();
   setupListeners();
 
   if (currentView === "home") {
@@ -109,10 +118,12 @@ onMount(() => {
       slug: bootData.artifactSlug,
     });
   }
+
+  return unregisterCloseShortcuts;
 });
 
 function handleThemeToggle(next: string): void {
-  theme = next as "dark" | "light";
+  theme = next;
 }
 
 function artifactNodes(): { type: string; props: Record<string, unknown> }[] {
@@ -120,6 +131,20 @@ function artifactNodes(): { type: string; props: Record<string, unknown> }[] {
     | { nodes?: unknown; data?: Record<string, unknown[]> }
     | undefined;
   return normalizeArtifactNodes(spec?.nodes, spec?.data);
+}
+
+/* ---- Comments toggle ---- */
+
+let commentModeActive = $state(false);
+let commentThreadCount = $state(0);
+
+function toggleComments(): void {
+  commentModeActive = !commentModeActive;
+}
+
+function onCommentModeChange(active: boolean, count: number): void {
+  commentModeActive = active;
+  commentThreadCount = count;
 }
 </script>
 
@@ -135,7 +160,27 @@ function artifactNodes(): { type: string; props: Record<string, unknown> }[] {
       <p class="muted">· {bootData.projectName}</p>
     {/if}
     <div class="spacer"></div>
-    <ThemeToggle {theme} onToggle={handleThemeToggle} />
+
+    {#if currentView === "artifact"}
+      <button
+        type="button"
+        class="comments-button"
+        class:comments-active={commentModeActive}
+        onclick={toggleComments}
+        aria-pressed={commentModeActive}
+      >
+        Comments
+        {#if commentThreadCount > 0}
+          <span class="comment-count">{commentThreadCount}</span>
+        {/if}
+      </button>
+    {/if}
+
+    <ThemeToggle
+      {theme}
+      themes={VISUAL_ARTIFACT_THEMES}
+      onToggle={handleThemeToggle}
+    />
   </header>
 
   <section class="content">
@@ -176,7 +221,23 @@ function artifactNodes(): { type: string; props: Record<string, unknown> }[] {
 
     {:else if currentView === "artifact"}
       {#if bootData.artifactSpec && artifactNodes().length > 0}
-        <VisualArtifactRenderer nodes={artifactNodes()} />
+        {#if bootData.projectName && bootData.artifactSlug}
+          <AnnotationProvider
+            project={bootData.projectName}
+            slug={bootData.artifactSlug}
+            bind:commentModeActive
+            onThreadCountChange={(n: number) => commentThreadCount = n}
+          >
+            <div class="artifact-layout" class:with-panel={commentModeActive}>
+              <div class="artifact-main">
+                <VisualArtifactRenderer nodes={artifactNodes()} />
+              </div>
+              <AnnotationPanel />
+            </div>
+          </AnnotationProvider>
+        {:else}
+          <VisualArtifactRenderer nodes={artifactNodes()} />
+        {/if}
       {:else}
         <p class="empty">Loading artifact...</p>
       {/if}
@@ -231,8 +292,58 @@ function artifactNodes(): { type: string; props: Record<string, unknown> }[] {
     padding: 0 4px;
   }
 
+  .comments-button {
+    background: none;
+    border: 1px solid var(--va-border-strong);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 12px;
+    color: var(--va-text-primary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .comments-button:hover {
+    background: var(--va-bg-hover);
+  }
+
+  .comments-active {
+    background: var(--va-accent-primary);
+    color: var(--va-text-inverse);
+    border-color: var(--va-accent-primary);
+  }
+
+  .comment-count {
+    background: var(--va-bg-inverse-subtle);
+    border-radius: 999px;
+    padding: 0 6px;
+    font-size: 10px;
+    line-height: 16px;
+  }
+
+  .comments-active .comment-count {
+    background: var(--va-bg-inverse-strong);
+  }
+
   .content {
     padding: 4px;
+  }
+
+  .artifact-layout {
+    display: flex;
+    position: relative;
+  }
+
+  .artifact-main {
+    flex: 1;
+    min-width: 0;
+    transition: padding-right 0.2s ease;
+  }
+
+  .with-panel .artifact-main {
+    padding-right: 320px;
   }
 
   .grid {

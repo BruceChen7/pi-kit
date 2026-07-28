@@ -6,10 +6,12 @@ let {
   title = "",
   description = "",
   nodes = [],
+  _nodePath = "",
 }: {
   title?: string;
   description?: string;
   nodes?: { type: string; props: Record<string, unknown> }[];
+  _nodePath?: string;
 } = $props();
 </script>
 
@@ -22,7 +24,7 @@ let {
   {/if}
   {#if nodes.length > 0}
     <div class="va-card-body">
-      <VisualArtifactRenderer {nodes} />
+      <VisualArtifactRenderer {nodes} basePath={`${_nodePath}.props.nodes`} />
     </div>
   {/if}
 </div>
@@ -31,21 +33,21 @@ let {
   .va-card {
     padding: 16px;
     margin: 12px 0;
-    border: 1px solid #334155;
-    border-radius: 10px;
-    background: #1e293b;
+    border: 1px solid var(--va-border-default);
+    border-radius: var(--va-radius-lg);
+    background: var(--va-bg-surface);
   }
 
   .va-card-title {
     margin: 0 0 4px;
     font-size: 15px;
     font-weight: 700;
-    color: #f1f5f9;
+    color: var(--va-text-primary);
   }
 
   .va-card-desc {
     margin: 0 0 10px;
-    color: #94a3b8;
+    color: var(--va-text-muted);
     font-size: 13px;
   }
 

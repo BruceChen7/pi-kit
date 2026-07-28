@@ -8,9 +8,9 @@ type Step = {
 let { steps = [] }: { steps?: Step[] } = $props();
 
 const statusColors: Record<string, string> = {
-  completed: "#22c55e",
-  active: "#3b82f6",
-  pending: "#475569",
+  completed: "var(--va-accent-success)",
+  active: "var(--va-accent-primary)",
+  pending: "var(--va-border-strong)",
 };
 
 const statusIcons: Record<string, string> = {
@@ -23,7 +23,7 @@ const statusIcons: Record<string, string> = {
 {#if steps.length > 0}
   <div class="va-steps">
     {#each steps as step, i}
-      {@const color = statusColors[step.status ?? "pending"] ?? "#475569"}
+      {@const color = statusColors[step.status ?? "pending"] ?? "var(--va-border-strong)"}
       {@const icon = statusIcons[step.status ?? "pending"] ?? "○"}
       <div class="va-step">
         <div class="va-step-marker">
@@ -90,7 +90,7 @@ const statusIcons: Record<string, string> = {
 
   .va-step-title {
     margin: 0;
-    color: #f1f5f9;
+    color: var(--va-text-primary);
     font-size: 14px;
     font-weight: 600;
     padding-top: 2px;
@@ -98,7 +98,7 @@ const statusIcons: Record<string, string> = {
 
   .va-step-desc {
     margin: 4px 0 0;
-    color: #94a3b8;
+    color: var(--va-text-muted);
     font-size: 13px;
     line-height: 1.5;
   }

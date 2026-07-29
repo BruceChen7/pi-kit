@@ -1,6 +1,12 @@
 <script lang="ts">
-let { text = "", variant = "info" }: { text?: string; variant?: string } =
-  $props();
+import { cn } from "$lib/utils";
+import { renderInlineMarkdown } from "../../inline-markdown.ts";
+
+let {
+  title = "",
+  text = "",
+  variant = "info",
+}: { title?: string; text?: string; variant?: string } = $props();
 
 const variantClasses: Record<string, string> = {
   info: "bg-clay/10 border-clay/20 text-clay-dark",
@@ -11,5 +17,10 @@ const variantClasses: Record<string, string> = {
 </script>
 
 <div class={cn("px-4 py-3 my-3 rounded-lg border text-sm leading-relaxed", variantClasses[variant] ?? variantClasses.info)}>
-  {text}
+  {#if title}
+    <strong class="block mb-1">{@html renderInlineMarkdown(title)}</strong>
+  {/if}
+  {#if text}
+    <div>{@html renderInlineMarkdown(text)}</div>
+  {/if}
 </div>

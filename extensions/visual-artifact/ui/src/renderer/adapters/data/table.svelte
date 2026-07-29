@@ -1,4 +1,6 @@
 <script lang="ts">
+import Table from "$components/Table.svelte";
+
 let { headers = [], rows = [] }: { headers?: string[]; rows?: string[][] } =
   $props();
 </script>

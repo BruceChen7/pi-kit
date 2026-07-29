@@ -1,5 +1,6 @@
 <script lang="ts">
-import { type Tone } from "$lib/tone";
+import { type Tone, toneBorderClass } from "$lib/tone";
+import { cn } from "$lib/utils";
 
 let {
   tone = "default",

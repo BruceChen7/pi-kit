@@ -77,24 +77,17 @@ function handleKeydown(e: KeyboardEvent) {
 function handleComposerKeydown(e: KeyboardEvent) {
   if (e.isComposing) return;
 
-  // Ctrl+Enter: add current text as pending item
-  if (e.ctrlKey && e.key === "Enter") {
+  // Cmd+Enter (macOS) / Ctrl+Enter (other): context-aware
+  //   - textarea has content → add to pending
+  //   - textarea empty & pending has items → send all
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
     e.preventDefault();
-    if (s().draftText.trim()) {
-      s().addItem();
-    }
-  }
 
-  // Cmd+Enter (macOS): add current text + send all to agent
-  if (e.metaKey && e.key === "Enter") {
-    e.preventDefault();
     if (s().draftText.trim()) {
       s().addItem();
-    }
-    // Small delay to let the item be added before sending
-    requestAnimationFrame(() => {
+    } else if (s().pendingItems.length > 0) {
       s().sendFeedback();
-    });
+    }
   }
 }
 </script>
@@ -160,7 +153,7 @@ function handleComposerKeydown(e: KeyboardEvent) {
           aria-describedby="va-feedback-shortcut"
         ></textarea>
         <span id="va-feedback-shortcut" class="va-composer-shortcut">
-          Ctrl+Enter to add · Cmd+Enter to add &amp; send all
+          Cmd/Ctrl+Enter to add · empty then send all
         </span>
       </div>
     </div>

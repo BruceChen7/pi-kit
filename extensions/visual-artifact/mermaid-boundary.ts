@@ -7,7 +7,12 @@ export type MermaidParser = {
 
 let mermaidModule: MermaidParser | null = null;
 
-function detectDiagramType(code: string): string | undefined {
+/**
+ * Detect the Mermaid diagram type from code.
+ * Returns the first non-empty, non-comment token (e.g. "flowchart", "sequenceDiagram").
+ * Exported so that error messages and type-specific advice can use it.
+ */
+export function detectDiagramType(code: string): string | undefined {
   for (const line of code.split(/\r?\n/u)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("%%")) continue;
@@ -15,6 +20,23 @@ function detectDiagramType(code: string): string | undefined {
   }
   return undefined;
 }
+
+/**
+ * Known Tier 1 Mermaid diagram type strings, normalised for comparison.
+ * Used for type-aware branching in normalise / validation / advice.
+ */
+export const TIER_1_DIAGRAM_TYPES = new Set([
+  "flowchart",
+  "graph",
+  "sequenceDiagram",
+  "classDiagram",
+  "stateDiagram",
+  "stateDiagram-v2",
+  "erDiagram",
+  "gantt",
+  "mindmap",
+  "gitGraph",
+]);
 
 function escapeQuotedLabel(label: string): string {
   return label
@@ -298,7 +320,9 @@ export function normalizeMermaidCode(code: string): string {
   const normalized = code.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const diagramType = detectDiagramType(normalized);
 
-  // Step 1: Handle structural fixes for flowchart/graph types
+  // Step 1: Handle structural fixes for flowchart/graph types.
+  // These use heavy bracket syntax (multiline labels, link text, inline pipes)
+  // that requires the full normalize pipeline.
   if (diagramType === "graph" || diagramType === "flowchart") {
     const bracketFixed = normalizeFlowchartSquareLabels(
       normalizeLinkText(normalized),
@@ -308,8 +332,17 @@ export function normalizeMermaidCode(code: string): string {
     return aggressiveQuoteLabels(bracketFixed);
   }
 
-  // For non-flowchart types (sequenceDiagram, stateDiagram, etc.), still apply
-  // preventive quoting for any square-bracket labels
+  // For all other Tier 1 types (sequenceDiagram, classDiagram, stateDiagram,
+  // erDiagram, gantt, mindmap, gitGraph) and unknown types, apply preventive
+  // quoting for any square-bracket labels.
+  //
+  // These diagram types either:
+  //   - Don't use bracket syntax at all (gantt, mindmap, gitGraph)
+  //   - Use diamond {} or quoted syntax (classDiagram, stateDiagram, erDiagram)
+  //   - Use participant-based syntax (sequenceDiagram)
+  //
+  // aggressiveQuoteLabels is safe: its regex only matches Node[label] patterns,
+  // so it won't corrupt indentation, command keywords, or other structural syntax.
   return aggressiveQuoteLabels(normalized);
 }
 
@@ -373,6 +406,14 @@ export async function getMermaidRuntime(): Promise<MermaidParser> {
   return getMermaid();
 }
 
+/**
+ * Reset the cached mermaid module for test isolation.
+ * Call in beforeEach/afterEach when tests must not share mermaid state.
+ */
+export function resetMermaidModule(): void {
+  mermaidModule = null;
+}
+
 function formatMermaidError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message
@@ -382,8 +423,77 @@ function formatMermaidError(error: unknown): string {
 }
 
 export type MermaidValidationResultWithFix =
-  | { ok: true; fixedCode?: string }
-  | { ok: false; error: string; fixedCode?: string };
+  | { ok: true; fixedCode?: string; diagramType?: string }
+  | { ok: false; error: string; fixedCode?: string; diagramType?: string };
+
+/**
+ * Get type-specific advice for a Mermaid diagram type.
+ * Returns an array of suggestion strings, or undefined if no specific advice exists.
+ */
+export function getTypeAdviceForDiagram(
+  diagramType: string | undefined,
+): string[] | undefined {
+  if (!diagramType) return undefined;
+
+  const typeLower = diagramType.toLowerCase();
+
+  const adviceMap: Record<string, string[]> = {
+    flowchart: [
+      'Use double-quoted labels: N["label text"] not N[label text]',
+      'Edge labels need quoting: -->|"label"| Next',
+      "Use subgraph for logical groups: subgraph Title ... end",
+      "Inline :::class breaks node labels — put on separate line: N:::class",
+    ],
+    graph: [
+      'Use double-quoted labels: N["label text"] not N[label text]',
+      'Edge labels need quoting: -->|"label"| Next',
+      "Use subgraph for logical groups: subgraph Title ... end",
+    ],
+    sequencediagram: [
+      'Quote participant names with special chars: participant A as "my name"',
+      "Message arrows: -> for solid, ->> for dotted",
+      "Use activate/deactivate for lifeline blocks",
+    ],
+    classdiagram: [
+      'Use quotes for class names with special chars: class "My Class"',
+      "Members in {} blocks: class Name { +method() }",
+      'Avoid unquoted parens in labels: use N["method()"] not N[method()]',
+    ],
+    statediagram: [
+      'Use quotes for multi-word state names: state "My State" as S',
+      "Transitions: State1 --> State2 : event",
+      "Use [*] for initial and final states",
+    ],
+    statediagramv2: [
+      'Use quotes for multi-word state names: state "My State" as S',
+      "Transitions: State1 --> State2 : event",
+      "Use [*] for initial and final states",
+    ],
+    erdiagram: [
+      "Cardinality: ||--o{ for one-to-many, ||--|| for one-to-one",
+      'Quoted multi-word entity names: "Order Item"',
+      "Attributes in {} blocks: Entity { attr type }",
+    ],
+    gantt: [
+      "Set dateFormat first: dateFormat YYYY-MM-DD",
+      "Use crit for critical path, milestone for key points",
+      "Task: Name, id, start, duration",
+    ],
+    mindmap: [
+      "Use 2-space indentation for hierarchy",
+      "Root: root((Title)) or root[Title]",
+      "Keep branches shallow (3-4 levels max)",
+    ],
+    gitgraph: [
+      "Use commit, branch, checkout, merge keywords",
+      "checkout before adding commits to a branch",
+      "merge to integrate branches",
+    ],
+  };
+
+  // Normalize: lowercase + strip hyphens so 'stateDiagram-v2' → 'statediagramv2'
+  return adviceMap[typeLower.replace(/-/gu, "")];
+}
 
 /**
  * Validate a mermaid code string against the real parser.
@@ -410,28 +520,43 @@ export async function validateMermaidCodeWith(
   code: string,
   mermaid: MermaidParser,
 ): Promise<MermaidValidationResultWithFix> {
+  const diagramType = detectDiagramType(code);
+
   try {
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: "loose",
     });
     await mermaid.parse(code);
-    return { ok: true };
+    return { ok: true, diagramType };
   } catch (error) {
     const originalError = formatMermaidError(error);
 
     // Try auto-fix strategies
     const fixed = await autoFixMermaidCode(code, mermaid);
     if (fixed) {
-      return { ok: true, fixedCode: fixed };
+      return { ok: true, fixedCode: fixed, diagramType };
     }
 
     return {
       ok: false,
       error: originalError,
+      diagramType,
     };
   }
 }
+
+type MermaidCodeRef = {
+  path: string;
+  codeKey: "code" | "definition";
+  code: string;
+};
+
+type FixEntry = {
+  path: string;
+  codeKey: string;
+  fixedCode: string;
+};
 
 type CollectedErrors = {
   errors: string[];
@@ -439,94 +564,56 @@ type CollectedErrors = {
   fixedSpec: VisualArtifactSpec | null;
 };
 
-async function collectMermaidErrors(
+/**
+ * Pure: check if a record is a mermaid node and extract its code ref.
+ * Returns null if the record is not a mermaid node or has no parseable code.
+ */
+function extractMermaidCodeRef(
+  record: Record<string, unknown>,
+  path: string,
+): MermaidCodeRef | null {
+  if (record.type !== "mermaid") return null;
+  const props = record.props;
+  if (!props || typeof props !== "object" || Array.isArray(props)) return null;
+  const p = props as Record<string, unknown>;
+  const codeKey =
+    typeof p.code === "string"
+      ? "code"
+      : typeof p.definition === "string"
+        ? "definition"
+        : null;
+  if (!codeKey) return null;
+  return { path, codeKey, code: p[codeKey] as string };
+}
+
+/**
+ * Pure: Recursively walk a spec tree and collect all mermaid code refs.
+ * No IO, no mutation — just structural traversal.
+ */
+function collectMermaidCodeRefs(
   value: unknown,
   path: string,
-  mermaid: MermaidParser,
-): Promise<CollectedErrors> {
+  refs: MermaidCodeRef[],
+): void {
   if (Array.isArray(value)) {
-    const results = await Promise.all(
-      value.map((entry, index) =>
-        collectMermaidErrors(entry, `${path}[${index}]`, mermaid),
-      ),
-    );
-    const allErrors = results.flatMap((r) => r.errors);
-    let mergedFixed: unknown;
-    let hasFix = false;
-    for (let i = 0; i < results.length; i++) {
-      if (results[i].fixedSpec) {
-        if (!mergedFixed) mergedFixed = [...value];
-        (mergedFixed as unknown[])[i] = results[i].fixedSpec;
-        hasFix = true;
-      }
+    for (let i = 0; i < value.length; i++) {
+      collectMermaidCodeRefs(value[i], `${path}[${i}]`, refs);
     }
-    // If any child was fixed but we didn't track the fix
-    if (hasFix) {
-      return {
-        errors: allErrors,
-        fixedSpec: mergedFixed as VisualArtifactSpec | null,
-      };
-    }
-    return { errors: allErrors, fixedSpec: null };
+    return;
   }
 
-  if (!value || typeof value !== "object") {
-    return { errors: [], fixedSpec: null };
-  }
+  if (!value || typeof value !== "object") return;
 
   const record = value as Record<string, unknown>;
-  const errors: string[] = [];
-  let mutated: Record<string, unknown> | null = null;
 
-  // Check mermaid nodes
-  if (
-    record.type === "mermaid" &&
-    record.props &&
-    typeof record.props === "object" &&
-    !Array.isArray(record.props)
-  ) {
-    const props = record.props as Record<string, unknown>;
-    const codeKey =
-      typeof props.code === "string"
-        ? "code"
-        : typeof props.definition === "string"
-          ? "definition"
-          : null;
-    if (codeKey) {
-      const originalCode = props[codeKey] as string;
-      const result = await validateMermaidCodeWith(originalCode, mermaid);
-      if (!result.ok) {
-        errors.push(
-          `${path}<mermaid>: ${(result as { ok: false; error: string }).error}`,
-        );
-      }
-      // Even if ok returned with fixedCode, apply the fix
-      if (
-        "fixedCode" in result &&
-        result.fixedCode &&
-        result.fixedCode !== originalCode
-      ) {
-        if (!mutated) {
-          mutated = { ...record, props: { ...props } };
-        }
-        (mutated.props as Record<string, unknown>)[codeKey] = result.fixedCode;
-      }
-    }
-  }
+  // Collect ref if this is a mermaid node
+  const ref = extractMermaidCodeRef(record, path);
+  if (ref) refs.push(ref);
 
-  // Recurse into other keys — apply any fixes found in children
+  // Recurse into non-structural keys
   for (const [key, entry] of Object.entries(record)) {
     if (key === "type" || key === "props") continue;
-    const childResult = await collectMermaidErrors(
-      entry,
-      `${path}.${key}`,
-      mermaid,
-    );
-    errors.push(...childResult.errors);
-    if (childResult.fixedSpec) {
-      if (!mutated) mutated = { ...record };
-      (mutated as Record<string, unknown>)[key] = childResult.fixedSpec;
-    }
+    collectMermaidCodeRefs(entry, `${path}.${key}`, refs);
   }
 
   // Recurse into props
@@ -535,22 +622,124 @@ async function collectMermaidErrors(
     typeof record.props === "object" &&
     !Array.isArray(record.props)
   ) {
-    const propsResult = await collectMermaidErrors(
-      record.props as Record<string, unknown>,
-      `${path}.props`,
-      mermaid,
-    );
-    errors.push(...propsResult.errors);
-    if (propsResult.fixedSpec) {
+    collectMermaidCodeRefs(record.props, `${path}.props`, refs);
+  }
+}
+
+/**
+ * Pure: Apply a map of path-based fixes to a deep clone of a spec tree.
+ * Returns the cloned tree with fixes applied, or the original if no fixes.
+ */
+function applyMermaidFixes(
+  value: unknown,
+  path: string,
+  fixes: Map<string, FixEntry>,
+): unknown {
+  if (fixes.size === 0) return value;
+
+  // Check if this exact path has a fix (mermaid node's code)
+  const pathFix = fixes.get(path);
+  if (pathFix) {
+    const record = { ...(value as Record<string, unknown>) };
+    return {
+      ...record,
+      props: {
+        ...(record.props as Record<string, unknown>),
+        [pathFix.codeKey]: pathFix.fixedCode,
+      },
+    };
+  }
+
+  if (Array.isArray(value)) {
+    let changed = false;
+    const result = value.map((entry, i) => {
+      const fixed = applyMermaidFixes(entry, `${path}[${i}]`, fixes);
+      if (fixed !== entry) changed = true;
+      return fixed;
+    });
+    return changed ? result : value;
+  }
+
+  if (!value || typeof value !== "object") return value;
+
+  const record = value as Record<string, unknown>;
+  let mutated: Record<string, unknown> | null = null;
+
+  for (const [key, entry] of Object.entries(record)) {
+    if (key === "type" || key === "props") continue;
+    const fixed = applyMermaidFixes(entry, `${path}.${key}`, fixes);
+    if (fixed !== entry) {
       if (!mutated) mutated = { ...record };
-      (mutated as Record<string, unknown>).props = propsResult.fixedSpec;
+      mutated[key] = fixed;
     }
   }
 
-  return {
-    errors,
-    fixedSpec: mutated ? (mutated as VisualArtifactSpec) : null,
-  };
+  if (
+    record.props &&
+    typeof record.props === "object" &&
+    !Array.isArray(record.props)
+  ) {
+    const fixed = applyMermaidFixes(
+      record.props as Record<string, unknown>,
+      `${path}.props`,
+      fixes,
+    );
+    if (fixed !== record.props) {
+      if (!mutated) mutated = { ...record };
+      mutated.props = fixed;
+    }
+  }
+
+  return mutated ?? value;
+}
+
+/**
+ * Orchestrator: validates mermaid nodes in a spec tree.
+ *
+ * Architecture (Functional Core, Imperative Shell):
+ *   1. Pure tree walk → collect all code refs (core)
+ *   2. Validate each ref via injected mermaid parser (shell — IO)
+ *   3. Collect errors and fixes (core)
+ *   4. Apply fixes to a deep clone (core)
+ */
+async function collectMermaidErrors(
+  value: unknown,
+  path: string,
+  mermaid: MermaidParser,
+): Promise<CollectedErrors> {
+  // Phase 1: Pure tree walk — collect all mermaid code references
+  const refs: MermaidCodeRef[] = [];
+  collectMermaidCodeRefs(value, path, refs);
+
+  // Phase 2: Validate each code snippet against the real parser (IO)
+  const results = await Promise.all(
+    refs.map(async (ref) => {
+      const result = await validateMermaidCodeWith(ref.code, mermaid);
+      return { ...ref, result };
+    }),
+  );
+
+  // Phase 3: Collect errors and build fixes map
+  const errors: string[] = [];
+  const fixes = new Map<string, FixEntry>();
+
+  for (const { path, codeKey, code, result } of results) {
+    if (!result.ok) {
+      const diagramType = result.diagramType ?? "unknown";
+      errors.push(`${path}<mermaid:${diagramType}>: ${result.error}`);
+    }
+    if (result.fixedCode && result.fixedCode !== code) {
+      fixes.set(path, { path, codeKey, fixedCode: result.fixedCode });
+    }
+  }
+
+  // Phase 4: Apply fixes to a deep clone (pure tree walk)
+  const fixedSpec =
+    fixes.size > 0
+      ? (applyMermaidFixes(value, "", fixes) as VisualArtifactSpec)
+      : null;
+
+  return { errors, fixedSpec };
 }
 
 /**

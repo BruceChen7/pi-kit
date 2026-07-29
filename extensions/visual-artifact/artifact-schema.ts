@@ -59,6 +59,12 @@ export const LIMITS = {
 /*  Node type catalog for contract export                               */
 /* ------------------------------------------------------------------ */
 
+export type TypeGuidelines = {
+  hints: string[];
+  example?: string;
+  commonMistakes?: string[];
+};
+
 export type NodeTypeEntry = {
   type: string;
   label: string;
@@ -70,6 +76,11 @@ export type NodeTypeEntry = {
    * These are included in the LLM-facing contract.
    */
   guidelines?: string[];
+  /**
+   * Per-subtype guidelines keyed by diagram/subtype identifier.
+   * For mermaid, keys are diagram type keywords (flowchart, sequenceDiagram, etc.).
+   */
+  typeGuidelines?: Record<string, TypeGuidelines>;
 };
 
 export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
@@ -157,6 +168,164 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
       'For sequenceDiagram, quote participant names with special chars: participant A as "my name"',
       "Keep diagram type declaration simple: flowchart LR, sequenceDiagram, stateDiagram-v2, etc.",
     ],
+    typeGuidelines: {
+      flowchart: {
+        hints: [
+          "Direction: LR (left→right) for architecture, TB (top→bottom) for processes",
+          "Node shapes: [] for process, () for start/end, {} for decision, > for I/O",
+          "Use subgraph for logical groupings: subgraph Title ... end",
+          'Always quote labels with special chars: N["label with () or []"]',
+          'For edge labels, use quoted pipe syntax: -->|"label"| Next',
+        ],
+        example: [
+          "flowchart LR",
+          '  START(["Start"]) --> PROC["Process"]',
+          "  PROC --> DEC{Check?}",
+          '  DEC -->|"Yes"| PASS["OK"]',
+          '  DEC -->|"No"| FAIL["Fail"]',
+        ].join("\n"),
+      },
+      sequenceDiagram: {
+        hints: [
+          'Define participants at the top: participant A as "Alias"',
+          "Message arrows: -> for solid, ->> for dotted, --x for loss",
+          "Use activate/deactivate for lifeline activation blocks",
+          "Group with loop/alt/opt/par for structured logic",
+          "Use Note over A,B: text for annotations",
+        ],
+        example: [
+          "sequenceDiagram",
+          '  participant U as "User"',
+          '  participant S as "Service"',
+          "  U->>S: Request",
+          "  activate S",
+          "  S-->>U: Response",
+          "  deactivate S",
+        ].join("\n"),
+      },
+      classDiagram: {
+        hints: [
+          "Use +/-/# for visibility: +public, -private, #protected",
+          "Relations: <|-- inheritance, *-- composition, o-- aggregation",
+          "Define members inside {}: class Name { +method() }",
+          "Use <<interface>> or <<abstract>> stereotypes",
+          "Use class A : BaseClass for inheritance declaration",
+        ],
+        example: [
+          "classDiagram",
+          "  class Animal {",
+          "    +String name",
+          "    +eat()",
+          "  }",
+          "  class Dog {",
+          "    +bark()",
+          "  }",
+          "  Animal <|-- Dog",
+        ].join("\n"),
+      },
+      stateDiagram: {
+        hints: [
+          "Use [*] for initial and final states: [*] --> Active",
+          'Use state "Label" as Alias for multi-word state names',
+          "Use --> for transitions, add labels: -->|event| NextState",
+          "Nest composite states: state Composite { ... }",
+          "Use note right of State: text for annotations",
+        ],
+        example: [
+          "stateDiagram-v2",
+          "  [*] --> Idle",
+          "  Idle --> Processing: submit",
+          "  Processing --> Success: complete",
+          "  Processing --> Error: fail",
+          "  Success --> [*]",
+          "  Error --> Idle: retry",
+        ].join("\n"),
+      },
+      erDiagram: {
+        hints: [
+          "Use ||--o{ for one-to-many, ||--|| for one-to-one",
+          "Entity attributes inside {}: Entity { attribute type }",
+          "Weak entity with: Entity }o--|| StrongEntity",
+          "Use string quotes for multi-word entity names",
+        ],
+        example: [
+          "erDiagram",
+          '  CUSTOMER ||--o{ ORDER : "places"',
+          '  ORDER ||--o{ LINE_ITEM : "contains"',
+          "  CUSTOMER {",
+          "    int id PK",
+          "    string name",
+          "  }",
+          "  ORDER {",
+          "    int id PK",
+          "    date created",
+          "  }",
+        ].join("\n"),
+      },
+      gantt: {
+        hints: [
+          "Set dateFormat first: dateFormat YYYY-MM-DD",
+          "Use title for chart title, axisFormat for x-axis style",
+          "Task syntax: Task Name, id, startDate, duration",
+          "Use crit for critical path tasks",
+          "Use milestone for key checkpoints: Milestone, m1, 2024-01-15, 0d",
+        ],
+        example: [
+          "gantt",
+          "  title Project Timeline",
+          "  dateFormat YYYY-MM-DD",
+          "  section Planning",
+          "  Research     : r1, 2024-01-01, 7d",
+          "  Design       : d1, after r1, 5d",
+          "  section Dev",
+          "  Frontend     : f1, after d1, 10d",
+          "  Backend      : b1, after d1, 10d",
+          "  Launch       : m1, after f1, 0d",
+        ].join("\n"),
+      },
+      mindmap: {
+        hints: [
+          "Use indentation for hierarchy (2 spaces per level)",
+          "Root node: root((Title)) or root[Title]",
+          "Leaf nodes use plain indent without brackets",
+          "Icons: root::icon(fa fa-star) — use sparingly",
+          "Keep branches shallow (max 3-4 levels for readability)",
+        ],
+        example: [
+          "mindmap",
+          "  root((Project))",
+          "    Frontend",
+          "      React",
+          "      Styling",
+          "    Backend",
+          "      API",
+          "      Database",
+          "    DevOps",
+          "      CI/CD",
+          "      Monitoring",
+        ].join("\n"),
+      },
+      gitGraph: {
+        hints: [
+          "Use commit for commits, branch for branching",
+          "checkout before adding commits to a branch",
+          "merge to integrate branches, with optional branch name",
+          'Use commit id: "C1" or just commit for auto-id',
+          "Cherry-pick: cherry-pick id on other branch (experimental)",
+        ],
+        example: [
+          "gitGraph",
+          "  commit",
+          "  commit",
+          "  branch feature",
+          "  checkout feature",
+          "  commit",
+          "  commit",
+          "  checkout main",
+          '  merge feature tag: "v1.0"',
+        ].join("\n"),
+      },
+    },
   },
   {
     type: "log",

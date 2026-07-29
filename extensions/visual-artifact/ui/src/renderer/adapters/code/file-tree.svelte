@@ -52,39 +52,49 @@ const dirIcon = (open: boolean) => (open ? "▾" : "▸");
 const fileIcon = (s?: string) => (s ? "+" : "·");
 </script>
 
-{#if items.length > 0}
-  <div class="rounded-xl border border-border bg-[#141413] text-[#f0eee6] font-mono text-sm p-3 my-3">
-    {#each items as item}
-      {@const path = makePath(_parentPath, item.name)}
-      {@const isDir = item.type === "directory" || (item.children?.length ?? 0) > 0}
-      {@const isExpanded = activeExpanded.has(path)}
-      {@const sc = item.status ? statusColors[item.status] : ""}
-      <div>
-        <button
-          type="button"
-          class="flex items-center gap-1 w-full px-1 py-0.5 rounded text-left text-[#f0eee6] {isDir ? 'cursor-pointer hover:bg-white/5' : 'cursor-default'}"
-          onclick={() => isDir && activeToggle(path)}
-        >
-          <span class="w-3 text-[#6b6a63] text-[10px] shrink-0">
-            {isDir ? dirIcon(isExpanded) : fileIcon(item.status)}
-          </span>
-          <span>{item.name}</span>
-          {#if sc}
-            <span class="ml-auto text-[9px] font-bold uppercase leading-4 px-1.5 rounded-full {sc}">{item.status}</span>
-          {/if}
-        </button>
-        {#if isDir && isExpanded && item.children}
-          <div class="ml-4 border-l border-border/30 pl-3">
-            <FileTree
-              items={item.children}
-              _depth={_depth + 1}
-              _expanded={activeExpanded}
-              _toggle={activeToggle}
-              _parentPath={path}
-            />
-          </div>
+{#snippet treeItems()}
+  {#each items as item}
+    {@const path = makePath(_parentPath, item.name)}
+    {@const isDir = item.type === "directory" || (item.children?.length ?? 0) > 0}
+    {@const isExpanded = activeExpanded.has(path)}
+    {@const sc = item.status ? statusColors[item.status] : ""}
+    <div>
+      <button
+        type="button"
+        class="flex items-center gap-1 w-full px-1 py-0.5 rounded text-left text-primary-foreground {isDir ? 'cursor-pointer hover:bg-white/5' : 'cursor-default'}"
+        onclick={() => isDir && activeToggle(path)}
+      >
+        <span class="w-3 text-muted-foreground text-[10px] shrink-0">
+          {isDir ? dirIcon(isExpanded) : fileIcon(item.status)}
+        </span>
+        <span class="min-w-0 break-all">{item.name}</span>
+        {#if sc}
+          <span class="ml-auto text-[9px] font-bold uppercase leading-4 px-1.5 rounded-full {sc}">{item.status}</span>
         {/if}
-      </div>
-    {/each}
-  </div>
+      </button>
+      {#if isDir && isExpanded && item.children}
+        <div class="ml-4 border-l border-white/10 pl-3">
+          <FileTree
+            items={item.children}
+            _depth={_depth + 1}
+            _expanded={activeExpanded}
+            _toggle={activeToggle}
+            _parentPath={path}
+          />
+        </div>
+      {/if}
+    </div>
+  {/each}
+{/snippet}
+
+{#if items.length > 0}
+  {#if _depth === 0}
+    <div class="rounded-xl border border-border bg-primary text-primary-foreground font-mono text-sm p-3 my-3">
+      {@render treeItems()}
+    </div>
+  {:else}
+    <div class="py-0.5">
+      {@render treeItems()}
+    </div>
+  {/if}
 {/if}

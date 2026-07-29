@@ -395,16 +395,10 @@ function handleCleanupResult(e: Event): void {
 
 <style>
   .app {
-    --va-app-gutter: 24px;
-    --va-comment-panel-width: 360px;
-    --va-radius-sm: calc(var(--radius) * 0.6);
-    --va-radius-md: calc(var(--radius) * 0.8);
-    --va-radius-lg: var(--radius);
-
-    font-family: var(--va-font-sans);
+    font-family: var(--font-sans);
     padding: 24px;
-    color: var(--va-text-primary);
-    background: var(--va-bg-app);
+    color: var(--foreground);
+    background: var(--background);
     min-height: 100vh;
   }
 
@@ -423,7 +417,7 @@ function handleCleanupResult(e: Event): void {
 
   .muted {
     margin: 0;
-    color: var(--va-text-muted);
+    color: var(--muted-foreground);
     font-size: 13px;
   }
 
@@ -434,12 +428,12 @@ function handleCleanupResult(e: Event): void {
     max-width: 260px;
     min-height: 28px;
     padding: 0 9px;
-    border: 1px solid var(--va-border-default);
-    border-radius: var(--va-radius-sm);
-    background: var(--va-bg-code);
-    color: var(--va-text-muted);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 0.6);
+    background: var(--muted);
+    color: var(--muted-foreground);
     font-size: 11px;
-    font-family: var(--va-font-mono);
+    font-family: var(--font-mono);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -452,7 +446,7 @@ function handleCleanupResult(e: Event): void {
   .back-button {
     background: none;
     border: none;
-    color: var(--va-accent-primary-text);
+    color: var(--clay-dark);
     font-size: 18px;
     cursor: pointer;
     padding: 0 4px;
@@ -460,22 +454,22 @@ function handleCleanupResult(e: Event): void {
 
   .feedback-button {
     background: none;
-    border: 1px solid var(--va-border-strong);
+    border: 1px solid color-mix(in oklch, var(--border), var(--foreground) 18%);
     border-radius: 999px;
     padding: 4px 12px;
     font-size: 12px;
-    color: var(--va-text-primary);
+    color: var(--foreground);
     cursor: pointer;
   }
 
   .feedback-button:hover {
-    background: var(--va-bg-hover);
+    background: color-mix(in oklch, var(--foreground), transparent 96%);
   }
 
   .feedback-active {
-    background: var(--va-accent-primary);
-    color: var(--va-text-inverse);
-    border-color: var(--va-accent-primary);
+    background: var(--clay);
+    color: var(--primary-foreground);
+    border-color: var(--clay);
   }
 
   .content {
@@ -489,47 +483,16 @@ function handleCleanupResult(e: Event): void {
 
   .artifact-main {
     flex: 1;
-    width: min(100%, 1120px);
-    max-width: 1120px;
+    width: min(100%, 1040px);
+    max-width: 1040px;
     min-width: 0;
     margin: 0 auto;
     transition: margin-right 0.2s ease;
   }
 
   .artifact-main > :global(.va-node[data-va-type="text"]) {
-    max-width: 82ch;
-  }
-
-  .artifact-main
-    > :global(.va-node[data-va-type="heading"] + .va-node[data-va-type="text"]) {
-    max-width: 72ch;
-    margin-bottom: 8px;
-  }
-
-  .artifact-main
-    > :global(
-      .va-node[data-va-type="heading"]
-        + .va-node[data-va-type="text"]
-        .va-text
-    ) {
-    font-size: 18px !important;
-    line-height: 1.65;
-  }
-
-  .artifact-main
-    > :global(
-      .va-node[data-va-type="heading"]
-        + .va-node[data-va-type="text"]
-        + .va-node[data-va-type="text"]
-    ) {
-    box-sizing: border-box;
-    max-width: 82ch;
-    margin: 0 0 14px;
-    padding: 12px 14px;
-    border: 1px solid var(--va-border-info-subtle);
-    border-left: 3px solid var(--va-accent-primary);
-    border-radius: var(--va-radius-md);
-    background: var(--va-bg-info-subtle);
+    max-width: 78ch;
+    overflow-wrap: anywhere;
   }
 
   .artifact-main > :global(.va-node[data-va-type="badge"]) {
@@ -545,9 +508,7 @@ function handleCleanupResult(e: Event): void {
   }
 
   .with-panel .artifact-main {
-    margin-right: calc(
-      var(--va-comment-panel-width) - var(--va-app-gutter)
-    );
+    margin-right: 336px;
   }
 
   .grid {
@@ -564,9 +525,9 @@ function handleCleanupResult(e: Event): void {
     text-align: left;
     min-height: 78px;
     padding: 16px;
-    border: 1px solid var(--va-border-default);
-    border-radius: var(--va-radius-md);
-    background: var(--va-bg-surface);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 0.8);
+    background: var(--card);
     color: inherit;
     cursor: pointer;
     transition:
@@ -576,8 +537,8 @@ function handleCleanupResult(e: Event): void {
   }
 
   .card-btn:hover {
-    border-color: var(--va-accent-primary);
-    background: var(--va-bg-hover);
+    border-color: var(--clay);
+    background: color-mix(in oklch, var(--foreground), transparent 96%);
     transform: translateY(-1px);
   }
 
@@ -585,7 +546,7 @@ function handleCleanupResult(e: Event): void {
     display: block;
     margin-bottom: 4px;
     font-size: 15px;
-    color: var(--va-text-primary);
+    color: var(--foreground);
   }
 
   .list {
@@ -605,7 +566,7 @@ function handleCleanupResult(e: Event): void {
     gap: 16px;
     margin-bottom: 16px;
     padding-bottom: 14px;
-    border-bottom: 1px solid var(--va-border-default);
+    border-bottom: 1px solid var(--border);
   }
 
   .list-summary h2 {
@@ -613,7 +574,7 @@ function handleCleanupResult(e: Event): void {
     font-size: 16px;
     font-weight: 650;
     line-height: 1.3;
-    color: var(--va-text-primary);
+    color: var(--foreground);
   }
 
   .summary-meta {
@@ -629,18 +590,18 @@ function handleCleanupResult(e: Event): void {
     align-items: center;
     min-height: 28px;
     padding: 0 10px;
-    border: 1px solid var(--va-border-default);
+    border: 1px solid var(--border);
     border-radius: 999px;
-    background: var(--va-bg-code);
-    color: var(--va-text-muted);
+    background: var(--muted);
+    color: var(--muted-foreground);
     font-size: 12px;
     white-space: nowrap;
   }
 
   .count-pill {
-    background: var(--va-bg-info-subtle);
-    border-color: var(--va-border-info-subtle);
-    color: var(--va-accent-primary-text);
+    background: color-mix(in oklch, var(--clay), transparent 92%);
+    border-color: color-mix(in oklch, var(--clay), transparent 70%);
+    color: var(--clay-dark);
   }
 
   .row-btn {
@@ -651,9 +612,9 @@ function handleCleanupResult(e: Event): void {
     min-height: 74px;
     text-align: left;
     padding: 14px 16px;
-    border: 1px solid var(--va-border-default);
-    border-radius: var(--va-radius-md);
-    background: var(--va-bg-surface);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 0.8);
+    background: var(--card);
     color: inherit;
     cursor: pointer;
     transition:
@@ -662,15 +623,15 @@ function handleCleanupResult(e: Event): void {
   }
 
   .row-btn:hover {
-    border-color: var(--va-accent-primary);
-    background: var(--va-bg-hover);
+    border-color: var(--clay);
+    background: color-mix(in oklch, var(--foreground), transparent 96%);
   }
 
   .row-btn strong {
     display: block;
     margin-bottom: 4px;
     font-size: 15px;
-    color: var(--va-text-primary);
+    color: var(--foreground);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -689,30 +650,30 @@ function handleCleanupResult(e: Event): void {
   }
 
   .empty {
-    color: var(--va-text-subtle);
+    color: color-mix(in oklch, var(--muted-foreground), transparent 24%);
     font-size: 14px;
     text-align: center;
     padding: 48px 12px;
-    border: 1px dashed var(--va-border-default);
-    border-radius: var(--va-radius-md);
+    border: 1px dashed var(--border);
+    border-radius: calc(var(--radius) * 0.8);
   }
 
   /* ---- Cleanup buttons ---- */
 
   .clean-btn {
     background: none;
-    border: 1px solid var(--va-border-strong);
-    border-radius: var(--va-radius-md);
+    border: 1px solid color-mix(in oklch, var(--border), var(--foreground) 18%);
+    border-radius: calc(var(--radius) * 0.8);
     padding: 5px 12px;
     font-size: 12px;
-    color: var(--va-text-muted);
+    color: var(--muted-foreground);
     cursor: pointer;
   }
 
   .clean-btn:hover {
-    background: var(--va-bg-hover);
-    color: var(--va-text-danger, #e74c3c);
-    border-color: var(--va-text-danger, #e74c3c);
+    background: color-mix(in oklch, var(--foreground), transparent 96%);
+    color: var(--rust);
+    border-color: var(--rust);
   }
 
   .clean-bar {
@@ -746,14 +707,12 @@ function handleCleanupResult(e: Event): void {
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--va-radius-md);
-    border: 1px solid var(--va-border-default);
+    border-radius: calc(var(--radius) * 0.8);
+    border: 1px solid var(--border);
   }
 
   @media (max-width: 720px) {
     .app {
-      --va-app-gutter: 16px;
-
       padding: 16px;
     }
 
@@ -805,9 +764,9 @@ function handleCleanupResult(e: Event): void {
   }
 
   .confirm-dialog {
-    background: var(--va-bg-surface, #1e1e1e);
-    border: 1px solid var(--va-border-strong);
-    border-radius: var(--va-radius-lg);
+    background: var(--card);
+    border: 1px solid color-mix(in oklch, var(--border), var(--foreground) 18%);
+    border-radius: var(--radius);
     padding: 24px;
     max-width: 400px;
     width: 90%;
@@ -819,7 +778,7 @@ function handleCleanupResult(e: Event): void {
   }
 
   .confirm-hint {
-    color: var(--va-text-subtle);
+    color: color-mix(in oklch, var(--muted-foreground), transparent 24%);
     font-size: 13px;
     margin-bottom: 16px;
   }
@@ -832,15 +791,15 @@ function handleCleanupResult(e: Event): void {
 
   .cancel-btn {
     background: none;
-    border: 1px solid var(--va-border-default);
+    border: 1px solid var(--border);
     border-radius: 999px;
     padding: 4px 16px;
     font-size: 12px;
-    color: var(--va-text-primary);
+    color: var(--foreground);
     cursor: pointer;
   }
 
   .cancel-btn:hover {
-    background: var(--va-bg-hover);
+    background: color-mix(in oklch, var(--foreground), transparent 96%);
   }
 </style>

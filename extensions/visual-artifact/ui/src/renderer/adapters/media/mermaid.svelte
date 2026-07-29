@@ -60,8 +60,8 @@ $effect(() => {
 <figure class="my-3 flex flex-col gap-2" bind:this={host}>
   {#if error}
     <div class="rounded-xl border border-border bg-card p-3">
-      <p class="text-[#d9a84b] text-xs mb-2">Mermaid render failed. Definition shown as source:</p>
-      <pre class="p-3 bg-[#141413] text-[#f0eee6] rounded-lg font-mono text-xs leading-relaxed whitespace-pre-wrap overflow-x-auto">{definition}</pre>
+      <p class="text-amber text-xs mb-2">Mermaid render failed. Definition shown as source:</p>
+      <pre class="p-3 bg-primary text-primary-foreground rounded-lg font-mono text-xs leading-relaxed whitespace-pre-wrap overflow-x-auto">{definition}</pre>
       <p class="text-rust text-xs mt-2">{error}</p>
     </div>
   {:else if isRendering}

@@ -15,7 +15,7 @@ const trendIcons: Record<string, string> = {
 };
 </script>
 
-<Card padding="sm">
+<Card padding="sm" class="my-3">
   <p class="font-mono text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground mb-1">{label}</p>
   <p class="font-serif text-2xl font-medium tracking-[-0.035em] text-foreground leading-tight">
     {value}

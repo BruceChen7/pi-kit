@@ -19,15 +19,20 @@ const variantClasses: Record<string, string> = {
   default: "bg-card border-border",
   info: "bg-clay/10 border-clay/20",
   success: "bg-olive/10 border-olive/20",
-  warning: "bg-[#d9a84b]/10 border-[#d9a84b]/20",
+  warning: "bg-amber/10 border-amber/20",
   danger: "bg-rust/10 border-rust/20",
 };
 
-const effectiveColumns = $derived(Math.min(3, Math.max(1, columns)));
+const effectiveColumns = $derived(
+  Number.isFinite(columns) ? Math.min(4, Math.max(1, Math.round(columns))) : 2,
+);
 </script>
 
 {#if items.length > 0}
-  <div class="grid gap-3 my-3" style="grid-template-columns: repeat({effectiveColumns}, minmax(0, 1fr))">
+  <div
+    class="va-kpi-grid grid gap-3 my-4"
+    style="grid-template-columns: repeat({effectiveColumns}, minmax(0, 1fr))"
+  >
     {#each items as item}
       {@const vc = variantClasses[item.variant ?? "default"] ?? variantClasses.default}
       <div class="rounded-xl border p-4 min-w-0 {vc}">
@@ -45,9 +50,14 @@ const effectiveColumns = $derived(Math.min(3, Math.max(1, columns)));
 
 <style>
   @media (max-width: 820px) {
-    :global(.va-kpi-grid) { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+    .va-kpi-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
   }
+
   @media (max-width: 520px) {
-    :global(.va-kpi-grid) { grid-template-columns: 1fr !important; }
+    .va-kpi-grid {
+      grid-template-columns: 1fr !important;
+    }
   }
 </style>

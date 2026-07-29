@@ -22,11 +22,11 @@ const lines = $derived(code.split("\n"));
       {language}
     </div>
   {/if}
-  <pre class="m-0 p-4 bg-[#141413] text-[#f0eee6] font-mono text-sm leading-relaxed overflow-x-auto">
+  <pre class="m-0 p-4 bg-primary text-primary-foreground font-mono text-sm leading-relaxed overflow-x-auto">
     {#if showLineNumbers}
       {#each lines as line, i}
         <code class="table-row">
-          <span class="table-cell w-8 text-right pr-4 select-none text-[#6b6a63]/40">{i + 1}</span>
+          <span class="table-cell w-8 text-right pr-4 select-none text-muted-foreground/60">{i + 1}</span>
           <span class="table-cell whitespace-pre">{line}</span>
         </code>
       {/each}

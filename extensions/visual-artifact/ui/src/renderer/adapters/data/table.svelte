@@ -3,9 +3,15 @@ import Table from "$components/Table.svelte";
 
 let { headers = [], rows = [] }: { headers?: string[]; rows?: string[][] } =
   $props();
+
+const minWidth = $derived(
+  headers.length > 3
+    ? `${Math.min(1040, Math.max(640, headers.length * 170))}px`
+    : "100%",
+);
 </script>
 
-<Table>
+<Table {minWidth}>
   {#if headers.length > 0}
     <thead>
       <tr>
@@ -19,7 +25,7 @@ let { headers = [], rows = [] }: { headers?: string[]; rows?: string[][] } =
     {#each rows as row}
       <tr class="border-b border-border last:border-0 hover:bg-muted/50">
         {#each row as cell}
-          <td class="p-4 text-foreground">{cell}</td>
+          <td class="max-w-[32rem] p-4 align-top text-foreground break-words">{cell}</td>
         {/each}
       </tr>
     {/each}

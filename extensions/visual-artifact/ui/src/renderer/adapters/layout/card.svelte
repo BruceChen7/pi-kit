@@ -32,7 +32,7 @@ function semanticVariant(value: string): string {
 const tone = $derived(semanticVariant(title));
 </script>
 
-<Card {tone}>
+<Card {tone} class="my-3">
   {#if title}
     <h3 class="font-serif text-lg font-medium tracking-[-0.015em] text-foreground mb-1">{title}</h3>
   {/if}

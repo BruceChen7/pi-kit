@@ -14,12 +14,20 @@ let {
   columns?: number;
   _nodePath?: string;
 } = $props();
+
+const effectiveColumns = $derived(
+  Number.isFinite(columns) ? Math.min(4, Math.max(1, Math.round(columns))) : 2,
+);
 </script>
 
 {#if cards.length > 0}
-  <div class="grid gap-3 my-3" style="grid-template-columns: repeat({columns}, 1fr)">
+  <div
+    class="va-card-grid grid gap-3 my-4"
+    data-columns={effectiveColumns}
+    style="grid-template-columns: repeat({effectiveColumns}, minmax(0, 1fr))"
+  >
     {#each cards as card, i}
-      <div class="rounded-xl border border-border bg-card p-4">
+      <div class="min-w-0 rounded-xl border border-border bg-card p-4">
         {#if card.title}
           <h4 class="font-serif text-base font-medium tracking-[-0.01em] text-foreground mb-1">{card.title}</h4>
         {/if}
@@ -35,3 +43,17 @@ let {
     {/each}
   </div>
 {/if}
+
+<style>
+  @media (max-width: 900px) {
+    .va-card-grid:not([data-columns="1"]) {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .va-card-grid {
+      grid-template-columns: 1fr !important;
+    }
+  }
+</style>

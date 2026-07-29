@@ -48,7 +48,7 @@ export function getMermaidThemeVariables(
 
 export function getMermaidRenderConfig(
   theme: MermaidAppTheme,
-  fontFamily = "var(--va-font-sans)",
+  fontFamily = "Inter, ui-sans-serif, system-ui, sans-serif",
 ): Record<string, unknown> {
   return {
     startOnLoad: false,
@@ -157,7 +157,7 @@ export async function renderMermaidDiagram(
   mermaid.initialize(
     getMermaidRenderConfig(
       input.theme,
-      input.fontFamily ?? "var(--va-font-sans)",
+      input.fontFamily ?? "Inter, ui-sans-serif, system-ui, sans-serif",
     ),
   );
 

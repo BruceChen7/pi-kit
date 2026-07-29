@@ -17,7 +17,7 @@ describe("getMermaidTheme", () => {
 });
 
 describe("getMermaidRenderConfig", () => {
-  it("builds a dark theme config with readable theme variables", () => {
+  it("falls back legacy dark requests to the warm-neutral theme", () => {
     const config = getMermaidRenderConfig("dark");
 
     expect(config).toMatchObject({
@@ -25,22 +25,22 @@ describe("getMermaidRenderConfig", () => {
       securityLevel: "strict",
       startOnLoad: false,
       themeVariables: expect.objectContaining({
-        background: "#0f172a",
-        primaryTextColor: "#f1f5f9",
-        lineColor: "#94a3b8",
+        background: "#faf9f5",
+        primaryTextColor: "#141413",
+        lineColor: "#6b6a63",
       }),
     });
   });
 
-  it("builds a light theme config with readable theme variables", () => {
+  it("builds a warm-neutral config with readable theme variables", () => {
     const config = getMermaidRenderConfig("light");
 
     expect(config).toMatchObject({
       theme: "base",
       themeVariables: expect.objectContaining({
-        background: "#f8fafc",
-        primaryTextColor: "#0f172a",
-        lineColor: "#475569",
+        background: "#faf9f5",
+        primaryTextColor: "#141413",
+        lineColor: "#6b6a63",
       }),
     });
   });
@@ -97,7 +97,7 @@ describe("renderMermaidDiagram", () => {
         theme: "base",
         securityLevel: "strict",
         themeVariables: expect.objectContaining({
-          background: "#0f172a",
+          background: "#faf9f5",
         }),
       }),
     );
@@ -128,7 +128,7 @@ describe("renderMermaidDiagram", () => {
       expect.objectContaining({
         theme: "base",
         themeVariables: expect.objectContaining({
-          background: "#f8fafc",
+          background: "#faf9f5",
         }),
       }),
     );

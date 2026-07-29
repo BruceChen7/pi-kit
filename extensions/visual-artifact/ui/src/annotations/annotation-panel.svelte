@@ -99,7 +99,7 @@ function handleComposerKeydown(e: KeyboardEvent) {
     class="va-feedback-panel"
     aria-label="Feedback"
     bind:this={panelElement}
-    style={`--va-panel-top: ${panelTop}px`}
+    style={`--panel-top: ${panelTop}px`}
   >
     <!-- Header -->
     <div class="va-panel-header">
@@ -204,20 +204,20 @@ function handleComposerKeydown(e: KeyboardEvent) {
 <style>
   .va-feedback-panel {
     position: fixed;
-    top: var(--va-panel-top, 0px);
+    top: var(--panel-top, 0px);
     right: 0;
-    width: min(var(--va-comment-panel-width, 360px), 100vw);
-    height: calc(100vh - var(--va-panel-top, 0px));
-    background: var(--va-bg-surface);
-    border-left: 1px solid var(--va-border-default);
-    border-radius: var(--va-radius-lg) 0 0 var(--va-radius-lg);
+    width: min(360px, 100vw);
+    height: calc(100vh - var(--panel-top, 0px));
+    background: var(--card);
+    border-left: 1px solid var(--border);
+    border-radius: var(--radius) 0 0 var(--radius);
     box-shadow: -12px 0 32px rgba(2, 6, 23, 0.24);
     display: flex;
     flex-direction: column;
     overflow: hidden;
     z-index: 100;
     font-size: 13px;
-    color: var(--va-text-primary);
+    color: var(--foreground);
     box-sizing: border-box;
   }
 
@@ -232,7 +232,7 @@ function handleComposerKeydown(e: KeyboardEvent) {
     gap: 8px;
     min-height: 52px;
     padding: 12px 16px;
-    border-bottom: 1px solid var(--va-border-default);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -246,7 +246,7 @@ function handleComposerKeydown(e: KeyboardEvent) {
   }
 
   .va-saving {
-    color: var(--va-text-muted);
+    color: var(--muted-foreground);
     animation: va-spin 1s linear infinite;
     font-size: 14px;
   }
@@ -259,7 +259,7 @@ function handleComposerKeydown(e: KeyboardEvent) {
   .va-close-btn {
     background: none;
     border: none;
-    color: var(--va-text-muted);
+    color: var(--muted-foreground);
     font-size: 18px;
     cursor: pointer;
     padding: 0 4px;
@@ -267,7 +267,7 @@ function handleComposerKeydown(e: KeyboardEvent) {
   }
 
   .va-close-btn:hover {
-    color: var(--va-text-primary);
+    color: var(--foreground);
   }
 
   /* ---- Selected node ---- */
@@ -277,27 +277,27 @@ function handleComposerKeydown(e: KeyboardEvent) {
     gap: 8px;
     min-height: 42px;
     padding: 9px 16px;
-    border-bottom: 1px solid var(--va-border-default);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
   .va-node-label {
     font-size: 12px;
     font-weight: 600;
-    font-family: var(--va-font-mono);
-    color: var(--va-accent-primary-text);
+    font-family: var(--font-mono);
+    color: var(--clay-dark);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .va-node-type {
-    color: var(--va-text-muted);
-    font-family: var(--va-font-sans);
+    color: var(--muted-foreground);
+    font-family: var(--font-sans);
   }
 
   .va-hint {
-    color: var(--va-text-subtle);
+    color: color-mix(in oklch, var(--muted-foreground), transparent 24%);
     font-size: 12px;
     font-style: italic;
   }
@@ -305,7 +305,7 @@ function handleComposerKeydown(e: KeyboardEvent) {
   .va-clear-btn {
     background: none;
     border: none;
-    color: var(--va-text-muted);
+    color: var(--muted-foreground);
     cursor: pointer;
     font-size: 14px;
     padding: 0 2px;
@@ -313,13 +313,13 @@ function handleComposerKeydown(e: KeyboardEvent) {
   }
 
   .va-clear-btn:hover {
-    color: var(--va-accent-danger-text);
+    color: var(--rust);
   }
 
   /* ---- Composer ---- */
   .va-composer {
     padding: 14px 16px;
-    border-bottom: 1px solid var(--va-border-default);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -333,26 +333,26 @@ function handleComposerKeydown(e: KeyboardEvent) {
     min-width: 0;
     min-height: 96px;
     padding: 10px 12px 32px;
-    border: 1px solid var(--va-border-default);
-    border-radius: var(--va-radius-sm);
-    background: var(--va-bg-app);
-    color: var(--va-text-primary);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 0.6);
+    background: var(--background);
+    color: var(--foreground);
     font-size: 13px;
     line-height: 1.45;
-    font-family: var(--va-font-sans);
+    font-family: var(--font-sans);
     resize: vertical;
   }
 
   .va-textarea:focus {
     outline: none;
-    border-color: var(--va-accent-primary);
+    border-color: var(--clay);
   }
 
   .va-composer-shortcut {
     position: absolute;
     right: 10px;
     bottom: 9px;
-    color: var(--va-text-subtle);
+    color: color-mix(in oklch, var(--muted-foreground), transparent 24%);
     font-size: 10px;
     line-height: 1;
     white-space: nowrap;
@@ -372,7 +372,7 @@ function handleComposerKeydown(e: KeyboardEvent) {
   .va-pending-title {
     font-size: 11px;
     font-weight: 500;
-    color: var(--va-text-muted);
+    color: var(--muted-foreground);
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
@@ -386,9 +386,9 @@ function handleComposerKeydown(e: KeyboardEvent) {
   .va-pending-item {
     position: relative;
     padding: 10px 32px 10px 10px;
-    border: 1px solid var(--va-border-default);
-    border-radius: var(--va-radius-sm);
-    background: var(--va-bg-app);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 0.6);
+    background: var(--background);
   }
 
   .va-pending-meta {
@@ -400,15 +400,15 @@ function handleComposerKeydown(e: KeyboardEvent) {
 
   .va-pending-node {
     font-size: 10px;
-    font-family: var(--va-font-mono);
-    color: var(--va-accent-primary-text);
+    font-family: var(--font-mono);
+    color: var(--clay-dark);
   }
 
   .va-pending-body {
     margin: 0;
     font-size: 12px;
     line-height: 1.4;
-    color: var(--va-text-primary);
+    color: var(--foreground);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -420,7 +420,7 @@ function handleComposerKeydown(e: KeyboardEvent) {
     right: 4px;
     background: none;
     border: none;
-    color: var(--va-text-muted);
+    color: var(--muted-foreground);
     cursor: pointer;
     font-size: 14px;
     padding: 0 2px;
@@ -428,14 +428,14 @@ function handleComposerKeydown(e: KeyboardEvent) {
   }
 
   .va-remove-btn:hover {
-    color: var(--va-accent-danger-text);
+    color: var(--rust);
   }
 
   /* ---- Send button ---- */
   .va-send-area {
     margin-top: auto;
     padding: 14px 16px 16px;
-    border-top: 1px solid var(--va-border-default);
+    border-top: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -443,10 +443,10 @@ function handleComposerKeydown(e: KeyboardEvent) {
     width: 100%;
     min-height: 40px;
     padding: 9px 14px;
-    border-radius: var(--va-radius-md);
+    border-radius: calc(var(--radius) * 0.8);
     border: none;
-    background: var(--va-accent-primary);
-    color: var(--va-text-inverse);
+    background: var(--clay);
+    color: var(--primary-foreground);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -458,9 +458,9 @@ function handleComposerKeydown(e: KeyboardEvent) {
   }
 
   .va-send-btn:disabled {
-    border: 1px solid var(--va-border-default);
-    background: var(--va-bg-elevated);
-    color: var(--va-text-subtle);
+    border: 1px solid var(--border);
+    background: var(--muted);
+    color: color-mix(in oklch, var(--muted-foreground), transparent 24%);
     cursor: not-allowed;
   }
 

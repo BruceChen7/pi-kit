@@ -1,9 +1,1 @@
-<hr class="va-divider" />
-
-<style>
-  .va-divider {
-    margin: 20px 0;
-    border: none;
-    border-top: 1px solid var(--va-border-default);
-  }
-</style>
+<hr class="my-5 border-t border-border border-0" />

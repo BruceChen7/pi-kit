@@ -1,7 +1,4 @@
 <script lang="ts">
-// biome-ignore lint/correctness/noUnusedImports: used in template
-import VisualArtifactRenderer from "../../visual-artifact-renderer.svelte";
-
 let {
   tabs = [],
   activeIndex = 0,
@@ -15,11 +12,11 @@ let {
   _nodePath?: string;
 } = $props();
 
-function initialActiveTab(): number {
+// Capture initial value only — prop changes after mount should not override user interaction
+function defaultIndex(): number {
   return activeIndex;
 }
-
-let activeTab = $state<number>(initialActiveTab());
+let activeTab = $state(defaultIndex());
 
 function selectTab(index: number): void {
   activeTab = index;
@@ -27,64 +24,24 @@ function selectTab(index: number): void {
 </script>
 
 {#if tabs.length > 0}
-  <div class="va-tabs">
-    <div class="va-tab-bar" role="tablist">
+  <div class="my-3">
+    <div class="flex gap-0 border-b border-border" role="tablist">
       {#each tabs as tab, i}
         <button
           type="button"
-          class:va-tab-active={activeTab === i}
-          onclick={() => selectTab(i)}
+          class="px-4 py-2 text-sm font-medium bg-transparent border-none cursor-pointer transition-colors {activeTab === i ? 'text-clay border-b-2 border-clay' : 'text-muted-foreground hover:text-foreground'}"
           role="tab"
           aria-selected={activeTab === i}
+          onclick={() => selectTab(i)}
         >
           {tab.label}
         </button>
       {/each}
     </div>
-    <div class="va-tab-content" role="tabpanel">
+    <div class="pt-3" role="tabpanel">
       {#if tabs[activeTab]}
-        <VisualArtifactRenderer
-          nodes={tabs[activeTab].nodes}
-          basePath={`${_nodePath}.props.tabs.${activeTab}.nodes`}
-        />
+        <VisualArtifactRenderer nodes={tabs[activeTab].nodes} basePath={`${_nodePath}.props.tabs.${activeTab}.nodes`} />
       {/if}
     </div>
   </div>
 {/if}
-
-<style>
-  .va-tabs {
-    margin: 12px 0;
-  }
-
-  .va-tab-bar {
-    display: flex;
-    gap: 2px;
-    border-bottom: 1px solid var(--va-border-default);
-    padding: 0;
-  }
-
-  button {
-    padding: 8px 16px;
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--va-text-muted);
-    font-size: 13px;
-    cursor: pointer;
-    transition: color 0.15s, border-color 0.15s;
-  }
-
-  button:hover {
-    color: var(--va-text-secondary);
-  }
-
-  .va-tab-active {
-    color: var(--va-accent-primary-text);
-    border-bottom-color: var(--va-accent-primary);
-  }
-
-  .va-tab-content {
-    padding: 12px 4px;
-  }
-</style>

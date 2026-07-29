@@ -104,30 +104,38 @@ try {
     z-index: 1;
     border: 1px solid transparent;
     border-left-width: 3px;
-    border-radius: var(--va-radius-lg);
+    border-radius: calc(var(--radius) * 1.4);
     pointer-events: none;
     transition:
-      border-color 0.12s ease,
-      background 0.12s ease;
+      border-color 0.15s ease,
+      background 0.15s ease,
+      box-shadow 0.15s ease;
   }
 
   .va-clickable:hover::after {
-    border-color: var(--va-border-info-subtle);
-    border-left-color: var(--va-accent-primary);
+    border-color: color-mix(in oklch, var(--clay), transparent 80%);
+    border-left-color: var(--clay);
   }
 
   .va-selected::after {
-    border-color: var(--va-accent-primary);
-    background: var(--va-bg-selected);
+    border-color: var(--clay);
+    border-left-color: var(--clay);
+    background: color-mix(in oklch, var(--clay), transparent 92%);
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--clay), transparent 85%);
+  }
+
+  /* Subtle scale feedback on click (optional, CSS-only) */
+  .va-clickable:active::after {
+    background: color-mix(in oklch, var(--clay), transparent 88%);
   }
 
   .va-fallback {
     padding: 12px;
-    color: var(--va-accent-danger-text);
-    background: var(--va-bg-danger-subtle);
-    border: 1px dashed var(--va-border-danger-subtle);
-    border-radius: 6px;
+    color: var(--rust);
+    background: color-mix(in oklch, var(--rust), transparent 90%);
+    border: 1px dashed color-mix(in oklch, var(--rust), transparent 60%);
+    border-radius: calc(var(--radius) * 0.8);
     font-size: 13px;
-    font-family: monospace;
+    font-family: var(--font-mono);
   }
 </style>

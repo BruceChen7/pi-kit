@@ -69,9 +69,11 @@
     "@biomejs/biome": "^2.5.5",
     "@jackwener/opencli": "^1.8.6",
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@tailwindcss/vite": "^4.3.3",
     "husky": "^9.1.7",
     "lint-staged": "^17.2.0",
     "svelte": "^5.56.8",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^8.0.0",
     "vitest": "^4.1.10"

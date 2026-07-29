@@ -1,7 +1,4 @@
 <script lang="ts">
-// biome-ignore lint/correctness/noUnusedImports: used in template
-import VisualArtifactRenderer from "../../visual-artifact-renderer.svelte";
-
 let {
   items = [],
   _nodePath = "",
@@ -15,8 +12,8 @@ let {
 } = $props();
 
 function initialOpenIndex(): number | null {
-  const index = items.findIndex((item) => item.defaultOpen === true);
-  return index >= 0 ? index : null;
+  const idx = items.findIndex((item) => item.defaultOpen === true);
+  return idx >= 0 ? idx : null;
 }
 
 let openIndex = $state<number | null>(initialOpenIndex());
@@ -27,76 +24,23 @@ function toggle(i: number): void {
 </script>
 
 {#if items.length > 0}
-  <div class="va-accordion">
+  <div class="rounded-xl border border-border bg-card overflow-hidden my-3">
     {#each items as item, i}
-      <div class="va-accordion-item">
+      <div class="border-b border-border last:border-b-0">
         <button
           type="button"
-          class:va-accordion-open={openIndex === i}
+          class="flex justify-between items-center w-full px-4 py-3 text-left text-sm font-medium text-foreground bg-transparent border-none cursor-pointer hover:bg-muted/50 {openIndex === i ? 'bg-muted' : ''}"
           onclick={() => toggle(i)}
         >
           {item.title}
-          <span class="va-chevron">{openIndex === i ? "▾" : "▸"}</span>
+          <span class="text-muted-foreground text-xs ml-2 shrink-0">{openIndex === i ? "▾" : "▸"}</span>
         </button>
         {#if openIndex === i}
-          <div class="va-accordion-body">
-            <VisualArtifactRenderer
-              nodes={item.nodes}
-              basePath={`${_nodePath}.props.items.${i}.nodes`}
-            />
+          <div class="px-4 pb-4">
+            <VisualArtifactRenderer nodes={item.nodes} basePath={`${_nodePath}.props.items.${i}.nodes`} />
           </div>
         {/if}
       </div>
     {/each}
   </div>
 {/if}
-
-<style>
-  .va-accordion {
-    margin: 12px 0;
-    border: 1px solid var(--va-border-default);
-    border-radius: var(--va-radius-md);
-    overflow: hidden;
-  }
-
-  .va-accordion-item {
-    border-bottom: 1px solid var(--va-border-default);
-  }
-
-  .va-accordion-item:last-child {
-    border-bottom: none;
-  }
-
-  button {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    width: 100%;
-    padding: 10px 14px;
-    background: transparent;
-    border: none;
-    color: var(--va-text-secondary);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    text-align: left;
-  }
-
-  button:hover {
-    background: var(--va-bg-hover);
-  }
-
-  .va-accordion-open {
-    background: var(--va-bg-selected);
-  }
-
-  .va-chevron {
-    color: var(--va-text-subtle);
-    font-size: 11px;
-    margin-left: 8px;
-  }
-
-  .va-accordion-body {
-    padding: 8px 14px 14px;
-  }
-</style>

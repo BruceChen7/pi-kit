@@ -4,10 +4,22 @@
 
 export default async (): Promise<Record<string, unknown>> => {
   // biome-ignore lint/suspicious/noExplicitAny: dynamic import skips ESM-only require trap
-  const mod: any = await import("@sveltejs/vite-plugin-svelte");
+  const svelteMod: any = await import("@sveltejs/vite-plugin-svelte");
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic import skips ESM-only require trap
+  const tailwindMod: any = await import("@tailwindcss/vite");
+  const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
   return {
-    plugins: [mod.svelte()],
+    plugins: [tailwindMod.default(), svelteMod.svelte()],
+    resolve: {
+      alias: {
+        $lib: path.resolve(__dirname, "src/lib"),
+        $components: path.resolve(__dirname, "src/components"),
+      },
+    },
     build: {
       outDir: "../ui-dist",
       emptyOutDir: true,

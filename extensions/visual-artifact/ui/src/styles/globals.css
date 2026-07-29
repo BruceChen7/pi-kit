@@ -1,102 +1,140 @@
 /* ------------------------------------------------------------------ */
-/*  Visual Artifact — Design Tokens & Theme System                    */
+/*  Visual Artifact — Warm Neutral Design Tokens                      */
+/*  Tailwind v4 + CSS custom properties, single theme (no dark mode)   */
 /* ------------------------------------------------------------------ */
+
+@import "tailwindcss";
+
+@theme inline {
+  /* Semantic colors — mapped to CSS variables for runtime use */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+
+  /* Brand colors */
+  --color-clay: var(--clay);
+  --color-clay-dark: var(--clay-dark);
+  --color-olive: var(--olive);
+  --color-rust: var(--rust);
+  --color-oat: var(--oat);
+
+  /* Fonts */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-serif: var(--font-serif);
+
+  /* Border radius chain — base 0.75rem */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* Shadows */
+  --shadow-card: var(--shadow-card);
+  --shadow-card-sm: var(--shadow-card-sm);
+}
+
+:root {
+  /* Font stacks */
+  --font-sans:
+    "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-mono: "DM Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
+  --font-serif: "Georgia", "Times New Roman", ui-serif, serif;
+
+  /* Light palette — warm neutral */
+  --ivory: #faf9f5;
+  --paper: #ffffff;
+  --slate: #141413;
+  --clay: #d97757;
+  --clay-dark: #b85c3e;
+  --oat: #e3dacc;
+  --olive: #788c5d;
+  --rust: #b04a3f;
+  --gray-100: #f0eee6;
+  --gray-200: #e6e3da;
+  --gray-300: #d1cfc5;
+  --gray-500: #6b6a63;
+  --gray-700: #3d3d3a;
+
+  /* Semantic tokens */
+  --background: var(--ivory);
+  --foreground: var(--slate);
+  --card: var(--paper);
+  --card-foreground: var(--slate);
+  --popover: var(--paper);
+  --popover-foreground: var(--slate);
+  --primary: var(--slate);
+  --primary-foreground: var(--ivory);
+  --secondary: var(--gray-100);
+  --secondary-foreground: var(--slate);
+  --muted: var(--gray-100);
+  --muted-foreground: var(--gray-500);
+  --accent: var(--oat);
+  --accent-foreground: var(--slate);
+  --destructive: var(--rust);
+  --border: var(--gray-300);
+  --input: var(--gray-300);
+  --ring: var(--clay);
+
+  /* Shadows */
+  --shadow-card: 0 10px 34px rgba(20, 20, 19, 0.06);
+  --shadow-card-sm: 0 8px 26px rgba(20, 20, 19, 0.05);
+
+  /* Radius base */
+  --radius: 0.75rem;
+}
 
 html,
 body {
   min-height: 100%;
   margin: 0;
-  background: var(--va-bg-app);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-:root,
-[data-theme="dark"] {
-  /* Backgrounds */
-  --va-bg-app: #0f172a;
-  --va-bg-surface: #1e293b;
-  --va-bg-elevated: #334155;
-  --va-bg-code: #0f172a;
-  --va-bg-hover: rgba(255, 255, 255, 0.03);
-  --va-bg-selected: rgba(59, 130, 246, 0.08);
-  --va-bg-info-subtle: rgba(59, 130, 246, 0.08);
-  --va-bg-success-subtle: rgba(34, 197, 94, 0.08);
-  --va-bg-warning-subtle: rgba(234, 179, 8, 0.08);
-  --va-bg-danger-subtle: rgba(239, 68, 68, 0.08);
-  --va-bg-inverse-subtle: rgba(255, 255, 255, 0.2);
-  --va-bg-inverse-strong: rgba(255, 255, 255, 0.3);
-
-  /* Text */
-  --va-text-primary: #f1f5f9;
-  --va-text-secondary: #e2e8f0;
-  --va-text-muted: #94a3b8;
-  --va-text-subtle: #64748b;
-  --va-text-inverse: #ffffff;
-
-  /* Borders */
-  --va-border-default: #334155;
-  --va-border-strong: #475569;
-  --va-border-info-subtle: rgba(59, 130, 246, 0.25);
-  --va-border-success-subtle: rgba(34, 197, 94, 0.25);
-  --va-border-warning-subtle: rgba(234, 179, 8, 0.25);
-  --va-border-danger-subtle: rgba(239, 68, 68, 0.25);
-
-  /* Accent */
-  --va-accent-primary: #3b82f6;
-  --va-accent-primary-text: #60a5fa;
-  --va-accent-success: #22c55e;
-  --va-accent-success-text: #86efac;
-  --va-accent-warning: #f59e0b;
-  --va-accent-warning-text: #fde68a;
-  --va-accent-danger: #ef4444;
-  --va-accent-danger-text: #fca5a5;
-  --va-accent-neutral: #64748b;
-
-  /* Misc */
-  --va-shadow-badge: 0 1px 3px rgba(0, 0, 0, 0.3);
-  --va-radius-sm: 6px;
-  --va-radius-md: 8px;
-  --va-radius-lg: 10px;
-  --va-font-mono: "SF Mono", "Fira Code", "Cascadia Code", monospace;
-  --va-font-sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    "Segoe UI", sans-serif;
+/* Warm selection */
+::selection {
+  background: color-mix(in oklch, var(--clay), transparent 65%);
+  color: var(--foreground);
 }
 
-[data-theme="light"] {
-  --va-bg-app: #f8fafc;
-  --va-bg-surface: #ffffff;
-  --va-bg-elevated: #e2e8f0;
-  --va-bg-code: #f1f5f9;
-  --va-bg-hover: rgba(0, 0, 0, 0.02);
-  --va-bg-selected: rgba(37, 99, 235, 0.08);
-  --va-bg-info-subtle: rgba(37, 99, 235, 0.08);
-  --va-bg-success-subtle: rgba(22, 163, 74, 0.08);
-  --va-bg-warning-subtle: rgba(217, 119, 6, 0.1);
-  --va-bg-danger-subtle: rgba(220, 38, 38, 0.08);
-  --va-bg-inverse-subtle: rgba(255, 255, 255, 0.2);
-  --va-bg-inverse-strong: rgba(255, 255, 255, 0.3);
+/* Subtle background gradient (same as current repo) */
+body {
+  background-image: radial-gradient(
+    70rem 42rem at -10rem -12rem,
+    color-mix(in oklch, var(--clay), transparent 92%),
+    transparent 72%
+  );
+  background-repeat: no-repeat;
+}
 
-  --va-text-primary: #0f172a;
-  --va-text-secondary: #1e293b;
-  --va-text-muted: #64748b;
-  --va-text-subtle: #94a3b8;
-  --va-text-inverse: #ffffff;
+/* Prevent flex children from overflowing */
+body > * {
+  min-width: 0;
+}
 
-  --va-border-default: #e2e8f0;
-  --va-border-strong: #cbd5e1;
-  --va-border-info-subtle: rgba(37, 99, 235, 0.24);
-  --va-border-success-subtle: rgba(22, 163, 74, 0.24);
-  --va-border-warning-subtle: rgba(217, 119, 6, 0.28);
-  --va-border-danger-subtle: rgba(220, 38, 38, 0.24);
-
-  --va-accent-primary: #2563eb;
-  --va-accent-primary-text: #3b82f6;
-  --va-accent-success: #16a34a;
-  --va-accent-success-text: #22c55e;
-  --va-accent-warning: #d97706;
-  --va-accent-warning-text: #f59e0b;
-  --va-accent-danger: #dc2626;
-  --va-accent-danger-text: #ef4444;
-  --va-accent-neutral: #64748b;
-  --va-shadow-badge: 0 1px 3px rgba(15, 23, 42, 0.18);
+/* Code blocks keep a dark background */
+pre,
+code {
+  font-family: var(--font-mono);
 }

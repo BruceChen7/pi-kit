@@ -1,7 +1,4 @@
 <script lang="ts">
-// biome-ignore lint/correctness/noUnusedImports: used in template
-import VisualArtifactRenderer from "../../visual-artifact-renderer.svelte";
-
 let {
   title = "",
   nodes = [],
@@ -13,30 +10,11 @@ let {
 } = $props();
 </script>
 
-<section class="va-section">
+<section class="my-4">
   {#if title}
-    <h2 class="va-section-title">{title}</h2>
+    <h2 class="font-serif text-2xl font-medium tracking-[-0.02em] text-foreground pb-2 mb-3 border-b border-border">{title}</h2>
   {/if}
-  <div class="va-section-body">
+  <div>
     <VisualArtifactRenderer {nodes} basePath={`${_nodePath}.props.nodes`} />
   </div>
 </section>
-
-<style>
-  .va-section {
-    margin: 16px 0;
-  }
-
-  .va-section-title {
-    margin: 0 0 8px;
-    font-size: 16px;
-    font-weight: 700;
-    color: var(--va-text-primary);
-    padding-bottom: 6px;
-    border-bottom: 1px solid var(--va-border-default);
-  }
-
-  .va-section-body {
-    padding-left: 2px;
-  }
-</style>

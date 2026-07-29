@@ -7,11 +7,6 @@ import AnnotationPanel from "./annotations/annotation-panel.svelte";
 import AnnotationProvider from "./annotations/annotation-provider.svelte";
 import { normalizeArtifactNodes } from "./normalize-spec.ts";
 // biome-ignore lint/correctness/noUnusedImports: used in template
-import ThemeToggle from "./renderer/theme-toggle.svelte";
-import type { VisualArtifactTheme } from "./renderer/themes.ts";
-// biome-ignore lint/correctness/noUnusedImports: used in template
-import { VISUAL_ARTIFACT_THEMES } from "./renderer/themes.ts";
-// biome-ignore lint/correctness/noUnusedImports: used in template
 import VisualArtifactRenderer from "./renderer/visual-artifact-renderer.svelte";
 
 type ViewType = "home" | "project" | "artifact";
@@ -28,7 +23,6 @@ const boot = window.__VISUAL_ARTIFACT_BOOT__ ?? { view: "home" as ViewType };
 
 let currentView = $state<ViewType>((boot as BootData).view);
 let bootData = $state<BootData>(boot as BootData);
-let theme = $state<VisualArtifactTheme>("dark");
 let projects = $state<ProjectSummary[]>([]);
 let artifacts = $state<ArtifactSummary[]>([]);
 let totalArtifactCount = $derived(
@@ -139,10 +133,6 @@ onMount(() => {
   return unregisterCloseShortcuts;
 });
 
-function handleThemeToggle(next: string): void {
-  theme = next;
-}
-
 function artifactNodes(): { type: string; props: Record<string, unknown> }[] {
   const spec = bootData.artifactSpec as
     | { nodes?: unknown; data?: Record<string, unknown[]> }
@@ -226,7 +216,7 @@ function handleCleanupResult(e: Event): void {
 }
 </script>
 
-<main class="app" data-theme={theme}>
+<main class="app">
   <header class="titlebar">
     {#if currentView !== "home"}
       <button type="button" class="back-button" onclick={goBack}>&larr;</button>
@@ -257,12 +247,6 @@ function handleCleanupResult(e: Event): void {
         Feedback
       </button>
     {/if}
-
-    <ThemeToggle
-      {theme}
-      themes={VISUAL_ARTIFACT_THEMES}
-      onToggle={handleThemeToggle}
-    />
   </header>
 
   <section class="content">

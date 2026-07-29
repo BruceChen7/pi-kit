@@ -34,5 +34,16 @@ export const CONTRACT = {
     props: entry.props,
     // Include per-type guidelines where defined (e.g., mermaid)
     ...(entry.guidelines ? { guidelines: entry.guidelines } : {}),
+    // Include per-subtype guidelines as a hints-only summary to save tokens
+    ...(entry.typeGuidelines
+      ? {
+          typeGuidelines: Object.fromEntries(
+            Object.entries(entry.typeGuidelines).map(([key, val]) => [
+              key,
+              { hints: val.hints, example: val.example },
+            ]),
+          ),
+        }
+      : {}),
   })),
 } as const;

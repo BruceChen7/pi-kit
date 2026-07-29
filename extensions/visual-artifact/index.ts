@@ -9,6 +9,7 @@ import {
 } from "./artifact-store.ts";
 import { openVisualArtifactWindow } from "./glimpse-host.ts";
 import {
+  getTypeAdviceForDiagram,
   normalizeMermaidNodesInSpec,
   validateMermaidNodesInSpec,
 } from "./mermaid-boundary.ts";
@@ -167,30 +168,36 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
           `Mermaid validation failed (auto-fix applied to ${mermaidFixedSpec ? "some nodes" : "none"}):\n${mermaidErrors.join("\n")}`,
         );
 
-        // Build agent-readable error with context
+        // Build agent-readable error with context — now type-aware
+        // Error format: "nodes[14]<mermaid:flowchart>: Expecting ..."
         const details = mermaidErrors
           .map((err) => {
-            // err looks like "nodes[14]<mermaid>: Expecting ..."
-            const match = err.match(/^(.*?<mermaid>):\s*(.*)$/u);
+            // Match with optional diagram type: nodes[N]<mermaid:type> or nodes[N]<mermaid>
+            // Capture everything between : and > so hyphens in stateDiagram-v2 work.
+            const match = err.match(/^(.*?<mermaid(?::([^>]+))?>):\s*(.*)$/u);
             if (!match) return `  • ${err}`;
-            const [, location, parseMsg] = match;
+            const [, location, diagramType, parseMsg] = match;
+
+            // Get type-specific advice
+            const typeAdvice = getTypeAdviceForDiagram(diagramType);
+            const adviceLines = typeAdvice
+              ? `    ${typeAdvice.map((a) => `• ${a}`).join("\n    ")}`
+              : `    • Wrap ALL labels with quotes: N["label text"] not N[label text]\n    • Avoid parentheses () inside unquoted labels`;
+
             return [
               `  • ${location}`,
-              `    Problem: unquoted special characters (like parentheses) in label`,
-              `    Fix: wrap the label with quotes: N["label with ()"] instead of N[label with ()]`,
+              `    Diagram type: ${diagramType ?? "unknown"}`,
               `    Parse error: ${parseMsg}`,
+              `    Type-specific tips:\n${adviceLines}`,
             ].join("\n");
           })
           .join("\n");
 
         return errorResult(
-          `MERMAID_VALIDATION_ERROR: ${mermaidErrors.length} diagram(s) failed to parse.\n\n${details}\n\nSUGGESTED_FIX: Rewrite each failing diagram with ALL labels quoted using N["label"] syntax. ` +
-            `Ensure ( ) [ ] | and other special characters are inside quoted labels:\n` +
-            `  Before: WRITE_ENTRY[writeSessionEntry(key, snapshot)]:::storage\n` +
-            `  After:  WRITE_ENTRY["writeSessionEntry(key, snapshot)"]:::storage\n` +
-            `Also avoid inline ::: after bracket — use separate lines:\n` +
-            `  Before: N[label]:::class\n` +
-            `  After:  N["label"]\n  N:::class`,
+          `MERMAID_VALIDATION_ERROR: ${mermaidErrors.length} diagram(s) failed to parse.\n\n${details}\n\nIf you continue to have issues, try:\n` +
+            '1. Use N["label"] with double quotes for ALL bracket labels\n' +
+            "2. Avoid inline ::: after bracket — put `:::class` on a separate line\n" +
+            "3. Check the type-specific tips above for your diagram type",
         );
       }
 

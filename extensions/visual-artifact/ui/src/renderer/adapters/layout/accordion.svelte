@@ -1,16 +1,25 @@
 <script lang="ts">
+// biome-ignore lint/correctness/noUnusedImports: used in template
+import VisualArtifactRenderer from "../../visual-artifact-renderer.svelte";
+
 let {
   items = [],
   _nodePath = "",
 }: {
   items?: {
     title: string;
+    defaultOpen?: boolean;
     nodes: { type: string; props: Record<string, unknown> }[];
   }[];
   _nodePath?: string;
 } = $props();
 
-let openIndex = $state<number | null>(null);
+function initialOpenIndex(): number | null {
+  const index = items.findIndex((item) => item.defaultOpen === true);
+  return index >= 0 ? index : null;
+}
+
+let openIndex = $state<number | null>(initialOpenIndex());
 
 function toggle(i: number): void {
   openIndex = openIndex === i ? null : i;

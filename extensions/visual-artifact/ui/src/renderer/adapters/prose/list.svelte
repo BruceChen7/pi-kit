@@ -1,4 +1,7 @@
 <script lang="ts">
+// biome-ignore lint/correctness/noUnusedImports: used in template
+import { renderInlineMarkdown } from "../../inline-markdown.ts";
+
 type ListItem =
   | string
   | {
@@ -36,13 +39,13 @@ const isOrdered = $derived(
   {#if isOrdered}
     <ol class="va-list va-list-ordered">
       {#each items as item}
-        <li>{itemText(item)}</li>
+        <li>{@html renderInlineMarkdown(itemText(item))}</li>
       {/each}
     </ol>
   {:else}
     <ul class="va-list va-list-unordered">
       {#each items as item}
-        <li>{itemText(item)}</li>
+        <li>{@html renderInlineMarkdown(itemText(item))}</li>
       {/each}
     </ul>
   {/if}
@@ -66,5 +69,20 @@ const isOrdered = $derived(
   .va-list li::marker {
     color: var(--va-accent-primary-text);
     font-weight: 600;
+  }
+
+  .va-list :global(code) {
+    padding: 0.1em 0.34em;
+    border: 1px solid var(--va-border-default);
+    border-radius: 4px;
+    background: var(--va-bg-code);
+    color: var(--va-accent-primary-text);
+    font-family: var(--va-font-mono);
+    font-size: 0.88em;
+  }
+
+  .va-list :global(strong) {
+    color: var(--va-text-primary);
+    font-weight: 700;
   }
 </style>

@@ -5,6 +5,7 @@ import FileTree from "./file-tree.svelte";
 type FileTreeItem = {
   name: string;
   type?: "file" | "directory";
+  status?: "added" | "modified" | "deleted";
   children?: FileTreeItem[];
 };
 
@@ -42,6 +43,18 @@ function makePath(parent: string, name: string): string {
 
 const activeExpanded = $derived(_expanded ?? expanded);
 const activeToggle = $derived(_toggle ?? toggle);
+
+const statusIcons: Record<string, string> = {
+  added: "+",
+  modified: "~",
+  deleted: "-",
+};
+
+const statusColors: Record<string, string> = {
+  added: "var(--va-accent-success)",
+  modified: "var(--va-accent-warning)",
+  deleted: "var(--va-accent-danger)",
+};
 </script>
 
 {#if items.length > 0}
@@ -50,6 +63,7 @@ const activeToggle = $derived(_toggle ?? toggle);
       {@const path = makePath(_parentPath, item.name)}
       {@const isDir = item.type === "directory" || (item.children != null && item.children.length > 0)}
       {@const isExpanded = activeExpanded.has(path)}
+      {@const hasStatus = item.status != null && statusColors[item.status] != null}
       <div class="va-tree-node">
         <button
           type="button"
@@ -57,8 +71,16 @@ const activeToggle = $derived(_toggle ?? toggle);
           class:va-tree-dir={isDir}
           onclick={() => isDir && activeToggle(path)}
         >
-          <span class="va-tree-icon">{isDir ? (isExpanded ? "▾" : "▸") : "·"}</span>
+          <span class="va-tree-icon">{isDir ? (isExpanded ? "▾" : "▸") : ((hasStatus && statusIcons[item.status!]) ?? "·")}</span>
           <span class="va-tree-name">{item.name}</span>
+          {#if hasStatus}
+            <span
+              class="va-tree-status"
+              style="background: {statusColors[item.status!]};"
+            >
+              {item.status}
+            </span>
+          {/if}
         </button>
         {#if isDir && isExpanded && item.children}
           <div class="va-tree-children" style="padding-left: 16px;">
@@ -120,6 +142,20 @@ const activeToggle = $derived(_toggle ?? toggle);
 
   .va-tree-name {
     color: var(--va-text-secondary);
+  }
+
+  .va-tree-status {
+    display: inline-block;
+    margin-left: auto;
+    padding: 0 6px;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 16px;
+    border-radius: 999px;
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
   }
 
   .va-tree-children {

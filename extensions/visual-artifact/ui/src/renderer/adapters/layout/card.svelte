@@ -13,9 +13,26 @@ let {
   nodes?: { type: string; props: Record<string, unknown> }[];
   _nodePath?: string;
 } = $props();
+
+function semanticVariant(value: string): string {
+  switch (value.trim().toLowerCase()) {
+    case "good":
+      return "success";
+    case "bad":
+      return "danger";
+    case "ugly":
+      return "warning";
+    case "questions":
+      return "info";
+    default:
+      return "default";
+  }
+}
+
+const variant = $derived(semanticVariant(title));
 </script>
 
-<div class="va-card">
+<div class="va-card" data-variant={variant}>
   {#if title}
     <h3 class="va-card-title">{title}</h3>
   {/if}
@@ -36,6 +53,22 @@ let {
     border: 1px solid var(--va-border-default);
     border-radius: var(--va-radius-lg);
     background: var(--va-bg-surface);
+  }
+
+  .va-card[data-variant="success"] {
+    border-left: 3px solid var(--va-accent-success);
+  }
+
+  .va-card[data-variant="danger"] {
+    border-left: 3px solid var(--va-accent-danger);
+  }
+
+  .va-card[data-variant="warning"] {
+    border-left: 3px solid var(--va-accent-warning);
+  }
+
+  .va-card[data-variant="info"] {
+    border-left: 3px solid var(--va-accent-primary);
   }
 
   .va-card-title {

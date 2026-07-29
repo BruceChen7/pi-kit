@@ -8,6 +8,11 @@ const styles: Record<string, { bg: string; border: string; color: string }> = {
     border: "var(--va-border-strong)",
     color: "var(--va-text-secondary)",
   },
+  info: {
+    bg: "var(--va-bg-info-subtle)",
+    border: "var(--va-border-info-subtle)",
+    color: "var(--va-accent-primary-text)",
+  },
   success: {
     bg: "var(--va-bg-success-subtle)",
     border: "var(--va-border-success-subtle)",

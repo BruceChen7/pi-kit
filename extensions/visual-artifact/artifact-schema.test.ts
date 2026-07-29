@@ -86,6 +86,60 @@ describe("validate", () => {
     }
   });
 
+  it("rejects too many total nodes nested inside side-by-side", () => {
+    const panelNodes = Array.from({ length: LIMITS.maxTotalNodes }, (_, i) => ({
+      type: "text",
+      props: { text: `Nested ${i}`, size: "sm" },
+    }));
+
+    const result = validate({
+      slug: "too-many-side-by-side",
+      title: "Too Many Side By Side",
+      nodes: [
+        {
+          type: "side-by-side",
+          props: {
+            left: panelNodes,
+            right: [],
+          },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.includes("total nodes"))).toBe(true);
+    }
+  });
+
+  it("rejects node nesting deeper than the limit", () => {
+    let nestedNode: Record<string, unknown> = {
+      type: "text",
+      props: { text: "leaf", size: "sm" },
+    };
+
+    for (let depth = 0; depth < LIMITS.maxNodeDepth; depth += 1) {
+      nestedNode = {
+        type: "card",
+        props: {
+          title: `Level ${depth}`,
+          nodes: [nestedNode],
+        },
+      };
+    }
+
+    const result = validate({
+      slug: "too-deep",
+      title: "Too Deep",
+      nodes: [nestedNode],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.some((e) => e.includes("nesting depth"))).toBe(true);
+    }
+  });
+
   it("rejects too many datasets", () => {
     const data: Record<string, unknown[]> = {};
     for (let i = 0; i < LIMITS.maxDatasets + 1; i++) {
@@ -226,6 +280,90 @@ describe("validate", () => {
     if (!result.ok) {
       expect(result.errors).toContain(
         'Unsupported node type: "unknown-widget".',
+      );
+    }
+  });
+
+  it("validates required props recursively with a precise node path", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [
+        {
+          type: "accordion",
+          props: {
+            items: [
+              {
+                title: "Coverage",
+                nodes: [
+                  {
+                    type: "card",
+                    props: {
+                      title: "Nested",
+                      nodes: [{ type: "text", props: {} }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContain(
+        'Node "text" requires prop "text" at nodes.0.props.items.0.nodes.0.props.nodes.0.',
+      );
+    }
+  });
+
+  it("accepts inline table columns as header aliases", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [
+        {
+          type: "accordion",
+          props: {
+            items: [
+              {
+                title: "Coverage",
+                nodes: [
+                  {
+                    type: "table",
+                    props: {
+                      columns: ["Area", "Delta"],
+                      rows: [["Tests", "0"]],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects nested tables without headers or columns", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [
+        {
+          type: "card",
+          props: {
+            nodes: [{ type: "table", props: { rows: [["Tests", "0"]] } }],
+          },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors).toContain(
+        'Node "table" requires prop "headers" or "columns" at nodes.0.props.nodes.0.',
       );
     }
   });

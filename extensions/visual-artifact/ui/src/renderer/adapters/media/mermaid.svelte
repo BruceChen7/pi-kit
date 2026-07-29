@@ -10,7 +10,7 @@ import {
 let {
   definition = "",
   caption = "",
-  height = 420,
+  height = 220,
 }: {
   definition?: string;
   caption?: string;
@@ -116,7 +116,7 @@ $effect(() => {
       <p>Rendering Mermaid…</p>
     </div>
   {:else if svg}
-    <div class="va-mermaid-frame" style={`min-height: ${height}px`}>
+    <div class="va-mermaid-frame">
       <div class="va-mermaid-svg">{@html svg}</div>
     </div>
   {:else}
@@ -141,7 +141,7 @@ $effect(() => {
   .va-mermaid-frame,
   .va-mermaid-error,
   .va-mermaid-loading {
-    padding: 12px;
+    padding: 10px;
     border: 1px solid var(--va-border-default);
     border-radius: var(--va-radius-md);
     background: var(--va-bg-surface);
@@ -160,7 +160,6 @@ $effect(() => {
   .va-mermaid-svg {
     overflow: auto;
     border-radius: 6px;
-    border: 1px solid var(--va-border-default);
     background: var(--va-bg-app);
   }
 

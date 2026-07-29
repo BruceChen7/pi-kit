@@ -5,6 +5,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createLogger } from "../shared/logger.ts";
 
 export type VisualArtifactBootData = {
   view: "home" | "project" | "artifact";
@@ -23,6 +24,7 @@ export type CreateVisualArtifactHtmlOptions = {
 const DEFAULT_UI_DIST_DIR = fileURLToPath(
   new URL("./ui-dist", import.meta.url),
 );
+const log = createLogger("visual-artifact", { stderr: null });
 
 export async function createVisualArtifactHtml(
   options: CreateVisualArtifactHtmlOptions,
@@ -31,19 +33,20 @@ export async function createVisualArtifactHtml(
   const rawHtml = await readUiHtml(uiDistDir);
   const bootData = options.bootData;
 
-  console.log(
-    `[visual-artifact] ui-dist: ${uiDistDir}, raw HTML: ${rawHtml.length} bytes`,
-  );
+  log.debug("Prepared visual artifact UI shell", {
+    uiDistDir,
+    rawHtmlBytes: rawHtml.length,
+  });
 
   const built = await inlineBuiltAssets(rawHtml, uiDistDir);
   const result = injectBootData(built, bootData);
 
   const bootJsonSize = JSON.stringify(bootData).length;
-  console.log(
-    `[visual-artifact] Final HTML: ${result.length} bytes, ` +
-      `boot data: ${bootJsonSize} bytes, ` +
-      `view: ${bootData.view}`,
-  );
+  log.debug("Built visual artifact HTML", {
+    finalHtmlBytes: result.length,
+    bootDataBytes: bootJsonSize,
+    view: bootData.view,
+  });
 
   return result;
 }
@@ -72,9 +75,7 @@ async function inlineScriptAssets(
         await readAsset(uiDistDir, src),
       );
       if (!content) {
-        console.warn(
-          `[visual-artifact] Script asset is empty or missing: ${src}`,
-        );
+        log.warn("Script asset is empty or missing", { src });
       }
       return `<script${before}${after}>${content}</script>`;
     },
@@ -91,9 +92,7 @@ async function inlineStyleAssets(
     async (_match, before: string, href: string) => {
       const content = await readAsset(uiDistDir, href);
       if (!content) {
-        console.warn(
-          `[visual-artifact] Style asset is empty or missing: ${href}`,
-        );
+        log.warn("Style asset is empty or missing", { href });
       }
       return `<style${before}>${content}</style>`;
     },

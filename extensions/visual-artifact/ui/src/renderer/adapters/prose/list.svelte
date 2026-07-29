@@ -1,4 +1,6 @@
 <script lang="ts">
+import { renderInlineMarkdown } from "../../inline-markdown.ts";
+
 type ListItem = string | { content?: string; text?: string; type?: string };
 
 let { items = [], ordered }: { items?: ListItem[]; ordered?: boolean } =

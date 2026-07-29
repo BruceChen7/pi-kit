@@ -1,4 +1,7 @@
 <script lang="ts">
+import Card from "$components/Card.svelte";
+import VisualArtifactRenderer from "../../visual-artifact-renderer.svelte";
+
 let {
   title = "",
   description = "",

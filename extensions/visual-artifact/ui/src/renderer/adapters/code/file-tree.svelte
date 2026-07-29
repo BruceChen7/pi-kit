@@ -1,4 +1,6 @@
 <script lang="ts">
+import FileTree from "./file-tree.svelte";
+
 type FileTreeItem = {
   name: string;
   type?: "file" | "directory";

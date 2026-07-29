@@ -1,4 +1,6 @@
 <script lang="ts">
+import Heading from "$components/Heading.svelte";
+
 let { text = "", level = "h2" }: { text?: string; level?: string } = $props();
 
 const levelMap: Record<string, 1 | 2 | 3 | 4> = {

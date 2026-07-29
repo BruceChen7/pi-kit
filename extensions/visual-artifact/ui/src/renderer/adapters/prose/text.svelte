@@ -1,4 +1,6 @@
 <script lang="ts">
+import { renderInlineMarkdown } from "../../inline-markdown.ts";
+
 let { text = "", size = "md" }: { text?: string; size?: string } = $props();
 
 const sizeClasses: Record<string, string> = {

@@ -1,4 +1,6 @@
 <script lang="ts">
+import CodeBlock from "$components/CodeBlock.svelte";
+
 let {
   code = "",
   language = "",

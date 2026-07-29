@@ -1,4 +1,7 @@
 <script lang="ts">
+import Card from "$components/Card.svelte";
+import { cn } from "$lib/utils";
+
 let {
   label = "",
   value = "",

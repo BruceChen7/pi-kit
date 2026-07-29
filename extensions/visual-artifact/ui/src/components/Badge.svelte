@@ -1,5 +1,6 @@
 <script lang="ts">
-import { type Tone } from "$lib/tone";
+import { type Tone, toneBadgeClass } from "$lib/tone";
+import { cn } from "$lib/utils";
 
 let {
   variant = "default",

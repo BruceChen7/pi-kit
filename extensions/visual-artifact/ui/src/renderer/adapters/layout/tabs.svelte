@@ -1,4 +1,6 @@
 <script lang="ts">
+import VisualArtifactRenderer from "../../visual-artifact-renderer.svelte";
+
 let {
   tabs = [],
   activeIndex = 0,

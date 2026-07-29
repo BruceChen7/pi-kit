@@ -502,8 +502,59 @@ function handleCleanupResult(e: Event): void {
 
   .artifact-main {
     flex: 1;
+    width: min(100%, 1120px);
+    max-width: 1120px;
     min-width: 0;
+    margin: 0 auto;
     transition: margin-right 0.2s ease;
+  }
+
+  .artifact-main > :global(.va-node[data-va-type="text"]) {
+    max-width: 82ch;
+  }
+
+  .artifact-main
+    > :global(.va-node[data-va-type="heading"] + .va-node[data-va-type="text"]) {
+    max-width: 72ch;
+    margin-bottom: 8px;
+  }
+
+  .artifact-main
+    > :global(
+      .va-node[data-va-type="heading"]
+        + .va-node[data-va-type="text"]
+        .va-text
+    ) {
+    font-size: 18px !important;
+    line-height: 1.65;
+  }
+
+  .artifact-main
+    > :global(
+      .va-node[data-va-type="heading"]
+        + .va-node[data-va-type="text"]
+        + .va-node[data-va-type="text"]
+    ) {
+    box-sizing: border-box;
+    max-width: 82ch;
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--va-border-info-subtle);
+    border-left: 3px solid var(--va-accent-primary);
+    border-radius: var(--va-radius-md);
+    background: var(--va-bg-info-subtle);
+  }
+
+  .artifact-main > :global(.va-node[data-va-type="badge"]) {
+    display: inline-block;
+    width: auto;
+    margin: 0 6px 8px 0;
+    vertical-align: top;
+  }
+
+  .artifact-main > :global(.va-node[data-va-type="kpi-grid"]) {
+    clear: both;
+    margin-top: 8px;
   }
 
   .with-panel .artifact-main {

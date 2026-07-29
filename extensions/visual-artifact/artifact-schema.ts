@@ -124,7 +124,13 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
     type: "table",
     label: "Table",
     description: "Rows and columns of data.",
-    props: { headers: "string[]", rows: "string[][]" },
+    props: {
+      headers: "string[] (preferred for inline rows)",
+      columns:
+        "string[] | { key?: string; label?: string; header?: string }[] (accepted as inline header aliases or with dataKey)",
+      rows: "string[][]",
+      dataKey: "string (optional dataset reference)",
+    },
   },
   {
     type: "diff",
@@ -166,7 +172,7 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
     description: "Short colored label.",
     props: {
       text: "string",
-      variant: '"default" | "success" | "warning" | "danger"',
+      variant: '"default" | "info" | "success" | "warning" | "danger"',
     },
   },
   {
@@ -259,6 +265,49 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
     description: "Indented quote/prose block.",
     props: { text: "string" },
   },
+  {
+    type: "side-by-side",
+    label: "Side-by-Side",
+    description:
+      "Two columns of content rendered side by side for before/after or comparison views.",
+    props: {
+      left: "ArtifactNode[]",
+      right: "ArtifactNode[]",
+      leftLabel: "string (optional)",
+      rightLabel: "string (optional)",
+    },
+    example: {
+      type: "side-by-side",
+      props: {
+        leftLabel: "Before",
+        rightLabel: "After",
+        left: [{ type: "text", props: { text: "Old implementation" } }],
+        right: [{ type: "text", props: { text: "New implementation" } }],
+      },
+    },
+  },
+  {
+    type: "kpi-grid",
+    label: "KPI Grid",
+    description:
+      "Dashboard-style grid of key performance indicators. Each item renders as a stat-card in a responsive grid.",
+    props: {
+      items:
+        "{ label: string; value: string | number; trend?: 'up' | 'down' | 'neutral'; variant?: 'default' | 'info' | 'success' | 'warning' | 'danger' }[]",
+      columns: "number (optional, default 2)",
+    },
+    example: {
+      type: "kpi-grid",
+      props: {
+        columns: 3,
+        items: [
+          { label: "Files Changed", value: 12, trend: "up" },
+          { label: "Lines Added", value: "340", trend: "up" },
+          { label: "Tests", value: 8, trend: "neutral" },
+        ],
+      },
+    },
+  },
 ];
 
 const SUPPORTED_NODE_TYPES = new Set(
@@ -269,13 +318,15 @@ const REQUIRED_NODE_PROPS: Record<string, string[]> = {
   text: ["text"],
   heading: ["text", "level"],
   list: ["items"],
-  table: ["headers", "rows"],
+  table: ["rows"],
   "code-block": ["code"],
   link: ["text"],
   log: ["lines"],
   badge: ["text"],
   diff: ["before", "after"],
   "stat-card": ["label", "value"],
+  "side-by-side": ["left", "right"],
+  "kpi-grid": ["items"],
 };
 
 const LEGACY_PROP_NAMES: Record<string, Record<string, string>> = {
@@ -301,27 +352,78 @@ function estimateJsonBytes(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).length;
 }
 
-function countNodes(node: ArtifactNode, depth: number): number {
-  let count = 1;
-  if (depth > LIMITS.maxNodeDepth) return count;
-  const children = node.props?.nodes;
-  if (Array.isArray(children)) {
-    for (const child of children) {
-      if (isRecord(child) && typeof child.type === "string") {
-        count += countNodes(child as ArtifactNode, depth + 1);
+function getNestedNodeGroups(props: Record<string, unknown>): ArtifactNode[][] {
+  const groups: ArtifactNode[][] = [];
+
+  if (Array.isArray(props.nodes)) {
+    groups.push(props.nodes as ArtifactNode[]);
+  }
+
+  if (Array.isArray(props.left)) {
+    groups.push(props.left as ArtifactNode[]);
+  }
+
+  if (Array.isArray(props.right)) {
+    groups.push(props.right as ArtifactNode[]);
+  }
+
+  if (Array.isArray(props.tabs)) {
+    for (const tab of props.tabs) {
+      if (isRecord(tab) && Array.isArray(tab.nodes)) {
+        groups.push(tab.nodes as ArtifactNode[]);
       }
     }
   }
-  return count;
+
+  if (Array.isArray(props.items)) {
+    for (const item of props.items) {
+      if (isRecord(item) && Array.isArray(item.nodes)) {
+        groups.push(item.nodes as ArtifactNode[]);
+      }
+    }
+  }
+
+  if (Array.isArray(props.cards)) {
+    for (const card of props.cards) {
+      if (isRecord(card) && Array.isArray(card.nodes)) {
+        groups.push(card.nodes as ArtifactNode[]);
+      }
+    }
+  }
+
+  return groups;
+}
+
+function countNodes(
+  node: ArtifactNode,
+  depth: number,
+): { count: number; maxDepth: number } {
+  let count = 1;
+  let maxDepth = depth;
+
+  for (const children of getNestedNodeGroups(node.props ?? {})) {
+    for (const child of children) {
+      if (isRecord(child) && typeof child.type === "string") {
+        const childStats = countNodes(child as ArtifactNode, depth + 1);
+        count += childStats.count;
+        maxDepth = Math.max(maxDepth, childStats.maxDepth);
+      }
+    }
+  }
+
+  return { count, maxDepth };
 }
 
 function validateNodeProps(
   type: string,
   props: Record<string, unknown>,
   errors: string[],
+  path?: string,
 ): void {
+  const suffix = path ? ` at ${path}` : "";
+
   if (!SUPPORTED_NODE_TYPES.has(type)) {
-    errors.push(`Unsupported node type: "${type}".`);
+    errors.push(`Unsupported node type: "${type}"${suffix}.`);
     return;
   }
 
@@ -335,12 +437,20 @@ function validateNodeProps(
     if (legacyName && props[legacyName] !== undefined) {
       errors.push(
         `Node "${type}" requires prop "${propName}" ` +
-          `(legacy prop "${legacyName}" is not supported).`,
+          `(legacy prop "${legacyName}" is not supported)${suffix}.`,
       );
       continue;
     }
 
-    errors.push(`Node "${type}" requires prop "${propName}".`);
+    errors.push(`Node "${type}" requires prop "${propName}"${suffix}.`);
+  }
+
+  if (
+    type === "table" &&
+    props.headers === undefined &&
+    props.columns === undefined
+  ) {
+    errors.push(`Node "table" requires prop "headers" or "columns"${suffix}.`);
   }
 
   if (
@@ -351,12 +461,74 @@ function validateNodeProps(
     if (props.chart !== undefined) {
       errors.push(
         'Node "mermaid" requires prop "definition" ' +
-          '(legacy prop "chart" is not supported).',
+          `(legacy prop "chart" is not supported)${suffix}.`,
       );
     } else {
-      errors.push('Node "mermaid" requires prop "definition".');
+      errors.push(`Node "mermaid" requires prop "definition"${suffix}.`);
     }
   }
+}
+
+function validateNestedNodes(
+  props: Record<string, unknown>,
+  parentPath: string,
+  errors: string[],
+): void {
+  const validateGroup = (value: unknown, groupPath: string): void => {
+    if (!Array.isArray(value)) return;
+    for (const [index, child] of value.entries()) {
+      validateNodeTree(child, `${groupPath}.${index}`, errors, true);
+    }
+  };
+
+  validateGroup(props.nodes, `${parentPath}.props.nodes`);
+  validateGroup(props.left, `${parentPath}.props.left`);
+  validateGroup(props.right, `${parentPath}.props.right`);
+
+  for (const containerName of ["tabs", "items", "cards"] as const) {
+    const containers = props[containerName];
+    if (!Array.isArray(containers)) continue;
+    for (const [containerIndex, container] of containers.entries()) {
+      if (!isRecord(container)) continue;
+      validateGroup(
+        container.nodes,
+        `${parentPath}.props.${containerName}.${containerIndex}.nodes`,
+      );
+    }
+  }
+}
+
+function validateNodeTree(
+  value: unknown,
+  path: string,
+  errors: string[],
+  includePath: boolean,
+): void {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    errors.push(
+      includePath
+        ? `Each node must have a type property at ${path}.`
+        : "Each node must have a type property.",
+    );
+    return;
+  }
+
+  if (!isRecord(value.props)) {
+    errors.push(
+      includePath
+        ? `Node "${value.type}" is missing props at ${path}.`
+        : `Node "${value.type}" is missing props.`,
+    );
+    return;
+  }
+
+  validateNodeProps(
+    value.type,
+    value.props,
+    errors,
+    includePath ? path : undefined,
+  );
+  validateNestedNodes(value.props, path, errors);
 }
 
 function _countFileTreeDepth(items: unknown[], currentDepth: number): number {
@@ -418,22 +590,24 @@ export function validate(input: unknown): ValidationResult {
 
   /* -- validate each node -- */
   let totalNodes = 0;
-  for (const node of nodes) {
-    if (!isRecord(node) || typeof node.type !== "string") {
-      errors.push("Each node must have a type property.");
-      continue;
-    }
-    if (!isRecord(node.props)) {
-      errors.push(`Node "${node.type}" is missing props.`);
-    } else {
-      validateNodeProps(node.type, node.props, errors);
-    }
-    totalNodes += countNodes(node as ArtifactNode, 1);
+  let maxNodeDepth = 0;
+  for (const [nodeIndex, node] of nodes.entries()) {
+    validateNodeTree(node, `nodes.${nodeIndex}`, errors, false);
+    if (!isRecord(node) || typeof node.type !== "string") continue;
+    const nodeStats = countNodes(node as ArtifactNode, 1);
+    totalNodes += nodeStats.count;
+    maxNodeDepth = Math.max(maxNodeDepth, nodeStats.maxDepth);
   }
 
   if (totalNodes > LIMITS.maxTotalNodes) {
     errors.push(
       `Too many total nodes: ${totalNodes} > ${LIMITS.maxTotalNodes}`,
+    );
+  }
+
+  if (maxNodeDepth > LIMITS.maxNodeDepth) {
+    errors.push(
+      `Node nesting depth ${maxNodeDepth} exceeds limit ${LIMITS.maxNodeDepth}`,
     );
   }
 

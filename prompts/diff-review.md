@@ -1,11 +1,9 @@
 ---
-description: Generate a visual HTML diff review — before/after architecture comparison with code review analysis
+description: Generate a Visual Artifact diff review — before/after architecture comparison with code review analysis
 ---
-Generate a comprehensive visual diff review as a self-contained HTML page.
+Generate a comprehensive diff review as a Visual Artifact via the `create_visual_artifact` tool.
 
-This prompt produces a reviewed visual artifact, not source-code implementation. Write the HTML under the project Plan Mode plan directory so Plannotator Auto can track and review it.
-
-Use the `plannotator-visual-explainer` PR path when possible; otherwise use its visual explainer path. Read the relevant skill references, component patterns, and Plannotator theme guidance before generating. Use a GitHub-diff-inspired aesthetic with red/green before/after panels, but vary fonts and palette from previous diagrams.
+This prompt produces a reviewed visual artifact, not source-code implementation. It uses the `create_visual_artifact` tool — pass `nodes` as a JSON string of the node array, and `data` as a JSON string when present — not a standalone HTML page.
 
 **Scope detection** — determine what to diff based on `$1`:
 - Branch name (e.g. `main`, `develop`): working tree vs that branch
@@ -26,46 +24,161 @@ Use the `plannotator-visual-explainer` PR path when possible; otherwise use its 
 - Check whether `README.md` or `docs/*.md` need updates given any new or changed features
 - Reconstruct decision rationale: if this work was done in the current session, mine the conversation for approaches discussed, alternatives rejected, and trade-offs made. Check for progress docs (`~/.agent/memory/{project}/progress.md`, `~/.pi/agent/memory/{project}/progress.md`) or plan files that may contain reasoning. For committed changes, read commit messages and PR descriptions.
 
-**Verification checkpoint** — before generating HTML, produce a structured fact sheet of every claim you will present in the review:
+**Verification checkpoint** — before generating the artifact, produce a structured fact sheet of every claim you will present in the review:
 - Every quantitative figure: line counts, file counts, function counts, test counts
 - Every function, type, and module name you will reference
 - Every behavior description: what code does, what changed, before vs. after
 - For each, cite the source: the git command output that produced it, or the file:line where you read it
-Verify each claim against the code. If something cannot be verified, mark it as uncertain rather than stating it as fact. This fact sheet is your source of truth during HTML generation — do not deviate from it.
+Verify each claim against the code. If something cannot be verified, mark it as uncertain rather than stating it as fact. This fact sheet is your source of truth during artifact generation — do not deviate from it.
 
-**Diagram structure** — the page should include:
-1. **Executive summary** — not just a dry before/after. Lead with the *intuition*: why do these changes exist? What problem were they solving, what was the core insight? Then the factual scope (X files, Y lines, Z new modules). Aim for "aha moment" clarity — a reader who only sees this section should understand the essence of the change. *Visual treatment: this is the visual anchor — use hero depth (larger type 20-24px, subtle accent-tinted background, more padding than other sections).*
-2. **KPI dashboard** — lines added/removed, files changed, new modules, test counts. Include a **housekeeping** indicator: whether CHANGELOG.md was updated (green/red badge) and whether docs need changes (green/yellow/red).
-3. **Module architecture** — how the file structure changed, with a Mermaid dependency graph of the current state. Wrap in `.mermaid-wrap` with zoom controls (+/−/reset/expand buttons), Ctrl/Cmd+scroll zoom, click-and-drag panning, and click-to-expand (opens diagram full-size in new tab). See css-patterns.md "Mermaid Zoom Controls" for the full pattern including the `openMermaidInNewTab()` function.
-4. **Major feature comparisons** — side-by-side before/after panels for each significant area of change (UI, data flow, API surface, config, etc.). Overflow prevention: apply `min-width: 0` on all grid/flex children and `overflow-wrap: break-word` on panels. Never use `display: flex` on `<li>` for marker characters — use absolute positioning instead (see css-patterns.md Overflow Protection).
-5. **Flow diagrams** — Mermaid flowchart, sequence, or state diagrams for any new lifecycle/pipeline/interaction patterns. Same zoom controls and click-to-expand as section 3.
-6. **File map** — full tree with color-coded new/modified/deleted indicators. *Visual treatment: compact — consider `<details>` collapsed by default for pages with many sections.*
-7. **Test coverage** — before/after test file counts and what's covered
-8. **Code review** — structured Good/Bad/Ugly analysis of the changes:
-   - **Good**: Solid choices, improvements, clean patterns worth calling out
-   - **Bad**: Concrete issues — bugs, regressions, missing error handling, logic errors
-   - **Ugly**: Subtle problems — tech debt introduced, maintainability concerns, things that work now but will bite later
-   - **Questions**: Anything unclear or that needs the author's clarification
-   - Use styled cards with green/red/amber/blue left-border accents matching the diff color language. Each item should reference specific files and line ranges. If nothing to flag in a category, say "None found" rather than omitting the section.
-9. **Decision log** — for each significant design choice in the diff, a styled card with:
-   - **Decision**: one-line summary of what was decided (e.g., "Promise-based deferred resolution instead of event emitters for cleanup signaling")
-   - **Rationale**: why this approach — constraints, trade-offs, what it enables. Pull from conversation context if available, infer from code structure if not.
-   - **Alternatives considered**: what was rejected and why, if recoverable
-   - **Confidence**: whether this rationale was explicitly discussed (high — sourced from conversation/docs) or inferred from the code (medium — flagged as inference). Low confidence means the rationale couldn't be recovered at all.
-   - Visual treatment by confidence level — use left-border accent colors consistent with the diff color language: **High** (sourced from conversation/docs): green left border. **Medium** (inferred from code): blue left border, labeled "inferred." **Low** (not recoverable): amber left border, "rationale not recoverable — document before committing" warning. Low-confidence cards are cognitive debt hotspots — tell the user to document the reasoning before committing.
-10. **Re-entry context** — a concise "note from present-you to future-you" covering the following. *Visual treatment: compact — consider `<details>` collapsed by default for pages with many sections.*
-   - **Key invariants**: assumptions the changed code relies on that aren't enforced by types or tests (e.g., "cleanup must be called before session switch or artifacts leak")
-   - **Non-obvious coupling**: files or behaviors that are connected in ways that aren't visible from imports alone (e.g., "the feed renderer reads events written by the overlay — changing the event schema requires updating both")
-   - **Gotchas**: things that would surprise someone modifying this code in two weeks. Edge cases, ordering dependencies, implicit contracts.
-   - **Don't forget**: if the changes require follow-up work (migration, config update, docs), list it here.
+**Artifact structure** — build a spec object with the following 10 sections mapped to Visual Artifact node types, then call `create_visual_artifact` with `nodes: JSON.stringify(spec.nodes)` and `data: JSON.stringify(spec.data)` when `data` is present.
 
-**Visual hierarchy**: Sections 1-3 should dominate the viewport on load (hero depth, larger type, more padding). Sections 6+ are reference material and should feel lighter (flat or recessed depth, compact layout, collapsible where appropriate).
+Sections 1-3 are the visual anchor — use one concise `text` node with `size: "lg"` or `"xl"` and a `heading` with `level: "h1"`. Keep the executive summary to two short paragraphs. Sections 6+ (file map, test coverage, code review, decision log, re-entry context) are reference material — wrap them in `accordion` nodes to keep the artifact compact and under the 30 top-level node limit.
 
-**Optional illustrations** — if `surf` CLI is available (`which surf`), consider generating a hero banner or conceptual illustration via `surf gemini --generate-image` when it would enhance the page. Embed as base64 data URI. See css-patterns.md "Generated Images" for container styles. Skip if surf isn't available or the diff is purely structural.
+### Section-to-node mapping
 
-Include responsive section navigation. Use diff-style visual language throughout: red for removed/before, green for added/after, yellow for modified, blue for neutral context.
+| # | Section | VA Node Type(s) | Notes |
+|---|---------|-----------------|-------|
+| 1 | **Executive summary** | `heading` (h1) + `text` (xl) + `badge` | Lead with intuition, then scope. Use text xl for the lead paragraph. |
+| 2 | **KPI dashboard** | `kpi-grid` | Use 4-6 high-signal metrics only, with at most 3 columns. Omit redundant zero-value metrics. Put CHANGELOG/docs status in badges, not KPI cards. |
+| 3 | **Module architecture** | `mermaid` | Include one compact dependency graph only when it clarifies a non-obvious relationship. Do not wrap Mermaid in another card. |
+| 4 | **Major feature comparisons** | `side-by-side` | Use at most two focused comparisons for genuinely different before/after behavior. Set `leftLabel`/`rightLabel` for headers. |
+| 5 | **Flow diagrams** | `mermaid` | Include at most one additional flow/sequence diagram and only when it adds information not already shown by the architecture graph. |
+| 6 | **File map** | `file-tree` | Full tree with `status: "added"\|"modified"\|"deleted"` on items. Wrap in `accordion` (collapsed by default) to save top-level slots. |
+| 7 | **Test coverage** | `table` + `stat-card` | Before/after test counts. Inline tables must use `headers` and `rows`; use `columns` only with a referenced `dataKey`. |
+| 8 | **Code review** | `card` + `badge` + `list` | Four categories: Good (green badge), Bad (danger badge), Ugly (warning badge), Questions (default badge). Each card contains a `list` of findings with file:line references. If nothing to flag, say "None found." |
+| 9 | **Decision log** | `card` + `badge` + `text` | Per decision: `card` with Decision (bold text), Rationale (prose), Alternatives (list), Confidence (badge: green=high, default=medium, warning=low). Low-confidence cards: include a note to document before committing. |
+| 10 | **Re-entry context** | `accordion` (collapsed) | Collapsed by default. Inside: `list` items for Key invariants, Non-obvious coupling, Gotchas, Don't-forget. |
 
-Write to `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html` with a descriptive filename, then call `plannotator_auto_submit_review({ path })`. Do not open the browser directly.
+### Folding strategy (top-level node conservation)
+
+The `create_visual_artifact` tool has a 30 top-level node limit. Sections 6-10 should be wrapped in `accordion` nodes (each accordion counts as 1 top-level node) to stay well under the limit while keeping all content accessible.
+
+Use the following structure to minimize top-level node count for the in-memory `spec` object before stringifying `spec.nodes` for the tool call:
+
+```json
+{
+  "slug": "diff-review-<YYYY-MM-DD>-<topic>",
+  "title": "Diff Review: <descriptive title>",
+  "artifactType": "review",
+  "nodes": [
+    // Section 1: Executive summary — heading + text xl + badges
+    { "type": "heading", "props": { "text": "<title>", "level": "h1" } },
+    { "type": "text", "props": { "text": "<intuition paragraph>", "size": "xl" } },
+    { "type": "text", "props": { "text": "<scope paragraph>" } },
+
+    // Section 2: KPI dashboard
+    { "type": "kpi-grid", "props": {
+      "columns": 3,
+      "items": [
+        { "label": "Files Changed", "value": 12, "trend": "up" },
+        { "label": "Lines Added", "value": 340, "trend": "up" },
+        { "label": "New Modules", "value": 2, "trend": "neutral" },
+        { "label": "Tests", "value": 8, "trend": "up" }
+      ]
+    } },
+
+    // Sections 3-5: direct nodes
+    { "type": "mermaid", "props": { "definition": "<flowchart>" } },
+    { "type": "side-by-side", "props": {
+      "leftLabel": "Before",
+      "rightLabel": "After",
+      "left": [ /* before content nodes */ ],
+      "right": [ /* after content nodes */ ]
+    } },
+
+    // Sections 6-10: accordion-wrapped
+    { "type": "accordion", "props": { "items": [
+      // File map
+      { "title": "File Map", "nodes": [{ "type": "file-tree", "props": { "items": [...] } }] },
+      // Test coverage
+      { "title": "Test Coverage", "nodes": [...] },
+      // Code review
+      { "title": "Code Review", "nodes": [...] },
+      // Decision log
+      { "title": "Decision Log", "nodes": [...] },
+      // Re-entry context
+      { "title": "Re-entry Context", "nodes": [...] }
+    ] } }
+  ]
+}
+```
+
+### Visual hierarchy guidelines
+
+- **Sections 1-3**: Use `heading` h1/h2 + `text` size lg/xl. These are the primary content — no wrapping in accordion.
+- **Sections 4-5**: Prefer one focused comparison and one diagram over repeating several structurally similar blocks.
+- **Sections 6-10**: Always wrap in `accordion` (collapsed). Each accordion item can contain multiple sub-nodes (cards, tables, lists, file-trees).
+- **Diff color language**: Use `badge` and `callout` variants to convey meaning — `success` for added/good, `danger` for removed/bad, `warning` for modified/ugly, `info` for neutral/question.
+- **Prose density**: Keep top-level paragraphs under roughly 100 Chinese characters or 70 English words. Move detailed evidence into lists or the reference accordion.
+- **KPI semantics**: A trend arrow means directional change, not quality. Use `variant` to express success/warning/danger when a value has evaluative meaning.
+
+### Available node types for context
+
+Refer to the `create_visual_artifact` tool's `nodes` parameter for the full list. Key types for diff reviews:
+
+| Type | Use for |
+|------|---------|
+| `heading` | Section titles (h1-h4) |
+| `text` | Prose, with sizes sm/md/lg/xl |
+| `list` | Bulleted items |
+| `card` | Bordered container with optional title |
+| `stat-card` | Single metric with trend |
+| `table` | Rows and columns of data |
+| `diff` | Code-level before/after diff |
+| `code-block` | Highlighted code |
+| `mermaid` | Flowcharts, sequence diagrams, state diagrams |
+| `badge` | Short colored labels (info/success/warning/danger/default) |
+| `callout` | Info/success/warning/danger callouts |
+| `side-by-side` | Before/after comparison panels |
+| `kpi-grid` | Dashboard-style KPI grid |
+| `file-tree` | Nested file tree with optional `status` (added/modified/deleted) |
+| `accordion` | Collapsible groups (use for reference sections 6-10) |
+| `section` | Untitled section container |
+
+### Mermaid guidelines (always follow)
+
+- Always use double-quoted labels: `N["label text"]` not `N[label text]`
+- Never use parentheses `()` inside unquoted labels
+- Apply `:::` class on a separate line, NOT inline
+- Keep diagram type simple: `flowchart LR`, `sequenceDiagram`, `stateDiagram-v2`
+
+After assembling the full `spec` object, call `create_visual_artifact` with `slug`, `title`, `artifactType`, and `description` from `spec`, plus `nodes: JSON.stringify(spec.nodes)` and `data: JSON.stringify(spec.data)` when `spec.data` exists.
+
+Example:
+
+```ts
+const spec = {
+  slug: "diff-review-<YYYY-MM-DD>-<topic>",
+  title: "Diff Review: <descriptive title>",
+  artifactType: "review",
+  description: "<optional description>",
+  nodes: [
+    /* ArtifactNode[] */
+  ],
+  data: {
+    /* optional shared datasets */
+  },
+};
+
+create_visual_artifact({
+  slug: spec.slug,
+  title: spec.title,
+  artifactType: spec.artifactType,
+  description: spec.description,
+  nodes: JSON.stringify(spec.nodes),
+  data: spec.data ? JSON.stringify(spec.data) : undefined,
+});
+```
+
+Do NOT:
+- Write standalone HTML files
+- Use `plannotator_auto_submit_review`
+- Reference css-patterns.md, plannotator theme, or plan directories
+- Generate hero images via `surf` CLI
+- Open a browser directly
+
+The Visual Artifact window handles rendering, theming, and interaction. Do not assume diagrams have zoom controls; keep Mermaid definitions compact enough to read at the default size.
 
 Ultrathink.
 

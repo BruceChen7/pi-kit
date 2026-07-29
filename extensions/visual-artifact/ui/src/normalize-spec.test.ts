@@ -249,6 +249,29 @@ describe("table normalization", () => {
       rows: [["y"]],
     });
   });
+
+  it("maps inline columns to headers while preserving rows", () => {
+    const nodes = normalizeArtifactNodes([
+      {
+        type: "table",
+        props: {
+          columns: ["Area", "Delta"],
+          rows: [
+            ["Tests", "0"],
+            ["Docs", "1"],
+          ],
+        },
+      },
+    ]);
+
+    expect(nodes[0].props).toEqual({
+      headers: ["Area", "Delta"],
+      rows: [
+        ["Tests", "0"],
+        ["Docs", "1"],
+      ],
+    });
+  });
 });
 
 describe("normalizeArtifactNodes", () => {

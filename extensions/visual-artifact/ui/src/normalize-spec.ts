@@ -286,6 +286,15 @@ export function normalizeArtifactNode(
     props.cards = normalizeCardGridCards(props.cards, data);
   }
 
+  if (type === "side-by-side") {
+    if (Array.isArray(props.left)) {
+      props.left = normalizeArtifactNodes(props.left, data);
+    }
+    if (Array.isArray(props.right)) {
+      props.right = normalizeArtifactNodes(props.right, data);
+    }
+  }
+
   const normalized: UiArtifactNode = {
     type,
     props,
@@ -323,11 +332,10 @@ function resolveTableFromData(
   const dataKey = typeof props.dataKey === "string" ? props.dataKey : undefined;
   const columns = Array.isArray(props.columns) ? props.columns : undefined;
 
-  if (!dataKey || !columns || !data || !Array.isArray(data[dataKey])) {
+  if (!columns) {
     return node;
   }
 
-  const rows = data[dataKey] as Record<string, unknown>[];
   const headers: string[] = columns.map((col: unknown) => {
     if (isRecord(col) && typeof col.label === "string") {
       return col.label;
@@ -341,6 +349,24 @@ function resolveTableFromData(
     return String(col);
   });
 
+  if (Array.isArray(props.rows)) {
+    const caption =
+      typeof props.caption === "string" ? props.caption : undefined;
+    return {
+      ...node,
+      props: {
+        headers,
+        rows: props.rows,
+        ...(caption ? { caption } : {}),
+      },
+    };
+  }
+
+  if (!dataKey || !data || !Array.isArray(data[dataKey])) {
+    return node;
+  }
+
+  const rows = data[dataKey] as Record<string, unknown>[];
   const resolvedRows: string[][] = rows.map((row: Record<string, unknown>) =>
     columns.map((col: unknown) => {
       const key =

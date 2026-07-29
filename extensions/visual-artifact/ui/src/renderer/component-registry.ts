@@ -6,11 +6,13 @@ import CodeBlockAdapter from "./adapters/code/code-block.svelte";
 import FileTreeAdapter from "./adapters/code/file-tree.svelte";
 import LogAdapter from "./adapters/code/log.svelte";
 import DiffAdapter from "./adapters/data/diff.svelte";
+import SideBySideAdapter from "./adapters/data/side-by-side.svelte";
 import StatCardAdapter from "./adapters/data/stat-card.svelte";
 import TableAdapter from "./adapters/data/table.svelte";
 import AccordionAdapter from "./adapters/layout/accordion.svelte";
 import CardAdapter from "./adapters/layout/card.svelte";
 import CardGridAdapter from "./adapters/layout/card-grid.svelte";
+import KpiGridAdapter from "./adapters/layout/kpi-grid.svelte";
 import SectionAdapter from "./adapters/layout/section.svelte";
 import TabsAdapter from "./adapters/layout/tabs.svelte";
 import ImageAdapter from "./adapters/media/image.svelte";
@@ -44,9 +46,11 @@ const registry: Record<string, AdapterComponent> = {
   table: TableAdapter,
   "stat-card": StatCardAdapter,
   diff: DiffAdapter,
+  "side-by-side": SideBySideAdapter,
   // layout
   card: CardAdapter,
   "card-grid": CardGridAdapter,
+  "kpi-grid": KpiGridAdapter,
   tabs: TabsAdapter,
   accordion: AccordionAdapter,
   section: SectionAdapter,

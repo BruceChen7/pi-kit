@@ -91,25 +91,33 @@ try {
   .va-node {
     position: relative;
     width: 100%;
-    transition:
-      background 0.12s ease,
-      box-shadow 0.12s ease;
   }
 
   .va-clickable {
     cursor: pointer;
   }
 
-  .va-clickable:hover {
-    box-shadow: inset 3px 0 0 var(--va-accent-primary);
+  .va-clickable::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    z-index: 1;
+    border: 1px solid transparent;
+    border-left-width: 3px;
     border-radius: var(--va-radius-lg);
+    pointer-events: none;
+    transition:
+      border-color 0.12s ease,
+      background 0.12s ease;
   }
 
-  .va-selected {
-    box-shadow:
-      inset 3px 0 0 var(--va-accent-primary),
-      inset 0 0 0 1px var(--va-border-info-subtle);
-    border-radius: var(--va-radius-lg);
+  .va-clickable:hover::after {
+    border-color: var(--va-border-info-subtle);
+    border-left-color: var(--va-accent-primary);
+  }
+
+  .va-selected::after {
+    border-color: var(--va-accent-primary);
     background: var(--va-bg-selected);
   }
 

@@ -6,6 +6,7 @@ import {
   buildTruncationWarning,
   computeTagIncrement,
   displayTag,
+  fetchTagPosts,
   filterByMinScore,
   formatPostLine,
   formatTagSection,
@@ -165,6 +166,37 @@ describe("computeTagIncrement", () => {
       items,
       headId: "c",
     });
+  });
+});
+
+// ── fetchTagPosts ────────────────────────────────────────
+
+describe("fetchTagPosts", () => {
+  it("fetches the tag page JSON endpoint", async () => {
+    const calls: Array<{ cmd: string; args?: string[] }> = [];
+    const post = samplePost({ short_id: "new-head" });
+
+    const result = await fetchTagPosts("performance", async (cmd, args) => {
+      calls.push({ cmd, args });
+      return {
+        code: 0,
+        stdout: JSON.stringify([post]),
+        stderr: "",
+      };
+    });
+
+    expect(result).toEqual([post]);
+    expect(calls).toEqual([
+      {
+        cmd: "curl",
+        args: [
+          "-s",
+          "--max-time",
+          "15",
+          "https://lobste.rs/t/performance/page/1.json",
+        ],
+      },
+    ]);
   });
 });
 

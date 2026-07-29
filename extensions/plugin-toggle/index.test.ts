@@ -579,7 +579,7 @@ describe("default project bootstrap", () => {
     expect(result.skippedDefaultDisabled).toEqual([]);
   });
 
-  it("bootstraps missing non-disabled plugins when the cwd already has a managed record", async () => {
+  it("does not re-enable a plugin that was explicitly disabled", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     const library = createPluginLibrary("alpha");
 
@@ -591,13 +591,13 @@ describe("default project bootstrap", () => {
     } = await importPluginToggle();
     const [plugin] = discoverPlugins(library);
     enablePlugin(cwd, plugin);
-    disablePlugin(cwd, plugin);
+    disablePlugin(cwd, plugin); // user explicitly disabled it
 
     const result = bootstrapDefaultManagedPlugins(cwd, [plugin]);
 
-    expect(result.status).toBe("bootstrapped");
-    expect(result.enabled).toEqual(["alpha"]);
-    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(true);
+    expect(result.status).toBe("already-configured");
+    expect(result.enabled).toEqual([]);
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(false);
   });
 
   it("notifies without queueing reload after bootstrapping newly enabled plugins", async () => {
@@ -631,33 +631,53 @@ describe("default project bootstrap", () => {
     expect(sendUserMessage).not.toHaveBeenCalled();
   });
 
-  it("enables every missing non-disabled plugin after the cwd was configured", async () => {
+  it("restores symlinks for managed plugins whose symlinks were accidentally removed", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
-    const library = createPluginLibrary(
-      "alpha",
-      ...PROJECT_DEFAULT_PLUGIN_NAMES,
-    );
+    const library = createPluginLibrary("alpha", "beta");
     const { bootstrapDefaultManagedPlugins, discoverPlugins } =
       await importPluginToggle();
     const plugins = discoverPlugins(library);
+
+    // First bootstrap → all plugins enabled
+    const first = bootstrapDefaultManagedPlugins(cwd, plugins);
+    expect(first.enabled).toEqual(["alpha", "beta"]);
+
+    // Simulate accidental symlink deletion for "alpha"
+    fs.unlinkSync(projectPluginPath(cwd, "alpha"));
+
+    // Second bootstrap → only alpha (still in managed set) gets restored
+    const second = bootstrapDefaultManagedPlugins(cwd, plugins);
+
+    expect(second.status).toBe("bootstrapped");
+    expect(second.enabled).toEqual(["alpha"]);
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(true);
+    expect(fs.existsSync(projectPluginPath(cwd, "beta"))).toBe(true);
+  });
+
+  it("does not auto-enable newly discovered plugins when the project is already configured", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary("alpha");
+    const { bootstrapDefaultManagedPlugins, discoverPlugins } =
+      await importPluginToggle();
+
+    // First bootstrap with only "alpha"
     bootstrapDefaultManagedPlugins(
       cwd,
-      plugins.filter((plugin) => plugin.name === "alpha"),
+      discoverPlugins(library).filter((p) => p.name === "alpha"),
     );
 
-    const result = bootstrapDefaultManagedPlugins(cwd, plugins);
+    // New plugin "beta" appears in library
+    createPluginDir(library, "beta");
 
-    expect(result.status).toBe("bootstrapped");
-    expect(result.enabled).toEqual(PROJECT_DEFAULT_PLUGIN_NAMES);
-    expect(readManagedPluginNames(cwd)).toEqual([
-      "alpha",
-      ...PROJECT_DEFAULT_PLUGIN_NAMES,
-    ]);
-    for (const pluginName of PROJECT_DEFAULT_PLUGIN_NAMES) {
-      expect(
-        fs.lstatSync(projectPluginPath(cwd, pluginName)).isSymbolicLink(),
-      ).toBe(true);
-    }
+    // Second bootstrap with all plugins → beta should NOT be auto-enabled
+    const result = bootstrapDefaultManagedPlugins(
+      cwd,
+      discoverPlugins(library),
+    );
+
+    expect(result.status).toBe("already-configured");
+    expect(result.enabled).toEqual([]);
+    expect(fs.existsSync(projectPluginPath(cwd, "beta"))).toBe(false);
   });
 
   it("does not queue reload when every discovered plugin is default-disabled", async () => {

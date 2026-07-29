@@ -397,6 +397,9 @@ function handleCleanupResult(e: Event): void {
   .app {
     --va-app-gutter: 24px;
     --va-comment-panel-width: 360px;
+    --va-radius-sm: calc(var(--radius) * 0.6);
+    --va-radius-md: calc(var(--radius) * 0.8);
+    --va-radius-lg: var(--radius);
 
     font-family: var(--va-font-sans);
     padding: 24px;

@@ -37,7 +37,6 @@
       "./extensions/visual-artifact",
       "./extensions/librarian",
       "./extensions/btw",
-      "./extensions/opencode-go-provider",
       "./extensions/tools_intercepted",
       "./extensions/qmd-search",
       "./extensions/herdr-squad"

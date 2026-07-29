@@ -1,7 +1,4 @@
 <script lang="ts">
-// biome-ignore lint/correctness/noUnusedImports: used in template
-import VisualArtifactRenderer from "../../visual-artifact-renderer.svelte";
-
 let {
   left = [],
   right = [],
@@ -17,92 +14,21 @@ let {
 } = $props();
 </script>
 
-<div class="va-side-by-side">
-  <div class="va-sbs-panel va-sbs-left">
+<div class="grid grid-cols-1 sm:grid-cols-2 my-3 rounded-xl border border-border overflow-hidden">
+  <div class="min-w-0 break-words border-b sm:border-b-0 sm:border-r border-border bg-rust/[0.02]">
     {#if leftLabel}
-      <p class="va-sbs-label">{leftLabel}</p>
+      <div class="px-3 py-1.5 bg-[#141413] text-rust text-[10px] font-semibold uppercase tracking-wider border-b border-border">{leftLabel}</div>
     {/if}
-    <div class="va-sbs-content">
+    <div class="p-3 min-w-0 break-words">
       <VisualArtifactRenderer nodes={left} basePath={`${_nodePath}.props.left`} />
     </div>
   </div>
-  <div class="va-sbs-panel va-sbs-right">
+  <div class="min-w-0 break-words bg-olive/[0.02]">
     {#if rightLabel}
-      <p class="va-sbs-label">{rightLabel}</p>
+      <div class="px-3 py-1.5 bg-[#141413] text-olive text-[10px] font-semibold uppercase tracking-wider border-b border-border">{rightLabel}</div>
     {/if}
-    <div class="va-sbs-content">
+    <div class="p-3 min-w-0 break-words">
       <VisualArtifactRenderer nodes={right} basePath={`${_nodePath}.props.right`} />
     </div>
   </div>
 </div>
-
-<style>
-  .va-side-by-side {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0;
-    margin: 12px 0;
-    border: 1px solid var(--va-border-default);
-    border-radius: var(--va-radius-md);
-    overflow: hidden;
-  }
-
-  .va-sbs-panel {
-    min-width: 0;
-    overflow-wrap: break-word;
-  }
-
-  .va-sbs-left {
-    border-right: 1px solid var(--va-border-default);
-    background:
-      linear-gradient(var(--va-bg-danger-subtle), var(--va-bg-danger-subtle)),
-      var(--va-bg-surface);
-  }
-
-  .va-sbs-right {
-    background:
-      linear-gradient(var(--va-bg-success-subtle), var(--va-bg-success-subtle)),
-      var(--va-bg-surface);
-  }
-
-  .va-sbs-label {
-    margin: 0;
-    padding: 6px 12px;
-    background: var(--va-bg-code);
-    color: var(--va-text-subtle);
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    border-bottom: 1px solid var(--va-border-default);
-  }
-
-  .va-sbs-left .va-sbs-label {
-    color: var(--va-accent-danger-text);
-  }
-
-  .va-sbs-right .va-sbs-label {
-    color: var(--va-accent-success-text);
-  }
-
-  .va-sbs-content {
-    padding: 12px;
-    min-width: 0;
-    overflow-wrap: break-word;
-  }
-
-  .va-sbs-content :global(.va-node) {
-    margin-bottom: 0;
-  }
-
-  @media (max-width: 640px) {
-    .va-side-by-side {
-      grid-template-columns: 1fr;
-    }
-
-    .va-sbs-left {
-      border-right: none;
-      border-bottom: 1px solid var(--va-border-default);
-    }
-  }
-</style>

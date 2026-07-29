@@ -6,30 +6,11 @@ let {
 }: { src?: string; poster?: string; caption?: string } = $props();
 </script>
 
-<figure class="va-video">
-  <video controls {poster} preload="metadata">
+<figure class="my-3 text-center">
+  <video controls {poster} preload="metadata" class="max-w-full rounded-xl border border-border">
     <source {src} />
   </video>
   {#if caption}
-    <figcaption>{caption}</figcaption>
+    <figcaption class="mt-1.5 text-xs text-muted-foreground">{caption}</figcaption>
   {/if}
 </figure>
-
-<style>
-  .va-video {
-    margin: 12px 0;
-    text-align: center;
-  }
-
-  video {
-    max-width: 100%;
-    border-radius: var(--va-radius-md);
-    border: 1px solid var(--va-border-default);
-  }
-
-  figcaption {
-    margin-top: 6px;
-    color: var(--va-text-subtle);
-    font-size: 12px;
-  }
-</style>

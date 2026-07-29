@@ -1,7 +1,4 @@
 <script lang="ts">
-// biome-ignore lint/correctness/noUnusedImports: used in template
-import VisualArtifactRenderer from "../../visual-artifact-renderer.svelte";
-
 let {
   title = "",
   description = "",
@@ -29,62 +26,19 @@ function semanticVariant(value: string): string {
   }
 }
 
-const variant = $derived(semanticVariant(title));
+const tone = $derived(semanticVariant(title));
 </script>
 
-<div class="va-card" data-variant={variant}>
+<Card {tone}>
   {#if title}
-    <h3 class="va-card-title">{title}</h3>
+    <h3 class="font-serif text-lg font-medium tracking-[-0.015em] text-foreground mb-1">{title}</h3>
   {/if}
   {#if description}
-    <p class="va-card-desc">{description}</p>
+    <p class="text-sm text-muted-foreground mb-3">{description}</p>
   {/if}
   {#if nodes.length > 0}
-    <div class="va-card-body">
+    <div class="pt-1">
       <VisualArtifactRenderer {nodes} basePath={`${_nodePath}.props.nodes`} />
     </div>
   {/if}
-</div>
-
-<style>
-  .va-card {
-    padding: 16px;
-    margin: 12px 0;
-    border: 1px solid var(--va-border-default);
-    border-radius: var(--va-radius-lg);
-    background: var(--va-bg-surface);
-  }
-
-  .va-card[data-variant="success"] {
-    border-left: 3px solid var(--va-accent-success);
-  }
-
-  .va-card[data-variant="danger"] {
-    border-left: 3px solid var(--va-accent-danger);
-  }
-
-  .va-card[data-variant="warning"] {
-    border-left: 3px solid var(--va-accent-warning);
-  }
-
-  .va-card[data-variant="info"] {
-    border-left: 3px solid var(--va-accent-primary);
-  }
-
-  .va-card-title {
-    margin: 0 0 4px;
-    font-size: 15px;
-    font-weight: 700;
-    color: var(--va-text-primary);
-  }
-
-  .va-card-desc {
-    margin: 0 0 10px;
-    color: var(--va-text-muted);
-    font-size: 13px;
-  }
-
-  .va-card-body {
-    padding-top: 4px;
-  }
-</style>
+</Card>

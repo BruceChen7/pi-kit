@@ -3,31 +3,9 @@ let { text = "", href = "" }: { text?: string; href?: string } = $props();
 </script>
 
 {#if href}
-  <a class="va-link" {href} target="_blank" rel="noopener noreferrer">
+  <a {href} target="_blank" rel="noopener noreferrer" class="text-clay-dark hover:text-clay underline underline-offset-2 text-sm no-underline hover:underline">
     {text || href}
   </a>
 {:else}
-  <span class="va-link va-link-text">{text}</span>
+  <span class="text-foreground text-sm">{text}</span>
 {/if}
-
-<style>
-  .va-link {
-    color: var(--va-accent-primary-text);
-    text-decoration: none;
-    font-size: 13px;
-  }
-
-  .va-link:hover {
-    text-decoration: underline;
-    color: var(--va-accent-primary);
-  }
-
-  .va-link-text {
-    color: var(--va-text-secondary);
-    cursor: default;
-  }
-
-  .va-link-text:hover {
-    text-decoration: none;
-  }
-</style>

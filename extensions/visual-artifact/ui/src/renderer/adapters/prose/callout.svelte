@@ -2,43 +2,14 @@
 let { text = "", variant = "info" }: { text?: string; variant?: string } =
   $props();
 
-const styles: Record<string, { bg: string; border: string; color: string }> = {
-  info: {
-    bg: "var(--va-bg-info-subtle)",
-    border: "var(--va-border-info-subtle)",
-    color: "var(--va-accent-primary-text)",
-  },
-  success: {
-    bg: "var(--va-bg-success-subtle)",
-    border: "var(--va-border-success-subtle)",
-    color: "var(--va-accent-success-text)",
-  },
-  warning: {
-    bg: "var(--va-bg-warning-subtle)",
-    border: "var(--va-border-warning-subtle)",
-    color: "var(--va-accent-warning-text)",
-  },
-  danger: {
-    bg: "var(--va-bg-danger-subtle)",
-    border: "var(--va-border-danger-subtle)",
-    color: "var(--va-accent-danger-text)",
-  },
+const variantClasses: Record<string, string> = {
+  info: "bg-clay/10 border-clay/20 text-clay-dark",
+  success: "bg-olive/10 border-olive/20 text-olive",
+  warning: "bg-[#d9a84b]/10 border-[#d9a84b]/20 text-[#b88a30]",
+  danger: "bg-rust/10 border-rust/20 text-rust",
 };
-
-const s = $derived(styles[variant] ?? styles.info);
 </script>
 
-<div class="va-callout" style="background: {s.bg}; border-color: {s.border}; color: {s.color};">
+<div class={cn("px-4 py-3 my-3 rounded-lg border text-sm leading-relaxed", variantClasses[variant] ?? variantClasses.info)}>
   {text}
 </div>
-
-<style>
-  .va-callout {
-    padding: 10px 14px;
-    margin: 12px 0;
-    border: 1px solid;
-    border-radius: var(--va-radius-sm);
-    font-size: 13px;
-    line-height: 1.5;
-  }
-</style>

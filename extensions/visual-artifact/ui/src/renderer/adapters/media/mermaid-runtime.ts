@@ -7,38 +7,21 @@ export type MermaidRuntimeApi = {
 };
 
 const MERMAID_THEME_VARIABLES: Record<string, Record<string, string>> = {
-  dark: {
-    background: "#0f172a",
-    primaryColor: "#1e293b",
-    primaryTextColor: "#f1f5f9",
-    primaryBorderColor: "#475569",
-    secondaryColor: "#334155",
-    secondaryTextColor: "#e2e8f0",
-    tertiaryColor: "#111827",
-    tertiaryTextColor: "#e2e8f0",
-    lineColor: "#94a3b8",
-    textColor: "#f1f5f9",
-    mainBkg: "#1e293b",
-    nodeBorder: "#475569",
-    clusterBkg: "#1f2937",
-    clusterBorder: "#475569",
-    edgeLabelBackground: "#0f172a",
-  },
   light: {
-    background: "#f8fafc",
+    background: "#faf9f5",
     primaryColor: "#ffffff",
-    primaryTextColor: "#0f172a",
-    primaryBorderColor: "#cbd5e1",
-    secondaryColor: "#f1f5f9",
-    secondaryTextColor: "#1e293b",
-    tertiaryColor: "#e2e8f0",
-    tertiaryTextColor: "#1e293b",
-    lineColor: "#475569",
-    textColor: "#0f172a",
+    primaryTextColor: "#141413",
+    primaryBorderColor: "#d1cfc5",
+    secondaryColor: "#f0eee6",
+    secondaryTextColor: "#3d3d3a",
+    tertiaryColor: "#e6e3da",
+    tertiaryTextColor: "#3d3d3a",
+    lineColor: "#6b6a63",
+    textColor: "#141413",
     mainBkg: "#ffffff",
-    nodeBorder: "#cbd5e1",
-    clusterBkg: "#f8fafc",
-    clusterBorder: "#cbd5e1",
+    nodeBorder: "#d1cfc5",
+    clusterBkg: "#faf9f5",
+    clusterBorder: "#d1cfc5",
     edgeLabelBackground: "#ffffff",
   },
 } as const;
@@ -60,7 +43,7 @@ export function getMermaidTheme(theme: MermaidAppTheme): "base" {
 export function getMermaidThemeVariables(
   theme: MermaidAppTheme,
 ): Record<string, string> {
-  return MERMAID_THEME_VARIABLES[theme] ?? MERMAID_THEME_VARIABLES.dark;
+  return MERMAID_THEME_VARIABLES[theme] ?? MERMAID_THEME_VARIABLES.light;
 }
 
 export function getMermaidRenderConfig(

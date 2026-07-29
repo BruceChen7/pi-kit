@@ -39,7 +39,8 @@
       "./extensions/btw",
       "./extensions/tools_intercepted",
       "./extensions/qmd-search",
-      "./extensions/herdr-squad"
+      "./extensions/herdr-squad",
+      "./extensions/cc-switch"
     ]
   },
   "scripts": {

@@ -170,6 +170,20 @@ export const IMPLEMENTATION_DATA_STRUCTURE_GUIDANCE = [
   "- 包括关键类型、函数签名、条件判断、状态迁移的最小片段。",
   "- 避免粘贴完整实现，只展示能让 reviewer 判断方向的代码。",
 ];
+export const IMPLEMENTATION_CALL_TREE_GUIDANCE = [
+  "- Implementation 中的调用链用 ASCII tree 展示：",
+  "  父函数 → 子调用 → 条件分支，标注 skip / 过滤 / 副作用 / 数据流向。",
+  "- 用 ├─ 和 └─ 画树，条件或循环用 ← 标注原因。",
+  "- 示例:",
+  "  bootstrapDefaultManagedPlugins(cwd, plugins)",
+  "    ├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）",
+  "    └─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared",
+  "         └─ bootstrapPlugins(...)",
+  "              └─ 遍历: disabled.has(name) → skip",
+  "                   其余 → enablePlugin()  ← 副作用: 写 symlink",
+  "- Mermaid 留给 Current Flow / Desired Flow / Boundaries 的架构层交互；",
+  "  ASCII tree 用于 Implementation 的函数级调用链和条件分支。",
+];
 export const TESTING_VALUE_IN_OUT_GUIDANCE = [
   "- Testing 围绕核心 value in / value out，",
   "  写出核心函数签名 + 关键测试场景。",
@@ -184,6 +198,7 @@ export const PLAN_REVIEW_ARTIFACT_GUIDANCE = [
   ...FLOW_TREE_GUIDANCE,
   BOUNDARIES_SEQUENCE_GUIDANCE,
   ...IMPLEMENTATION_DATA_STRUCTURE_GUIDANCE,
+  ...IMPLEMENTATION_CALL_TREE_GUIDANCE,
   ...TESTING_VALUE_IN_OUT_GUIDANCE,
   DECISIONS_ADR_GUIDANCE,
   NON_GOALS_GUIDANCE,

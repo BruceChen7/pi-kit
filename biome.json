@@ -37,7 +37,8 @@
         "rules": {
           "preset": "recommended",
           "correctness": {
-            "noUnusedVariables": "off"
+            "noUnusedVariables": "off",
+            "noUnusedImports": "off"
           }
         }
       }

@@ -1,12 +1,9 @@
 <script lang="ts">
 import { onMount } from "svelte";
 import { registerGlimpseCloseShortcuts } from "../../../shared/glimpse-ui-shortcuts.ts";
-// biome-ignore lint/correctness/noUnusedImports: used in template
 import AnnotationPanel from "./annotations/annotation-panel.svelte";
-// biome-ignore lint/correctness/noUnusedImports: used in template
 import AnnotationProvider from "./annotations/annotation-provider.svelte";
 import { normalizeArtifactNodes } from "./normalize-spec.ts";
-// biome-ignore lint/correctness/noUnusedImports: used in template
 import VisualArtifactRenderer from "./renderer/visual-artifact-renderer.svelte";
 
 type ViewType = "home" | "project" | "artifact";

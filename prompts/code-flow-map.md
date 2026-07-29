@@ -76,14 +76,50 @@ detailed reference material into `accordion` nodes.
 |---|---------|------------|---------|
 | 1 | Executive mental model | `heading`, `text`, `badge` | A short summary of what the flow does and why it exists. |
 | 2 | Flow dashboard | `kpi-grid` | 4-6 metrics: entry points, key modules, data types, side effects, tests, risk flags. |
-| 3 | Control-flow diagram | `mermaid` | Main path plus important branches and failure paths. |
-| 4 | Data/state map | `mermaid` or `table` | Key structures, owners, lifecycle transitions, and persistence boundaries. |
+| 3a | **Participant diagram** (强制) | `mermaid` `sequenceDiagram` | 跨参与者/跨 boundary 的消息和调用链，不画内部分支。标注每个 participant。 |
+| 3b | **Logic diagram** (条件) | `mermaid` `flowchart` | 仅当存在非平凡分支（≥3 条路径、状态机、重试/回退）时才产出。聚焦核心决策树。 |
+| 4a | **State/lifecycle diagram** (条件) | `mermaid` `stateDiagram` | 有生命周期/状态转换时产出（enable→disable、draft→published 等）。 |
+| 4b | **Entity/relationship diagram** (条件) | `mermaid` `erDiagram` | 有多个实体 + 关系时产出。无状态机也无实体关系时降级为 `table`。 |
 | 5 | Boundary map | `table` + `badge` | IO/adapters/side effects with risk level and evidence. |
 | 6 | Blast radius | `file-tree` or `table` | Callers, dependents, tests, docs, config, compatibility surface. |
 | 7 | Walkthrough | `timeline` or `accordion` | Step-by-step execution with file/function references. |
 | 8 | Tests and gaps | `table`, `callout` | Existing coverage and missing verification. |
 | 9 | Gotchas and invariants | `accordion`, `card`, `list` | What must stay true, and what is easy to misunderstand. |
 | 10 | Grill-me starter | `callout` or `card` | The first question you will ask me after creating the artifact. |
+
+### Diagram selection guide
+
+Diagrams are the **highest-priority** elements of a code-flow map. They must appear as independent
+top-level nodes — never buried inside accordions.
+
+**Section 3a — Participant diagram (强制):**
+
+Always produce a `sequenceDiagram` showing cross-boundary message flow between participants.
+
+- Each distinct module, process, or external system is a `participant`.
+- Only show calls/messages between participants; do not draw internal branches here.
+- If the flow has **no cross-boundary interaction** (pure in-process pipeline), note this
+explicitly and fall back to a single `flowchart` that combines 3a + 3b roles.
+
+**Section 3b — Logic diagram (条件):**
+
+Produce a `flowchart` **only when** the flow has non-trivial branching:
+
+- ≥ 3 distinct code paths
+- State machine or mode-dependent behavior
+- Retry, fallback, or rollback loops
+
+Focus on the core decision tree. Skip 3b for linear flows.
+
+**Section 4 — Data/state diagram (至少一个):**
+
+Choose based on what the flow's data actually does:
+
+- Has **lifecycle / state transitions** (enable→disable, pending→active→done) → `stateDiagram-v2`
+- Has **multiple entities with relationships** (Plugin→Settings, Project→Symlink) → `erDiagram`
+- Has **neither** → fall back to a `table` of key structures
+
+If the flow has both state transitions and entity relationships, produce both 4a and 4b.
 
 ### Compact spec shape
 
@@ -94,11 +130,21 @@ const spec = {
   artifactType: "explainer",
   description: "Evidence-backed map of <topic> in <repo>.",
   nodes: [
+    // --- Section 1-2: overview ---
     { "type": "heading", "props": { "text": "Code Flow Map: <topic>", "level": "h1" } },
     { "type": "text", "props": { "text": "<one-paragraph mental model>", "size": "xl" } },
     { "type": "kpi-grid", "props": { "columns": 3, "items": [] } },
-    { "type": "mermaid", "props": { "definition": "flowchart LR\n  A[\"Entry\"] --> B[\"Core step\"]" } },
-    { "type": "mermaid", "props": { "definition": "flowchart TB\n  D[\"DTO\"] --> S[\"State\"]" } },
+
+    // --- Section 3a: participant diagram (强制, 独立顶层节点) ---
+    { "type": "mermaid", "props": { "definition": "sequenceDiagram\n  participant A as \"Module A\"\n  participant B as \"Module B\"\n  A->>B: call()\n  B-->>A: result" } },
+
+    // --- Section 3b: logic diagram (条件, 独立顶层节点) ---
+    { "type": "mermaid", "props": { "definition": "flowchart TD\n  A[\"Entry\"] --> |\"condition\"| B[\"Path 1\"]\n  A --> |\"else\"| C[\"Path 2\"]" } },
+
+    // --- Section 4a/b: data/state diagram (至少一个, 独立顶层节点) ---
+    { "type": "mermaid", "props": { "definition": "stateDiagram-v2\n  [*] --> Active\n  Active --> Disabled\n  Disabled --> [*]" } },
+
+    // --- Section 5-9: details in accordion ---
     { "type": "accordion", "props": { "items": [
       { "title": "Boundary Map", "nodes": [] },
       { "title": "Blast Radius", "nodes": [] },
@@ -106,6 +152,8 @@ const spec = {
       { "title": "Tests and Gaps", "nodes": [] },
       { "title": "Gotchas and Invariants", "nodes": [] }
     ] } },
+
+    // --- Section 10: grill-me ---
     { "type": "callout", "props": {
       "title": "Grill-me starter",
       "text": "<first comprehension question>",
@@ -130,7 +178,10 @@ create_visual_artifact({
 - Use Visual Artifact nodes, not standalone HTML.
 - Do not use `plannotator_auto_submit_review`.
 - Do not open a browser directly; the Visual Artifact tool handles the window.
-- Use compact Mermaid diagrams; prefer one control-flow diagram and one data/state diagram.
+- **Diagrams are the highest-priority elements.** Always produce at minimum one `sequenceDiagram`
+  (3a) and one data/state diagram (4). The logic `flowchart` (3b) is conditional on branch
+  complexity. Every diagram must be a **top-level node**, never inside an accordion.
+- Use compact Mermaid diagrams; each diagram should fit on one screen.
 - Always use double-quoted Mermaid labels: `N["label text"]`, not `N[label text]`.
 - Never use parentheses inside unquoted labels.
 - Apply Mermaid `:::` classes on separate lines, not inline.

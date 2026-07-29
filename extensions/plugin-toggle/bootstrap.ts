@@ -57,10 +57,19 @@ export function bootstrapDefaultManagedPlugins(
   const disabled = settingsStore.readDefaultDisabledPlugins();
 
   if (settingsStore.hasManagedPluginsEntry()) {
-    const missingProjectDefaults = plugins
+    // Already configured: only restore symlinks for plugins that are in the
+    // managed set (user explicitly enabled) but missing their symlink.
+    // Plugins not in managed were either explicitly disabled or never enabled;
+    // do NOT auto-enable them.
+    const managed = settingsStore.readManagedPlugins();
+    const missingManaged = plugins
       .filter(isDefaultBootstrapEntry)
-      .filter((plugin) => !fs.existsSync(pluginTargetPath(cwd, plugin)));
-    const result = bootstrapPlugins(cwd, missingProjectDefaults, disabled);
+      .filter(
+        (plugin) =>
+          managed.has(normalizeName(plugin.name)) &&
+          !fs.existsSync(pluginTargetPath(cwd, plugin)),
+      );
+    const result = bootstrapPlugins(cwd, missingManaged, disabled);
     result.status =
       result.enabled.length > 0 ? "bootstrapped" : "already-configured";
     return sortDefaultBootstrapResult(result);

@@ -2,7 +2,7 @@
  * lobsters.ts — scheduled task: fetch Lobste.rs per-tag newest posts and push to Telegram.
  *
  * Pipeline (per tag):
- *   1. HTTP fetch /t/{tag}.json
+ *   1. HTTP fetch /t/{tag}/page/1.json
  *   2. Parse JSON response
  *   3. Filter by score >= 1
  *   4. Compute increment (short_id exact match)
@@ -312,7 +312,7 @@ export async function fetchTagPosts(
     stderr: string;
   }>,
 ): Promise<LobstersPost[] | null> {
-  const url = `${LOBSTERS_BASE}/t/${tag}.json`;
+  const url = `${LOBSTERS_BASE}/t/${tag}/page/1.json`;
   log.info("fetching tag", { tag, url });
 
   const result = await execFn("curl", ["-s", "--max-time", "15", url]);

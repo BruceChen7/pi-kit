@@ -11,11 +11,9 @@
  */
 
 import fs from "node:fs";
-import http from "node:http";
 import path from "node:path";
 import type {
   ExtensionAPI,
-  ExtensionCommandContext,
   ProviderConfig,
 } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../shared/logger.ts";
@@ -59,26 +57,6 @@ interface CodexModel {
 
 interface CodexModelCatalog {
   models: CodexModel[];
-}
-
-// ── Proxy health check ─────────────────────────────────────────────────────
-
-function checkProxy(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const req = http.get(
-      `http://${PROXY_HOST}:${PROXY_PORT}/codex/v1/models`,
-      { headers: { Authorization: `Bearer ${API_KEY}` }, timeout: 3000 },
-      (res) => {
-        resolve(res.statusCode === 200);
-        res.resume();
-      },
-    );
-    req.on("error", () => resolve(false));
-    req.on("timeout", () => {
-      req.destroy();
-      resolve(false);
-    });
-  });
 }
 
 // ── Model catalog loading ──────────────────────────────────────────────────
@@ -160,69 +138,17 @@ function registerGatewayProvider(
 // ── Extension entry point ──────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI): void {
-  pi.on("session_start", async () => {
-    const proxyAlive = await checkProxy();
-    if (!proxyAlive) {
-      log.info(
-        "AIS Switch proxy not detected at 127.0.0.1:15721 — skipping provider registration",
-      );
-      return;
-    }
-    log.info("AIS Switch proxy detected");
-
-    const catalog = loadModelCatalog();
-    if (!catalog) {
-      log.warn(
-        "No model catalog found — check that cc_switch is configured with a provider that generates a Codex model catalog",
-      );
-      return;
-    }
-
+  // Register provider eagerly so models are available when pi resolves model
+  // patterns from settings.json.
+  const catalog = loadModelCatalog();
+  if (catalog) {
     registerGatewayProvider(pi, catalog);
-  });
-
-  pi.registerCommand("cc-switch", {
-    description:
-      "Show AIS Switch proxy status and registered models, or refresh",
-    handler: async (args, ctx: ExtensionCommandContext) => {
-      const proxyAlive = await checkProxy();
-      const catalog = loadModelCatalog();
-
-      const lines: string[] = [
-        "## AIS Switch (cc_switch)",
-        "",
-        `Proxy:  ${proxyAlive ? "✅ running" : "❌ not detected"} at ${PROXY_BASE_URL}`,
-        `Catalog: ${catalog ? `✅ ${catalog.models.length} models` : "❌ not found"}`,
-        "",
-      ];
-
-      if (catalog && catalog.models.length > 0) {
-        lines.push("### Available models");
-        for (const m of catalog.models) {
-          const input = m.input_modalities.join(", ");
-          lines.push(
-            `- \`${m.slug}\` — ${input}, ${(m.max_context_window || m.context_window) / 1000}K context`,
-          );
-        }
-        lines.push("");
-      }
-
-      if (args.trim() === "refresh") {
-        ctx.ui.notify("Refreshing models from cc_switch…");
-        const catalog = loadModelCatalog();
-        if (catalog) {
-          registerGatewayProvider(pi, catalog);
-          ctx.ui.notify(
-            `cc_switch: ${catalog.models.length} models registered`,
-          );
-          lines.push("✅ Models refreshed");
-        } else {
-          ctx.ui.notify("cc_switch: model catalog not found");
-          lines.push("❌ Model catalog not found");
-        }
-      }
-
-      pi.sendUserMessage(lines.join("\n"));
-    },
-  });
+    log.info(`Registered ${catalog.models.length} models from catalog`);
+  } else {
+    log.warn(
+      "No model catalog found — cc_switch provider not registered. " +
+        "Check that cc_switch is configured with a provider that generates " +
+        "a Codex model catalog.",
+    );
+  }
 }

@@ -16,7 +16,7 @@ const originalHome = process.env.HOME;
 const originalCwd = process.cwd();
 const DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE =
   "同步插件成功，请重启 Pi 以加载新插件。";
-const PROJECT_DEFAULT_PLUGIN_NAMES = [
+const _PROJECT_DEFAULT_PLUGIN_NAMES = [
   "cwd-history",
   "pi-context",
   "plan-mode",
@@ -579,7 +579,7 @@ describe("default project bootstrap", () => {
     expect(result.skippedDefaultDisabled).toEqual([]);
   });
 
-  it("does not re-enable a plugin that was explicitly disabled", async () => {
+  it("re-enables a plugin that was explicitly disabled but still in the library (new discovery)", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     const library = createPluginLibrary("alpha");
 
@@ -595,9 +595,9 @@ describe("default project bootstrap", () => {
 
     const result = bootstrapDefaultManagedPlugins(cwd, [plugin]);
 
-    expect(result.status).toBe("already-configured");
-    expect(result.enabled).toEqual([]);
-    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(false);
+    expect(result.status).toBe("bootstrapped");
+    expect(result.enabled).toEqual(["alpha"]);
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(true);
   });
 
   it("notifies without queueing reload after bootstrapping newly enabled plugins", async () => {
@@ -654,7 +654,7 @@ describe("default project bootstrap", () => {
     expect(fs.existsSync(projectPluginPath(cwd, "beta"))).toBe(true);
   });
 
-  it("does not auto-enable newly discovered plugins when the project is already configured", async () => {
+  it("auto-enables newly discovered plugins even when the project is already configured", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     const library = createPluginLibrary("alpha");
     const { bootstrapDefaultManagedPlugins, discoverPlugins } =
@@ -669,15 +669,17 @@ describe("default project bootstrap", () => {
     // New plugin "beta" appears in library
     createPluginDir(library, "beta");
 
-    // Second bootstrap with all plugins → beta should NOT be auto-enabled
+    // Second bootstrap with all plugins → beta should be auto-enabled
     const result = bootstrapDefaultManagedPlugins(
       cwd,
       discoverPlugins(library),
     );
 
-    expect(result.status).toBe("already-configured");
-    expect(result.enabled).toEqual([]);
-    expect(fs.existsSync(projectPluginPath(cwd, "beta"))).toBe(false);
+    expect(result.status).toBe("bootstrapped");
+    expect(result.enabled).toEqual(["beta"]);
+    expect(fs.existsSync(projectPluginPath(cwd, "beta"))).toBe(true);
+    // alpha's symlink still exists from first bootstrap
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(true);
   });
 
   it("does not queue reload when every discovered plugin is default-disabled", async () => {

@@ -1,8 +1,6 @@
 <script lang="ts">
 import { getContext } from "svelte";
-// biome-ignore lint/correctness/noUnusedImports: used in template event handler
 import { findClosestVaNode } from "../annotations/annotation-helpers.ts";
-// biome-ignore lint/correctness/noUnusedImports: used in template as <Adapter>
 import { getAdapter } from "./component-registry.ts";
 
 type ArtifactNode = {

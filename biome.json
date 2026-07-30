@@ -9,7 +9,6 @@
     "ignoreUnknown": false,
     "includes": [
       "**",
-      "!extensions/kanban-worktree/ui-dist",
       "!extensions/cache-graph/ui-dist",
       "!skills/render-markdown/scripts"
     ]

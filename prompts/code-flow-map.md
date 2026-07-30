@@ -80,12 +80,10 @@ detailed reference material into `accordion` nodes.
 | 3b | **Logic diagram** (条件) | `mermaid` `flowchart` | 仅当存在非平凡分支（≥3 条路径、状态机、重试/回退）时才产出。聚焦核心决策树。 |
 | 4a | **State/lifecycle diagram** (条件) | `mermaid` `stateDiagram` | 有生命周期/状态转换时产出（enable→disable、draft→published 等）。 |
 | 4b | **Entity/relationship diagram** (条件) | `mermaid` `erDiagram` | 有多个实体 + 关系时产出。无状态机也无实体关系时降级为 `table`。 |
-| 5 | Boundary map | `table` + `badge` | IO/adapters/side effects with risk level and evidence. |
-| 6 | Blast radius | `file-tree` or `table` | Callers, dependents, tests, docs, config, compatibility surface. |
-| 7 | Walkthrough | `timeline` or `accordion` | Step-by-step execution with file/function references. |
-| 8 | Tests and gaps | `table`, `callout` | Existing coverage and missing verification. |
-| 9 | Gotchas and invariants | `accordion`, `card`, `list` | What must stay true, and what is easy to misunderstand. |
-| 10 | Grill-me starter | `callout` or `card` | The first question you will ask me after creating the artifact. |
+| 5 | Walkthrough (强制) | `timeline` | Step-by-step execution with file/function references. Same priority as diagrams — do not fold into accordion. |
+| 6 | Boundaries & Blast Radius | `accordion` | IO/adapters/side effects (table+badge) + callers, dependents, tests, docs, config (file-tree/table). |
+| 7 | Tests, Gaps & Gotchas | `accordion` | Coverage table + callout for gaps + list/card of invariants and traps. |
+| 8 | Grill-me starter | `callout` or `card` | The first question you will ask me after creating the artifact. |
 
 ### Diagram selection guide
 
@@ -144,16 +142,18 @@ const spec = {
     // --- Section 4a/b: data/state diagram (至少一个, 独立顶层节点) ---
     { "type": "mermaid", "props": { "definition": "stateDiagram-v2\n  [*] --> Active\n  Active --> Disabled\n  Disabled --> [*]" } },
 
-    // --- Section 5-9: details in accordion ---
-    { "type": "accordion", "props": { "items": [
-      { "title": "Boundary Map", "nodes": [] },
-      { "title": "Blast Radius", "nodes": [] },
-      { "title": "Walkthrough", "nodes": [] },
-      { "title": "Tests and Gaps", "nodes": [] },
-      { "title": "Gotchas and Invariants", "nodes": [] }
+    // --- Section 5: walkthrough (强制, 独立顶层节点) ---
+    { "type": "timeline", "props": { "items": [
+      { "step": 1, "title": "<step name>", "description": "<what happens and where>" }
     ] } },
 
-    // --- Section 10: grill-me ---
+    // --- Section 6-7: details in accordion (合并为 2 项) ---
+    { "type": "accordion", "props": { "items": [
+      { "title": "Boundaries & Blast Radius", "nodes": [] },
+      { "title": "Tests, Gaps & Gotchas", "nodes": [] }
+    ] } },
+
+    // --- Section 8: grill-me ---
     { "type": "callout", "props": {
       "title": "Grill-me starter",
       "text": "<first comprehension question>",

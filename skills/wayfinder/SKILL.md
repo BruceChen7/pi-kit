@@ -244,6 +244,13 @@ The user invokes with a map path. Tickets are **optional** — when no ticket is
 
 Users may run unblocked tickets in parallel, so expect other sessions to be editing the map and ticket files simultaneously.
 
+6. **Map completion — synthesize design document.**
+   When all tickets are closed and the path to the destination is clear, the map is complete.
+   By default the output is the map itself (decisions in tickets). If the user or project Notes specify a need for a comprehensive design document (architecture overview, data structures, algorithms, implementation plan), create it as a standalone artifact at:
+   `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-wayfinder-design.md`
+   This file synthesizes all resolved decisions, fog that cleared, and out-of-scope rulings into a single reference document.
+   Same path convention as the spec review at drawing time — the date and topic distinguish them.
+
 ---
 
 ## Plannotator Review Integration
@@ -270,7 +277,8 @@ This skill depends on the following locally available skills:
 | Map file | `.pi/plans/<repo>/wayfinder/map.md` |
 | Ticket directory | `.pi/plans/<repo>/wayfinder/tickets/` |
 | Assets directory | `.pi/plans/<repo>/wayfinder/assets/` |
-| Spec review | `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-wayfinder-design.md` |
+| Spec review (drawing stage) | `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-wayfinder-design.md` |
+| Synthesized design document | `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-wayfinder-design.md` |
 | Domain glossary | `.pi/contexts/**/CONTEXT.md` |
 | ADR directory | `.pi/contexts/**/adr/` |
 

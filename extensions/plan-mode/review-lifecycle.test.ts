@@ -377,7 +377,11 @@ describe("plan-mode extension: review lifecycle", () => {
 
       await emitAbortedAgentEnd(harness, ctx);
 
-      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining("Execution aborted"),
+        "info",
+      );
+      expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
         expect.stringContaining("approved execution was aborted"),
         { deliverAs: "followUp" },
       );
@@ -458,7 +462,11 @@ describe("plan-mode extension: review lifecycle", () => {
 
       await emitAbortedAgentEnd(harness, ctx);
 
-      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        expect.stringContaining("Execution aborted"),
+        "info",
+      );
+      expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
         expect.stringContaining("approved execution was aborted"),
         { deliverAs: "followUp" },
       );
@@ -473,6 +481,50 @@ describe("plan-mode extension: review lifecycle", () => {
           planPath: demoPlanPath,
         },
       });
+    });
+  });
+
+  it("queues the re-review reminder at most once per unapproved episode", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await startApprovedDemoRun(harness, ctx);
+
+      // ESC abort: notify only, no follow-up queued, agent stops.
+      await emitAbortedAgentEnd(harness, ctx);
+      // Clear any setup-phase sendUserMessage calls (currently none —
+      // abort uses notify — but guarded so a future implementation
+      // change doesn't silently inflate the count below).
+      harness.api.sendUserMessage.mockClear();
+
+      // Next user turn ends normally: the re-review reminder is queued once.
+      await harness.emit("agent_end", { messages: [] }, ctx);
+      expect(harness.api.sendUserMessage).toHaveBeenCalledTimes(1);
+      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("approved artifact changed"),
+        { deliverAs: "followUp" },
+      );
+
+      // The continuation turn also ends without re-approval: no second
+      // reminder — the post-run loop must stop instead of self-continuing.
+      await harness.emit("agent_end", { messages: [] }, ctx);
+      expect(harness.api.sendUserMessage).toHaveBeenCalledTimes(1);
+
+      // After the plan is approved again, a new abort episode may remind
+      // once more.
+      await emitApprovedReview(harness, ctx, demoPlanPath);
+      // Clear pre-episode noise so the one allowed re-review message is
+      // the only sendUserMessage in this block.
+      harness.api.sendUserMessage.mockClear();
+      await emitAbortedAgentEnd(harness, ctx);
+      await harness.emit("agent_end", { messages: [] }, ctx);
+      expect(harness.api.sendUserMessage).toHaveBeenCalledTimes(1);
+      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("approved artifact changed"),
+        { deliverAs: "followUp" },
+      );
     });
   });
 
@@ -567,6 +619,57 @@ describe("plan-mode extension: review lifecycle", () => {
         expect.stringContaining("plannotator_auto_submit_review"),
       );
       expect(options).toEqual({ deliverAs: "followUp" });
+    });
+  });
+
+  it("queues the policy-fix reminder again only when the failure changes", async () => {
+    await withTempCtx(async (ctx) => {
+      const today = new Date().toISOString().slice(0, 10);
+      const planPath = `.pi/plans/pi-kit/plan/${today}-demo.md`;
+      writePlanArtifact(ctx.cwd, planPath, invalidPlanContent);
+      const { harness } = await startPlanModeSession("act", ctx);
+      await harness.runTool(
+        PLAN_MODE_TODO_TOOL,
+        {
+          action: "set",
+          items: [{ text: "修复 plan 格式", status: "todo" }],
+        },
+        ctx,
+      );
+      await emitReviewArtifactWrite(harness, ctx, planPath);
+
+      // First turn-end with an invalid artifact: reminder is queued once.
+      await harness.emit("agent_end", { messages: [] }, ctx);
+      expect(harness.api.sendUserMessage).toHaveBeenCalledTimes(1);
+
+      // Same failure on the next turn-end: no re-queue — the post-run
+      // loop must stop instead of self-continuing forever.
+      await harness.emit("agent_end", { messages: [] }, ctx);
+      expect(harness.api.sendUserMessage).toHaveBeenCalledTimes(1);
+
+      // Artifact rewritten but still invalid with a different failure:
+      // the new failure text is queued again.
+      // Note: writePlanArtifact bypasses the tool-result →
+      // markReviewArtifactWritten path, but validateArtifactPolicyForPath
+      // reads from disk directly, so the guard (which keys on the
+      // formatted failure text) sees the new content regardless.
+      writePlanArtifact(
+        ctx.cwd,
+        planPath,
+        validPlanContent.replace("## Decisions", "## Notes"),
+      );
+      await harness.emit("agent_end", { messages: [] }, ctx);
+      expect(harness.api.sendUserMessage).toHaveBeenCalledTimes(2);
+
+      // Artifact fixed: no further policy reminders.
+      writePlanArtifact(ctx.cwd, planPath, validPlanContent);
+      await harness.emit("agent_end", { messages: [] }, ctx);
+      const policyCalls = harness.api.sendUserMessage.mock.calls.filter(
+        ([message]) =>
+          typeof message === "string" &&
+          message.includes("Plan Mode artifact policy"),
+      );
+      expect(policyCalls).toHaveLength(2);
     });
   });
 

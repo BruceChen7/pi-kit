@@ -85,10 +85,9 @@ const APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE =
   "Plan Mode is waiting for an approved Plannotator plan/spec. The " +
   "approved artifact changed and must be reviewed again before " +
   "continuing approved execution.";
-const APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE =
-  "Plan Mode is waiting for an approved Plannotator plan/spec. The " +
-  "approved execution was aborted by the user and must be reviewed again " +
-  "before continuing.";
+// APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE removed - no longer used.
+// The abort path now uses ctx.ui.notify() instead of sendUserMessage()
+// to avoid restarting the agent (which caused an infinite retry loop).
 
 // ── Date helpers ──────────────────────────────────────────────
 
@@ -122,6 +121,21 @@ export class PlanModeController {
   private inputSourceForTurn: InputSource = "unknown";
   private internalExtensionBypassForTurn = false;
   private approvedPlanContinuationForTurn = false;
+  // ── Episode-guard markers ──────────────────────────────────────
+  // Each marker is keyed on a unique identifier for the current "episode"
+  // (artifact path for re-review, failure text for policy).  Once a
+  // follow-up has been queued, subsequent turn-ends with the same key are
+  // skipped — the post-run loop must stop, not self-continue forever.
+  //
+  // Reset strategy (applied consistently to both markers):
+  //   · restore()       — fresh session, no episode in progress.
+  //   · abort-approved  — abort ends the current episode; next normal
+  //                       turn-end may remind once for the new episode.
+  //   · approval        — run recovered; future unapproved episodes may
+  //                       remind once.
+  //   · policy pass     — artifact fixed; a new failure text queues again.
+  private reReviewReminderSentFor: string | null = null;
+  private policyReminderSentFor: string | null = null;
   constructor(private readonly pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext): void {
@@ -132,6 +146,8 @@ export class PlanModeController {
     this.inputSourceForTurn = "unknown";
     this.internalExtensionBypassForTurn = false;
     this.approvedPlanContinuationForTurn = false;
+    this.reReviewReminderSentFor = null;
+    this.policyReminderSentFor = null;
   }
 
   persist(): void {
@@ -511,14 +527,32 @@ export class PlanModeController {
     if (turnWasAborted(event, ctx)) {
       if (this.state.abortApprovedExecution(latestArtifactPath)) {
         this.persist();
-        this.sendReviewWaitMessage(APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE);
+        // Allow one re-review reminder in the next (non-abort) episode.
+        this.reReviewReminderSentFor = null;
+        // Do NOT sendUserMessage() here. During agent_end the session still
+        // counts as streaming (_isAgentRunActive), so the message is queued
+        // as a follow-up and the post-run loop continues the agent with
+        // agent.continue(). Every following turn-end would hit
+        // approvedExecutionNeedsReReview() and queue another follow-up —
+        // an infinite self-continuation loop (the "keeps retrying after
+        // ESC" bug). Notify via UI instead and let the agent actually stop.
+        if (ctx.hasUI) {
+          ctx.ui.notify(
+            "Execution aborted. Submit the plan for re-review.",
+            "info",
+          );
+        }
         this.finishTurn(ctx);
         return;
       }
       // Aborted turns skip generic plan reminders; still surface this review
       // gate so the next turn does not appear idle while execution is blocked.
+      // Use notify() for the same reason — a queued follow-up would keep
+      // the agent loop self-continuing.
       if (this.approvedExecutionNeedsReReview(latestArtifactPath)) {
-        this.sendReviewWaitMessage(APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE);
+        if (ctx.hasUI) {
+          ctx.ui.notify("Plan artifact changed. Submit for re-review.", "info");
+        }
         this.finishTurn(ctx);
         return;
       }
@@ -552,14 +586,34 @@ export class PlanModeController {
         { alreadyApproved: latestReviewArtifactApproved },
       );
       if (policyFailure) {
-        this.pi.sendUserMessage(policyFailure, { deliverAs: "followUp" });
+        // Queue the fix reminder only when the failure changed since the
+        // last queue (e.g. the artifact was rewritten). Re-queueing the
+        // identical failure on every turn-end would keep the post-run
+        // continuation loop spinning forever when the agent does not or
+        // cannot fix the artifact.
+        if (this.policyReminderSentFor !== policyFailure) {
+          this.policyReminderSentFor = policyFailure;
+          this.pi.sendUserMessage(policyFailure, { deliverAs: "followUp" });
+        }
         this.finishTurn(ctx);
         return;
       }
     }
+    // Validation passes or no artifact to validate — allow a future
+    // failure to remind without stale marker from an earlier episode.
+    this.policyReminderSentFor = null;
 
     if (this.approvedExecutionNeedsReReview(latestArtifactPath)) {
-      this.sendReviewWaitMessage(APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE);
+      // Remind at most once per unapproved episode. Without this guard,
+      // every turn-end queues the same follow-up and the post-run loop
+      // keeps continuing the agent (agent.continue()) — an infinite
+      // self-continuation loop. This is the same "keeps retrying" bug,
+      // triggered when the user sends a new message after an ESC abort
+      // cleared the plan approval.
+      if (this.reReviewReminderSentFor !== latestArtifactPath) {
+        this.reReviewReminderSentFor = latestArtifactPath;
+        this.sendReviewWaitMessage(APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE);
+      }
       this.finishTurn(ctx);
       return;
     }
@@ -667,6 +721,9 @@ export class PlanModeController {
     this.state.activePlanPath = pathToQueue;
     this.state.latestReviewArtifactPath = pathToQueue;
     this.state.reviewApprovedPlanPaths.add(pathToQueue);
+    // Approval recovers the run; allow a future unapproved episode to
+    // send its single re-review reminder again.
+    this.reReviewReminderSentFor = null;
     this.state.pendingApprovedPlanContinuationPath = pathToQueue;
     this.state.resumableApprovedPlanPath = pathToQueue;
     if (this.state.activeRun) {

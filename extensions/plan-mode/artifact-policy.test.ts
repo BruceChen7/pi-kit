@@ -442,4 +442,35 @@ describe("plan artifact content forms", () => {
     expect(reason).toContain("```mermaid");
     expect(reason).toContain("├─");
   });
+
+  it("every Mermaid fix snippet includes MERMAID_CONFIG_LIGHT frontmatter", () => {
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content: noDiagramsPlan,
+    });
+    const reason = formatArtifactPolicyFailure(planPath, result.issues);
+
+    // Extract each mermaid code block to verify it starts with the frontmatter
+    const mermaidBlocks = reason.match(/```mermaid\n[\s\S]*?```/g);
+    expect(mermaidBlocks).not.toBeNull();
+    expect(mermaidBlocks!.length).toBeGreaterThanOrEqual(3);
+
+    for (const block of mermaidBlocks!) {
+      // Each block must start with ```mermaid\n---\nconfig:\n  theme: base
+      expect(block).toMatch(/```mermaid\n---\nconfig:\n {2}theme: base/);
+      expect(block).toContain("themeVariables:");
+    }
+  });
+
+  it("keeps Implementation fix snippet as ASCII tree (unchanged)", () => {
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content: noDiagramsPlan,
+    });
+    const reason = formatArtifactPolicyFailure(planPath, result.issues);
+
+    expect(reason).toContain("├─ childA()");
+    expect(reason).toContain("└─ childB()");
+    expect(reason).toContain("parentFn()");
+  });
 });

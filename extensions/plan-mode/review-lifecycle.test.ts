@@ -595,4 +595,28 @@ describe("plan-mode extension: review lifecycle", () => {
       expect(options).toEqual({ deliverAs: "followUp" });
     });
   });
+
+  describe("abort notification for plain ESC (no approved execution to cancel)", () => {
+    it("notifies the user when hasUI is true", async () => {
+      const testCtx = buildCtx();
+      const { harness, ctx } = await startPlanModeSession("act", testCtx);
+      ctx.ui.notify.mockClear();
+
+      await emitAbortedAgentEnd(harness, ctx);
+
+      expect(ctx.ui.notify).toHaveBeenCalledWith(
+        "Operation cancelled.",
+        "info",
+      );
+    });
+
+    it("does not notify when hasUI is false", async () => {
+      const testCtx = { ...buildCtx(), hasUI: false };
+      const { harness, ctx } = await startPlanModeSession("act", testCtx);
+
+      await emitAbortedAgentEnd(harness, ctx);
+
+      expect(ctx.ui.notify).not.toHaveBeenCalled();
+    });
+  });
 });

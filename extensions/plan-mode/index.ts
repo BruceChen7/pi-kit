@@ -172,8 +172,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   );
 
   pi.on("tool_result", async (event, ctx) => {
-    controller.handleToolResult(event, ctx);
+    const result = controller.handleToolResult(event, ctx);
     controller.updateUi(ctx);
+    return result;
   });
 
   pi.on("agent_end", async (event, ctx) => {

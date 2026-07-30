@@ -5,6 +5,7 @@ import type {
   ExtensionContext,
   ToolCallEvent,
   ToolResultEvent,
+  ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { pathsFromWriteToolInput } from "../shared/tool-targets.ts";
 import {
@@ -591,7 +592,10 @@ export class PlanModeController {
     this.finishTurn(ctx);
   }
 
-  handleToolResult(event: ToolResultEvent, ctx: ExtensionContext): void {
+  handleToolResult(
+    event: ToolResultEvent,
+    ctx: ExtensionContext,
+  ): ToolResultEventResult | undefined {
     if (event.toolName === "read" && !event.isError) {
       const rawPath = stringProperty(event.input, "path");
       if (rawPath) {
@@ -613,8 +617,17 @@ export class PlanModeController {
           // should not pollute latestReviewArtifactPath in state.
           const dateError = validatePathDate(policyPath);
           if (dateError) {
-            this.pi.sendUserMessage(dateError, { deliverAs: "followUp" });
-            continue;
+            // Fail the tool call with a clear error so the agent learns
+            // the date requirement and retries with the correct name.
+            try {
+              fs.unlinkSync(absolutePath);
+            } catch {
+              // best-effort cleanup
+            }
+            return {
+              isError: true,
+              content: [{ type: "text" as const, text: dateError }],
+            };
           }
           this.state.markReviewArtifactWritten(policyPath);
         }

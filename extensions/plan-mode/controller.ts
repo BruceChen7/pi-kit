@@ -496,6 +496,12 @@ export class PlanModeController {
         this.finishTurn(ctx);
         return;
       }
+      // No approved execution to abort and no artifact to re-review —
+      // this is a plain abort in act mode (e.g. user pressed ESC during
+      // a tool-calling turn). Notify the user so they know ESC was handled.
+      if (ctx.hasUI) {
+        ctx.ui.notify("Operation cancelled.", "info");
+      }
       this.finishTurn(ctx);
       return;
     }

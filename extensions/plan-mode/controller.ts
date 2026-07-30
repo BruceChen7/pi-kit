@@ -89,6 +89,31 @@ const APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE =
   "approved execution was aborted by the user and must be reviewed again " +
   "before continuing.";
 
+// ── Date helpers ──────────────────────────────────────────────
+
+/** Return today's date as YYYY-MM-DD (UTC, which matches local date
+ *  for all practical purposes). Pure function, no side-effects. */
+export const getTodayDateString = (): string =>
+  new Date().toISOString().slice(0, 10);
+
+/** Validate that a plan artifact path's date prefix equals today's date.
+ *  Returns an error message when the date doesn't match, or null if it
+ *  matches or the path has no date pattern (non-standard paths pass). */
+export const validatePathDate = (planPath: string): string | null => {
+  const match = planPath.match(/(\d{4}-\d{2}-\d{2})/);
+  if (!match) return null;
+
+  const pathDate = match[1];
+  const today = getTodayDateString();
+  if (pathDate === today) return null;
+
+  return [
+    `Plan artifact path uses date "${pathDate}" but today is "${today}".`,
+    `Fix: rename the path to use ${today} as the date prefix.`,
+    `Example: .pi/plans/<repo>/plan/${today}-<slug>.md`,
+  ].join("\n");
+};
+
 export class PlanModeController {
   config: PlanModeConfig = DEFAULT_CONFIG;
   state = new PlanModeState(DEFAULT_CONFIG.defaultMode);
@@ -583,9 +608,15 @@ export class PlanModeController {
         this.state.markFileFreshlyWritten(absolutePath);
         wroteTrackedPath = true;
         if (isReviewArtifactPath(ctx.cwd, rawPath)) {
-          this.state.markReviewArtifactWritten(
-            relativeToolPath(ctx.cwd, rawPath),
-          );
+          const policyPath = relativeToolPath(ctx.cwd, rawPath);
+          // Validate the date prefix before marking — a wrong-date path
+          // should not pollute latestReviewArtifactPath in state.
+          const dateError = validatePathDate(policyPath);
+          if (dateError) {
+            this.pi.sendUserMessage(dateError, { deliverAs: "followUp" });
+            continue;
+          }
+          this.state.markReviewArtifactWritten(policyPath);
         }
       }
       if (wroteTrackedPath) {

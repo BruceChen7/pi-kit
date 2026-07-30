@@ -542,7 +542,8 @@ describe("plan-mode extension: review lifecycle", () => {
 
   it("reminds the agent to fix the latest invalid plan artifact", async () => {
     await withTempCtx(async (ctx) => {
-      const planPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
+      const today = new Date().toISOString().slice(0, 10);
+      const planPath = `.pi/plans/pi-kit/plan/${today}-demo.md`;
       writePlanArtifact(ctx.cwd, planPath, invalidPlanContent);
       const { harness } = await startPlanModeSession("act", ctx);
 

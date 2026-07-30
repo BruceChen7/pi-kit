@@ -44,6 +44,8 @@ to-tickets|local|skills/to-tickets
 writing-great-skills|local|skills/writing-great-skills
 # https://github.com/mattpocock/skills (v1.0.0+)
 resolving-merge-conflicts|local|skills/resolving-merge-conflicts
+# https://github.com/mattpocock/skills (v1.1.0+)
+wayfinder|local|skills/wayfinder
 opencli-usage|local|skills/opencli-usage
 opencli-browser|local|skills/opencli-browser
 opencli-autofix|local|skills/opencli-autofix

@@ -14,6 +14,7 @@ import {
   type PiKitPlannotatorPendingReviewEvent,
   PLANNOTATOR_PENDING_REVIEW_CHANNEL,
 } from "../shared/internal-events.ts";
+import { normalizeMermaidCode } from "../shared/mermaid-normalize.ts";
 import {
   runPlannotatorAnnotateCli,
   runPlannotatorPlanReviewCli,
@@ -127,6 +128,23 @@ export const validateMermaidFences = (markdown: string): string | null => {
 
   return null;
 };
+
+/**
+ * Run normalizeMermaidCode on every ` ```mermaid ` fence body in a markdown
+ * document.  This auto-fixes common syntax issues (unquoted labels, special
+ * characters in labels, etc.) before the content reaches Plannotator review.
+ *
+ * Safe to call on markdown that has no mermaid blocks — returns unchanged.
+ */
+export function normalizePlanMermaidBlocks(markdown: string): string {
+  return markdown.replace(
+    /```mermaid\n([\s\S]*?)```/g,
+    (_match: string, body: string) => {
+      const normalized = normalizeMermaidCode(body.trimEnd());
+      return `\`\`\`mermaid\n${normalized}\n\`\`\``;
+    },
+  );
+}
 
 const getReviewWidgetMessage = (
   state: SessionRuntimeState,
@@ -612,9 +630,12 @@ export const registerPlanReviewSubmitTool = (
       }
 
       const renderHtml = isHtmlPath(pendingPlanReview.resolvedPlanPath);
-      const normalizedPlanContent = renderHtml
+      const preprocessed = renderHtml
         ? planContent
         : preprocessPlanMarkdown(planContent);
+      // Normalize mermaid code blocks before review: auto-fix common label
+      // syntax issues (unquoted parens/brackets, special chars, etc.)
+      const normalizedPlanContent = normalizePlanMermaidBlocks(preprocessed);
 
       if (!renderHtml) {
         const mermaidValidationFailure = validateMermaidFences(

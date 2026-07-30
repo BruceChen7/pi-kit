@@ -113,7 +113,8 @@ install_npm_plugin() {
 
   npm pack "$package" --pack-destination "$temp_dir" >/dev/null
   local tarball
-  tarball="$(find "$temp_dir" -maxdepth 1 -name '*.tgz' -print -quit)"
+  # `-quit` is a GNU find extension; use `head` for BSD find (macOS) compat.
+  tarball="$(find "$temp_dir" -maxdepth 1 -name '*.tgz' -print | head -n 1)"
   [ -n "$tarball" ] || { echo "npm pack produced no tarball for $source" >&2; return 1; }
   tar -xzf "$tarball" -C "$temp_dir"
   rm -rf "$target"

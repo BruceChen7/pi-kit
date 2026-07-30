@@ -6,6 +6,7 @@ import { FILE_WATCHER_CONTROL_CHANNEL } from "../shared/internal-events.ts";
 import type { FileWatcherHost } from "./index.ts";
 import {
   buildMarkerRegex,
+  flushFileChange,
   formatBatchedPromptMessage,
   formatPromptMessage,
   isBinary,
@@ -80,11 +81,16 @@ function createFileWatcherHarness(initialIdle = true) {
   };
 
   return {
+    host,
     repoRoot,
     messages,
     notifications,
     setIdle(nextIdle: boolean) {
       idle = nextIdle;
+    },
+    /** Directly process a file through the watcher pipeline, bypassing fs.watch. */
+    flushFile(filePath: string) {
+      flushFileChange(host, filePath);
     },
     async startWatching() {
       await watchHandler?.("start .", ctx);
@@ -244,6 +250,9 @@ describe("file-watcher prompt message formatting", () => {
 });
 
 describe("file-watcher batched delivery", () => {
+  // These tests wait for real fs.watch events plus the 1s batch delay, so
+  // they regularly exceed vitest's 5s default test timeout under parallel
+  // load. Give them explicit, generous timeouts.
   it("batches multiple prompt lines into one message", async () => {
     const harness = createFileWatcherHarness();
     await harness.startWatching();
@@ -256,7 +265,7 @@ describe("file-watcher batched delivery", () => {
     // The watcher has a 1s batch delay (PROMPT_BATCH_MS). Under parallel
     // test load the setTimeout can be delayed significantly, so be generous.
     await vi.waitFor(() => expect(harness.messages).toHaveLength(1), {
-      timeout: 10_000,
+      timeout: 15_000,
       interval: 200,
     });
 
@@ -264,7 +273,7 @@ describe("file-watcher batched delivery", () => {
     expect(harness.messages[0].text).toContain("Line 1: first");
     expect(harness.messages[0].text).toContain("Line 2: second");
     await harness.shutdown();
-  });
+  }, 30_000);
 
   it("waits for agent_end before flushing prompts collected while busy", async () => {
     const harness = createFileWatcherHarness(false);
@@ -279,7 +288,7 @@ describe("file-watcher batched delivery", () => {
     expect(harness.messages).toHaveLength(1);
     expect(harness.messages[0].text).toContain("Line 1: later");
     await harness.shutdown();
-  });
+  }, 30_000);
 
   it("allows the same prompt to fire again after its marker is removed", async () => {
     const harness = createFileWatcherHarness();
@@ -291,17 +300,24 @@ describe("file-watcher batched delivery", () => {
       timeout: 10_000,
       interval: 200,
     });
+    expect(harness.messages[0].text).toContain("Line 1: repeat");
 
+    // Remove the marker and immediately reconcile via the testing seam,
+    // bypassing the fs.watch debounce. No probe file needed.
     writeFileSync(filePath, "// repeat\n");
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    writeFileSync(filePath, "// repeat #pi!\n");
+    harness.flushFile(filePath);
 
+    // Write the marker back; the processed-prompt key has already been
+    // reconciled, so the prompt is treated as new.
+    writeFileSync(filePath, "// repeat #pi!\n");
     await vi.waitFor(() => expect(harness.messages).toHaveLength(2), {
       timeout: 10_000,
       interval: 200,
     });
+    expect(harness.messages[1].text).toContain("Line 1: repeat");
+
     await harness.shutdown();
-  });
+  }, 20_000);
 });
 
 describe("file-watcher command parsing", () => {

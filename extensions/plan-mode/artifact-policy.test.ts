@@ -12,16 +12,27 @@ const validPlan = [
   "- 用户希望实现 UX-Flow-Tree 风格的 Plan 模板。",
   "",
   "## Current Flow",
-  "- 当前从用户请求到数据返回的全链路流程。",
+  "```mermaid",
+  "sequenceDiagram",
+  "  A->>B: current step",
+  "```",
   "",
   "## Desired Flow",
-  "- 目标状态的变化和新增节点。",
+  "```mermaid",
+  "sequenceDiagram",
+  "  A->>B: new step  ← 新增",
+  "```",
   "",
   "## Boundaries",
-  "- 展示层间交互和 ownership。",
+  "```mermaid",
+  "sequenceDiagram",
+  "  L1->>L2: call  ← ownership",
+  "```",
   "",
   "## Implementation",
-  "- 关键数据结构和函数签名。",
+  "parentFn()",
+  "  ├─ childA()  ← 条件分支",
+  "  └─ childB()  ← 副作用",
   "",
   "## Testing",
   "- 核心 value in / value out 测试场景。",
@@ -32,6 +43,8 @@ const validPlan = [
   "## Non-goals",
   "- 不处理存量格式迁移。",
 ].join("\n");
+
+const structuralOnlyConfig = { requireReviewDetails: false };
 
 describe("plan artifact policy", () => {
   it("approves a standard plan with all 8 required sections", () => {
@@ -259,6 +272,7 @@ describe("plan artifact policy", () => {
     const result = validateArtifactPolicy({
       path: planPath,
       content,
+      config: structuralOnlyConfig,
     });
 
     expect(result.approved).toBe(true);
@@ -295,6 +309,7 @@ describe("plan artifact policy", () => {
     const result = validateArtifactPolicy({
       path: planPath,
       content,
+      config: structuralOnlyConfig,
     });
 
     expect(result.approved).toBe(true);
@@ -331,9 +346,100 @@ describe("plan artifact policy", () => {
     const result = validateArtifactPolicy({
       path: planPath,
       content,
+      config: structuralOnlyConfig,
     });
 
     expect(result.approved).toBe(true);
     expect(result.issues).toEqual([]);
+  });
+});
+
+describe("plan artifact content forms", () => {
+  const noDiagramsPlan = [
+    "## Goal",
+    "- Product goal.",
+    "",
+    "## Current Flow",
+    "- Current flow in prose only.",
+    "",
+    "## Desired Flow",
+    "- Desired flow in prose only.",
+    "",
+    "## Boundaries",
+    "- Boundaries in prose only.",
+    "",
+    "## Implementation",
+    "- Implementation details in prose only.",
+    "",
+    "## Testing",
+    "- Testing.",
+    "",
+    "## Decisions",
+    "- Decisions.",
+    "",
+    "## Non-goals",
+    "- Non-goals.",
+  ].join("\n");
+
+  it("rejects a prose-only plan with one issue per missing content form", () => {
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content: noDiagramsPlan,
+    });
+
+    expect(result.approved).toBe(false);
+    const formIssues = result.issues.filter(
+      (issue) => issue.code === "missing_content_form",
+    );
+    expect(formIssues.map((issue) => issue.section)).toEqual([
+      "Current Flow",
+      "Desired Flow",
+      "Boundaries",
+      "Implementation",
+    ]);
+  });
+
+  it("reports only the sections that are missing their content form", () => {
+    const content = noDiagramsPlan.replace(
+      "## Implementation\n- Implementation details in prose only.",
+      "## Implementation\nparentFn()\n  ├─ childA()\n  └─ childB()",
+    );
+
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content,
+    });
+
+    const formIssues = result.issues.filter(
+      (issue) => issue.code === "missing_content_form",
+    );
+    expect(formIssues.map((issue) => issue.section)).toEqual([
+      "Current Flow",
+      "Desired Flow",
+      "Boundaries",
+    ]);
+  });
+
+  it("skips content form checks when requireReviewDetails is disabled", () => {
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content: noDiagramsPlan,
+      config: structuralOnlyConfig,
+    });
+
+    expect(result.approved).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  it("includes guidance and a fix snippet in the block reason", () => {
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content: noDiagramsPlan,
+    });
+    const reason = formatArtifactPolicyFailure(planPath, result.issues);
+
+    expect(reason).toContain("Mermaid sequenceDiagram");
+    expect(reason).toContain("```mermaid");
+    expect(reason).toContain("├─");
   });
 });

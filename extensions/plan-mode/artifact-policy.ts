@@ -1,3 +1,9 @@
+import {
+  BOUNDARIES_SEQUENCE_GUIDANCE,
+  FLOW_TREE_GUIDANCE,
+  IMPLEMENTATION_CALL_TREE_GUIDANCE,
+} from "./guidance.ts";
+
 export type ArtifactPolicyConfig = {
   enabled: boolean;
   planFormat: "pi-standard";
@@ -13,7 +19,8 @@ export type ArtifactPolicyIssueCode =
   | "missing_section"
   | "section_order"
   | "extra_section"
-  | "empty_section";
+  | "empty_section"
+  | "missing_content_form";
 
 export type ArtifactPolicyIssue = {
   code: ArtifactPolicyIssueCode;
@@ -62,7 +69,7 @@ const DEFAULT_ARTIFACT_POLICY_CONFIG: ArtifactPolicyConfig = {
   allowExtraSections: true,
   requireSectionOrder: true,
   requireChinese: false,
-  requireReviewDetails: false,
+  requireReviewDetails: true,
 };
 
 const mergeConfig = (
@@ -123,6 +130,71 @@ const parseTopLevelSections = (content: string): MarkdownSection[] => {
 
 const normalizeSectionName = (name: string): string =>
   SECTION_ALIASES[name] ?? name;
+
+const stripGuidanceBullet = (line: string): string => line.replace(/^-\s*/, "");
+
+const hasMermaidBlock = (content: string): boolean =>
+  content.includes("```mermaid");
+
+const hasAsciiCallTree = (content: string): boolean =>
+  /[\u251c\u2514]/.test(content);
+
+type ContentFormCheck = {
+  section: string;
+  ok: (content: string) => boolean;
+  message: string;
+  suggestion: string;
+};
+
+const CONTENT_FORM_CHECKS: readonly ContentFormCheck[] = [
+  {
+    section: "Current Flow",
+    ok: hasMermaidBlock,
+    message: "## Current Flow section is missing a Mermaid diagram.",
+    suggestion: `Add a \`\`\`mermaid block. ${stripGuidanceBullet(FLOW_TREE_GUIDANCE[0])}`,
+  },
+  {
+    section: "Desired Flow",
+    ok: hasMermaidBlock,
+    message: "## Desired Flow section is missing a Mermaid diagram.",
+    suggestion: `Add a \`\`\`mermaid block. ${stripGuidanceBullet(FLOW_TREE_GUIDANCE[2])}`,
+  },
+  {
+    section: "Boundaries",
+    ok: hasMermaidBlock,
+    message: "## Boundaries section is missing a Mermaid diagram.",
+    suggestion:
+      "Add a ```mermaid block. " +
+      stripGuidanceBullet(BOUNDARIES_SEQUENCE_GUIDANCE),
+  },
+  {
+    section: "Implementation",
+    ok: hasAsciiCallTree,
+    message: "## Implementation section is missing an ASCII call tree.",
+    suggestion: stripGuidanceBullet(IMPLEMENTATION_CALL_TREE_GUIDANCE[0]),
+  },
+];
+
+const validateContentForms = (
+  sectionByName: Map<string, MarkdownSection>,
+): ArtifactPolicyIssue[] => {
+  const issues: ArtifactPolicyIssue[] = [];
+  for (const check of CONTENT_FORM_CHECKS) {
+    const section = sectionByName.get(check.section);
+    if (!section || section.content.length === 0) {
+      continue;
+    }
+    if (!check.ok(section.content)) {
+      issues.push({
+        code: "missing_content_form",
+        section: check.section,
+        message: check.message,
+        suggestion: check.suggestion,
+      });
+    }
+  }
+  return issues;
+};
 
 const isRequiredPlanSection = (name: string): name is RequiredPlanSection =>
   REQUIRED_PLAN_SECTIONS.includes(
@@ -211,6 +283,10 @@ const validateStandardPlan = (
     }
   }
 
+  if (config.requireReviewDetails) {
+    issues.push(...validateContentForms(sectionByName));
+  }
+
   return issues;
 };
 
@@ -244,8 +320,22 @@ const FIX_SNIPPETS: Partial<Record<ArtifactPolicyIssueCode, string>> = {
     "## Decisions\n\n## Non-goals",
 };
 
-const fixSnippetForIssue = (issue: ArtifactPolicyIssue): string | null =>
-  FIX_SNIPPETS[issue.code] ?? null;
+const CONTENT_FORM_SNIPPETS: Record<string, string> = {
+  "Current Flow": "```mermaid\nsequenceDiagram\n  A->>B: current step\n```",
+  "Desired Flow": "```mermaid\nsequenceDiagram\n  A->>B: new step  ← 新增\n```",
+  Boundaries: "```mermaid\nsequenceDiagram\n  L1->>L2: call  ← ownership\n```",
+  Implementation:
+    "parentFn()\n  ├─ childA()  ← 条件分支\n  └─ childB()  ← 副作用",
+};
+
+const fixSnippetForIssue = (issue: ArtifactPolicyIssue): string | null => {
+  if (issue.code === "missing_content_form") {
+    return issue.section
+      ? (CONTENT_FORM_SNIPPETS[issue.section] ?? null)
+      : null;
+  }
+  return FIX_SNIPPETS[issue.code] ?? null;
+};
 
 const formatPolicyIssue = (issue: ArtifactPolicyIssue): string => {
   const section = issue.section ? ` (${issue.section})` : "";

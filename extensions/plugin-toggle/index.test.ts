@@ -7,9 +7,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearSettingsCache,
   getSettingsPaths,
-  readSettingsFile,
   writeSettingsFile,
 } from "../shared/settings.js";
+import { PluginToggleSettingsStore } from "./settings-store.js";
 
 const tempDirs: string[] = [];
 const originalHome = process.env.HOME;
@@ -104,16 +104,11 @@ const createFakeExtensionRuntime = async () => {
   return { runSessionStart, sendUserMessage };
 };
 
-const readManagedPluginNames = (cwd: string): string[] => {
-  const { globalPath } = getSettingsPaths(cwd);
-  const settings = readSettingsFile(globalPath);
-  const entry = (
-    settings.pluginToggle as {
-      byCwd: Record<string, { managedPlugins: string[] }>;
-    }
-  ).byCwd[cwd];
-  return entry.managedPlugins;
-};
+const readEnabledPluginNames = (cwd: string): string[] =>
+  Array.from(new PluginToggleSettingsStore(cwd).readEnabledPlugins()).sort();
+
+const readDisabledPluginNames = (cwd: string): string[] =>
+  Array.from(new PluginToggleSettingsStore(cwd).readDisabledPlugins()).sort();
 
 const restoreHome = (): void => {
   if (originalHome === undefined) delete process.env.HOME;
@@ -341,7 +336,7 @@ describe("project symlink management", () => {
     expect(fs.lstatSync(sharedTarget).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(sharedTarget)).toBe(fs.realpathSync(expectedShared));
 
-    expect(readManagedPluginNames(cwd)).toEqual(["alpha"]);
+    expect(readEnabledPluginNames(cwd)).toEqual(["alpha"]);
   });
 
   it("disables only managed symlinks that point into the plugin library", async () => {
@@ -381,7 +376,7 @@ describe("project symlink management", () => {
 
     expect(disablePlugin(cwd, plugin).status).toBe("disabled");
     expect(() => fs.lstatSync(target)).toThrow();
-    expect(readManagedPluginNames(cwd)).toEqual([]);
+    expect(readEnabledPluginNames(cwd)).toEqual([]);
   });
 
   it("does not remove a conflicting symlink when the source plugin is missing", async () => {
@@ -504,6 +499,30 @@ describe("default project bootstrap", () => {
     expect(fs.existsSync(projectPluginPath(cwd, "copyx"))).toBe(false);
   });
 
+  it("skips global autoload entries during per-project bootstrap", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary(
+      "alpha",
+      "cc-switch",
+      "plugin-toggle",
+      "shared",
+    );
+
+    const { bootstrapDefaultManagedPlugins, discoverPlugins } =
+      await importPluginToggle();
+    const plugins = discoverPlugins(library);
+
+    const result = bootstrapDefaultManagedPlugins(cwd, plugins);
+
+    expect(result.enabled).toEqual(["alpha"]);
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(true);
+    expect(fs.existsSync(projectPluginPath(cwd, "cc-switch"))).toBe(false);
+    expect(fs.existsSync(projectPluginPath(cwd, "plugin-toggle"))).toBe(false);
+    // Note: a "shared" symlink may still exist — enablePlugin() links it as a
+    // dependency of enabled plugins. What matters is that "shared" is not
+    // bootstrapped as a managed plugin (covered by result.enabled above).
+  });
+
   it("leaves default-disabled plugins visible as disabled choices", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     const library = createPluginLibrary("alpha", "copyx");
@@ -540,7 +559,7 @@ describe("default project bootstrap", () => {
       await importPluginToggle();
     bootstrapDefaultManagedPlugins(cwd, discoverPlugins(library));
 
-    expect(readManagedPluginNames(cwd)).toEqual([]);
+    expect(readEnabledPluginNames(cwd)).toEqual([]);
   });
 
   it("uses configured default-disabled plugins instead of the built-in list", async () => {
@@ -579,7 +598,7 @@ describe("default project bootstrap", () => {
     expect(result.skippedDefaultDisabled).toEqual([]);
   });
 
-  it("re-enables a plugin that was explicitly disabled but still in the library (new discovery)", async () => {
+  it("keeps an explicitly disabled plugin disabled across bootstraps", async () => {
     const cwd = createTempDir("pi-kit-plugin-toggle-project-");
     const library = createPluginLibrary("alpha");
 
@@ -593,11 +612,61 @@ describe("default project bootstrap", () => {
     enablePlugin(cwd, plugin);
     disablePlugin(cwd, plugin); // user explicitly disabled it
 
-    const result = bootstrapDefaultManagedPlugins(cwd, [plugin]);
+    const first = bootstrapDefaultManagedPlugins(cwd, [plugin]);
 
-    expect(result.status).toBe("bootstrapped");
+    expect(first.status).toBe("already-configured");
+    expect(first.enabled).toEqual([]);
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(false);
+    expect(readEnabledPluginNames(cwd)).toEqual([]);
+    expect(readDisabledPluginNames(cwd)).toEqual(["alpha"]);
+
+    // Disable is persistent: subsequent bootstraps must not resurrect it.
+    const second = bootstrapDefaultManagedPlugins(cwd, [plugin]);
+    expect(second.enabled).toEqual([]);
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(false);
+  });
+
+  it("re-enables a disabled plugin via enablePlugin", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary("alpha");
+
+    const {
+      bootstrapDefaultManagedPlugins,
+      disablePlugin,
+      discoverPlugins,
+      enablePlugin,
+    } = await importPluginToggle();
+    const [plugin] = discoverPlugins(library);
+    enablePlugin(cwd, plugin);
+    disablePlugin(cwd, plugin);
+
+    expect(enablePlugin(cwd, plugin).status).toBe("enabled");
+    expect(readEnabledPluginNames(cwd)).toEqual(["alpha"]);
+    expect(readDisabledPluginNames(cwd)).toEqual([]);
+
+    // Back in the enabled set: missing symlinks are restored again.
+    fs.unlinkSync(projectPluginPath(cwd, "alpha"));
+    const result = bootstrapDefaultManagedPlugins(cwd, [plugin]);
     expect(result.enabled).toEqual(["alpha"]);
     expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(true);
+  });
+
+  it("pre-disabling a never-enabled plugin prevents future auto-enable", async () => {
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const library = createPluginLibrary("alpha");
+
+    const { bootstrapDefaultManagedPlugins, disablePlugin, discoverPlugins } =
+      await importPluginToggle();
+    const [plugin] = discoverPlugins(library);
+
+    // No symlink exists yet; disable records the explicit opt-out.
+    expect(disablePlugin(cwd, plugin).status).toBe("already-disabled");
+    expect(readDisabledPluginNames(cwd)).toEqual(["alpha"]);
+
+    // First bootstrap for this cwd: alpha must stay disabled.
+    const result = bootstrapDefaultManagedPlugins(cwd, [plugin]);
+    expect(result.enabled).toEqual([]);
+    expect(fs.existsSync(projectPluginPath(cwd, "alpha"))).toBe(false);
   });
 
   it("notifies without queueing reload after bootstrapping newly enabled plugins", async () => {
@@ -614,7 +683,7 @@ describe("default project bootstrap", () => {
       DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE,
       "info",
     );
-    expect(readManagedPluginNames(cwd)).toEqual(["alpha"]);
+    expect(readEnabledPluginNames(cwd)).toEqual(["alpha"]);
   });
 
   it("does not queue reload when the cwd already has a managed record", async () => {
@@ -691,7 +760,7 @@ describe("default project bootstrap", () => {
     await runSessionStart(cwd);
 
     expect(sendUserMessage).not.toHaveBeenCalled();
-    expect(readManagedPluginNames(cwd)).toEqual([]);
+    expect(readEnabledPluginNames(cwd)).toEqual([]);
   });
 
   it("does not default-bootstrap plugin-toggle itself", async () => {
@@ -707,7 +776,7 @@ describe("default project bootstrap", () => {
     );
 
     expect(result.enabled).toEqual(["alpha"]);
-    expect(readManagedPluginNames(cwd)).toEqual(["alpha"]);
+    expect(readEnabledPluginNames(cwd)).toEqual(["alpha"]);
     expect(fs.existsSync(projectPluginPath(cwd, "plugin-toggle"))).toBe(false);
   });
 
@@ -724,7 +793,7 @@ describe("default project bootstrap", () => {
     await runSessionStart(cwd, { hasUI: true, notify });
 
     expect(sendUserMessage).not.toHaveBeenCalled();
-    expect(readManagedPluginNames(cwd)).toEqual(["alpha"]);
+    expect(readEnabledPluginNames(cwd)).toEqual(["alpha"]);
     expect(notify).toHaveBeenCalledWith(
       `Default plugin bootstrap skipped conflicting paths: ${projectPlugin}`,
       "warning",
@@ -748,6 +817,91 @@ describe("default project bootstrap", () => {
     expect(fs.readFileSync(path.join(projectPlugin, "index.ts"), "utf-8")).toBe(
       "// user plugin\n",
     );
+  });
+});
+
+describe("plugin toggle settings store", () => {
+  const importSettingsStore = async () => {
+    vi.resetModules();
+    return await import("./settings-store.js");
+  };
+
+  it("reads legacy managedPlugins as enabled plugins", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const { globalPath } = getSettingsPaths(cwd);
+    writeSettingsFile(globalPath, {
+      pluginToggle: { byCwd: { [cwd]: { managedPlugins: ["alpha"] } } },
+    });
+
+    const { PluginToggleSettingsStore } = await importSettingsStore();
+    const store = new PluginToggleSettingsStore(cwd);
+
+    expect(store.hasManagedPluginsEntry()).toBe(true);
+    expect(Array.from(store.readEnabledPlugins())).toEqual(["alpha"]);
+    expect(Array.from(store.readDisabledPlugins())).toEqual([]);
+  });
+
+  it("migrates legacy managedPlugins to the new fields on write", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const { globalPath } = getSettingsPaths(cwd);
+    writeSettingsFile(globalPath, {
+      pluginToggle: { byCwd: { [cwd]: { managedPlugins: ["alpha"] } } },
+    });
+
+    const { PluginToggleSettingsStore } = await importSettingsStore();
+    const store = new PluginToggleSettingsStore(cwd);
+
+    // Legacy data readable through the public API before any write
+    expect(Array.from(store.readEnabledPlugins())).toEqual(["alpha"]);
+    expect(Array.from(store.readDisabledPlugins())).toEqual([]);
+
+    // Write triggers migration: markDisabled moves alpha to the disabled set
+    store.markDisabled("alpha");
+
+    // Behavioral check: alpha is now disabled, not enabled
+    expect(Array.from(store.readEnabledPlugins())).toEqual([]);
+    expect(Array.from(store.readDisabledPlugins())).toEqual(["alpha"]);
+
+    // Reading back from a fresh store (no in-memory state) confirms persistence
+    const freshStore = new PluginToggleSettingsStore(cwd);
+    expect(Array.from(freshStore.readEnabledPlugins())).toEqual([]);
+    expect(Array.from(freshStore.readDisabledPlugins())).toEqual(["alpha"]);
+  });
+
+  it("recognizes entries that only use the new fields", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+    const { globalPath } = getSettingsPaths(cwd);
+    writeSettingsFile(globalPath, {
+      pluginToggle: { byCwd: { [cwd]: { disabledPlugins: ["beta"] } } },
+    });
+
+    const { PluginToggleSettingsStore } = await importSettingsStore();
+    const store = new PluginToggleSettingsStore(cwd);
+
+    expect(store.hasManagedPluginsEntry()).toBe(true);
+    expect(Array.from(store.readDisabledPlugins())).toEqual(["beta"]);
+  });
+
+  it("moves names between enabled and disabled sets", async () => {
+    createTempHome();
+    const cwd = createTempDir("pi-kit-plugin-toggle-project-");
+
+    const { PluginToggleSettingsStore } = await importSettingsStore();
+    const store = new PluginToggleSettingsStore(cwd);
+
+    store.markEnabled("alpha");
+    expect(Array.from(store.readEnabledPlugins())).toEqual(["alpha"]);
+
+    store.markDisabled("alpha");
+    expect(Array.from(store.readEnabledPlugins())).toEqual([]);
+    expect(Array.from(store.readDisabledPlugins())).toEqual(["alpha"]);
+
+    store.markEnabled("alpha");
+    expect(Array.from(store.readEnabledPlugins())).toEqual(["alpha"]);
+    expect(Array.from(store.readDisabledPlugins())).toEqual([]);
   });
 });
 
@@ -807,6 +961,26 @@ describe("messages and migration", () => {
         .lstatSync(path.join(home, ".agents", "pi-plugins", "alpha"))
         .isSymbolicLink(),
     ).toBe(true);
+  });
+
+  it("keeps global autoload entries in the global dir during migration", async () => {
+    const home = createTempHome();
+    const source = createTempDir("pi-kit-plugin-toggle-source-");
+    const alphaSource = createPluginDir(source, "alpha");
+    const ccSwitchSource = createPluginDir(source, "cc-switch");
+    const globalDir = path.join(home, ".pi", "agent", "extensions");
+    fs.mkdirSync(globalDir, { recursive: true });
+    fs.symlinkSync(alphaSource, path.join(globalDir, "alpha"));
+    fs.symlinkSync(ccSwitchSource, path.join(globalDir, "cc-switch"));
+
+    const { migrateGlobalPlugins } = await importPluginToggle();
+    const result = migrateGlobalPlugins({ home });
+
+    expect(result.migrated.map((item) => item.name)).toEqual(["alpha"]);
+    expect(fs.existsSync(path.join(globalDir, "cc-switch"))).toBe(true);
+    expect(
+      fs.existsSync(path.join(home, ".agents", "pi-plugins", "cc-switch")),
+    ).toBe(false);
   });
 
   it("reports real global plugin files as needing confirmation without deleting them", async () => {

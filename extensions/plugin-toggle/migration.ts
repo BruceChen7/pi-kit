@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES } from "./constants.ts";
 import { isPluginFile } from "./library.ts";
 import type { MigrationItem, MigrationOptions, PluginEntry } from "./types.ts";
 
@@ -8,7 +9,11 @@ function globalPluginEntries(globalDir: string): PluginEntry[] {
   if (!fs.existsSync(globalDir)) return [];
   const plugins: PluginEntry[] = [];
   for (const entryName of fs.readdirSync(globalDir).sort()) {
-    if (entryName === "shared" || entryName.startsWith(".")) continue;
+    if (
+      GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES.has(entryName) ||
+      entryName.startsWith(".")
+    )
+      continue;
     const sourcePath = path.join(globalDir, entryName);
     const stat = fs.lstatSync(sourcePath);
     if (

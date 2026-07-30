@@ -9,6 +9,23 @@ function isDefaultBootstrapEntry(plugin: PluginEntry): boolean {
   return !GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES.has(normalizeName(plugin.name));
 }
 
+/**
+ * Pure decision: given the known-linked set, does this plugin need bootstrapping?
+ * The caller gathers the linked set via IO and passes it in so this function
+ * can be tested without mocking the filesystem.
+ */
+function needsBootstrap(
+  plugin: PluginEntry,
+  projectDisabled: Set<string>,
+  alreadyLinked: Set<string>,
+): boolean {
+  return (
+    isDefaultBootstrapEntry(plugin) &&
+    !projectDisabled.has(normalizeName(plugin.name)) &&
+    !alreadyLinked.has(normalizeName(plugin.name))
+  );
+}
+
 function sortDefaultBootstrapResult(
   result: DefaultBootstrapResult,
 ): DefaultBootstrapResult {
@@ -57,15 +74,19 @@ export function bootstrapDefaultManagedPlugins(
   const disabled = settingsStore.readDefaultDisabledPlugins();
 
   if (settingsStore.hasManagedPluginsEntry()) {
-    // Already configured: restore missing symlinks for managed plugins AND
-    // auto-enable newly discovered plugins (not in managed, not yet linked).
-    // Plugins that were explicitly disabled are removed from the managed set
-    // and will be re-enabled only if they reappear in the library — this
-    // matches the "new discovery" intent rather than overriding a user choice.
-    const _managed = settingsStore.readManagedPlugins();
-    const toBootstrap = plugins
-      .filter(isDefaultBootstrapEntry)
-      .filter((plugin) => !fs.existsSync(pluginTargetPath(cwd, plugin)));
+    // Already configured: restore missing symlinks for enabled plugins AND
+    // auto-enable newly discovered plugins (not yet linked). Plugins the user
+    // explicitly disabled live in the per-project disabled set and are never
+    // auto-enabled again.
+    const projectDisabled = settingsStore.readDisabledPlugins();
+    const alreadyLinked = new Set(
+      plugins
+        .filter((p) => fs.existsSync(pluginTargetPath(cwd, p)))
+        .map((p) => normalizeName(p.name)),
+    );
+    const toBootstrap = plugins.filter((p) =>
+      needsBootstrap(p, projectDisabled, alreadyLinked),
+    );
     const result = bootstrapPlugins(cwd, toBootstrap, disabled);
     result.status =
       result.enabled.length > 0 ? "bootstrapped" : "already-configured";

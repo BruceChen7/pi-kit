@@ -5,7 +5,7 @@
 #
 # Default behavior matches extensions/plugin-toggle:
 #   - local plugins are symlinked into ~/.agents/pi-plugins
-#   - only plugin-toggle and shared helpers are bootstrapped globally
+#   - only plugin-toggle, shared helpers, auto-trust-work and cc-switch are bootstrapped globally
 #   - projects opt into plugins by running /toggle-plugin
 #
 # Supported plugin source patterns:
@@ -168,7 +168,7 @@ install_plugin_dependencies() {
 
 is_bootstrap_global_entry() {
     local name="$1"
-    [ "$name" = "plugin-toggle" ] || [ "$name" = "shared" ] || [ "$name" = "auto-trust-work" ]
+    [ "$name" = "plugin-toggle" ] || [ "$name" = "shared" ] || [ "$name" = "auto-trust-work" ] || [ "$name" = "cc-switch" ]
 }
 
 is_plugin_like_entry() {
@@ -326,6 +326,11 @@ if [ "$SCOPE" = "library" ]; then
     echo "Bootstrapping global extensions..."
     install_symlink "$EXTENSIONS_DIR/plugin-toggle" "plugin-toggle" "$GLOBAL_EXTENSION_DIR"
     install_symlink "$EXTENSIONS_DIR/auto-trust-work" "auto-trust-work" "$GLOBAL_EXTENSION_DIR"
+    # cc-switch is a pure global resource (localhost proxy + global model
+    # catalog) with no per-project state. Loading it globally keeps its
+    # provider — and any saved model pointing at it — resolvable in every
+    # project, including first-time projects.
+    install_symlink "$EXTENSIONS_DIR/cc-switch" "cc-switch" "$GLOBAL_EXTENSION_DIR"
     install_shared_symlink "$HOME/.pi/agent"
     install_shared_symlink "$GLOBAL_EXTENSION_DIR"
     migrate_old_global_autoload

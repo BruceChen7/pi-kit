@@ -46,9 +46,12 @@ function createUiCustomStub() {
 
 beforeEach(() => {
   mocks.BorderedLoader.mockReset();
-  mocks.BorderedLoader.mockImplementation(() => ({
-    dispose() {},
-  }));
+  // The source uses `new BorderedLoader(...)`; arrow functions are not
+  // constructible, so the mock must be a regular function (or class).
+  // biome-ignore lint/complexity/useArrowFunction: arrow functions cannot be used with `new`
+  mocks.BorderedLoader.mockImplementation(function () {
+    return { dispose() {} };
+  });
 });
 
 describe("runWithWorkingLoader", () => {

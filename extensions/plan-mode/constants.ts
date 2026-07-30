@@ -1,4 +1,16 @@
 import { getDefaultArtifactPolicyConfig } from "./artifact-policy.ts";
+import {
+  BOUNDARIES_SEQUENCE_GUIDANCE,
+  FLOW_TREE_GUIDANCE,
+  IMPLEMENTATION_CALL_TREE_GUIDANCE,
+} from "./guidance.ts";
+
+export {
+  BOUNDARIES_SEQUENCE_GUIDANCE,
+  FLOW_TREE_GUIDANCE,
+  IMPLEMENTATION_CALL_TREE_GUIDANCE,
+};
+
 import type {
   PlanArtifactFormat,
   PlanMode,
@@ -156,33 +168,11 @@ export const FC_IS_TEST_GUIDANCE =
   "核心 value in / value out, shell 尽量薄。 " +
   "Module 的 Interface is the test surface; " +
   "test seam/Adapter behavior, not Implementation details.";
-export const FLOW_TREE_GUIDANCE = [
-  "- Current Flow / Desired Flow 使用 Mermaid sequenceDiagram + tree 格式。",
-  "- Module 是边界，不要太细到代码行级。",
-  "- Desired Flow 标注新增、删除、修改的变化部分。",
-];
-export const BOUNDARIES_SEQUENCE_GUIDANCE =
-  "- Boundaries 用 Mermaid sequenceDiagram 表达层间交互和 ownership。" +
-  " 展示谁检测、谁副作用、谁更新状态、谁持久化。";
 export const IMPLEMENTATION_DATA_STRUCTURE_GUIDANCE = [
   "- Implementation 强调关键数据结构（types / interfaces / data models），",
   "  而不是文件路径列表。",
   "- 包括关键类型、函数签名、条件判断、状态迁移的最小片段。",
   "- 避免粘贴完整实现，只展示能让 reviewer 判断方向的代码。",
-];
-export const IMPLEMENTATION_CALL_TREE_GUIDANCE = [
-  "- Implementation 中的调用链用 ASCII tree 展示：",
-  "  父函数 → 子调用 → 条件分支，标注 skip / 过滤 / 副作用 / 数据流向。",
-  "- 用 ├─ 和 └─ 画树，条件或循环用 ← 标注原因。",
-  "- 示例:",
-  "  bootstrapDefaultManagedPlugins(cwd, plugins)",
-  "    ├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）",
-  "    └─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared",
-  "         └─ bootstrapPlugins(...)",
-  "              └─ 遍历: disabled.has(name) → skip",
-  "                   其余 → enablePlugin()  ← 副作用: 写 symlink",
-  "- Mermaid 留给 Current Flow / Desired Flow / Boundaries 的架构层交互；",
-  "  ASCII tree 用于 Implementation 的函数级调用链和条件分支。",
 ];
 export const TESTING_VALUE_IN_OUT_GUIDANCE = [
   "- Testing 围绕核心 value in / value out，",

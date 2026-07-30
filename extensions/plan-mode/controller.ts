@@ -400,7 +400,11 @@ export class PlanModeController {
     const result = validateArtifactPolicy({
       path: policyPath,
       content,
-      config: this.config.artifactPolicy,
+      // Human-approved artifacts are final: never re-judge their content
+      // forms (mermaid diagrams, call trees) at agent_end.
+      config: options.alreadyApproved
+        ? { ...this.config.artifactPolicy, requireReviewDetails: false }
+        : this.config.artifactPolicy,
     });
     if (result.approved) {
       return null;

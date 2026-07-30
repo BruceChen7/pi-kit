@@ -16,6 +16,15 @@ A project enables a plugin by symlinking it into:
 
 Disable removes the project symlink only; it does not delete the shared plugin source.
 
+Enable/disable state is tracked per project as three states — enabled,
+disabled, or never seen. Disabling a plugin is persistent: once disabled,
+session-start sync will never auto-enable it again in that project (re-enable
+it any time with `/toggle-plugin`). Plugins that appear in the shared library
+later are auto-enabled on the next session start, unless they are listed in
+the global `pluginToggle.defaultDisabledPlugins` setting (defaults to
+`copyx` and `pi-autoresearch`), which only acts as the initial default for
+plugins a project has never seen.
+
 ## Install plugins from this repo
 
 Use the repo installer from the repository root:
@@ -30,7 +39,7 @@ Default behavior installs this repo's plugins into the shared library:
 ~/.agents/pi-plugins
 ```
 
-It also bootstraps only `plugin-toggle` and shared helpers globally so `/toggle-plugin` is available in Pi. Other plugins are not globally autoloaded; enable them per project with:
+It also bootstraps `plugin-toggle`, shared helpers, `auto-trust-work` and `cc-switch` globally so `/toggle-plugin` is available in Pi and machine-wide providers keep working in every project. `cc-switch` is global on purpose: it proxies a machine-wide service (`127.0.0.1:15721`) with a global model catalog, so per-project opt-in would only risk losing saved model selections in new projects. Other plugins are not globally autoloaded; enable them per project with:
 
 ```text
 /toggle-plugin

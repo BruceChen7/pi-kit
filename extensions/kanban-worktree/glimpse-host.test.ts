@@ -111,6 +111,7 @@ function createMockHostProcess() {
   return {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
+    stderr: new PassThrough(),
     on: vi.fn(),
   };
 }
@@ -194,7 +195,7 @@ test("openGlimpseKanban preserves redirected stderr write callbacks", async () =
   expect(log).toContain("another warning");
 });
 
-test("default Glimpse opener starts the native host with stderr ignored", async () => {
+test("default Glimpse opener starts the native host with piped stdio", async () => {
   await writeBuiltSvelteShell();
   const previousBinaryPath = process.env.GLIMPSE_BINARY_PATH;
   const previousHostPath = process.env.GLIMPSE_HOST_PATH;
@@ -215,7 +216,7 @@ test("default Glimpse opener starts the native host with stderr ignored", async 
       "/tmp/glimpse-host",
       ["--width", "1100", "--height", "720", "--title", "Kanban Worktree"],
       {
-        stdio: ["pipe", "pipe", "ignore"],
+        stdio: ["pipe", "pipe", "pipe"],
         windowsHide: false,
       },
     );

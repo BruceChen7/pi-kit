@@ -870,6 +870,33 @@ function cancelDeferredJobs(
   ctx.ui.notify(`Cancelled deferred job for ${path.basename(absPath)}`, "info");
 }
 
+// Testing seam — looks up state via host to avoid exporting the state object.
+const testingStateByHost = new WeakMap<FileWatcherHost, WatcherState>();
+
+/**
+ * Directly process a file through the watcher pipeline, bypassing `fs.watch`
+ * and the debounce timer. Exported for tests so they can reconcile processed
+ * prompt keys deterministically instead of relying on probe-file timing.
+ *
+ * Calling this cancels any pending debounce timer for the same path so the
+ * `fs.watch` callback doesn't duplicate the work.
+ */
+export function flushFileChange(host: FileWatcherHost, filePath: string): void {
+  const state = testingStateByHost.get(host);
+  if (!state) {
+    log?.warn("flushFileChange: no state found for host");
+    return;
+  }
+
+  const timer = state.debounceTimers.get(filePath);
+  if (timer) {
+    clearTimeout(timer);
+    state.debounceTimers.delete(filePath);
+  }
+
+  handleFileChange(filePath, state, null, host);
+}
+
 function cleanupState(state: WatcherState): void {
   closeWatchers(state.watchedPaths.values());
   clearTimers(state.debounceTimers.values());
@@ -938,6 +965,7 @@ export function registerFileWatcher(host: FileWatcherHost) {
     (host.getFlag("--marker") as string | undefined) ?? DEFAULT_MARKER;
   const extraIgnore = host.getFlag("--ignore") as string | undefined;
   const state = createWatcherState(marker, extraIgnore);
+  testingStateByHost.set(host, state);
   registerFileWatcherControlEvents(host, state);
 
   const autoWatchPath = getAutoWatchPath();

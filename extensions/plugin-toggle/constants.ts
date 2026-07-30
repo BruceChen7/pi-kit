@@ -16,6 +16,7 @@ export const GLOBAL_EXTENSION_DIR = path.join(
 export const GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES = new Set([
   "plugin-toggle",
   "shared",
+  "cc-switch",
 ]);
 export const DEFAULT_DISABLED_PLUGINS = ["copyx", "pi-autoresearch"];
 export const PROJECT_EXTENSION_DIR = path.join(".pi", "extensions");

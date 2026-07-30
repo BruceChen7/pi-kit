@@ -55,7 +55,7 @@ function symlinkTargetMatchesPath(
   );
 }
 
-function symlinkReferencesPlugin(
+function _symlinkReferencesPlugin(
   targetPath: string,
   plugin: PluginEntry,
 ): boolean {
@@ -114,6 +114,39 @@ function ensureSharedDependency(
   return null;
 }
 
+/**
+ * Assess the state of the target path relative to a plugin, performing the
+ * necessary IO upfront so callers (enablePlugin / disablePlugin) can make
+ * decisions with a simple switch instead of interleaved try/catch + if/else.
+ */
+type TargetState =
+  | { kind: "absent" }
+  | { kind: "matched" }
+  | { kind: "broken-matching" }
+  | { kind: "conflict" };
+
+function evaluateTargetState(
+  targetPath: string,
+  plugin: PluginEntry,
+): TargetState {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(targetPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { kind: "absent" };
+    throw error;
+  }
+
+  if (!stat.isSymbolicLink()) return { kind: "conflict" };
+
+  if (symlinkPointsToPlugin(targetPath, plugin)) return { kind: "matched" };
+  if (symlinkTargetMatchesPath(targetPath, plugin.sourcePath)) {
+    return { kind: "broken-matching" };
+  }
+  return { kind: "conflict" };
+}
+
 export function isPluginEnabled(cwd: string, plugin: PluginEntry): boolean {
   const targetPath = pluginTargetPath(cwd, plugin);
   return fs.existsSync(targetPath) && symlinkPointsToPlugin(targetPath, plugin);
@@ -124,31 +157,23 @@ export function enablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
   const targetPath = pluginTargetPath(cwd, plugin);
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 
-  try {
-    const stat = fs.lstatSync(targetPath);
-    if (stat.isSymbolicLink()) {
-      if (symlinkPointsToPlugin(targetPath, plugin)) {
-        const sharedConflict = ensureSharedDependency(cwd, plugin);
-        if (sharedConflict) return sharedConflict;
+  const state = evaluateTargetState(targetPath, plugin);
 
-        settingsStore.markEnabled(plugin.name);
-        return { status: "already-enabled" };
-      }
-
-      // Broken symlink or symlink pointing elsewhere
-      if (symlinkTargetMatchesPath(targetPath, plugin.sourcePath)) {
-        // Broken symlink pointing to our source — remove and re-enable
-        fs.unlinkSync(targetPath);
-        return enablePlugin(cwd, plugin);
-      } else {
-        return { status: "conflict", path: targetPath };
-      }
-    } else {
-      return { status: "conflict", path: targetPath };
+  switch (state.kind) {
+    case "matched": {
+      const sharedConflict = ensureSharedDependency(cwd, plugin);
+      if (sharedConflict) return sharedConflict;
+      settingsStore.markEnabled(plugin.name);
+      return { status: "already-enabled" };
     }
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") throw error;
+    case "broken-matching": {
+      fs.unlinkSync(targetPath);
+      return enablePlugin(cwd, plugin);
+    }
+    case "conflict":
+      return { status: "conflict", path: targetPath };
+    case "absent":
+      break; // fall through to creation below
   }
 
   const sharedConflict = ensureSharedDependency(cwd, plugin);
@@ -162,28 +187,20 @@ export function enablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
 export function disablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
   const settingsStore = new PluginToggleSettingsStore(cwd);
   const targetPath = pluginTargetPath(cwd, plugin);
-  const managed = settingsStore.readManagedPlugins();
-  const normalizedName = normalizeName(plugin.name);
+  const enabled = settingsStore.readEnabledPlugins();
 
-  let stat: fs.Stats;
-  try {
-    stat = fs.lstatSync(targetPath);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") throw error;
+  const state = evaluateTargetState(targetPath, plugin);
 
+  if (state.kind === "absent") {
     settingsStore.markDisabled(plugin.name);
     return { status: "already-disabled" };
   }
 
-  if (!stat.isSymbolicLink() || !managed.has(normalizedName)) {
+  if (state.kind === "conflict" || !enabled.has(normalizeName(plugin.name))) {
     return { status: "conflict", path: targetPath };
   }
 
-  if (!symlinkReferencesPlugin(targetPath, plugin)) {
-    return { status: "conflict", path: targetPath };
-  }
-
+  // Symlink exists and belongs to this plugin
   fs.unlinkSync(targetPath);
   settingsStore.markDisabled(plugin.name);
   return { status: "disabled" };
@@ -236,11 +253,11 @@ export function getEnabledManagedPlugins(
   cwd: string,
   plugins: PluginEntry[],
 ): string[] {
-  const managed = new PluginToggleSettingsStore(cwd).readManagedPlugins();
+  const enabled = new PluginToggleSettingsStore(cwd).readEnabledPlugins();
   return plugins
     .filter(
       (plugin) =>
-        managed.has(normalizeName(plugin.name)) && isPluginEnabled(cwd, plugin),
+        enabled.has(normalizeName(plugin.name)) && isPluginEnabled(cwd, plugin),
     )
     .map((plugin) => plugin.name)
     .sort((left, right) => left.localeCompare(right));

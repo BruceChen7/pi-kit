@@ -24,19 +24,30 @@ const PLAN_DRAFT_CONTENT = `# Plan
 
 ## Current Flow
 
-当前流程描述。
+\`\`\`mermaid
+sequenceDiagram
+  A->>B: current step
+\`\`\`
 
 ## Desired Flow
 
-目标流程描述。
+\`\`\`mermaid
+sequenceDiagram
+  A->>B: new step  ← 新增
+\`\`\`
 
 ## Boundaries
 
-层间交互描述。
+\`\`\`mermaid
+sequenceDiagram
+  L1->>L2: call  ← ownership
+\`\`\`
 
 ## Implementation
 
-关键数据结构和函数签名。
+parentFn()
+  ├─ childA()  ← 条件分支
+  └─ childB()  ← 副作用
 
 ## Testing
 

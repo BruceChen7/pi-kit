@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildConceptContent } from "./wiki-concept.mjs";
+// Import the pure core directly: wiki-concept.mjs is a CLI shell whose
+// import-time knowledge-dir resolution (lib/paths.mjs) exits the process
+// when no knowledge base root is available.
+import { buildConceptContent } from "./lib/concept-content.mjs";
 
 // ── buildConceptContent ─────────────────────────────────
 

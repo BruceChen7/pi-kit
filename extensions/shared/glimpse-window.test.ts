@@ -30,17 +30,20 @@ const EXAMPLE_WINDOW_OPTIONS = {
 let dir: string;
 let stdin: PassThrough;
 let stdout: PassThrough;
+let stderr: PassThrough;
 
 beforeEach(async () => {
   dir = await mkdtemp(path.join(tmpdir(), "shared-glimpse-window-"));
   stdin = new PassThrough();
   stdout = new PassThrough();
+  stderr = new PassThrough();
   spawnMock.mockReset();
   getNativeHostInfoMock.mockReset();
   getNativeHostInfoMock.mockReturnValue({ path: "/tmp/glimpse-host" });
   spawnMock.mockReturnValue({
     stdin,
     stdout,
+    stderr,
     on: vi.fn(),
   });
 });
@@ -60,7 +63,7 @@ test("opens Glimpse native host with window options", () => {
     "/tmp/glimpse-host",
     ["--width", "1100", "--height", "720", "--title", "Kanban Worktree"],
     {
-      stdio: ["pipe", "pipe", "ignore"],
+      stdio: ["pipe", "pipe", "pipe"],
       windowsHide: false,
     },
   );

@@ -390,16 +390,27 @@ export const validPlanContent = `## Goal
 - 用户希望实现 UX-Flow-Tree 风格的 Plan 模板。
 
 ## Current Flow
-- 当前从用户请求到数据返回的全链路流程。
+\`\`\`mermaid
+sequenceDiagram
+  A->>B: current step
+\`\`\`
 
 ## Desired Flow
-- 目标状态的变化和新增节点。
+\`\`\`mermaid
+sequenceDiagram
+  A->>B: new step  ← 新增
+\`\`\`
 
 ## Boundaries
-- 展示层间交互和 ownership。
+\`\`\`mermaid
+sequenceDiagram
+  L1->>L2: call  ← ownership
+\`\`\`
 
 ## Implementation
-- 关键数据结构和函数签名。
+parentFn()
+  ├─ childA()  ← 条件分支
+  └─ childB()  ← 副作用
 
 ## Testing
 - 核心 value in / value out 测试场景。

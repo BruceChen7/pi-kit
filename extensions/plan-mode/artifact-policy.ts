@@ -2,6 +2,7 @@ import {
   BOUNDARIES_SEQUENCE_GUIDANCE,
   FLOW_TREE_GUIDANCE,
   IMPLEMENTATION_CALL_TREE_GUIDANCE,
+  MERMAID_CONFIG_LIGHT,
 } from "./guidance.ts";
 
 export type ArtifactPolicyConfig = {
@@ -321,9 +322,18 @@ const FIX_SNIPPETS: Partial<Record<ArtifactPolicyIssueCode, string>> = {
 };
 
 const CONTENT_FORM_SNIPPETS: Record<string, string> = {
-  "Current Flow": "```mermaid\nsequenceDiagram\n  A->>B: current step\n```",
-  "Desired Flow": "```mermaid\nsequenceDiagram\n  A->>B: new step  ← 新增\n```",
-  Boundaries: "```mermaid\nsequenceDiagram\n  L1->>L2: call  ← ownership\n```",
+  "Current Flow":
+    "```mermaid\n" +
+    MERMAID_CONFIG_LIGHT +
+    "\n\nsequenceDiagram\n  A->>B: current step\n```",
+  "Desired Flow":
+    "```mermaid\n" +
+    MERMAID_CONFIG_LIGHT +
+    "\n\nsequenceDiagram\n  A->>B: new step  ← 新增\n```",
+  Boundaries:
+    "```mermaid\n" +
+    MERMAID_CONFIG_LIGHT +
+    "\n\nsequenceDiagram\n  L1->>L2: call  ← ownership\n```",
   Implementation:
     "parentFn()\n  ├─ childA()  ← 条件分支\n  └─ childB()  ← 副作用",
 };

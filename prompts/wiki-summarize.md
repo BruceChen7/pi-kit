@@ -12,19 +12,19 @@ Default to Chinese unless the user explicitly asks for another language.
 
 - **No argument** (`$1` is empty): run `list-stale` on the knowledge base and process all stale files
 - **Single file path** (`$1` is a relative path like `Notes/Foo.md`): process only that specific file, even if it's not stale
-- The knowledge base root is the current working directory (where `Wiki/` lives)
+- The knowledge base root is the current working directory (where `Wiki/` lives); when run from the scheduled task, use the knowledge base root from the task configuration as `<cwd>`
 
 ## Dependencies
 
-Two skill scripts in this project's `.pi/skills/`:
+Three skill scripts in the pi-kit repo under `skills/knowledge-wiki/`:
 
 | Script | Location | Commands used |
 |--------|----------|---------------|
-| `wiki-summary.mjs` | `.pi/skills/knowledge-wiki-summary/wiki-summary.mjs` | `list-stale`, `create`, `insert-concept` |
-| `wiki-concept.mjs` | `.pi/skills/knowledge-wiki-concept/wiki-concept.mjs` | `create` (with `--tags` + stdin body), `insert-source` |
-| `wiki-index.mjs` (state) | `.pi/skills/knowledge-wiki-state/wiki-index.mjs` | `upsert-summary` |
+| `wiki-summary.mjs` | `skills/knowledge-wiki/summary/wiki-summary.mjs` | `list-stale`, `create`, `insert-concept` |
+| `wiki-concept.mjs` | `skills/knowledge-wiki/concept/wiki-concept.mjs` | `create` (with `--tags` + stdin body), `insert-source` |
+| `wiki-index.mjs` (state) | `skills/knowledge-wiki/state/wiki-index.mjs` | `upsert-summary` |
 
-Resolve all relative paths (`./*.mjs`, `./lib/*.mjs`) relative to the source skill directory (same as `SKILL.md`). Pass `--base-path <cwd>` to every command.
+The placeholders `<path-to-wiki-summary.mjs>`, `<path-to-wiki-concept.mjs>`, `<path-to-wiki-index.mjs>`, and `<cwd>` are filled in by the task configuration (see the injected `## Task Configuration` section). Use those absolute paths exactly. Pass `--base-path <cwd>` to every command.
 
 ## Workflow
 
@@ -58,7 +58,7 @@ For each stale source file in the list (or the single file from `$1`):
 
    Derive tags from the file's frontmatter `tags` field and the content topics. Use the same tag convention as existing summaries (e.g. `[cpp/learning, cpp/11]`, `[ebpf/learning]`).
 
-4. **Update the index** — Register or update the summary entry in `Wiki/index.md`:
+4. **Update the index** — Register or update the summary entry in the index:
 
    Derive the summary's rel-path by stripping the `Wiki/Summaries/` prefix and the `.md` extension from the output path printed by the `create` command.
 
@@ -70,7 +70,7 @@ For each stale source file in the list (or the single file from `$1`):
    node <path-to-wiki-index.mjs> upsert-summary "{rel-path}" "{one-line description}" --base-path <cwd>
    ```
 
-   The sumary file will have a path like `Wiki/Summaries/...` — derive `{rel-path}` by removing the `Wiki/Summaries/` prefix and the `.md` extension.
+   The summary file will have a path like `Wiki/Summaries/...` — derive `{rel-path}` by removing the `Wiki/Summaries/` prefix and the `.md` extension. `upsert-summary` routes DailyNotes summaries (`Calendar/DailyNotes/<year>/...`) into `Wiki/index-<year>.md` and everything else into `Wiki/index.md` — no manual routing needed.
 
 ### Phase 3: Link concepts
 
@@ -154,10 +154,10 @@ End your response with a single JSON object on its own line. Use this exact sche
 
 ## Notes
 
-- The path to `wiki-summary.mjs` is `.pi/skills/knowledge-wiki-summary/wiki-summary.mjs`
-- The path to `wiki-concept.mjs` is `.pi/skills/knowledge-wiki-concept/wiki-concept.mjs`
-- The path to `wiki-index.mjs` (state) is `.pi/skills/knowledge-wiki-state/wiki-index.mjs`
-- Always pass `--base-path` as the current working directory so the scripts resolve the knowledge base root correctly
+- The scripts live in the pi-kit repo: `skills/knowledge-wiki/summary/wiki-summary.mjs`, `skills/knowledge-wiki/concept/wiki-concept.mjs`, `skills/knowledge-wiki/state/wiki-index.mjs`
+- Use the absolute paths injected by the task configuration for `<path-to-wiki-summary.mjs>`, `<path-to-wiki-concept.mjs>`, `<path-to-wiki-index.mjs>`
+- Always pass `--base-path <cwd>` (the knowledge base root from the task configuration) so the scripts resolve the knowledge base root correctly
+- If the main index (`Wiki/index.md`) still contains `Calendar/DailyNotes/...` entries from before the shard layout, run `node <path-to-wiki-index.mjs> split-daily-shards --base-path <cwd>` once to move them into per-year shards (`Wiki/index-<year>.md`). It is idempotent; the scheduled task runs it automatically at the start of every run.
 - Use `--tags` with the bracket format like `[tag1, tag2]` (must be valid JSON array)
 - The `insert-concept` command reads all fields from stdin when `-` is passed as the first argument, with one field per line: summary-rel-path, slug, display-name, description (the last field spans the rest and is trimmed)
 - For `insert-source`, the summary path is without the `.summary.md` suffix (e.g. `Wiki/Summaries/Notes/Foo.summary`)

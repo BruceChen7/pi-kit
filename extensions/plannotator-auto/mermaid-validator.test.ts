@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MermaidParser } from "../shared/mermaid-runtime.ts";
 import {
-  countLeadingFrontmatterLines,
+  countLeadingStrippedLines,
   formatPlanMermaidErrors,
   runPlanMermaidValidation,
   scanMermaidBlocks,
@@ -130,14 +130,14 @@ describe("scanMermaidBlocks", () => {
   });
 });
 
-describe("countLeadingFrontmatterLines", () => {
+describe("countLeadingStrippedLines", () => {
   it("returns 0 for bodies without frontmatter", () => {
-    expect(countLeadingFrontmatterLines("flowchart TD\n  A --> B")).toBe(0);
+    expect(countLeadingStrippedLines("flowchart TD\n  A --> B")).toBe(0);
   });
 
   it("counts a complete leading frontmatter block including delimiters", () => {
     expect(
-      countLeadingFrontmatterLines(
+      countLeadingStrippedLines(
         "---\nconfig:\n  theme: base\n---\nflowchart TD\n  A --> B",
       ),
     ).toBe(4);
@@ -145,20 +145,39 @@ describe("countLeadingFrontmatterLines", () => {
 
   it("counts blank lines inside the frontmatter block", () => {
     expect(
-      countLeadingFrontmatterLines("---\nconfig:\n\n\n---\nflowchart TD"),
+      countLeadingStrippedLines("---\nconfig:\n\n\n---\nflowchart TD"),
     ).toBe(5);
   });
 
   it("returns 0 for an unclosed leading delimiter", () => {
-    expect(countLeadingFrontmatterLines("---\nflowchart TD\n  A --> B")).toBe(
+    expect(countLeadingStrippedLines("---\nflowchart TD\n  A --> B")).toBe(0);
+  });
+
+  it("returns 0 when frontmatter does not start the body", () => {
+    expect(countLeadingStrippedLines("flowchart TD\n---\nconfig:\n---")).toBe(
       0,
     );
   });
 
-  it("returns 0 when frontmatter does not start the body", () => {
+  it("counts leading blank lines even without frontmatter", () => {
+    expect(countLeadingStrippedLines("\n\nsequenceDiagram\n  A->>B: x")).toBe(
+      2,
+    );
+  });
+
+  it("counts blank lines directly after the frontmatter", () => {
+    // mermaid strips frontmatter AND the blank line(s) after it before
+    // parsing, so the error-line offset must include them.
     expect(
-      countLeadingFrontmatterLines("flowchart TD\n---\nconfig:\n---"),
-    ).toBe(0);
+      countLeadingStrippedLines(
+        "---\nconfig:\n  theme: base\n---\n\nsequenceDiagram\n  A->>B: x",
+      ),
+    ).toBe(5);
+  });
+
+  it("counts blank lines before and after an unclosed delimiter only once", () => {
+    // Leading blank lines are stripped even when the frontmatter is unclosed.
+    expect(countLeadingStrippedLines("\n---\nflowchart TD\n  A --> B")).toBe(1);
   });
 });
 
@@ -314,6 +333,46 @@ describe("validatePlanMermaidBlocks", () => {
     expect(errors[1]?.startLine).toBe(1);
     expect(errors[1]?.diagramType).toBe("flowchart");
   });
+
+  it("attaches sequenceDiagram diagnostics to a failed block", async () => {
+    const markdown = [
+      "```mermaid", // line 1
+      "sequenceDiagram", // line 2
+      "  A->>B: ok", // line 3
+      "  Note over A: bad;one", // line 4 — semicolon
+      "  Note over B: bad;two", // line 5 — semicolon
+      "```",
+    ].join("\n");
+    const body =
+      "sequenceDiagram\n  A->>B: ok\n  Note over A: bad;one\n  Note over B: bad;two";
+
+    const errors = await validatePlanMermaidBlocks(
+      markdown,
+      failingParser([body]),
+    );
+
+    // Wiring contract: a failed sequenceDiagram block carries its
+    // content-anchored diagnostics (the core's branching is tested directly
+    // in mermaid-normalize.test.ts).
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.diagnostics?.map((d) => d.code)).toEqual([
+      "Note over A: bad;one",
+      "Note over B: bad;two",
+    ]);
+  });
+
+  it("keeps diagnostics empty for non-sequenceDiagram failures", async () => {
+    const markdown = ["```mermaid", "flowchart LR", "  BAD[", "```"].join("\n");
+    const body = "flowchart LR\n  BAD[";
+
+    const errors = await validatePlanMermaidBlocks(
+      markdown,
+      failingParser([body]),
+    );
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.diagnostics).toEqual([]);
+  });
 });
 
 describe("formatPlanMermaidErrors", () => {
@@ -331,6 +390,51 @@ describe("formatPlanMermaidErrors", () => {
     expect(text).toContain("flowchart");
     expect(text).toContain("Expecting 'PS'");
     expect(text).toContain('N["label text"]');
+  });
+
+  it("renders diagnostics as content anchors (no line numbers)", () => {
+    const text = formatPlanMermaidErrors([
+      {
+        startLine: 10,
+        errorLine: 20,
+        diagramType: "sequenceDiagram",
+        message: "Expecting '()', got 'NEWLINE'",
+        diagnostics: [
+          {
+            // Trimmed source line, exactly as diagnoseSequenceDiagramIssues
+            // produces it in the real pipeline.
+            code: "Note over T,E: 并发上限 3 由任务侧强制;不引入新依赖",
+            message: "Note 文本中的分号 `;` 会导致解析失败",
+          },
+        ],
+      },
+    ]);
+
+    // Block-level location still shown; the diagnostic itself is a content
+    // anchor the agent can grep for, not a line number.
+    expect(text).toContain("文件第 20 行");
+    expect(text).toContain("疑似根因: Note 文本中的分号 `;` 会导致解析失败");
+    expect(text).toContain(
+      "出错行内容: `Note over T,E: 并发上限 3 由任务侧强制;不引入新依赖`",
+    );
+    // No diagnostic line-number is rendered.
+    expect(text).not.toContain("文件第 13 行");
+  });
+
+  it("escapes backticks inside the offending source line", () => {
+    const text = formatPlanMermaidErrors([
+      {
+        startLine: 1,
+        errorLine: 3,
+        diagramType: "sequenceDiagram",
+        message: "Expecting '()', got 'NEWLINE'",
+        diagnostics: [
+          { code: "A->>B: use `foo`;x", message: "消息文本中的分号" },
+        ],
+      },
+    ]);
+
+    expect(text).toContain("出错行内容: `A->>B: use \\`foo\\`;x`");
   });
 });
 

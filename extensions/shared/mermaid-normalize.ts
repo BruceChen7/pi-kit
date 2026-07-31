@@ -125,3 +125,73 @@ export function getTypeAdviceForDiagram(
   // Normalize: lowercase + strip hyphens so 'stateDiagram-v2' → 'statediagramv2'
   return adviceMap[typeLower.replace(/-/gu, "")];
 }
+
+/* ------------------------------------------------------------------ */
+/*  Failure diagnostics                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A specific hint about why a diagram block failed to parse. Unlike the raw
+ * parser message ("Expecting '()', 'SOLID_OPEN_ARROW', …"), it points at the
+ * concrete offending source line so the agent can fix it in one pass instead
+ * of guessing.
+ *
+ * `code` is the actual offending source line, which the agent can grep for
+ * directly. Deliberately no absolute line number in the agent-facing hint:
+ * line numbers depend on the mermaid version's stripping behavior and can
+ * drift, while content anchors are stable.
+ */
+export type MermaidBlockDiagnostic = {
+  /** The trimmed offending source line, for content-anchored agent lookup. */
+  code: string;
+  message: string;
+};
+
+/** Arrow message line: `A->>B: text` / `A-->>B: text` / `A-xB: text` / `A-->B: text`. */
+const SEQUENCE_MESSAGE_RE =
+  /^\s*\S+\s*(?:-->|->|-->>|->>|--x|-x|--\)|-\))\S*\s*:/u;
+/** Note line: `Note over A: text` / `Note right of A: text` / `Note left of A: text`. */
+const SEQUENCE_NOTE_RE = /^\s*Note\s+(?:over|right of|left of)\b/u;
+
+/**
+ * Diagnose known high-confidence causes of sequenceDiagram parse failures.
+ *
+ * Only patterns proven to break the real mermaid parser are reported (a
+ * semicolon `;` inside a message or Note text line) — things like `{}`,
+ * unicode arrows or unquoted participant aliases are intentionally NOT
+ * flagged because they parse fine and flagging them would send the agent
+ * chasing red herrings (that happened in earlier sessions).
+ *
+ * Pure core: value in / value out, no IO, no parser dependency.
+ */
+export function diagnoseSequenceDiagramIssues(
+  body: string,
+): MermaidBlockDiagnostic[] {
+  const diagnostics: MermaidBlockDiagnostic[] = [];
+  const lines = body.split(/\r?\n/u);
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("%%")) continue;
+
+    const isNote = SEQUENCE_NOTE_RE.test(line);
+    const isMessage = SEQUENCE_MESSAGE_RE.test(line);
+    if (!isNote && !isMessage) continue;
+
+    const colonIndex = line.indexOf(":");
+    if (colonIndex === -1) continue;
+    const text = line.slice(colonIndex + 1);
+
+    if (text.includes(";")) {
+      diagnostics.push({
+        code: trimmed,
+        message: isNote
+          ? "Note 文本中的分号 `;` 会被 mermaid 解析为语句边界,导致 sequenceDiagram 解析失败。请改用逗号或句号。"
+          : "消息文本中的分号 `;` 会被 mermaid 解析为语句边界,导致 sequenceDiagram 解析失败。请改用逗号或句号。",
+      });
+    }
+  }
+
+  return diagnostics;
+}

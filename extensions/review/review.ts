@@ -40,6 +40,11 @@ import {
   SelectList,
   Text,
 } from "@earendil-works/pi-tui";
+import {
+  extractModelOverride,
+  getReviewModel,
+  parseModelId,
+} from "./review-config.ts";
 
 // State to track fresh session review (where we branched from).
 // Module-level state means only one review can be active at a time.
@@ -1389,13 +1394,48 @@ export default function reviewExtension(pi: ExtensionAPI) {
   }
 
   /**
+   * Switch the session to the configured review model for this review pass.
+   * Returns `true` when a switch actually happened (caller must restore the
+   * work model afterwards); `false` when disabled/not resolvable/unavailable —
+   * the pass then degrades to the current model (with a visible warning).
+   */
+  async function assertReviewModel(
+    ctx: ExtensionCommandContext,
+    cwd: string,
+    argsModel?: string,
+  ): Promise<boolean> {
+    const modelId = getReviewModel(cwd, argsModel);
+    if (!modelId) {
+      return false; // disabled ("off") — current behavior
+    }
+    const parsed = parseModelId(modelId);
+    const model = parsed && ctx.modelRegistry.find(parsed.provider, parsed.id);
+    if (!model) {
+      ctx.ui.notify(
+        `Review model unavailable (${modelId}), using current model for this pass.`,
+        "warning",
+      );
+      return false;
+    }
+    const ok = await pi.setModel(model);
+    if (!ok) {
+      ctx.ui.notify(
+        `Review model switch failed (${modelId}), using current model for this pass.`,
+        "warning",
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * Execute the review
    */
   async function executeReview(
     ctx: ExtensionCommandContext,
     target: ReviewTarget,
     useFreshSession: boolean,
-    options?: { includeLocalChanges?: boolean },
+    options?: { includeLocalChanges?: boolean; argsModel?: string },
   ): Promise<boolean> {
     // Check if we're already in a review
     if (reviewOriginId) {
@@ -1488,8 +1528,29 @@ export default function reviewExtension(pi: ExtensionAPI) {
     const modeHint = useFreshSession ? " (fresh session)" : "";
     ctx.ui.notify(`Starting review: ${hint}${modeHint}`, "info");
 
+    // Switch to the configured review model for this pass (degrade with a
+    // warning when unavailable). Snapshot the work model before the switch so
+    // we can restore it after the review turn completes.
+    const workModel = ctx.model;
+    const switched = await assertReviewModel(ctx, ctx.cwd, options?.argsModel);
+
     // Send as a user message that triggers a turn
     pi.sendUserMessage(fullPrompt);
+
+    // Wait for the review turn to settle, then restore the work model.
+    // The session stays on the review model for the whole turn (review + any
+    // follow-up tool calls), and returns to the work model afterwards.
+    await ctx.waitForIdle();
+    if (switched) {
+      const restored = await pi.setModel(workModel);
+      if (!restored) {
+        ctx.ui.notify(
+          "Failed to restore work model after review. Use /model to switch back.",
+          "warning",
+        );
+      }
+    }
+
     return true;
   }
 
@@ -1612,6 +1673,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
   async function runLoopFixingReview(
     ctx: ExtensionCommandContext,
     target: ReviewTarget,
+    argsModel?: string,
   ): Promise<void> {
     if (reviewLoopInProgress) {
       ctx.ui.notify("Loop fixing review is already running.", "warning");
@@ -1630,6 +1692,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
         const reviewBaselineAssistantId = getLastAssistantSnapshot(ctx)?.id;
         const started = await executeReview(ctx, target, true, {
           includeLocalChanges: true,
+          argsModel,
         });
         if (!started) {
           ctx.ui.notify(
@@ -1810,10 +1873,13 @@ export default function reviewExtension(pi: ExtensionAPI) {
         return;
       }
 
-      // Try to parse direct arguments
+      // Try to parse direct arguments (--model <id> single-invocation override
+      // is stripped first; it overrides the configured review model for this
+      // review only and never writes config).
+      const { model: argsModel, rest: reviewArgs } = extractModelOverride(args);
       let target: ReviewTarget | null = null;
       let fromSelector = false;
-      const parsed = parseArgs(args);
+      const parsed = parseArgs(reviewArgs);
 
       if (parsed) {
         if (parsed.type === "pr") {
@@ -1855,7 +1921,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
         }
 
         if (reviewLoopFixingEnabled) {
-          await runLoopFixingReview(ctx, target);
+          await runLoopFixingReview(ctx, target, argsModel);
           return;
         }
 
@@ -1886,7 +1952,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
           useFreshSession = choice === "Empty branch";
         }
 
-        await executeReview(ctx, target, useFreshSession);
+        await executeReview(ctx, target, useFreshSession, { argsModel });
         return;
       }
     },

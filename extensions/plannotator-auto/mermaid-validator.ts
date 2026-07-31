@@ -19,7 +19,9 @@
 
 import {
   detectDiagramType,
+  diagnoseSequenceDiagramIssues,
   getTypeAdviceForDiagram,
+  type MermaidBlockDiagnostic,
 } from "../shared/mermaid-normalize.ts";
 import {
   extractMermaidErrorLine,
@@ -42,6 +44,12 @@ export type PlanMermaidError = {
   errorLine?: number;
   diagramType?: string;
   message: string;
+  /**
+   * Line-anchored diagnostics that explain WHY the block failed, pointing at
+   * the concrete offending line (the raw parser message is often cryptic and
+   * its own line number can point at the line AFTER the real problem).
+   */
+  diagnostics?: MermaidBlockDiagnostic[];
 };
 
 export type MermaidBlockScan = {
@@ -115,21 +123,46 @@ export function scanMermaidBlocks(markdown: string): MermaidBlockScan {
 }
 
 /**
- * Count leading YAML frontmatter lines (`---` … `---`) in a mermaid body.
+ * Count leading lines that mermaid strips before parsing a block body.
  *
- * Mermaid strips a well-formed leading frontmatter block before parsing, and
- * its "Parse error on line N" is relative to the stripped code — so absolute
- * file lines must add back the number of stripped frontmatter lines. Returns
- * 0 when there is no frontmatter or it is not closed (mermaid then reports no
- * line number for such bodies, so nothing needs compensating).
+ * Mermaid drops a well-formed leading YAML frontmatter block (`---` … `---`)
+ * AND any blank lines directly after it (plus leading blank lines when there
+ * is no frontmatter) before parsing — its "Parse error on line N" is relative
+ * to the stripped code, so absolute file lines must add this count back.
+ *
+ * Returns the number of stripped lines: 0 when there is no frontmatter and no
+ * leading blank lines, 0 for an unclosed leading delimiter (mermaid then
+ * reports no line number for such bodies, so nothing needs compensating).
  */
-export function countLeadingFrontmatterLines(body: string): number {
+export function countLeadingStrippedLines(body: string): number {
   const lines = body.split(/\r?\n/u);
-  if ((lines[0]?.trim() ?? "") !== "---") return 0;
-  for (let i = 1; i < lines.length; i += 1) {
-    if ((lines[i]?.trim() ?? "") === "---") return i + 1;
+
+  let stripped = 0;
+
+  // Leading blank lines are stripped even without frontmatter.
+  while (stripped < lines.length && !lines[stripped]?.trim()) {
+    stripped += 1;
   }
-  return 0;
+
+  if ((lines[stripped]?.trim() ?? "") !== "---") return stripped;
+
+  let closedAt = -1;
+  for (let i = stripped + 1; i < lines.length; i += 1) {
+    if ((lines[i]?.trim() ?? "") === "---") {
+      closedAt = i;
+      break;
+    }
+  }
+  if (closedAt === -1) return stripped;
+
+  stripped = closedAt + 1;
+
+  // Blank lines directly after the frontmatter are stripped too.
+  while (stripped < lines.length && !lines[stripped]?.trim()) {
+    stripped += 1;
+  }
+
+  return stripped;
 }
 
 /**
@@ -162,11 +195,20 @@ export async function validatePlanMermaidBlocks(
         errorLine:
           blockErrorLine !== undefined
             ? block.startLine +
-              countLeadingFrontmatterLines(block.body) +
+              countLeadingStrippedLines(block.body) +
               blockErrorLine
             : undefined,
         diagramType: block.diagramType,
         message: formatMermaidError(error),
+        // Sequence-specific root-cause hints: the raw parser message is
+        // cryptic ("Expecting '()', 'SOLID_OPEN_ARROW', …") and its caret can
+        // land on the line AFTER the real problem, so give the agent the
+        // concrete offending source line(s) to fix in one pass. Other diagram
+        // types have no diagnostic rules yet.
+        diagnostics:
+          block.diagramType === "sequenceDiagram"
+            ? diagnoseSequenceDiagramIssues(block.body)
+            : [],
       });
     }
   }
@@ -184,6 +226,18 @@ export function formatPlanMermaidErrors(errors: PlanMermaidError[]): string {
     const location = error.errorLine ?? error.startLine;
     const type = error.diagramType ? `（类型: ${error.diagramType}）` : "";
     lines.push(`- 文件第 ${location} 行${type}: ${error.message}`);
+
+    // Precise root-cause diagnostics first. Use content anchors (the actual
+    // offending source line) instead of absolute line numbers: line numbers
+    // depend on mermaid's stripping behavior and can drift; the agent can
+    // grep for `code` reliably. Backticks in the code are escaped so the
+    // inline code span cannot be broken by the offending source.
+    if (error.diagnostics && error.diagnostics.length > 0) {
+      for (const diag of error.diagnostics) {
+        lines.push(`  · 疑似根因: ${diag.message}`);
+        lines.push(`    出错行内容: \`${diag.code.replaceAll("`", "\\`")}\``);
+      }
+    }
 
     const advice = getTypeAdviceForDiagram(error.diagramType);
     if (advice) {

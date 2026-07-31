@@ -212,7 +212,7 @@ For each key in the output:
 
 ## Check 6 — Dead Index Links
 
-_Removes entries from `Wiki/index.md` that point to files that no longer exist on disk._
+_Removes entries from `Wiki/index*.md` (main index and per-year shards) that point to files that no longer exist on disk._
 
 ### 8. Remove dead index links
 
@@ -230,7 +230,9 @@ Otherwise record the counts for the final summary — no further action required
 
 ## Check 7 — Missing Summary Index Entries
 
-_Adds index entries for summary files on disk that have no Wikilink in `Wiki/index.md`._
+_Adds index entries for summary files on disk that have no Wikilink in `Wiki/index*.md` (main index and per-year shards)._
+
+DailyNotes summaries route into `Wiki/index-<year>.md` by their path year; other summaries go into `Wiki/index.md`.
 
 ### 9. Find summaries missing from the index
 
@@ -259,6 +261,8 @@ For each rel-path in the array:
 ## Check 8 — Missing Concept Index Entries
 
 _Adds index entries for concept files on disk that have no Wikilink in `Wiki/index.md`._
+
+Concept entries always live in the main index; year shards contain only DailyNotes summaries.
 
 ### 11. Find concepts missing from the index
 

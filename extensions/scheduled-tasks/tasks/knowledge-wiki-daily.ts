@@ -20,7 +20,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineTask } from "../../shared/deferred-queue/define-task.ts";
 import { log } from "../../shared/deferred-queue/logger.ts";
-import { sendTelegramNotification } from "../../shared/telegram.ts";
+import { escapeHtml, sendTelegramNotification } from "../../shared/telegram.ts";
 
 // ── Paths ──────────────────────────────────────────────────────────────────
 
@@ -262,7 +262,7 @@ function buildTelegramSuccessMessage(
     lines.push(`<b>📄 已创建 / 更新（${summaries.length} 个 summary）</b>`);
     const displayed = summaries.slice(0, maxFiles);
     for (const s of displayed) {
-      lines.push(`  <code>${escapeTelegramHtml(s)}</code>`);
+      lines.push(`  <code>${escapeHtml(s)}</code>`);
     }
     if (summaries.length > maxFiles) {
       lines.push(`  <code>... 还有 ${summaries.length - maxFiles} 个</code>`);
@@ -275,7 +275,7 @@ function buildTelegramSuccessMessage(
     lines.push(`<b>📄 源文件（${staleFiles.length} 个 stale 文件）</b>`);
     const displayed = staleFiles.slice(0, maxFiles);
     for (const f of displayed) {
-      lines.push(`  <code>${escapeTelegramHtml(f)}</code>`);
+      lines.push(`  <code>${escapeHtml(f)}</code>`);
     }
     if (staleFiles.length > maxFiles) {
       lines.push(`  <code>... 还有 ${staleFiles.length - maxFiles} 个</code>`);
@@ -301,7 +301,7 @@ function buildTelegramFailureMessage(
   const lines: string[] = [
     `❌ 知识库维护失败 — ${step}`,
     "",
-    `错误：${escapeTelegramHtml(error)}`,
+    `错误：${escapeHtml(error)}`,
   ];
 
   if (extra?.exitCode !== undefined) {
@@ -309,21 +309,10 @@ function buildTelegramFailureMessage(
   }
   if (extra?.stderr) {
     const snippet = extra.stderr.slice(0, 500);
-    lines.push(`stderr：${escapeTelegramHtml(snippet)}`);
+    lines.push(`stderr：${escapeHtml(snippet)}`);
   }
 
   return lines.join("\n");
-}
-
-/**
- * Escape text for Telegram HTML (only & < > ").
- */
-function escapeTelegramHtml(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
 }
 
 // ── Batch subagent processing ────────────────────────────────────────────

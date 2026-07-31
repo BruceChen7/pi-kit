@@ -13,6 +13,8 @@
  * No IO, no side effects — fully testable. 工厂函数处理所有编排。
  */
 
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   loadCheckpoint as _loadCheckpoint,
   saveCheckpoint as _saveCheckpoint,
@@ -21,7 +23,7 @@ import { type HtmlChunk, prepareChunks, splitEntries } from "./chunking.ts";
 import { defineTask } from "./deferred-queue/define-task.ts";
 import { log } from "./deferred-queue/logger.ts";
 import type { Duration } from "./deferred-queue/types.ts";
-import { sendTelegramNotification } from "./telegram.ts";
+import { escapeHtml, sendTelegramNotification } from "./telegram.ts";
 
 // ── JSON parsing ───────────────────────────────────────
 
@@ -120,6 +122,96 @@ export function buildTruncationWarning(limit: number): string {
   return `上次 job 后有大量新增收藏，本次只拉取到前 ${limit} 条，结果可能不完整。`;
 }
 
+// ── Archive (per-year markdown sink) ───────────────────
+
+/**
+ * Optional archive configuration for a bookmark task.
+ *
+ * When configured, each run appends the newly-fetched items to a per-year
+ * markdown file after formatting and BEFORE any Telegram delivery. A failed
+ * archive write aborts the whole run (fail-fast): no Telegram chunks are
+ * sent and the checkpoint is not advanced, so the batch retries next run
+ * (deduping keeps the file idempotent).
+ *
+ * Leave `archive` unset to keep the exact legacy behavior.
+ */
+export interface ArchiveConfig<B> {
+  /** Archive root directory (absolute path); the year is embedded in the file name. */
+  dir: string;
+  /** Build the per-year file name, e.g. "raindrop-bookmarks-2026.md". */
+  buildFileName: (year: string) => string;
+  /**
+   * Pure: given today's local date (YYYY-MM-DD), the newly-fetched items and
+   * the current file content, produce the text to append. Return "" when
+   * everything is a duplicate and nothing should be written. May emit a
+   * file title when `existingContent` is empty (first creation).
+   *
+   * `previousYearContent` is the previous year's file content, provided only
+   * while the current year's file is still empty ("" when there is no
+   * previous file). Honor its keys so a batch archived in December but
+   * retried after Jan 1 is not duplicated into a fresh year file.
+   */
+  buildEntry: (
+    date: string,
+    items: B[],
+    existingContent: string,
+    previousYearContent: string,
+  ) => string;
+}
+
+/**
+ * Local date as YYYY-MM-DD.
+ *
+ * Year and date derive from the same source, so a run at a year boundary
+ * can never disagree about which year file to use vs. which date header.
+ */
+export function localDateString(now: Date = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Build the Telegram error notification for a failed archive write.
+ *
+ * Deliberately contains no bookmark content — it is a failure alert only.
+ */
+export function buildArchiveFailureMessage(
+  filePath: string,
+  error: string,
+): string {
+  return [
+    "❌ 书签档案写入失败，本次任务已中止",
+    "",
+    `文件：<code>${escapeHtml(filePath)}</code>`,
+    `错误：${escapeHtml(error)}`,
+    "",
+    "下次运行时将自动重试。",
+  ].join("\n");
+}
+
+/**
+ * Read the previous year's archive file content.
+ *
+ * Only consulted while the current year's file is still empty: a fail-fast
+ * retry that crosses a year boundary would otherwise append the same batch
+ * to both year files. Returns "" when there is no previous file.
+ */
+function readPreviousYearArchive<B>(
+  archive: ArchiveConfig<B>,
+  year: string,
+  existingContent: string,
+): string {
+  if (existingContent) return "";
+  const prevPath = join(
+    archive.dir,
+    archive.buildFileName(String(Number(year) - 1)),
+  );
+  if (!existsSync(prevPath)) return "";
+  return readFileSync(prevPath, "utf8");
+}
+
 // ── Shared types for createBookmarkTask ─────────────────
 
 /**
@@ -190,6 +282,13 @@ export interface BookmarkTaskConfig<B> {
    */
   formatIncrement: (items: B[], warning?: string) => string;
 
+  /**
+   * Optional per-year markdown archive. When set, newly-fetched items are
+   * appended to `<dir>/<buildFileName(year)>.md` before Telegram delivery,
+   * with fail-fast semantics on write errors. Default: no archive.
+   */
+  archive?: ArchiveConfig<B>;
+
   /** Max items to fetch per run (default: 50). */
   limit?: number;
   /** Max HTML length per Telegram chunk (default: 4096). */
@@ -224,6 +323,7 @@ export function createBookmarkTask<B>(
     buildPrefix,
     computeIncrement,
     formatIncrement,
+    archive,
     limit = 50,
     maxHtmlLength = 4096,
   } = config;
@@ -294,6 +394,53 @@ export function createBookmarkTask<B>(
 
       const markdown = formatIncrement(decision.items, warning);
       const prefix = buildPrefix(decision, decision.items.length);
+
+      // ── 4.5 Shell: write per-year archive (fail-fast) ──────
+      if (archive) {
+        const today = localDateString();
+        const year = today.slice(0, 4);
+        const filePath = join(archive.dir, archive.buildFileName(year));
+        try {
+          const existing = existsSync(filePath)
+            ? readFileSync(filePath, "utf8")
+            : "";
+          // Year-boundary safety: while this year's file is still empty,
+          // also honor keys from the previous year's file so a batch that
+          // was archived in December but retried after Jan 1 is not
+          // duplicated into the fresh year file.
+          const previousYearContent = readPreviousYearArchive(
+            archive,
+            year,
+            existing,
+          );
+          const entry = archive.buildEntry(
+            today,
+            decision.items,
+            existing,
+            previousYearContent,
+          );
+          if (entry) {
+            mkdirSync(archive.dir, { recursive: true });
+            appendFileSync(filePath, entry, "utf8");
+            log.info("archive appended", { filePath });
+          } else {
+            log.info("archive skipped (all duplicates)", { filePath });
+          }
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          log.warn("archive write failed", { filePath, error: errorMsg });
+          // buildArchiveFailureMessage already escapes its dynamic parts —
+          // send it raw so the <code> markup is not escaped a second time.
+          await sendTelegramNotification(
+            buildArchiveFailureMessage(filePath, errorMsg),
+            undefined,
+            true,
+          ).catch((e) =>
+            log.warn("telegram notify failed", { error: String(e) }),
+          );
+          return; // fail-fast: no Telegram chunks, no checkpoint advance
+        }
+      }
 
       // ── 5. Pure: chunk Markdown into Telegram HTML ──────────
       const chunks = prepareBookmarkChunks({

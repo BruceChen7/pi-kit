@@ -37,7 +37,13 @@ export interface TelegramConfig {
 const buildTelegramUrl = (botToken: string, method: string): string =>
   `https://api.telegram.org/bot${botToken}/${method}`;
 
-const escapeHtml = (text: string): string =>
+/**
+ * Escape text for Telegram HTML (only & < > ").
+ *
+ * Exported so other modules (e.g. bookmark-pipeline, knowledge-wiki-daily)
+ * can reuse it instead of maintaining private copies.
+ */
+export const escapeHtml = (text: string): string =>
   text
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")

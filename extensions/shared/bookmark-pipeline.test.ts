@@ -1,11 +1,31 @@
-import { describe, expect, it, vi } from "vitest";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanupDir, tempDir } from "../scheduled-tasks/tasks/test-utils.ts";
 import {
+  type ArchiveConfig,
   type BookmarkTaskConfig,
+  buildArchiveFailureMessage,
   createBookmarkTask,
   type IncrementDecision,
+  localDateString,
   prepareBookmarkChunks,
 } from "./bookmark-pipeline.ts";
 import type { ExecContext } from "./deferred-queue/types.ts";
+
+// ── Telegram mock ─────────────────────────────────────
+
+const { sendTelegramNotificationMock } = vi.hoisted(() => ({
+  sendTelegramNotificationMock: vi.fn(),
+}));
+
+vi.mock("./telegram.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./telegram.ts")>();
+  return {
+    ...actual,
+    sendTelegramNotification: sendTelegramNotificationMock,
+  };
+});
 
 // ── Fixtures ──────────────────────────────────────────
 
@@ -196,5 +216,199 @@ describe("createBookmarkTask", () => {
     expect(result[0].html).toContain("📑 Prefix");
     expect(result[0].html).toContain("<b>1. First</b>");
     expect(result[0].html).toContain("<b>2. Second</b>");
+  });
+});
+
+// ── Archive (per-year markdown sink) ──────────────────
+
+/**
+ * Minimal archive config that echoes a marker + the first item title.
+ */
+function testArchive(dir: string): ArchiveConfig<TestBookmark> {
+  return {
+    dir,
+    buildFileName: (year) => `bookmarks-${year}.md`,
+    buildEntry: (date, items, existingContent) =>
+      `archive:${date}:${existingContent.length}:${items[0]?.title ?? ""}`,
+  };
+}
+
+describe("localDateString", () => {
+  it("formats a local date as YYYY-MM-DD", () => {
+    expect(localDateString(new Date(2026, 6, 31, 12, 0, 0))).toBe("2026-07-31");
+  });
+
+  it("keeps year and date consistent at a year boundary", () => {
+    expect(localDateString(new Date(2026, 11, 31, 23, 30, 0))).toBe(
+      "2026-12-31",
+    );
+  });
+});
+
+describe("buildArchiveFailureMessage", () => {
+  it("includes the file path and error, but no bookmark content", () => {
+    const msg = buildArchiveFailureMessage("/tmp/x/archive.md", "boom");
+    expect(msg).toContain("档案写入失败");
+    expect(msg).toContain("x/archive.md");
+    expect(msg).toContain("boom");
+  });
+});
+
+describe("createBookmarkTask archive integration", () => {
+  let dir: string;
+  let checkpointPath: string;
+
+  beforeEach(() => {
+    dir = tempDir("archive-test-");
+    checkpointPath = join(dir, "checkpoint.json");
+    sendTelegramNotificationMock.mockReset();
+    sendTelegramNotificationMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    cleanupDir(dir);
+  });
+
+  it("writes the archive, sends Telegram, then saves checkpoint", async () => {
+    const config = testConfig({
+      checkpointPath,
+      archive: testArchive(dir),
+    });
+    const task = createBookmarkTask(config);
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: JSON.stringify([
+        { id: "2", title: "world" },
+        { id: "1", title: "hello" },
+      ]),
+      stderr: "",
+    });
+
+    await task.handler({ exec } as unknown as ExecContext);
+
+    // Archive file created with the entry text
+    const files = readdirSync(dir).filter((f) =>
+      /^bookmarks-\d{4}\.md$/.test(f),
+    );
+    expect(files).toHaveLength(1);
+    const content = readFileSync(join(dir, files[0]), "utf8");
+    expect(content).toContain("archive:");
+    expect(content).toContain("world");
+
+    // Telegram delivered and checkpoint advanced
+    expect(sendTelegramNotificationMock).toHaveBeenCalled();
+    expect(existsSync(checkpointPath)).toBe(true);
+  });
+
+  it("writes the archive even when Telegram delivery fails (archive-first)", async () => {
+    sendTelegramNotificationMock.mockRejectedValue(new Error("telegram down"));
+    const config = testConfig({
+      checkpointPath,
+      archive: testArchive(dir),
+    });
+    const task = createBookmarkTask(config);
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: JSON.stringify([{ id: "1", title: "hello" }]),
+      stderr: "",
+    });
+
+    await expect(
+      task.handler({ exec } as unknown as ExecContext),
+    ).resolves.toBeUndefined();
+
+    // Archive was written before Telegram attempted delivery
+    const files = readdirSync(dir).filter((f) =>
+      /^bookmarks-\d{4}\.md$/.test(f),
+    );
+    expect(files).toHaveLength(1);
+
+    // Checkpoint not advanced because Telegram failed
+    expect(existsSync(checkpointPath)).toBe(false);
+  });
+
+  it("skips the archive write when buildEntry returns empty, but still delivers", async () => {
+    const config = testConfig({
+      checkpointPath,
+      archive: { ...testArchive(dir), buildEntry: () => "" },
+    });
+    const task = createBookmarkTask(config);
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: JSON.stringify([{ id: "1", title: "hello" }]),
+      stderr: "",
+    });
+
+    await task.handler({ exec } as unknown as ExecContext);
+
+    const files = readdirSync(dir).filter((f) =>
+      /^bookmarks-\d{4}\.md$/.test(f),
+    );
+    expect(files).toHaveLength(0);
+    expect(sendTelegramNotificationMock).toHaveBeenCalled();
+    expect(existsSync(checkpointPath)).toBe(true);
+  });
+
+  it("fails fast on archive write error: no chunks, no checkpoint, error alert", async () => {
+    // archive.dir points at an existing regular file → mkdir throws ENOTDIR
+    const blocker = join(dir, "blocker");
+    writeFileSync(blocker, "i am a file");
+
+    const config = testConfig({
+      checkpointPath,
+      archive: { ...testArchive(blocker) },
+    });
+    const task = createBookmarkTask(config);
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: JSON.stringify([{ id: "1", title: "hello" }]),
+      stderr: "",
+    });
+
+    await expect(
+      task.handler({ exec } as unknown as ExecContext),
+    ).resolves.toBeUndefined();
+
+    // Exactly one Telegram call: the failure alert, not bookmark chunks
+    expect(sendTelegramNotificationMock).toHaveBeenCalledTimes(1);
+    const alert = String(sendTelegramNotificationMock.mock.calls[0][0]);
+    expect(alert).toContain("档案写入失败");
+    expect(alert).not.toContain("hello");
+    // The alert is pre-built HTML (message builder already escapes dynamic
+    // parts) — it must be sent raw, otherwise it is escaped a second time.
+    expect(alert).toContain("<code>");
+    expect(sendTelegramNotificationMock.mock.calls[0][2]).toBe(true);
+
+    // Checkpoint not advanced
+    expect(existsSync(checkpointPath)).toBe(false);
+  });
+
+  it("passes previous-year content to buildEntry when the year file is fresh", async () => {
+    const currentYear = String(new Date().getFullYear());
+    const prevYear = String(Number(currentYear) - 1);
+    writeFileSync(join(dir, `bookmarks-${prevYear}.md`), "prev-year-content");
+
+    const config = testConfig({
+      checkpointPath,
+      archive: {
+        ...testArchive(dir),
+        buildEntry: (_date, _items, existing, previous) =>
+          `existing=${existing.length}:previous=${previous.length}`,
+      },
+    });
+    const task = createBookmarkTask(config);
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: JSON.stringify([{ id: "1", title: "hello" }]),
+      stderr: "",
+    });
+
+    await task.handler({ exec } as unknown as ExecContext);
+
+    const content = readFileSync(
+      join(dir, `bookmarks-${currentYear}.md`),
+      "utf8",
+    );
+    expect(content).toBe("existing=0:previous=17");
   });
 });

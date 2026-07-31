@@ -12,6 +12,7 @@ import {
 // Mock Telegram to prevent actual network calls during shell function tests.
 vi.mock("../../shared/telegram.ts", () => ({
   sendTelegramNotification: vi.fn(() => Promise.resolve()),
+  escapeHtml: (text: string) => text,
 }));
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

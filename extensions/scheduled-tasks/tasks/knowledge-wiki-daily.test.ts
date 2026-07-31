@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
+  aggregateBatchResults,
   buildSubagentPrompt,
   parseResultJson,
   runQmdStep,
@@ -25,6 +26,54 @@ const WIKI_SUMMARIZE_FILE = path.resolve(
   "prompts",
   "wiki-summarize.md",
 );
+
+// ── Test helpers ──────────────────────────────────────
+
+/**
+ * Create a subagent mock whose calls only resolve when manually resolved.
+ * Lets tests control completion order / concurrency deterministically.
+ */
+function deferredSubagentMock() {
+  const resolvers: Array<(value: unknown) => void> = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+
+  const subagent = vi.fn().mockImplementation(() => {
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    return new Promise((resolve) => {
+      resolvers.push((value: unknown) => {
+        inFlight--;
+        resolve(value);
+      });
+    });
+  });
+
+  return {
+    subagent,
+    resolvers,
+    get maxInFlight() {
+      return maxInFlight;
+    },
+  };
+}
+
+/**
+ * Build a successful subagent result. A batch number tags the done text and
+ * adds one summary file; batch 0 produces an empty summary list.
+ */
+function makeOkResult(batch = 0) {
+  return {
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+    summary: JSON.stringify({
+      ok: true,
+      done: batch ? `batch-${batch} done` : "done",
+      summaries: batch ? [`Wiki/Summaries/B${batch}.summary.md`] : [],
+    }),
+  };
+}
 
 // ── buildSubagentPrompt ───────────────────────────────
 
@@ -331,6 +380,45 @@ describe("runShardMigration", () => {
   });
 });
 
+// ── aggregateBatchResults ─────────────────────────────
+
+describe("aggregateBatchResults", () => {
+  it("accumulates summaries and done text in batch order", () => {
+    const result = aggregateBatchResults([
+      { ok: true, done: "a", summaries: ["S1", "S2"] },
+      { ok: true, done: "b" },
+    ]);
+    expect(result.createdSummaries).toEqual(["S1", "S2"]);
+    expect(result.wikiSummaryDone).toBe("Batch 1: a | Batch 2: b");
+    expect(result.failed).toEqual([]);
+  });
+
+  it("collects failed batches and skips them in the output", () => {
+    const result = aggregateBatchResults([
+      { ok: true, done: "a", summaries: ["S1"] },
+      { ok: false, done: "boom" },
+      { ok: true, done: "c", summaries: ["S3"] },
+    ]);
+    expect(result.createdSummaries).toEqual(["S1", "S3"]);
+    expect(result.wikiSummaryDone).toBe("Batch 1: a | Batch 3: c");
+    expect(result.failed).toEqual([{ batch: 2, error: "boom" }]);
+  });
+
+  it("uses 'unknown error' when a failed batch has no message", () => {
+    const result = aggregateBatchResults([{ ok: false }]);
+    expect(result.failed).toEqual([{ batch: 1, error: "unknown error" }]);
+    expect(result.createdSummaries).toEqual([]);
+    expect(result.wikiSummaryDone).toBe("");
+  });
+
+  it("handles empty results", () => {
+    const result = aggregateBatchResults([]);
+    expect(result.createdSummaries).toEqual([]);
+    expect(result.wikiSummaryDone).toBe("");
+    expect(result.failed).toEqual([]);
+  });
+});
+
 // ── runSummarizePipeline ──────────────────────────────
 
 describe("runSummarizePipeline", () => {
@@ -341,82 +429,7 @@ describe("runSummarizePipeline", () => {
     expect(result.wikiSummaryDone).toBe("No stale files found.");
   });
 
-  it("accumulates summaries from multiple successful batches", async () => {
-    const exec = {
-      subagent: vi
-        .fn()
-        .mockResolvedValueOnce({
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-          summary: JSON.stringify({
-            ok: true,
-            done: "Phase 1-4 complete",
-            summaries: ["Wiki/Summaries/A.summary.md"],
-          }),
-        })
-        .mockResolvedValueOnce({
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-          summary: JSON.stringify({
-            ok: true,
-            done: "Phase 1-4 complete",
-            summaries: ["Wiki/Summaries/B.summary.md"],
-          }),
-        }),
-    };
-
-    // BATCH_SIZE = 3, so 4 files → 2 batches (3 + 1)
-    const result = await runSummarizePipeline(exec, [
-      "A.md",
-      "B.md",
-      "C.md",
-      "D.md",
-    ]);
-    expect(result.createdSummaries).toEqual([
-      "Wiki/Summaries/A.summary.md",
-      "Wiki/Summaries/B.summary.md",
-    ]);
-    expect(result.wikiSummaryDone).toContain("Batch 1");
-    expect(result.wikiSummaryDone).toContain("Batch 2");
-  });
-
-  it("continues processing remaining batches after one fails", async () => {
-    const exec = {
-      subagent: vi
-        .fn()
-        .mockResolvedValueOnce({
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-          summary: JSON.stringify({
-            ok: true,
-            done: "Batch 1 done",
-            summaries: ["Wiki/Summaries/A.summary.md"],
-          }),
-        })
-        .mockResolvedValueOnce({
-          exitCode: 1,
-          stdout: "",
-          stderr: "batch 2 failed",
-        }),
-    };
-
-    // BATCH_SIZE = 3, so 4 files → 2 batches (3 + 1)
-    // Batch 1 succeeds, batch 2 fails
-    const result = await runSummarizePipeline(exec, [
-      "A.md",
-      "B.md",
-      "C.md",
-      "D.md",
-    ]);
-    expect(result.createdSummaries).toEqual(["Wiki/Summaries/A.summary.md"]);
-    expect(result.wikiSummaryDone).toContain("Batch 1");
-    expect(result.wikiSummaryDone).not.toContain("Batch 2");
-  });
-
-  it("handles exception during iteration gracefully", async () => {
+  it("keeps collecting results when a subagent call rejects", async () => {
     const exec = {
       subagent: vi
         .fn()
@@ -433,8 +446,8 @@ describe("runSummarizePipeline", () => {
         .mockRejectedValueOnce(new Error("subagent crashed")),
     };
 
-    // BATCH_SIZE = 3, so 4 files → 2 batches (3 + 1)
-    // Batch 1 succeeds, batch 2 throws
+    // BATCH_SIZE = 3 → 4 files → 2 batches, run concurrently.
+    // Batch 1 succeeds, batch 2 throws; the throw only fails that batch.
     const result = await runSummarizePipeline(exec, [
       "A.md",
       "B.md",
@@ -442,44 +455,64 @@ describe("runSummarizePipeline", () => {
       "D.md",
     ]);
     expect(result.createdSummaries).toEqual(["Wiki/Summaries/A.summary.md"]);
+    expect(result.wikiSummaryDone).toContain("Batch 1");
+    expect(result.wikiSummaryDone).not.toContain("Batch 2");
   });
 
-  it("handles batch failure via ok:false result", async () => {
-    const exec = {
-      subagent: vi
-        .fn()
-        .mockResolvedValueOnce({
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-          summary: JSON.stringify({
-            ok: false,
-            done: "Phase 2 failed: cannot process",
-          }),
-        })
-        .mockResolvedValueOnce({
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-          summary: JSON.stringify({
-            ok: true,
-            done: "Batch 2 done",
-            summaries: ["Wiki/Summaries/B.summary.md"],
-          }),
-        }),
-    };
+  it("never runs more than 3 subagents at once and processes every batch", async () => {
+    const mock = deferredSubagentMock();
 
-    // BATCH_SIZE = 3, so 4 files → 2 batches (3 + 1)
-    // Batch 1 returns ok:false, batch 2 succeeds
-    const result = await runSummarizePipeline(exec, [
-      "A.md",
-      "B.md",
-      "C.md",
-      "D.md",
+    // BATCH_SIZE = 3 → 10 files → 4 batches.
+    const files = Array.from({ length: 10 }, (_, i) => `Notes/F${i}.md`);
+    const pipelinePromise = runSummarizePipeline(
+      { subagent: mock.subagent },
+      files,
+    );
+
+    // The pool starts at most 3; the 4th batch is scheduled only after a
+    // slot frees up — observable behavior, not internal timing.
+    await vi.waitFor(() => expect(mock.resolvers).toHaveLength(3));
+    mock.resolvers[0](makeOkResult());
+    await vi.waitFor(() => expect(mock.resolvers).toHaveLength(4));
+    mock.resolvers.slice(1).forEach((resolve) => {
+      resolve(makeOkResult());
+    });
+
+    const result = await pipelinePromise;
+    expect(mock.maxInFlight).toBe(3);
+    expect(mock.subagent).toHaveBeenCalledTimes(4);
+    expect(result.wikiSummaryDone).toContain("Batch 4");
+  });
+
+  it("collects results in batch order regardless of completion order", async () => {
+    const mock = deferredSubagentMock();
+
+    // BATCH_SIZE = 3 → 10 files → 4 batches.
+    const files = Array.from({ length: 10 }, (_, i) => `Notes/F${i}.md`);
+    const pipelinePromise = runSummarizePipeline(
+      { subagent: mock.subagent },
+      files,
+    );
+
+    await vi.waitFor(() => expect(mock.resolvers).toHaveLength(3));
+    // Resolve out of order: batch 3 first, then batch 2, batch 1, batch 4.
+    mock.resolvers[2](makeOkResult(3));
+    await vi.waitFor(() => expect(mock.resolvers).toHaveLength(4));
+    mock.resolvers[1](makeOkResult(2));
+    mock.resolvers[0](makeOkResult(1));
+    mock.resolvers[3](makeOkResult(4));
+
+    const result = await pipelinePromise;
+    // Collected in batch order, not completion order.
+    expect(result.createdSummaries).toEqual([
+      "Wiki/Summaries/B1.summary.md",
+      "Wiki/Summaries/B2.summary.md",
+      "Wiki/Summaries/B3.summary.md",
+      "Wiki/Summaries/B4.summary.md",
     ]);
-    // Should have continued past batch 1 and collected batch 2
-    expect(result.createdSummaries).toEqual(["Wiki/Summaries/B.summary.md"]);
-    expect(result.wikiSummaryDone).toContain("Batch 2");
+    expect(result.wikiSummaryDone).toBe(
+      "Batch 1: batch-1 done | Batch 2: batch-2 done | Batch 3: batch-3 done | Batch 4: batch-4 done",
+    );
   });
 });
 

@@ -10,11 +10,14 @@
 #
 # Supported plugin source patterns:
 #   extensions/foo/index.ts    -> creates foo/ symlink
-#   extensions/foo/foo.ts      -> creates foo.ts symlink
+#   extensions/foo/foo.ts      -> creates foo.ts symlink (only when foo.ts is
+#                                 the sole source file; sibling modules are
+#                                 unreachable through a file symlink)
 #   extensions/foo.ts          -> creates foo.ts symlink
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EXTENSIONS_DIR="$SCRIPT_DIR/extensions"
+# Overridable for tests (see scripts/install-plugins.test.ts).
+EXTENSIONS_DIR="${PI_KIT_EXTENSIONS_DIR:-$SCRIPT_DIR/extensions}"
 LIBRARY_DIR="$HOME/.agents/pi-plugins"
 GLOBAL_EXTENSION_DIR="$HOME/.pi/agent/extensions"
 SCOPE="library"
@@ -280,6 +283,19 @@ install_plugin_sources() {
                     mark_installed "$dir_name"
                 fi
             elif [ -f "$dir${dir_name}.ts" ]; then
+                # A single-file symlink only exposes ${dir_name}.ts. Sibling
+                # modules (e.g. review-config.ts) would be unreachable at
+                # runtime: pi loads extensions via their configured path and
+                # resolves relative imports against that path's directory, so
+                # the sibling must live next to the symlink. Multi-file
+                # extensions must use an index.ts entry (-> directory symlink).
+                local sibling_source
+                sibling_source="$(find "$dir" -maxdepth 1 -name '*.ts' \
+                    ! -name "${dir_name}.ts" ! -name '*.test.ts' ! -name '*.spec.ts' \
+                    -print -quit)"
+                if [ -n "$sibling_source" ]; then
+                    echo -e "${YELLOW}!${NC} $dir_name has sibling .ts files not reachable through the ${dir_name}.ts symlink (pi resolves relative imports against the symlink's directory). Add an index.ts entry so it installs as a directory."
+                fi
                 if install_symlink "$dir${dir_name}.ts" "${dir_name}.ts" "$target_dir"; then
                     mark_installed "${dir_name}.ts"
                 fi

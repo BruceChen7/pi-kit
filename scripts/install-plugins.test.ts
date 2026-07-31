@@ -21,12 +21,38 @@ function createPluginDir(baseDir: string, name: string): string {
   return pluginDir;
 }
 
-function runInstall(home: string, args: string[] = []): string {
+function runInstall(
+  home: string,
+  args: string[] = [],
+  extraEnv: Record<string, string> = {},
+): string {
   return execFileSync("bash", [scriptPath, ...args], {
     cwd: repoRoot,
-    env: { ...process.env, HOME: home, PI_KIT_SKIP_PLUGIN_DEP_INSTALL: "1" },
+    env: {
+      ...process.env,
+      HOME: home,
+      PI_KIT_SKIP_PLUGIN_DEP_INSTALL: "1",
+      ...extraEnv,
+    },
     encoding: "utf8",
   });
+}
+
+function createExtensionsFixture(baseDir: string): string {
+  // A `foo/foo.ts` entry with a sibling module: exactly the layout that a
+  // single-file symlink cannot expose (siblings are unreachable at runtime).
+  const extensionsDir = path.join(baseDir, "extensions");
+  const pluginDir = path.join(extensionsDir, "sample-plugin");
+  fs.mkdirSync(pluginDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(pluginDir, "sample-plugin.ts"),
+    "export default function () {}\n",
+  );
+  fs.writeFileSync(
+    path.join(pluginDir, "sample-config.ts"),
+    "export const x = 1;\n",
+  );
+  return extensionsDir;
 }
 
 afterEach(() => {
@@ -59,6 +85,46 @@ describe("install-plugins.sh", () => {
       fs.lstatSync(path.join(globalExtensionsDir, "shared")).isSymbolicLink(),
     ).toBe(true);
     expect(fs.existsSync(path.join(globalExtensionsDir, "copyx"))).toBe(false);
+  });
+
+  it("installs review as a directory symlink so sibling modules stay reachable", () => {
+    const home = createTempDir();
+
+    runInstall(home);
+
+    const libraryDir = path.join(home, ".agents", "pi-plugins");
+    const reviewLink = path.join(libraryDir, "review");
+
+    // With an index.ts entry, review installs as a directory symlink.
+    expect(fs.lstatSync(reviewLink).isSymbolicLink()).toBe(true);
+    expect(fs.statSync(reviewLink).isDirectory()).toBe(true);
+
+    // Sibling modules must stay reachable through the symlinked directory,
+    // otherwise pi cannot resolve `./review-config.ts` from review.ts.
+    expect(fs.existsSync(path.join(reviewLink, "review-config.ts"))).toBe(true);
+
+    // The old single-file symlink must not be created anymore.
+    expect(fs.existsSync(path.join(libraryDir, "review.ts"))).toBe(false);
+  });
+
+  it("warns when a foo/foo.ts extension has sibling modules a file symlink cannot expose", () => {
+    const home = createTempDir();
+    const fixture = createTempDir();
+    const extensionsDir = createExtensionsFixture(fixture);
+
+    const output = runInstall(home, [], {
+      PI_KIT_EXTENSIONS_DIR: extensionsDir,
+    });
+
+    const libraryDir = path.join(home, ".agents", "pi-plugins");
+    expect(
+      fs.lstatSync(path.join(libraryDir, "sample-plugin.ts")).isSymbolicLink(),
+    ).toBe(true);
+    // The sibling is NOT installed (a single-file symlink cannot expose it).
+    expect(fs.existsSync(path.join(libraryDir, "sample-config.ts"))).toBe(
+      false,
+    );
+    expect(output).toContain("has sibling .ts files not reachable");
   });
 
   it("migrates old global symlink plugins into the shared library by default", () => {

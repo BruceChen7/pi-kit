@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { VisualArtifactSpec } from "./artifact-schema.ts";
 import type { MermaidParser } from "./mermaid-boundary.ts";
 import {
   formatMermaidValidationErrors,
@@ -7,7 +8,6 @@ import {
   validateMermaidCodeWith,
   validateMermaidNodesInSpec,
 } from "./mermaid-boundary.ts";
-import type { VisualArtifactSpec } from "./artifact-schema.ts";
 
 describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
   let mermaid: MermaidParser;

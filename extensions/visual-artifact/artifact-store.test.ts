@@ -60,7 +60,7 @@ describe("artifact-store", () => {
     expect(read).toBeNull();
   });
 
-  it("normalizes legacy mermaid syntax when reading an artifact", () => {
+  it("reads artifacts without rewriting mermaid code (no silent normalize)", () => {
     const legacySpec: VisualArtifactSpec = {
       slug: "legacy-mermaid",
       title: "Legacy Mermaid",
@@ -83,8 +83,10 @@ describe("artifact-store", () => {
     const code = read?.nodes[0]?.props.code;
 
     expect(typeof code).toBe("string");
-    expect(String(code)).toContain('SHOW_TODO["#id [✓/~/!] text');
-    expect(String(code)).toContain("progress bar");
+    // The stored code is returned verbatim — validation (not rewriting) is
+    // the project policy; agents fix invalid syntax themselves.
+    expect(String(code)).toContain("SHOW_TODO[#id [✓/~/!] text");
+    expect(String(code)).toContain("progress bar]");
 
     deleteArtifact(TEST_ROOT, TEST_PROJECT, "legacy-mermaid");
   });

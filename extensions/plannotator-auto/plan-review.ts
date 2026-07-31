@@ -15,12 +15,16 @@ import {
   type PiKitPlannotatorPendingReviewEvent,
   PLANNOTATOR_PENDING_REVIEW_CHANNEL,
 } from "../shared/internal-events.ts";
-import { normalizeMermaidCode } from "../shared/mermaid-normalize.ts";
+import { createLogger } from "../shared/logger.ts";
 import {
   runPlannotatorAnnotateCli,
   runPlannotatorPlanReviewCli,
 } from "./cli.ts";
 import { extractBashPathCandidates, resolveToolPaths } from "./helpers.ts";
+import {
+  formatPlanMermaidErrors,
+  runPlanMermaidValidation,
+} from "./mermaid-validator.ts";
 import { isHtmlPath, resolveReviewTargetMatch } from "./paths.ts";
 import type { PendingPlanReview, PlanFileConfig } from "./plan-review/types.ts";
 import { getSessionState, type SessionRuntimeState } from "./session.ts";
@@ -33,6 +37,8 @@ const MERMAID_RENDERING_GUIDANCE =
 const PLAN_REVIEW_SUBMIT_TOOL = "plannotator_auto_submit_review";
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
 const SYNC_PLANNOTATOR_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
+
+const log = createLogger("plannotator-auto", { stderr: null });
 
 type PendingPlanReviewEventHandle = {
   markHandled: () => void;
@@ -100,52 +106,6 @@ export const preprocessPlanMarkdown = (markdown: string): string =>
     (_m, prefix: string, suffix: string, body: string) =>
       `${prefix}\n\`\`\`mermaid${suffix}\n${body}\n\`\`\``,
   );
-
-export const validateMermaidFences = (markdown: string): string | null => {
-  const lines = markdown.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i += 1) {
-    const open = lines[i]?.match(/^\s*```\s*mermaid\b/i);
-    if (!open) continue;
-
-    let j = i + 1;
-    while (j < lines.length && !/^\s*```\s*$/.test(lines[j] ?? "")) {
-      j += 1;
-    }
-
-    if (j >= lines.length) {
-      return `Mermaid block starting at line ${i + 1} is missing a closing \`\`\` fence.`;
-    }
-
-    const body = lines
-      .slice(i + 1, j)
-      .join("\n")
-      .trim();
-    if (!body) {
-      return `Mermaid block starting at line ${i + 1} is empty.`;
-    }
-
-    i = j;
-  }
-
-  return null;
-};
-
-/**
- * Run normalizeMermaidCode on every ` ```mermaid ` fence body in a markdown
- * document.  This auto-fixes common syntax issues (unquoted labels, special
- * characters in labels, etc.) before the content reaches Plannotator review.
- *
- * Safe to call on markdown that has no mermaid blocks — returns unchanged.
- */
-export function normalizePlanMermaidBlocks(markdown: string): string {
-  return markdown.replace(
-    /```mermaid\n([\s\S]*?)```/g,
-    (_match: string, body: string) => {
-      const normalized = normalizeMermaidCode(body.trimEnd());
-      return `\`\`\`mermaid\n${normalized}\n\`\`\``;
-    },
-  );
-}
 
 const getReviewWidgetMessage = (
   state: SessionRuntimeState,
@@ -634,18 +594,24 @@ export const registerPlanReviewSubmitTool = (
       const preprocessed = renderHtml
         ? planContent
         : preprocessPlanMarkdown(planContent);
-      // Normalize mermaid code blocks before review: auto-fix common label
-      // syntax issues (unquoted parens/brackets, special chars, etc.)
-      const normalizedPlanContent = normalizePlanMermaidBlocks(preprocessed);
 
+      let mermaidValidationNotice: string | null = null;
       if (!renderHtml) {
-        const mermaidValidationFailure = validateMermaidFences(
-          normalizedPlanContent,
-        );
-        if (mermaidValidationFailure) {
+        // Real syntax validation against the mermaid parser. Covers fence
+        // structure (unclosed/empty) AND parse errors; all failures are
+        // collected and reported together. A broken runtime degrades to a
+        // skip (never blocks the review gate).
+        const mermaidValidation = await runPlanMermaidValidation(preprocessed);
+        if (mermaidValidation.skipped) {
+          log.warn(`Mermaid validation skipped: ${mermaidValidation.reason}`);
+          mermaidValidationNotice = `Note: mermaid 语法校验跳过（原因: ${mermaidValidation.reason}），本次提交未做 mermaid 校验。`;
+        } else if (mermaidValidation.errors.length > 0) {
           return {
             content: [
-              { type: "text", text: `Error: ${mermaidValidationFailure}` },
+              {
+                type: "text",
+                text: formatPlanMermaidErrors(mermaidValidation.errors),
+              },
             ],
             details: { status: "error", reason: "mermaid-validation" },
           };
@@ -674,7 +640,7 @@ export const registerPlanReviewSubmitTool = (
                 timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
               },
             )
-          : await runPlannotatorPlanReviewCli(ctx, normalizedPlanContent, {
+          : await runPlannotatorPlanReviewCli(ctx, preprocessed, {
               signal,
               timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
             });
@@ -702,13 +668,25 @@ export const registerPlanReviewSubmitTool = (
           };
         }
 
-        return completePendingPlanReview(
+        const result = completePendingPlanReview(
           ctx,
           state,
           pendingPlanReviews,
           pendingPlanReview,
           cliResult.result,
         );
+
+        if (mermaidValidationNotice) {
+          return {
+            ...result,
+            content: result.content.map((part) =>
+              part.type === "text"
+                ? { ...part, text: `${mermaidValidationNotice}\n${part.text}` }
+                : part,
+            ),
+          };
+        }
+        return result;
       } finally {
         state.activePlanReviewByCwd.delete(ctx.cwd);
         setReviewWidget(ctx);

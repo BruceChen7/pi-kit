@@ -239,6 +239,149 @@ describe("submit review tool", () => {
     }
   });
 
+  it("blocks plans with invalid mermaid before starting review", async () => {
+    vi.resetModules();
+    const spawn = mockSpawn({ status: 0, stdout: "", stderr: "" });
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-bad-mermaid-");
+    const planFileRelative = getPlanFileRelative(repoRoot);
+    // Flowchart with an unquoted bracket label containing parens — the real
+    // parser rejects it (no silent normalize/auto-fix anymore).
+    const INVALID_MERMAID_PLAN = `# Plan
+
+## Goal
+
+坏 mermaid 校验用例。
+
+## Current Flow
+
+\`\`\`mermaid
+flowchart TD
+  A[bad (label] --> B
+\`\`\`
+
+## Desired Flow
+
+\`\`\`mermaid
+sequenceDiagram
+  A->>B: new step
+\`\`\`
+
+## Boundaries
+
+\`\`\`mermaid
+sequenceDiagram
+  L1->>L2: call
+\`\`\`
+
+## Implementation
+
+parentFn()
+  ├─ childA()
+  └─ childB()
+
+## Testing
+
+核心 value in / value out。
+
+## Decisions
+
+推荐方案。
+
+## Non-goals
+
+不做的事。
+`;
+    await writeTestFile(repoRoot, planFileRelative, INVALID_MERMAID_PLAN);
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
+      )) as {
+        content?: Array<{ type?: string; text?: string }>;
+        details?: { status?: string; reason?: string };
+      };
+
+      expect(result.details?.status).toBe("error");
+      expect(result.details?.reason).toBe("mermaid-validation");
+      expect(result.content?.[0]?.text ?? "").toContain("flowchart");
+      expect(spawn).not.toHaveBeenCalledWith(
+        "plannotator",
+        expect.anything(),
+        expect.anything(),
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("proceeds with review and surfaces a notice when mermaid validation is skipped", async () => {
+    vi.resetModules();
+    const spawn = mockSpawn({
+      status: 0,
+      stdout: cliPlanApprovedStdout,
+      stderr: "",
+    });
+    // Simulate a broken mermaid runtime: the validator degrades to skipped,
+    // the gate must still submit and clearly say validation did not run.
+    vi.doMock("./mermaid-validator.ts", () => ({
+      runPlanMermaidValidation: vi.fn(async () => ({
+        skipped: true,
+        reason: "mock runtime down",
+        errors: [],
+      })),
+      formatPlanMermaidErrors: vi.fn(() => ""),
+    }));
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-skip-mermaid-");
+    const planFileRelative = getPlanFileRelative(repoRoot);
+    await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
+      )) as {
+        content?: Array<{ type?: string; text?: string }>;
+        details?: { status?: string };
+      };
+
+      // Gate still submits to Plannotator…
+      expect(spawn).toHaveBeenCalledWith(
+        "plannotator",
+        [],
+        expect.objectContaining({ cwd: repoRoot }),
+      );
+      // …and the result explicitly says validation was skipped.
+      expect(result.details?.status).toBe("approved");
+      expect(result.content?.[0]?.text ?? "").toContain("mermaid 语法校验跳过");
+      expect(result.content?.[0]?.text ?? "").toContain("mock runtime down");
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
   it("does not enqueue a stale gate after CLI approval", async () => {
     vi.resetModules();
     const spawn = mockSpawn({
@@ -268,11 +411,15 @@ describe("submit review tool", () => {
       );
 
       await flushMicrotasks();
-      expect(spawn).toHaveBeenCalledWith(
-        "plannotator",
-        [],
-        expect.objectContaining({ cwd: repoRoot }),
-      );
+      // The submit now runs real mermaid validation first (dynamic imports +
+      // parse), so the CLI spawn may arrive a few async ticks later.
+      await vi.waitFor(() => {
+        expect(spawn).toHaveBeenCalledWith(
+          "plannotator",
+          [],
+          expect.objectContaining({ cwd: repoRoot }),
+        );
+      });
       expect(api.sendUserMessage).not.toHaveBeenCalled();
 
       await submitPromise;

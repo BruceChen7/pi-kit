@@ -1,153 +1,22 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { MermaidParser } from "./mermaid-boundary.ts";
 import {
+  formatMermaidValidationErrors,
   getMermaidRuntime,
-  normalizeMermaidCode,
-  normalizeMermaidNodesInSpec,
   resetMermaidModule,
   validateMermaidCodeWith,
+  validateMermaidNodesInSpec,
 } from "./mermaid-boundary.ts";
-
-describe("normalizeMermaidNodesInSpec", () => {
-  it("normalizes mermaid nodes recursively in nested props", () => {
-    const spec = {
-      slug: "demo",
-      title: "demo",
-      nodes: [
-        {
-          type: "card",
-          props: {
-            nodes: [
-              {
-                type: "mermaid",
-                props: {
-                  code: "graph TD\nX --> Y[label [inner]\nnext]",
-                },
-              },
-            ],
-          },
-        },
-      ],
-    };
-
-    const normalized = normalizeMermaidNodesInSpec(spec);
-    const nestedCode = (
-      normalized.nodes[0].props.nodes as {
-        type: string;
-        props: { code: string };
-      }[]
-    )[0].props.code;
-
-    expect(nestedCode).toContain('Y["label [inner]');
-    expect(nestedCode).toContain("next");
-  });
-});
-
-describe("validateMermaidCode", () => {
-  let mermaid: MermaidParser;
-
-  beforeAll(async () => {
-    mermaid = await getMermaidRuntime();
-  });
-
-  afterEach(() => {
-    resetMermaidModule();
-  });
-
-  it("accepts the normalized version of the current parse-error case", async () => {
-    const code = normalizeMermaidCode(
-      [
-        "graph TD",
-        "UPDATE_UI --> |todo widget| SHOW_TODO[#id [✓/~/!] text",
-        "progress bar]",
-      ].join("\n"),
-    );
-
-    const result = await validateMermaidCodeWith(code, mermaid);
-
-    expect(result.ok).toBe(true);
-  });
-
-  it("accepts normalized flowchart labels containing pipe characters", async () => {
-    const code = normalizeMermaidCode(
-      [
-        "flowchart LR",
-        "MODE[mode: plan | act]",
-        "PHASE[phase: plan | act]",
-        "MODE --> PHASE",
-      ].join("\n"),
-    );
-
-    const result = await validateMermaidCodeWith(code, mermaid);
-
-    expect(result.ok).toBe(true);
-  });
-
-  it("accepts normalized link text with parentheses", async () => {
-    const code = normalizeMermaidCode(
-      [
-        "flowchart LR",
-        'State -->|"snapshot()"| APPEND',
-        "APPEND -->|test()| ANOTHER",
-      ].join("\n"),
-    );
-
-    const result = await validateMermaidCodeWith(code, mermaid);
-
-    expect(result.ok).toBe(true);
-  });
-
-  it("accepts normalized labels with array brackets and pipe, connected on the same line", async () => {
-    const code = normalizeMermaidCode(
-      [
-        "flowchart LR",
-        "TODOS[todos: TodoItem[]] --> ACTIVE[activeRun: PlanRun | null]",
-      ].join("\n"),
-    );
-
-    const result = await validateMermaidCodeWith(code, mermaid);
-
-    expect(result.ok).toBe(true);
-  });
-
-  it("accepts normalized flowchart with parens in label and ::: inline (the session failure)", async () => {
-    const code = normalizeMermaidCode(
-      [
-        "flowchart TB",
-        "classDef storage fill:#e8f5e9,stroke:#2e7d32",
-        "classDef decision fill:#f3e5f5,stroke:#7b1fa2",
-        "WRITE_ENTRY[writeSessionEntry(key, snapshot)]:::storage",
-        "EXEC_CONT[执行 continuation] --> CHECK_PATH{path 在 approvedPaths 中?}:::decision",
-      ].join("\n"),
-    );
-
-    const result = await validateMermaidCodeWith(code, mermaid);
-
-    expect(result.ok).toBe(true);
-  });
-
-  it("accepts normalized diamond label with special characters via auto-fix", async () => {
-    const code = normalizeMermaidCode("flowchart LR\n  A{test more} --> B");
-
-    const result = await validateMermaidCodeWith(code, mermaid);
-
-    expect(result.ok).toBe(true);
-  });
-
-  // Shell integration is tested implicitly via validateMermaidNodesInSpec.
-  // The core logic (validateMermaidCodeWith) is what matters here.
-});
-
-/* ------------------------------------------------------------------ */
-/*  Tier 1 — validate: all 8 diagram types parse correctly after       */
-/*  normalize                                                          */
-/* ------------------------------------------------------------------ */
+import type { VisualArtifactSpec } from "./artifact-schema.ts";
 
 describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
   let mermaid: MermaidParser;
 
   beforeAll(async () => {
     mermaid = await getMermaidRuntime();
+    // Configuration is the shell's job (validateMermaidCode /
+    // validateMermaidNodesInSpec); initialize once here for direct core tests.
+    mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
   });
 
   afterEach(() => {
@@ -155,7 +24,7 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
   });
 
   it("validates sequenceDiagram", async () => {
-    const code = normalizeMermaidCode(
+    const result = await validateMermaidCodeWith(
       [
         "sequenceDiagram",
         '  participant U as "User"',
@@ -163,15 +32,29 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
         "  U->>S: Request",
         "  S-->>U: Response",
       ].join("\n"),
+      mermaid,
     );
 
-    const result = await validateMermaidCodeWith(code, mermaid);
     expect(result.ok).toBe(true);
-    expect(result.diagramType).toBe("sequenceDiagram");
+    if (result.ok) expect(result.diagramType).toBe("sequenceDiagram");
+  });
+
+  it("validates flowchart with quoted labels", async () => {
+    const result = await validateMermaidCodeWith(
+      [
+        "flowchart LR",
+        'MODE["mode: plan | act"]',
+        'PHASE["phase: plan | act"]',
+        "MODE --> PHASE",
+      ].join("\n"),
+      mermaid,
+    );
+
+    expect(result.ok).toBe(true);
   });
 
   it("validates classDiagram", async () => {
-    const code = normalizeMermaidCode(
+    const result = await validateMermaidCodeWith(
       [
         "classDiagram",
         "  class Animal {",
@@ -180,30 +63,30 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
         "  }",
         "  Animal <|-- Dog",
       ].join("\n"),
+      mermaid,
     );
 
-    const result = await validateMermaidCodeWith(code, mermaid);
     expect(result.ok).toBe(true);
-    expect(result.diagramType).toBe("classDiagram");
+    expect(result.ok && result.diagramType).toBe("classDiagram");
   });
 
   it("validates stateDiagram-v2", async () => {
-    const code = normalizeMermaidCode(
+    const result = await validateMermaidCodeWith(
       [
         "stateDiagram-v2",
         "  [*] --> Idle",
         "  Idle --> Processing: submit",
         "  Processing --> [*]",
       ].join("\n"),
+      mermaid,
     );
 
-    const result = await validateMermaidCodeWith(code, mermaid);
     expect(result.ok).toBe(true);
-    expect(result.diagramType).toBe("stateDiagram-v2");
+    expect(result.ok && result.diagramType).toBe("stateDiagram-v2");
   });
 
   it("validates erDiagram", async () => {
-    const code = normalizeMermaidCode(
+    const result = await validateMermaidCodeWith(
       [
         "erDiagram",
         '  CUSTOMER ||--o{ ORDER : "places"',
@@ -211,15 +94,15 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
         "    int id PK",
         "  }",
       ].join("\n"),
+      mermaid,
     );
 
-    const result = await validateMermaidCodeWith(code, mermaid);
     expect(result.ok).toBe(true);
-    expect(result.diagramType).toBe("erDiagram");
+    expect(result.ok && result.diagramType).toBe("erDiagram");
   });
 
   it("validates gantt", async () => {
-    const code = normalizeMermaidCode(
+    const result = await validateMermaidCodeWith(
       [
         "gantt",
         "  title Project",
@@ -227,25 +110,25 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
         "  section Work",
         "  Task : t1, 2024-01-01, 3d",
       ].join("\n"),
+      mermaid,
     );
 
-    const result = await validateMermaidCodeWith(code, mermaid);
     expect(result.ok).toBe(true);
-    expect(result.diagramType).toBe("gantt");
+    expect(result.ok && result.diagramType).toBe("gantt");
   });
 
   it("validates mindmap", async () => {
-    const code = normalizeMermaidCode(
+    const result = await validateMermaidCodeWith(
       ["mindmap", "  root((T))", "    A", "      B"].join("\n"),
+      mermaid,
     );
 
-    const result = await validateMermaidCodeWith(code, mermaid);
     expect(result.ok).toBe(true);
-    expect(result.diagramType).toBe("mindmap");
+    expect(result.ok && result.diagramType).toBe("mindmap");
   });
 
   it("validates gitGraph", async () => {
-    const code = normalizeMermaidCode(
+    const result = await validateMermaidCodeWith(
       [
         "gitGraph",
         "  commit",
@@ -255,10 +138,86 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
         "  checkout main",
         "  merge f",
       ].join("\n"),
+      mermaid,
     );
 
-    const result = await validateMermaidCodeWith(code, mermaid);
     expect(result.ok).toBe(true);
-    expect(result.diagramType).toBe("gitGraph");
+    expect(result.ok && result.diagramType).toBe("gitGraph");
+  });
+
+  it("reports parse failures without auto-fixing (no silent rewrite)", async () => {
+    const result = await validateMermaidCodeWith(
+      "flowchart TD\n  A[bad (label] --> B",
+      mermaid,
+    );
+
+    expect(result.ok).toBe(false);
+    if ("error" in result) {
+      expect(result.error).toContain("Expecting");
+      expect(result.diagramType).toBe("flowchart");
+    }
+  });
+});
+
+describe("validateMermaidNodesInSpec", () => {
+  afterEach(() => {
+    resetMermaidModule();
+  });
+
+  const spec = (code: string): VisualArtifactSpec => ({
+    slug: "demo",
+    title: "demo",
+    nodes: [{ type: "mermaid", props: { code } }],
+  });
+
+  it("returns no errors for valid mermaid nodes", async () => {
+    const { errors } = await validateMermaidNodesInSpec(
+      spec("sequenceDiagram\n  A->>B: x"),
+    );
+
+    expect(errors).toHaveLength(0);
+  });
+
+  it("reports invalid nodes verbatim — no fixedSpec, no auto-fix", async () => {
+    const { errors } = await validateMermaidNodesInSpec(
+      spec("flowchart TD\n  A[bad (label] --> B"),
+    );
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("nodes[0]<mermaid:flowchart>");
+    expect(errors[0]).toContain("Expecting");
+  });
+});
+
+describe("formatMermaidValidationErrors", () => {
+  it("expands node errors with location, type and advice", () => {
+    const text = formatMermaidValidationErrors([
+      "nodes[14]<mermaid:flowchart>: Expecting 'PS', got 'TEXT'",
+    ]);
+
+    expect(text).toContain("MERMAID_VALIDATION_ERROR");
+    expect(text).toContain("1 diagram(s) failed to parse");
+    expect(text).toContain("nodes[14]");
+    expect(text).toContain("Diagram type: flowchart");
+    expect(text).toContain("Parse error: Expecting 'PS', got 'TEXT'");
+    expect(text).toContain('N["label text"]');
+  });
+
+  it("preserves unrecognized error entries verbatim", () => {
+    const text = formatMermaidValidationErrors([
+      "mystery entry without the node format",
+    ]);
+
+    expect(text).toContain("mystery entry without the node format");
+  });
+
+  it("handles stateDiagram-v2 (hyphenated type) and unknown types", () => {
+    const text = formatMermaidValidationErrors([
+      "nodes[0]<mermaid:stateDiagram-v2>: bad transition",
+      "nodes[1]<mermaid:customThing>: boom",
+    ]);
+
+    expect(text).toContain("Diagram type: stateDiagram-v2");
+    expect(text).toContain("Diagram type: customThing");
   });
 });

@@ -15,7 +15,6 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { type VisualArtifactSpec, validate } from "./artifact-schema.ts";
-import { normalizeMermaidNodesInSpec } from "./mermaid-boundary.ts";
 import {
   getArtifactBundleDir,
   getArtifactJsonPath,
@@ -86,7 +85,7 @@ export function readArtifact(
     const raw = readFileSync(targetPath, "utf8");
     const parsed = JSON.parse(raw);
     const result = validate(parsed);
-    return result.ok ? normalizeMermaidNodesInSpec(result.spec) : null;
+    return result.ok ? result.spec : null;
   } catch {
     return null;
   }

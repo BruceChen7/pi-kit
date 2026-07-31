@@ -23,10 +23,10 @@
  * `podcast-publishing`.
  *
  * Usage:
- *   node scripts/wiki/wiki-backlinks.mjs update-after-merge <secondary-path> <primary-path> <primary-display-name>
+ *   node skills/knowledge-wiki/merge/wiki-backlinks.mjs update-after-merge <secondary-path> <primary-path> <primary-display-name>
  *
  * Example:
- *   node scripts/wiki/wiki-backlinks.mjs update-after-merge \
+ *   node skills/knowledge-wiki/merge/wiki-backlinks.mjs update-after-merge \
  *     Wiki/Concepts/podcast-publishing.md \
  *     Wiki/Concepts/podcast.md \
  *     "Podcast"
@@ -121,7 +121,7 @@ export function runUpdateAfterMerge(args) {
   const [secondaryPath, primaryPath, primaryDisplayName] = args;
   if (!secondaryPath || !primaryPath || !primaryDisplayName) {
     console.error(
-      "Usage: node scripts/wiki/wiki-backlinks.mjs update-after-merge <secondary-path> <primary-path> <primary-display-name>",
+      "Usage: node skills/knowledge-wiki/merge/wiki-backlinks.mjs update-after-merge <secondary-path> <primary-path> <primary-display-name>",
     );
     process.exit(1);
   }

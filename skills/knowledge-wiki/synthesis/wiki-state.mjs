@@ -5,11 +5,11 @@
  * Skills should call this instead of reading/writing .state.json directly.
  *
  * Usage:
- *   node scripts/wiki/wiki-state.mjs find-unprocessed-summaries <skill-name>
- *   node scripts/wiki/wiki-state.mjs set-last-run <skill-name>
- *   node scripts/wiki/wiki-state.mjs dismiss-pair <skill-name> <pathA> <pathB>
- *   node scripts/wiki/wiki-state.mjs prune-merge-pairs
- *   node scripts/wiki/wiki-state.mjs prune-cluster-pairs
+ *   node skills/knowledge-wiki/synthesis/wiki-state.mjs find-unprocessed-summaries <skill-name>
+ *   node skills/knowledge-wiki/synthesis/wiki-state.mjs set-last-run <skill-name>
+ *   node skills/knowledge-wiki/synthesis/wiki-state.mjs dismiss-pair <skill-name> <pathA> <pathB>
+ *   node skills/knowledge-wiki/synthesis/wiki-state.mjs prune-merge-pairs
+ *   node skills/knowledge-wiki/synthesis/wiki-state.mjs prune-cluster-pairs
  *
  * --base-path can be added at any position to override the KNOWLEDGE_DIR.
  */
@@ -38,7 +38,7 @@ const [subcommand, ...args] = process.argv.slice(2);
 
 if (!subcommand) {
   console.error(
-    "Usage: node scripts/wiki/wiki-state.mjs <find-unprocessed-summaries|set-last-run|dismiss-pair|prune-merge-pairs|prune-cluster-pairs> [args]",
+    "Usage: node skills/knowledge-wiki/synthesis/wiki-state.mjs <find-unprocessed-summaries|set-last-run|dismiss-pair|prune-merge-pairs|prune-cluster-pairs> [args]",
   );
   process.exit(1);
 }
@@ -49,7 +49,7 @@ if (subcommand === "find-unprocessed-summaries") {
   const [skillName] = args;
   if (!skillName) {
     console.error(
-      "Usage: node scripts/wiki/wiki-state.mjs find-unprocessed-summaries <skill-name>",
+      "Usage: node skills/knowledge-wiki/synthesis/wiki-state.mjs find-unprocessed-summaries <skill-name>",
     );
     process.exit(1);
   }
@@ -106,7 +106,7 @@ if (subcommand === "find-unprocessed-summaries") {
   const [skillName] = args;
   if (!skillName) {
     console.error(
-      "Usage: node scripts/wiki/wiki-state.mjs set-last-run <skill-name>",
+      "Usage: node skills/knowledge-wiki/synthesis/wiki-state.mjs set-last-run <skill-name>",
     );
     process.exit(1);
   }
@@ -124,7 +124,7 @@ if (subcommand === "find-unprocessed-summaries") {
   const [skillName, pathA, pathB] = args;
   if (!skillName || !pathA || !pathB) {
     console.error(
-      "Usage: node scripts/wiki/wiki-state.mjs dismiss-pair <skill-name> <pathA> <pathB>",
+      "Usage: node skills/knowledge-wiki/synthesis/wiki-state.mjs dismiss-pair <skill-name> <pathA> <pathB>",
     );
     process.exit(1);
   }

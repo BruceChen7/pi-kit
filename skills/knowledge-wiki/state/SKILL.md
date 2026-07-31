@@ -63,6 +63,9 @@ node ./wiki-index.mjs sort --base-path /path/to/knowledge-base
 # Read current entries
 node ./wiki-index.mjs read-concepts --base-path /path/to/knowledge-base
 node ./wiki-index.mjs read-summaries --base-path /path/to/knowledge-base
+# read-summaries lists only the main index by default; pass --all to also
+# include the per-year DailyNotes shards (Wiki/index-<year>.md):
+node ./wiki-index.mjs read-summaries --all --base-path /path/to/knowledge-base
 
 # Insert/update/delete entries
 node ./wiki-index.mjs upsert-concept <slug> "<display-name>" "<description>" --base-path /path/to/knowledge-base

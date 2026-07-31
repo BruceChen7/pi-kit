@@ -2,6 +2,7 @@
  * knowledge-wiki-daily.ts — Daily knowledge base maintenance task.
  *
  * Pipeline:
+ *   Step 0:   split-daily-shards — move DailyNotes entries into Wiki/index-<year>.md (idempotent)
  *   Pre-step: run wiki-summary list-stale to get file list
  *   Step 1-3: Pi subagent with --prompt-template prompts/wiki-summarize.md
  *             - Phase 1: list-stale (from prompt)
@@ -42,6 +43,14 @@ const CONCEPT_SCRIPT = join(
   "knowledge-wiki",
   "concept",
   "wiki-concept.mjs",
+);
+
+const INDEX_SCRIPT = join(
+  PI_KIT_DIR,
+  "skills",
+  "knowledge-wiki",
+  "state",
+  "wiki-index.mjs",
 );
 
 const PROMPT_TEMPLATE_PATH = join(PI_KIT_DIR, "prompts", "wiki-summarize.md");
@@ -112,10 +121,12 @@ export function buildSubagentPrompt(staleFiles: string[]): string {
     `Knowledge base root: ${KNOWLEDGE_DIR}`,
     `wiki-summary.mjs path: ${SUMMARY_SCRIPT}`,
     `wiki-concept.mjs path: ${CONCEPT_SCRIPT}`,
+    `wiki-index.mjs path: ${INDEX_SCRIPT}`,
     "",
     "Replace `<cwd>` with the knowledge base root above for all `--base-path` arguments.",
     "Replace `<path-to-wiki-summary.mjs>` with the absolute path above when running node commands.",
     "Replace `<path-to-wiki-concept.mjs>` with the absolute path above when running node commands.",
+    "Replace `<path-to-wiki-index.mjs>` with the absolute path above when running node commands.",
     "",
     `## Stale Files (${staleFiles.length} total)`,
     "",
@@ -600,6 +611,52 @@ export async function runQmdStep(
 // ── Shell: run the wiki-summarize pipeline across all batches ────────────
 
 /**
+ * Run the one-time `split-daily-shards` migration: move DailyNotes summaries
+ * out of the main index into per-year shard files (Wiki/index-<year>.md).
+ *
+ * Idempotent — once the main index holds no DailyNotes entries the script
+ * reports a no-op. Running it on every daily run keeps knowledge bases that
+ * predate the shard layout from splitting DailyNotes across the main index
+ * and shards as new `upsert-summary` calls route into shards.
+ *
+ * Pure IO shell — no decision logic. Failures are logged and swallowed: the
+ * summarize pipeline still works against an unmigrated index, so a broken
+ * migration must not block the daily run.
+ */
+/** @internal Exported for testing only. */
+export async function runShardMigration(exec: {
+  exec: (
+    cmd: string,
+    args?: string[],
+  ) => Promise<{ code: number; stdout: string; stderr: string }>;
+}): Promise<void> {
+  log.info("Step 0: split-daily-shards migration");
+  try {
+    const result = await exec.exec("node", [
+      INDEX_SCRIPT,
+      "split-daily-shards",
+      "--base-path",
+      KNOWLEDGE_DIR,
+    ]);
+    if (result.code !== 0) {
+      log.warn("split-daily-shards failed", {
+        exitCode: result.code,
+        stderr: result.stderr.slice(0, 500),
+      });
+      return;
+    }
+    const stdout = result.stdout.trim();
+    if (stdout) {
+      log.info("split-daily-shards output", { stdout: stdout.slice(0, 500) });
+    }
+  } catch (err) {
+    log.warn("split-daily-shards threw", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
  * Result of the wiki-summarize pipeline.
  */
 interface SummarizePipelineResult {
@@ -710,6 +767,9 @@ export default defineTask({
     "每日知识库维护：过期摘要重新生成、概念自动链接、qmd 索引和向量嵌入更新",
 
   handler: async (exec) => {
+    // ── Step 0: split DailyNotes into per-year shards (idempotent migration) ──
+    await runShardMigration(exec);
+
     // ── Pre-step: list stale files ──
     log.info("Pre-step: list-stale");
     const staleFiles = await listStaleFiles(exec);

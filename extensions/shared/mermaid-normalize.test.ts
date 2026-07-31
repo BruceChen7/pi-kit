@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   detectDiagramType,
+  diagnoseSequenceDiagramIssues,
   getTypeAdviceForDiagram,
   TIER_1_DIAGRAM_TYPES,
 } from "./mermaid-normalize.ts";
@@ -132,5 +133,79 @@ describe("getTypeAdviceForDiagram", () => {
 
   it("returns undefined for undefined input", () => {
     expect(getTypeAdviceForDiagram(undefined)).toBeUndefined();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  diagnoseSequenceDiagramIssues                                      */
+/* ------------------------------------------------------------------ */
+
+describe("diagnoseSequenceDiagramIssues", () => {
+  it("flags a semicolon inside a Note over line", () => {
+    const diagnostics = diagnoseSequenceDiagramIssues(
+      `sequenceDiagram\n  participant A as "x"\n  Note over A: a;b`,
+    );
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      code: "Note over A: a;b",
+      message: expect.stringContaining("分号"),
+    });
+  });
+
+  it("flags a semicolon inside a message line", () => {
+    const diagnostics = diagnoseSequenceDiagramIssues(
+      `sequenceDiagram\n  A->>B: hi;there\n  participant B as "y"`,
+    );
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      code: "A->>B: hi;there",
+      message: expect.stringContaining("分号"),
+    });
+  });
+
+  it("flags both semicolon lines in one pass (no fail-fast)", () => {
+    const diagnostics = diagnoseSequenceDiagramIssues(
+      `sequenceDiagram\n  A->>B: one;two\n  Note over A: three;four`,
+    );
+
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics.map((d) => d.code)).toEqual([
+      "A->>B: one;two",
+      "Note over A: three;four",
+    ]);
+  });
+
+  it("ignores semicolons in lines that are not messages or notes", () => {
+    const diagnostics = diagnoseSequenceDiagramIssues(
+      `sequenceDiagram\n  participant A as "x;y"\n  A->>B: fine`,
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("ignores non-sequence diagrams entirely", () => {
+    const diagnostics = diagnoseSequenceDiagramIssues(
+      "flowchart TD\n  A --> B\n  B --> C;D",
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("ignores comment lines", () => {
+    const diagnostics = diagnoseSequenceDiagramIssues(
+      `sequenceDiagram\n  %% A->>B: hidden;note\n  A->>B: fine`,
+    );
+
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("returns empty for a clean diagram", () => {
+    const diagnostics = diagnoseSequenceDiagramIssues(
+      `sequenceDiagram\n  participant A as "x"\n  A->>B: hello\n  Note over A: all good`,
+    );
+
+    expect(diagnostics).toEqual([]);
   });
 });

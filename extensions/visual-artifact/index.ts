@@ -9,8 +9,7 @@ import {
 } from "./artifact-store.ts";
 import { openVisualArtifactWindow } from "./glimpse-host.ts";
 import {
-  getTypeAdviceForDiagram,
-  normalizeMermaidNodesInSpec,
+  formatMermaidValidationErrors,
   validateMermaidNodesInSpec,
 } from "./mermaid-boundary.ts";
 import { deriveProjectName, getDefaultProjectRoot } from "./paths.ts";
@@ -134,7 +133,7 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
         ? tryParseJson(String(params.data))
         : undefined;
 
-      const spec: VisualArtifactSpec = normalizeMermaidNodesInSpec({
+      const spec: VisualArtifactSpec = {
         slug,
         title,
         description: String(params.description ?? "").trim() || undefined,
@@ -148,7 +147,7 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
         data: parsedData
           ? (parsedData as Record<string, unknown[]>)
           : undefined,
-      });
+      };
 
       const validated = validate(spec);
       if (!validated.ok) {
@@ -157,48 +156,17 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
         );
       }
 
-      const { errors: mermaidErrors, fixedSpec: mermaidFixedSpec } =
-        await validateMermaidNodesInSpec(validated.spec);
+      const { errors: mermaidErrors } = await validateMermaidNodesInSpec(
+        validated.spec,
+      );
 
-      // If auto-fix saved the day, use the fixed spec seamlessly
-      const finalSpec = mermaidFixedSpec ?? validated.spec;
+      // No auto-fix: agent-provided mermaid code is rendered as-is once it
+      // parses; anything that fails is reported back for the agent to fix.
+      const finalSpec = validated.spec;
 
       if (mermaidErrors.length > 0) {
-        log.warn(
-          `Mermaid validation failed (auto-fix applied to ${mermaidFixedSpec ? "some nodes" : "none"}):\n${mermaidErrors.join("\n")}`,
-        );
-
-        // Build agent-readable error with context — now type-aware
-        // Error format: "nodes[14]<mermaid:flowchart>: Expecting ..."
-        const details = mermaidErrors
-          .map((err) => {
-            // Match with optional diagram type: nodes[N]<mermaid:type> or nodes[N]<mermaid>
-            // Capture everything between : and > so hyphens in stateDiagram-v2 work.
-            const match = err.match(/^(.*?<mermaid(?::([^>]+))?>):\s*(.*)$/u);
-            if (!match) return `  • ${err}`;
-            const [, location, diagramType, parseMsg] = match;
-
-            // Get type-specific advice
-            const typeAdvice = getTypeAdviceForDiagram(diagramType);
-            const adviceLines = typeAdvice
-              ? `    ${typeAdvice.map((a) => `• ${a}`).join("\n    ")}`
-              : `    • Wrap ALL labels with quotes: N["label text"] not N[label text]\n    • Avoid parentheses () inside unquoted labels`;
-
-            return [
-              `  • ${location}`,
-              `    Diagram type: ${diagramType ?? "unknown"}`,
-              `    Parse error: ${parseMsg}`,
-              `    Type-specific tips:\n${adviceLines}`,
-            ].join("\n");
-          })
-          .join("\n");
-
-        return errorResult(
-          `MERMAID_VALIDATION_ERROR: ${mermaidErrors.length} diagram(s) failed to parse.\n\n${details}\n\nIf you continue to have issues, try:\n` +
-            '1. Use N["label"] with double quotes for ALL bracket labels\n' +
-            "2. Avoid inline ::: after bracket — put `:::class` on a separate line\n" +
-            "3. Check the type-specific tips above for your diagram type",
-        );
+        log.warn(`Mermaid validation failed:\n${mermaidErrors.join("\n")}`);
+        return errorResult(formatMermaidValidationErrors(mermaidErrors));
       }
 
       const projectRoot = getDefaultProjectRoot();

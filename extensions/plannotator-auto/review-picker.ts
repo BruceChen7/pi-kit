@@ -21,10 +21,10 @@ import {
   runPlannotatorPlanReviewCli,
 } from "./cli.ts";
 import { getPlanFileConfig } from "./paths.ts";
+import { scanMermaidBlocks } from "./mermaid-validator.ts";
 import {
   listPendingPlanReviews,
   preprocessPlanMarkdown,
-  validateMermaidFences,
 } from "./plan-review.ts";
 import { getSessionState } from "./session.ts";
 
@@ -328,9 +328,12 @@ const runPlanReview = async (
 
     // Markdown plan → PermissionRequest hook
     const normalized = preprocessPlanMarkdown(planContent);
-    const validationError = validateMermaidFences(normalized);
-    if (validationError) {
-      ctx.ui.notify(validationError, "warning");
+    const fenceError = scanMermaidBlocks(normalized).fenceErrors[0];
+    if (fenceError) {
+      ctx.ui.notify(
+        `文件第 ${fenceError.startLine} 行: ${fenceError.message}`,
+        "warning",
+      );
       return;
     }
 

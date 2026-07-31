@@ -33,7 +33,8 @@ function findWikiFiles(dir, knowledgeDir, results = []) {
     } else if (
       entry.isFile() &&
       entry.name.endsWith(".md") &&
-      entry.name !== "index.md"
+      entry.name !== "index.md" &&
+      !/^index-\d{4}\.md$/.test(entry.name)
     ) {
       results.push(
         path.relative(knowledgeDir, fullPath).replaceAll(path.sep, "/"),

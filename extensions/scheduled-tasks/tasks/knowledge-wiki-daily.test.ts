@@ -7,6 +7,7 @@ import {
   buildSubagentPrompt,
   parseResultJson,
   runQmdStep,
+  runShardMigration,
   runSummarizePipeline,
 } from "./knowledge-wiki-daily.js";
 
@@ -89,6 +90,8 @@ describe("buildSubagentPrompt", () => {
     expect(result).toContain("<cwd>");
     expect(result).toContain("<path-to-wiki-summary.mjs>");
     expect(result).toContain("<path-to-wiki-concept.mjs>");
+    expect(result).toContain("<path-to-wiki-index.mjs>");
+    expect(result).toContain("wiki-index.mjs path");
   });
 
   it("should mention the 4-phase workflow", () => {
@@ -334,6 +337,46 @@ describe("runQmdStep", () => {
     });
 
     expect(process.env[key]).toBeUndefined();
+  });
+});
+
+// ── runShardMigration ─────────────────────────────────
+
+describe("runShardMigration", () => {
+  it("runs split-daily-shards with the index script and base path", async () => {
+    const exec = {
+      exec: vi.fn().mockResolvedValue({
+        code: 0,
+        stdout:
+          '{"years": {"2026": 3}, "kept": 2, "backup": "index.md.bak-20260101"}',
+        stderr: "",
+      }),
+    };
+
+    await runShardMigration(exec);
+
+    expect(exec.exec).toHaveBeenCalledWith("node", [
+      expect.stringContaining("knowledge-wiki"),
+      "split-daily-shards",
+      "--base-path",
+      expect.stringContaining("notes"),
+    ]);
+  });
+
+  it("swallows a non-zero exit code", async () => {
+    const exec = {
+      exec: vi.fn().mockResolvedValue({ code: 1, stdout: "", stderr: "boom" }),
+    };
+
+    await expect(runShardMigration(exec)).resolves.toBeUndefined();
+  });
+
+  it("swallows a thrown error", async () => {
+    const exec = {
+      exec: vi.fn().mockRejectedValue(new Error("spawn failed")),
+    };
+
+    await expect(runShardMigration(exec)).resolves.toBeUndefined();
   });
 });
 

@@ -613,7 +613,7 @@ const handleCommandRegistry = (
   rawArgs: string,
 ): void => {
   const parsed = parseCommandRegistryArgs(rawArgs);
-  if (!parsed.ok) {
+  if (parsed.ok === false) {
     ctx.ui.notify(parsed.error, "warning");
     if (parsed.error !== COMMANDS_USAGE) {
       ctx.ui.notify(COMMANDS_USAGE, "info");

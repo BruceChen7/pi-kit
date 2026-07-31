@@ -82,7 +82,9 @@ function registerToolsForTest() {
     registerTool: vi.fn((tool: RegisteredTool) => tools.set(tool.name, tool)),
   };
 
-  registerLibrarianTools(pi as Parameters<typeof registerLibrarianTools>[0]);
+  registerLibrarianTools(
+    pi as unknown as Parameters<typeof registerLibrarianTools>[0],
+  );
 
   return { pi, tools };
 }

@@ -13,7 +13,7 @@ export type AnnotationAuthor = {
 
 export type AnnotationAnchor = {
   nodeId?: string;
-  nodePath: string;
+  nodePath?: string;
   nodeType?: string;
   textSnippet?: string;
 };

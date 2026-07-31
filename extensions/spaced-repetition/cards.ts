@@ -28,8 +28,8 @@
 
 /** 答案的一个结构化分段 */
 export interface AnswerSection {
-  heading: string;  // 中文标题
-  content: string;  // 该分段的内容
+  heading: string; // 中文标题
+  content: string; // 该分段的内容
 }
 
 /** 卡片类型 */
@@ -37,12 +37,12 @@ export type CardType = "qa" | "summary" | "connection";
 
 /** 复习卡片 */
 export interface ReviewCard {
-  concept: string;                // 概念名（英文）
-  slug: string;                   // 文件名
-  question: string;               // 中文问题
-  answer: AnswerSection[];        // 结构化分段答案
-  tags: string[];                 // 标签
-  source: string;                 // 源文件路径
+  concept: string; // 概念名（英文）
+  slug: string; // 文件名
+  question: string; // 中文问题
+  answer: AnswerSection[]; // 结构化分段答案
+  tags: string[]; // 标签
+  source: string; // 源文件路径
   cardType: CardType;
 
   // Type C 专用
@@ -52,18 +52,18 @@ export interface ReviewCard {
 
 /** 解析后的概念 */
 export interface ParsedConcept {
-  slug: string;                   // 文件名
-  title: string;                  // 标题（# Title）
-  tags: string[];                 // frontmatter tags
-  bodySections: BodySection[];    // 正文分段
-  hasSubstance: boolean;          // 是否有正文内容
-  source: string;                 // 源文件路径
+  slug: string; // 文件名
+  title: string; // 标题（# Title）
+  tags: string[]; // frontmatter tags
+  bodySections: BodySection[]; // 正文分段
+  hasSubstance: boolean; // 是否有正文内容
+  source: string; // 源文件路径
 }
 
 /** 正文分段 */
 export interface BodySection {
-  heading: string;                // 段落标题（英文原文）
-  content: string;                // 段落内容
+  heading: string; // 段落标题（英文原文）
+  content: string; // 段落内容
 }
 
 // ── 常量 ───────────────────────────────────────────────────────────────────
@@ -195,8 +195,8 @@ export function extractBodySections(content: string): BodySection[] {
   let lastMatch = firstMatch;
 
   // 遍历后续 ## 标题
-  let match: RegExpExecArray | null;
-  while ((match = headingPattern.exec(body)) !== null) {
+  let match = headingPattern.exec(body);
+  while (match !== null) {
     // 从上个标题到这个标题之间的内容
     const sectionContent = body
       .slice(lastMatch.index + lastMatch[0].length, match.index)
@@ -207,6 +207,7 @@ export function extractBodySections(content: string): BodySection[] {
     lastIndex = match.index;
     lastHeading = match[1].trim();
     lastMatch = match;
+    match = headingPattern.exec(body);
   }
 
   // 最后一个 ## 标题后的内容
@@ -379,17 +380,17 @@ function translateHeading(heading: string): string {
     概述: "概述",
     "Common Causes": "常见原因",
     "Detection and Prevention": "检测与预防",
-    "Detection": "检测方法",
-    "Prevention": "预防措施",
-    "Examples": "示例",
-    "Usage": "用法",
-    "Implementation": "实现",
-    "Performance": "性能",
-    "Comparison": "对比",
-    "Design": "设计",
-    "Architecture": "架构",
-    "Background": "背景",
-    "Motivation": "动机",
+    Detection: "检测方法",
+    Prevention: "预防措施",
+    Examples: "示例",
+    Usage: "用法",
+    Implementation: "实现",
+    Performance: "性能",
+    Comparison: "对比",
+    Design: "设计",
+    Architecture: "架构",
+    Background: "背景",
+    Motivation: "动机",
     "Key Concepts": "核心概念",
     "How it works": "工作原理",
     "How It Works": "工作原理",

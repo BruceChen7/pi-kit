@@ -13,8 +13,10 @@
 
 import { defineTask } from "../../shared/deferred-queue/define-task.ts";
 import { log } from "../../shared/deferred-queue/logger.ts";
-import { isTelegramConfigured } from "../../shared/telegram.ts";
-import { sendTelegramNotification } from "../../shared/telegram.ts";
+import {
+  isTelegramConfigured,
+  sendTelegramNotification,
+} from "../../shared/telegram.ts";
 
 export default defineTask({
   id: "spaced-repetition-daily",

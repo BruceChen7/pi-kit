@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  type ParsedConcept,
   evaluateSubstance,
   extractBodySections,
   extractTags,
@@ -9,6 +8,7 @@ import {
   generateConnectionCard,
   generateQaCard,
   generateSummaryCard,
+  type ParsedConcept,
   parseConceptContent,
   summarizeSection,
 } from "./cards.js";
@@ -189,20 +189,12 @@ describe("evaluateSubstance", () => {
       "go-http-server",
       "/path.md",
     );
-    expect(
-      evaluateSubstance(parsed.bodySections, RICH_CONCEPT),
-    ).toBe(true);
+    expect(evaluateSubstance(parsed.bodySections, RICH_CONCEPT)).toBe(true);
   });
 
   it("should return false for thin concept", () => {
-    const parsed = parseConceptContent(
-      THIN_CONCEPT,
-      "async-await",
-      "/path.md",
-    );
-    expect(
-      evaluateSubstance(parsed.bodySections, THIN_CONCEPT),
-    ).toBe(false);
+    const parsed = parseConceptContent(THIN_CONCEPT, "async-await", "/path.md");
+    expect(evaluateSubstance(parsed.bodySections, THIN_CONCEPT)).toBe(false);
   });
 });
 
@@ -288,7 +280,8 @@ describe("generateAllCards", () => {
 
 describe("summarizeSection", () => {
   it("should limit to approximately 3 sentences", () => {
-    const long = "First sentence. Second sentence. Third sentence. Fourth sentence. Fifth sentence.";
+    const long =
+      "First sentence. Second sentence. Third sentence. Fourth sentence. Fifth sentence.";
     const result = summarizeSection(long);
     // First 3 sentences
     expect(result).toContain("First sentence");
@@ -298,7 +291,9 @@ describe("summarizeSection", () => {
 
   it("should truncate when over 200 chars", () => {
     const veryLong =
-      "This is a very long sentence that goes on and on and on about various topics. ".repeat(6);
+      "This is a very long sentence that goes on and on and on about various topics. ".repeat(
+        6,
+      );
     const result = summarizeSection(veryLong);
     // Should be truncated to ~200 chars with ellipsis
     expect(result.length).toBeLessThanOrEqual(203); // 200 + ellipsis

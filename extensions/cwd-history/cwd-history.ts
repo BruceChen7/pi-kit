@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -27,14 +28,14 @@ type SessionMessageContent = {
 
 type SessionMessage = {
   role?: string;
-  content?: SessionMessageContent[];
-  timestamp?: number;
+  content?: string | SessionMessageContent[];
+  timestamp?: string | number;
 };
 
 type SessionEntry = {
   type?: string;
   message?: SessionMessage;
-  timestamp?: number;
+  timestamp?: string | number;
 };
 
 class HistoryEditor extends CustomEditor {
@@ -154,7 +155,7 @@ async function loadPromptHistoryForCwd(
     : undefined;
   const prompts: PromptEntry[] = [];
 
-  let entries: fs.Dirent[] = [];
+  let entries: Dirent[] = [];
   try {
     entries = await fs.readdir(sessionDir, { withFileTypes: true });
   } catch {

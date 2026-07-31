@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createNewEntry } from "./sm2.js";
 import {
   createEmptyState,
   getActiveSlugs,
@@ -6,18 +7,22 @@ import {
   summarizeState,
   syncConcepts,
 } from "./state.js";
-import { createNewEntry } from "./sm2.js";
 
 // ── Test helpers ───────────────────────────────────────
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
 
-function makeEntry(slug: string, overrides: Partial<ReturnType<typeof createNewEntry>> = {}) {
+function makeEntry(
+  slug: string,
+  overrides: Partial<ReturnType<typeof createNewEntry>> = {},
+) {
   return { ...createNewEntry(slug, 0), ...overrides };
 }
 
-function makeState(concepts: Record<string, ReturnType<typeof createNewEntry>>) {
+function makeState(
+  concepts: Record<string, ReturnType<typeof createNewEntry>>,
+) {
   return { version: 1 as const, concepts };
 }
 

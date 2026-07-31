@@ -5,33 +5,35 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
 import { homedir } from "node:os";
+import path from "node:path";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
-import { sendTelegramNotification, isTelegramConfigured } from "../shared/telegram.ts";
+import {
+  isTelegramConfigured,
+  sendTelegramNotification,
+} from "../shared/telegram.ts";
 
 import {
   generateAllCards,
-  parseConceptContent,
   type ParsedConcept,
+  parseConceptContent,
 } from "./cards.ts";
-import { computeNextReview, type ConceptEntry } from "./sm2.ts";
-import { createNewEntry } from "./sm2.ts";
+import { type ConceptEntry, computeNextReview, createNewEntry } from "./sm2.ts";
 import {
-  type ReviewState,
   loadState,
+  type ReviewState,
   saveState,
   selectConcepts,
   summarizeState,
   syncConcepts,
 } from "./state.ts";
 import { formatCardsForTelegram } from "./telegram.ts";
-import { createCardWidget, type CardResult } from "./widget.ts";
+import { type CardResult, createCardWidget } from "./widget.ts";
 
 // ── Logger ──────────────────────────────────────────────
 
@@ -127,10 +129,7 @@ function scanConceptFiles(conceptsDir: string): string[] {
 /**
  * 读取概念文件并解析。
  */
-function readConcept(
-  conceptsDir: string,
-  slug: string,
-): ParsedConcept | null {
+function readConcept(conceptsDir: string, slug: string): ParsedConcept | null {
   const filePath = path.join(conceptsDir, `${slug}.md`);
   try {
     const content = fs.readFileSync(filePath, "utf-8");
@@ -162,13 +161,7 @@ async function findRelatedConcept(
 
     const { stdout } = await execFileAsync(
       "qmd",
-      [
-        "search",
-        keywords,
-        "--json",
-        "-n",
-        "5",
-      ],
+      ["search", keywords, "--json", "-n", "5"],
       {
         cwd: process.cwd(),
         timeout: 15_000,
@@ -276,7 +269,11 @@ async function runRecallSession(
   }
 
   // 5. 生成卡片（对每个概念尝试发现关联）
-  const allCards: Array<{ card: import("./cards.ts").ReviewCard; slug: string; concept: string }> = [];
+  const allCards: Array<{
+    card: import("./cards.ts").ReviewCard;
+    slug: string;
+    concept: string;
+  }> = [];
   for (const parsed of parsedConcepts) {
     // 尝试找关联概念（Type C）
     let relatedConcept: string | undefined;
@@ -297,17 +294,12 @@ async function runRecallSession(
   const reviewCards = allCards.map((c) => c.card);
 
   // 6. 打开交互式 widget
-  ctx.ui.notify(
-    `打开复习：${reviewCards.length} 张卡片`,
-    "info",
-  );
+  ctx.ui.notify(`打开复习：${reviewCards.length} 张卡片`, "info");
 
   const widgetResult = await ctx.ui.custom<{
     results: CardResult[];
     cancelled: boolean;
-  }>((tui, theme, _kb, done) =>
-    createCardWidget(reviewCards, theme, done),
-  );
+  }>((tui, theme, _kb, done) => createCardWidget(reviewCards, theme, done));
 
   if (widgetResult.cancelled) {
     ctx.ui.notify("复习已取消", "info");
@@ -354,11 +346,7 @@ async function runRecallSession(
     const totalCount = widgetResult.results.length;
 
     const stats = summarizeState(updatedState, now);
-    const msg = formatCardsForTelegram(
-      reviewCards,
-      correctCount,
-      totalCount,
-    );
+    const msg = formatCardsForTelegram(reviewCards, correctCount, totalCount);
 
     try {
       await sendTelegramNotification(msg, undefined, true);
@@ -368,9 +356,7 @@ async function runRecallSession(
   }
 
   // 11. 完成通知
-  const correctCount = widgetResult.results.filter(
-    (r) => r.grade === 4,
-  ).length;
+  const correctCount = widgetResult.results.filter((r) => r.grade === 4).length;
   ctx.ui.notify(
     `复习完成：${correctCount}/${widgetResult.results.length} 记住了`,
     "info",
@@ -387,10 +373,7 @@ export default function spacedRepetitionExtension(pi: ExtensionAPI): void {
 
       // 检查概念目录是否存在
       if (!fs.existsSync(config.conceptsDir)) {
-        ctx.ui.notify(
-          `概念目录不存在：${config.conceptsDir}`,
-          "error",
-        );
+        ctx.ui.notify(`概念目录不存在：${config.conceptsDir}`, "error");
         return;
       }
 

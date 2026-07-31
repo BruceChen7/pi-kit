@@ -176,7 +176,7 @@ describe("scanPlanFiles (shell integration)", () => {
     const { scanPlanFiles } = await import("./review-picker.js");
     const ctx = createTestContext(repoRoot);
 
-    const files = scanPlanFiles(ctx);
+    const files = scanPlanFiles(ctx as never);
     expect(files).toEqual([]);
   });
 
@@ -216,7 +216,7 @@ describe("scanPlanFiles (shell integration)", () => {
     const { scanPlanFiles } = await import("./review-picker.js");
     const ctx = createTestContext(repoRoot);
 
-    const files = scanPlanFiles(ctx);
+    const files = scanPlanFiles(ctx as never);
     expect(files).toHaveLength(1);
     expect(files[0]?.relativePath).toContain("2026-01-01-my-plan.md");
   });

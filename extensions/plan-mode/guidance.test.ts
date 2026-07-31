@@ -37,7 +37,7 @@ describe("MERMAID_CONFIG_LIGHT", () => {
     // Dynamically extract all keys under themeVariables and verify
     // each has a hex color assignment — no hardcoded key list needed.
     const themeBlock = MERMAID_CONFIG_LIGHT.match(
-      /themeVariables:\n((?:    \w+: .*\n?)*)/,
+      /themeVariables:\n((?: {4}\w+: .*\n?)*)/,
     );
     expect(themeBlock).not.toBeNull();
     const assignments = (themeBlock![1].match(/^\s{4}\w+:.+$/gm) ?? [])

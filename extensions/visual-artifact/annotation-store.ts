@@ -14,6 +14,14 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { getArtifactBundleDir, getTempDir } from "./paths.ts";
+import type {
+  AnnotationAnchor,
+  AnnotationAuthor,
+  AnnotationDocument,
+  AnnotationMessage,
+  AnnotationMutation,
+  AnnotationThread,
+} from "./shared/annotation-types.ts";
 
 /* ------------------------------------------------------------------ */
 /*  Types — re-exported from shared canonical source                   */

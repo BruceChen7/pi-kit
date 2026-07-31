@@ -370,7 +370,7 @@ async function collectMermaidErrors(
   const fixes = new Map<string, FixEntry>();
 
   for (const { path, codeKey, code, result } of results) {
-    if (!result.ok) {
+    if (result.ok === false) {
       const diagramType = result.diagramType ?? "unknown";
       errors.push(`${path}<mermaid:${diagramType}>: ${result.error}`);
     }

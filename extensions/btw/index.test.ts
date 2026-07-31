@@ -4,7 +4,7 @@ import btwExtension from "./index.js";
 const streamSimple = vi.hoisted(() => vi.fn());
 const completeSimple = vi.hoisted(() => vi.fn());
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   streamSimple,
   completeSimple,
 }));

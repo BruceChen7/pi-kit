@@ -262,7 +262,7 @@ describe("notify failure scenarios", () => {
 const mockHerdrExec = async (error?: Error) => {
   const execFile = await loadExecFile();
   vi.mocked(execFile).mockImplementation((_file, _args, _options, callback) => {
-    callback(error ?? null, "", "");
+    callback((error ?? null) as never, "", "");
     return {} as never;
   });
   return execFile;

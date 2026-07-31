@@ -57,6 +57,21 @@ const QMD_EMBED_MODEL =
  */
 const BATCH_SIZE = 3;
 
+/**
+ * Maximum number of subagent batches to run concurrently.
+ * Each batch spawns its own isolated Pi process; this cap prevents
+ * overwhelming the machine / model with too many parallel agents.
+ */
+const MAX_CONCURRENT_BATCHES = 3;
+
+/**
+ * Per-batch subagent timeout (10 minutes).
+ * Batches run concurrently (up to MAX_CONCURRENT_BATCHES), so this bounds the
+ * worst-case wall-clock time to roughly
+ * ceil(batchCount / MAX_CONCURRENT_BATCHES) × 10 min.
+ */
+const SUBAGENT_TIMEOUT_MS = 600_000;
+
 // ── Subagent prompt builder ───────────────────────────────────────────────
 
 /**
@@ -224,7 +239,7 @@ async function listStaleFiles(exec: {
     return parsed.sources;
   } catch (err) {
     log.warn("list-stale threw", {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     });
     return [];
   }
@@ -327,6 +342,20 @@ export interface BatchResult {
 }
 
 /**
+ * Pure: normalize an unknown thrown value into a human-readable message.
+ */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Pure: convert a thrown error into a failed batch result.
+ */
+function toBatchFailure(err: unknown): BatchResult {
+  return { ok: false, done: errorMessage(err) };
+}
+
+/**
  * Pure: split an array into fixed-size batches.
  *
  * Pure — no side effects, no IO. Easy to test with table tests.
@@ -344,14 +373,102 @@ function partitionIntoBatches<T>(items: T[], batchSize: number): T[][] {
 }
 
 /**
+ * Pure: aggregate per-batch results into the pipeline outcome.
+ *
+ * Pure — no side effects, no IO. Failures are collected separately so the
+ * shell can decide how to surface them (logs, notifications) without the
+ * aggregation logic being entangled with side effects.
+ *
+ * @param results - Batch results in batch order
+ * @returns Aggregated outcome: created/updated summaries, done text, failures
+ */
+export interface PipelineAggregation {
+  createdSummaries: string[];
+  wikiSummaryDone: string;
+  failed: Array<{ batch: number; error: string }>;
+}
+
+/** @internal Exported for testing only. */
+export function aggregateBatchResults(
+  results: BatchResult[],
+): PipelineAggregation {
+  const createdSummaries: string[] = [];
+  const failed: Array<{ batch: number; error: string }> = [];
+  let wikiSummaryDone = "";
+
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+
+    if (!result.ok) {
+      failed.push({ batch: i + 1, error: result.done ?? "unknown error" });
+      continue;
+    }
+
+    if (result.summaries) {
+      createdSummaries.push(...result.summaries);
+    }
+    if (result.done) {
+      if (wikiSummaryDone) wikiSummaryDone += " | ";
+      wikiSummaryDone += `Batch ${i + 1}: ${result.done}`;
+    }
+  }
+
+  return { createdSummaries, wikiSummaryDone, failed };
+}
+
+/**
+ * Run batch jobs with bounded concurrency, collecting results in input order
+ * regardless of completion order.
+ *
+ * Fixed-size worker pool over a shared index cursor. Results are written at
+ * `results[index]`, so the final array is always in input order even when
+ * workers finish out of order.
+ *
+ * A job rejection degrades to a failed result (`{ ok: false, done }`) instead
+ * of rejecting the whole pool — partially collected results are never lost.
+ * Use `onRejected` for shell-side observability (e.g. logging) of throws.
+ *
+ * @param batches - Batches to process (each a stale-file list)
+ * @param concurrency - Max number of jobs running at once
+ * @param job - Async job; receives the batch and its index
+ * @param onRejected - Optional shell hook fired when a job throws
+ * @returns Results in input (batch) order
+ */
+async function runBatchesConcurrently(
+  batches: string[][],
+  concurrency: number,
+  job: (batch: string[], index: number) => Promise<BatchResult>,
+  onRejected?: (error: unknown, index: number) => void,
+): Promise<BatchResult[]> {
+  const results: BatchResult[] = new Array(batches.length);
+  let nextIndex = 0;
+
+  const worker = async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= batches.length) break;
+      results[index] = await job(batches[index], index).catch((err) => {
+        onRejected?.(err, index);
+        return toBatchFailure(err);
+      });
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, batches.length) }, worker),
+  );
+  return results;
+}
+
+/**
  * Process a batch of stale files through a single Pi subagent call.
  *
  * Builds a scoped prompt for the batch, runs the wiki-summarize pipeline
  * (Phase 1-4), and returns the parsed result.
  *
- * The subagent has a generous timeout and the prompt template loaded via
- * --prompt-template. Each batch is independent — the subagent does not know
- * about other batches.
+ * The subagent has a 10-minute timeout (SUBAGENT_TIMEOUT_MS) and the prompt
+ * template loaded via --prompt-template. Each batch is independent — the
+ * subagent does not know about other batches.
  */
 async function processBatch(
   exec: {
@@ -381,7 +498,7 @@ async function processBatch(
   const result = await exec.subagent({
     prompt,
     promptTemplatePaths: [PROMPT_TEMPLATE_PATH],
-    timeoutMs: 300_000,
+    timeoutMs: SUBAGENT_TIMEOUT_MS,
   });
 
   const parsed = parseResultJson(result.summary);
@@ -459,7 +576,7 @@ export async function runQmdStep(
     log.info(`${label} completed`);
     return true;
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = errorMessage(err);
     log.warn(`${label} threw`, { error: errorMsg });
 
     await sendTelegramNotification(
@@ -492,10 +609,19 @@ interface SummarizePipelineResult {
 
 /**
  * Run the wiki-summarize pipeline for all stale files, processing them
- * in independent batches via the Pi subagent.
+ * in independent batches via the Pi subagent with bounded concurrency
+ * (up to MAX_CONCURRENT_BATCHES at a time).
  *
  * Pure shell — handles IO (subagent calls, logging, Telegram notifications).
  * Returns accumulated results for the handler to use in subsequent steps.
+ *
+ * Each batch is independent: a failure (returned or thrown) only affects that
+ * batch. Results are collected in batch order regardless of completion order,
+ * keeping `createdSummaries` / `wikiSummaryDone` deterministic.
+ *
+ * Shared concept files (Phase 3 linking) are safe under concurrency:
+ * wiki-concept.mjs serializes per-concept mutations via inter-process lock
+ * files, so parallel batches cannot lose each other's updates.
  */
 /** @internal Exported for testing only. */
 export async function runSummarizePipeline(
@@ -513,11 +639,9 @@ export async function runSummarizePipeline(
   },
   staleFiles: string[],
 ): Promise<SummarizePipelineResult> {
-  const createdSummaries: string[] = [];
-
   if (staleFiles.length === 0) {
     log.info("no stale files, skipping subagent");
-    return { createdSummaries, wikiSummaryDone: "No stale files found." };
+    return { createdSummaries: [], wikiSummaryDone: "No stale files found." };
   }
 
   // ── Build batches ──
@@ -526,65 +650,44 @@ export async function runSummarizePipeline(
     totalFiles: staleFiles.length,
     batchCount: batches.length,
     batchSize: BATCH_SIZE,
+    maxConcurrent: MAX_CONCURRENT_BATCHES,
   });
 
-  // ── Process batches sequentially ──
-  let batchFailed = false;
-  let wikiSummaryDone = "";
-
-  try {
-    for (let i = 0; i < batches.length; i++) {
-      const batchResult = await processBatch(
-        exec,
-        batches[i],
-        i,
-        batches.length,
-      );
-
-      if (!batchResult.ok) {
-        const errorMsg = batchResult.done ?? "unknown error";
-        log.warn("wiki-summarize batch failed", {
-          batch: `${i + 1}/${batches.length}`,
-          error: errorMsg,
-        });
-
-        await sendTelegramNotification(
-          buildTelegramFailureMessage(
-            `Step 1-3 (wiki-summarize batch ${i + 1}/${batches.length})`,
-            errorMsg,
-          ),
-        ).catch((e) =>
-          log.warn("telegram notify failed", { error: String(e) }),
-        );
-        batchFailed = true;
-        // Continue with remaining batches — each batch is independent
-        continue;
-      }
-
-      if (batchResult.summaries) {
-        createdSummaries.push(...batchResult.summaries);
-      }
-      if (batchResult.done) {
-        if (wikiSummaryDone) wikiSummaryDone += " | ";
-        wikiSummaryDone += `Batch ${i + 1}: ${batchResult.done}`;
-      }
-
-      log.info("wiki-summarize batch completed", {
-        batch: `${i + 1}/${batches.length}`,
-        summariesCount: batchResult.summaries?.length ?? 0,
+  // ── Process batches with bounded concurrency ──
+  // A thrown subagent error degrades to a failed batch inside the pool
+  // (onRejected keeps the shell-level log); collected results are never lost.
+  // Concept-file writes stay safe: wiki-concept.mjs locks per concept slug.
+  const results = await runBatchesConcurrently(
+    batches,
+    MAX_CONCURRENT_BATCHES,
+    (batch, index) => processBatch(exec, batch, index, batches.length),
+    (err, index) => {
+      log.warn("wiki-summarize batch threw", {
+        batch: `${index + 1}/${batches.length}`,
+        error: errorMessage(err),
       });
-    }
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    log.warn("subagent batch iteration threw", { error: errorMsg });
+    },
+  );
+
+  // ── Aggregate results (pure) → surface failures (shell) ──
+  const { createdSummaries, wikiSummaryDone, failed } =
+    aggregateBatchResults(results);
+
+  for (const f of failed) {
+    log.warn("wiki-summarize batch failed", {
+      batch: `${f.batch}/${results.length}`,
+      error: f.error,
+    });
 
     await sendTelegramNotification(
-      buildTelegramFailureMessage("Step 1-3 (wiki-summarize)", errorMsg),
+      buildTelegramFailureMessage(
+        `Step 1-3 (wiki-summarize batch ${f.batch}/${results.length})`,
+        f.error,
+      ),
     ).catch((e) => log.warn("telegram notify failed", { error: String(e) }));
-    batchFailed = true;
   }
 
-  if (batchFailed) {
+  if (failed.length > 0) {
     log.warn("wiki-summarize pipeline partially completed", {
       summariesCount: createdSummaries.length,
       note: "some batches failed, see previous warnings",

@@ -14,12 +14,17 @@
  *   node scripts/wiki/wiki-concept.mjs delete-connected-concept <slug> <linked-slug>
  *
  * --base-path can be added at any position to override the KNOWLEDGE_DIR.
+ *
+ * All mutating subcommands serialize per concept via an inter-process lock
+ * (./lib/concept-lock.mjs), so concurrent invocations — e.g. parallel
+ * wiki-summarize subagent batches — cannot lose each other's updates.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildConceptContent } from "./lib/concept-content.mjs";
+import { conceptLockPath, withConceptLock } from "./lib/concept-lock.mjs";
 import {
   CONCEPTS_DIR,
   conceptFullPath,
@@ -56,7 +61,7 @@ function writeConcept(slug, content) {
 
 // --- Subcommands ---
 
-function cmdCreate(args) {
+async function cmdCreate(args) {
   const slug = args[0];
   const displayName = args[1];
   if (!slug || !displayName) {
@@ -74,38 +79,43 @@ function cmdCreate(args) {
   const icon = iconIdx !== -1 && args[iconIdx + 1] ? args[iconIdx + 1] : "note";
   const tags = tagsIdx !== -1 && args[tagsIdx + 1] ? args[tagsIdx + 1] : "[]";
 
-  if (fs.existsSync(conceptFullPath(slug))) {
-    console.error(`Concept file already exists: ${conceptRelPath(slug)}`);
-    console.error(
-      "Use insert-source / insert-connected-concept to modify existing concepts.",
-    );
-    process.exit(1);
-  }
+  // The existsSync check and write must be atomic: two concurrent creators
+  // for the same slug would otherwise both pass the check and clobber each
+  // other's file (last-write-wins).
+  await withConceptLock(conceptLockPath(CONCEPTS_DIR, slug), () => {
+    if (fs.existsSync(conceptFullPath(slug))) {
+      console.error(`Concept file already exists: ${conceptRelPath(slug)}`);
+      console.error(
+        "Use insert-source / insert-connected-concept to modify existing concepts.",
+      );
+      process.exit(1);
+    }
 
-  fs.mkdirSync(CONCEPTS_DIR, { recursive: true });
+    fs.mkdirSync(CONCEPTS_DIR, { recursive: true });
 
-  // Read body content from stdin when data is piped (non-TTY stdin).
-  // This allows the caller to pipe body text: `echo "body" | node ... create ...`
-  // or redirect from a temp file: `node ... create ... < temp-body-file`
-  let body = "";
-  if (!process.stdin.isTTY) {
-    const piped = fs.readFileSync(0, "utf8").trimEnd();
-    if (piped) body = piped;
-  }
+    // Read body content from stdin when data is piped (non-TTY stdin).
+    // This allows the caller to pipe body text: `echo "body" | node ... create ...`
+    // or redirect from a temp file: `node ... create ... < temp-body-file`
+    let body = "";
+    if (!process.stdin.isTTY) {
+      const piped = fs.readFileSync(0, "utf8").trimEnd();
+      if (piped) body = piped;
+    }
 
-  const content = buildConceptContent({
-    displayName,
-    type,
-    icon,
-    tags,
-    body,
+    const content = buildConceptContent({
+      displayName,
+      type,
+      icon,
+      tags,
+      body,
+    });
+
+    fs.writeFileSync(conceptFullPath(slug), content, "utf8");
+    console.log(conceptRelPath(slug));
   });
-
-  fs.writeFileSync(conceptFullPath(slug), content, "utf8");
-  console.log(conceptRelPath(slug));
 }
 
-function cmdInsertSource(args) {
+async function cmdInsertSource(args) {
   const [slug, summaryPath] = args;
   if (!slug || !summaryPath) {
     console.error(
@@ -114,26 +124,30 @@ function cmdInsertSource(args) {
     process.exit(1);
   }
 
-  const summaryFile = path.join(KNOWLEDGE_DIR, `${summaryPath}.md`);
-  if (!fs.existsSync(summaryFile)) {
-    console.error(`Error: summary file not found: ${summaryPath}.md`);
-    process.exit(1);
-  }
+  // Read-modify-write must be atomic: two concurrent inserters would both
+  // read the pre-insert state and the last write would drop the other's link.
+  await withConceptLock(conceptLockPath(CONCEPTS_DIR, slug), () => {
+    const summaryFile = path.join(KNOWLEDGE_DIR, `${summaryPath}.md`);
+    if (!fs.existsSync(summaryFile)) {
+      console.error(`Error: summary file not found: ${summaryPath}.md`);
+      process.exit(1);
+    }
 
-  const link = `[[${summaryPath}]]`;
-  const content = readConcept(slug);
+    const link = `[[${summaryPath}]]`;
+    const content = readConcept(slug);
 
-  if (sectionContains(content, "Sources", link)) {
-    console.log(`Already present in ${slug}: ${summaryPath}`);
-    return;
-  }
+    if (sectionContains(content, "Sources", link)) {
+      console.log(`Already present in ${slug}: ${summaryPath}`);
+      return;
+    }
 
-  const updated = insertBulletInSection(content, "Sources", `- ${link}`);
-  writeConcept(slug, updated);
-  console.log(`Inserted source into ${slug}.`);
+    const updated = insertBulletInSection(content, "Sources", `- ${link}`);
+    writeConcept(slug, updated);
+    console.log(`Inserted source into ${slug}.`);
+  });
 }
 
-function cmdDeleteSource(args) {
+async function cmdDeleteSource(args) {
   const [slug, summaryPath] = args;
   if (!slug || !summaryPath) {
     console.error(
@@ -142,24 +156,26 @@ function cmdDeleteSource(args) {
     process.exit(1);
   }
 
-  const link = `[[${summaryPath}]]`;
-  const content = readConcept(slug);
-  const { content: updated, found } = deleteBulletFromSection(
-    content,
-    "Sources",
-    (line) => line.includes(link),
-  );
+  await withConceptLock(conceptLockPath(CONCEPTS_DIR, slug), () => {
+    const link = `[[${summaryPath}]]`;
+    const content = readConcept(slug);
+    const { content: updated, found } = deleteBulletFromSection(
+      content,
+      "Sources",
+      (line) => line.includes(link),
+    );
 
-  if (!found) {
-    console.log(`Not found in ${slug}: ${summaryPath}`);
-    return;
-  }
+    if (!found) {
+      console.log(`Not found in ${slug}: ${summaryPath}`);
+      return;
+    }
 
-  writeConcept(slug, updated);
-  console.log(`Deleted source from ${slug}.`);
+    writeConcept(slug, updated);
+    console.log(`Deleted source from ${slug}.`);
+  });
 }
 
-function cmdInsertConnectedConcept(args) {
+async function cmdInsertConnectedConcept(args) {
   const [slug, linkedSlug, displayName] = args;
   if (!slug || !linkedSlug || !displayName) {
     console.error(
@@ -173,31 +189,33 @@ function cmdInsertConnectedConcept(args) {
     return;
   }
 
-  const link = `[[Wiki/Concepts/${linkedSlug}|${displayName}]]`;
-  const content = readConcept(slug);
+  await withConceptLock(conceptLockPath(CONCEPTS_DIR, slug), () => {
+    const link = `[[Wiki/Concepts/${linkedSlug}|${displayName}]]`;
+    const content = readConcept(slug);
 
-  if (
-    sectionContains(
+    if (
+      sectionContains(
+        content,
+        "Connected Concepts",
+        `[[Wiki/Concepts/${linkedSlug}|`,
+      )
+    ) {
+      console.log(`Already present in ${slug}: ${linkedSlug}`);
+      return;
+    }
+
+    const updated = insertBulletInSection(
       content,
       "Connected Concepts",
-      `[[Wiki/Concepts/${linkedSlug}|`,
-    )
-  ) {
-    console.log(`Already present in ${slug}: ${linkedSlug}`);
-    return;
-  }
-
-  const updated = insertBulletInSection(
-    content,
-    "Connected Concepts",
-    `- ${link}`,
-    { insertBefore: "Sources" },
-  );
-  writeConcept(slug, updated);
-  console.log(`Inserted connected concept into ${slug}.`);
+      `- ${link}`,
+      { insertBefore: "Sources" },
+    );
+    writeConcept(slug, updated);
+    console.log(`Inserted connected concept into ${slug}.`);
+  });
 }
 
-function cmdDeleteConnectedConcept(args) {
+async function cmdDeleteConnectedConcept(args) {
   const [slug, linkedSlug] = args;
   if (!slug || !linkedSlug) {
     console.error(
@@ -206,22 +224,24 @@ function cmdDeleteConnectedConcept(args) {
     process.exit(1);
   }
 
-  const linkWithAlias = `[[Wiki/Concepts/${linkedSlug}|`;
-  const linkBare = `[[Wiki/Concepts/${linkedSlug}]]`;
-  const content = readConcept(slug);
-  const { content: updated, found } = deleteBulletFromSection(
-    content,
-    "Connected Concepts",
-    (line) => line.includes(linkWithAlias) || line.includes(linkBare),
-  );
+  await withConceptLock(conceptLockPath(CONCEPTS_DIR, slug), () => {
+    const linkWithAlias = `[[Wiki/Concepts/${linkedSlug}|`;
+    const linkBare = `[[Wiki/Concepts/${linkedSlug}]]`;
+    const content = readConcept(slug);
+    const { content: updated, found } = deleteBulletFromSection(
+      content,
+      "Connected Concepts",
+      (line) => line.includes(linkWithAlias) || line.includes(linkBare),
+    );
 
-  if (!found) {
-    console.log(`Not found in ${slug}: ${linkedSlug}`);
-    return;
-  }
+    if (!found) {
+      console.log(`Not found in ${slug}: ${linkedSlug}`);
+      return;
+    }
 
-  writeConcept(slug, updated);
-  console.log(`Deleted connected concept from ${slug}.`);
+    writeConcept(slug, updated);
+    console.log(`Deleted connected concept from ${slug}.`);
+  });
 }
 
 // --- Dispatch ---
@@ -234,27 +254,39 @@ if (
 ) {
   const [, , subcommand, ...rest] = process.argv;
 
-  switch (subcommand) {
-    case "create":
-      cmdCreate(rest);
-      break;
-    case "insert-source":
-      cmdInsertSource(rest);
-      break;
-    case "delete-source":
-      cmdDeleteSource(rest);
-      break;
-    case "insert-connected-concept":
-      cmdInsertConnectedConcept(rest);
-      break;
-    case "delete-connected-concept":
-      cmdDeleteConnectedConcept(rest);
-      break;
-    default:
-      console.error(`Unknown subcommand: ${subcommand}`);
-      console.error(
-        "Subcommands: create, insert-source, delete-source, insert-connected-concept, delete-connected-concept",
-      );
-      process.exit(1);
-  }
+  // Mutating commands are async (they hold the concept lock); a hard
+  // process.exit inside a lock leaves the lock behind, so top-level errors
+  // (e.g. lock acquisition timeout) exit via the catch below.
+  const run = (async () => {
+    switch (subcommand) {
+      case "create":
+        await cmdCreate(rest);
+        break;
+      case "insert-source":
+        await cmdInsertSource(rest);
+        break;
+      case "delete-source":
+        await cmdDeleteSource(rest);
+        break;
+      case "insert-connected-concept":
+        await cmdInsertConnectedConcept(rest);
+        break;
+      case "delete-connected-concept":
+        await cmdDeleteConnectedConcept(rest);
+        break;
+      default:
+        console.error(`Unknown subcommand: ${subcommand}`);
+        console.error(
+          "Subcommands: create, insert-source, delete-source, insert-connected-concept, delete-connected-concept",
+        );
+        process.exit(1);
+    }
+  })();
+
+  run.catch((err) => {
+    console.error(
+      `wiki-concept: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exit(1);
+  });
 }

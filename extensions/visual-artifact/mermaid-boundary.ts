@@ -15,8 +15,8 @@ export {
   TIER_1_DIAGRAM_TYPES,
 } from "../shared/mermaid-normalize.ts";
 export {
-  type MermaidParser,
   getMermaidParser,
+  type MermaidParser,
   resetMermaidModule,
 } from "../shared/mermaid-runtime.ts";
 

@@ -20,8 +20,8 @@ import {
   runPlannotatorAnnotateCli,
   runPlannotatorPlanReviewCli,
 } from "./cli.ts";
-import { getPlanFileConfig } from "./paths.ts";
 import { scanMermaidBlocks } from "./mermaid-validator.ts";
+import { getPlanFileConfig } from "./paths.ts";
 import {
   listPendingPlanReviews,
   preprocessPlanMarkdown,

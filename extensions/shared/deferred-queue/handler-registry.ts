@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { log } from "./logger.ts";
+import { bindCollector, createOutputCollector } from "./output-collector.ts";
 import { extractAssistantSummary } from "./summary-extractor.ts";
 import type {
   ExecContext,
@@ -10,8 +11,23 @@ import type {
 } from "./types.ts";
 
 /**
+ * Output caps (in characters) for spawned child processes.
+ * Subagent caps match the librarian runner conventions; exec is more
+ * generous since CLI output is the task's data, not a control stream.
+ */
+const MAX_EXEC_STDOUT_CHARS = 16 * 1024 * 1024;
+const MAX_EXEC_STDERR_CHARS = 512 * 1024;
+const MAX_SUBAGENT_STDOUT_CHARS = 2 * 1024 * 1024;
+const MAX_SUBAGENT_STDERR_CHARS = 512 * 1024;
+
+/**
  * Execute a CLI command via spawn with a Promise wrapper.
  * Lightweight — no Pi process overhead.
+ *
+ * Output is collected through a bounded accumulator; if a child exceeds
+ * the cap it is terminated with SIGTERM and the result is flagged
+ * `truncated` instead of crashing the host (RangeError: Invalid string
+ * length from unbounded `+=` accumulation).
  */
 function createExecHandler(): ExecContext["exec"] {
   return (command: string, args?: string[]): Promise<ExecResult> =>
@@ -21,31 +37,46 @@ function createExecHandler(): ExecContext["exec"] {
         stdio: ["ignore", "pipe", "pipe"],
         shell: false,
       });
-      let stdout = "";
-      let stderr = "";
+      const stdout = createOutputCollector(MAX_EXEC_STDOUT_CHARS);
+      const stderr = createOutputCollector(MAX_EXEC_STDERR_CHARS);
 
-      proc.stdout?.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString();
+      bindCollector(proc.stdout, stdout, () => {
+        log.warn("exec: stdout exceeded cap, terminating", {
+          command,
+          maxChars: MAX_EXEC_STDOUT_CHARS,
+        });
+        proc.kill("SIGTERM");
       });
-      proc.stderr?.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString();
+      bindCollector(proc.stderr, stderr, () => {
+        log.warn("exec: stderr exceeded cap, terminating", {
+          command,
+          maxChars: MAX_EXEC_STDERR_CHARS,
+        });
+        proc.kill("SIGTERM");
       });
       proc.on("error", (err) => {
         log.warn("exec: spawn error", {
           command,
           error: err.message,
-          stdoutLength: stdout.length,
+          stdoutLength: stdout.value.length,
         });
-        resolve({ code: 1, stdout, stderr });
+        resolve({ code: 1, stdout: stdout.value, stderr: stderr.value });
       });
       proc.on("close", (code) => {
         log.debug("exec: completed", {
           command,
           exitCode: code,
-          stdoutLength: stdout.length,
-          stderrLength: stderr.length,
+          stdoutLength: stdout.value.length,
+          stderrLength: stderr.value.length,
+          stdoutTruncated: stdout.truncated,
+          stderrTruncated: stderr.truncated,
         });
-        resolve({ code: code ?? 1, stdout, stderr });
+        resolve({
+          code: code ?? 1,
+          stdout: stdout.value,
+          stderr: stderr.value,
+          truncated: stdout.truncated || stderr.truncated,
+        });
       });
     });
 }
@@ -103,8 +134,11 @@ function createSubagentHandler(): ExecContext["subagent"] {
         ...spawnOptions,
       });
 
-      let stdout = "";
-      let stderr = "";
+      const stdout = createOutputCollector(MAX_SUBAGENT_STDOUT_CHARS);
+      const stderr = createOutputCollector(MAX_SUBAGENT_STDERR_CHARS);
+      // Summary extracted just before truncation, so the last assistant
+      // message survives even when the tail of the stream is dropped.
+      let fallbackSummary: string | undefined;
       let settled = false;
 
       const timer = setTimeout(() => {
@@ -115,12 +149,19 @@ function createSubagentHandler(): ExecContext["subagent"] {
         reject(new Error(`subagent timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 
-      proc.stdout?.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString();
+      bindCollector(proc.stdout, stdout, () => {
+        log.warn("subagent: stdout exceeded cap, terminating", {
+          maxChars: MAX_SUBAGENT_STDOUT_CHARS,
+        });
+        fallbackSummary ??= extractAssistantSummary(stdout.value);
+        proc.kill("SIGTERM");
       });
 
-      proc.stderr?.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString();
+      bindCollector(proc.stderr, stderr, () => {
+        log.warn("subagent: stderr exceeded cap, terminating", {
+          maxChars: MAX_SUBAGENT_STDERR_CHARS,
+        });
+        proc.kill("SIGTERM");
       });
 
       proc.on("error", (err) => {
@@ -135,17 +176,22 @@ function createSubagentHandler(): ExecContext["subagent"] {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        const finalStdout = stdout.value;
+        const summary = extractAssistantSummary(finalStdout) ?? fallbackSummary;
         log.info("subagent: completed", {
           exitCode,
-          stdoutLength: stdout.length,
-          stderrLength: stderr.length,
-          summaryLength: extractAssistantSummary(stdout)?.length ?? 0,
+          stdoutLength: finalStdout.length,
+          stderrLength: stderr.value.length,
+          stdoutTruncated: stdout.truncated,
+          stderrTruncated: stderr.truncated,
+          summaryLength: summary?.length ?? 0,
         });
         resolve({
-          stdout,
-          stderr,
+          stdout: finalStdout,
+          stderr: stderr.value,
           exitCode: exitCode ?? -1,
-          summary: extractAssistantSummary(stdout),
+          summary,
+          truncated: stdout.truncated || stderr.truncated,
         });
       });
 

@@ -16,8 +16,7 @@ import fs from "node:fs/promises";
 // ── Types ──────────────────────────────────────────────────────────────────
 
 import type { ConceptEntry } from "./sm2.ts";
-import { createNewEntry } from "./sm2.ts";
-import { filterDueEntries } from "./sm2.ts";
+import { createNewEntry, filterDueEntries } from "./sm2.ts";
 
 export type { ConceptEntry };
 

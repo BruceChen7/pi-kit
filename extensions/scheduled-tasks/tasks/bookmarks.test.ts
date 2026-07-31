@@ -145,7 +145,7 @@ describe("parseBookmarkItems", () => {
       { id: "1", author: "a", text: "hi" },
       { id: "2", author: "b", text: "hello" },
     ]);
-    const items = parseBookmarkItems(json);
+    const items = parseBookmarkItems<BookmarkItem>(json);
     expect(items).toHaveLength(2);
     expect(items[0].id).toBe("1");
     expect(items[1].id).toBe("2");

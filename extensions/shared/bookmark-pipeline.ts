@@ -84,7 +84,8 @@ export function prepareBookmarkChunks(
 }
 
 // Re‑export for convenience
-export { HtmlChunk, prepareChunks, splitEntries } from "./chunking.ts";
+export type { HtmlChunk } from "./chunking.ts";
+export { prepareChunks, splitEntries } from "./chunking.ts";
 
 // ── Checkpoint management (delegates to checkpoint.ts) ───
 

@@ -43,9 +43,7 @@ export function formatCardsForTelegram(
   lines.push("");
 
   // 统计
-  lines.push(
-    `<b>完成：</b> ${correctCount}/${totalCount} 记住了`,
-  );
+  lines.push(`<b>完成：</b> ${correctCount}/${totalCount} 记住了`);
   lines.push("");
 
   // 每张卡片

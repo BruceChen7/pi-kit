@@ -44,6 +44,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
     "update": "npm update",
     "update:pi-agent": "node scripts/update-pi-coding-agent.mjs",
     "test": "vitest run",

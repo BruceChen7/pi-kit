@@ -23,7 +23,7 @@ export async function generateKebabCaseIdFromDescription(
 
   let mod: unknown;
   try {
-    mod = await import("@earendil-works/pi-ai");
+    mod = await import("@earendil-works/pi-ai/compat");
   } catch {
     return null;
   }

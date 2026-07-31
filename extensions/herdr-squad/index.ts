@@ -477,9 +477,8 @@ export default function (pi: ExtensionAPI) {
       let createdTab = false;
       try {
         const buildInitState = (
-          overrides: Partial<
-            Pick<SquadState, "tabId" | "rootPaneId" | "inTab">
-          >,
+          overrides: Pick<SquadState, "tabId" | "rootPaneId"> &
+            Partial<Pick<SquadState, "inTab">>,
         ): SquadState => ({
           version: STATE_VERSION,
           squadId: v.squadId,

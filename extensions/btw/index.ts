@@ -132,15 +132,14 @@
 // These are `custom` entries (not `custom_message`), so they don't
 // appear in the TUI conversation or the agent's LLM context.
 
-import {
-  type Api,
-  completeSimple,
-  type Message,
-  type Model,
-  streamSimple,
-  type ThinkingLevel,
-  type Usage,
+import type {
+  Api,
+  Message,
+  Model,
+  ThinkingLevel,
+  Usage,
 } from "@earendil-works/pi-ai";
+import { completeSimple, streamSimple } from "@earendil-works/pi-ai/compat";
 import type {
   ExtensionAPI,
   ExtensionContext,

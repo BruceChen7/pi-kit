@@ -90,7 +90,7 @@ export function cleanupActivePtySession(
     activePtySessions.delete(sessionName);
   }
   if (socket) {
-    socketSessionMap.delete(socket);
+    socketSessionMap.delete(socket as object);
   }
 }
 
@@ -160,7 +160,11 @@ export function registerRoutes(
   fastify.post(
     "/api/login",
     async (request: FastifyRequest, reply: FastifyReply) => {
-      const { username, password } = request.body || {};
+      const { username, password } =
+        (request.body as {
+          username?: string;
+          password?: string;
+        }) || {};
       if (!username || !password) {
         return reply
           .status(400)
@@ -223,14 +227,14 @@ export function registerRoutes(
         const { execSync } = await import("node:child_process");
         try {
           execSync(
-            `git show-ref --verify --quiet refs/heads/${shellEscape(body.branch)} 2>/dev/null`,
+            `git show-ref --verify --quiet refs/heads/${shellEscape(body.branch as string)} 2>/dev/null`,
             { cwd: sessionCwd, stdio: "pipe", timeout: 5000 },
           );
         } catch {
           // Branch doesn't exist — create it from baseBranch
           try {
-            const safeBranch = shellEscape(body.branch);
-            const safeBase = shellEscape(body.baseBranch);
+            const safeBranch = shellEscape(body.branch as string);
+            const safeBase = shellEscape(body.baseBranch as string);
             execSync(`git checkout -b ${safeBranch} ${safeBase} 2>/dev/null`, {
               cwd: sessionCwd,
               stdio: "pipe",

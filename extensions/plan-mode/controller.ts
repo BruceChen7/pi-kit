@@ -5,8 +5,18 @@ import type {
   ExtensionContext,
   ToolCallEvent,
   ToolResultEvent,
-  ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent";
+
+/** Structural mirror of the (non-public) ToolResultEventResult type. */
+interface ToolResultEventResult {
+  content?: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; data: string; mimeType: string }
+  >;
+  details?: unknown;
+  isError?: boolean;
+}
+
 import { pathsFromWriteToolInput } from "../shared/tool-targets.ts";
 import {
   formatApprovedArtifactPolicyFailure,

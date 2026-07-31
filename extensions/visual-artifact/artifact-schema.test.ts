@@ -21,7 +21,7 @@ describe("validate", () => {
   it("rejects non-object input", () => {
     const result = validate("not an object");
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors).toContain("Input must be a JSON object.");
     }
   });
@@ -29,7 +29,7 @@ describe("validate", () => {
   it("rejects missing slug", () => {
     const result = validate({ title: "No Slug", nodes: [] });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors.some((e) => e.includes("slug"))).toBe(true);
     }
   });
@@ -37,7 +37,7 @@ describe("validate", () => {
   it("rejects missing title", () => {
     const result = validate({ slug: "no-title", nodes: [] });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors.some((e) => e.includes("title"))).toBe(true);
     }
   });
@@ -45,7 +45,7 @@ describe("validate", () => {
   it("rejects non-array nodes", () => {
     const result = validate({ slug: "bad", title: "Bad", nodes: "not array" });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors).toContain("nodes must be an array.");
     }
   });
@@ -64,7 +64,7 @@ describe("validate", () => {
       nodes,
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors.some((e) => e.includes("top-level"))).toBe(true);
     }
   });
@@ -81,7 +81,7 @@ describe("validate", () => {
       nodes: deepNodes,
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors.some((e) => e.includes("total nodes"))).toBe(true);
     }
   });
@@ -107,7 +107,7 @@ describe("validate", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors.some((e) => e.includes("total nodes"))).toBe(true);
     }
   });
@@ -135,7 +135,7 @@ describe("validate", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors.some((e) => e.includes("nesting depth"))).toBe(true);
     }
   });
@@ -150,7 +150,7 @@ describe("validate", () => {
       data,
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors.some((e) => e.includes("datasets"))).toBe(true);
     }
   });
@@ -199,7 +199,7 @@ describe("validate", () => {
       nodes: [{ type: "text", props: { text: largeText, size: "md" } }],
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors.some((e) => e.includes("size limit"))).toBe(true);
     }
   });
@@ -210,7 +210,7 @@ describe("validate", () => {
       nodes: [{ type: "text" }],
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors.some((e) => e.includes("props"))).toBe(true);
     }
   });
@@ -226,7 +226,7 @@ describe("validate", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors).toContain(
         'Node "text" requires prop "text" (legacy prop "content" is not supported).',
       );
@@ -265,7 +265,7 @@ describe("validate", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors).toContain('Node "list" requires prop "items".');
     }
   });
@@ -277,7 +277,7 @@ describe("validate", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors).toContain(
         'Unsupported node type: "unknown-widget".',
       );
@@ -311,7 +311,7 @@ describe("validate", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors).toContain(
         'Node "text" requires prop "text" at nodes.0.props.items.0.nodes.0.props.nodes.0.',
       );
@@ -361,7 +361,7 @@ describe("validate", () => {
     });
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
+    if (result.ok === false) {
       expect(result.errors).toContain(
         'Node "table" requires prop "headers" or "columns" at nodes.0.props.nodes.0.',
       );

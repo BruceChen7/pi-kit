@@ -1,8 +1,10 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import {
   ACT_MODE_TODO_TOOL,
   buildCtx,
   buildHarness,
+  type CustomEntry,
   completeApprovedDemoRun,
   demoPlanPath,
   lastModeWidgetCall,
@@ -409,14 +411,14 @@ describe("plan-mode extension: todo state and widgets", () => {
     planModeExtension(harness.api as unknown as ExtensionAPI);
 
     await harness.emit("session_start", {}, ctx);
-    const result = await harness.runTool(
+    const result = (await harness.runTool(
       ACT_MODE_TODO_TOOL,
       {
         action: "set",
         items: [{ text: "直接执行", status: "todo" }],
       },
       ctx,
-    );
+    )) as { content: Array<{ text: string }> };
     const todoTool = registeredTool(harness, ACT_MODE_TODO_TOOL);
     const promptGuidance = todoTool.promptGuidelines?.join("\n") ?? "";
 

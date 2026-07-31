@@ -31,7 +31,14 @@ interface AssistantMessageEntry {
   message: {
     role: "assistant";
     content: Array<
-      { type: "text"; text: string } | { type: "image"; source: unknown }
+      | { type: "text"; text: string }
+      | { type: "image"; source: unknown }
+      | {
+          type: "toolCall";
+          id: string;
+          name: string;
+          arguments: string;
+        }
     >;
     usage?: { input: number; output: number };
   };

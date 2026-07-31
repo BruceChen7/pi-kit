@@ -9,7 +9,7 @@
  * - q / Esc 退出
  */
 
-import { matchesKey, Key, truncateToWidth } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ReviewCard } from "./cards.ts";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -173,23 +173,17 @@ export function createCardWidget(
     } else if (!flipped) {
       lines.push("");
       lines.push(
-        theme.fg(
-          "muted",
-          "  ↩ Enter 翻看答案    ↑↓ 切换卡片    q 退出",
-        ),
+        theme.fg("muted", "  ↩ Enter 翻看答案    ↑↓ 切换卡片    q 退出"),
       );
     } else {
       lines.push("");
       lines.push(
-        theme.fg(
-          "muted",
-          "  1=✅ 记住了  2=❌ 忘了  ↑↓ 切换卡片  q 退出",
-        ),
+        theme.fg("muted", "  1=✅ 记住了  2=❌ 忘了  ↑↓ 切换卡片  q 退出"),
       );
     }
 
     // ── 进度条 ──
-    lines.push(renderProgressBar(cards.length, results.length, width));
+    lines.push(...renderProgressBar(cards.length, results.length, width));
 
     cachedWidth = width;
     cachedLines = lines;
@@ -227,16 +221,12 @@ function renderQuestion(
 
   // 标签
   if (card.tags.length > 0) {
-    const tagStr = card.tags
-      .map((t) => theme.fg("info", `#${t}`))
-      .join(" ");
+    const tagStr = card.tags.map((t) => theme.fg("accent", `#${t}`)).join(" ");
     lines.push(`  🏷 ${truncateToWidth(tagStr, innerW)}`);
   }
 
   if (card.relatedConcept) {
-    lines.push(
-      `  🔗 ${truncateToWidth(card.relatedConcept, innerW)}`,
-    );
+    lines.push(`  🔗 ${truncateToWidth(card.relatedConcept, innerW)}`);
   }
 
   return lines;
@@ -269,14 +259,14 @@ function renderAnswer(
   // 标签
   if (card.tags.length > 0) {
     lines.push("");
-    const tagStr = card.tags
-      .map((t) => theme.fg("info", `#${t}`))
-      .join(" ");
+    const tagStr = card.tags.map((t) => theme.fg("accent", `#${t}`)).join(" ");
     lines.push(`  🏷 ${truncateToWidth(tagStr, innerW)}`);
   }
 
   if (card.relatedConcept) {
-    lines.push(`  🔗 ${card.relatedConcept} — ${card.relationDescription ?? ""}`);
+    lines.push(
+      `  🔗 ${card.relatedConcept} — ${card.relationDescription ?? ""}`,
+    );
   }
 
   return lines;

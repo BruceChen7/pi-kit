@@ -42,7 +42,11 @@ type ExecFileCallback = (
 
 type SessionStartHandler = (...args: unknown[]) => unknown;
 
-type ToolExecute = (...args: unknown[]) => Promise<unknown>;
+type ToolResult = {
+  content: Array<{ type: string; text: string }>;
+  details?: Record<string, unknown>;
+};
+type ToolExecute = (...args: unknown[]) => Promise<ToolResult>;
 
 type RegisteredTool = Record<string, unknown> & {
   execute?: ToolExecute;
@@ -97,7 +101,7 @@ function mockExecFileResult(
 
     implementation(cmd, args, options, callback);
     return {} as never;
-  }) as typeof execFile);
+  }) as unknown as typeof execFile);
 }
 
 function registerExtension(): RegisteredExtension {
@@ -231,7 +235,7 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = await tool.execute?.(
+    const result = (await tool.execute?.(
       "call-1",
       {
         query: "authenticate",
@@ -243,7 +247,7 @@ describe("cs-search extension", () => {
       undefined,
       undefined,
       ctx,
-    );
+    ))!;
 
     expect(result).toBeDefined();
 
@@ -348,7 +352,7 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = await tool.execute?.(
+    const result = (await tool.execute?.(
       "call-1b",
       {
         query: "authenticate",
@@ -359,7 +363,7 @@ describe("cs-search extension", () => {
       undefined,
       undefined,
       ctx,
-    );
+    ))!;
 
     expect(result).toBeDefined();
     expect(result.content[0].text).toContain(
@@ -419,13 +423,13 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = await tool.execute?.(
+    const result = (await tool.execute?.(
       "call-2",
       { query: "auth", path: "src", language: "ts", max_results: 3 },
       undefined,
       undefined,
       ctx,
-    );
+    ))!;
 
     expect(result).toBeDefined();
 
@@ -465,7 +469,7 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = await tool.execute?.(
+    const result = (await tool.execute?.(
       "call-2b",
       {
         query: "cs_search extension",
@@ -476,7 +480,7 @@ describe("cs-search extension", () => {
       undefined,
       undefined,
       ctx,
-    );
+    ))!;
 
     expect(result).toBeDefined();
     expect(result.content[0].text).toContain(
@@ -540,13 +544,13 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = await tool.execute?.(
+    const result = (await tool.execute?.(
       "call-4",
       { query: "missing" },
       undefined,
       undefined,
       ctx,
-    );
+    ))!;
 
     expect(result.content[0].text).toContain("No ranked results found.");
     expect(result.details).toEqual(
@@ -574,13 +578,13 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = await tool.execute?.(
+    const result = (await tool.execute?.(
       "call-malformed",
       { query: "broken" },
       undefined,
       undefined,
       ctx,
-    );
+    ))!;
 
     expect(result.content[0].text).toContain(
       "cs_search failed: invalid cs JSON output.",
@@ -607,13 +611,13 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = await tool.execute?.(
+    const result = (await tool.execute?.(
       "call-exec-error",
       { query: "broken" },
       undefined,
       undefined,
       ctx,
-    );
+    ))!;
 
     expect(result.content[0].text).toContain(
       "cs_search failed: cs execution failed.",
@@ -661,13 +665,13 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = await tool.execute?.(
+    const result = (await tool.execute?.(
       "call-5",
       { query: "skill-toggle", path: ".pi/extensions" },
       undefined,
       undefined,
       ctx,
-    );
+    ))!;
 
     expect(vi.mocked(execFile)).toHaveBeenNthCalledWith(
       3,

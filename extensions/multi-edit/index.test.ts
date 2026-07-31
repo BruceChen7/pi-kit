@@ -52,7 +52,7 @@ function registerToolForTest(): RegisteredTool {
     registerTool: vi.fn((tool: RegisteredTool) => tools.set(tool.name, tool)),
   };
 
-  multiEditExtension(pi as Parameters<typeof multiEditExtension>[0]);
+  multiEditExtension(pi as unknown as Parameters<typeof multiEditExtension>[0]);
 
   const tool = tools.get("edit");
   if (!tool) throw new Error("Expected edit tool to be registered");

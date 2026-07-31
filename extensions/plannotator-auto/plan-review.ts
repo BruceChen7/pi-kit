@@ -4,6 +4,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import type { TSchema } from "typebox";
 import {
   formatArtifactPolicyFailure,
   isStandardMarkdownPlanArtifactPath,
@@ -535,7 +536,7 @@ export const createPendingReviewGateMessage = (
 
 export const registerPlanReviewSubmitTool = (
   pi: ExtensionAPI,
-  planReviewSubmitToolParameters: Record<string, unknown>,
+  planReviewSubmitToolParameters: TSchema,
 ): void => {
   pi.registerTool({
     name: PLAN_REVIEW_SUBMIT_TOOL,

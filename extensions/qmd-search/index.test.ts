@@ -6,7 +6,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", () => {
   const execFile = vi.fn();
-  // @ts-expect-error — promisify symbol not on Mock type
   execFile[Symbol.for("nodejs.util.promisify.custom")] = (
     cmd: string,
     args: string[],

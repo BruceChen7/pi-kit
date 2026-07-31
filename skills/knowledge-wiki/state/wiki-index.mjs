@@ -5,16 +5,16 @@
  * Skills should call this instead of reading the whole file and writing it back.
  *
  * Usage:
- *   node scripts/wiki/wiki-index.mjs sort
- *   node scripts/wiki/wiki-index.mjs read-concepts
- *   node scripts/wiki/wiki-index.mjs read-summaries
- *   node scripts/wiki/wiki-index.mjs upsert-concept <slug> "<display-name>" "<description>"
- *   node scripts/wiki/wiki-index.mjs delete-concept <slug>
- *   node scripts/wiki/wiki-index.mjs upsert-summary "<rel-path>" "<description>"
- *   node scripts/wiki/wiki-index.mjs delete-summary "<rel-path>"
- *   node scripts/wiki/wiki-index.mjs find-missing-summaries
- *   node scripts/wiki/wiki-index.mjs find-missing-concepts
- *   node scripts/wiki/wiki-index.mjs delete-dead-links
+ *   node skills/knowledge-wiki/state/wiki-index.mjs sort
+ *   node skills/knowledge-wiki/state/wiki-index.mjs read-concepts
+ *   node skills/knowledge-wiki/state/wiki-index.mjs read-summaries
+ *   node skills/knowledge-wiki/state/wiki-index.mjs upsert-concept <slug> "<display-name>" "<description>"
+ *   node skills/knowledge-wiki/state/wiki-index.mjs delete-concept <slug>
+ *   node skills/knowledge-wiki/state/wiki-index.mjs upsert-summary "<rel-path>" "<description>"
+ *   node skills/knowledge-wiki/state/wiki-index.mjs delete-summary "<rel-path>"
+ *   node skills/knowledge-wiki/state/wiki-index.mjs find-missing-summaries
+ *   node skills/knowledge-wiki/state/wiki-index.mjs find-missing-concepts
+ *   node skills/knowledge-wiki/state/wiki-index.mjs delete-dead-links
  *
  * --base-path can be added at any position to override the KNOWLEDGE_DIR.
  */

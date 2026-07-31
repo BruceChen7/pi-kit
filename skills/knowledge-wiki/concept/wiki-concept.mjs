@@ -5,13 +5,13 @@
  * wikilinks containing file paths by hand.
  *
  * Usage:
- *   node scripts/wiki/wiki-concept.mjs create <slug> <display-name> [--type <Concept|Synthesis>] [--icon <note|notepad>] [--tags <JSON-array>]
+ *   node skills/knowledge-wiki/concept/wiki-concept.mjs create <slug> <display-name> [--type <Concept|Synthesis>] [--icon <note|notepad>] [--tags <JSON-array>]
  *     Pipe body content via stdin to create a fully populated concept file.
  *     Without stdin, creates a skeleton (frontmatter + title + empty Sources).
- *   node scripts/wiki/wiki-concept.mjs insert-source <slug> <summary-path>
- *   node scripts/wiki/wiki-concept.mjs delete-source <slug> <summary-path>
- *   node scripts/wiki/wiki-concept.mjs insert-connected-concept <slug> <linked-slug> <display-name>
- *   node scripts/wiki/wiki-concept.mjs delete-connected-concept <slug> <linked-slug>
+ *   node skills/knowledge-wiki/concept/wiki-concept.mjs insert-source <slug> <summary-path>
+ *   node skills/knowledge-wiki/concept/wiki-concept.mjs delete-source <slug> <summary-path>
+ *   node skills/knowledge-wiki/concept/wiki-concept.mjs insert-connected-concept <slug> <linked-slug> <display-name>
+ *   node skills/knowledge-wiki/concept/wiki-concept.mjs delete-connected-concept <slug> <linked-slug>
  *
  * --base-path can be added at any position to override the KNOWLEDGE_DIR.
  *
@@ -66,7 +66,7 @@ async function cmdCreate(args) {
   const displayName = args[1];
   if (!slug || !displayName) {
     console.error(
-      "Usage: node scripts/wiki/wiki-concept.mjs create <slug> <display-name> [--type <Concept|Synthesis>] [--icon <note|notepad>] [--tags <JSON-array>]",
+      "Usage: node skills/knowledge-wiki/concept/wiki-concept.mjs create <slug> <display-name> [--type <Concept|Synthesis>] [--icon <note|notepad>] [--tags <JSON-array>]",
     );
     process.exit(1);
   }
@@ -119,7 +119,7 @@ async function cmdInsertSource(args) {
   const [slug, summaryPath] = args;
   if (!slug || !summaryPath) {
     console.error(
-      "Usage: node scripts/wiki/wiki-concept.mjs insert-source <slug> <summary-path>",
+      "Usage: node skills/knowledge-wiki/concept/wiki-concept.mjs insert-source <slug> <summary-path>",
     );
     process.exit(1);
   }
@@ -151,7 +151,7 @@ async function cmdDeleteSource(args) {
   const [slug, summaryPath] = args;
   if (!slug || !summaryPath) {
     console.error(
-      "Usage: node scripts/wiki/wiki-concept.mjs delete-source <slug> <summary-path>",
+      "Usage: node skills/knowledge-wiki/concept/wiki-concept.mjs delete-source <slug> <summary-path>",
     );
     process.exit(1);
   }
@@ -179,7 +179,7 @@ async function cmdInsertConnectedConcept(args) {
   const [slug, linkedSlug, displayName] = args;
   if (!slug || !linkedSlug || !displayName) {
     console.error(
-      "Usage: node scripts/wiki/wiki-concept.mjs insert-connected-concept <slug> <linked-slug> <display-name>",
+      "Usage: node skills/knowledge-wiki/concept/wiki-concept.mjs insert-connected-concept <slug> <linked-slug> <display-name>",
     );
     process.exit(1);
   }
@@ -219,7 +219,7 @@ async function cmdDeleteConnectedConcept(args) {
   const [slug, linkedSlug] = args;
   if (!slug || !linkedSlug) {
     console.error(
-      "Usage: node scripts/wiki/wiki-concept.mjs delete-connected-concept <slug> <linked-slug>",
+      "Usage: node skills/knowledge-wiki/concept/wiki-concept.mjs delete-connected-concept <slug> <linked-slug>",
     );
     process.exit(1);
   }

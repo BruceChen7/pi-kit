@@ -2,9 +2,9 @@
  * Candidate queues for judgment-driven wiki workflows.
  *
  * Usage:
- *   node scripts/wiki/candidates.mjs find-shared-source-concepts
- *   node scripts/wiki/candidates.mjs find-implied-parent-concepts
- *   node scripts/wiki/candidates.mjs find-thin-concepts
+ *   node skills/knowledge-wiki/cluster/candidates.mjs find-shared-source-concepts
+ *   node skills/knowledge-wiki/cluster/candidates.mjs find-implied-parent-concepts
+ *   node skills/knowledge-wiki/cluster/candidates.mjs find-thin-concepts
  *
  * --base-path can be added at any position to override the KNOWLEDGE_DIR.
  */
@@ -164,7 +164,9 @@ export function runCandidateCommand(subcommand) {
 function main() {
   const subcommand = process.argv[2];
   if (!subcommand || subcommand === "--help") {
-    console.error("Usage: node scripts/wiki/candidates.mjs <subcommand>");
+    console.error(
+      "Usage: node skills/knowledge-wiki/cluster/candidates.mjs <subcommand>",
+    );
     console.error(`Subcommands: ${Object.keys(COMMANDS).join(", ")}`);
     process.exit(1);
   }

@@ -5,7 +5,7 @@
  * outputs JSON and starts with find-*.
  *
  * Usage:
- *   node scripts/wiki/wiki-lint.mjs <subcommand>
+ *   node skills/knowledge-wiki/lint/wiki-lint.mjs <subcommand>
  *
  * Subcommands:
  *   find-orphan-summaries          Summary files whose source document no longer exists
@@ -228,7 +228,9 @@ if (
   const subcommand = process.argv[2];
 
   if (!subcommand || subcommand === "--help") {
-    console.error("Usage: node scripts/wiki/wiki-lint.mjs <subcommand>");
+    console.error(
+      "Usage: node skills/knowledge-wiki/lint/wiki-lint.mjs <subcommand>",
+    );
     console.error(`Subcommands: ${Object.keys(COMMANDS).join(", ")}`);
     process.exit(1);
   }

@@ -5,10 +5,10 @@
  * frontmatter or backlinks by hand.
  *
  * Usage:
- *   node scripts/wiki/wiki-summary.mjs list-stale
- *   node scripts/wiki/wiki-summary.mjs create <source-path> [--at <ISO timestamp>]
- *   node scripts/wiki/wiki-summary.mjs delete-concept <summary-rel-path> <concept-slug>
- *   node scripts/wiki/wiki-summary.mjs insert-concept <summary-rel-path> <concept-slug> <display-name> <description>
+ *   node skills/knowledge-wiki/summary/wiki-summary.mjs list-stale
+ *   node skills/knowledge-wiki/summary/wiki-summary.mjs create <source-path> [--at <ISO timestamp>]
+ *   node skills/knowledge-wiki/summary/wiki-summary.mjs delete-concept <summary-rel-path> <concept-slug>
+ *   node skills/knowledge-wiki/summary/wiki-summary.mjs insert-concept <summary-rel-path> <concept-slug> <display-name> <description>
  *
  * --base-path can be added at any position to override the KNOWLEDGE_DIR.
  */
@@ -168,7 +168,7 @@ function cmdCreate(args) {
   const sourceRel = args[0];
   if (!sourceRel) {
     console.error(
-      "Usage: node scripts/wiki/wiki-summary.mjs create <source-path> [--at <ISO timestamp>]",
+      "Usage: node skills/knowledge-wiki/summary/wiki-summary.mjs create <source-path> [--at <ISO timestamp>]",
     );
     process.exit(1);
   }
@@ -236,7 +236,7 @@ function cmdDeleteConcept(args) {
   }
   if (!relPath || !slug) {
     console.error(
-      "Usage: node scripts/wiki/wiki-summary.mjs delete-concept - | <summary-rel-path> <concept-slug>",
+      "Usage: node skills/knowledge-wiki/summary/wiki-summary.mjs delete-concept - | <summary-rel-path> <concept-slug>",
     );
     process.exit(1);
   }
@@ -290,7 +290,7 @@ function cmdInsertConcept(args) {
 
   if (!relPath || !slug || !displayName || !description) {
     console.error(
-      "Usage: node scripts/wiki/wiki-summary.mjs insert-concept - | <summary-rel-path> <concept-slug> <display-name> <description|->\n  Use - as first arg to read all fields from stdin; or pass - as 4th arg to read only the description.",
+      "Usage: node skills/knowledge-wiki/summary/wiki-summary.mjs insert-concept - | <summary-rel-path> <concept-slug> <display-name> <description|->\n  Use - as first arg to read all fields from stdin; or pass - as 4th arg to read only the description.",
     );
     process.exit(1);
   }

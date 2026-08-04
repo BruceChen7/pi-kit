@@ -13,6 +13,8 @@ export interface ExecResult {
   code: number;
   stdout: string;
   stderr: string;
+  /** True when output exceeded the collection cap and was dropped. */
+  truncated?: boolean;
 }
 
 /**
@@ -49,6 +51,8 @@ export interface SubagentResult {
   exitCode: number;
   /** Optional structured summary (extracted from JSON output). */
   summary?: string;
+  /** True when output exceeded the collection cap and was dropped. */
+  truncated?: boolean;
 }
 
 /**

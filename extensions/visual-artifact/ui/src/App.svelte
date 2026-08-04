@@ -354,7 +354,7 @@ function handleCleanupResult(e: Event): void {
           >
             <div class="artifact-layout" class:with-panel={feedbackOpen}>
               <div class="artifact-main">
-                <VisualArtifactRenderer nodes={artifactNodes()} />
+                <VisualArtifactRenderer nodes={artifactNodes()} feedbackActive={feedbackOpen} />
               </div>
               <AnnotationPanel />
             </div>

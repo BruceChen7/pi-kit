@@ -36,7 +36,8 @@ Gather these facts before generating the artifact:
 3. **Key data structures** — domain types, DTOs, schemas, config objects, persisted records,
    in-memory state, and ownership/lifecycle rules.
 4. **Boundaries and side effects** — filesystem, git, network, subprocesses, model/provider calls,
-   TUI/RPC/UI interactions, databases, caches, env vars, clocks, and global state.
+   TUI/RPC/UI interactions, databases, caches, env vars, clocks, and global state. 为每个副作用
+   记录 `file:line`：边界树里副作用节点必须带行号。
 5. **Blast radius** — callers, downstream consumers, tests, docs, settings, package exports,
    generated files, migrations, and compatibility contracts that depend on this flow.
 6. **Tests and verification** — existing test files, smoke tests, scripts, manual commands, and
@@ -81,8 +82,8 @@ detailed reference material into `accordion` nodes.
 | 4a | **State/lifecycle diagram** (条件) | `mermaid` `stateDiagram` | 有生命周期/状态转换时产出（enable→disable、draft→published 等）。 |
 | 4b | **Entity/relationship diagram** (条件) | `mermaid` `erDiagram` | 有多个实体 + 关系时产出。无状态机也无实体关系时降级为 `table`。 |
 | 5 | Walkthrough (强制) | `timeline` | Step-by-step execution with file/function references. Same priority as diagrams — do not fold into accordion. |
-| 6 | Boundaries & Blast Radius | `accordion` | IO/adapters/side effects (table+badge) + callers, dependents, tests, docs, config (file-tree/table). |
-| 7 | Tests, Gaps & Gotchas | `accordion` | Coverage table + callout for gaps + list/card of invariants and traps. |
+| 6 | **Boundary tree** (强制, 独立顶层节点) | `code-block` | ASCII 调用树：副作用/IO 节点带 `← 注释` + `file:line`；纯逻辑节点省略行号。见 Boundary tree guidance。 |
+| 7 | Blast Radius + Tests/Gaps/Gotchas | `accordion` (2 项) | 项 1 "Blast Radius"：callers, dependents, tests, docs, config (file-tree/table)。项 2 "Tests, Gaps & Gotchas"：Coverage table + callout for gaps + list/card of invariants and traps. |
 | 8 | Grill-me starter | `callout` or `card` | The first question you will ask me after creating the artifact. |
 
 ### Diagram selection guide
@@ -119,6 +120,24 @@ Choose based on what the flow's data actually does:
 
 If the flow has both state transitions and entity relationships, produce both 4a and 4b.
 
+**Section 6 — Boundary tree (强制, 独立顶层节点):**
+
+IO 边界/副作用用 ASCII 调用树呈现（`code-block` 节点），取代平表。根节点是入口函数或顶层模块调用，用 `├─/└─/│` 表达层级：
+
+```text
+bootstrapDefaultManagedPlugins(cwd, plugins)
+├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）
+└─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared
+     └─ bootstrapPlugins(...)
+          └─ 遍历: disabled.has(name) → skip
+               其余 → enablePlugin()  ← 副作用: 写 symlink, project.ts:142
+```
+
+- **副作用/IO 节点必须带 `file:line`**：`← 副作用: <类型>, <file:line>`，类型用固定词表（读文件/写文件/网络/子进程/时钟/env/全局状态）。
+- 纯逻辑节点（filter、判断）省略行号；一行一个节点，描述 ≤ 60 字符。
+- 深度 ≤ 6、总节点 ≤ 20：过长子树折叠为 `└─ … (N 项)`，更大拆成多棵子树。
+- **IO 完整性**：树必须穷尽所有副作用节点，只允许裁剪纯逻辑细节。
+
 ### Compact spec shape
 
 ```ts
@@ -147,9 +166,12 @@ const spec = {
       { "step": 1, "title": "<step name>", "description": "<what happens and where>" }
     ] } },
 
-    // --- Section 6-7: details in accordion (合并为 2 项) ---
+    // --- Section 6: boundary tree (强制, 独立顶层节点) ---
+    { "type": "code-block", "props": { "code": "bootstrapDefaultManagedPlugins(cwd, plugins)\n├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）\n└─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared\n     └─ bootstrapPlugins(...)\n          └─ 遍历: disabled.has(name) → skip\n               其余 → enablePlugin()  ← 副作用: 写 symlink, project.ts:142", "language": "text" } },
+
+    // --- Section 7: details in accordion (2 项) ---
     { "type": "accordion", "props": { "items": [
-      { "title": "Boundaries & Blast Radius", "nodes": [] },
+      { "title": "Blast Radius", "nodes": [] },
       { "title": "Tests, Gaps & Gotchas", "nodes": [] }
     ] } },
 
@@ -180,7 +202,8 @@ create_visual_artifact({
 - Do not open a browser directly; the Visual Artifact tool handles the window.
 - **Diagrams are the highest-priority elements.** Always produce at minimum one `sequenceDiagram`
   (3a) and one data/state diagram (4). The logic `flowchart` (3b) is conditional on branch
-  complexity. Every diagram must be a **top-level node**, never inside an accordion.
+  complexity. Every diagram must be a **top-level node**, never inside an accordion. 边界树
+  (Section 6 `code-block`) 同样必须独立顶层节点，不进 accordion。
 - Use compact Mermaid diagrams; each diagram should fit on one screen.
 - Always use double-quoted Mermaid labels: `N["label text"]`, not `N[label text]`.
 - Never use parentheses inside unquoted labels.

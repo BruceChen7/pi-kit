@@ -666,4 +666,115 @@ parentFn()
       await removeTempRepo(repoRoot);
     }
   });
+
+  it("releases the gate without settling when the review is dismissed", async () => {
+    vi.resetModules();
+
+    mockSpawn({
+      status: 0,
+      stdout: JSON.stringify({ decision: "dismissed" }),
+      stderr: "",
+    });
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-submit-dismiss-");
+    const planFileRelative = getPlanFileRelative(repoRoot);
+    await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
+      )) as { details?: { status?: string } };
+      expect(result.details?.status).toBe("dismissed");
+
+      // Gate released: no pending-review message on the next agent turn.
+      const gateResult = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+      expect(gateResult).toBeUndefined();
+
+      // Not settled: the next write to the same file re-queues the review.
+      await emitToolWrite(emit, ctx, planFileRelative);
+      const requeuedGate = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+      expect(requeuedGate?.message?.content ?? "").toContain(
+        "plannotator_auto_submit_review",
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("omits markdown-only guidance from the HTML plan gate message", async () => {
+    vi.resetModules();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-html-gate-");
+    const repoName = repoRoot.split("/").pop() ?? "repo";
+    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.html`;
+    await writeTestFile(
+      repoRoot,
+      planFileRelative,
+      "<!doctype html><html><body>Plan</body></html>",
+    );
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      const gateResult = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+      const content = gateResult?.message?.content ?? "";
+      expect(content).toContain(planFileRelative);
+      expect(content).not.toContain("Keep the first # heading");
+      expect(content).not.toContain("mermaid fenced blocks");
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("keeps markdown-only guidance when all pending targets are markdown", async () => {
+    vi.resetModules();
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-md-gate-");
+    const planFileRelative = getPlanFileRelative(repoRoot);
+    await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+
+      const gateResult = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+      const content = gateResult?.message?.content ?? "";
+      expect(content).toContain("Keep the first # heading");
+      expect(content).toContain("mermaid fenced blocks");
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
 });

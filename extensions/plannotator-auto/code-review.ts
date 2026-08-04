@@ -7,7 +7,6 @@ import type {
 import { runPlannotatorAnnotateCli } from "./cli.ts";
 import { extractBashPathCandidates, resolveToolPaths } from "./helpers.ts";
 import {
-  isHtmlPath,
   isPathWithinCwd,
   isReviewDocumentPath,
   toRepoRelativePath,
@@ -180,14 +179,11 @@ const annotateLatestReviewDocument = async (
     return;
   }
 
-  const renderHtml = isHtmlPath(latestDocument.absolutePath);
-
   try {
     const response = await runPlannotatorAnnotateCli(
       ctx,
       latestDocument.absolutePath,
       {
-        renderHtml,
         signal: ctx.signal,
         timeoutMs: SYNC_ANNOTATE_TIMEOUT_MS,
       },

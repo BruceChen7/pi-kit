@@ -1,10 +1,16 @@
 # Design System Reference
 
-Plan documents use Plannotator's semantic theme tokens. This makes them theme-aware: standalone files render with bundled defaults; embedded in the Plannotator UI, they inherit whatever theme is active (30+ themes, light and dark variants).
+Plan documents use Plannotator's semantic theme tokens. This makes them theme-aware: standalone files render with bundled defaults; embedded in the Plannotator UI, they follow the active theme (30+ themes, light and dark variants) **when the document declares the host theme opt-in** in its `<head>`:
+
+```html
+<meta name="plannotator-theme" content="host">
+```
+
+Without the tag, the viewer renders the document untouched and the `:root` defaults below are all the document ever sees.
 
 ## Standalone defaults
 
-Include this `:root` block so the plan works when opened directly in a browser. These are the Plannotator light theme values — they get overridden when embedded.
+Include this `:root` block so the plan works when opened directly in a browser. These are the Plannotator light theme values — with the opt-in meta tag above, they get overridden by the active theme when embedded.
 
 ```css
 :root {
@@ -38,7 +44,7 @@ Include this `:root` block so the plan works when opened directly in a browser. 
 }
 ```
 
-`--font-display` is plan-specific — used for headings and titles to create visual contrast with the body. It's not part of the core Plannotator theme, so it won't be overridden when embedded (which is the desired behavior).
+`--font-display` is plan-specific — used for headings and titles to create visual contrast with the body. It's not part of the core Plannotator theme, so even with the opt-in it won't be overridden when embedded (which is the desired behavior).
 
 ## Token usage map
 

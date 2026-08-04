@@ -51,6 +51,7 @@ type PlanReviewSubmitToolParams = {
 type PlanReviewDecisionLike = {
   approved?: boolean;
   feedback?: string;
+  dismissed?: boolean;
 };
 
 const getPendingPlanReviewTargets = (
@@ -189,12 +190,17 @@ const formatPendingPlanReviewPrompt = (planFiles: string[]): string => {
     `Your next required action is calling ${PLAN_REVIEW_SUBMIT_TOOL} ` +
     "with one pending path.";
   const deniedAction = `If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`;
+  // Markdown-only guidance: HTML plans have no `# heading` and do not use
+  // ```mermaid fenced blocks, so the guidance would actively mislead agents.
+  const markdownGuidance = planFiles.some((file) => isHtmlPath(file))
+    ? ""
+    : ` ${KEEP_PLAN_HEADING_GUIDANCE} ${MERMAID_RENDERING_GUIDANCE}`;
 
   return [
     "[PLANNOTATOR AUTO - PENDING REVIEW]",
     "Pending review targets:",
     targets,
-    `${nextAction} ${deniedAction} ${KEEP_PLAN_HEADING_GUIDANCE} ${MERMAID_RENDERING_GUIDANCE}`,
+    `${nextAction} ${deniedAction}${markdownGuidance}`,
   ].join("\n\n");
 };
 
@@ -428,15 +434,49 @@ const approvePendingPlanReview = (
 const denyPendingPlanReview = (
   pendingPlanReview: PendingPlanReview,
   feedback?: string,
-) => ({
-  content: [
-    {
-      type: "text" as const,
-      text: `YOUR REVIEW WAS NOT APPROVED. Revise ${pendingPlanReview.planFile} and call ${PLAN_REVIEW_SUBMIT_TOOL} again after addressing this feedback. ${KEEP_PLAN_HEADING_GUIDANCE}\n\n${feedback || "Review changes requested."}`,
-    },
-  ],
-  details: { status: "denied" },
-});
+) => {
+  const headingGuidance = isHtmlPath(pendingPlanReview.resolvedPlanPath)
+    ? ""
+    : ` ${KEEP_PLAN_HEADING_GUIDANCE}`;
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: `YOUR REVIEW WAS NOT APPROVED. Revise ${pendingPlanReview.planFile} and call ${PLAN_REVIEW_SUBMIT_TOOL} again after addressing this feedback.${headingGuidance}\n\n${feedback || "Review changes requested."}`,
+      },
+    ],
+    details: { status: "denied" },
+  };
+};
+
+const dismissPendingPlanReview = (
+  state: SessionRuntimeState,
+  cwd: string,
+  pendingPlanReviews: Map<string, PendingPlanReview>,
+  pendingPlanReview: PendingPlanReview,
+) => {
+  // Dismissed = no decision, no revision demand. Release the gate but do NOT
+  // settle the path: the next write to the same file re-queues the review.
+  clearPendingPlanReviewTarget(
+    state,
+    cwd,
+    pendingPlanReviews,
+    pendingPlanReview.resolvedPlanPath,
+  );
+  markPendingPlanReviewEventsHandled(state, cwd, [
+    pendingPlanReview.resolvedPlanPath,
+  ]);
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: `Review dismissed for ${pendingPlanReview.planFile} without a decision. The pending gate is released; the file will be queued for review again on its next write, or review it anytime with the plan/spec file picker.`,
+      },
+    ],
+    details: { status: "dismissed" },
+  };
+};
 
 const completePendingPlanReview = (
   ctx: ExtensionContext,
@@ -448,6 +488,15 @@ const completePendingPlanReview = (
   setReviewWidget(ctx);
   if (result.approved) {
     return approvePendingPlanReview(
+      state,
+      ctx.cwd,
+      pendingPlanReviews,
+      pendingPlanReview,
+    );
+  }
+
+  if (result.dismissed) {
+    return dismissPendingPlanReview(
       state,
       ctx.cwd,
       pendingPlanReviews,
@@ -635,7 +684,6 @@ export const registerPlanReviewSubmitTool = (
               pendingPlanReview.resolvedPlanPath,
               {
                 gate: true,
-                renderHtml,
                 signal,
                 timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
               },

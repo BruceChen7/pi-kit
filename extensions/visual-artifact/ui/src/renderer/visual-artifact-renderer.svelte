@@ -12,7 +12,12 @@ type ArtifactNode = {
 let {
   nodes,
   basePath = "nodes",
-}: { nodes: ArtifactNode[]; basePath?: string } = $props();
+  feedbackActive = false,
+}: {
+  nodes: ArtifactNode[];
+  basePath?: string;
+  feedbackActive?: boolean;
+} = $props();
 
 function nodeId(node: ArtifactNode, index: number): string {
   return node.metadata?.id ?? `node-${index}`;
@@ -56,13 +61,13 @@ try {
   {@const Adapter = getAdapter(node.type)}
   {@const nId = nodeId(node, i)}
   {@const nPath = nodePath(i)}
-  {@const isSelected = feedbackCtx?.store.selectedNode?.nodePath === nPath}
+  {@const isSelected = feedbackActive && feedbackCtx?.store.selectedNode?.nodePath === nPath}
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
     class="va-node"
-    class:va-clickable={!!feedbackCtx}
+    class:va-clickable={feedbackActive}
     class:va-selected={isSelected}
     data-va-type={node.type}
     data-va-id={nId}
@@ -71,7 +76,7 @@ try {
     data-va-node-type={node.type}
     data-va-node-label={nodeLabel(node)}
     onclick={(e) => {
-      if (!feedbackCtx) return;
+      if (!feedbackActive) return;
       e.preventDefault();
       e.stopPropagation();
       feedbackCtx.store.handleNodeClick(e);
@@ -95,7 +100,7 @@ try {
     cursor: pointer;
   }
 
-  .va-clickable::after {
+  .va-node::after {
     content: "";
     position: absolute;
     inset: -4px;
@@ -104,18 +109,22 @@ try {
     border-left-width: 3px;
     border-radius: calc(var(--radius) * 1.4);
     pointer-events: none;
+    opacity: 0;
     transition:
+      opacity 0.15s ease,
       border-color 0.15s ease,
       background 0.15s ease,
       box-shadow 0.15s ease;
   }
 
   .va-clickable:hover::after {
+    opacity: 1;
     border-color: color-mix(in oklch, var(--clay), transparent 80%);
     border-left-color: var(--clay);
   }
 
   .va-selected::after {
+    opacity: 1;
     border-color: var(--clay);
     border-left-color: var(--clay);
     background: color-mix(in oklch, var(--clay), transparent 92%);

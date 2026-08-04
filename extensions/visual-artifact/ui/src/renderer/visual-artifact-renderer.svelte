@@ -67,7 +67,7 @@ try {
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
     class="va-node"
-    class:va-clickable={feedbackActive}
+    class:va-clickable={!!feedbackCtx}
     class:va-selected={isSelected}
     data-va-type={node.type}
     data-va-id={nId}

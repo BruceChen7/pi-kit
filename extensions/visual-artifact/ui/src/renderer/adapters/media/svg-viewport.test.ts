@@ -4,12 +4,15 @@ import {
   computeView,
   exceedsDragThreshold,
   fitBoundsToContainer,
+  isAtBaseZoom,
+  isZoomModifierDown,
   MAX_ZOOM,
   MIN_ZOOM,
   normalizeSvgMarkup,
   parseViewBoxFromMarkup,
   stepZoom,
-  ZOOM_STEP,
+  type ZoomShortcut,
+  zoomShortcutForKey,
 } from "./svg-viewport.ts";
 
 describe("parseViewBoxFromMarkup", () => {
@@ -144,9 +147,9 @@ describe("clampZoom / stepZoom", () => {
     expect(clampZoom(1)).toBe(1);
   });
 
-  it("steps by ZOOM_STEP in both directions", () => {
-    expect(stepZoom(1, 1)).toBeCloseTo(1 + ZOOM_STEP);
-    expect(stepZoom(1, -1)).toBeCloseTo(1 - ZOOM_STEP);
+  it("steps by a quarter in both directions", () => {
+    expect(stepZoom(1, 1)).toBeCloseTo(1.25);
+    expect(stepZoom(1, -1)).toBeCloseTo(0.75);
   });
 
   it("does not step past the bounds", () => {
@@ -173,6 +176,88 @@ describe("exceedsDragThreshold", () => {
   it("supports a custom threshold, strictly greater than", () => {
     expect(exceedsDragThreshold(5, 0, 5)).toBe(false);
     expect(exceedsDragThreshold(5.1, 0, 5)).toBe(true);
+  });
+});
+
+describe("isAtBaseZoom", () => {
+  it("treats exactly 1 as the base zoom", () => {
+    expect(isAtBaseZoom(1)).toBe(true);
+  });
+
+  it("treats values within epsilon as the base zoom", () => {
+    expect(isAtBaseZoom(1.0005)).toBe(true);
+    expect(isAtBaseZoom(0.9995)).toBe(true);
+  });
+
+  it("treats values beyond epsilon as zoomed", () => {
+    expect(isAtBaseZoom(1.0011)).toBe(false);
+    expect(isAtBaseZoom(0.9989)).toBe(false);
+  });
+});
+
+describe("isZoomModifierDown", () => {
+  it("accepts Ctrl, Meta, or both", () => {
+    expect(isZoomModifierDown(true, false)).toBe(true);
+    expect(isZoomModifierDown(false, true)).toBe(true);
+    expect(isZoomModifierDown(true, true)).toBe(true);
+  });
+
+  it("rejects when neither modifier is held", () => {
+    expect(isZoomModifierDown(false, false)).toBe(false);
+  });
+});
+
+describe("zoomShortcutForKey", () => {
+  const meta = { meta: true };
+
+  const metaMappings: Array<[string, string, ZoomShortcut]> = [
+    ["plus (Shift+=)", "+", { type: "step", direction: 1 }],
+    ["equal (no shift)", "=", { type: "step", direction: 1 }],
+    ["minus", "-", { type: "step", direction: -1 }],
+    ["Shift+minus (_)", "_", { type: "step", direction: -1 }],
+    ["zero (reset)", "0", { type: "reset" }],
+  ];
+
+  it.each(metaMappings)("maps Cmd/Meta+%s", (_label, key, expected) => {
+    expect(zoomShortcutForKey(key, meta)).toEqual(expected);
+  });
+
+  const ctrlMappings: Array<[string, ZoomShortcut]> = [
+    ["+", { type: "step", direction: 1 }],
+    ["-", { type: "step", direction: -1 }],
+    ["0", { type: "reset" }],
+  ];
+
+  it.each(ctrlMappings)(
+    "accepts Ctrl+%s on non-mac platforms",
+    (key, expected) => {
+      expect(zoomShortcutForKey(key, { ctrl: true })).toEqual(expected);
+    },
+  );
+
+  it("accepts either Cmd or Ctrl when both are held", () => {
+    expect(zoomShortcutForKey("+", { meta: true, ctrl: true })).toEqual({
+      type: "step",
+      direction: 1,
+    });
+  });
+
+  it("returns null without a Cmd/Ctrl modifier", () => {
+    expect(zoomShortcutForKey("+", {})).toBeNull();
+    expect(zoomShortcutForKey("0", {})).toBeNull();
+  });
+
+  it("returns null for Alt-modified combos", () => {
+    expect(zoomShortcutForKey("+", { meta: true, alt: true })).toBeNull();
+    expect(zoomShortcutForKey("-", { ctrl: true, alt: true })).toBeNull();
+    expect(zoomShortcutForKey("0", { meta: true, alt: true })).toBeNull();
+  });
+
+  it("returns null for unrelated keys", () => {
+    expect(zoomShortcutForKey("a", meta)).toBeNull();
+    expect(zoomShortcutForKey("1", meta)).toBeNull();
+    expect(zoomShortcutForKey(" ", meta)).toBeNull();
+    expect(zoomShortcutForKey("ArrowUp", meta)).toBeNull();
   });
 });
 

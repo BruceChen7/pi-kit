@@ -125,6 +125,77 @@ export function stepZoom(zoom: number, direction: 1 | -1): number {
   return clampZoom(zoom + direction * ZOOM_STEP);
 }
 
+/** Zoom is treated as "at 100%" when within this distance of 1. */
+export const ZOOM_EPSILON = 0.001;
+
+/**
+ * True when the zoom level is (within epsilon of) the base 100%.
+ * Drives the zoom badge visibility and the re-fit-on-resize guard.
+ */
+export function isAtBaseZoom(zoom: number, epsilon = ZOOM_EPSILON): boolean {
+  return Math.abs(zoom - 1) <= epsilon;
+}
+
+/**
+ * Whether Cmd (macOS) or Ctrl (elsewhere) is held — the single source of
+ * truth for which modifier activates zoom interactions. Shared by the
+ * wheel/pinch handlers and the keyboard shortcut decision.
+ */
+export function isZoomModifierDown(ctrl: boolean, meta: boolean): boolean {
+  return ctrl || meta;
+}
+
+/**
+ * Modifier keys relevant to zoom shortcuts. `shift` is intentionally not a
+ * field: shifted variants are already distinguished by the key string
+ * (`+` vs `=`, `_` vs `-`), so the core only needs Cmd/Ctrl/Alt state.
+ */
+export interface ZoomShortcutModifiers {
+  meta?: boolean;
+  ctrl?: boolean;
+  alt?: boolean;
+}
+
+export type ZoomShortcut =
+  | { type: "step"; direction: 1 | -1 }
+  | { type: "reset" };
+
+/**
+ * Decide the action for a Cmd/Ctrl+`+` / Cmd/Ctrl+`-` / Cmd/Ctrl+`0`
+ * keyboard shortcut. Pure: takes primitive key/modifier values (no DOM
+ * types), so the Svelte shell unpacks the KeyboardEvent and delegates here.
+ *
+ * Accepts `+` (Shift+= on US/CN layouts), `=` (same key without Shift) and
+ * numpad variants for zoom in; `-` and `_` (Shift+-) for zoom out; `0`
+ * (including numpad 0) to reset to the default fit. Either Cmd or Ctrl
+ * works (shared with the wheel handler via isZoomModifierDown); Alt-
+ * modified combos are ignored.
+ *
+ * Returns a zoom-in step, a zoom-out step, a reset, or null when the combo
+ * is not a zoom shortcut.
+ */
+export function zoomShortcutForKey(
+  key: string,
+  modifiers: ZoomShortcutModifiers = {},
+): ZoomShortcut | null {
+  if (!isZoomModifierDown(modifiers.ctrl ?? false, modifiers.meta ?? false)) {
+    return null;
+  }
+  if (modifiers.alt) return null;
+  switch (key) {
+    case "+":
+    case "=":
+      return { type: "step", direction: 1 };
+    case "-":
+    case "_":
+      return { type: "step", direction: -1 };
+    case "0":
+      return { type: "reset" };
+    default:
+      return null;
+  }
+}
+
 /**
  * Distinguish a drag (pan) from a plain click (annotation select).
  * Strictly greater than the threshold counts as a drag.

@@ -2,6 +2,7 @@
 import { getContext } from "svelte";
 import { findClosestVaNode } from "../annotations/annotation-helpers.ts";
 import { getAdapter } from "./component-registry.ts";
+import { isRenderableNode } from "./renderable-node.ts";
 
 type ArtifactNode = {
   type: string;
@@ -55,12 +56,18 @@ try {
 } catch {
   // No feedback provider — that's fine for home/project views.
 }
+
+const visibleNodes = $derived(
+  nodes
+    .map((node, index) => ({ node, index }))
+    .filter((entry) => isRenderableNode(entry.node)),
+);
 </script>
 
-{#each nodes as node, i (nodeId(node, i))}
+{#each visibleNodes as { node, index } (nodeId(node, index))}
   {@const Adapter = getAdapter(node.type)}
-  {@const nId = nodeId(node, i)}
-  {@const nPath = nodePath(i)}
+  {@const nId = nodeId(node, index)}
+  {@const nPath = nodePath(index)}
   {@const isSelected = feedbackActive && feedbackCtx?.store.selectedNode?.nodePath === nPath}
 
   <!-- svelte-ignore a11y_no_static_element_interactions -->

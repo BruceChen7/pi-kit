@@ -31,7 +31,7 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 - `/plannotator-review` opens an interactive plan/spec file picker and submits the selected file for Plannotator review.
 - `Ctrl+Shift+R` opens the same plan/spec file picker.
 - `Ctrl+Alt+L` annotates the latest Markdown or HTML file modified in the current session with `plannotator annotate <file> --json`.
-- Markdown plan/spec/issue submissions use Plannotator's plan-review hook mode so version history and plan diffs are available. HTML submissions use `plannotator annotate <file> --render-html --gate --json`.
+- Markdown plan/spec/issue submissions use Plannotator's plan-review hook mode so version history and plan diffs are available. HTML submissions use `plannotator annotate <file> --gate --json` (HTML renders raw by default since Plannotator v0.22+).
 
 ## Configuration
 
@@ -70,7 +70,7 @@ Notes:
 Plannotator Auto requires the `plannotator` CLI to be available on `PATH`.
 
 - `plannotator` with a PermissionRequest hook payload on stdin for Markdown plan/spec/issue review
-- `plannotator annotate <file> --render-html --gate --json`
+- `plannotator annotate <file> --gate --json`
 - `plannotator annotate <file> --json`
 
 ## Logging

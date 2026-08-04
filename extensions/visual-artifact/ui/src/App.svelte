@@ -480,8 +480,8 @@ function handleCleanupResult(e: Event): void {
 
   .artifact-main {
     flex: 1;
-    width: min(100%, 1040px);
-    max-width: 1040px;
+    width: min(100%, 1440px);
+    max-width: 1440px;
     min-width: 0;
     margin: 0 auto;
     transition: margin-right 0.2s ease;

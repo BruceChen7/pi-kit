@@ -125,6 +125,44 @@ export function stepZoom(zoom: number, direction: 1 | -1): number {
   return clampZoom(zoom + direction * ZOOM_STEP);
 }
 
+export interface ZoomShortcutModifiers {
+  meta?: boolean;
+  ctrl?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+}
+
+/**
+ * Decide the zoom direction for a Cmd/Ctrl+`+` / Cmd/Ctrl+`-` keyboard
+ * shortcut. Pure: takes primitive key/modifier values (no DOM types), so
+ * the Svelte shell unpacks the KeyboardEvent and delegates here.
+ *
+ * Accepts `+` (Shift+= on US/CN layouts), `=` (same key without Shift) and
+ * numpad variants for zoom in; `-` and `_` (Shift+-) for zoom out. Either
+ * Cmd or Ctrl works (mirrors the wheel handler's ctrlKey || metaKey);
+ * Alt-modified combos are ignored.
+ *
+ * Returns 1 (zoom in), -1 (zoom out), or null when the combo is not a zoom
+ * shortcut.
+ */
+export function zoomDirectionForKey(
+  key: string,
+  modifiers: ZoomShortcutModifiers = {},
+): 1 | -1 | null {
+  if (!modifiers.meta && !modifiers.ctrl) return null;
+  if (modifiers.alt) return null;
+  switch (key) {
+    case "+":
+    case "=":
+      return 1;
+    case "-":
+    case "_":
+      return -1;
+    default:
+      return null;
+  }
+}
+
 /**
  * Distinguish a drag (pan) from a plain click (annotation select).
  * Strictly greater than the threshold counts as a drag.

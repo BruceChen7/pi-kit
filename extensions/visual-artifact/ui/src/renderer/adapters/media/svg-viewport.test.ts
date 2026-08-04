@@ -10,6 +10,7 @@ import {
   parseViewBoxFromMarkup,
   stepZoom,
   ZOOM_STEP,
+  zoomDirectionForKey,
 } from "./svg-viewport.ts";
 
 describe("parseViewBoxFromMarkup", () => {
@@ -173,6 +174,52 @@ describe("exceedsDragThreshold", () => {
   it("supports a custom threshold, strictly greater than", () => {
     expect(exceedsDragThreshold(5, 0, 5)).toBe(false);
     expect(exceedsDragThreshold(5.1, 0, 5)).toBe(true);
+  });
+});
+
+describe("zoomDirectionForKey", () => {
+  const meta = { meta: true };
+
+  it("maps Cmd/Meta+plus to zoom in", () => {
+    expect(zoomDirectionForKey("+", meta)).toBe(1);
+  });
+
+  it("maps Cmd/Meta+equal (plus without shift) to zoom in", () => {
+    expect(zoomDirectionForKey("=", meta)).toBe(1);
+  });
+
+  it("maps Cmd/Meta+minus to zoom out", () => {
+    expect(zoomDirectionForKey("-", meta)).toBe(-1);
+  });
+
+  it("maps Cmd/Meta+Shift+minus (key '_') to zoom out", () => {
+    expect(zoomDirectionForKey("_", meta)).toBe(-1);
+  });
+
+  it("accepts Ctrl as the modifier on non-mac platforms", () => {
+    expect(zoomDirectionForKey("+", { ctrl: true })).toBe(1);
+    expect(zoomDirectionForKey("-", { ctrl: true })).toBe(-1);
+  });
+
+  it("accepts either Cmd or Ctrl when both are held", () => {
+    expect(zoomDirectionForKey("+", { meta: true, ctrl: true })).toBe(1);
+  });
+
+  it("returns null without a Cmd/Ctrl modifier", () => {
+    expect(zoomDirectionForKey("+", {})).toBeNull();
+    expect(zoomDirectionForKey("+", { shift: true })).toBeNull();
+  });
+
+  it("returns null for Alt-modified combos", () => {
+    expect(zoomDirectionForKey("+", { meta: true, alt: true })).toBeNull();
+    expect(zoomDirectionForKey("-", { ctrl: true, alt: true })).toBeNull();
+  });
+
+  it("returns null for unrelated keys", () => {
+    expect(zoomDirectionForKey("a", meta)).toBeNull();
+    expect(zoomDirectionForKey("1", meta)).toBeNull();
+    expect(zoomDirectionForKey(" ", meta)).toBeNull();
+    expect(zoomDirectionForKey("ArrowUp", meta)).toBeNull();
   });
 });
 

@@ -11,6 +11,7 @@ import {
   isReviewDocumentPath,
   toRepoRelativePath,
 } from "./paths.ts";
+import { runLavishReviewOnce } from "./plan-review.ts";
 import type { SessionReviewDocument, SessionRuntimeState } from "./session.ts";
 import { getSessionState } from "./session.ts";
 
@@ -180,6 +181,12 @@ const annotateLatestReviewDocument = async (
   }
 
   try {
+    if (latestDocument.absolutePath.toLowerCase().endsWith(".html")) {
+      // HTML artifacts review through Lavish (open + poll once).
+      await runLavishReviewOnce(pi, ctx, latestDocument.absolutePath);
+      return;
+    }
+
     const response = await runPlannotatorAnnotateCli(
       ctx,
       latestDocument.absolutePath,

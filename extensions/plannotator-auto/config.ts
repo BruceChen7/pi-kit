@@ -8,6 +8,7 @@ export type ExtraReviewTargetConfig = {
 
 export type PlannotatorAutoConfig = {
   planFile?: string | null;
+  htmlDirs?: string[] | null;
   extraReviewTargets?: ExtraReviewTargetConfig[];
 };
 
@@ -39,6 +40,25 @@ const sanitizeExtraReviewTargets = (
   return next.length > 0 ? next : undefined;
 };
 
+const sanitizeHtmlDirs = (value: unknown): string[] | null | undefined => {
+  if (value === null) {
+    return null;
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const next = value.flatMap((entry) => {
+    if (typeof entry !== "string") {
+      return [];
+    }
+    const trimmed = entry.trim();
+    return trimmed.length > 0 ? [trimmed] : [];
+  });
+
+  return next;
+};
+
 const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
   if (!isRecord(value)) {
     return {};
@@ -53,6 +73,11 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
     if (trimmed.length > 0) {
       next.planFile = trimmed;
     }
+  }
+
+  const htmlDirs = sanitizeHtmlDirs(value.htmlDirs);
+  if (htmlDirs !== undefined) {
+    next.htmlDirs = htmlDirs;
   }
 
   const extraReviewTargets = sanitizeExtraReviewTargets(
@@ -85,6 +110,7 @@ export const loadConfig = (
   getLogger().debug("plannotator-auto config loaded", {
     cwd,
     planFile: config.planFile,
+    htmlDirs: config.htmlDirs,
     extraReviewTargetCount: config.extraReviewTargets?.length ?? 0,
   });
   return config;

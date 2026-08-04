@@ -39,6 +39,12 @@ const isReviewTrackedToolName = (toolName: string): boolean =>
 
 const planReviewSubmitToolParameters = Type.Object({
   path: Type.String({ description: "Pending review target path" }),
+  reply: Type.Optional(
+    Type.String({
+      description:
+        "Optional message shown to the user in Lavish when re-submitting an HTML artifact after applying feedback (mapped to --agent-reply).",
+    }),
+  ),
 });
 
 const resolveToolPath = (args: unknown): string | null => {

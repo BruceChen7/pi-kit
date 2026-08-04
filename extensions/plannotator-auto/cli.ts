@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 
 export type CliReviewDecision = {
   approved: boolean;
@@ -13,14 +13,33 @@ export type CliReviewResult =
   | { status: "error"; error: string }
   | { status: "aborted" };
 
+export type LavishDecision =
+  | { kind: "opened" }
+  | { kind: "user-ended" }
+  | {
+      kind: "feedback";
+      prompts: string[];
+      sessionEnded: boolean;
+      endedBy?: string;
+      nextStep?: string;
+    }
+  | { kind: "ended"; endedBy?: string; nextStep?: string };
+
+export type LavishCliResult =
+  | { status: "handled"; result: LavishDecision }
+  | { status: "error"; error: string }
+  | { status: "aborted" };
+
 // --- Session child tracking ---
 //
-// Track spawned plannotator children per session key so they can be killed on
+// Track spawned review CLI children per session key so they can be killed on
 // session_shutdown when the user closes the browser tab without completing
-// the review (the plannotator CLI hangs on an unresolved Promise).
+// the review (the CLIs hang on an unresolved Promise).
 //
 // Keyed by sessionKey (not cwd) to correctly isolate sessions that share the
-// same working directory.
+// same working directory. Children spawned through `npx` run detached in
+// their own process group, so group-kill is used for them (Windows falls
+// back to a plain child kill).
 
 import { getSessionKey } from "./session.ts";
 
@@ -30,17 +49,47 @@ type CliCtx = {
   sessionManager: { getSessionFile: () => string | null | undefined };
 };
 
-const childrenBySessionKey = new Map<string, Set<ChildProcess>>();
+type TrackedChild = {
+  child: ChildProcess;
+  killGroup: boolean;
+};
 
-const trackChild = (sessionKey: string, child: ChildProcess): void => {
+const childrenBySessionKey = new Map<string, Set<TrackedChild>>();
+
+const killTracked = (tracked: TrackedChild): void => {
+  const { child, killGroup } = tracked;
+  if (killGroup && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+      return;
+    } catch {
+      // Process group unavailable — fall through to a plain child kill.
+    }
+  }
+  if (!child.killed) {
+    child.kill(); // SIGTERM (default)
+  }
+};
+
+const trackChild = (
+  sessionKey: string,
+  child: ChildProcess,
+  killGroup: boolean,
+): void => {
   let children = childrenBySessionKey.get(sessionKey);
   if (!children) {
     children = new Set();
     childrenBySessionKey.set(sessionKey, children);
   }
-  children.add(child);
+  const tracked: TrackedChild = { child, killGroup };
+  children.add(tracked);
   child.on("close", () => {
-    children.delete(child);
+    for (const entry of children) {
+      if (entry.child === child) {
+        children.delete(entry);
+        break;
+      }
+    }
     if (children.size === 0) {
       childrenBySessionKey.delete(sessionKey);
     }
@@ -54,8 +103,7 @@ export const countTrackedChildren = (sessionKey: string): number =>
   childrenBySessionKey.get(sessionKey)?.size ?? 0;
 
 /**
- * Kill all tracked plannotator children for the given session key.
- * Uses SIGTERM to match the existing timeout/abort pattern in this file.
+ * Kill all tracked review CLI children for the given session key.
  */
 export const killTrackedChildren = (sessionKey: string): void => {
   const children = childrenBySessionKey.get(sessionKey);
@@ -63,42 +111,52 @@ export const killTrackedChildren = (sessionKey: string): void => {
     return;
   }
 
-  for (const child of children) {
-    if (!child.killed) {
-      child.kill(); // SIGTERM (default)
-    }
+  for (const tracked of children) {
+    killTracked(tracked);
   }
   childrenBySessionKey.delete(sessionKey);
 };
 
-type RunPlannotatorCliOptions = {
+type RunCliOptions<T> = {
   input?: string;
-  parseStdout: (stdout: string) => CliReviewDecision;
+  parseStdout: (stdout: string) => T;
   signal?: AbortSignal;
   timeoutMs: number;
+  detached?: boolean;
+  env?: NodeJS.ProcessEnv;
 };
 
-const runPlannotatorCli = async (
+type RunCliResult<T> =
+  | { status: "handled"; result: T }
+  | { status: "error"; error: string }
+  | { status: "aborted" };
+
+const runCli = async <T>(
   ctx: CliCtx,
+  command: string,
   args: string[],
-  options: RunPlannotatorCliOptions,
-): Promise<CliReviewResult> =>
+  options: RunCliOptions<T>,
+): Promise<RunCliResult<T>> =>
   new Promise((resolve) => {
-    const child = spawn("plannotator", args, {
+    const detached = options.detached === true;
+    const child = spawn(command, args, {
       cwd: ctx.cwd,
-      env: { ...process.env, PLANNOTATOR_CWD: ctx.cwd },
+      env: options.env ?? { ...process.env, PLANNOTATOR_CWD: ctx.cwd },
       stdio: ["pipe", "pipe", "pipe"],
+      ...(detached ? { detached: true } : {}),
     });
     let stdout = "";
     let stderr = "";
     let settled = false;
     let aborted = Boolean(options.signal?.aborted);
 
+    const killChild = () => killTracked({ child, killGroup: detached });
+
     const cleanup = () => {
       clearTimeout(timeout);
       options.signal?.removeEventListener("abort", abort);
     };
-    const finish = (result: CliReviewResult) => {
+    const finish = (result: RunCliResult<T>) => {
       if (settled) {
         return;
       }
@@ -108,11 +166,11 @@ const runPlannotatorCli = async (
     };
     const abort = () => {
       aborted = true;
-      child.kill();
+      killChild();
     };
     const timeout = setTimeout(() => {
-      child.kill();
-      finish({ status: "error", error: "plannotator timed out" });
+      killChild();
+      finish({ status: "error", error: "review CLI timed out" });
     }, options.timeoutMs);
 
     child.stdout.setEncoding("utf-8");
@@ -134,7 +192,7 @@ const runPlannotatorCli = async (
       if (code !== 0) {
         finish({
           status: "error",
-          error: stderr || `plannotator exited with ${code}`,
+          error: stderr || `${command} exited with ${code}`,
         });
         return;
       }
@@ -154,7 +212,7 @@ const runPlannotatorCli = async (
     // Track child so it can be killed on session_shutdown if the user closes
     // the browser tab without completing the review.
     const sessionKey = getSessionKey(ctx);
-    trackChild(sessionKey, child);
+    trackChild(sessionKey, child, detached);
 
     child.stdin.end(options.input ?? "");
   });
@@ -236,7 +294,7 @@ export const runPlannotatorPlanReviewCli = async (
     permission_mode: "default",
   };
 
-  return runPlannotatorCli(ctx, [], {
+  return runCli(ctx, "plannotator", [], {
     input: `${JSON.stringify(hookEvent)}\n`,
     parseStdout: parseCliPlanReviewResult,
     signal: options.signal,
@@ -247,11 +305,7 @@ export const runPlannotatorPlanReviewCli = async (
 export const runPlannotatorAnnotateCli = async (
   ctx: CliCtx,
   filePath: string,
-  options: {
-    gate?: boolean;
-    signal?: AbortSignal;
-    timeoutMs: number;
-  },
+  options: { gate?: boolean; signal?: AbortSignal; timeoutMs: number },
 ): Promise<CliReviewResult> => {
   const args = ["annotate", filePath];
   if (options.gate) {
@@ -259,8 +313,146 @@ export const runPlannotatorAnnotateCli = async (
   }
   args.push("--json");
 
-  return runPlannotatorCli(ctx, args, {
+  return runCli(ctx, "plannotator", args, {
     parseStdout: parseCliReviewResult,
+    signal: options.signal,
+    timeoutMs: options.timeoutMs,
+  });
+};
+
+// --- Lavish (HTML artifact review) CLI ---
+
+let lavishCommandProbe: { command: string; prefixArgs: string[] } | null = null;
+
+/**
+ * Resolve how to invoke lavish-axi: prefer a direct PATH binary, fall back to
+ * `npx -y lavish-axi`. Probed once and cached for the extension lifetime.
+ */
+export const resolveLavishCommand = (): {
+  command: string;
+  prefixArgs: string[];
+} => {
+  if (lavishCommandProbe) {
+    return lavishCommandProbe;
+  }
+
+  let hasLavishAxi = false;
+  try {
+    const probe = spawnSync("lavish-axi", ["--version"], {
+      stdio: "ignore",
+      timeout: 5_000,
+    });
+    hasLavishAxi = probe.status === 0;
+  } catch {
+    hasLavishAxi = false;
+  }
+
+  lavishCommandProbe = hasLavishAxi
+    ? { command: "lavish-axi", prefixArgs: [] }
+    : {
+        command: process.platform === "win32" ? "npx.cmd" : "npx",
+        prefixArgs: ["-y", "lavish-axi"],
+      };
+  return lavishCommandProbe;
+};
+
+const runLavishCli = async (
+  ctx: CliCtx,
+  args: string[],
+  options: {
+    parseStdout: (stdout: string) => LavishDecision;
+    signal?: AbortSignal;
+    timeoutMs: number;
+  },
+): Promise<LavishCliResult> => {
+  const { command, prefixArgs } = resolveLavishCommand();
+  const result = await runCli(ctx, command, [...prefixArgs, ...args], {
+    parseStdout: options.parseStdout,
+    signal: options.signal,
+    timeoutMs: options.timeoutMs,
+    detached: command !== "lavish-axi",
+    env: { ...process.env },
+  });
+  return result;
+};
+
+const parseLavishOpenOutput = (stdout: string): LavishDecision => {
+  const trimmed = stdout.trim();
+  try {
+    const parsed = JSON.parse(trimmed) as { session?: { status?: string } };
+    if (parsed.session?.status === "user-ended") {
+      return { kind: "user-ended" };
+    }
+  } catch {
+    // Fall through — a non-JSON open output still means the open was
+    // attempted; treat it as opened so the poll can run.
+  }
+  return { kind: "opened" };
+};
+
+const parseLavishPollOutput = (stdout: string): LavishDecision => {
+  const trimmed = stdout.trim();
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      session?: {
+        status?: string;
+        session_ended?: boolean;
+        ended_by?: string;
+      };
+      prompts?: Array<{ text?: string; tag?: string }>;
+      next_step?: string;
+    };
+    const prompts = (parsed.prompts ?? [])
+      .map((prompt) => prompt.text ?? "")
+      .filter((text) => text.trim().length > 0);
+    const sessionStatus = parsed.session?.status;
+    if (sessionStatus === "ended") {
+      return {
+        kind: "ended",
+        endedBy: parsed.session?.ended_by,
+        nextStep: parsed.next_step,
+      };
+    }
+    return {
+      kind: "feedback",
+      prompts,
+      sessionEnded: Boolean(parsed.session?.session_ended),
+      endedBy: parsed.session?.ended_by,
+      nextStep: parsed.next_step,
+    };
+  } catch {
+    // Non-JSON poll output (e.g. interrupted wait) — treat as empty feedback;
+    // queued feedback is never lost, so a later poll re-run still delivers it.
+    return { kind: "feedback", prompts: [], sessionEnded: false };
+  }
+};
+
+export const runLavishOpenCli = async (
+  ctx: CliCtx,
+  filePath: string,
+  options: { signal?: AbortSignal; timeoutMs: number },
+): Promise<LavishCliResult> =>
+  runLavishCli(ctx, ["open", filePath], {
+    parseStdout: parseLavishOpenOutput,
+    signal: options.signal,
+    timeoutMs: options.timeoutMs,
+  });
+
+export const runLavishPollCli = async (
+  ctx: CliCtx,
+  filePath: string,
+  options: {
+    agentReply?: string;
+    signal?: AbortSignal;
+    timeoutMs: number;
+  },
+): Promise<LavishCliResult> => {
+  const args = ["poll", filePath];
+  if (options.agentReply) {
+    args.push("--agent-reply", options.agentReply);
+  }
+  return runLavishCli(ctx, args, {
+    parseStdout: parseLavishPollOutput,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
   });

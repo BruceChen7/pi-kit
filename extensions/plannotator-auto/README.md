@@ -30,8 +30,12 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 - `plannotator_auto_submit_review` is the only plan/spec review runner. While it waits for a result, the same session will not ask for another submit; approval clears the pending target, while denial keeps it pending for a later retry. Denied retries should revise the same file and preserve the first `#` heading so Plannotator can show version diffs.
 - `/plannotator-review` opens an interactive plan/spec file picker and submits the selected file for Plannotator review.
 - `Ctrl+Shift+R` opens the same plan/spec file picker.
-- `Ctrl+Alt+L` annotates the latest Markdown or HTML file modified in the current session with `plannotator annotate <file> --json`.
-- Markdown plan/spec/issue submissions use Plannotator's plan-review hook mode so version history and plan diffs are available. HTML submissions use `plannotator annotate <file> --gate --json` (HTML renders raw by default since Plannotator v0.22+).
+- `Ctrl+Alt+L` annotates the latest Markdown or HTML file modified in the current session.
+
+### Backends by file type
+
+- **Markdown** (plan/spec/issue) → Plannotator plan-review hook mode so version history and plan diffs are available (`plannotator` CLI with a PermissionRequest hook payload).
+- **HTML** (plan `.html` and `.pi/html/` artifacts) → **Lavish Editor** (`lavish-axi` CLI, falling back to `npx -y lavish-axi`). First submit runs `lavish-axi open` + `poll`; after feedback the pending gate stays locked, and re-submitting with `reply` runs `poll --agent-reply <reply>` until the user ends the session (`ended` clears the pending target and settles the path). A poll interrupted by timeout/abort can be safely re-run — queued feedback is never lost.
 
 ## Configuration
 
@@ -45,6 +49,7 @@ Example:
 {
   "plannotatorAuto": {
     "planFile": ".pi/plans/my-repo/plan",
+    "htmlDirs": [".pi/html"],
     "extraReviewTargets": [
       {
         "dir": ".pi/plans/my-repo/office-hours",
@@ -62,16 +67,17 @@ Example:
 Notes:
 
 - `planFile` supports **directory path only**.
+- `htmlDirs` configures the HTML artifact review directories (default `[".pi/html"]`, resolved against the session cwd with the same repo-slug aliases as `planFile`); set `htmlDirs: null` or `[]` to disable HTML artifact review.
 - `extraReviewTargets` entries use `{ dir, filePattern }`, where `filePattern` is a basename regex applied to direct child files only.
 - Set `planFile: null` to disable plan/spec review auto-trigger.
 
 ## CLI commands used
 
-Plannotator Auto requires the `plannotator` CLI to be available on `PATH`.
+Plannotator Auto requires the `plannotator` CLI (Markdown review) and `lavish-axi` (HTML artifact review, falling back to `npx -y lavish-axi`) to be available on `PATH`.
 
 - `plannotator` with a PermissionRequest hook payload on stdin for Markdown plan/spec/issue review
-- `plannotator annotate <file> --gate --json`
-- `plannotator annotate <file> --json`
+- `plannotator annotate <file> --json` for manual Markdown annotation
+- `lavish-axi open <file>` / `lavish-axi poll <file> [--agent-reply "..."]` for HTML artifact review
 
 ## Logging
 

@@ -17,7 +17,9 @@ import {
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
 import {
-  runPlannotatorAnnotateCli,
+  type LavishDecision,
+  runLavishOpenCli,
+  runLavishPollCli,
   runPlannotatorPlanReviewCli,
 } from "./cli.ts";
 import { extractBashPathCandidates, resolveToolPaths } from "./helpers.ts";
@@ -46,6 +48,7 @@ type PendingPlanReviewEventHandle = {
 
 type PlanReviewSubmitToolParams = {
   path?: unknown;
+  reply?: unknown;
 };
 
 type PlanReviewDecisionLike = {
@@ -112,13 +115,14 @@ const getReviewWidgetMessage = (
   state: SessionRuntimeState,
   cwd: string,
 ): string | null => {
-  const planReviewActive = state.activePlanReviewByCwd.has(cwd);
-
-  if (planReviewActive) {
-    return "Plan/Spec review is active";
+  const planReviewActive = state.activePlanReviewByCwd.get(cwd);
+  if (!planReviewActive) {
+    return null;
   }
 
-  return null;
+  return isHtmlPath(planReviewActive.resolvedPlanPath)
+    ? "Lavish review is active"
+    : "Plan/Spec review is active";
 };
 
 export const setReviewWidget = (ctx: ExtensionContext): void => {
@@ -177,27 +181,41 @@ const formatPlanFileBulletList = (planFiles: string[]): string =>
 
 const formatPendingPlanReviewGateMessage = (planFiles: string[]): string => {
   const targets = formatPlanFileBulletList(planFiles);
+  const htmlTarget = planFiles.some((file) => isHtmlPath(file));
+  const heading = htmlTarget
+    ? "[LAVISH REVIEW - PENDING]"
+    : "[PLANNOTATOR AUTO - PENDING REVIEW]";
+  const guidance = htmlTarget
+    ? ""
+    : ` ${KEEP_PLAN_HEADING_GUIDANCE} ${MERMAID_RENDERING_GUIDANCE}`;
   return [
-    "You still have pending Plannotator review drafts:",
+    heading,
+    "You still have pending review drafts:",
     targets,
-    `Call ${PLAN_REVIEW_SUBMIT_TOOL} with one of these paths before continuing.`,
+    `Call ${PLAN_REVIEW_SUBMIT_TOOL} with one of these paths before continuing.${guidance}`,
   ].join("\n\n");
 };
 
 const formatPendingPlanReviewPrompt = (planFiles: string[]): string => {
   const targets = formatPlanFileBulletList(planFiles);
+  const htmlTarget = planFiles.some((file) => isHtmlPath(file));
   const nextAction =
     `Your next required action is calling ${PLAN_REVIEW_SUBMIT_TOOL} ` +
     "with one pending path.";
-  const deniedAction = `If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`;
+  const deniedAction = htmlTarget
+    ? `If the user sends feedback, revise the artifact and call ${PLAN_REVIEW_SUBMIT_TOOL} again (optionally with a reply describing your changes).`
+    : `If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`;
   // Markdown-only guidance: HTML plans have no `# heading` and do not use
   // ```mermaid fenced blocks, so the guidance would actively mislead agents.
-  const markdownGuidance = planFiles.some((file) => isHtmlPath(file))
+  const markdownGuidance = htmlTarget
     ? ""
     : ` ${KEEP_PLAN_HEADING_GUIDANCE} ${MERMAID_RENDERING_GUIDANCE}`;
+  const heading = htmlTarget
+    ? "[LAVISH REVIEW - PENDING]"
+    : "[PLANNOTATOR AUTO - PENDING REVIEW]";
 
   return [
-    "[PLANNOTATOR AUTO - PENDING REVIEW]",
+    heading,
     "Pending review targets:",
     targets,
     `${nextAction} ${deniedAction}${markdownGuidance}`,
@@ -258,6 +276,7 @@ const emitPendingPlanReviewEvent = (
   pendingPlanReviews: PendingPlanReview[],
 ): void => {
   const planFiles = pendingPlanReviews.map((pending) => pending.planFile);
+  const htmlTarget = planFiles.some((file) => isHtmlPath(file));
   const body = formatPendingPlanReviewGateMessage(planFiles);
   const handled = createHandledState();
   trackPendingPlanReviewEvent(state, ctx.cwd, pendingPlanReviews, handled);
@@ -266,7 +285,7 @@ const emitPendingPlanReviewEvent = (
     type: "plannotator-auto.pending-review",
     requestId: `plannotator_pending_review_${Date.now()}`,
     createdAt: Date.now(),
-    title: "Plannotator review pending",
+    title: htmlTarget ? "Lavish review pending" : "Plannotator review pending",
     body,
     planFiles,
     contextPreview: [body],
@@ -543,6 +562,241 @@ export const createPendingReviewGateMessage = (
   };
 };
 
+// --- Lavish (HTML artifact) review flow ---
+
+const LAVISH_DEFAULT_REPLY = "Agent updated the artifact. Please review again.";
+
+type ReviewToolResult = {
+  content: Array<{ type: "text"; text: string }>;
+  details: Record<string, unknown>;
+};
+
+export const formatLavishFeedback = (
+  planFile: string,
+  decision: Extract<LavishDecision, { kind: "feedback" }>,
+): string => {
+  const promptLines =
+    decision.prompts.length > 0
+      ? decision.prompts.map((prompt) => `- ${prompt}`)
+      : ["(no feedback text)"];
+  return [
+    "[LAVISH REVIEW FEEDBACK]",
+    `Review feedback for ${planFile}:`,
+    ...promptLines,
+    decision.nextStep ? `\n${decision.nextStep}` : "",
+  ]
+    .join("\n")
+    .trim();
+};
+
+/**
+ * Hard-gate Lavish review loop for a pending HTML artifact:
+ *   first submit  → `lavish-axi open` + `poll` (wait for the first batch)
+ *   later submits → `poll --agent-reply <reply>` + keep waiting
+ * feedback stays pending (= denied semantics); ended / user-ended / final
+ * feedback batch releases the gate (= approved semantics). Interrupted
+ * submits never re-open the session (`lavishSessionOpened`).
+ */
+const runLavishReviewFlow = async (
+  ctx: ExtensionContext,
+  state: SessionRuntimeState,
+  pendingPlanReviews: Map<string, PendingPlanReview>,
+  pendingPlanReview: PendingPlanReview,
+  reply: string | undefined,
+  signal: AbortSignal,
+): Promise<ReviewToolResult> => {
+  const openedNow = !pendingPlanReview.lavishSessionOpened;
+  if (openedNow) {
+    const openResult = await runLavishOpenCli(
+      ctx,
+      pendingPlanReview.resolvedPlanPath,
+      {
+        signal,
+        timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+      },
+    );
+    if (openResult.status === "error") {
+      return {
+        content: [{ type: "text", text: openResult.error }],
+        details: { status: "error" },
+      };
+    }
+    if (openResult.status === "aborted") {
+      return {
+        content: [{ type: "text", text: "Lavish review interrupted." }],
+        details: { status: "aborted" },
+      };
+    }
+    if (openResult.result.kind === "user-ended") {
+      approvePendingPlanReview(
+        state,
+        ctx.cwd,
+        pendingPlanReviews,
+        pendingPlanReview,
+      );
+      return {
+        content: [
+          {
+            type: "text",
+            text: `The user ended the Lavish review session for ${pendingPlanReview.planFile}; review is complete.`,
+          },
+        ],
+        details: { status: "approved" },
+      };
+    }
+    pendingPlanReview.lavishSessionOpened = true;
+  }
+
+  const pollResult = await runLavishPollCli(
+    ctx,
+    pendingPlanReview.resolvedPlanPath,
+    {
+      agentReply: openedNow ? undefined : (reply ?? LAVISH_DEFAULT_REPLY),
+      signal,
+      timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+    },
+  );
+  if (pollResult.status === "error") {
+    return {
+      content: [{ type: "text", text: pollResult.error }],
+      details: { status: "error" },
+    };
+  }
+  if (pollResult.status === "aborted") {
+    return {
+      content: [{ type: "text", text: "Lavish review interrupted." }],
+      details: { status: "aborted" },
+    };
+  }
+
+  const decision = pollResult.result;
+  if (decision.kind === "ended") {
+    approvePendingPlanReview(
+      state,
+      ctx.cwd,
+      pendingPlanReviews,
+      pendingPlanReview,
+    );
+    const endedByNote =
+      decision.endedBy === "user" ? " (ended by the user)" : "";
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Lavish review ended${endedByNote} for ${pendingPlanReview.planFile}.`,
+        },
+      ],
+      details: { status: "approved" },
+    };
+  }
+
+  // Final feedback batch with session ended = review complete: deliver the
+  // feedback and release the gate (the user cannot send more feedback).
+  if (decision.kind === "feedback" && decision.sessionEnded) {
+    approvePendingPlanReview(
+      state,
+      ctx.cwd,
+      pendingPlanReviews,
+      pendingPlanReview,
+    );
+    return {
+      content: [
+        {
+          type: "text",
+          text: `${formatLavishFeedback(pendingPlanReview.planFile, decision)}\n\nThe user ended the Lavish session with this feedback; review is complete. Revise ${pendingPlanReview.planFile} and deliver updates in this conversation.`,
+        },
+      ],
+      details: { status: "approved" },
+    };
+  }
+
+  // Ordinary feedback = denied semantics: pending stays, gate stays locked.
+  if (decision.kind === "feedback") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: formatLavishFeedback(pendingPlanReview.planFile, decision),
+        },
+      ],
+      details: { status: "denied" },
+    };
+  }
+
+  // opened / user-ended never come from poll — defensive fallback.
+  return {
+    content: [
+      {
+        type: "text",
+        text: "Lavish poll returned an unexpected result.",
+      },
+    ],
+    details: { status: "error" },
+  };
+};
+
+/**
+ * Manual-entry Lavish review (picker / Ctrl+Alt+L): open + poll once, deliver
+ * the first feedback batch as a follow-up. No pending gate involvement.
+ */
+export const runLavishReviewOnce = async (
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  filePath: string,
+): Promise<void> => {
+  ctx.ui.notify("Opening Lavish review…", "info");
+  const openResult = await runLavishOpenCli(ctx, filePath, {
+    signal: ctx.signal,
+    timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+  });
+  if (openResult.status === "error") {
+    ctx.ui.notify(openResult.error, "warning");
+    return;
+  }
+  if (openResult.status === "aborted") {
+    ctx.ui.notify("Lavish review interrupted.", "info");
+    return;
+  }
+  if (openResult.result.kind === "user-ended") {
+    ctx.ui.notify(
+      "The user ended the Lavish review session; not reopened.",
+      "info",
+    );
+    return;
+  }
+
+  const pollResult = await runLavishPollCli(ctx, filePath, {
+    signal: ctx.signal,
+    timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+  });
+  if (pollResult.status === "error") {
+    ctx.ui.notify(pollResult.error, "warning");
+    return;
+  }
+  if (pollResult.status === "aborted") {
+    ctx.ui.notify("Lavish review interrupted.", "info");
+    return;
+  }
+
+  const decision = pollResult.result;
+  if (decision.kind === "ended") {
+    ctx.ui.notify("Lavish review ended.", "info");
+    return;
+  }
+  if (
+    decision.kind === "feedback" &&
+    (decision.prompts.length > 0 || decision.nextStep)
+  ) {
+    const feedback = formatLavishFeedback(
+      path.relative(ctx.cwd, filePath),
+      decision,
+    );
+    await pi.sendUserMessage(feedback, { deliverAs: "followUp" });
+    return;
+  }
+  ctx.ui.notify("Lavish review closed (no feedback).", "info");
+};
+
 export const registerPlanReviewSubmitTool = (
   pi: ExtensionAPI,
   planReviewSubmitToolParameters: TSchema,
@@ -551,7 +805,7 @@ export const registerPlanReviewSubmitTool = (
     name: PLAN_REVIEW_SUBMIT_TOOL,
     label: "Submit Plannotator Auto Review",
     description:
-      "Submit a pending plan/spec/extra review target to Plannotator and wait for approval or feedback.",
+      "Submit a pending plan/spec/extra review target to Plannotator, or a pending HTML artifact to Lavish, and wait for approval or feedback.",
     parameters: planReviewSubmitToolParameters,
     async execute(_toolCallId, rawParams, signal, _onUpdate, ctx) {
       const params = rawParams as PlanReviewSubmitToolParams;
@@ -605,6 +859,33 @@ export const registerPlanReviewSubmitTool = (
         };
       }
 
+      // HTML artifacts review through the Lavish open/poll loop instead of the
+      // Plannotator plan-review hook: no artifact-policy / mermaid checks.
+      if (isHtmlPath(pendingPlanReview.resolvedPlanPath)) {
+        state.activePlanReviewByCwd.set(ctx.cwd, {
+          reviewId: `cli:${Date.now()}`,
+          kind: pendingPlanReview.kind,
+          planFile: pendingPlanReview.planFile,
+          resolvedPlanPath: pendingPlanReview.resolvedPlanPath,
+          startedAt: Date.now(),
+          origin: "manual-submit",
+        });
+        setReviewWidget(ctx);
+        try {
+          return await runLavishReviewFlow(
+            ctx,
+            state,
+            pendingPlanReviews,
+            pendingPlanReview,
+            typeof params.reply === "string" ? params.reply : undefined,
+            signal,
+          );
+        } finally {
+          state.activePlanReviewByCwd.delete(ctx.cwd);
+          setReviewWidget(ctx);
+        }
+      }
+
       let planContent = "";
       try {
         planContent = fs.readFileSync(
@@ -639,32 +920,27 @@ export const registerPlanReviewSubmitTool = (
         };
       }
 
-      const renderHtml = isHtmlPath(pendingPlanReview.resolvedPlanPath);
-      const preprocessed = renderHtml
-        ? planContent
-        : preprocessPlanMarkdown(planContent);
+      const preprocessed = preprocessPlanMarkdown(planContent);
 
       let mermaidValidationNotice: string | null = null;
-      if (!renderHtml) {
-        // Real syntax validation against the mermaid parser. Covers fence
-        // structure (unclosed/empty) AND parse errors; all failures are
-        // collected and reported together. A broken runtime degrades to a
-        // skip (never blocks the review gate).
-        const mermaidValidation = await runPlanMermaidValidation(preprocessed);
-        if (mermaidValidation.skipped) {
-          log.warn(`Mermaid validation skipped: ${mermaidValidation.reason}`);
-          mermaidValidationNotice = `Note: mermaid 语法校验跳过（原因: ${mermaidValidation.reason}），本次提交未做 mermaid 校验。`;
-        } else if (mermaidValidation.errors.length > 0) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: formatPlanMermaidErrors(mermaidValidation.errors),
-              },
-            ],
-            details: { status: "error", reason: "mermaid-validation" },
-          };
-        }
+      // Real syntax validation against the mermaid parser. Covers fence
+      // structure (unclosed/empty) AND parse errors; all failures are
+      // collected and reported together. A broken runtime degrades to a
+      // skip (never blocks the review gate).
+      const mermaidValidation = await runPlanMermaidValidation(preprocessed);
+      if (mermaidValidation.skipped) {
+        log.warn(`Mermaid validation skipped: ${mermaidValidation.reason}`);
+        mermaidValidationNotice = `Note: mermaid 语法校验跳过（原因: ${mermaidValidation.reason}），本次提交未做 mermaid 校验。`;
+      } else if (mermaidValidation.errors.length > 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: formatPlanMermaidErrors(mermaidValidation.errors),
+            },
+          ],
+          details: { status: "error", reason: "mermaid-validation" },
+        };
       }
 
       state.activePlanReviewByCwd.set(ctx.cwd, {
@@ -678,20 +954,10 @@ export const registerPlanReviewSubmitTool = (
       setReviewWidget(ctx);
 
       try {
-        const cliResult = renderHtml
-          ? await runPlannotatorAnnotateCli(
-              ctx,
-              pendingPlanReview.resolvedPlanPath,
-              {
-                gate: true,
-                signal,
-                timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
-              },
-            )
-          : await runPlannotatorPlanReviewCli(ctx, preprocessed, {
-              signal,
-              timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
-            });
+        const cliResult = await runPlannotatorPlanReviewCli(ctx, preprocessed, {
+          signal,
+          timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+        });
 
         if (cliResult.status === "error") {
           return {

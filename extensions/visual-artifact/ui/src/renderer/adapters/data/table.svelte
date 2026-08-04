@@ -6,7 +6,7 @@ let { headers = [], rows = [] }: { headers?: string[]; rows?: string[][] } =
 
 const minWidth = $derived(
   headers.length > 3
-    ? `${Math.min(1040, Math.max(640, headers.length * 170))}px`
+    ? `${Math.min(1440, Math.max(640, headers.length * 170))}px`
     : "100%",
 );
 </script>

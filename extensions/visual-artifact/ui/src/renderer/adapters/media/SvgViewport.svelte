@@ -169,12 +169,14 @@ $effect(() => {
   };
 });
 
-// Wheel zoom — unconditional hijack, non-passive so preventDefault works.
+// Wheel zoom — requires Ctrl/Meta so it doesn't hijack page scrolling.
+// Plain wheel scrolls the page normally; Ctrl/Meta+wheel zooms the diagram.
 $effect(() => {
   const el = containerEl;
   if (!el || showSource) return;
 
   const handleWheel = (event: WheelEvent) => {
+    if (!event.ctrlKey && !event.metaKey) return;
     if (Math.abs(event.deltaY) < 0.1) return;
     event.preventDefault();
     applyWheelZoomDelta(event.deltaY);

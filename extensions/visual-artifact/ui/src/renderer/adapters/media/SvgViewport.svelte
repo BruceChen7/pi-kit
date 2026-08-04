@@ -67,9 +67,23 @@ let panStart = { x: 0, y: 0 };
  */
 let viewportAspect = $state<number | null>(null);
 
+const INLINE_MAX_HEIGHT = "min(85vh, 44rem)";
+
 function aspectOf(bounds: ViewBox | null): number | null {
   if (!bounds || bounds.width <= 0 || bounds.height <= 0) return null;
   return bounds.width / bounds.height;
+}
+
+function inlineViewportStyle(aspect: number | null): string | undefined {
+  if (!aspect || isExpanded) return undefined;
+  const ratio = aspect.toFixed(4);
+  const maxWidthVh = (85 * aspect).toFixed(4);
+  const maxWidthRem = (44 * aspect).toFixed(4);
+  return [
+    `aspect-ratio: ${ratio}`,
+    `max-height: ${INLINE_MAX_HEIGHT}`,
+    `width: min(100%, ${maxWidthVh}vh, ${maxWidthRem}rem)`,
+  ].join("; ");
 }
 
 // Imperative control refs (updated without re-render, like the source's refs)
@@ -612,9 +626,7 @@ function handleClick(event: MouseEvent): void {
       : viewportAspect
         ? 'min-h-[20rem]'
         : 'h-[min(65vh,36rem)] min-h-[20rem]'}"
-    style={!isExpanded && viewportAspect
-      ? `aspect-ratio: ${viewportAspect.toFixed(4)}; max-height: min(85vh, 44rem);`
-      : undefined}
+    style={inlineViewportStyle(viewportAspect)}
     onmousedown={handleMouseDown}
     onmousemove={handleMouseMove}
     onmouseup={stopDragging}

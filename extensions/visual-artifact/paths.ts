@@ -8,6 +8,7 @@
  * The project root is derived from the caller's git root or working directory.
  */
 
+import { execSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
@@ -74,9 +75,23 @@ export function getAnnotationsJsonPath(
 }
 
 /**
- * Get the default project root. Uses the current working directory.
+ * Get the default project root.
+ *
+ * Resolves to the git repository root (via `git rev-parse --show-toplevel`)
+ * when inside a git repo, falling back to the current working directory otherwise.
+ * This ensures worktrees resolve to the main repo root, so all artifacts share
+ * a single `.pi/visual-artifact/artifacts/` tree regardless of worktree location.
  */
 export function getDefaultProjectRoot(): string {
+  try {
+    const gitRoot = execSync("git rev-parse --show-toplevel", {
+      encoding: "utf8",
+      timeout: 3000,
+    }).trim();
+    if (gitRoot) return gitRoot;
+  } catch {
+    // not a git repository, or git unavailable
+  }
   return process.cwd();
 }
 

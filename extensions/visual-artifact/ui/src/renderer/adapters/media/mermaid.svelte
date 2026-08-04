@@ -5,12 +5,12 @@ import {
   type MermaidAppTheme,
   renderMermaidDiagram,
 } from "./mermaid-runtime.ts";
+import SvgViewport from "./SvgViewport.svelte";
 
 let {
   definition = "",
   caption = "",
-  height = 220,
-}: { definition?: string; caption?: string; height?: number } = $props();
+}: { definition?: string; caption?: string } = $props();
 
 const instanceId = `va-mermaid-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -18,7 +18,6 @@ let svg = $state("");
 let error = $state("");
 let isRendering = $state(false);
 let renderVersion = 0;
-let host: HTMLElement | undefined = $state();
 
 // Single theme — always light/warm-neutral
 const theme: MermaidAppTheme = "light";
@@ -57,7 +56,7 @@ $effect(() => {
 });
 </script>
 
-<figure class="my-3 flex flex-col gap-2" bind:this={host}>
+<figure class="my-3 flex flex-col gap-2">
   {#if error}
     <div class="rounded-xl border border-border bg-card p-3">
       <p class="text-amber text-xs mb-2">Mermaid render failed. Definition shown as source:</p>
@@ -65,15 +64,13 @@ $effect(() => {
       <p class="text-rust text-xs mt-2">{error}</p>
     </div>
   {:else if isRendering}
-    <div class="rounded-xl border border-border bg-card flex items-center justify-center text-xs text-muted-foreground uppercase tracking-wider" style="min-height:{height}px">
+    <div class="rounded-xl border border-border bg-card flex items-center justify-center text-xs text-muted-foreground uppercase tracking-wider min-h-[20rem]">
       Rendering Mermaid…
     </div>
   {:else if svg}
-    <div class="rounded-xl border border-border bg-card p-3">
-      <div class="overflow-auto rounded-lg bg-white">{@html svg}</div>
-    </div>
+    <SvgViewport {svg} source={definition} label="Mermaid diagram" />
   {:else}
-    <div class="rounded-xl border border-border bg-card flex items-center justify-center text-xs text-muted-foreground uppercase tracking-wider" style="min-height:{height}px">
+    <div class="rounded-xl border border-border bg-card flex items-center justify-center text-xs text-muted-foreground uppercase tracking-wider min-h-[20rem]">
       Waiting for Mermaid definition…
     </div>
   {/if}

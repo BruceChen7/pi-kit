@@ -311,7 +311,7 @@ const runPlanReview = async (
   try {
     if (renderHtml) {
       const response = await runPlannotatorAnnotateCli(ctx, filePath, {
-        renderHtml: true,
+        gate: true,
         signal: ctx.signal,
         timeoutMs: SYNC_REVIEW_TIMEOUT_MS,
       });

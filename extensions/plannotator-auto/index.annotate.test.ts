@@ -132,7 +132,7 @@ describe("annotate latest document shortcut", () => {
     }
   });
 
-  it("annotates latest HTML document with render-html CLI flag", async () => {
+  it("annotates latest HTML document without render-html CLI flag", async () => {
     vi.resetModules();
     const spawnSync = mockSpawnSync({
       status: 0,
@@ -161,7 +161,7 @@ describe("annotate latest document shortcut", () => {
 
       expect(spawnSync).toHaveBeenCalledWith(
         "plannotator",
-        ["annotate", latestPath, "--render-html", "--json"],
+        ["annotate", latestPath, "--json"],
         expect.objectContaining({ cwd: repoRoot }),
       );
     } finally {

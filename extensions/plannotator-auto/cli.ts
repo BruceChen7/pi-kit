@@ -4,6 +4,8 @@ export type CliReviewDecision = {
   approved: boolean;
   feedback?: string;
   exit?: boolean;
+  /** User closed the review without a decision (dismissed, not denied). */
+  dismissed?: boolean;
 };
 
 export type CliReviewResult =
@@ -172,7 +174,7 @@ const parseCliReviewResult = (stdout: string): CliReviewDecision => {
       return { approved: true };
     }
     if (parsed.decision === "dismissed") {
-      return { approved: false, exit: true };
+      return { approved: false, exit: true, dismissed: true };
     }
     return { approved: false, feedback: parsed.feedback ?? "" };
   } catch {
@@ -211,7 +213,7 @@ const parseCliPlanReviewResult = (stdout: string): CliReviewDecision => {
       return { approved: true };
     }
     if (parsed.decision === "dismissed") {
-      return { approved: false, exit: true };
+      return { approved: false, exit: true, dismissed: true };
     }
     if (parsed.decision === "annotated") {
       return { approved: false, feedback: parsed.feedback ?? "" };
@@ -247,15 +249,11 @@ export const runPlannotatorAnnotateCli = async (
   filePath: string,
   options: {
     gate?: boolean;
-    renderHtml?: boolean;
     signal?: AbortSignal;
     timeoutMs: number;
   },
 ): Promise<CliReviewResult> => {
   const args = ["annotate", filePath];
-  if (options.renderHtml) {
-    args.push("--render-html");
-  }
   if (options.gate) {
     args.push("--gate");
   }

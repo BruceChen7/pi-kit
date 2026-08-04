@@ -1,5 +1,8 @@
 ---
-description: 输入文章 URL 或粘贴全文，结构化提炼主要内容（论点/主张/论证细节/推理/假设/局限/结论），可扫读；可选简短模式
+description: >-
+  输入文章 URL（opencli web read 抓取）或粘贴全文，
+  结构化提炼主要内容（论点/主张/论证细节/推理/假设/局限/结论），
+  可扫读；可选简短模式
 argument-hint: "<文章 URL | 粘贴的文章全文> [简短]"
 ---
 # Article Read — 结构化读文章
@@ -13,10 +16,22 @@ argument-hint: "<文章 URL | 粘贴的文章全文> [简短]"
 
 ## 第一步：获取内容
 
-- 是 URL 就**先用 `web_search` 工具**（codex-web-search）获取：直接把文章 URL 作为查询传入，工具会用 Defuddle 提取页面内容。
-  - 注意：`web_search` 只回传"摘要 + 来源片段"，不会把全文带进对话。
-- 若 `web_search` 返回的摘要不足以支撑下面的忠实提炼（尤其细节块需要原文例子和具体数字），**用 curl 抓取全文补齐**；仍不够就如实说明，绝不编造。
-- 是粘贴的文本就直接使用，不需要搜索。
+- 是 URL 就**先用 `opencli web read` 抓取**，固定参数：
+  `opencli web read --url <URL>`
+  `--stdout true --download-images false --wait 3 -f md`
+  - 输出是 markdown 全文，直接进对话上下文，省去读文件一步。
+- 抓取后**先检查内容，再提炼**：
+  - 输出为空、`# untitled`、或明显过短（抓 PDF/图片/纯 API 页面时常见）
+    → 如实说明抓取失败，绝不编造。
+  - 输出超长（>50KB 左右）→ 落盘到 `/tmp` 临时目录，分段 `read` 再提炼。
+- `opencli web read` 失败（如无浏览器桥）时**用 curl 兜底**：
+  `curl -sL --max-time 30 -A "<浏览器 UA>" <URL>`
+  提取顺序：`og:title` + `og:description` → python3 提取正文文本 →
+  都提取不到就降级输出，但必须标注"内容来自摘要而非全文"。
+- X/Twitter 链接特例：`web read` 抓不到正文时，
+  用 `opencli twitter tweets <用户名>` 拿推文原文；
+  推文带链接时用 `web read` 抓链接指向的文章。
+- 是粘贴的文本就直接使用，不需要抓取。
 - 获取失败、内容不完整或遇到付费墙时**如实说明**，绝不编造或脑补文章内容。
 - 若正文与链接标题明显不符，以实际抓到的正文为准。
 

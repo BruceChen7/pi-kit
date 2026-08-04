@@ -36,6 +36,9 @@ export type OpenVisualArtifactWindowOptions = {
 const GLIMPSE_WINDOW_OPTIONS = {
   width: 1200,
   height: 800,
+  // 1440px content column + 48px app padding; clamped to the visible screen.
+  preferredWidth: 1488,
+  preferredHeight: 940,
   title: "Visual Artifact",
 } satisfies GlimpseWindowOptions;
 

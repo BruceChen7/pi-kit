@@ -352,7 +352,7 @@ function handleCleanupResult(e: Event): void {
             slug={bootData.artifactSlug}
             bind:feedbackOpen
           >
-            <div class="artifact-layout" class:with-panel={feedbackOpen}>
+            <div class="artifact-layout">
               <div class="artifact-main">
                 <VisualArtifactRenderer nodes={artifactNodes()} feedbackActive={feedbackOpen} />
               </div>
@@ -488,7 +488,7 @@ function handleCleanupResult(e: Event): void {
   }
 
   .artifact-main > :global(.va-node[data-va-type="text"]) {
-    max-width: 78ch;
+    max-width: 96ch;
     overflow-wrap: anywhere;
   }
 

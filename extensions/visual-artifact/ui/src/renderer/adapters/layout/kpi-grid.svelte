@@ -29,33 +29,44 @@ const effectiveColumns = $derived(
 </script>
 
 {#if items.length > 0}
-  <div
-    class="va-kpi-grid grid gap-3 my-4"
-    style="grid-template-columns: repeat({effectiveColumns}, minmax(0, 1fr))"
-  >
-    {#each items as item}
-      {@const vc = variantClasses[item.variant ?? "default"] ?? variantClasses.default}
-      <div class="rounded-xl border p-4 min-w-0 {vc}">
-        <p class="font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">{item.label}</p>
-        <p class="text-2xl font-bold text-foreground leading-tight">
-          {item.value}
-          {#if item.trend && trendIcons[item.trend]}
-            <span class="ml-1 text-lg {item.trend === 'up' ? 'text-olive' : item.trend === 'down' ? 'text-rust' : 'text-muted-foreground'}">{trendIcons[item.trend]}</span>
-          {/if}
-        </p>
-      </div>
-    {/each}
+  <div class="va-kpi-grid-container">
+    <div
+      class="va-kpi-grid grid gap-3 my-4"
+      data-columns={effectiveColumns}
+      style="grid-template-columns: repeat({effectiveColumns}, minmax(0, 1fr))"
+    >
+      {#each items as item}
+        {@const vc = variantClasses[item.variant ?? "default"] ?? variantClasses.default}
+        <div class="rounded-xl border p-4 min-w-0 {vc}">
+          <p class="font-mono text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">{item.label}</p>
+          <p class="text-2xl font-bold text-foreground leading-tight">
+            {item.value}
+            {#if item.trend && trendIcons[item.trend]}
+              <span class="ml-1 text-lg {item.trend === 'up' ? 'text-olive' : item.trend === 'down' ? 'text-rust' : 'text-muted-foreground'}">{trendIcons[item.trend]}</span>
+            {/if}
+          </p>
+        </div>
+      {/each}
+    </div>
   </div>
 {/if}
 
 <style>
-  @media (max-width: 820px) {
-    .va-kpi-grid {
+  /*
+    Container queries respond to the grid's actual width, not the window —
+    opening the feedback panel or resizing the window reflows correctly.
+  */
+  .va-kpi-grid-container {
+    container-type: inline-size;
+  }
+
+  @container (max-width: 820px) {
+    .va-kpi-grid:not([data-columns="1"]) {
       grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
   }
 
-  @media (max-width: 520px) {
+  @container (max-width: 520px) {
     .va-kpi-grid {
       grid-template-columns: 1fr !important;
     }

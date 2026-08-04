@@ -29,43 +29,6 @@ const ctx = getContext<{
 }>("feedback");
 
 const s = () => ctx.store;
-let panelElement = $state<HTMLElement>();
-let panelTop = $state(80);
-
-$effect(() => {
-  if (!panelElement) return;
-
-  const layout = panelElement.parentElement;
-  const firstRenderedNode = layout?.querySelector<HTMLElement>(
-    ".artifact-main > .va-node",
-  );
-  const firstContentNode =
-    firstRenderedNode?.dataset.vaType === "section"
-      ? (firstRenderedNode.querySelector<HTMLElement>(
-          ".va-section-body > .va-node",
-        ) ?? firstRenderedNode)
-      : firstRenderedNode;
-  const updatePanelTop = () => {
-    const alignmentTarget = firstContentNode ?? layout;
-    panelTop = Math.max(0, alignmentTarget?.getBoundingClientRect().top ?? 0);
-  };
-  const observer =
-    typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(updatePanelTop);
-
-  updatePanelTop();
-  if (layout) observer?.observe(layout);
-  if (firstContentNode) observer?.observe(firstContentNode);
-  window.addEventListener("scroll", updatePanelTop, { passive: true });
-  window.addEventListener("resize", updatePanelTop);
-
-  return () => {
-    observer?.disconnect();
-    window.removeEventListener("scroll", updatePanelTop);
-    window.removeEventListener("resize", updatePanelTop);
-  };
-});
 
 function handleKeydown(e: KeyboardEvent) {
   if (e.key === "Escape" && s().draftText.trim()) {
@@ -95,12 +58,11 @@ function handleComposerKeydown(e: KeyboardEvent) {
 <svelte:window onkeydown={handleKeydown} />
 
 {#if s().isOpen}
-  <aside
-    class="va-feedback-panel"
-    aria-label="Feedback"
-    bind:this={panelElement}
-    style={`--panel-top: ${panelTop}px`}
-  >
+  <!--
+    Sticky flex sibling of .artifact-main: the panel participates in the
+    layout (no fixed positioning, no margin hacks, no JS top alignment).
+  -->
+  <aside class="va-feedback-panel" aria-label="Feedback">
     <!-- Header -->
     <div class="va-panel-header">
       <span class="va-panel-title">Feedback</span>
@@ -203,22 +165,30 @@ function handleComposerKeydown(e: KeyboardEvent) {
 
 <style>
   .va-feedback-panel {
-    position: fixed;
-    top: var(--panel-top, 0px);
-    right: 0;
-    width: min(360px, 100vw);
-    height: calc(100vh - var(--panel-top, 0px));
+    position: sticky;
+    top: 24px;
+    align-self: flex-start;
+    flex-shrink: 0;
+    width: min(360px, 100%);
+    max-height: calc(100vh - 48px);
     background: var(--card);
-    border-left: 1px solid var(--border);
-    border-radius: var(--radius) 0 0 var(--radius);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     box-shadow: -12px 0 32px rgba(2, 6, 23, 0.24);
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    z-index: 100;
     font-size: 13px;
     color: var(--foreground);
     box-sizing: border-box;
+  }
+
+  @media (max-width: 720px) {
+    .va-feedback-panel {
+      position: static;
+      width: 100%;
+      max-height: none;
+    }
   }
 
   .va-feedback-panel :global(*) {
@@ -362,6 +332,7 @@ function handleComposerKeydown(e: KeyboardEvent) {
   /* ---- Pending list ---- */
   .va-pending-section {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 14px 16px;
     display: flex;

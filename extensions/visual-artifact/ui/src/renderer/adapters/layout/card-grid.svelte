@@ -21,11 +21,12 @@ const effectiveColumns = $derived(
 </script>
 
 {#if cards.length > 0}
-  <div
-    class="va-card-grid grid gap-3 my-4"
-    data-columns={effectiveColumns}
-    style="grid-template-columns: repeat({effectiveColumns}, minmax(0, 1fr))"
-  >
+  <div class="va-card-grid-container">
+    <div
+      class="va-card-grid grid gap-3 my-4"
+      data-columns={effectiveColumns}
+      style="grid-template-columns: repeat({effectiveColumns}, minmax(0, 1fr))"
+    >
     {#each cards as card, i}
       <div class="min-w-0 rounded-xl border border-border bg-card p-4">
         {#if card.title}
@@ -41,17 +42,26 @@ const effectiveColumns = $derived(
         {/if}
       </div>
     {/each}
+    </div>
   </div>
 {/if}
 
 <style>
-  @media (max-width: 900px) {
+  /*
+    Container queries respond to the grid's actual width, not the window —
+    opening the feedback panel or resizing the window reflows correctly.
+  */
+  .va-card-grid-container {
+    container-type: inline-size;
+  }
+
+  @container (max-width: 900px) {
     .va-card-grid:not([data-columns="1"]) {
       grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     }
   }
 
-  @media (max-width: 560px) {
+  @container (max-width: 560px) {
     .va-card-grid {
       grid-template-columns: 1fr !important;
     }

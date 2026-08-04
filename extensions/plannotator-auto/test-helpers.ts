@@ -31,7 +31,10 @@ export function createMockPlannotatorChild(): MockPlannotatorChild {
   return child;
 }
 
-export function mockPlannotatorSpawn(result: MockPlannotatorCliResult) {
+export function mockPlannotatorSpawn(
+  result: MockPlannotatorCliResult,
+  options: { lavishOnPath?: boolean } = {},
+) {
   const spawn = vi.fn(() => {
     const child = createMockPlannotatorChild();
     queueMicrotask(() => {
@@ -52,11 +55,16 @@ export function mockPlannotatorSpawn(result: MockPlannotatorCliResult) {
   vi.doMock("node:child_process", async (importOriginal) => ({
     ...(await importOriginal<typeof import("node:child_process")>()),
     spawn,
+    // resolveLavishCommand probes `lavish-axi --version` through spawnSync;
+    // default to not-on-PATH so tests exercise the npx fallback deterministically.
+    spawnSync: vi.fn(() => ({ status: options.lavishOnPath ? 0 : 1 })),
   }));
   return spawn;
 }
 
-export function mockHangingPlannotatorSpawn() {
+export function mockHangingPlannotatorSpawn(
+  options: { lavishOnPath?: boolean } = {},
+) {
   let child: MockPlannotatorChild | null = null;
   const spawn = vi.fn(() => {
     child = createMockPlannotatorChild();
@@ -65,8 +73,81 @@ export function mockHangingPlannotatorSpawn() {
   vi.doMock("node:child_process", async (importOriginal) => ({
     ...(await importOriginal<typeof import("node:child_process")>()),
     spawn,
+    spawnSync: vi.fn(() => ({ status: options.lavishOnPath ? 0 : 1 })),
   }));
   return { spawn, getChild: () => child };
+}
+
+/**
+ * Mock the lavish-axi open+poll spawn sequence: the first spawn returns
+ * `openResult`, every later spawn returns `pollResult` (re-queued poll).
+ * Resolves the lavish command to `npx -y lavish-axi` unless `lavishOnPath`.
+ */
+export function mockLavishSpawn(
+  openResult: MockPlannotatorCliResult,
+  pollResult: MockPlannotatorCliResult,
+  options: { lavishOnPath?: boolean } = {},
+) {
+  const results = [openResult, pollResult];
+  let callCount = 0;
+  const spawn = vi.fn(() => {
+    const result = results[Math.min(callCount, results.length - 1)];
+    callCount += 1;
+    const child = createMockPlannotatorChild();
+    queueMicrotask(() => {
+      if (result.error) {
+        child.emit("error", result.error);
+        return;
+      }
+      if (result.stdout) {
+        child.stdout.emit("data", result.stdout);
+      }
+      if (result.stderr) {
+        child.stderr.emit("data", result.stderr);
+      }
+      child.emit("close", result.status);
+    });
+    return child;
+  });
+  vi.doMock("node:child_process", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("node:child_process")>()),
+    spawn,
+    spawnSync: vi.fn(() => ({ status: options.lavishOnPath ? 0 : 1 })),
+  }));
+  return spawn;
+}
+
+/**
+ * Mock lavish-axi where the first spawn (open) succeeds and every later
+ * spawn (poll) hangs — used to test interrupted polls and re-poll retries.
+ */
+export function mockLavishOpenThenHangingSpawn(
+  options: { lavishOnPath?: boolean } = {},
+) {
+  let hangingChild: MockPlannotatorChild | null = null;
+  let callCount = 0;
+  const spawn = vi.fn(() => {
+    callCount += 1;
+    if (callCount === 1) {
+      const child = createMockPlannotatorChild();
+      queueMicrotask(() => {
+        child.stdout.emit(
+          "data",
+          JSON.stringify({ session: { status: "opened" } }),
+        );
+        child.emit("close", 0);
+      });
+      return child;
+    }
+    hangingChild = createMockPlannotatorChild();
+    return hangingChild;
+  });
+  vi.doMock("node:child_process", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("node:child_process")>()),
+    spawn,
+    spawnSync: vi.fn(() => ({ status: options.lavishOnPath ? 0 : 1 })),
+  }));
+  return { spawn, getHangingChild: () => hangingChild };
 }
 
 export type TestCtx = {

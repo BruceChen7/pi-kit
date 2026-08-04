@@ -42,6 +42,9 @@ function mockSpawnSync(result: SpawnSyncMockResult) {
   vi.doMock("node:child_process", async (importOriginal) => ({
     ...(await importOriginal<typeof import("node:child_process")>()),
     spawn: spawnSync,
+    // resolveLavishCommand probes `lavish-axi --version` through spawnSync;
+    // default to not-on-PATH so tests exercise the npx fallback deterministically.
+    spawnSync: vi.fn(() => ({ status: 1 })),
   }));
   return spawnSync;
 }
@@ -50,6 +53,7 @@ import {
   createFakePi,
   createTempRepo,
   createTestContext,
+  mockLavishSpawn,
   removeTempRepo,
   writeTestFile,
 } from "./test-helpers.js";
@@ -132,13 +136,23 @@ describe("annotate latest document shortcut", () => {
     }
   });
 
-  it("annotates latest HTML document without render-html CLI flag", async () => {
+  it("opens latest HTML document through Lavish open+poll", async () => {
     vi.resetModules();
-    const spawnSync = mockSpawnSync({
-      status: 0,
-      stdout: JSON.stringify({ decision: "dismissed" }),
-      stderr: "",
-    });
+    const spawn = mockLavishSpawn(
+      {
+        status: 0,
+        stdout: JSON.stringify({ session: { status: "opened" } }),
+        stderr: "",
+      },
+      {
+        status: 0,
+        stdout: JSON.stringify({
+          session: { status: "feedback", session_ended: false },
+          prompts: [{ text: "Please refine the HTML layout." }],
+        }),
+        stderr: "",
+      },
+    );
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { api, emit, runShortcut } = createFakePi();
@@ -159,10 +173,19 @@ describe("annotate latest document shortcut", () => {
       await recordSessionDocumentWrite(emit, ctx, "plans/visual.html");
       await runShortcut("ctrl+alt+l", ctx);
 
-      expect(spawnSync).toHaveBeenCalledWith(
-        "plannotator",
-        ["annotate", latestPath, "--json"],
+      expect(spawn).toHaveBeenCalledWith(
+        "npx",
+        ["-y", "lavish-axi", "open", latestPath],
         expect.objectContaining({ cwd: repoRoot }),
+      );
+      expect(spawn).toHaveBeenCalledWith(
+        "npx",
+        ["-y", "lavish-axi", "poll", latestPath],
+        expect.objectContaining({ cwd: repoRoot }),
+      );
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Please refine the HTML layout."),
+        { deliverAs: "followUp" },
       );
     } finally {
       await emit("session_shutdown", {}, ctx);

@@ -21,6 +21,7 @@ type PlanConfig = {
   resolvedPlanPath: string;
   resolvedPlanPaths: string[];
   resolvedSpecPaths?: string[];
+  resolvedHtmlPaths?: string[];
   extraReviewTargets?: Array<{
     dir: string;
     pattern: RegExp;
@@ -37,6 +38,7 @@ function createPlanConfig(overrides: Partial<PlanConfig> = {}): PlanConfig {
     resolvedPlanPath: "/repo/.pi/plans/repo/plan",
     resolvedPlanPaths: ["/repo/.pi/plans/repo/plan"],
     resolvedSpecPaths: ["/repo/.pi/plans/repo/specs"],
+    resolvedHtmlPaths: [],
     ...overrides,
   };
 }
@@ -146,6 +148,36 @@ describe("index path helpers", () => {
         config: createPlanConfig(),
         targetPath:
           "/repo/.pi/plans/repo/issues/session-switch-lifecycle/01-cleanup.txt",
+        expected: null,
+      },
+      {
+        name: "matches HTML artifacts under .pi/html/<repo>",
+        config: createPlanConfig({
+          resolvedHtmlPaths: ["/repo/.pi/html/repo"],
+        }),
+        targetPath: "/repo/.pi/html/repo/2026-04-16-prototype.html",
+        expected: ".pi/html/repo/2026-04-16-prototype.html",
+      },
+      {
+        name: "ignores HTML artifacts without the dated naming pattern",
+        config: createPlanConfig({
+          resolvedHtmlPaths: ["/repo/.pi/html/repo"],
+        }),
+        targetPath: "/repo/.pi/html/repo/prototype.html",
+        expected: null,
+      },
+      {
+        name: "ignores non-HTML files under .pi/html/<repo>",
+        config: createPlanConfig({
+          resolvedHtmlPaths: ["/repo/.pi/html/repo"],
+        }),
+        targetPath: "/repo/.pi/html/repo/2026-04-16-prototype.md",
+        expected: null,
+      },
+      {
+        name: "ignores HTML artifacts outside configured html dirs",
+        config: createPlanConfig(),
+        targetPath: "/repo/.pi/html/repo/2026-04-16-prototype.html",
         expected: null,
       },
       {

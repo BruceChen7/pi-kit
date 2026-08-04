@@ -15,16 +15,13 @@ import {
   PLAN_REVIEW_FILE_PATTERN,
   SPEC_REVIEW_FILE_PATTERN,
 } from "../shared/review-targets.ts";
-import {
-  type CliReviewResult,
-  runPlannotatorAnnotateCli,
-  runPlannotatorPlanReviewCli,
-} from "./cli.ts";
+import { type CliReviewResult, runPlannotatorPlanReviewCli } from "./cli.ts";
 import { scanMermaidBlocks } from "./mermaid-validator.ts";
 import { getPlanFileConfig } from "./paths.ts";
 import {
   listPendingPlanReviews,
   preprocessPlanMarkdown,
+  runLavishReviewOnce,
 } from "./plan-review.ts";
 import { getSessionState } from "./session.ts";
 
@@ -298,7 +295,6 @@ const runPlanReview = async (
   ctx.ui.notify("Starting plan review…", "info");
 
   const relativePath = path.relative(ctx.cwd, filePath);
-  const renderHtml = filePath.endsWith(".html");
   let planContent: string;
 
   try {
@@ -309,20 +305,9 @@ const runPlanReview = async (
   }
 
   try {
-    if (renderHtml) {
-      const response = await runPlannotatorAnnotateCli(ctx, filePath, {
-        gate: true,
-        signal: ctx.signal,
-        timeoutMs: SYNC_REVIEW_TIMEOUT_MS,
-      });
-      await handleCliResult(pi, ctx, response, (result) => {
-        if (result.approved) {
-          return "# Plan Review\n\nPlan review completed — no changes requested.";
-        }
-        return result.feedback?.trim()
-          ? `# Plan Review\n\n${result.feedback}\n\nPlease address this feedback.`
-          : null;
-      });
+    if (filePath.endsWith(".html")) {
+      // HTML artifacts review through Lavish (open + poll once).
+      await runLavishReviewOnce(pi, ctx, filePath);
       return;
     }
 

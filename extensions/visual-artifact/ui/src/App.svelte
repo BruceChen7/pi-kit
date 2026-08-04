@@ -504,10 +504,6 @@ function handleCleanupResult(e: Event): void {
     margin-top: 8px;
   }
 
-  .with-panel .artifact-main {
-    margin-right: 336px;
-  }
-
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -711,10 +707,6 @@ function handleCleanupResult(e: Event): void {
   @media (max-width: 720px) {
     .app {
       padding: 16px;
-    }
-
-    .with-panel .artifact-main {
-      margin-right: 0;
     }
 
     .titlebar {

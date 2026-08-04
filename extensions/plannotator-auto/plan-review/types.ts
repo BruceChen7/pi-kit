@@ -1,4 +1,4 @@
-export type ReviewTargetKind = "plan" | "spec";
+export type ReviewTargetKind = "plan" | "spec" | "html";
 
 export type ExtraReviewTarget = {
   dir: string;
@@ -10,6 +10,7 @@ export type PlanFileConfig = {
   resolvedPlanPath: string;
   resolvedPlanPaths: string[];
   resolvedSpecPaths: string[];
+  resolvedHtmlPaths: string[];
   extraReviewTargets: ExtraReviewTarget[];
 };
 
@@ -18,6 +19,8 @@ export type PendingPlanReview = {
   planFile: string;
   resolvedPlanPath: string;
   updatedAt: number;
+  /** True once a lavish-axi session was opened for this artifact; retries must not re-open. */
+  lavishSessionOpened?: boolean;
 };
 
 export type ActivePlanReview = {

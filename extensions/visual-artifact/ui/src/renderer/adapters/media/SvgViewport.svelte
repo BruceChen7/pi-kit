@@ -21,6 +21,7 @@ import {
   parseViewBoxFromMarkup,
   stepZoom,
   type ViewBox,
+  zoomDirectionForKey,
 } from "./svg-viewport.ts";
 
 let {
@@ -221,6 +222,38 @@ $effect(() => {
   });
   return () =>
     window.removeEventListener("wheel", handlePinchWheel, { capture: true });
+});
+
+// Cmd/Ctrl+`+` / Cmd/Ctrl+`-` zoom shortcuts — window-level so they work
+// without hovering the diagram. Ignored while typing in editable elements
+// and in source view; preventDefault stops the browser's own page zoom.
+$effect(() => {
+  if (showSource || !normalizedSvg) return;
+
+  const handleKeyDown = (event: KeyboardEvent) => {
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+    const direction = zoomDirectionForKey(event.key, {
+      meta: event.metaKey,
+      ctrl: event.ctrlKey,
+      shift: event.shiftKey,
+      alt: event.altKey,
+    });
+    if (direction === null) return;
+    event.preventDefault();
+    updateZoom(stepZoom(zoomLevel, direction));
+  };
+
+  window.addEventListener("keydown", handleKeyDown);
+  return () => window.removeEventListener("keydown", handleKeyDown);
 });
 
 // Escape to close + body scroll lock while expanded.

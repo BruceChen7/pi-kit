@@ -21,6 +21,13 @@ export type GlimpseWindowOptions = {
   width: number;
   height: number;
   title: string;
+  /**
+   * Size the window grows toward once the native host reports screen
+   * geometry in its `ready` message. Clamped to the visible screen area.
+   * Falls back to `width`/`height` when unset or geometry is unavailable.
+   */
+  preferredWidth?: number;
+  preferredHeight?: number;
 };
 
 type NativeHostInfo = {
@@ -73,7 +80,7 @@ export function openGlimpseWindow(
     }
   });
 
-  return new PiKitGlimpseWindow(proc, html);
+  return new PiKitGlimpseWindow(proc, html, options);
 }
 
 export function withRedirectedOpenWindowStderr<T>(
@@ -112,6 +119,7 @@ class PiKitGlimpseWindow extends EventEmitter implements GlimpseWindow {
   constructor(
     private readonly proc: ReturnType<typeof spawn>,
     initialHtml: string,
+    private readonly options: GlimpseWindowOptions,
   ) {
     super();
     this.#pendingHtmlBase64 = Buffer.from(initialHtml).toString("base64");
@@ -137,6 +145,7 @@ class PiKitGlimpseWindow extends EventEmitter implements GlimpseWindow {
     switch (message.type) {
       case "ready":
         this.#sendPendingHtml();
+        this.#resizeToPreferredSize(message);
         return;
       case "message":
         this.emit("message", message.data);
@@ -150,6 +159,14 @@ class PiKitGlimpseWindow extends EventEmitter implements GlimpseWindow {
     if (!this.#pendingHtmlBase64) return;
     this.#write({ type: "html", html: this.#pendingHtmlBase64 });
     this.#pendingHtmlBase64 = null;
+  }
+
+  #resizeToPreferredSize(message: JsonRecord): void {
+    const screen = readScreenGeometry(message);
+    if (!screen) return;
+    const size = preferredWindowSize(this.options, screen);
+    if (!size) return;
+    this.#write({ type: "resize", width: size.width, height: size.height });
   }
 
   #write(message: JsonRecord): void {
@@ -194,6 +211,55 @@ function readStderrWriteCallback(
 ): StderrWriteCallback | undefined {
   const callback = args[2] ?? args[1];
   return typeof callback === "function" ? callback : undefined;
+}
+
+const MIN_WINDOW_WIDTH = 480;
+const MIN_WINDOW_HEIGHT = 360;
+
+export type ScreenGeometry = {
+  visibleWidth: number;
+  visibleHeight: number;
+};
+
+/**
+ * Compute the resize target for a window with preferred size, clamped to
+ * the visible screen area. Returns null when no resize is needed.
+ */
+export function preferredWindowSize(
+  options: GlimpseWindowOptions,
+  screen: ScreenGeometry,
+): { width: number; height: number } | null {
+  const { preferredWidth, preferredHeight } = options;
+  if (!preferredWidth && !preferredHeight) return null;
+
+  const width = preferredWidth
+    ? Math.max(MIN_WINDOW_WIDTH, Math.min(preferredWidth, screen.visibleWidth))
+    : options.width;
+  const height = preferredHeight
+    ? Math.max(
+        MIN_WINDOW_HEIGHT,
+        Math.min(preferredHeight, screen.visibleHeight),
+      )
+    : options.height;
+
+  if (width === options.width && height === options.height) return null;
+  return { width, height };
+}
+
+function readScreenGeometry(message: JsonRecord): ScreenGeometry | null {
+  const screen = message.screen;
+  if (!isRecord(screen)) return null;
+  const visibleWidth = Number(screen.visibleWidth);
+  const visibleHeight = Number(screen.visibleHeight);
+  if (
+    !Number.isFinite(visibleWidth) ||
+    !Number.isFinite(visibleHeight) ||
+    visibleWidth <= 0 ||
+    visibleHeight <= 0
+  ) {
+    return null;
+  }
+  return { visibleWidth, visibleHeight };
 }
 
 function isRecord(value: unknown): value is JsonRecord {

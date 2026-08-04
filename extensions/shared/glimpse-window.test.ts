@@ -110,6 +110,89 @@ test("sends initial HTML only for the first ready event", () => {
   );
 });
 
+/**
+ * Writes made inside stream callbacks are deferred to later ticks, so
+ * tests must drain stdin across a few macrotasks instead of reading
+ * synchronously.
+ */
+async function drainStdinWrites(): Promise<string> {
+  const chunks: string[] = [];
+  const onData = (chunk: Buffer) => chunks.push(chunk.toString());
+  stdin.on("data", onData);
+  try {
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    return chunks.join("");
+  } finally {
+    stdin.off("data", onData);
+  }
+}
+
+test("resizes toward preferred size clamped to the visible screen on ready", async () => {
+  openGlimpseWindow("<html></html>", {
+    width: 1200,
+    height: 800,
+    title: "Visual Artifact",
+    preferredWidth: 1488,
+    preferredHeight: 940,
+  });
+
+  stdout.write(
+    '{"type":"ready","screen":{"visibleWidth":1512,"visibleHeight":855}}\n',
+  );
+
+  const writes = await drainStdinWrites();
+  expect(writes).toContain('"type":"resize"');
+  expect(writes).toContain('"width":1488');
+  expect(writes).toContain('"height":855');
+});
+
+test("shrinks below the spawned size when the screen is smaller", async () => {
+  openGlimpseWindow("<html></html>", {
+    width: 1200,
+    height: 800,
+    title: "Visual Artifact",
+    preferredWidth: 1488,
+    preferredHeight: 940,
+  });
+
+  stdout.write(
+    '{"type":"ready","screen":{"visibleWidth":1280,"visibleHeight":720}}\n',
+  );
+
+  const writes = await drainStdinWrites();
+  expect(writes).toContain('"type":"resize"');
+  expect(writes).toContain('"width":1280');
+  expect(writes).toContain('"height":720');
+});
+
+test("does not resize when no preferred size is configured", async () => {
+  openGlimpseWindow("<html></html>", EXAMPLE_WINDOW_OPTIONS);
+
+  stdout.write(
+    '{"type":"ready","screen":{"visibleWidth":3000,"visibleHeight":2000}}\n',
+  );
+
+  const writes = await drainStdinWrites();
+  expect(writes).not.toContain('"type":"resize"');
+});
+
+test("does not resize when ready carries no screen geometry", async () => {
+  openGlimpseWindow("<html></html>", {
+    width: 1200,
+    height: 800,
+    title: "Visual Artifact",
+    preferredWidth: 1488,
+    preferredHeight: 940,
+  });
+
+  stdout.write('{"type":"ready"}\n');
+
+  const writes = await drainStdinWrites();
+  expect(writes).not.toContain('"type":"resize"');
+});
+
 test("forwards host messages to window message listeners", () => {
   const window = openGlimpseWindow("<html></html>", EXAMPLE_WINDOW_OPTIONS);
   const handler = vi.fn();

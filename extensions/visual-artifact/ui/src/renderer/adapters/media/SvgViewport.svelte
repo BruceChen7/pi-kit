@@ -56,6 +56,18 @@ let didDrag = false;
 let dragStart = { x: 0, y: 0 };
 let panStart = { x: 0, y: 0 };
 
+/**
+ * Reactive container aspect (width / height) of the diagram content.
+ * Drives the container's CSS aspect-ratio so wide diagrams fill the
+ * container width instead of letterboxing inside a fixed-height box.
+ */
+let viewportAspect = $state<number | null>(null);
+
+function aspectOf(bounds: ViewBox | null): number | null {
+  if (!bounds || bounds.width <= 0 || bounds.height <= 0) return null;
+  return bounds.width / bounds.height;
+}
+
 // Imperative control refs (updated without re-render, like the source's refs)
 let zoomInBtn = $state<HTMLButtonElement>();
 let zoomOutBtn = $state<HTMLButtonElement>();
@@ -111,6 +123,7 @@ $effect(() => {
   panOffset = { x: 0, y: 0 };
   baseViewBox = null;
   naturalBounds = markup ? parseViewBoxFromMarkup(markup) : null;
+  viewportAspect = aspectOf(naturalBounds);
   isExpanded = false;
 });
 
@@ -150,6 +163,7 @@ $effect(() => {
     if (cancelled) return;
     if (!naturalBounds) {
       naturalBounds = parseViewBoxFromMarkup(markup);
+      viewportAspect = aspectOf(naturalBounds);
     }
     if (!naturalBounds) return;
     fitToCurrentViewport();
@@ -423,11 +437,21 @@ function handleClick(event: MouseEvent): void {
 {#snippet diagramBody()}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!--
+    Inline mode: container height follows the diagram's natural aspect
+    ratio (capped) so wide diagrams fill the width. Without a parseable
+    viewBox, fall back to the previous fixed-height viewport.
+  -->
   <div
     bind:this={containerEl}
     class="cursor-grab overflow-hidden rounded-xl border border-border bg-card select-none {isExpanded
       ? 'h-full min-h-0'
-      : 'h-[min(65vh,36rem)] min-h-[20rem]'}"
+      : viewportAspect
+        ? 'min-h-[20rem]'
+        : 'h-[min(65vh,36rem)] min-h-[20rem]'}"
+    style={!isExpanded && viewportAspect
+      ? `aspect-ratio: ${viewportAspect.toFixed(4)}; max-height: min(85vh, 44rem);`
+      : undefined}
     onmousedown={handleMouseDown}
     onmousemove={handleMouseMove}
     onmouseup={stopDragging}

@@ -1,4 +1,5 @@
 <script lang="ts">
+import { isRenderableCard } from "../../renderable-node.ts";
 import VisualArtifactRenderer from "../../visual-artifact-renderer.svelte";
 
 let {
@@ -15,19 +16,26 @@ let {
   _nodePath?: string;
 } = $props();
 
+const visibleCards = $derived(
+  cards
+    .map((card, index) => ({ card, index }))
+    .filter((entry) => isRenderableCard(entry.card)),
+);
 const effectiveColumns = $derived(
-  Number.isFinite(columns) ? Math.min(4, Math.max(1, Math.round(columns))) : 2,
+  Number.isFinite(columns)
+    ? Math.min(visibleCards.length, 4, Math.max(1, Math.round(columns)))
+    : Math.min(visibleCards.length, 2),
 );
 </script>
 
-{#if cards.length > 0}
+{#if visibleCards.length > 0}
   <div class="va-card-grid-container">
     <div
       class="va-card-grid grid gap-3 my-4"
       data-columns={effectiveColumns}
       style="grid-template-columns: repeat({effectiveColumns}, minmax(0, 1fr))"
     >
-    {#each cards as card, i}
+    {#each visibleCards as { card, index }}
       <div class="min-w-0 rounded-xl border border-border bg-card p-4">
         {#if card.title}
           <h4 class="font-serif text-base font-medium tracking-[-0.01em] text-foreground mb-1">{card.title}</h4>
@@ -37,7 +45,7 @@ const effectiveColumns = $derived(
         {/if}
         {#if card.nodes?.length}
           <div class="pt-0.5">
-            <VisualArtifactRenderer nodes={card.nodes} basePath={`${_nodePath}.props.cards.${i}.nodes`} />
+            <VisualArtifactRenderer nodes={card.nodes} basePath={`${_nodePath}.props.cards.${index}.nodes`} />
           </div>
         {/if}
       </div>

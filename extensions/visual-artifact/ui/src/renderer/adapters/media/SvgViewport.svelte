@@ -43,6 +43,7 @@ let isExpanded = $state(false);
 // Element refs as $state so effects re-run when the body remounts
 // (inline ↔ expanded moves the snippet's DOM).
 let containerEl = $state<HTMLDivElement>();
+let svgContentEl = $state<HTMLDivElement>();
 let overlayEl = $state<HTMLDivElement>();
 
 const normalizedSvg = $derived(normalizeSvgMarkup(svg));
@@ -101,9 +102,8 @@ let copyResetTimer: ReturnType<typeof setTimeout> | undefined;
 /* ------------------------------------------------------------------ */
 
 function applyViewToDom(): void {
-  const el = containerEl;
-  if (!el || !baseViewBox) return;
-  const svgEl = el.querySelector("svg");
+  if (!baseViewBox) return;
+  const svgEl = svgContentEl?.querySelector("svg");
   if (!(svgEl instanceof SVGSVGElement)) return;
   const vb = computeView(baseViewBox, zoomLevel, panOffset);
   svgEl.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.width} ${vb.height}`);
@@ -125,7 +125,7 @@ function updateZoom(next: number): void {
 function fitToCurrentViewport(): void {
   const el = containerEl;
   if (!el || !naturalBounds) return;
-  const svgEl = el.querySelector("svg");
+  const svgEl = svgContentEl?.querySelector("svg");
   if (!(svgEl instanceof SVGSVGElement)) return;
 
   const rect = el.getBoundingClientRect();
@@ -165,11 +165,12 @@ $effect(() => {
 // the body (re)mounts: content change, source toggle, inline ↔ expanded.
 $effect(() => {
   const el = containerEl;
+  const content = svgContentEl;
   const markup = normalizedSvg;
-  if (!el || !markup || showSource) return;
+  if (!el || !content || !markup || showSource) return;
   void isExpanded; // re-fit after the body remounts in the overlay
 
-  const svgEl = el.querySelector("svg");
+  const svgEl = content.querySelector("svg");
   if (!(svgEl instanceof SVGSVGElement)) return;
 
   svgEl.style.maxWidth = "none";
@@ -412,7 +413,7 @@ function handleMouseDown(event: MouseEvent): void {
 
 function handleMouseMove(event: MouseEvent): void {
   if (!isDragging || !containerEl || !baseViewBox) return;
-  const svgEl = containerEl.querySelector("svg");
+  const svgEl = svgContentEl?.querySelector("svg");
   if (!(svgEl instanceof SVGSVGElement)) return;
 
   const dx = event.clientX - dragStart.x;
@@ -634,24 +635,46 @@ function handleClick(event: MouseEvent): void {
     onclick={handleClick}
   >
     {@render controls()}
-    {@html normalizedSvg}
+    <!--
+      Keep the injected Mermaid SVG in its own mount layer. The controls also
+      contain SVG icons, so querying the whole viewport would select an icon
+      and resize it to the diagram's dimensions.
+    -->
+    <div bind:this={svgContentEl} class="h-full w-full">
+      {@html normalizedSvg}
+    </div>
   </div>
 {/snippet}
 
 <div class="group relative">
-  {#if showSource || !normalizedSvg}
-    <div class="relative">
-      {#if !isExpanded}
-        {@render controls()}
-      {/if}
+  {#if showSource && source}
+    <div class="relative max-h-[24rem] overflow-hidden rounded-xl border border-border bg-muted">
+      <button
+        type="button"
+        onclick={(e) => {
+          e.stopPropagation();
+          showSource = false;
+        }}
+        class="absolute top-2 right-2 z-10 rounded-md bg-card/90 p-1.5 text-muted-foreground shadow-sm hover:bg-card hover:text-foreground"
+        title="Show diagram"
+        aria-label="Show diagram"
+      >
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width={2}>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+      </button>
       <pre
-        class="overflow-x-auto rounded-xl border border-border bg-muted p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap"
+        class="m-0 max-h-[24rem] overflow-auto p-4 pr-14 font-mono text-xs leading-relaxed whitespace-pre-wrap"
       ><code>{source}</code></pre>
     </div>
-  {:else if !isExpanded}
+  {:else if !isExpanded && normalizedSvg}
     {@render diagramBody()}
-  {:else}
+  {:else if isExpanded && normalizedSvg}
     <div class="h-[min(65vh,36rem)] min-h-[20rem] rounded-xl border border-border bg-muted/50"></div>
+  {:else}
+    <div class="rounded-xl border border-border bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+      Diagram source is unavailable.
+    </div>
   {/if}
 </div>
 

@@ -436,8 +436,16 @@ function handleClick(event: MouseEvent): void {
 </script>
 
 {#snippet controls()}
+  <!--
+    Rendered inside the diagram card (or a positioned source wrapper) so the
+    column anchors to the card's top-right corner — NOT to the full-width
+    page group. mousedown is shielded so clicking a control never starts a
+    diagram pan (the controls live inside the pannable container).
+  -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="absolute top-2 right-2 z-10 flex flex-col items-center gap-1"
+    onmousedown={(e) => e.stopPropagation()}
   >
     {#if source}
       <button
@@ -593,10 +601,13 @@ function handleClick(event: MouseEvent): void {
     Inline mode: container height follows the diagram's natural aspect
     ratio (capped) so wide diagrams fill the width. Without a parseable
     viewBox, fall back to the previous fixed-height viewport.
+    This div is the controls' positioning context (relative) — for tall
+    diagrams the card is narrower than the page column, so anchoring the
+    controls here keeps them inside the rendered diagram.
   -->
   <div
     bind:this={containerEl}
-    class="cursor-grab overflow-hidden rounded-xl border border-border bg-card select-none {isExpanded
+    class="relative cursor-grab overflow-hidden rounded-xl border border-border bg-card select-none {isExpanded
       ? 'h-full min-h-0'
       : viewportAspect
         ? 'min-h-[20rem]'
@@ -609,17 +620,22 @@ function handleClick(event: MouseEvent): void {
     onmouseup={stopDragging}
     onmouseleave={stopDragging}
     onclick={handleClick}
-  >{@html normalizedSvg}</div>
+  >
+    {@render controls()}
+    {@html normalizedSvg}
+  </div>
 {/snippet}
 
 <div class="group relative">
-  {#if !isExpanded}
-    {@render controls()}
-  {/if}
   {#if showSource || !normalizedSvg}
-    <pre
-      class="overflow-x-auto rounded-xl border border-border bg-muted p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap"
-    ><code>{source}</code></pre>
+    <div class="relative">
+      {#if !isExpanded}
+        {@render controls()}
+      {/if}
+      <pre
+        class="overflow-x-auto rounded-xl border border-border bg-muted p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap"
+      ><code>{source}</code></pre>
+    </div>
   {:else if !isExpanded}
     {@render diagramBody()}
   {:else}
@@ -644,7 +660,6 @@ function handleClick(event: MouseEvent): void {
         </button>
       </div>
       <div class="group relative min-h-0 flex-1">
-        {@render controls()}
         {@render diagramBody()}
       </div>
     </div>

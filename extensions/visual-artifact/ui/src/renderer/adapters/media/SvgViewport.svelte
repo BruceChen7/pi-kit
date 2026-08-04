@@ -10,18 +10,21 @@
  * Ported from plannotator's MermaidBlock.tsx (React) to Svelte 5 runes.
  */
 
+import { type CopyIo, copyText } from "./copy-text.ts";
 import {
   clampZoom,
   computeView,
   exceedsDragThreshold,
   fitBoundsToContainer,
+  isAtBaseZoom,
+  isZoomModifierDown,
   MAX_ZOOM,
   MIN_ZOOM,
   normalizeSvgMarkup,
   parseViewBoxFromMarkup,
   stepZoom,
   type ViewBox,
-  zoomDirectionForKey,
+  zoomShortcutForKey,
 } from "./svg-viewport.ts";
 
 let {
@@ -74,6 +77,11 @@ let zoomInBtn = $state<HTMLButtonElement>();
 let zoomOutBtn = $state<HTMLButtonElement>();
 let zoomBadge = $state<HTMLSpanElement>();
 
+// Copy-to-clipboard feedback state — drives the button icon (copy/✓/✕)
+// and the "Copied" / "Copy failed" badge below the control column.
+let copyState = $state<"idle" | "copied" | "failed">("idle");
+let copyResetTimer: ReturnType<typeof setTimeout> | undefined;
+
 /* ------------------------------------------------------------------ */
 /*  DOM writers (the only place viewBox/state hits the DOM)            */
 /* ------------------------------------------------------------------ */
@@ -94,7 +102,7 @@ function updateZoom(next: number): void {
   if (zoomInBtn) zoomInBtn.disabled = zoomLevel >= MAX_ZOOM;
   if (zoomOutBtn) zoomOutBtn.disabled = zoomLevel <= MIN_ZOOM;
   if (zoomBadge) {
-    const show = Math.abs(zoomLevel - 1) > 0.001;
+    const show = !isAtBaseZoom(zoomLevel);
     zoomBadge.textContent = show ? `${Math.round(zoomLevel * 100)}%` : "";
     zoomBadge.hidden = !show;
   }
@@ -191,7 +199,7 @@ $effect(() => {
   if (!el || showSource) return;
 
   const handleWheel = (event: WheelEvent) => {
-    if (!event.ctrlKey && !event.metaKey) return;
+    if (!isZoomModifierDown(event.ctrlKey, event.metaKey)) return;
     if (Math.abs(event.deltaY) < 0.1) return;
     event.preventDefault();
     applyWheelZoomDelta(event.deltaY);
@@ -208,7 +216,7 @@ $effect(() => {
   if (!overlay || !isExpanded || showSource) return;
 
   const handlePinchWheel = (event: WheelEvent) => {
-    if (!event.ctrlKey && !event.metaKey) return;
+    if (!isZoomModifierDown(event.ctrlKey, event.metaKey)) return;
     const target = event.target;
     if (!(target instanceof Node) || !overlay.contains(target)) return;
     event.preventDefault();
@@ -224,9 +232,10 @@ $effect(() => {
     window.removeEventListener("wheel", handlePinchWheel, { capture: true });
 });
 
-// Cmd/Ctrl+`+` / Cmd/Ctrl+`-` zoom shortcuts — window-level so they work
-// without hovering the diagram. Ignored while typing in editable elements
-// and in source view; preventDefault stops the browser's own page zoom.
+// Cmd/Ctrl+`+` / Cmd/Ctrl+`-` / Cmd/Ctrl+`0` zoom shortcuts — window-level
+// so they work without hovering the diagram. Ignored while typing in
+// editable elements and in source view; preventDefault stops the browser's
+// own page zoom (Cmd+0 resets the page to actual size).
 $effect(() => {
   if (showSource || !normalizedSvg) return;
 
@@ -241,19 +250,29 @@ $effect(() => {
     ) {
       return;
     }
-    const direction = zoomDirectionForKey(event.key, {
+    const shortcut = zoomShortcutForKey(event.key, {
       meta: event.metaKey,
       ctrl: event.ctrlKey,
-      shift: event.shiftKey,
       alt: event.altKey,
     });
-    if (direction === null) return;
+    if (shortcut === null) return;
     event.preventDefault();
-    updateZoom(stepZoom(zoomLevel, direction));
+    if (shortcut.type === "reset") {
+      handleReset();
+    } else {
+      updateZoom(stepZoom(zoomLevel, shortcut.direction));
+    }
   };
 
   window.addEventListener("keydown", handleKeyDown);
   return () => window.removeEventListener("keydown", handleKeyDown);
+});
+
+// Clear the copy feedback timer when the component unmounts.
+$effect(() => {
+  return () => {
+    if (copyResetTimer) clearTimeout(copyResetTimer);
+  };
 });
 
 // Escape to close + body scroll lock while expanded.
@@ -282,7 +301,7 @@ $effect(() => {
 
   const observer = new ResizeObserver(() => {
     if (!naturalBounds) return;
-    if (Math.abs(zoomLevel - 1) > 0.001) return;
+    if (!isAtBaseZoom(zoomLevel)) return;
     fitToCurrentViewport();
   });
   observer.observe(el);
@@ -308,6 +327,63 @@ function handleZoomOut(): void {
 
 function handleFitToScreen(): void {
   fitToCurrentViewport();
+}
+
+// Restore the default view (Cmd/Ctrl+0): re-fit to the container, zero pan,
+// zoom 100%. The unconditional updateZoom(1) also covers the no-bounds edge
+// case where fitToCurrentViewport no-ops, so the badge never shows a stale
+// percentage.
+function handleReset(): void {
+  fitToCurrentViewport();
+  updateZoom(1);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Copy-to-clipboard (source code)                                    */
+/* ------------------------------------------------------------------ */
+
+// Real IO adapters for the pure copyText core: modern async API first,
+// legacy textarea+execCommand fallback for non-secure webview contexts.
+const copyIo: CopyIo = {
+  async clipboardWrite(text) {
+    if (!navigator.clipboard?.writeText) return false;
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  legacyCopy(text) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "-1000px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    let copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } catch {
+      copied = false;
+    } finally {
+      textarea.remove();
+    }
+    return copied;
+  },
+};
+
+function handleCopyClick(): void {
+  if (!source) return;
+  void copyText(source, copyIo).then((result) => {
+    copyState = result;
+    if (copyResetTimer) clearTimeout(copyResetTimer);
+    copyResetTimer = setTimeout(() => {
+      copyState = "idle";
+    }, 1500);
+  });
 }
 
 function handleMouseDown(event: MouseEvent): void {
@@ -381,6 +457,40 @@ function handleClick(event: MouseEvent): void {
         {:else}
           <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width={2}>
             <path stroke-linecap="round" stroke-linejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+          </svg>
+        {/if}
+      </button>
+
+      <button
+        type="button"
+        onclick={(e) => {
+          e.stopPropagation();
+          handleCopyClick();
+        }}
+        class="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+        title={copyState === "copied"
+          ? "Copied to clipboard"
+          : copyState === "failed"
+            ? "Copy failed"
+            : "Copy mermaid code"}
+        aria-label={copyState === "copied"
+          ? "Copied to clipboard"
+          : copyState === "failed"
+            ? "Copy failed"
+            : "Copy mermaid code"}
+      >
+        {#if copyState === "copied"}
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width={2}>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M20 6 9 17l-5-5" />
+          </svg>
+        {:else if copyState === "failed"}
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width={2}>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        {:else}
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width={2}>
+            <rect x="9" y="9" width="13" height="13" rx="2" stroke-linecap="round" stroke-linejoin="round" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
           </svg>
         {/if}
       </button>
@@ -463,6 +573,15 @@ function handleClick(event: MouseEvent): void {
         hidden
         class="min-w-10 rounded bg-muted/85 px-1 py-0.5 text-center text-[10px] leading-tight text-muted-foreground tabular-nums"
       ></span>
+    {/if}
+
+    {#if copyState !== "idle"}
+      <span
+        role="status"
+        class="min-w-10 rounded bg-muted/85 px-1 py-0.5 text-center text-[10px] leading-tight text-muted-foreground tabular-nums"
+      >
+        {copyState === "copied" ? "Copied" : "Copy failed"}
+      </span>
     {/if}
   </div>
 {/snippet}

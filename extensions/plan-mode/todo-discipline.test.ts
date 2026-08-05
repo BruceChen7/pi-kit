@@ -5,10 +5,11 @@ import {
   buildTodoDisciplineReminder,
   clearTodoDisciplineMarkersForRun,
   decideTodoDisciplineReminders,
+  doneFlipsFromSet,
   TODO_DISCIPLINE_REMINDER_LIMIT,
   type TodoDoneFlip,
 } from "./controller-decisions.js";
-import { PlanModeState } from "./state.js";
+import { nextTodoToPromoteIndex, PlanModeState } from "./state.js";
 import {
   ACT_MODE_TODO_TOOL,
   approveDemoPlan,
@@ -21,7 +22,7 @@ import {
   planModeStateEntry,
   startPlanModeSession,
 } from "./test-harness.js";
-import type { PlanRun } from "./types.js";
+import type { PlanRun, TodoStatus } from "./types.js";
 import { formatRelativeTime } from "./ui.js";
 
 // ── helpers ───────────────────────────────────────────────────
@@ -102,9 +103,14 @@ describe("todo discipline: state normalization", () => {
     state.replaceTodos([{ text: "a" }, { text: "b" }]);
     state.updateTodo(1, { status: "done" });
     expect(state.todos[0].everInProgress).toBe(true);
-    state.replaceTodos([{ text: "x" }]);
-    expect(state.todos[0].everInProgress).toBe(true); // fresh promotion sets it again
-    expect(state.todos[0].id).toBe(1);
+    // A fresh run's done item is never promoted, so the flag must not leak
+    // from the previous run's objects.
+    state.replaceTodos([{ text: "x", status: "done" }]);
+    expect(state.todos[0].everInProgress).toBeUndefined();
+    expect(state.todos[0].status).toBe("done");
+    // A fresh pending item still gets promoted on the new run.
+    state.replaceTodos([{ text: "y" }]);
+    expect(state.todos[0].everInProgress).toBe(true);
   });
 
   it("records lastTodoUpdateAt on every mutation path", () => {
@@ -117,6 +123,97 @@ describe("todo discipline: state normalization", () => {
     expect(state.activeRun?.lastTodoUpdateAt).toBeDefined();
     state.removeTodo(3);
     expect(state.activeRun?.lastTodoUpdateAt).toBeDefined();
+  });
+});
+
+// ── pure decision: doneFlipsFromSet (③, set path) ─────────────
+
+describe("todo discipline: doneFlipsFromSet", () => {
+  const oldTodos = [
+    { id: 1, text: "a", status: "in_progress" as const, everInProgress: true },
+    { id: 2, text: "b", status: "todo" as const },
+    { id: 3, text: "c", status: "done" as const },
+  ];
+
+  it("records fresh done items as flips with everInProgress=false", () => {
+    const flips = doneFlipsFromSet(oldTodos, [
+      { text: "a", status: "done" },
+      { text: "b", status: "done" },
+    ]);
+    expect(flips).toEqual([
+      { id: 1, everInProgress: true }, // predecessor was in_progress
+      { id: 2, everInProgress: false }, // predecessor never in_progress
+    ]);
+  });
+
+  it("skips items whose predecessor was already done (idempotent re-set)", () => {
+    const flips = doneFlipsFromSet(
+      [{ id: 1, text: "a", status: "done" as const }],
+      [{ text: "a", status: "done" }],
+    );
+    expect(flips).toEqual([]);
+  });
+
+  it("ignores non-done items", () => {
+    const flips = doneFlipsFromSet(oldTodos, [
+      { text: "a", status: "in_progress" },
+      { text: "b" },
+    ]);
+    expect(flips).toEqual([]);
+  });
+
+  it("carries over the predecessor's everInProgress (matches the update path)", () => {
+    const flips = doneFlipsFromSet(
+      [{ id: 1, text: "a", status: "todo" as const, everInProgress: true }],
+      [{ text: "a", status: "done" }],
+    );
+    expect(flips).toEqual([{ id: 1, everInProgress: true }]);
+  });
+
+  it("records flips for items that did not exist before", () => {
+    const flips = doneFlipsFromSet(
+      [{ id: 1, text: "a", status: "done" as const }],
+      [
+        { text: "a", status: "done" },
+        { text: "b", status: "done" },
+      ],
+    );
+    expect(flips).toEqual([{ id: 2, everInProgress: false }]);
+  });
+});
+
+// ── pure decision: nextTodoToPromoteIndex (①) ─────────────────
+
+describe("todo discipline: nextTodoToPromoteIndex", () => {
+  const todo = (id: number, status: string) => ({
+    id,
+    text: `步骤${id}`,
+    status: status as TodoStatus,
+  });
+
+  it("promotes the first pending todo item", () => {
+    expect(nextTodoToPromoteIndex([todo(1, "todo"), todo(2, "todo")])).toBe(0);
+  });
+
+  it("returns -1 when an item is already in_progress", () => {
+    expect(
+      nextTodoToPromoteIndex([
+        todo(1, "todo"),
+        todo(2, "in_progress"),
+        todo(3, "todo"),
+      ]),
+    ).toBe(-1);
+  });
+
+  it("returns -1 when any item is blocked", () => {
+    expect(nextTodoToPromoteIndex([todo(1, "blocked"), todo(2, "todo")])).toBe(
+      -1,
+    );
+  });
+
+  it("returns -1 when nothing is pending (all done or empty)", () => {
+    expect(nextTodoToPromoteIndex([todo(1, "done"), todo(2, "done")])).toBe(-1);
+    expect(nextTodoToPromoteIndex([])).toBe(-1);
   });
 });
 

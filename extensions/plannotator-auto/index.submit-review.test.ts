@@ -6,6 +6,10 @@ import {
   createTempRepo,
   createTestContext,
   flushMicrotasks,
+  lavishEndedStdout as lavishEndedStdoutFixture,
+  lavishFeedbackStdout as lavishFeedbackStdoutFixture,
+  lavishOpenStdout as lavishOpenStdoutFixture,
+  lavishUserEndedStdout as lavishUserEndedStdoutFixture,
   mockHangingPlannotatorSpawn,
   mockLavishOpenThenHangingSpawn,
   mockLavishSpawn,
@@ -788,19 +792,15 @@ describe("lavish HTML artifact review", () => {
     return `.pi/html/${repoName}/2026-04-16-proto.html`;
   };
 
-  const lavishOpenStdout = JSON.stringify({
-    session: { status: "opened" },
-  });
-  const lavishUserEndedStdout = JSON.stringify({
-    session: { status: "user-ended" },
-  });
-  const lavishFeedbackStdout = JSON.stringify({
-    session: { status: "feedback", session_ended: false },
-    prompts: [{ text: "Please refine the layout." }],
-  });
-  const lavishEndedStdout = JSON.stringify({
-    session: { status: "ended" },
-  });
+  // `lavish-axi` emits TOON (not JSON); fixtures use the real shape.
+  const lavishOpenStdout = lavishOpenStdoutFixture("/repo/proto.html");
+  const lavishUserEndedStdout =
+    lavishUserEndedStdoutFixture("/repo/proto.html");
+  const lavishFeedbackStdout = lavishFeedbackStdoutFixture(
+    "/repo/proto.html",
+    "Please refine the layout.",
+  );
+  const lavishEndedStdout = lavishEndedStdoutFixture("/repo/proto.html");
 
   it("reviews HTML artifacts through Lavish open+poll and keeps the gate on feedback", async () => {
     vi.resetModules();

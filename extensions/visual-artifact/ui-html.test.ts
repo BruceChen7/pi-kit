@@ -1,8 +1,25 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { build } from "vite";
+import { beforeAll, describe, expect, it } from "vitest";
 import { createVisualArtifactHtml } from "./ui-html.ts";
+
+// The first test asserts properties of the real production bundle, so the
+// built ui-dist must exist. Build it on demand when missing (e.g. a fresh
+// checkout); prepack / visual-artifact:ui:build produce it in releases.
+const UI_DIST_DIR = new URL("./ui-dist", import.meta.url);
+
+beforeAll(async () => {
+  if (existsSync(new URL("index.html", UI_DIST_DIR))) {
+    return;
+  }
+  await build({
+    configFile: "extensions/visual-artifact/vite.config.mts",
+    logLevel: "warn",
+  });
+}, 120_000);
 
 describe("createVisualArtifactHtml", () => {
   it("produces self-contained html without runtime chunk URLs", async () => {

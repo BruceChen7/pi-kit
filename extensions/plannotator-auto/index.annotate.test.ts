@@ -53,6 +53,8 @@ import {
   createFakePi,
   createTempRepo,
   createTestContext,
+  lavishFeedbackStdout,
+  lavishOpenStdout,
   mockLavishSpawn,
   removeTempRepo,
   writeTestFile,
@@ -141,15 +143,15 @@ describe("annotate latest document shortcut", () => {
     const spawn = mockLavishSpawn(
       {
         status: 0,
-        stdout: JSON.stringify({ session: { status: "opened" } }),
+        stdout: lavishOpenStdout("/repo/visual.html"),
         stderr: "",
       },
       {
         status: 0,
-        stdout: JSON.stringify({
-          session: { status: "feedback", session_ended: false },
-          prompts: [{ text: "Please refine the HTML layout." }],
-        }),
+        stdout: lavishFeedbackStdout(
+          "/repo/visual.html",
+          "Please refine the HTML layout.",
+        ),
         stderr: "",
       },
     );

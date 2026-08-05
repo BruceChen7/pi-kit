@@ -732,13 +732,19 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     session: CrSession,
   ): Promise<void> => {
     let inlineFinished = false;
+    const clearActiveSession = (): void => {
+      if (activeSession?.sessionId !== session.sessionId) return;
+      activeSession = null;
+    };
     const crSocketServer = await startCrSocketServer(session, pi, null, () => {
       inlineFinished = true;
+      clearActiveSession();
     });
 
     const tui = await captureTui(ctx);
     if (!tui) {
       closeCrSocketServer(crSocketServer, session.crSocketPath);
+      clearActiveSession();
       ctx.ui.notify(`/${START_COMMAND} requires interactive mode`, "error");
       return;
     }
@@ -752,6 +758,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
       // nvim exited without a finish handshake (crash/kill): read the artifact.
       sendArtifactAnnotationsToPi(pi, session);
       closeCrSocketServer(crSocketServer, session.crSocketPath);
+      clearActiveSession();
       ctx.ui.notify("CR review closed (no finish handshake)", "warning");
       return;
     }
@@ -803,6 +810,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     );
 
     if (inlineMode) {
+      activeSession = session;
       await runInlineStart(pi, ctx, session);
       return;
     }
@@ -864,7 +872,14 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     const env = getExtensionEnv(ctx);
     const multiplexer = createMultiplexer(pi, env);
     if (!multiplexer) {
-      ctx.ui.notify(`/${STOP_COMMAND} requires tmux or herdr`, "error");
+      // No tmux/herdr available: reviews run in inline (modal) mode and end
+      // when Neovim exits, so there is no multiplexer view to close.
+      ctx.ui.notify(
+        activeSession
+          ? "Inline CR review is modal — exit Neovim to end it"
+          : "No active CR review",
+        "info",
+      );
       return;
     }
     const widgetCtx = ctx as WidgetContext;

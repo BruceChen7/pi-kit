@@ -68,6 +68,23 @@ The file is reviewed inside Lavish's sandboxed iframe, so:
 - No external CSS files via `<link href="../...">`.
 - The artifact must render identically standalone and inside Lavish.
 
+### 4b. Interactive controls (Lavish annotate mode)
+
+Lavish opens in **annotate mode**: clicks on unmarked custom elements and drag-selections are captured to open an annotation card. Interactive controls in the prototype must follow these rules or reviewers cannot operate them:
+
+- **Meta-controls must be marked.** The variant switcher bar, demo buttons, tabs — any custom clickable element that is *not itself under review* — gets `data-lavish-action` on the container/element. Lavish then lets clicks through and shows a pointer cursor (its `closest` check covers children, so marking the container suffices):
+  ```html
+  <div id="switcher" data-lavish-action>…◀ ▶…</div>
+  ```
+- **Native controls pass through for free.** `<button>`, `<a href>`, `<input>`, `<select>`, `<textarea>`, `<label>`, `<summary>` need no marking.
+- **Do NOT mark review targets.** Variant sections, rows, cards, and body text must stay annotatable (click/drag = annotate). That is the point of the review.
+- **Keyboard fallback is mandatory.** Because clicking a review target opens the annotation card, every select/switch interaction in the prototype must also work from the keyboard (`←`/`→` to cycle variants, `↑`/`↓` to move rows, Enter to confirm). `←`/`→` cycling is already required in step 3; extend it to any row/option selection.
+- **Tell the reviewer how to operate.** Add a short note to the top-of-file HTML comment: `⌘I / Ctrl+I` toggles annotate/explore mode (explore = free clicking and text selection), and the keyboard shortcuts. Optionally render a transient hint bar that only shows inside Lavish, detected via the SDK's public handle:
+  ```js
+  if (window.lavish) { /* show "⌘I 切换批注/浏览 · ←/→ 切方案 · 拖选=批注" hint */ }
+  ```
+- **Self-check before submitting**: (1) marked controls are clickable in annotate mode; (2) clicking a review target still opens the annotation card; (3) keyboard paths cover every selection/switch.
+
 ### 5. Review loop (Lavish)
 
 Immediately after writing the file, call:

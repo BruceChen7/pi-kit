@@ -69,7 +69,8 @@ Build a `spec` object and call `create_visual_artifact` with:
 - `data`: `JSON.stringify(spec.data)` only when useful
 
 Keep the artifact under Visual Artifact limits: max 30 top-level nodes, max 100 total nodes. Fold
-detailed reference material into `accordion` nodes.
+detailed reference material into `accordion` nodes. 图注占用顶层预算（每张图 +2：`heading` + `text`）；
+若 3a/3b/4a/4b 全产出且预算吃紧，优先精简 3b 图注，不要砍 3a 或 Section 6。
 
 ### Section-to-node mapping
 
@@ -77,19 +78,27 @@ detailed reference material into `accordion` nodes.
 |---|---------|------------|---------|
 | 1 | Executive mental model | `heading`, `text`, `badge` | A short summary of what the flow does and why it exists. |
 | 2 | Flow dashboard | `kpi-grid` | 4-6 metrics: entry points, key modules, data types, side effects, tests, risk flags. |
-| 3a | **Participant diagram** (强制) | `mermaid` `sequenceDiagram` | 跨参与者/跨 boundary 的消息和调用链，不画内部分支。标注每个 participant。 |
-| 3b | **Logic diagram** (条件) | `mermaid` `flowchart` | 仅当存在非平凡分支（≥3 条路径、状态机、重试/回退）时才产出。聚焦核心决策树。 |
-| 4a | **State/lifecycle diagram** (条件) | `mermaid` `stateDiagram` | 有生命周期/状态转换时产出（enable→disable、draft→published 等）。 |
-| 4b | **Entity/relationship diagram** (条件) | `mermaid` `erDiagram` | 有多个实体 + 关系时产出。无状态机也无实体关系时降级为 `table`。 |
+| 3a | **Participant diagram** (强制) | `heading` + `text` 图注, `mermaid` `sequenceDiagram` | 跨参与者/跨 boundary 的消息和调用链，不画内部分支。标注每个 participant。 |
+| 3b | **Logic diagram** (条件) | `heading` + `text` 图注, `mermaid` `flowchart` | 仅当存在非平凡分支（≥3 条路径、状态机、重试/回退）时才产出。聚焦核心决策树。 |
+| 4a | **State/lifecycle diagram** (条件) | `heading` + `text` 图注, `mermaid` `stateDiagram` | 有生命周期/状态转换时产出（enable→disable、draft→published 等）。 |
+| 4b | **Entity/relationship diagram** (条件) | `heading` + `text` 图注, `mermaid` `erDiagram` | 有多个实体 + 关系时产出。无状态机也无实体关系时降级为 `table`。 |
 | 5 | Walkthrough (强制) | `timeline` | Step-by-step execution with file/function references. Same priority as diagrams — do not fold into accordion. |
-| 6 | **Boundary tree** (强制, 独立顶层节点) | `code-block` | ASCII 调用树：副作用/IO 节点带 `← 注释` + `file:line`；纯逻辑节点省略行号。见 Boundary tree guidance。 |
+| 6 | **Boundary tree** (强制, 独立顶层节点) | `section` (title: "Boundary Map") 内含 `code-block` | ASCII 调用树：副作用/IO 节点带 `← 注释` + `file:line`；纯逻辑节点省略行号。见 Boundary tree guidance。 |
 | 7 | Blast Radius + Tests/Gaps/Gotchas | `accordion` (2 项) | 项 1 "Blast Radius"：callers, dependents, tests, docs, config (file-tree/table)。项 2 "Tests, Gaps & Gotchas"：Coverage table + callout for gaps + list/card of invariants and traps. |
 | 8 | Grill-me starter | `callout` or `card` | The first question you will ask me after creating the artifact. |
+
+**图注规则（所有 mermaid 图强制）：** 每个 mermaid 图之前必须紧跟两行图注，说明这张图是 what、怎么读：
+
+- `heading`（level `h2`，图名，如 "Participant Diagram: CLI → Plugin Manager → FS"）
+- 一行 `text`（简洁描述，如 "这张图展示跨 boundary 的消息流：谁调用谁、消息带什么；内部分支不在此图"）
+
+图注与图都是独立顶层节点，顺序为 `heading` → `text` → `mermaid`，不允许只丢一个裸 mermaid。每张图 +2 个顶层节点，计入 30 上限；4a/4b 同时产出时各自保留图注（预算紧张时优先合并 3b 图注为一行）。
 
 ### Diagram selection guide
 
 Diagrams are the **highest-priority** elements of a code-flow map. They must appear as independent
-top-level nodes — never buried inside accordions.
+top-level nodes — never buried inside accordions. Every diagram is preceded by its caption
+(`heading` + one-line `text`) per the caption rule above.
 
 **Section 3a — Participant diagram (强制):**
 
@@ -122,7 +131,7 @@ If the flow has both state transitions and entity relationships, produce both 4a
 
 **Section 6 — Boundary tree (强制, 独立顶层节点):**
 
-IO 边界/副作用用 ASCII 调用树呈现（`code-block` 节点），取代平表。根节点是入口函数或顶层模块调用，用 `├─/└─/│` 表达层级：
+IO 边界/副作用用 ASCII 调用树呈现，取代平表。顶层是一个 `section` 节点（`title: "Boundary Map"`），内含一个 `code-block`，对齐 plan-mode 的 Implementation ASCII call tree 约定。根节点是入口函数或顶层模块调用，用 `├─/└─/│` 表达层级：
 
 ```text
 bootstrapDefaultManagedPlugins(cwd, plugins)
@@ -153,12 +162,19 @@ const spec = {
     { "type": "kpi-grid", "props": { "columns": 3, "items": [] } },
 
     // --- Section 3a: participant diagram (强制, 独立顶层节点) ---
+    // 图注: heading(图名) + 一行 text(图是 what / 怎么读)，然后才是 mermaid
+    { "type": "heading", "props": { "text": "Participant Diagram: CLI → Plugin Manager → FS", "level": "h2" } },
+    { "type": "text", "props": { "text": "跨 boundary 的消息流：谁调用谁、消息带什么；内部分支不在此图。" } },
     { "type": "mermaid", "props": { "definition": "sequenceDiagram\n  participant A as \"Module A\"\n  participant B as \"Module B\"\n  A->>B: call()\n  B-->>A: result" } },
 
     // --- Section 3b: logic diagram (条件, 独立顶层节点) ---
+    { "type": "heading", "props": { "text": "Logic Diagram: 启用插件的核心决策树", "level": "h2" } },
+    { "type": "text", "props": { "text": "核心分支与回退路径；线性流程不产出此图。" } },
     { "type": "mermaid", "props": { "definition": "flowchart TD\n  A[\"Entry\"] --> |\"condition\"| B[\"Path 1\"]\n  A --> |\"else\"| C[\"Path 2\"]" } },
 
     // --- Section 4a/b: data/state diagram (至少一个, 独立顶层节点) ---
+    { "type": "heading", "props": { "text": "State Diagram: 插件生命周期", "level": "h2" } },
+    { "type": "text", "props": { "text": "状态转换及触发事件；无生命周期则用 table 代替。" } },
     { "type": "mermaid", "props": { "definition": "stateDiagram-v2\n  [*] --> Active\n  Active --> Disabled\n  Disabled --> [*]" } },
 
     // --- Section 5: walkthrough (强制, 独立顶层节点) ---
@@ -167,7 +183,10 @@ const spec = {
     ] } },
 
     // --- Section 6: boundary tree (强制, 独立顶层节点) ---
-    { "type": "code-block", "props": { "code": "bootstrapDefaultManagedPlugins(cwd, plugins)\n├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）\n└─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared\n     └─ bootstrapPlugins(...)\n          └─ 遍历: disabled.has(name) → skip\n               其余 → enablePlugin()  ← 副作用: 写 symlink, project.ts:142", "language": "text" } },
+    // section 包裹 ASCII 调用树: 副作用节点带 file:line，纯逻辑节点省略行号
+    { "type": "section", "props": { "title": "Boundary Map", "nodes": [
+      { "type": "code-block", "props": { "code": "bootstrapDefaultManagedPlugins(cwd, plugins)\n├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）\n└─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared\n     └─ bootstrapPlugins(...)\n          └─ 遍历: disabled.has(name) → skip\n               其余 → enablePlugin()  ← 副作用: 写 symlink, project.ts:142", "language": "text" } }
+    ] } },
 
     // --- Section 7: details in accordion (2 项) ---
     { "type": "accordion", "props": { "items": [
@@ -202,8 +221,10 @@ create_visual_artifact({
 - Do not open a browser directly; the Visual Artifact tool handles the window.
 - **Diagrams are the highest-priority elements.** Always produce at minimum one `sequenceDiagram`
   (3a) and one data/state diagram (4). The logic `flowchart` (3b) is conditional on branch
-  complexity. Every diagram must be a **top-level node**, never inside an accordion. 边界树
-  (Section 6 `code-block`) 同样必须独立顶层节点，不进 accordion。
+  complexity. Every diagram must be a **top-level node**, never inside an accordion, and must be
+  preceded by its caption (`heading` + one-line `text`). 边界树
+  (Section 6 `section`) 同样必须独立顶层节点，不进 accordion。
+- **每个 mermaid 图前必须有图注**：`heading`（h2，图名）+ 一行 `text`（简洁说明这张图是 what、怎么读），然后是 `mermaid`。图注与图都是独立顶层节点，不允许裸 mermaid。
 - Use compact Mermaid diagrams; each diagram should fit on one screen.
 - Always use double-quoted Mermaid labels: `N["label text"]`, not `N[label text]`.
 - Never use parentheses inside unquoted labels.

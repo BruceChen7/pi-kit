@@ -377,8 +377,13 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
   {
     type: "accordion",
     label: "Accordion",
-    description: "Collapsible groups of nested nodes.",
-    props: { items: "{ title: string; nodes: ArtifactNode[] }[]" },
+    description:
+      "Collapsible groups of nested nodes. All items are expanded by default; " +
+      "set defaultOpen: false on an item to start it collapsed.",
+    props: {
+      items:
+        "{ title: string; nodes: ArtifactNode[]; defaultOpen?: boolean }[]",
+    },
   },
   {
     type: "section",

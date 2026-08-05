@@ -69,3 +69,16 @@ export const IMPLEMENTATION_CALL_TREE_GUIDANCE = [
   "- Mermaid 留给 Current Flow / Desired Flow / Boundaries 的架构层交互；",
   "  ASCII tree 用于 Implementation 的函数级调用链和条件分支。",
 ];
+
+/**
+ * Execution todo discipline guidance, templated on the tool the agent should
+ * call. Single source of truth for the "one in_progress at a time, update the
+ * list before each step" rule — shared by the system prompt (constants.ts,
+ * with a generic subject) and the todo tool's promptGuidelines (todo-tool.ts,
+ * with the concrete tool name).
+ */
+export const todoDisciplineGuidance = (todoToolName: string): string =>
+  `- Keep at most one in_progress item. Update ${todoToolName} before starting ` +
+  "each step: mark the finished step done and the next step in_progress in " +
+  "the same call, so the widget shows the step you are about to execute " +
+  "— never bulk-mark all items done at the end.";

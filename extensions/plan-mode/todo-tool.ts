@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "@sinclair/typebox";
 import type { PlanModeController } from "./controller.ts";
+import { todoDisciplineGuidance } from "./guidance.ts";
 import type { PlanModeState } from "./state.ts";
 import { clonePlanRun } from "./state.ts";
 import { symbolForStatus } from "./ui.ts";
@@ -78,11 +79,7 @@ export const registerTodoTool = (
         `${phaseName} phase before implementation.`,
       'Use action "set" to replace the TODO list, or action "add" to append ' +
         'one TODO. Do not use action "create"; it is not supported.',
-      `Update ${name} before starting each step: mark the finished step ` +
-        "done and the next step in_progress in the same call, so the widget " +
-        "shows the step you are about to execute.",
-      "Keep at most one in_progress item and do not bulk-mark all items " +
-        "done at the end.",
+      todoDisciplineGuidance(name),
     ],
     parameters: todoParamsSchema,
     async execute(_toolCallId, params: TodoParams, _signal, _onUpdate, ctx) {

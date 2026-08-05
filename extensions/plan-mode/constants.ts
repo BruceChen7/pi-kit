@@ -3,12 +3,14 @@ import {
   BOUNDARIES_SEQUENCE_GUIDANCE,
   FLOW_TREE_GUIDANCE,
   IMPLEMENTATION_CALL_TREE_GUIDANCE,
+  todoDisciplineGuidance,
 } from "./guidance.ts";
 
 export {
   BOUNDARIES_SEQUENCE_GUIDANCE,
   FLOW_TREE_GUIDANCE,
   IMPLEMENTATION_CALL_TREE_GUIDANCE,
+  todoDisciplineGuidance,
 };
 
 import type {
@@ -172,10 +174,7 @@ export const PLAN_REVIEW_ARTIFACT_GUIDANCE = [
 ];
 export const ACT_CODE_WRITING_GUIDANCE = [FC_IS_TEST_GUIDANCE];
 export const EXECUTION_TODO_DISCIPLINE_GUIDANCE =
-  "- Keep at most one in_progress item. Update the todo list before starting " +
-  "each step: mark the finished step done and the next step in_progress in " +
-  "the same update, so the widget shows the step you are about to execute " +
-  "— never bulk-mark all items done at the end.";
+  todoDisciplineGuidance("the todo list");
 export const DIRECT_ACT_TODO_GUIDANCE = [
   "- In direct act mode, create concrete TODOs before using tools or making changes.",
   EXECUTION_TODO_DISCIPLINE_GUIDANCE,

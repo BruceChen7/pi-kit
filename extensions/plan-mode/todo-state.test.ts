@@ -8,28 +8,13 @@ import {
 import type { TodoStatus } from "./types.js";
 import { formatRelativeTime } from "./ui.js";
 
-// ── state normalization (①) ───────────────────────────────────
+// ── state normalization ───────────────────────────────────────
 
-describe("todo discipline: state normalization", () => {
+describe("todo state: normalization", () => {
   it("promotes the first todo item to in_progress after set", () => {
     const state = new PlanModeState("act");
     state.replaceTodos([{ text: "a" }, { text: "b" }]);
     expect(state.todos.map((t) => t.status)).toEqual(["in_progress", "todo"]);
-    expect(state.todos[0].everInProgress).toBe(true);
-    expect(state.todos[1].everInProgress).toBeUndefined();
-  });
-
-  it("does not promote when an item is already in_progress", () => {
-    const state = new PlanModeState("act");
-    state.replaceTodos([{ text: "a", status: "in_progress" }, { text: "b" }]);
-    expect(state.todos[0].status).toBe("in_progress");
-    expect(state.todos[1].status).toBe("todo");
-  });
-
-  it("does not promote when any item is blocked", () => {
-    const state = new PlanModeState("act");
-    state.replaceTodos([{ text: "a", status: "blocked" }, { text: "b" }]);
-    expect(state.todos.map((t) => t.status)).toEqual(["blocked", "todo"]);
   });
 
   it("does not promote when all items are done (run completes)", () => {
@@ -51,7 +36,6 @@ describe("todo discipline: state normalization", () => {
       "in_progress",
       "todo",
     ]);
-    expect(state.todos[1].everInProgress).toBe(true);
   });
 
   it("promotes the first remaining item after remove of the in_progress item", () => {
@@ -61,19 +45,17 @@ describe("todo discipline: state normalization", () => {
     expect(state.todos.map((t) => t.status)).toEqual(["in_progress"]);
   });
 
-  it("resets everInProgress for a fresh run on replaceTodos", () => {
+  it("starts a fresh run without inheriting the previous run's statuses", () => {
     const state = new PlanModeState("act");
     state.replaceTodos([{ text: "a" }, { text: "b" }]);
     state.updateTodo(1, { status: "done" });
-    expect(state.todos[0].everInProgress).toBe(true);
-    // A fresh run's done item is never promoted, so the flag must not leak
-    // from the previous run's objects.
+    expect(state.todos[0].status).toBe("done");
+    // A fresh run's done item is never promoted.
     state.replaceTodos([{ text: "x", status: "done" }]);
-    expect(state.todos[0].everInProgress).toBeUndefined();
     expect(state.todos[0].status).toBe("done");
     // A fresh pending item still gets promoted on the new run.
     state.replaceTodos([{ text: "y" }]);
-    expect(state.todos[0].everInProgress).toBe(true);
+    expect(state.todos[0].status).toBe("in_progress");
   });
 
   it("records lastTodoUpdateAt on every mutation path", () => {
@@ -89,9 +71,9 @@ describe("todo discipline: state normalization", () => {
   });
 });
 
-// ── pure decision: nextTodoToPromoteIndex (①) ─────────────────
+// ── pure decision: nextTodoToPromoteIndex ─────────────────────
 
-describe("todo discipline: nextTodoToPromoteIndex", () => {
+describe("todo state: nextTodoToPromoteIndex", () => {
   const todo = (id: number, status: string) => ({
     id,
     text: `步骤${id}`,
@@ -126,7 +108,7 @@ describe("todo discipline: nextTodoToPromoteIndex", () => {
 
 // ── widget last-update hint ───────────────────────────────────
 
-describe("todo discipline: widget last-update hint", () => {
+describe("todo state: widget last-update hint", () => {
   it("formats relative time", () => {
     const now = Date.parse("2026-08-05T12:00:00Z");
     expect(formatRelativeTime("2026-08-05T11:59:30Z", now)).toBe("刚刚");

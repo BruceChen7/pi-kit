@@ -46,14 +46,10 @@ import {
   TODO_WIDGET_KEY,
   WRITE_TOOL_NAMES,
 } from "./constants.ts";
-import type { TodoDoneFlip } from "./controller-decisions.ts";
 import {
-  buildTodoDisciplineReminder,
-  clearTodoDisciplineMarkersForRun,
   decideAgentStartPostActions,
   decideAgentStartPreActions,
   decidePlanReviewObligation,
-  decideTodoDisciplineReminders,
   getApprovedReviewPathToQueue,
 } from "./controller-decisions.ts";
 import { decideToolBlock, type GuardPolicyTarget } from "./guard-policy.ts";
@@ -150,13 +146,6 @@ export class PlanModeController {
   //   · policy pass     — artifact fixed; a new failure text queues again.
   private reReviewReminderSentFor: string | null = null;
   private policyReminderSentFor: string | null = null;
-  // ── TODO discipline state ────────────────────────────────────
-  // turnDoneFlips is turn-scoped (cleared in clearTurnSource);
-  // markers/counts survive across turns in the same session and are
-  // reset on restore() (new episode).
-  private turnDoneFlips: TodoDoneFlip[] = [];
-  private todoReminderMarkers = new Set<string>();
-  private todoReminderCounts: Record<string, number> = {};
   // Session-scoped values, resolved in restore() (no IO at construction).
   private htmlArtifactDirs: string[] = [];
   constructor(private readonly pi: ExtensionAPI) {}
@@ -172,9 +161,6 @@ export class PlanModeController {
     this.approvedPlanContinuationForTurn = false;
     this.reReviewReminderSentFor = null;
     this.policyReminderSentFor = null;
-    this.turnDoneFlips = [];
-    this.todoReminderMarkers = new Set();
-    this.todoReminderCounts = {};
   }
 
   persist(): void {
@@ -277,8 +263,8 @@ export class PlanModeController {
       "- If Plannotator denies the plan, revise the same file and submit again.",
       `- ${PLAN_HEADING_REVIEW_GUIDANCE}`,
       "- During approved execution, execute the approved plan and update " +
-        `${todoToolName} statuses to in_progress and done so the widget shows ` +
-        "the current step.",
+        `${todoToolName} statuses before starting each step so the widget ` +
+        "shows the current step.",
       EXECUTION_TODO_DISCIPLINE_GUIDANCE,
       ...this.getHtmlArtifactGuidanceLines(),
     ];
@@ -378,26 +364,6 @@ export class PlanModeController {
     this.inputSourceForTurn = "unknown";
     this.internalExtensionBypassForTurn = false;
     this.approvedPlanContinuationForTurn = false;
-    this.turnDoneFlips = [];
-  }
-
-  /** Record a todo→done flip within this turn (called by todo-tool before
-   *  mutating, so the pre-mutation status/everInProgress are still readable). */
-  recordTodoDoneFlip(id: number, everInProgress: boolean): void {
-    this.turnDoneFlips.push({ id, everInProgress });
-  }
-
-  /** Re-arm discipline reminders: any successful todo status update clears
-   *  the markers for the current run, so a future offense can remind again. */
-  clearTodoReminderMarkers(): void {
-    const runId = this.state.activeRun?.id;
-    if (!runId) {
-      return;
-    }
-    this.todoReminderMarkers = clearTodoDisciplineMarkersForRun(
-      this.todoReminderMarkers,
-      runId,
-    );
   }
 
   private finishTurn(ctx: ExtensionContext): void {
@@ -611,38 +577,6 @@ export class PlanModeController {
       }
       this.finishTurn(ctx);
       return;
-    }
-    // TODO discipline reminders (②③): run after a normal turn end, before
-    // review obligations. Markers/counts are instance state: markers are
-    // re-armed by any todo update (todo-tool) and by compliant turns here;
-    // the per-run per-reason cap prevents follow-up self-continuation loops.
-    const disciplineDecision = decideTodoDisciplineReminders({
-      run: this.state.activeRun,
-      turnDoneFlips: this.turnDoneFlips,
-      reminderMarkers: this.todoReminderMarkers,
-      reminderCounts: this.todoReminderCounts,
-    });
-    this.todoReminderMarkers = disciplineDecision.nextMarkers;
-    this.todoReminderCounts = disciplineDecision.nextCounts;
-    if (disciplineDecision.reasons.length > 0) {
-      this.pi.sendUserMessage(
-        buildTodoDisciplineReminder(
-          disciplineDecision.reasons,
-          this.getTodoToolNameForCurrentMode(),
-        ),
-        { deliverAs: "followUp" },
-      );
-      this.finishTurn(ctx);
-      return;
-    }
-    if (this.state.activeRun && disciplineDecision.offenses.length === 0) {
-      // Compliant turn (no offense at all): re-arm markers so a future
-      // offense in the same run can remind again. A persistent offense that
-      // is only suppressed by a marker keeps its marker — no re-fire.
-      this.todoReminderMarkers = clearTodoDisciplineMarkersForRun(
-        this.todoReminderMarkers,
-        this.state.activeRun.id,
-      );
     }
     if (this.hasPlanReviewObligation() && this.state.todos.length === 0) {
       const todoToolName = this.getTodoToolNameForCurrentMode();

@@ -78,13 +78,9 @@ function aspectOf(bounds: ViewBox | null): number | null {
 function inlineViewportStyle(aspect: number | null): string | undefined {
   if (!aspect || isExpanded) return undefined;
   const ratio = aspect.toFixed(4);
-  const maxWidthVh = (85 * aspect).toFixed(4);
-  const maxWidthRem = (44 * aspect).toFixed(4);
-  return [
-    `aspect-ratio: ${ratio}`,
-    `max-height: ${INLINE_MAX_HEIGHT}`,
-    `width: min(100%, ${maxWidthVh}vh, ${maxWidthRem}rem)`,
-  ].join("; ");
+  return [`aspect-ratio: ${ratio}`, `max-height: ${INLINE_MAX_HEIGHT}`].join(
+    "; ",
+  );
 }
 
 // Imperative control refs (updated without re-render, like the source's refs)
@@ -179,7 +175,7 @@ $effect(() => {
   svgEl.style.display = "block";
   svgEl.setAttribute("width", "100%");
   svgEl.setAttribute("height", "100%");
-  svgEl.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  svgEl.setAttribute("preserveAspectRatio", "xMidYMin meet");
 
   let cancelled = false;
 
@@ -616,13 +612,13 @@ function handleClick(event: MouseEvent): void {
     Inline mode: container height follows the diagram's natural aspect
     ratio (capped) so wide diagrams fill the width. Without a parseable
     viewBox, fall back to the previous fixed-height viewport.
-    This div is the controls' positioning context (relative) — for tall
-    diagrams the card is narrower than the page column, so anchoring the
-    controls here keeps them inside the rendered diagram.
+    This div is the controls' positioning context (relative). It always
+    fills the artifact column so consecutive Mermaid diagrams align, while
+    the SVG itself remains fitted within the viewport.
   -->
   <div
     bind:this={containerEl}
-    class="relative cursor-grab overflow-hidden rounded-xl border border-border bg-card select-none {isExpanded
+    class="relative w-full cursor-grab overflow-hidden rounded-xl border border-border bg-card select-none {isExpanded
       ? 'h-full min-h-0'
       : viewportAspect
         ? 'min-h-[20rem]'

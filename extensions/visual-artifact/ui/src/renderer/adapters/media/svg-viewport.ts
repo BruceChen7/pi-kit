@@ -82,7 +82,8 @@ export function computeView(
 
 /**
  * Pad content bounds to the container's aspect ratio so the diagram fits
- * without distortion (preserveAspectRatio="xMidYMid meet" does the rest).
+ * without distortion (preserveAspectRatio="xMidYMin meet" keeps the
+ * diagram anchored at the top of a taller viewport).
  * Container dimensions are clamped to >= 1 to avoid division by zero.
  */
 export function fitBoundsToContainer(
@@ -234,7 +235,7 @@ export function normalizeSvgMarkup(markup: string): string {
     }
 
     if (!/\bpreserveAspectRatio\s*=/i.test(next)) {
-      next += ' preserveAspectRatio="xMidYMid meet"';
+      next += ' preserveAspectRatio="xMidYMin meet"';
     }
     if (!/\bheight\s*=/i.test(next)) {
       next += ' height="100%"';

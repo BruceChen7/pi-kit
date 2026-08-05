@@ -23,13 +23,13 @@ const isOrdered = $derived(
 
 {#if items.length > 0}
   {#if isOrdered}
-    <ol class="pl-6 my-2 mb-4 text-sm text-foreground leading-relaxed space-y-1 marker:text-clay font-medium">
+    <ol class="my-2 mb-4 list-decimal space-y-1 pl-6 text-sm leading-relaxed text-foreground marker:text-clay font-medium">
       {#each items as item}
         <li class="pl-1">{@html renderInlineMarkdown(itemText(item))}</li>
       {/each}
     </ol>
   {:else}
-    <ul class="pl-6 my-2 mb-4 text-sm text-foreground leading-relaxed space-y-1 marker:text-clay">
+    <ul class="my-2 mb-4 list-disc space-y-1 pl-6 text-sm leading-relaxed text-foreground marker:text-clay">
       {#each items as item}
         <li class="pl-1">{@html renderInlineMarkdown(itemText(item))}</li>
       {/each}

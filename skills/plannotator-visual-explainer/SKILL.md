@@ -22,23 +22,21 @@ Three paths depending on content type. Each has its own references and structure
 
 ## Delivery
 
-Always deliver via Plannotator's annotation UI. Do NOT use `open` or `xdg-open`.
+Always deliver via the Lavish Editor review loop (`.pi/html/<repo>/YYYY-MM-DD-<slug>.html` +
+`plannotator_auto_submit_review`). Do NOT use `open` or `xdg-open`.
 
 For any deliverable that uses Mermaid, render every diagram with Mermaid 11 in both the light
-and dark palettes before opening the annotation UI. Rendering is a hard gate: an exception,
+and dark palettes before submitting for review. Rendering is a hard gate: an exception,
 empty SVG, or error output such as `aria-roledescription="error"` or `Syntax error in text`
 means the explainer is not deliverable. Fix the diagram or theme configuration and rerun both
 palettes until every SVG passes.
 
-**Plans/proposals** (user should approve/deny):
-```bash
-plannotator annotate <file> --gate
-```
-
-**Everything else** (informational):
-```bash
-plannotator annotate <file>
-```
+**All deliverables** (plan/proposal or informational) are reviewed through Lavish Editor:
+write the self-contained HTML artifact under `.pi/html/<repo>/YYYY-MM-DD-<slug>.html`, then
+call `plannotator_auto_submit_review({ path })`. The review runs `lavish-axi open` + `poll`;
+the user annotates in the browser, feedback comes back through the poll, and the review ends
+when the user sends their final feedback / ends the session. Revise the same file and
+re-submit (optionally with a `reply` describing your changes) after each feedback batch.
 
 ---
 

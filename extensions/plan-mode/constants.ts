@@ -32,11 +32,8 @@ export const PLANNOTATOR_SUBMIT_TOOL_NAME = "plannotator_auto_submit_review";
 export const MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION =
   ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md or " +
   ".pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md";
-export const HTML_PLAN_REVIEW_ARTIFACT_LOCATION =
-  ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html; " +
-  "specs remain .pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md";
 export const REVIEW_ARTIFACT_LOCATION =
-  ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md|.html, " +
+  ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md, " +
   ".pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md, " +
   ".pi/plans/<repo>/shaping/*.md, or " +
   ".pi/plans/<repo>/issues/<topic>/*.md";
@@ -51,20 +48,13 @@ export const REVIEW_ARTIFACT_WRITE_GUIDANCE = [
   `${REVIEW_ARTIFACT_TARGET}.`,
   REVIEW_ARTIFACT_WRITE_HINT,
 ].join(" ");
-export const HTML_PLAN_FORMAT_GUIDANCE = [
-  "- When planArtifactFormat is html, write implementation plans as " +
-    "self-contained HTML under " +
-    ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html.",
-  "- HTML plan mode is mandatory for implementation plans in this session; " +
-    "do not write a Markdown plan unless the format is switched back to " +
-    "markdown.",
-  "- When an HTML plan file is specified or requested, explicitly use the " +
-    "plannotator-visual-explainer skill Plan path: inline CSS/SVG, " +
-    "Plannotator theme tokens, visual timeline/data-flow/key-code/risk " +
-    "sections when useful, and no time estimates.",
-  "- Specs remain Markdown only under " +
-    ".pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md.",
-];
+export const HTML_ARTIFACT_REVIEW_LOCATION_HINT =
+  ".pi/html/<repo>/YYYY-MM-DD-<slug>.html";
+export const HTML_ARTIFACT_REVIEW_GUIDANCE =
+  "- HTML review artifacts (Lavish) must be written under " +
+  "<htmlDirs> as YYYY-MM-DD-<slug>.html, then submitted with " +
+  PLANNOTATOR_SUBMIT_TOOL_NAME +
+  ".";
 export const RECENT_RUN_LIMIT = 5;
 
 export const PLAN_MODE_ACT = "act";
@@ -80,19 +70,12 @@ export const MODE_SELECTION_OPTIONS: PlanMode[] = [
 export const PLAN_MODE_COMMAND_OPTIONS = [
   ...MODE_SELECTION_OPTIONS,
   "status",
-  "format",
 ] as const;
-export const PLAN_ARTIFACT_FORMAT_HTML = "html" satisfies PlanArtifactFormat;
 export const PLAN_ARTIFACT_FORMAT_MARKDOWN =
   "markdown" satisfies PlanArtifactFormat;
 export const PLAN_ARTIFACT_FORMAT_VALUES = [
-  PLAN_ARTIFACT_FORMAT_HTML,
   PLAN_ARTIFACT_FORMAT_MARKDOWN,
 ] as const satisfies readonly PlanArtifactFormat[];
-export const PLAN_MODE_FORMAT_OPTIONS = [
-  PLAN_ARTIFACT_FORMAT_HTML,
-  PLAN_ARTIFACT_FORMAT_MARKDOWN,
-] as const;
 export const TODO_STATUS_TODO = "todo" satisfies TodoStatus;
 export const TODO_STATUS_IN_PROGRESS = "in_progress" satisfies TodoStatus;
 export const TODO_STATUS_DONE = "done" satisfies TodoStatus;

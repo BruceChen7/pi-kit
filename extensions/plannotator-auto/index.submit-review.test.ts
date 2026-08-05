@@ -723,7 +723,7 @@ parentFn()
     }
   });
 
-  it("omits markdown-only guidance from the HTML plan gate message", async () => {
+  it("omits markdown-only guidance from the HTML artifact gate message", async () => {
     vi.resetModules();
 
     const plannotatorAuto = await importPlannotatorAuto();
@@ -732,23 +732,23 @@ parentFn()
 
     const repoRoot = await createTempRepo("plannotator-auto-html-gate-");
     const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.html`;
+    const htmlRelative = `.pi/html/${repoName}/2026-04-16-workflow.html`;
     await writeTestFile(
       repoRoot,
-      planFileRelative,
+      htmlRelative,
       "<!doctype html><html><body>Plan</body></html>",
     );
     const ctx = createTestContext(repoRoot);
 
     try {
       await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, planFileRelative);
+      await emitToolWrite(emit, ctx, htmlRelative);
 
       const gateResult = (await emit("before_agent_start", {}, ctx)) as {
         message?: { content?: string };
       };
       const content = gateResult?.message?.content ?? "";
-      expect(content).toContain(planFileRelative);
+      expect(content).toContain(htmlRelative);
       expect(content).not.toContain("Keep the first # heading");
       expect(content).not.toContain("mermaid fenced blocks");
     } finally {

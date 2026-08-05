@@ -31,7 +31,6 @@ By default, Plan Mode starts in `act`. For normal interactive runs, Pi may show 
 - `/plan-mode act`: direct execution. No reviewed plan/spec is required.
 - `/plan-mode plan`: one-shot review-first workflow. Approval means Pi should execute the approved plan automatically.
 - `/plan-mode status`: show the user-facing workflow state.
-- `/plan-mode format html|markdown`: choose the plan artifact format for this session.
 
 `review` is not a separate user mode. Review is what `plan` does before execution.
 
@@ -127,14 +126,9 @@ Markdown plan files should use this standard shape:
 
 Flow trees use Mermaid sequenceDiagram + tree format. Module boundaries are the granularity, not code-line level. Extra plan details should go inside the standard eight sections instead of adding new top-level `##` sections (though the policy allows them when needed).
 
-HTML plan files are first-class plan artifacts only under `plan/`, not `specs/`. Switch the current session with:
-
-```text
-/plan-mode format html
-/plan-mode format markdown
-```
-
-HTML mode requires agents to write a self-contained HTML plan with the `plannotator-visual-explainer` Plan path. When an HTML plan file is specified or requested, agents must explicitly use that skill rather than treating the file as generic HTML. HTML plan content is not checked by the Markdown artifact policy; reviewers judge content in Plannotator.
+Plans and specs are Markdown only. HTML artifacts for visual review (prototypes, explainers,
+visual plans) live under `.pi/html/<repo>/YYYY-MM-DD-<slug>.html` and are reviewed through the
+Lavish Editor loop (`plannotator_auto_submit_review`); they do not gate plan→act execution.
 
 ## Configuration
 

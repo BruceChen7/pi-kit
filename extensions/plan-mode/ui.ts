@@ -80,9 +80,7 @@ export const formatPlanModeStatus = (
     ? [
         `planArtifactFormat: ${artifactFormat}`,
         `formatSource: ${state.getPlanArtifactFormatSource(config)}`,
-        artifactFormat === "html"
-          ? "planTarget: .pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html"
-          : "planTarget: .pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md",
+        "planTarget: .pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md",
         "specs: markdown only",
       ]
     : [];

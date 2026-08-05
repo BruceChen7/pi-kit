@@ -24,6 +24,11 @@ import {
 } from "./cli.ts";
 import { extractBashPathCandidates, resolveToolPaths } from "./helpers.ts";
 import {
+  checkLavishHtmlCompliance,
+  formatLavishHtmlIssues,
+  type LavishHtmlIssue,
+} from "./lavish-html-check.ts";
+import {
   formatPlanMermaidErrors,
   runPlanMermaidValidation,
 } from "./mermaid-validator.ts";
@@ -739,11 +744,64 @@ const runLavishReviewFlow = async (
  * Manual-entry Lavish review (picker / Ctrl+Alt+L): open + poll once, deliver
  * the first feedback batch as a follow-up. No pending gate involvement.
  */
+/**
+ * Read an HTML artifact and run the static Lavish-annotate compliance check.
+ * Errors block submission; warnings only annotate the result.
+ */
+const readLavishHtmlCompliance = (
+  filePath: string,
+): { status: "read-error" } | { status: "ok"; issues: LavishHtmlIssue[] } => {
+  try {
+    const html = fs.readFileSync(filePath, "utf-8");
+    return { status: "ok", issues: checkLavishHtmlCompliance(html) };
+  } catch {
+    return { status: "read-error" };
+  }
+};
+
+const formatLavishHtmlComplianceBlock = (
+  planFile: string,
+  issues: LavishHtmlIssue[],
+): string => formatLavishHtmlIssues(issues, { blocked: true, planFile });
+
 export const runLavishReviewOnce = async (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   filePath: string,
 ): Promise<void> => {
+  const compliance = readLavishHtmlCompliance(filePath);
+  if (compliance.status === "read-error") {
+    ctx.ui.notify(
+      `Could not read ${path.relative(ctx.cwd, filePath)} before opening Lavish.`,
+      "warning",
+    );
+    return;
+  }
+  const blockIssues = compliance.issues.filter(
+    (issue) => issue.severity === "error",
+  );
+  if (blockIssues.length > 0) {
+    ctx.ui.notify(
+      formatLavishHtmlComplianceBlock(
+        path.relative(ctx.cwd, filePath),
+        compliance.issues,
+      ),
+      "warning",
+    );
+    return;
+  }
+  const warningIssues = compliance.issues.filter(
+    (issue) => issue.severity === "warning",
+  );
+  if (warningIssues.length > 0) {
+    ctx.ui.notify(
+      formatLavishHtmlIssues(warningIssues, {
+        blocked: false,
+        planFile: path.relative(ctx.cwd, filePath),
+      }),
+      "info",
+    );
+  }
   ctx.ui.notify("Opening Lavish review…", "info");
   const openResult = await runLavishOpenCli(ctx, filePath, {
     signal: ctx.signal,
@@ -860,8 +918,45 @@ export const registerPlanReviewSubmitTool = (
       }
 
       // HTML artifacts review through the Lavish open/poll loop instead of the
-      // Plannotator plan-review hook: no artifact-policy / mermaid checks.
+      // Plannotator plan-review hook. Before opening, run the static
+      // Lavish-annotate compliance gate: errors block the submission, warnings
+      // are attached to the first-submit result so the agent can fix them.
       if (isHtmlPath(pendingPlanReview.resolvedPlanPath)) {
+        const compliance = readLavishHtmlCompliance(
+          pendingPlanReview.resolvedPlanPath,
+        );
+        if (compliance.status === "read-error") {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Error: could not read ${pendingPlanReview.planFile} before submitting review.`,
+              },
+            ],
+            details: { status: "error" },
+          };
+        }
+        const blockIssues = compliance.issues.filter(
+          (issue) => issue.severity === "error",
+        );
+        if (blockIssues.length > 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: formatLavishHtmlComplianceBlock(
+                  pendingPlanReview.planFile,
+                  compliance.issues,
+                ),
+              },
+            ],
+            details: { status: "error", reason: "lavish-html-compliance" },
+          };
+        }
+        const warningIssues = compliance.issues.filter(
+          (issue) => issue.severity === "warning",
+        );
+        const openedBefore = pendingPlanReview.lavishSessionOpened;
         state.activePlanReviewByCwd.set(ctx.cwd, {
           reviewId: `cli:${Date.now()}`,
           kind: pendingPlanReview.kind,
@@ -872,7 +967,7 @@ export const registerPlanReviewSubmitTool = (
         });
         setReviewWidget(ctx);
         try {
-          return await runLavishReviewFlow(
+          const result = await runLavishReviewFlow(
             ctx,
             state,
             pendingPlanReviews,
@@ -880,6 +975,22 @@ export const registerPlanReviewSubmitTool = (
             typeof params.reply === "string" ? params.reply : undefined,
             signal,
           );
+          if (warningIssues.length > 0 && !openedBefore) {
+            const existing = result.content[0]?.text ?? "";
+            result.content = [
+              {
+                type: "text",
+                text:
+                  existing +
+                  "\n\n" +
+                  formatLavishHtmlIssues(warningIssues, {
+                    blocked: false,
+                    planFile: pendingPlanReview.planFile,
+                  }),
+              },
+            ];
+          }
+          return result;
         } finally {
           state.activePlanReviewByCwd.delete(ctx.cwd);
           setReviewWidget(ctx);

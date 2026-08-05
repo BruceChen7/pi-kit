@@ -1188,4 +1188,108 @@ describe("lavish HTML artifact review", () => {
       await removeTempRepo(repoRoot);
     }
   });
+
+  it("blocks submission when the HTML fails the Lavish compliance gate", async () => {
+    vi.resetModules();
+    const spawn = mockLavishSpawn(
+      { status: 0, stdout: lavishOpenStdout, stderr: "" },
+      { status: 0, stdout: lavishEndedStdout, stderr: "" },
+    );
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-lavish-block-");
+    const htmlRelative = getHtmlFileRelative(repoRoot);
+    const htmlPath = path.join(repoRoot, htmlRelative);
+    // Unmarked custom interactive control: annotate mode would swallow clicks.
+    await writeTestFile(
+      repoRoot,
+      htmlRelative,
+      '<style>.arrow { cursor: pointer }</style><div id="switcher"><span class="arrow">◀</span></div>',
+    );
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, htmlRelative);
+
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: htmlRelative },
+        ctx,
+      )) as {
+        content?: Array<{ text?: string }>;
+        details?: { status?: string; reason?: string };
+      };
+
+      expect(result.details?.status).toBe("error");
+      expect(result.details?.reason).toBe("lavish-html-compliance");
+      expect(result.content?.[0]?.text).toContain(
+        "[LAVISH HTML 合规检查未通过]",
+      );
+      expect(result.content?.[0]?.text).toContain("data-lavish-action");
+      // Lavish must never be opened for a blocked artifact.
+      expect(spawn).not.toHaveBeenCalled();
+      expect(htmlPath).toBeTruthy();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("attaches compliance warnings to the first Lavish submit result", async () => {
+    vi.resetModules();
+    const spawn = mockLavishSpawn(
+      { status: 0, stdout: lavishOpenStdout, stderr: "" },
+      { status: 0, stdout: lavishEndedStdout, stderr: "" },
+    );
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-lavish-warn-");
+    const htmlRelative = getHtmlFileRelative(repoRoot);
+    await writeTestFile(
+      repoRoot,
+      htmlRelative,
+      "<style>.arrow { cursor: pointer }</style>\n" +
+        '<div id="switcher" data-lavish-action><span class="arrow">◀</span></div>\n' +
+        "<script>\n" +
+        '  document.addEventListener("keydown", (e) => {\n' +
+        '    if (e.key === "ArrowLeft") cycle(-1);\n' +
+        '    if (e.key === "ArrowRight") cycle(1);\n' +
+        "  });\n" +
+        "</script>",
+    );
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, htmlRelative);
+
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: htmlRelative },
+        ctx,
+      )) as {
+        content?: Array<{ text?: string }>;
+        details?: { status?: string };
+      };
+
+      // Compliant: Lavish opens normally and the gate is released.
+      expect(spawn).toHaveBeenCalled();
+      expect(result.details?.status).toBe("approved");
+      // The missing header hint surfaces as a non-blocking warning.
+      expect(result.content?.[0]?.text).toContain(
+        "[LAVISH HTML 合规提示(不阻塞提交,建议修复)]",
+      );
+      expect(result.content?.[0]?.text).toContain("review-hint-missing");
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
 });

@@ -1,5 +1,12 @@
-import { promptRequestsPlanMode } from "./state.ts";
-import type { InputSource, PlanMode, PlanPhase, PlanRun } from "./types.ts";
+import { normalizeTodoStatus, promptRequestsPlanMode } from "./state.ts";
+import type {
+  InputSource,
+  PlanMode,
+  PlanPhase,
+  PlanRun,
+  TodoItem,
+  TodoStatusInput,
+} from "./types.ts";
 
 export type AgentStartPreDecisionInput = {
   inputSourceForTurn: InputSource;
@@ -133,6 +140,41 @@ export type TodoDoneFlip = {
   id: number;
   /** Whether the item was ever in_progress during its run lifetime. */
   everInProgress: boolean;
+};
+
+export type TodoSetItemInput = {
+  text: string;
+  status?: TodoStatusInput;
+};
+
+/**
+ * Compute todo→done flips for a "set" replacement (③). Pure decision:
+ * `replaceTodos` assigns fresh ids 1..N in list order, so the new item at
+ * `index` corresponds to the old item with id `index + 1`. A done item
+ * whose predecessor was not already done is a flip; the predecessor's
+ * everInProgress carries over so the set path classifies the same
+ * transition exactly like the update path.
+ */
+export const doneFlipsFromSet = (
+  oldTodos: readonly TodoItem[],
+  newItems: readonly TodoSetItemInput[],
+): TodoDoneFlip[] => {
+  const oldById = new Map(oldTodos.map((todo) => [todo.id, todo]));
+  const flips: TodoDoneFlip[] = [];
+  newItems.forEach((item, index) => {
+    const status = normalizeTodoStatus(item.status ?? "todo");
+    if (status !== "done") {
+      return;
+    }
+    const previous = oldById.get(index + 1);
+    if (previous?.status !== "done") {
+      flips.push({
+        id: index + 1,
+        everInProgress: previous?.everInProgress ?? false,
+      });
+    }
+  });
+  return flips;
 };
 
 export type TodoDisciplineReason = "no-in-progress" | "batch-done";

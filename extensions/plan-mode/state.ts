@@ -102,6 +102,27 @@ export const phaseForMode = (mode: PlanMode): PlanPhase =>
 export const hasCompletedAllTodos = (todos: TodoItem[]): boolean =>
   todos.length > 0 && todos.every((todo) => todo.status === TODO_STATUS_DONE);
 
+/**
+ * Pure decision for the one-at-a-time discipline normalization (①): the
+ * index of the first todo item that should become in_progress, or -1 when
+ * nothing should be promoted (an item is already in_progress, any item is
+ * blocked, or no pending todo item exists). Mutation is applied by the
+ * caller (PlanModeState.normalizeTodoDiscipline).
+ */
+export const nextTodoToPromoteIndex = (todos: readonly TodoItem[]): number => {
+  const hasInProgress = todos.some(
+    (todo) => todo.status === TODO_STATUS_IN_PROGRESS,
+  );
+  if (hasInProgress) {
+    return -1;
+  }
+  const hasBlocked = todos.some((todo) => todo.status === TODO_STATUS_BLOCKED);
+  if (hasBlocked) {
+    return -1;
+  }
+  return todos.findIndex((todo) => todo.status === TODO_STATUS_TODO);
+};
+
 export const isPlanRunStatus = (value: unknown): value is PlanRunStatus =>
   isStringValue(PLAN_RUN_STATUS_VALUES, value);
 
@@ -680,7 +701,8 @@ export class PlanModeState {
     for (const item of items) {
       this.addTodo(item.text, item.status ?? TODO_STATUS_TODO, item.notes);
     }
-    this.refreshActiveRunStatus();
+    this.syncActiveRunStatus();
+    this.normalizeTodoDiscipline();
   }
 
   addTodo(
@@ -708,7 +730,8 @@ export class PlanModeState {
     this.todos.push(todo);
     this.activeRun.nextTodoId = this.nextTodoId;
     this.touchTodoUpdate();
-    this.refreshActiveRunStatus();
+    this.syncActiveRunStatus();
+    this.normalizeTodoDiscipline();
     return todo;
   }
 
@@ -735,7 +758,8 @@ export class PlanModeState {
       }
     }
     this.touchTodoUpdate();
-    this.refreshActiveRunStatus();
+    this.syncActiveRunStatus();
+    this.normalizeTodoDiscipline();
     return true;
   }
 
@@ -748,7 +772,8 @@ export class PlanModeState {
     if (before !== this.todos.length) {
       this.touchTodoUpdate();
     }
-    this.refreshActiveRunStatus();
+    this.syncActiveRunStatus();
+    this.normalizeTodoDiscipline();
     return before !== this.todos.length;
   }
 
@@ -782,37 +807,27 @@ export class PlanModeState {
    * Discipline normalization (①): whenever the run has unfinished items but no
    * in_progress and no blocked item, promote the first todo item to
    * in_progress so the widget always shows a current step. Also enforces the
-   * "at most one in_progress" invariant. Called from refreshActiveRunStatus,
-   * so every todo mutation path (set/add/update/remove) converges here.
+   * "at most one in_progress" invariant. The decision is the pure
+   * `nextTodoToPromoteIndex`; this method only applies it. Called explicitly
+   * after every todo mutation, alongside `syncActiveRunStatus`.
    */
-  private promoteFirstTodoIfNeeded(): void {
-    if (!this.activeRun) {
+  private normalizeTodoDiscipline(): void {
+    const index = nextTodoToPromoteIndex(this.todos);
+    if (index < 0) {
       return;
     }
-    const hasInProgress = this.todos.some(
-      (todo) => todo.status === TODO_STATUS_IN_PROGRESS,
-    );
-    if (hasInProgress) {
-      return;
-    }
-    const hasBlocked = this.todos.some(
-      (todo) => todo.status === TODO_STATUS_BLOCKED,
-    );
-    if (hasBlocked) {
-      return;
-    }
-    const firstTodo = this.todos.find(
-      (todo) => todo.status === TODO_STATUS_TODO,
-    );
-    if (!firstTodo) {
-      return;
-    }
-    firstTodo.status = TODO_STATUS_IN_PROGRESS;
-    firstTodo.everInProgress = true;
+    const candidate = this.todos[index];
+    candidate.status = TODO_STATUS_IN_PROGRESS;
+    candidate.everInProgress = true;
     this.touchTodoUpdate();
   }
 
-  refreshActiveRunStatus(): void {
+  /**
+   * Recompute the active run status from the todo list after a mutation.
+   * Pure status bookkeeping: does NOT touch todo items (the ① discipline
+   * normalization is applied separately by `normalizeTodoDiscipline`).
+   */
+  private syncActiveRunStatus(): void {
     if (!this.activeRun) {
       return;
     }
@@ -827,16 +842,12 @@ export class PlanModeState {
       }
       return;
     }
-    if (
-      !allTodosCompleted &&
-      this.activeRun.status === PLAN_RUN_STATUS_COMPLETED
-    ) {
+    if (this.activeRun.status === PLAN_RUN_STATUS_COMPLETED) {
       this.activeRun.status = this.activeRun.planPath
         ? PLAN_RUN_STATUS_EXECUTING
         : PLAN_RUN_STATUS_DRAFT;
       delete this.activeRun.completedAt;
     }
-    this.promoteFirstTodoIfNeeded();
   }
 
   snapshot(): PlanModeSnapshot {

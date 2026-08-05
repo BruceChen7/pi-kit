@@ -2,7 +2,8 @@
 
 # Skills Migration Script
 # Usage:
-#   ./migrate.sh import   - Install prompts, GitHub/local skills, and local skill dependencies
+#   ./migrate.sh import   - Install prompts, GitHub/local skills, and local skill dependencies;
+#                           also uninstall skills removed or commented out in skills.txt
 #   ./migrate.sh update   - Update GitHub skill repos in ~/.agents/git-skills
 #   ./migrate.sh export   - Scan ~/.agents/me-skills + ~/.agents/git-skills and update skills/skills.txt
 #
@@ -21,6 +22,11 @@ ME_SKILLS_DIR="$HOME/.agents/me-skills"
 GIT_CLONE_BASE_DIR="$HOME/.agents/git-skills"
 PI_KIT_PROMPTS_DIR="$SCRIPT_DIR/../prompts"
 PI_PROMPTS_DIR="$HOME/.pi/agent/prompts"
+
+# Tracks what the current import run references, so cleanup_removed_skills
+# knows which installed artifacts are still wanted.
+referenced_repos=()
+referenced_local_names=()
 
 # Colors for output
 RED='\033[0;31m'
@@ -45,6 +51,7 @@ usage() {
     echo ""
     echo "Commands:"
     echo "  import   Install prompts, skills, and local skill dependencies"
+    echo "           Also uninstall skills removed or commented out in skills.txt"
     echo "  update   Update GitHub skill repos in ~/.agents/git-skills"
     echo "  export   Scan ~/.agents/me-skills + ~/.agents/git-skills and update skills/skills.txt"
     echo ""
@@ -83,6 +90,14 @@ sanitize_repo_path() {
     path="${path#/}"
     path="${path%/}"
     echo "$path"
+}
+
+# Normalize a repo URL for comparison (strip trailing slash and .git suffix)
+normalize_repo_url() {
+    local url="$1"
+    url="${url%/}"
+    url="${url%.git}"
+    echo "$url"
 }
 
 # Bash 3.2 compatibility: associative arrays are not supported.
@@ -302,6 +317,9 @@ import_skills() {
     local local_repo_root
     local_repo_root=$(resolve_path "$SCRIPT_DIR/..")
 
+    referenced_repos=()
+    referenced_local_names=()
+
     while IFS='|' read -r skill_name repo_url repo_path; do
         if [ -z "$skill_name" ]; then
             continue
@@ -310,6 +328,8 @@ import_skills() {
         repo_path=$(sanitize_repo_path "$repo_path")
 
         if [ "$repo_url" = "local" ] || { [ -z "$repo_url" ] && [ -n "$repo_path" ]; }; then
+            referenced_local_names+=("$skill_name")
+
             if [ -z "$repo_path" ]; then
                 log_warn "Skipping local skill with empty path: $skill_name"
                 continue
@@ -330,6 +350,7 @@ import_skills() {
             if [ "$skill_name" != "$resolved_name" ]; then
                 log_warn "Local skill name mismatch ($skill_name vs $resolved_name), using $resolved_name"
             fi
+            referenced_local_names+=("$resolved_name")
 
             install_local_skill_dependencies "$local_skill_dir" "$resolved_name"
 
@@ -350,6 +371,7 @@ import_skills() {
                 log_warn "Skipping non-GitHub repo: $skill_name"
                 continue
             fi
+            referenced_repos+=("$(normalize_repo_url "$repo_url")")
 
             local clone_base
             clone_base=$(ensure_repo_cloned "$repo_url" "$repo_path") || {
@@ -377,7 +399,123 @@ import_skills() {
         log_warn "Skipped existing local skills: ${skipped[*]}"
     fi
 
+    cleanup_removed_skills
+
     log_info "Import completed!"
+}
+
+# Uninstall skills that are no longer listed in skills.txt:
+#   - git-skills repos whose origin URL is no longer referenced
+#   - me-skills symlinks for local skills that are no longer referenced
+#   - .pi/skills symlinks left dangling by the removals above
+#
+# Safety: only artifacts whose entry is (or was) declared in skills.txt are
+# removed. Anything never declared (e.g. manually cloned repos or personal
+# me-skills links) is kept and flagged for manual review.
+cleanup_removed_skills() {
+    local declared_urls=()
+    local declared_names=()
+    local local_repo_root
+    local_repo_root=$(resolve_path "$SCRIPT_DIR/..")
+
+    # Collect every entry-like line, including commented-out ones.
+    while IFS='|' read -r name url path; do
+        if [ -n "$name" ] && [[ "$name" != *[[:space:]]* ]] && { [ -n "$url" ] || [ -n "$path" ]; }; then
+            declared_names+=("$name")
+            if is_github_repo "$url"; then
+                declared_urls+=("$(normalize_repo_url "$url")")
+            fi
+        fi
+    done < <(rg -v '^[[:space:]]*$' "$SKILLS_FILE" | sed 's/^[[:space:]]*#*[[:space:]]*//')
+
+    # Remove git-skills repos that are no longer referenced.
+    if [ -d "$GIT_CLONE_BASE_DIR" ]; then
+        local repo_dir
+        for repo_dir in "$GIT_CLONE_BASE_DIR"/*/; do
+            [ -d "$repo_dir" ] || continue
+
+            local repo_name
+            repo_name=$(basename "$repo_dir")
+
+            if [ ! -d "$repo_dir/.git" ]; then
+                log_warn "Skipping non-git directory in git-skills (manual review): $repo_name"
+                continue
+            fi
+
+            local origin
+            if ! origin=$(git -C "$repo_dir" remote get-url origin 2>/dev/null); then
+                log_warn "Skipping repo without origin in git-skills (manual review): $repo_name"
+                continue
+            fi
+            origin=$(normalize_repo_url "$origin")
+
+            if array_contains "$origin" "${referenced_repos[@]}"; then
+                continue
+            fi
+            if ! array_contains "$origin" "${declared_urls[@]}"; then
+                log_warn "Keeping git-skills repo $repo_name: never declared in skills.txt (remove manually if stale)"
+                continue
+            fi
+            if ! find "$repo_dir" \( -name .git -o -name node_modules \) -prune -o -name SKILL.md -print 2>/dev/null | grep -q .; then
+                log_warn "Keeping git-skills repo $repo_name: no SKILL.md found (manual review)"
+                continue
+            fi
+
+            rm -rf "$repo_dir"
+            log_info "Uninstalled skill repo: $repo_name (no longer in skills.txt)"
+        done
+    fi
+
+    # Remove me-skills symlinks for local skills that are no longer referenced.
+    if [ -d "$ME_SKILLS_DIR" ]; then
+        local entry
+        for entry in "$ME_SKILLS_DIR"/*; do
+            [ -e "$entry" ] || [ -L "$entry" ] || continue
+
+            local link_name
+            link_name=$(basename "$entry")
+
+            if [ ! -L "$entry" ]; then
+                log_warn "Skipping non-symlink entry in me-skills (manual review): $link_name"
+                continue
+            fi
+            if array_contains "$link_name" "${referenced_local_names[@]}"; then
+                continue
+            fi
+            if ! array_contains "$link_name" "${declared_names[@]}"; then
+                log_warn "Keeping me-skills link $link_name: not declared in skills.txt (remove manually if stale)"
+                continue
+            fi
+
+            local link_target
+            if ! link_target=$(resolve_path "$entry" 2>/dev/null); then
+                rm "$entry"
+                log_info "Uninstalled local skill: $link_name (broken link, no longer in skills.txt)"
+                continue
+            fi
+
+            if is_path_within_root "$link_target" "$local_repo_root" || \
+               is_path_within_root "$link_target" "$GIT_CLONE_BASE_DIR"; then
+                rm "$entry"
+                log_info "Uninstalled local skill: $link_name (no longer in skills.txt)"
+            fi
+        done
+    fi
+
+    # Remove .pi/skills symlinks left dangling by the removals above.
+    local pi_skills_dir="$local_repo_root/.pi/skills"
+    if [ -d "$pi_skills_dir" ]; then
+        local entry
+        for entry in "$pi_skills_dir"/*; do
+            [ -e "$entry" ] || [ -L "$entry" ] || continue
+            if [ -L "$entry" ] && [ ! -e "$entry" ]; then
+                rm "$entry"
+                log_info "Removed broken .pi/skills link: $(basename "$entry")"
+            elif [ ! -L "$entry" ]; then
+                log_warn "Skipping non-symlink entry in .pi/skills (manual review): $(basename "$entry")"
+            fi
+        done
+    fi
 }
 
 # Update skills: pull latest changes for cloned repos
@@ -556,6 +694,7 @@ export_skills() {
 #   dispatching-parallel-agents|https://github.com/obra/superpowers.git|skills/dispatching-parallel-agents
 #   boundaries-refactor|local|skills/boundaries-refactor
 #   x-tweet-fetcher|https://github.com/user/x-tweet-fetcher.git|
+# Removing or commenting out an entry, then re-running import, uninstalls it
 EOF
         for entry in "${entries[@]}"; do
             echo "$entry"

@@ -81,25 +81,20 @@ assert_present \
   'find "$GIT_CLONE_BASE_DIR" \( -name .git -o -name node_modules \) -prune -o -name SKILL.md -print0' \
   "migrate export prunes git metadata and dependencies"
 
-assert_absent \
-  "skills/brainstorming/scripts/start-server.sh" \
-  ".superpowers/brainstorm/" \
-  "brainstorming start-server avoids storing sessions at repo root"
-
-assert_absent \
-  "skills/brainstorming/visual-companion.md" \
-  ".superpowers/brainstorm/" \
-  "brainstorming visual companion docs avoid repo-root .superpowers storage"
+assert_present \
+  "skills/migrate.sh" \
+  'cleanup_removed_skills()' \
+  "migrate uninstalls skills removed from skills.txt"
 
 assert_present \
-  "skills/brainstorming/scripts/start-server.sh" \
-  'SCREEN_DIR="${PROJECT_DIR}/.pi/brainstorm/${SESSION_ID}"' \
-  "brainstorming start-server stores sessions under .pi"
+  "skills/migrate.sh" \
+  'rm -rf "$repo_dir"' \
+  "migrate removes git-skills repos no longer referenced"
 
 assert_present \
-  "skills/brainstorming/visual-companion.md" \
-  '`.pi/brainstorm/`' \
-  "brainstorming visual companion docs point to .pi storage"
+  "skills/migrate.sh" \
+  'no longer in skills.txt' \
+  "migrate logs uninstalls of skills removed from skills.txt"
 
 if [ "$failures" -gt 0 ]; then
   printf '\n%s verification checks failed.\n' "$failures" >&2

@@ -4,6 +4,7 @@ import {
   FLOW_TREE_GUIDANCE,
   IMPLEMENTATION_CALL_TREE_GUIDANCE,
   MERMAID_CONFIG_LIGHT,
+  todoDisciplineGuidance,
 } from "./guidance.ts";
 
 describe("MERMAID_CONFIG_LIGHT", () => {
@@ -97,5 +98,18 @@ describe("IMPLEMENTATION_CALL_TREE_GUIDANCE", () => {
     const text = IMPLEMENTATION_CALL_TREE_GUIDANCE.join("\n");
     expect(text).toContain("├─");
     expect(text).toContain("└─");
+  });
+});
+
+describe("todoDisciplineGuidance", () => {
+  it("names the todo tool the agent should call", () => {
+    expect(todoDisciplineGuidance("act_mode_todo")).toContain("act_mode_todo");
+  });
+
+  it("covers the one-in_progress and per-step update rules", () => {
+    const text = todoDisciplineGuidance("the todo list");
+    expect(text).toContain("at most one in_progress");
+    expect(text).toContain("before starting each step");
+    expect(text).toContain("never bulk-mark all items done");
   });
 });

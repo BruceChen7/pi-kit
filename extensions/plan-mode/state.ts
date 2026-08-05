@@ -103,7 +103,7 @@ export const hasCompletedAllTodos = (todos: TodoItem[]): boolean =>
   todos.length > 0 && todos.every((todo) => todo.status === TODO_STATUS_DONE);
 
 /**
- * Pure decision for the one-at-a-time discipline normalization (①): the
+ * Pure decision for the one-at-a-time discipline normalization: the
  * index of the first todo item that should become in_progress, or -1 when
  * nothing should be promoted (an item is already in_progress, any item is
  * blocked, or no pending todo item exists). Mutation is applied by the
@@ -145,7 +145,6 @@ export const todoFromSnapshot = (value: unknown): TodoItem | null => {
     text: value.text,
     status: value.status,
     ...(typeof value.notes === "string" ? { notes: value.notes } : {}),
-    ...(value.everInProgress === true ? { everInProgress: true } : {}),
   };
 };
 
@@ -744,11 +743,7 @@ export class PlanModeState {
       todo.text = patch.text;
     }
     if (patch.status !== undefined) {
-      const nextStatus = normalizeTodoStatus(patch.status);
-      if (nextStatus === TODO_STATUS_IN_PROGRESS) {
-        todo.everInProgress = true;
-      }
-      todo.status = nextStatus;
+      todo.status = normalizeTodoStatus(patch.status);
     }
     if (patch.notes !== undefined) {
       if (patch.notes) {
@@ -804,7 +799,7 @@ export class PlanModeState {
   }
 
   /**
-   * Discipline normalization (①): whenever the run has unfinished items but no
+   * Discipline normalization: whenever the run has unfinished items but no
    * in_progress and no blocked item, promote the first todo item to
    * in_progress so the widget always shows a current step. Also enforces the
    * "at most one in_progress" invariant. The decision is the pure
@@ -818,13 +813,12 @@ export class PlanModeState {
     }
     const candidate = this.todos[index];
     candidate.status = TODO_STATUS_IN_PROGRESS;
-    candidate.everInProgress = true;
     this.touchTodoUpdate();
   }
 
   /**
    * Recompute the active run status from the todo list after a mutation.
-   * Pure status bookkeeping: does NOT touch todo items (the ① discipline
+   * Pure status bookkeeping: does NOT touch todo items (the discipline
    * normalization is applied separately by `normalizeTodoDiscipline`).
    */
   private syncActiveRunStatus(): void {

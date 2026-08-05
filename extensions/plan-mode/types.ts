@@ -25,9 +25,6 @@ export type TodoItem = {
   text: string;
   status: TodoStatus;
   notes?: string;
-  /** Internal discipline-tracking flag: whether this item was ever in_progress
-   *  during its run lifetime. Not shown in the widget. */
-  everInProgress?: boolean;
 };
 
 export type PlanRunStatus =

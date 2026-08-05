@@ -1,10 +1,12 @@
 import path from "node:path";
-import { DEFAULT_GIT_TIMEOUT_MS, getGitCommonDir } from "../shared/git.ts";
 import {
   defaultReviewTargetKindFromAbsolutePath,
+  getRepoSlugFromGitCommonDir,
+  HTML_REVIEW_FILE_PATTERN,
   PLAN_REVIEW_FILE_PATTERN,
   REVIEW_TARGET_PLAN_DIR,
   REVIEW_TARGET_SPECS_DIR,
+  resolveHtmlReviewDirs,
   SPEC_REVIEW_FILE_PATTERN,
 } from "../shared/review-targets.ts";
 import type { ExtraReviewTargetConfig } from "./config.ts";
@@ -15,19 +17,9 @@ import type {
   ReviewTargetKind,
 } from "./plan-review/types.ts";
 
-const resolveRepoSlugFromGitCommonDir = (cwd: string): string | null => {
-  const commonDir = getGitCommonDir(cwd, DEFAULT_GIT_TIMEOUT_MS);
-  if (!commonDir) {
-    return null;
-  }
-
-  const candidate = path.basename(path.dirname(commonDir)).trim();
-  return candidate.length > 0 ? candidate : null;
-};
-
 const getDefaultReviewRoots = (cwd: string): string[] => {
   const candidates = [
-    resolveRepoSlugFromGitCommonDir(cwd),
+    getRepoSlugFromGitCommonDir(cwd),
     path.basename(cwd).trim(),
   ].filter((candidate): candidate is string => Boolean(candidate));
 
@@ -46,17 +38,6 @@ export const getDefaultPlanDirs = (cwd: string): string[] =>
 export const getDefaultSpecDirs = (cwd: string): string[] =>
   getDefaultReviewRoots(cwd).map((root) =>
     path.join(root, REVIEW_TARGET_SPECS_DIR),
-  );
-
-export const HTML_REVIEW_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.html$/;
-
-export const getDefaultHtmlDirs = (cwd: string): string[] =>
-  Array.from(
-    new Set(
-      [resolveRepoSlugFromGitCommonDir(cwd), path.basename(cwd).trim()]
-        .filter((candidate): candidate is string => Boolean(candidate))
-        .map((candidate) => path.join(".pi", "html", candidate)),
-    ),
   );
 
 export const resolveExtraReviewTargets = (
@@ -216,13 +197,7 @@ export const getPlanFileConfig = (ctx: {
   const resolvedPlanPath = resolvePlanPath(ctx.cwd, planFile);
   const resolvedPlanPaths = resolvePlanPaths(ctx.cwd, planFiles);
   const resolvedSpecPaths = resolvePlanPaths(ctx.cwd, specFiles);
-  const resolvedHtmlPaths =
-    config.htmlDirs === null
-      ? []
-      : resolvePlanPaths(
-          ctx.cwd,
-          config.htmlDirs ?? getDefaultHtmlDirs(ctx.cwd),
-        );
+  const resolvedHtmlPaths = resolveHtmlReviewDirs(ctx.cwd, config.htmlDirs);
   const extraReviewTargets = resolveExtraReviewTargets(
     ctx.cwd,
     config.extraReviewTargets,

@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "@sinclair/typebox";
 import type { PlanModeController } from "./controller.ts";
+import { doneFlipsFromSet } from "./controller-decisions.ts";
 import type { PlanModeState } from "./state.ts";
 import { clonePlanRun, normalizeTodoStatus } from "./state.ts";
 import { symbolForStatus } from "./ui.ts";
@@ -86,30 +87,18 @@ export const registerTodoTool = (
     ],
     parameters: todoParamsSchema,
     async execute(_toolCallId, params: TodoParams, _signal, _onUpdate, ctx) {
+      let mutatedTodoList = false;
       switch (params.action) {
         case "set": {
-          // Record todo→done flips (③): replaceTodos assigns fresh ids
-          // 1..N in list order, so compare each new item against the old
-          // item with the same id. A done item whose predecessor was not
-          // done is a flip on a fresh item (everInProgress=false).
-          const oldById = new Map(
-            controller.state.todos.map((todo) => [todo.id, todo]),
-          );
           const items = params.items ?? [];
-          items.forEach((item, index) => {
-            const status = normalizeTodoStatus(item.status ?? "todo");
-            if (status !== "done") {
-              return;
-            }
-            const previous = oldById.get(index + 1);
-            if (previous?.status !== "done") {
-              controller.recordTodoDoneFlip(index + 1, false);
-            }
-          });
+          for (const flip of doneFlipsFromSet(controller.state.todos, items)) {
+            controller.recordTodoDoneFlip(flip.id, flip.everInProgress);
+          }
           controller.state.replaceTodos(
             items,
             controller.getPlanPathForNewRun(),
           );
+          mutatedTodoList = true;
           break;
         }
         case "add":
@@ -122,6 +111,7 @@ export const registerTodoTool = (
             params.notes,
             controller.getPlanPathForNewRun(),
           );
+          mutatedTodoList = true;
           break;
         case "update":
           if (params.id === undefined) {
@@ -155,22 +145,28 @@ export const registerTodoTool = (
           ) {
             return todoToolError(`Error: TODO #${params.id} not found.`);
           }
+          mutatedTodoList = true;
           break;
         case "remove":
           if (params.id === undefined) {
             return todoToolError("Error: id is required for remove.");
           }
           controller.state.removeTodo(params.id);
+          mutatedTodoList = true;
           break;
         case "clear":
           controller.state.clearTodos();
           break;
         case "list":
+          // Read-only: must not re-arm the discipline markers below.
           break;
       }
-      // Re-arm discipline reminders: any successful todo mutation means the
-      // agent is engaging with the list again.
-      controller.clearTodoReminderMarkers();
+      if (mutatedTodoList) {
+        // Re-arm discipline reminders: any successful todo mutation means
+        // the agent is engaging with the list again (read-only `list` and
+        // `clear` — which drops the run — do not).
+        controller.clearTodoReminderMarkers();
+      }
 
       controller.updateUi(ctx);
       controller.persist();

@@ -67,7 +67,7 @@ import {
   relativeToolPath,
   turnWasAborted,
 } from "./guards.ts";
-import { isHtmlArtifactPath, resolveHtmlArtifactDirs } from "./html-dirs.ts";
+import { isHtmlArtifactPathIn, resolveHtmlArtifactDirs } from "./html-dirs.ts";
 import {
   getSessionStateEntries,
   hasCompletedAllTodos,
@@ -157,11 +157,12 @@ export class PlanModeController {
   private turnDoneFlips: TodoDoneFlip[] = [];
   private todoReminderMarkers = new Set<string>();
   private todoReminderCounts: Record<string, number> = {};
-  private cwd = process.cwd();
+  // Session-scoped values, resolved in restore() (no IO at construction).
+  private htmlArtifactDirs: string[] = [];
   constructor(private readonly pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext): void {
-    this.cwd = ctx.cwd;
+    this.htmlArtifactDirs = resolveHtmlArtifactDirs(ctx.cwd);
     this.config = loadPlanModeConfig(ctx.cwd);
     const entries = getSessionStateEntries(ctx);
     this.state.restore(latestSnapshot(entries), this.config.defaultMode);
@@ -298,7 +299,7 @@ export class PlanModeController {
   }
 
   private getHtmlArtifactGuidanceLines(): string[] {
-    const dirs = resolveHtmlArtifactDirs(this.cwd);
+    const dirs = this.htmlArtifactDirs;
     if (dirs.length === 0) {
       return [];
     }
@@ -535,7 +536,10 @@ export class PlanModeController {
               exists: fs.existsSync(absolutePath),
               isInsideCwd,
               isReviewArtifact: isReviewArtifactPath(ctx.cwd, rawPath),
-              isHtmlArtifact: isHtmlArtifactPath(ctx.cwd, absolutePath),
+              isHtmlArtifact: isHtmlArtifactPathIn(
+                this.htmlArtifactDirs,
+                absolutePath,
+              ),
               wasRead: this.state.hasReadFile(absolutePath),
               wasFreshlyWritten: this.state.wasFileFreshlyWritten(absolutePath),
             };

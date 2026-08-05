@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { EXECUTION_TODO_DISCIPLINE_GUIDANCE } from "./constants.js";
 import {
   BOUNDARIES_SEQUENCE_GUIDANCE,
   FLOW_TREE_GUIDANCE,
   IMPLEMENTATION_CALL_TREE_GUIDANCE,
   MERMAID_CONFIG_LIGHT,
   todoDisciplineGuidance,
-} from "./guidance.ts";
+} from "./guidance.js";
 
 describe("MERMAID_CONFIG_LIGHT", () => {
   it("produces valid frontmatter block with triple-dash delimiters", () => {
@@ -41,7 +42,7 @@ describe("MERMAID_CONFIG_LIGHT", () => {
       /themeVariables:\n((?: {4}\w+: .*\n?)*)/,
     );
     expect(themeBlock).not.toBeNull();
-    const assignments = (themeBlock![1].match(/^\s{4}\w+:.+$/gm) ?? [])
+    const assignments = (themeBlock?.[1].match(/^\s{4}\w+:.+$/gm) ?? [])
       .map((l) => l.trim())
       .filter((l) => l.includes("'#"));
     expect(assignments.length).toBeGreaterThanOrEqual(12);
@@ -111,5 +112,15 @@ describe("todoDisciplineGuidance", () => {
     expect(text).toContain("at most one in_progress");
     expect(text).toContain("before starting each step");
     expect(text).toContain("never bulk-mark all items done");
+  });
+});
+
+describe("todo discipline guidance wiring", () => {
+  it("system prompt constant uses the single source of truth", () => {
+    // Guards the wording drift this refactor fixed: if the system prompt text
+    // is ever re-inlined at the consumption point, this fails.
+    expect(EXECUTION_TODO_DISCIPLINE_GUIDANCE).toBe(
+      todoDisciplineGuidance("the todo list"),
+    );
   });
 });

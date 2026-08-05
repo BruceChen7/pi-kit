@@ -422,6 +422,13 @@ describe("plan-mode extension: todo state and widgets", () => {
 
     expect(todoTool.label).toBe("Act Mode TODO");
     expect(promptGuidance).toContain("Use act_mode_todo");
+    // Unified discipline wording from the shared guidance source (guards the
+    // "same update" vs "same call" drift fixed by todoDisciplineGuidance).
+    expect(promptGuidance).toContain(
+      "Update act_mode_todo before starting each step",
+    );
+    expect(promptGuidance).toContain("in the same call");
+    expect(promptGuidance).toContain("never bulk-mark all items done");
     expect(result.content[0]).toMatchObject({
       text: expect.stringContaining("Current Act Mode TODO list"),
     });

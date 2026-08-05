@@ -264,7 +264,7 @@ describe("zoomShortcutForKey", () => {
 describe("normalizeSvgMarkup", () => {
   it("injects style, preserveAspectRatio, and height when missing", () => {
     expect(normalizeSvgMarkup('<svg viewBox="0 0 10 10">')).toBe(
-      '<svg viewBox="0 0 10 10" style="max-width: none" preserveAspectRatio="xMidYMid meet" height="100%">',
+      '<svg viewBox="0 0 10 10" style="max-width: none" preserveAspectRatio="xMidYMin meet" height="100%">',
     );
   });
 
@@ -272,7 +272,7 @@ describe("normalizeSvgMarkup", () => {
     expect(
       normalizeSvgMarkup('<svg style="max-width: 100%; background: white;">'),
     ).toBe(
-      '<svg style="background: white; max-width: none" preserveAspectRatio="xMidYMid meet" height="100%">',
+      '<svg style="background: white; max-width: none" preserveAspectRatio="xMidYMin meet" height="100%">',
     );
   });
 

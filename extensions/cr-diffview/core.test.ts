@@ -104,22 +104,44 @@ describe("cr-diffview socket payload core", () => {
     ).toEqual([{ file: "src/a.ts", line: 1, comment: "Please rename." }]);
   });
 
-  it("formats annotations with structural sections for Pi follow-up", () => {
+  it("formats annotations as review.nvim-style markdown for Pi follow-up", () => {
     const prompt = formatAnnotationsPrompt([
       {
         file: "src/a.ts",
         line: 7,
-        side: "right",
-        snippet: "const value = 1",
+        type: "fix",
+        snippet: " const x = 1\n+const x = 2",
         comment: "Please rename this.",
       },
     ]);
 
-    expect(prompt).toContain("## CR annotation 1");
-    expect(prompt).toContain("- File: src/a.ts");
-    expect(prompt).toContain("- Line: 7");
-    expect(prompt).toContain("- Side: right");
-    expect(prompt).toContain("- Snippet: const value = 1");
+    expect(prompt).toContain("# Code Review Comments");
+    expect(prompt).toContain("## src/a.ts");
+    expect(prompt).toContain("### [FIX] src/a.ts:7");
+    expect(prompt).toContain("```typescript");
+    expect(prompt).toContain("+const x = 2");
+    expect(prompt).toContain("```");
     expect(prompt).toContain("Please rename this.");
+  });
+
+  it("groups annotations by file and maps comment types to labels", () => {
+    const prompt = formatAnnotationsPrompt([
+      {
+        file: "a.py",
+        line: 1,
+        type: "note",
+        snippet: "x = 1",
+        comment: "note",
+      },
+      { file: "a.py", line: 3, type: "question", comment: "q?" },
+      { file: "b.go", line: 2, comment: "legacy without type" },
+    ]);
+
+    expect(prompt).toContain("### [NOTE] a.py:1");
+    expect(prompt).toContain("```python");
+    expect(prompt).toContain("### [QUESTION] a.py:3");
+    expect(prompt).toContain("### b.go:2");
+    expect(prompt.match(/## a\.py/g)).toHaveLength(1);
+    expect(prompt.indexOf("## a.py")).toBeLessThan(prompt.indexOf("## b.go"));
   });
 });

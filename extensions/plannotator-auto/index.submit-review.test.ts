@@ -1202,7 +1202,6 @@ describe("lavish HTML artifact review", () => {
 
     const repoRoot = await createTempRepo("plannotator-auto-lavish-block-");
     const htmlRelative = getHtmlFileRelative(repoRoot);
-    const htmlPath = path.join(repoRoot, htmlRelative);
     // Unmarked custom interactive control: annotate mode would swallow clicks.
     await writeTestFile(
       repoRoot,
@@ -1232,7 +1231,6 @@ describe("lavish HTML artifact review", () => {
       expect(result.content?.[0]?.text).toContain("data-lavish-action");
       // Lavish must never be opened for a blocked artifact.
       expect(spawn).not.toHaveBeenCalled();
-      expect(htmlPath).toBeTruthy();
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

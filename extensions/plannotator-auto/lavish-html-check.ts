@@ -23,6 +23,10 @@
  * - R3 `review-hint-missing` (warning, prototypes only): the top-of-file
  *   comment does not mention the review controls (⌘I toggle, drag = annotate).
  *
+ * The check is pure (string in, issues out); the shell decides what to do via
+ * `decideLavishHtmlGate` (errors block the submission, warnings only annotate
+ * the result).
+ *
  * Static limitations (accepted): elements created at runtime (class names only
  * inside JS strings) are not detected; the keyboard/hint checks are regex
  * presence checks, not full JS analysis.
@@ -40,7 +44,7 @@ export interface LavishHtmlIssue {
 }
 
 /** Tags Lavish lets clicks through to natively; no marking needed. */
-export const NATIVE_INTERACTIVE_TAGS = new Set([
+const NATIVE_INTERACTIVE_TAGS = new Set([
   "button",
   "input",
   "select",
@@ -57,9 +61,7 @@ export const NATIVE_INTERACTIVE_TAGS = new Set([
   "meter",
 ]);
 
-export interface PointerRule {
-  /** Original selector text, e.g. `#switcher .arrow`. */
-  selector: string;
+interface PointerRule {
   /** First tag name in the selector ("" when it starts with . # : etc). */
   tag: string;
   classes: string[];
@@ -72,7 +74,7 @@ const ID_RE = /#([\w-]+)/g;
 const TAG_RE = /^([a-zA-Z][\w-]*)/;
 
 /** Extract CSS rules whose declarations set `cursor: pointer`. */
-export function extractPointerRules(css: string): PointerRule[] {
+function extractPointerRules(css: string): PointerRule[] {
   const rules: PointerRule[] = [];
   for (const match of css.matchAll(CSS_RULE_RE)) {
     const decls = match[2] ?? "";
@@ -90,13 +92,13 @@ export function extractPointerRules(css: string): PointerRule[] {
       if (NATIVE_INTERACTIVE_TAGS.has(tag)) continue;
       const classes = [...last.matchAll(CLASS_RE)].map((x) => x[1]);
       const ids = [...last.matchAll(ID_RE)].map((x) => x[1]);
-      rules.push({ selector, tag, classes, ids });
+      rules.push({ tag, classes, ids });
     }
   }
   return rules;
 }
 
-export interface ScannedElement {
+interface ScannedElement {
   tag: string;
   classes: string[];
   id: string;
@@ -138,7 +140,7 @@ const ATTR_STYLE_RE = /style\s*=\s*["']([^"']*)["']/i;
  * textarea content, tracks a tag stack with cumulative data-lavish-action
  * marking, and returns every scanned element.
  */
-export function tokenizeElements(html: string): ScannedElement[] {
+function tokenizeElements(html: string): ScannedElement[] {
   const elements: ScannedElement[] = [];
   const stack: Array<{ tag: string; marked: boolean }> = [];
   let index = 0;
@@ -320,6 +322,30 @@ export function checkLavishHtmlCompliance(html: string): LavishHtmlIssue[] {
 
   return issues;
 }
+
+/**
+ * Gate decision for the submit/manual-review shells: which severity gets which
+ * action. Errors block the submission entirely; warnings only annotate the
+ * result. The shells dispatch on `kind` and do the IO — they never re-derive
+ * the severity rules. `issues` always carries the full list so blocked
+ * messages can also list warnings as suggested fixes.
+ */
+export type LavishGateDecision =
+  | { kind: "pass" }
+  | { kind: "block"; issues: LavishHtmlIssue[] }
+  | { kind: "warn"; issues: LavishHtmlIssue[] };
+
+export const decideLavishHtmlGate = (
+  issues: LavishHtmlIssue[],
+): LavishGateDecision => {
+  if (issues.some((issue) => issue.severity === "error")) {
+    return { kind: "block", issues };
+  }
+  if (issues.length > 0) {
+    return { kind: "warn", issues };
+  }
+  return { kind: "pass" };
+};
 
 /** Format issues into an actionable Chinese message for the agent. */
 export function formatLavishHtmlIssues(

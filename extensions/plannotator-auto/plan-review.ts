@@ -25,6 +25,7 @@ import {
 import { extractBashPathCandidates, resolveToolPaths } from "./helpers.ts";
 import {
   checkLavishHtmlCompliance,
+  decideLavishHtmlGate,
   formatLavishHtmlIssues,
   type LavishHtmlIssue,
 } from "./lavish-html-check.ts";
@@ -741,10 +742,6 @@ const runLavishReviewFlow = async (
 };
 
 /**
- * Manual-entry Lavish review (picker / Ctrl+Alt+L): open + poll once, deliver
- * the first feedback batch as a follow-up. No pending gate involvement.
- */
-/**
  * Read an HTML artifact and run the static Lavish-annotate compliance check.
  * Errors block submission; warnings only annotate the result.
  */
@@ -759,11 +756,10 @@ const readLavishHtmlCompliance = (
   }
 };
 
-const formatLavishHtmlComplianceBlock = (
-  planFile: string,
-  issues: LavishHtmlIssue[],
-): string => formatLavishHtmlIssues(issues, { blocked: true, planFile });
-
+/**
+ * Manual-entry Lavish review (picker / Ctrl+Alt+L): open + poll once, deliver
+ * the first feedback batch as a follow-up. No pending gate involvement.
+ */
 export const runLavishReviewOnce = async (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -777,30 +773,19 @@ export const runLavishReviewOnce = async (
     );
     return;
   }
-  const blockIssues = compliance.issues.filter(
-    (issue) => issue.severity === "error",
-  );
-  if (blockIssues.length > 0) {
+  const gate = decideLavishHtmlGate(compliance.issues);
+  if (gate.kind !== "pass") {
+    const planFile = path.relative(ctx.cwd, filePath);
     ctx.ui.notify(
-      formatLavishHtmlComplianceBlock(
-        path.relative(ctx.cwd, filePath),
-        compliance.issues,
-      ),
-      "warning",
-    );
-    return;
-  }
-  const warningIssues = compliance.issues.filter(
-    (issue) => issue.severity === "warning",
-  );
-  if (warningIssues.length > 0) {
-    ctx.ui.notify(
-      formatLavishHtmlIssues(warningIssues, {
-        blocked: false,
-        planFile: path.relative(ctx.cwd, filePath),
+      formatLavishHtmlIssues(gate.issues, {
+        blocked: gate.kind === "block",
+        planFile,
       }),
-      "info",
+      gate.kind === "block" ? "warning" : "info",
     );
+    if (gate.kind === "block") {
+      return;
+    }
   }
   ctx.ui.notify("Opening Lavish review…", "info");
   const openResult = await runLavishOpenCli(ctx, filePath, {
@@ -936,26 +921,21 @@ export const registerPlanReviewSubmitTool = (
             details: { status: "error" },
           };
         }
-        const blockIssues = compliance.issues.filter(
-          (issue) => issue.severity === "error",
-        );
-        if (blockIssues.length > 0) {
+        const gate = decideLavishHtmlGate(compliance.issues);
+        if (gate.kind === "block") {
           return {
             content: [
               {
                 type: "text",
-                text: formatLavishHtmlComplianceBlock(
-                  pendingPlanReview.planFile,
-                  compliance.issues,
-                ),
+                text: formatLavishHtmlIssues(gate.issues, {
+                  blocked: true,
+                  planFile: pendingPlanReview.planFile,
+                }),
               },
             ],
             details: { status: "error", reason: "lavish-html-compliance" },
           };
         }
-        const warningIssues = compliance.issues.filter(
-          (issue) => issue.severity === "warning",
-        );
         const openedBefore = pendingPlanReview.lavishSessionOpened;
         state.activePlanReviewByCwd.set(ctx.cwd, {
           reviewId: `cli:${Date.now()}`,
@@ -975,7 +955,7 @@ export const registerPlanReviewSubmitTool = (
             typeof params.reply === "string" ? params.reply : undefined,
             signal,
           );
-          if (warningIssues.length > 0 && !openedBefore) {
+          if (gate.kind === "warn" && !openedBefore) {
             const existing = result.content[0]?.text ?? "";
             result.content = [
               {
@@ -983,7 +963,7 @@ export const registerPlanReviewSubmitTool = (
                 text:
                   existing +
                   "\n\n" +
-                  formatLavishHtmlIssues(warningIssues, {
+                  formatLavishHtmlIssues(gate.issues, {
                     blocked: false,
                     planFile: pendingPlanReview.planFile,
                   }),

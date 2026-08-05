@@ -9,6 +9,8 @@ export type GuardPolicyTarget = {
   exists: boolean;
   isInsideCwd: boolean;
   isReviewArtifact: boolean;
+  /** Reviewable HTML artifact under htmlDirs (e.g. `.pi/html/<repo>/YYYY-MM-DD-*.html`). */
+  isHtmlArtifact: boolean;
   wasRead: boolean;
   wasFreshlyWritten: boolean;
 };
@@ -50,7 +52,9 @@ export const decideToolBlock = (
     const writesOnlyReviewArtifacts =
       input.targetResult.kind === "paths" &&
       input.targets.length > 0 &&
-      input.targets.every((target) => target.isReviewArtifact);
+      input.targets.every(
+        (target) => target.isReviewArtifact || target.isHtmlArtifact,
+      );
     if (writesOnlyReviewArtifacts) {
       return undefined;
     }

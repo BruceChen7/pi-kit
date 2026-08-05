@@ -325,11 +325,6 @@ export const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
         ? data.resumableApprovedPlanPath
         : null,
     endConversationRequested: data.endConversationRequested === true,
-    planArtifactFormatOverride: isPlanArtifactFormat(
-      data.planArtifactFormatOverride,
-    )
-      ? data.planArtifactFormatOverride
-      : null,
     lastAutoDecision: planDecisionFromSnapshot(data.lastAutoDecision),
   };
 };
@@ -379,7 +374,6 @@ export class PlanModeState {
   confirmedApprovedContinuationPath: string | null = null;
   resumableApprovedPlanPath: string | null = null;
   endConversationRequested = false;
-  planArtifactFormatOverride: PlanArtifactFormat | null = null;
   lastAutoDecision: PlanDecisionSummary | null = null;
 
   constructor(defaultMode: PlanMode) {
@@ -403,7 +397,6 @@ export class PlanModeState {
     this.confirmedApprovedContinuationPath = null;
     this.resumableApprovedPlanPath = null;
     this.endConversationRequested = false;
-    this.planArtifactFormatOverride = null;
     this.lastAutoDecision = null;
   }
 
@@ -437,8 +430,6 @@ export class PlanModeState {
       snapshot.confirmedApprovedContinuationPath;
     this.resumableApprovedPlanPath = snapshot.resumableApprovedPlanPath;
     this.endConversationRequested = snapshot.endConversationRequested;
-    this.planArtifactFormatOverride =
-      snapshot.planArtifactFormatOverride ?? null;
     this.lastAutoDecision = snapshot.lastAutoDecision ?? null;
   }
 
@@ -454,10 +445,6 @@ export class PlanModeState {
     if (previousPhase === PLAN_MODE_ACT && this.phase === PLAN_MODE_PLAN) {
       this.clearReviewTracking();
     }
-  }
-
-  setPlanArtifactFormatOverride(format: PlanArtifactFormat): void {
-    this.planArtifactFormatOverride = format;
   }
 
   markFileRead(absolutePath: string): void {
@@ -477,15 +464,10 @@ export class PlanModeState {
   }
 
   getPlanArtifactFormat(config: PlanModeConfig): PlanArtifactFormat {
-    return this.planArtifactFormatOverride ?? config.planArtifactFormat;
+    return config.planArtifactFormat;
   }
 
-  getPlanArtifactFormatSource(
-    config: PlanModeConfig,
-  ): "session" | "config" | "default" {
-    if (this.planArtifactFormatOverride) {
-      return "session";
-    }
+  getPlanArtifactFormatSource(config: PlanModeConfig): "config" | "default" {
     return config.planArtifactFormatSource;
   }
 
@@ -822,7 +804,6 @@ export class PlanModeState {
       confirmedApprovedContinuationPath: this.confirmedApprovedContinuationPath,
       resumableApprovedPlanPath: this.resumableApprovedPlanPath,
       endConversationRequested: this.endConversationRequested,
-      planArtifactFormatOverride: this.planArtifactFormatOverride,
       lastAutoDecision: this.lastAutoDecision
         ? { ...this.lastAutoDecision }
         : null,

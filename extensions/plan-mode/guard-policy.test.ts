@@ -12,6 +12,7 @@ const target = (
   exists: true,
   isInsideCwd: true,
   isReviewArtifact: false,
+  isHtmlArtifact: false,
   wasRead: false,
   wasFreshlyWritten: false,
   ...overrides,
@@ -94,6 +95,45 @@ describe("plan-mode guard policy", () => {
     ).toBeUndefined();
 
     expect(decideToolBlock(input({ isPlanPhase: true }))).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("current phase can only write"),
+    });
+  });
+
+  it("allows plan-phase writes to HTML artifacts under htmlDirs", () => {
+    expect(
+      decideToolBlock(
+        input({
+          isPlanPhase: true,
+          targets: [
+            target({
+              isReviewArtifact: false,
+              isHtmlArtifact: true,
+              rawPath: ".pi/html/repo/2026-08-05-proto.html",
+              exists: false,
+            }),
+          ],
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("blocks plan-phase writes to non-date HTML files even under htmlDirs", () => {
+    expect(
+      decideToolBlock(
+        input({
+          isPlanPhase: true,
+          targets: [
+            target({
+              isReviewArtifact: false,
+              isHtmlArtifact: false,
+              rawPath: ".pi/html/repo/foo.html",
+              exists: false,
+            }),
+          ],
+        }),
+      ),
+    ).toMatchObject({
       block: true,
       reason: expect.stringContaining("current phase can only write"),
     });

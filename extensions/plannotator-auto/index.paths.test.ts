@@ -53,10 +53,10 @@ describe("index path helpers", () => {
         expected: ".pi/plans/repo/plan/2026-04-15-auth-flow.md",
       },
       {
-        name: "matches generated HTML plan files",
+        name: "ignores generated HTML plan files (HTML is not a plan artifact)",
         config: createPlanConfig(),
         targetPath: "/repo/.pi/plans/repo/plan/2026-04-15-auth-flow.html",
-        expected: ".pi/plans/repo/plan/2026-04-15-auth-flow.html",
+        expected: null,
       },
       {
         name: "matches generated design specs",
@@ -213,10 +213,10 @@ describe("index path helpers", () => {
         expected: false,
       },
       {
-        name: "skips generated HTML plan files",
+        name: "queues generated HTML plan files (HTML is not a plan artifact)",
         config: createPlanConfig(),
         targetPath: "/repo/.pi/plans/repo/plan/2026-04-15-auth-flow.html",
-        expected: false,
+        expected: true,
       },
       {
         name: "skips generated design specs",

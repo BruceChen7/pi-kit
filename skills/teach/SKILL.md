@@ -162,29 +162,8 @@ Glossaries, in particular, are essential. Once created, adhere to their terminol
 
 The user will sometimes express preferences for how they want to be taught, or things you should keep in mind. Record those preferences here so you can refer back to them when designing lessons or working with the user.
 
-## Reviewing Lessons
-
-Lessons review through the plan-mode review gate: only files under a review
-directory can be submitted, and writing one blocks the next turn until you
-call `plannotator_auto_submit_review`.
-
-- **Review directories** (project-root relative): `.pi/plans/<repo>/plan/`
-  (`.md`/`.html`), `.pi/plans/<repo>/specs/` (`.md`), `.pi/html/<repo>/`
-  (`.html`; configurable via `plannotatorAuto.htmlDirs` / `extraReviewTargets`).
-  `./lessons/` and `./reference/` are not review directories — write (or copy)
-  the lesson to `.pi/html/<repo>/YYYY-MM-DD-<slug>.html` and submit that copy.
-- **Submit**: `plannotator_auto_submit_review({ path })`. HTML artifacts review
-  through the Lavish Editor loop: feedback = denied — revise and re-submit with
-  `{ path, reply }` (`reply` summarizes your changes); user ends the session =
-  approved. Markdown artifacts review through Plannotator's approve/deny flow
-  (revise the same file, keep the first `#` heading).
-- **Manual entry**: `/plannotator-review` (or `Ctrl+Shift+R`) opens the review
-  file picker; `Ctrl+Alt+L` annotates the latest `.md`/`.html` file modified in
-  this session.
-
 ## Pi integration
 
 - Teaching workspace paths follow user preference — `.pi/teach/<topic>/` for project-related learning, external paths for general learning.
-- Review lessons through the path-gated review flow — see [Reviewing Lessons](#reviewing-lessons).
 - Learning records under `.pi/contexts/` or ADRs for domain terminology are also valid when the learning is closely coupled to this project's domain language.
 - Plan files under `.pi/plans/<repo>/plan/` can reference teaching milestones or lesson outcomes.

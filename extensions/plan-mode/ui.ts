@@ -16,6 +16,26 @@ import type {
 export const getModeLabel = (state: PlanModeState): string =>
   PLAN_MODE_LABELS[state.mode];
 
+/** Relative time label for the widget's "updated X ago" hint. */
+export const formatRelativeTime = (iso: string, now = Date.now()): string => {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) {
+    return "";
+  }
+  const minutes = Math.max(0, Math.floor((now - then) / 60_000));
+  if (minutes < 1) {
+    return "刚刚";
+  }
+  if (minutes < 60) {
+    return `${minutes} 分钟前`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours} 小时前`;
+  }
+  return `${Math.floor(hours / 24)} 天前`;
+};
+
 export const symbolForStatus = (status: TodoStatus): string => {
   switch (status) {
     case "done":
@@ -155,9 +175,14 @@ export const formatTodoWidgetLines = (state: PlanModeState): string[] => {
   }
 
   const modePrefix = `【${getUserRunStatus(state)}】`;
-  const heading = current
-    ? `进行中 #${current.id}/${total}：${current.text}`
-    : `已完成 ${done}/${total}`;
+  const lastUpdate = state.activeRun?.lastTodoUpdateAt
+    ? ` · 更新于 ${formatRelativeTime(state.activeRun.lastTodoUpdateAt)}`
+    : "";
+  const heading = `${
+    current
+      ? `进行中 #${current.id}/${total}：${current.text}`
+      : `已完成 ${done}/${total}`
+  }${lastUpdate}`;
   const progress = `已完成 ${done}/${total} · 剩余 ${total - done} 项`;
   const todoLines = state.todos.map((todo) => {
     const marker = todo === current ? "→" : " ";

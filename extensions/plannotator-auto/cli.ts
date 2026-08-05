@@ -440,11 +440,18 @@ const parseLavishPollOutput = (stdout: string): LavishDecision => {
         continue;
       }
       const record = prompt as ToonObject;
+      // Real `lavish-axi` prompt records carry the actionable feedback in
+      // `prompt`: chat messages (text is the static label "Freeform
+      // message"), annotations (text is the selected/element text), and
+      // layout-warnings / whiteboard batches (text is a short summary).
+      // The `feedback` tag is the exception — its content lands in `text`
+      // with an empty `prompt`. Prefer `prompt` when non-empty, fall back
+      // to `text`.
       const text =
-        typeof record.text === "string"
-          ? record.text
-          : typeof record.prompt === "string"
-            ? record.prompt
+        typeof record.prompt === "string" && record.prompt.trim().length > 0
+          ? record.prompt
+          : typeof record.text === "string"
+            ? record.text
             : undefined;
       if (text !== undefined && text.trim().length > 0) {
         prompts.push(text);

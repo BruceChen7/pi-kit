@@ -12,7 +12,6 @@ diagnosing-bugs|local|skills/diagnosing-bugs
 # visualise|https://github.com/bentossell/visualise.git|
 visual-explainer|https://github.com/nicobailon/visual-explainer.git|plugins/visual-explainer
 render-markdown|local|skills/render-markdown
-plannotator-visual-explainer|local|skills/plannotator-visual-explainer
 skill-creator|https://github.com/anthropics/skills.git|skills/skill-creator
 diagram-design|https://github.com/cathrynlavery/diagram-design|
 boundaries-refactor|local|skills/boundaries-refactor

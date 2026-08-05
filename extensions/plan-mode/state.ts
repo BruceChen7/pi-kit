@@ -14,7 +14,9 @@ import {
   PLAN_RUN_STATUS_VALUES,
   RECENT_RUN_LIMIT,
   STATE_ENTRY_TYPE,
+  TODO_STATUS_BLOCKED,
   TODO_STATUS_DONE,
+  TODO_STATUS_IN_PROGRESS,
   TODO_STATUS_PENDING,
   TODO_STATUS_TODO,
   TODO_STATUS_VALUES,
@@ -122,6 +124,7 @@ export const todoFromSnapshot = (value: unknown): TodoItem | null => {
     text: value.text,
     status: value.status,
     ...(typeof value.notes === "string" ? { notes: value.notes } : {}),
+    ...(value.everInProgress === true ? { everInProgress: true } : {}),
   };
 };
 
@@ -704,6 +707,7 @@ export class PlanModeState {
     this.nextTodoId += 1;
     this.todos.push(todo);
     this.activeRun.nextTodoId = this.nextTodoId;
+    this.touchTodoUpdate();
     this.refreshActiveRunStatus();
     return todo;
   }
@@ -717,7 +721,11 @@ export class PlanModeState {
       todo.text = patch.text;
     }
     if (patch.status !== undefined) {
-      todo.status = normalizeTodoStatus(patch.status);
+      const nextStatus = normalizeTodoStatus(patch.status);
+      if (nextStatus === TODO_STATUS_IN_PROGRESS) {
+        todo.everInProgress = true;
+      }
+      todo.status = nextStatus;
     }
     if (patch.notes !== undefined) {
       if (patch.notes) {
@@ -726,6 +734,7 @@ export class PlanModeState {
         delete todo.notes;
       }
     }
+    this.touchTodoUpdate();
     this.refreshActiveRunStatus();
     return true;
   }
@@ -735,6 +744,9 @@ export class PlanModeState {
     this.todos = this.todos.filter((item) => item.id !== id);
     if (this.activeRun) {
       this.activeRun.todos = this.todos;
+    }
+    if (before !== this.todos.length) {
+      this.touchTodoUpdate();
     }
     this.refreshActiveRunStatus();
     return before !== this.todos.length;
@@ -759,6 +771,47 @@ export class PlanModeState {
     this.activeRun = null;
   }
 
+  /** Record the moment the todo state last changed (widget "updated X ago"). */
+  private touchTodoUpdate(): void {
+    if (this.activeRun) {
+      this.activeRun.lastTodoUpdateAt = new Date().toISOString();
+    }
+  }
+
+  /**
+   * Discipline normalization (①): whenever the run has unfinished items but no
+   * in_progress and no blocked item, promote the first todo item to
+   * in_progress so the widget always shows a current step. Also enforces the
+   * "at most one in_progress" invariant. Called from refreshActiveRunStatus,
+   * so every todo mutation path (set/add/update/remove) converges here.
+   */
+  private promoteFirstTodoIfNeeded(): void {
+    if (!this.activeRun) {
+      return;
+    }
+    const hasInProgress = this.todos.some(
+      (todo) => todo.status === TODO_STATUS_IN_PROGRESS,
+    );
+    if (hasInProgress) {
+      return;
+    }
+    const hasBlocked = this.todos.some(
+      (todo) => todo.status === TODO_STATUS_BLOCKED,
+    );
+    if (hasBlocked) {
+      return;
+    }
+    const firstTodo = this.todos.find(
+      (todo) => todo.status === TODO_STATUS_TODO,
+    );
+    if (!firstTodo) {
+      return;
+    }
+    firstTodo.status = TODO_STATUS_IN_PROGRESS;
+    firstTodo.everInProgress = true;
+    this.touchTodoUpdate();
+  }
+
   refreshActiveRunStatus(): void {
     if (!this.activeRun) {
       return;
@@ -767,12 +820,11 @@ export class PlanModeState {
     this.activeRun.nextTodoId = this.nextTodoId;
 
     const allTodosCompleted = hasCompletedAllTodos(this.todos);
-    if (
-      allTodosCompleted &&
-      this.activeRun.status !== PLAN_RUN_STATUS_COMPLETED
-    ) {
-      this.activeRun.status = PLAN_RUN_STATUS_COMPLETED;
-      this.activeRun.completedAt = new Date().toISOString();
+    if (allTodosCompleted) {
+      if (this.activeRun.status !== PLAN_RUN_STATUS_COMPLETED) {
+        this.activeRun.status = PLAN_RUN_STATUS_COMPLETED;
+        this.activeRun.completedAt = new Date().toISOString();
+      }
       return;
     }
     if (
@@ -784,6 +836,7 @@ export class PlanModeState {
         : PLAN_RUN_STATUS_DRAFT;
       delete this.activeRun.completedAt;
     }
+    this.promoteFirstTodoIfNeeded();
   }
 
   snapshot(): PlanModeSnapshot {

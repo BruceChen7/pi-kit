@@ -6,6 +6,7 @@ import {
   createTempRepo,
   createTestContext,
   flushMicrotasks,
+  lavishChatMessageStdout as lavishChatMessageStdoutFixture,
   lavishEndedStdout as lavishEndedStdoutFixture,
   lavishFeedbackStdout as lavishFeedbackStdoutFixture,
   lavishOpenStdout as lavishOpenStdoutFixture,
@@ -868,6 +869,61 @@ describe("lavish HTML artifact review", () => {
       expect(gateResult?.message?.content ?? "").not.toContain(
         "Keep the first # heading",
       );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("delivers the real chat message content from Send to Agent, not the static text label", async () => {
+    vi.resetModules();
+    const spawn = mockLavishSpawn(
+      { status: 0, stdout: lavishOpenStdout, stderr: "" },
+      {
+        status: 0,
+        stdout: lavishChatMessageStdoutFixture(
+          "/repo/proto.html",
+          "Make the hero section narrower.",
+        ),
+        stderr: "",
+      },
+    );
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-lavish-msg-");
+    const htmlRelative = getHtmlFileRelative(repoRoot);
+    await writeTestFile(
+      repoRoot,
+      htmlRelative,
+      "<html><body>Prototype</body></html>",
+    );
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, htmlRelative);
+
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: htmlRelative },
+        ctx,
+      )) as {
+        content?: Array<{ text?: string }>;
+        details?: { status?: string };
+      };
+
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(result.details?.status).toBe("denied");
+      expect(result.content?.[0]?.text).toContain(
+        "Make the hero section narrower.",
+      );
+      // Regression: real chat-message records carry the content in `prompt`
+      // with `text` set to the static label "Freeform message"; the parser
+      // must not surface the label as the feedback.
+      expect(result.content?.[0]?.text).not.toContain("Freeform message");
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

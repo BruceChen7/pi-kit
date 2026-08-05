@@ -532,6 +532,26 @@ export const lavishFeedbackStdout = (
     'next_step: "Apply the requested changes and re-poll."',
   ]);
 
+/**
+ * Real shape for a chat message sent with "Send to Agent": the content is
+ * in `prompt`, while `text` is the static display label "Freeform message"
+ * (lavish-axi chrome-client.js enqueuePrompt). The `feedback`-tag fixture
+ * above puts content in `text`, which must NOT be assumed for other tags.
+ */
+export const lavishChatMessageStdout = (
+  filePath: string,
+  message: string,
+): string =>
+  joinToonLines([
+    "session:",
+    `  file: ${filePath}`,
+    "  status: feedback",
+    'dom_snapshot: ""',
+    "prompts[1]{uid,prompt,selector,tag,text}:",
+    `  "",${encodeToonScalar(message)},,message,Freeform message`,
+    'next_step: "Apply the requested changes and re-poll."',
+  ]);
+
 export const lavishEndedStdout = (filePath: string): string =>
   joinToonLines([
     "session:",

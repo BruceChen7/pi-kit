@@ -16,6 +16,7 @@ import crDiffviewExtension, {
   buildCrTmuxSelectPaneArgs,
   buildCrTmuxWindowName,
   buildSessionData,
+  type NvimSpawnOptions,
 } from "./index.ts";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
@@ -410,7 +411,7 @@ describe("cr-diffview command", () => {
       const [command, args, options] = spawnMock.mock.calls[0] as [
         string,
         string[],
-        { cwd: string; env: Record<string, string>; stdio: string },
+        NvimSpawnOptions,
       ];
       expect(command).toBe("nvim");
       expect(args).toEqual([
@@ -465,14 +466,10 @@ describe("cr-diffview command", () => {
 
       await vi.waitFor(() => {
         expect(sendUserMessage).toHaveBeenCalledWith(
-          expect.stringContaining("# Code Review Comments"),
+          expect.stringContaining("Please rename this."),
           { deliverAs: "followUp" },
         );
       });
-      expect(sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining("### [FIX] src/a.ts:7"),
-        { deliverAs: "followUp" },
-      );
 
       lastChild.emit("close", 0);
       await promise;

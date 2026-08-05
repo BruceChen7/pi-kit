@@ -19,6 +19,32 @@ export const MIN_ZOOM = 0.25;
 export const MAX_ZOOM = 8;
 export const DRAG_THRESHOLD_PX = 5;
 
+/** Max inline diagram height (keeps tall diagrams from pushing the page). */
+export const INLINE_MAX_HEIGHT = "min(85vh, 44rem)";
+
+/**
+ * preserveAspectRatio that top-aligns fitted diagrams (xMidYMin) so portrait
+ * charts do not leave empty space above them. Shared by the markup
+ * normalizer and the Svelte shell's DOM writer.
+ */
+export const FIT_PRESERVE_ASPECT_RATIO = "xMidYMin meet";
+
+/**
+ * Inline-mode viewport style: the container follows the diagram's natural
+ * aspect ratio (capped) so wide diagrams fill the width. Returns undefined
+ * when no aspect is known or the diagram is expanded.
+ */
+export function inlineViewportStyle(
+  aspect: number | null,
+  isExpanded: boolean,
+): string | undefined {
+  if (!aspect || isExpanded) return undefined;
+  const ratio = aspect.toFixed(4);
+  return [`aspect-ratio: ${ratio}`, `max-height: ${INLINE_MAX_HEIGHT}`].join(
+    "; ",
+  );
+}
+
 /**
  * Parse the base viewBox from SVG markup before DOM mount.
  * Prefers the viewBox attribute; falls back to width/height attributes.
@@ -235,7 +261,7 @@ export function normalizeSvgMarkup(markup: string): string {
     }
 
     if (!/\bpreserveAspectRatio\s*=/i.test(next)) {
-      next += ' preserveAspectRatio="xMidYMin meet"';
+      next += ` preserveAspectRatio="${FIT_PRESERVE_ASPECT_RATIO}"`;
     }
     if (!/\bheight\s*=/i.test(next)) {
       next += ' height="100%"';

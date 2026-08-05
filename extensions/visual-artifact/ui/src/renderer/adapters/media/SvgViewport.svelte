@@ -15,7 +15,9 @@ import {
   clampZoom,
   computeView,
   exceedsDragThreshold,
+  FIT_PRESERVE_ASPECT_RATIO,
   fitBoundsToContainer,
+  inlineViewportStyle,
   isAtBaseZoom,
   isZoomModifierDown,
   MAX_ZOOM,
@@ -68,19 +70,9 @@ let panStart = { x: 0, y: 0 };
  */
 let viewportAspect = $state<number | null>(null);
 
-const INLINE_MAX_HEIGHT = "min(85vh, 44rem)";
-
 function aspectOf(bounds: ViewBox | null): number | null {
   if (!bounds || bounds.width <= 0 || bounds.height <= 0) return null;
   return bounds.width / bounds.height;
-}
-
-function inlineViewportStyle(aspect: number | null): string | undefined {
-  if (!aspect || isExpanded) return undefined;
-  const ratio = aspect.toFixed(4);
-  return [`aspect-ratio: ${ratio}`, `max-height: ${INLINE_MAX_HEIGHT}`].join(
-    "; ",
-  );
 }
 
 // Imperative control refs (updated without re-render, like the source's refs)
@@ -175,7 +167,7 @@ $effect(() => {
   svgEl.style.display = "block";
   svgEl.setAttribute("width", "100%");
   svgEl.setAttribute("height", "100%");
-  svgEl.setAttribute("preserveAspectRatio", "xMidYMin meet");
+  svgEl.setAttribute("preserveAspectRatio", FIT_PRESERVE_ASPECT_RATIO);
 
   let cancelled = false;
 
@@ -623,7 +615,7 @@ function handleClick(event: MouseEvent): void {
       : viewportAspect
         ? 'min-h-[20rem]'
         : 'h-[min(65vh,36rem)] min-h-[20rem]'}"
-    style={inlineViewportStyle(viewportAspect)}
+    style={inlineViewportStyle(viewportAspect, isExpanded)}
     onmousedown={handleMouseDown}
     onmousemove={handleMouseMove}
     onmouseup={stopDragging}

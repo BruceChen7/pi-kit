@@ -24,11 +24,11 @@ describe("SvgViewport diagram mount", () => {
     expect(source).not.toContain("width: min(100%,");
   });
 
-  it("top-aligns fitted diagrams to avoid empty space above portrait charts", async () => {
+  it("top-aligns fitted diagrams via the shared constant", async () => {
     const source = await readFile(componentPath, "utf8");
 
     expect(source).toContain(
-      'svgEl.setAttribute("preserveAspectRatio", "xMidYMin meet")',
+      'setAttribute("preserveAspectRatio", FIT_PRESERVE_ASPECT_RATIO)',
     );
   });
 });

@@ -1,11 +1,14 @@
 ---
-description: Review code/test changes using Boundaries Refactor + TDD principles with P0-P3 severity classification
+description: Review code/test changes using Boundaries Refactor + me-tdd + Improve Codebase Architecture principles with P0-P3 severity classification
 argument-hint: "[scope]"
 ---
-Review the code or test changes using two complementary frameworks:
+Review the code or test changes using three complementary frameworks:
 
-1. **Boundaries Refactor (Functional Core, Imperative Shell)** — Identify where IO/side effects mix with pure decision logic, where boundaries DTOs are missing, and where module-level mutable state leaks. Read `/skill:boundaries-refactor` for full reference.
+1. **Boundaries Refactor (Functional Core, Imperative Shell)** — Identify where IO/side effects mix with pure decision logic, where boundary DTOs are missing, and where module-level mutable state leaks. Read `/skill:boundaries-refactor` for full reference.
 2. **me-tdd** — Evaluate whether tests verify behavioral contracts through public interfaces, or are coupled to implementation details, mock too deeply, or assert on call-choreography instead of outcomes. Read `/skill:me-tdd` for full reference.
+3. **Improve Codebase Architecture** — Evaluate module depth and seam quality: shallow modules (interface nearly as complex as implementation), pass-through modules that fail the deletion test, tightly-coupled modules leaking across seams, and whether new tests exercise behavior through the module interface. Read `/skill:improve-codebase-architecture` for full reference.
+
+> **Vocabulary note**: the two architecture frameworks use different terms for related concepts — boundaries-refactor speaks of *boundary DTOs* at the *IO/logic boundary*; improve-codebase-architecture speaks of *seams* and *adapters* and deliberately avoids the word "boundary". Use each framework's own terms when applying it, and tag every finding with its framework (below) so terms never mix inside one finding.
 
 ## Scope detection
 
@@ -24,16 +27,17 @@ For commit/range/PR scopes, also read commit messages for context:
 ## Steps
 
 0. **Determine scope**: apply the scope detection above. If reviewing a commit or range, first read commit messages (`git log -1`, `git log --oneline`) and display them for context.
-1. Read every modified file in full
-2. Read both skill references to internalize the principles
-3. Classify each finding by severity:
-   - **P0 (blocking)**: IO mixed with domain logic, pure decision embedded in shell, cannot test core without mocking filesystem
-   - **P1 (strongly recommended)**: Test tests private fields, redundant test coverage (pure logic re-tested in shell), module-level mutable global state
-   - **P2 (moderate)**: Mock boilerplate that could be extracted, lightly implementation-coupled assertions, minor import issues
-   - **P3 (minor)**: Naming, location, or structure nits
-4. Show code snippets for each finding with before/after suggestions
-5. For P0 findings, include a concrete extraction suggestion (pure function signature + shell wrapper shape)
-6. Mark what's already done right before diving into issues
+1. **Read every modified file in full** — include surrounding code paths needed to judge seam placement and interface quality, not just the diff hunks.
+2. **Read the three skill references** to internalize the principles.
+3. **Optional context skim**: if the diff touches existing module seams, skim `.pi/contexts/CONTEXT.md` (domain vocabulary) and `.pi/contexts/adr/` (recorded decisions). Use the domain terms; do not re-litigate ADRs unless the diff creates real friction with one.
+4. **Classify each finding by severity** and tag it with its framework:
+   - **P0 (blocking)** — `[boundaries]` IO mixed with domain logic, pure decision embedded in shell, cannot test core without mocking filesystem; `[arch]` new code that silently breaks an existing seam or contradicts a recorded ADR decision without justification
+   - **P1 (strongly recommended)** — `[tdd]` tests assert private fields, redundant test coverage (pure logic re-tested in shell), module-level mutable global state; `[arch]` shallow module (interface ≈ implementation), pass-through module that fails the deletion test, behavior untestable through the module interface
+   - **P2 (moderate)** — `[tdd]` mock boilerplate that could be extracted, lightly implementation-coupled assertions, minor import issues; `[arch]` helper extraction that reduces locality for real behavior, speculative single-adapter seam
+   - **P3 (minor)** — `[any]` naming, location, or structure nits
+5. **Show code snippets** for each finding with before/after suggestions.
+6. **For P0 findings**, include a concrete extraction suggestion: pure function signature + shell wrapper shape (`[boundaries]`), or module interface + adapter shape (`[arch]`).
+7. **Mark what's already done right** before diving into issues.
 
 ## Output format
 
@@ -42,11 +46,11 @@ For commit/range/PR scopes, also read commit messages for context:
 
 ### 🔴 P0 — 需要修复
 
-**标题** — 一句话问题描述
+**`[框架]` 标题** — 一句话问题描述
 
-问题分析：什么代码在什么地方，为什么混合了 IO/逻辑
+问题分析：什么代码在什么地方，为什么混合了 IO/逻辑或破坏了深度/接缝
 
-建议：纯函数签名 + shell 如何调用
+建议：纯函数签名 + shell 如何调用（或模块接口 + adapter 形状）
 
 ---
 
@@ -60,11 +64,13 @@ For commit/range/PR scopes, also read commit messages for context:
 
 ### 🔵 P3 — 次要
 
+...
+
 ---
 
 ## 摘要
 
-| 级别 | 问题 | 现状 | 建议 |
-|------|------|------|------|
-| 🔴 P0 | ... | ... | ... |
+| 级别 | 框架 | 问题 | 现状 | 建议 |
+|------|------|------|------|------|
+| 🔴 P0 | boundaries | ... | ... | ... |
 ```

@@ -76,6 +76,9 @@ During implementation, Pi should:
 
 - mark a task `in_progress` before starting it
 - mark it `done` after finishing it
+- update the todo list before switching steps: mark the finished step
+  `done` and the next step `in_progress` in the same call, so the widget
+  shows the step about to be executed
 - keep the widget aligned with the current step
 
 Completed runs remain visible briefly as an `已交付` task list, then clear on the next run or user turn.

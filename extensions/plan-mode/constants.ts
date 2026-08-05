@@ -172,9 +172,10 @@ export const PLAN_REVIEW_ARTIFACT_GUIDANCE = [
 ];
 export const ACT_CODE_WRITING_GUIDANCE = [FC_IS_TEST_GUIDANCE];
 export const EXECUTION_TODO_DISCIPLINE_GUIDANCE =
-  "- Keep at most one in_progress item: mark a step done as soon as it " +
-  "finishes and move in_progress to the next step; do not bulk-mark all " +
-  "items done at the end.";
+  "- Keep at most one in_progress item. Update the todo list before starting " +
+  "each step: mark the finished step done and the next step in_progress in " +
+  "the same update, so the widget shows the step you are about to execute " +
+  "— never bulk-mark all items done at the end.";
 export const DIRECT_ACT_TODO_GUIDANCE = [
   "- In direct act mode, create concrete TODOs before using tools or making changes.",
   EXECUTION_TODO_DISCIPLINE_GUIDANCE,

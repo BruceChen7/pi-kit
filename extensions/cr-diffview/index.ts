@@ -39,6 +39,7 @@ import {
   type CrSession,
   decideScopeFromPreset,
   decideScopeResolution,
+  describeInlineOutcome,
   type ExecResult,
   formatAnnotationsPrompt,
   getBranchCandidates,
@@ -64,6 +65,11 @@ const SELECT_LIST_HINT = "Type to filter • Enter to select • esc to cancel";
 const EMPTY_FILTER_HINT = "type to filter...";
 const START_SHORTCUT = "alt+r";
 const CR_FILE_WATCHER_SOURCE = "cr-diffview";
+/**
+ * How long to wait for the VimLeavePre finish handshake to land after nvim
+ * exits before falling back to reading the annotation artifact.
+ */
+const FINISH_HANDSHAKE_GRACE_MS = 150;
 
 type WidgetContext = ExtensionContext & {
   ui?: ExtensionContext["ui"] & {
@@ -545,7 +551,8 @@ const closeCrSocketServer = (server: net.Server, socketPath: string): void => {
 };
 
 /**
- * Inline (no tmux/herdr) review transport.
+ * Terminal suspend/resume adapter — the only place that knows how to hand the
+ * foreground terminal to a child process and take it back.
  *
  * HACK: the extension API has no "suspend TUI and run a foreground process"
  * primitive. We replicate pi's own Ctrl+G external-editor mechanism
@@ -554,9 +561,30 @@ const closeCrSocketServer = (server: net.Server, socketPath: string): void => {
  * calling its public stop()/start()/requestRender() methods.
  *
  * Upstream follow-up: propose a formal API (e.g. `ctx.ui.runInTerminal`)
- * on the ExtensionUIContext so this no longer depends on TUI internals.
+ * on the ExtensionUIContext so this no longer depends on TUI internals; when
+ * it lands, only `captureTuiSuspender`/`createTuiSuspender` need to change.
  */
-const captureTui = async (ctx: ExtensionContext): Promise<TUI | null> => {
+type TerminalSuspender = {
+  suspend(): void;
+  resume(): void;
+};
+
+const createTuiSuspender = (tui: TUI): TerminalSuspender => ({
+  suspend: () => {
+    tui.stop();
+    process.stdout.write(
+      `Opening CR review in Neovim — Pi will resume when nvim exits.\n`,
+    );
+  },
+  resume: () => {
+    tui.start();
+    tui.requestRender(true);
+  },
+});
+
+const captureTuiSuspender = async (
+  ctx: ExtensionContext,
+): Promise<TerminalSuspender | null> => {
   if (!ctx.hasUI || typeof ctx.ui.custom !== "function") return null;
   let captured: TUI | null = null;
   await ctx.ui.custom<void>((tui, _theme, _keybindings, done) => {
@@ -564,7 +592,7 @@ const captureTui = async (ctx: ExtensionContext): Promise<TUI | null> => {
     done(undefined);
     return { render: () => [], invalidate: () => {} };
   });
-  return captured;
+  return captured ? createTuiSuspender(captured) : null;
 };
 
 const buildNvimSpawnArgs = (session: CrSession): string[] => [
@@ -574,21 +602,31 @@ const buildNvimSpawnArgs = (session: CrSession): string[] => [
   buildNvimEntrypoint(),
 ];
 
-type InlineReviewOptions = {
-  tui: TUI;
-  session: CrSession;
-  spawnFn?: (command: string, args: string[], options: object) => ChildProcess;
+/** Spawn contract for the inline review transport (boundary DTO). */
+export type NvimSpawnOptions = {
+  cwd: string;
+  env: Record<string, string>;
+  stdio: "inherit";
 };
+
+type SpawnFn = (
+  command: string,
+  args: string[],
+  options: NvimSpawnOptions,
+) => ChildProcess;
 
 /**
  * Suspend the TUI and run nvim in the foreground terminal, exactly like Ctrl+G.
  * Resolves with nvim's exit code after the TUI has been resumed.
+ *
+ * Ordering is structural, not asserted: suspend() runs before spawn (same
+ * synchronous block), resume() runs after the child closes (finally).
  */
-const runInlineReview = async ({
-  tui,
-  session,
-  spawnFn = spawn,
-}: InlineReviewOptions): Promise<number> => {
+const runInlineReview = async (
+  suspender: TerminalSuspender,
+  session: CrSession,
+  spawnFn: SpawnFn = spawn,
+): Promise<number> => {
   return new Promise<number>((resolve) => {
     let settled = false;
     const settle = (code: number) => {
@@ -598,10 +636,7 @@ const runInlineReview = async ({
     };
 
     try {
-      tui.stop();
-      process.stdout.write(
-        `Opening CR review in Neovim — Pi will resume when nvim exits.\n`,
-      );
+      suspender.suspend();
       const child = spawnFn("nvim", buildNvimSpawnArgs(session), {
         cwd: session.repoRoot,
         env: { ...process.env, CR_SOCKET: session.crSocketPath },
@@ -613,8 +648,7 @@ const runInlineReview = async ({
       settle(-1);
     }
   }).finally(() => {
-    tui.start();
-    tui.requestRender(true);
+    suspender.resume();
   });
 };
 
@@ -704,6 +738,18 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
   let crWidgetVisible = false;
   let crWatcherSessionId: string | null = null;
 
+  /**
+   * Single writer for `activeSession`: clears it only when the given session
+   * is still the active one, and reports whether it did. Used by every async
+   * completion path (socket finish handshake, inline fallback, stop) so stale
+   * callbacks can never clobber a newer session's state.
+   */
+  const clearActiveSessionIfCurrent = (sessionId: string): boolean => {
+    if (activeSession?.sessionId !== sessionId) return false;
+    activeSession = null;
+    return true;
+  };
+
   const clearVisibleCrWidget = (ctx: WidgetContext): void => {
     clearCrWidget(ctx);
     crWidgetVisible = false;
@@ -732,42 +778,34 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     session: CrSession,
   ): Promise<void> => {
     let inlineFinished = false;
-    const clearActiveSession = (): void => {
-      if (activeSession?.sessionId !== session.sessionId) return;
-      activeSession = null;
-    };
     const crSocketServer = await startCrSocketServer(session, pi, null, () => {
       inlineFinished = true;
-      clearActiveSession();
+      clearActiveSessionIfCurrent(session.sessionId);
     });
 
-    const tui = await captureTui(ctx);
-    if (!tui) {
+    const suspender = await captureTuiSuspender(ctx);
+    if (!suspender) {
       closeCrSocketServer(crSocketServer, session.crSocketPath);
-      clearActiveSession();
+      clearActiveSessionIfCurrent(session.sessionId);
       ctx.ui.notify(`/${START_COMMAND} requires interactive mode`, "error");
       return;
     }
 
-    const exitCode = await runInlineReview({ tui, session });
+    const exitCode = await runInlineReview(suspender, session);
     // Give the VimLeavePre finish handshake a moment to land before falling back.
     if (!inlineFinished) {
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      await new Promise((resolve) =>
+        setTimeout(resolve, FINISH_HANDSHAKE_GRACE_MS),
+      );
     }
-    if (!inlineFinished) {
+    const outcome = describeInlineOutcome(exitCode, inlineFinished);
+    if (outcome.kind === "noHandshake") {
       // nvim exited without a finish handshake (crash/kill): read the artifact.
       sendArtifactAnnotationsToPi(pi, session);
       closeCrSocketServer(crSocketServer, session.crSocketPath);
-      clearActiveSession();
-      ctx.ui.notify("CR review closed (no finish handshake)", "warning");
-      return;
+      clearActiveSessionIfCurrent(session.sessionId);
     }
-    ctx.ui.notify(
-      exitCode === 0
-        ? "CR review finished"
-        : `CR review finished (nvim exit code ${exitCode})`,
-      "info",
-    );
+    ctx.ui.notify(outcome.message, outcome.level);
   };
 
   const startHandler = async (
@@ -820,9 +858,8 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
       pi,
       multiplexer,
       () => {
-        if (activeSession?.sessionId !== session.sessionId) return;
+        if (!clearActiveSessionIfCurrent(session.sessionId)) return;
         stopCrFileWatcher(session, widgetCtx);
-        activeSession = null;
         clearVisibleCrWidget(widgetCtx);
       },
     );

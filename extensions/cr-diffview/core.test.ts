@@ -9,6 +9,7 @@ import {
   type CrSession,
   decideScopeFromPreset,
   decideScopeResolution,
+  describeInlineOutcome,
   formatAnnotationsPrompt,
   getBranchCandidates,
   getCrReviewViewId,
@@ -144,4 +145,27 @@ describe("cr-diffview socket payload core", () => {
     expect(prompt.match(/## a\.py/g)).toHaveLength(1);
     expect(prompt.indexOf("## a.py")).toBeLessThan(prompt.indexOf("## b.go"));
   });
+});
+
+describe("cr-diffview inline outcome decisions", () => {
+  it.each([
+    [0, true, "finished", "CR review finished", "info"],
+    [1, true, "finished", "CR review finished (nvim exit code 1)", "info"],
+    [
+      0,
+      false,
+      "noHandshake",
+      "CR review closed (no finish handshake)",
+      "warning",
+    ],
+  ] as const)(
+    "exit code %s, finished=%s -> %s (%s)",
+    (exitCode, finished, kind, message, level) => {
+      expect(describeInlineOutcome(exitCode, finished)).toEqual({
+        kind,
+        message,
+        level,
+      });
+    },
+  );
 });

@@ -266,6 +266,34 @@ export const parseAnnotationsJsonl = (raw: string): CrAnnotation[] => {
   }
 };
 
+export type InlineReviewOutcome =
+  | { kind: "finished"; message: string; level: "info" }
+  | { kind: "noHandshake"; message: string; level: "warning" };
+
+/**
+ * Describe how an inline (no tmux/herdr) review ended: nvim either finished
+ * with a finish handshake (message reflects its exit code), or exited without
+ * one (crash/kill) and the annotation artifact must be read instead.
+ */
+export const describeInlineOutcome = (
+  exitCode: number,
+  finished: boolean,
+): InlineReviewOutcome =>
+  finished
+    ? {
+        kind: "finished",
+        level: "info",
+        message:
+          exitCode === 0
+            ? "CR review finished"
+            : `CR review finished (nvim exit code ${exitCode})`,
+      }
+    : {
+        kind: "noHandshake",
+        level: "warning",
+        message: "CR review closed (no finish handshake)",
+      };
+
 const LANGUAGE_BY_EXT: Record<string, string> = {
   ts: "typescript",
   tsx: "typescriptreact",

@@ -1,4 +1,5 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +16,14 @@ import crDiffviewExtension, {
   buildCrTmuxSelectPaneArgs,
   buildCrTmuxWindowName,
   buildSessionData,
+  type NvimSpawnOptions,
 } from "./index.ts";
+
+const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
+
+vi.mock("node:child_process", () => ({
+  spawn: spawnMock,
+}));
 
 beforeEach(() => {
   vi.stubEnv("TMUX", undefined);
@@ -23,6 +31,7 @@ beforeEach(() => {
   vi.stubEnv("HERDR_WORKSPACE_ID", undefined);
   vi.stubEnv("HERDR_TAB_ID", undefined);
   vi.stubEnv("HERDR_PANE_ID", undefined);
+  spawnMock.mockReset();
 });
 
 afterEach(() => {
@@ -324,19 +333,205 @@ describe("cr-diffview command", () => {
     );
   });
 
-  it("requires tmux or herdr before starting Neovim", async () => {
+  it("requires interactive mode when no tmux or herdr is available", async () => {
     const exec = vi
       .fn()
       .mockResolvedValueOnce({ code: 0, stdout: "/repo\n", stderr: "" });
-    const { ctx, notify } = createTestContext({ tmux: false });
+    const { ctx, notify } = createTestContext({ tmux: false, hasUI: false });
     const { startHandler } = registerCrCommands(exec);
 
     await startHandler("main", ctx);
 
     expect(notify).toHaveBeenCalledWith(
-      `/${START_COMMAND} requires tmux or herdr`,
+      `/${START_COMMAND} requires interactive mode when no tmux or herdr is available`,
       "error",
     );
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  describe("inline mode (no tmux/herdr)", () => {
+    const fakeTui = {
+      stop: vi.fn(),
+      start: vi.fn(),
+      requestRender: vi.fn(),
+    };
+    let lastChild: EventEmitter;
+
+    const createInlineContext = (repoRoot: string) => {
+      const custom = vi.fn(
+        async (
+          factory: (
+            tui: unknown,
+            theme: unknown,
+            keybindings: unknown,
+            done: () => void,
+          ) => unknown,
+        ) => {
+          factory(fakeTui, {}, {}, () => {});
+        },
+      );
+      return createTestContext({ repoRoot, tmux: false, ui: { custom } });
+    };
+
+    beforeEach(() => {
+      fakeTui.stop.mockClear();
+      fakeTui.start.mockClear();
+      fakeTui.requestRender.mockClear();
+      spawnMock.mockImplementation(() => {
+        lastChild = new EventEmitter();
+        return lastChild;
+      });
+    });
+
+    const spawnEnv = (): Record<string, string> =>
+      (spawnMock.mock.calls[0][2] as { env: Record<string, string> }).env;
+
+    const expectTuiLifecycle = () => {
+      expect(fakeTui.stop).toHaveBeenCalled();
+      expect(fakeTui.start).toHaveBeenCalled();
+      expect(fakeTui.requestRender).toHaveBeenCalledWith(true);
+      // stop must happen before the foreground spawn, start after it closes
+      expect(fakeTui.stop.mock.invocationCallOrder[0]).toBeLessThan(
+        spawnMock.mock.invocationCallOrder[0],
+      );
+      expect(spawnMock.mock.invocationCallOrder[0]).toBeLessThan(
+        fakeTui.start.mock.invocationCallOrder[0],
+      );
+    };
+
+    it("opens nvim in the foreground terminal instead of a multiplexer view", async () => {
+      const repoRoot = createRepoRoot();
+      const exec = createCrExec(repoRoot);
+      const { ctx, notify, setWidget } = createInlineContext(repoRoot);
+      const { startHandler, internalEvents } = registerCrCommands(exec);
+
+      const promise = startHandler("main", ctx);
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalled());
+
+      const [command, args, options] = spawnMock.mock.calls[0] as [
+        string,
+        string[],
+        NvimSpawnOptions,
+      ];
+      expect(command).toBe("nvim");
+      expect(args).toEqual([
+        "--listen",
+        expect.stringContaining("nvim.sock"),
+        "-c",
+        'lua require("pi.cr").start()',
+      ]);
+      expect(options.cwd).toBe(repoRoot);
+      expect(options.stdio).toBe("inherit");
+      expect(options.env.CR_SOCKET).toBeTruthy();
+
+      // nvim sends the finish handshake (VimLeavePre) before exiting
+      await exchangeSocketMessages(spawnEnv().CR_SOCKET, [
+        { type: "hello" },
+        { type: "finish", annotations: [] },
+      ]);
+      lastChild.emit("close", 0);
+      await promise;
+
+      expectTuiLifecycle();
+      expect(notify).toHaveBeenCalledWith("CR review finished", "info");
+      // inline mode is modal: no widget, no file watcher
+      expect(setWidget).not.toHaveBeenCalled();
+      expect(internalEvents.emit).not.toHaveBeenCalled();
+    });
+
+    it("sends CR annotations received over the socket in inline mode", async () => {
+      const repoRoot = createRepoRoot();
+      const exec = createCrExec(repoRoot);
+      const { ctx } = createInlineContext(repoRoot);
+      const { startHandler, sendUserMessage } = registerCrCommands(exec);
+
+      const promise = startHandler("main", ctx);
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalled());
+
+      await exchangeSocketMessages(spawnEnv().CR_SOCKET, [
+        { type: "hello" },
+        {
+          type: "finish",
+          annotations: [
+            {
+              file: "src/a.ts",
+              line: 7,
+              type: "fix",
+              snippet: " const x = 1\n+const x = 2",
+              comment: "Please rename this.",
+            },
+          ],
+        },
+      ]);
+
+      await vi.waitFor(() => {
+        expect(sendUserMessage).toHaveBeenCalledWith(
+          expect.stringContaining("Please rename this."),
+          { deliverAs: "followUp" },
+        );
+      });
+
+      lastChild.emit("close", 0);
+      await promise;
+    });
+
+    it("falls back to the annotation artifact when nvim exits without a finish handshake", async () => {
+      const repoRoot = createRepoRoot();
+      const exec = createCrExec(repoRoot);
+      const { ctx, notify } = createInlineContext(repoRoot);
+      const { startHandler, sendUserMessage } = registerCrCommands(exec);
+
+      const promise = startHandler("main", ctx);
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalled());
+
+      const sessionDir = join(repoRoot, ".pi", "cr-diffview");
+      const sessionId = readdirSync(sessionDir)[0];
+      writeFileSync(
+        join(sessionDir, sessionId, "annotations.jsonl"),
+        `${JSON.stringify({ file: "src/a.ts", line: 7, comment: "Crash survivor" })}\n`,
+      );
+
+      lastChild.emit("close", 1);
+      await promise;
+
+      await vi.waitFor(() => {
+        expect(sendUserMessage).toHaveBeenCalledWith(
+          expect.stringContaining("Crash survivor"),
+          { deliverAs: "followUp" },
+        );
+      });
+      expect(notify).toHaveBeenCalledWith(
+        "CR review closed (no finish handshake)",
+        "warning",
+      );
+    });
+
+    it("reports an inline review as modal when stop is invoked without tmux/herdr", async () => {
+      const repoRoot = createRepoRoot();
+      const exec = createCrExec(repoRoot);
+      const { ctx, notify } = createInlineContext(repoRoot);
+      const { startHandler, stopHandler } = registerCrCommands(exec);
+
+      const promise = startHandler("main", ctx);
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalled());
+
+      await stopHandler("", ctx);
+
+      expect(notify).toHaveBeenCalledWith(
+        "Inline CR review is modal — exit Neovim to end it",
+        "info",
+      );
+      expect(exec).not.toHaveBeenCalledWith("tmux", expect.anything());
+      expect(exec).not.toHaveBeenCalledWith("herdr", expect.anything());
+
+      // finish the inline session so the pending handler resolves
+      await exchangeSocketMessages(spawnEnv().CR_SOCKET, [
+        { type: "hello" },
+        { type: "finish", annotations: [] },
+      ]);
+      lastChild.emit("close", 0);
+      await promise;
+    });
   });
 
   it("opens a direct target diff in a new tmux Neovim window", async () => {
@@ -625,6 +820,19 @@ describe("cr-diffview command", () => {
       "--show-toplevel",
     ]);
     expect(notify).toHaveBeenCalledWith("Closed CR Neovim view", "info");
+  });
+
+  it("reports no active review when stopping without tmux/herdr", async () => {
+    const repoRoot = createRepoRoot();
+    const exec = createCrExec(repoRoot);
+    const { ctx, notify } = createTestContext({ repoRoot, tmux: false });
+    const { stopHandler } = registerCrCommands(exec);
+
+    await stopHandler("", ctx);
+
+    expect(notify).toHaveBeenCalledWith("No active CR review", "info");
+    expect(exec).not.toHaveBeenCalledWith("tmux", expect.anything());
+    expect(exec).not.toHaveBeenCalledWith("herdr", expect.anything());
   });
 
   it("stops an active herdr Neovim CR tab by tab id", async () => {

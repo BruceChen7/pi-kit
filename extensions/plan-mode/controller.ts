@@ -30,7 +30,7 @@ import {
   BUILTIN_TOOL_NAMES,
   DEFAULT_CONFIG,
   DIRECT_ACT_TODO_GUIDANCE,
-  HTML_PLAN_FORMAT_GUIDANCE,
+  EXECUTION_TODO_DISCIPLINE_GUIDANCE,
   MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION,
   MODE_WIDGET_KEY,
   PATH_GUARDED_TOOL_NAMES,
@@ -46,10 +46,14 @@ import {
   TODO_WIDGET_KEY,
   WRITE_TOOL_NAMES,
 } from "./constants.ts";
+import type { TodoDoneFlip } from "./controller-decisions.ts";
 import {
+  buildTodoDisciplineReminder,
+  clearTodoDisciplineMarkersForRun,
   decideAgentStartPostActions,
   decideAgentStartPreActions,
   decidePlanReviewObligation,
+  decideTodoDisciplineReminders,
   getApprovedReviewPathToQueue,
 } from "./controller-decisions.ts";
 import { decideToolBlock, type GuardPolicyTarget } from "./guard-policy.ts";
@@ -63,6 +67,7 @@ import {
   relativeToolPath,
   turnWasAborted,
 } from "./guards.ts";
+import { isHtmlArtifactPathIn, resolveHtmlArtifactDirs } from "./html-dirs.ts";
 import {
   getSessionStateEntries,
   hasCompletedAllTodos,
@@ -73,7 +78,6 @@ import {
 } from "./state.ts";
 import type {
   InputSource,
-  PlanArtifactFormat,
   PlanMode,
   PlanModeConfig,
   PlanPhase,
@@ -146,9 +150,19 @@ export class PlanModeController {
   //   · policy pass     — artifact fixed; a new failure text queues again.
   private reReviewReminderSentFor: string | null = null;
   private policyReminderSentFor: string | null = null;
+  // ── TODO discipline state ────────────────────────────────────
+  // turnDoneFlips is turn-scoped (cleared in clearTurnSource);
+  // markers/counts survive across turns in the same session and are
+  // reset on restore() (new episode).
+  private turnDoneFlips: TodoDoneFlip[] = [];
+  private todoReminderMarkers = new Set<string>();
+  private todoReminderCounts: Record<string, number> = {};
+  // Session-scoped values, resolved in restore() (no IO at construction).
+  private htmlArtifactDirs: string[] = [];
   constructor(private readonly pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext): void {
+    this.htmlArtifactDirs = resolveHtmlArtifactDirs(ctx.cwd);
     this.config = loadPlanModeConfig(ctx.cwd);
     const entries = getSessionStateEntries(ctx);
     this.state.restore(latestSnapshot(entries), this.config.defaultMode);
@@ -158,6 +172,9 @@ export class PlanModeController {
     this.approvedPlanContinuationForTurn = false;
     this.reReviewReminderSentFor = null;
     this.policyReminderSentFor = null;
+    this.turnDoneFlips = [];
+    this.todoReminderMarkers = new Set();
+    this.todoReminderCounts = {};
   }
 
   persist(): void {
@@ -206,16 +223,6 @@ export class PlanModeController {
     this.setMode(ctx, this.state.mode === "act" ? "plan" : "act");
   }
 
-  setPlanArtifactFormat(
-    ctx: ExtensionContext,
-    format: PlanArtifactFormat,
-  ): void {
-    this.state.setPlanArtifactFormatOverride(format);
-    this.applyMode(ctx);
-    this.persist();
-    ctx.ui.notify(`Plan artifact format: ${format} (session override)`, "info");
-  }
-
   updateUi(ctx: ExtensionContext): void {
     if (!ctx.hasUI) {
       return;
@@ -248,39 +255,32 @@ export class PlanModeController {
       ? "act"
       : this.state.phase;
     const todoToolName = this.getTodoToolNameForPhase(effectivePhase);
-    const format = this.state.getPlanArtifactFormat(this.config);
-    const reviewArtifactLocation =
-      format === "html"
-        ? ".pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.html"
-        : MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION;
     const lines = [
       "## Plan Mode Extension",
       "",
       `Current workflow: ${
         this.internalExtensionBypassForTurn ? "Act" : getModeLabel(this.state)
       }.`,
-      `Plan artifact format: ${format} ` +
+      `Plan artifact format: ${this.state.getPlanArtifactFormat(this.config)} ` +
         `(${this.state.getPlanArtifactFormatSource(this.config)}).`,
       "",
       `- In plan phases, inspect with ${PLAN_INSPECTION_TOOL_SLASH_LIST}. ` +
         "Runtime guards block bash and source-code edits.",
       `- Use ${todoToolName} to maintain the concrete TODO list.`,
       "- For implementation tasks, write only reviewable artifacts under " +
-        `${reviewArtifactLocation} and submit them with ` +
+        `${MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION} and submit them with ` +
         `${PLANNOTATOR_SUBMIT_TOOL_NAME}.`,
       `- ${REVIEW_ARTIFACT_WRITE_HINT}`,
-      ...(format === "html"
-        ? HTML_PLAN_FORMAT_GUIDANCE
-        : [
-            "- Standard plan artifacts must use the following sections: " +
-              "## Goal, ## Current Flow, ## Desired Flow, ## Boundaries, " +
-              "## Implementation, ## Testing, ## Decisions, ## Non-goals.",
-          ]),
+      "- Standard plan artifacts must use the following sections: " +
+        "## Goal, ## Current Flow, ## Desired Flow, ## Boundaries, " +
+        "## Implementation, ## Testing, ## Decisions, ## Non-goals.",
       "- If Plannotator denies the plan, revise the same file and submit again.",
       `- ${PLAN_HEADING_REVIEW_GUIDANCE}`,
       "- During approved execution, execute the approved plan and update " +
         `${todoToolName} statuses to in_progress and done so the widget shows ` +
         "the current step.",
+      EXECUTION_TODO_DISCIPLINE_GUIDANCE,
+      ...this.getHtmlArtifactGuidanceLines(),
     ];
 
     if (effectivePhase === "plan") {
@@ -296,6 +296,19 @@ export class PlanModeController {
     }
 
     return lines.join("\n");
+  }
+
+  private getHtmlArtifactGuidanceLines(): string[] {
+    const dirs = this.htmlArtifactDirs;
+    if (dirs.length === 0) {
+      return [];
+    }
+    const dirList = dirs.join(", ");
+    return [
+      `- HTML review artifacts (Lavish) must be written under ${dirList} ` +
+        `as YYYY-MM-DD-<slug>.html, then submitted with ` +
+        `${PLANNOTATOR_SUBMIT_TOOL_NAME}.`,
+    ];
   }
 
   handleInput(event: unknown): void {
@@ -365,6 +378,26 @@ export class PlanModeController {
     this.inputSourceForTurn = "unknown";
     this.internalExtensionBypassForTurn = false;
     this.approvedPlanContinuationForTurn = false;
+    this.turnDoneFlips = [];
+  }
+
+  /** Record a todo→done flip within this turn (called by todo-tool before
+   *  mutating, so the pre-mutation status/everInProgress are still readable). */
+  recordTodoDoneFlip(id: number, everInProgress: boolean): void {
+    this.turnDoneFlips.push({ id, everInProgress });
+  }
+
+  /** Re-arm discipline reminders: any successful todo status update clears
+   *  the markers for the current run, so a future offense can remind again. */
+  clearTodoReminderMarkers(): void {
+    const runId = this.state.activeRun?.id;
+    if (!runId) {
+      return;
+    }
+    this.todoReminderMarkers = clearTodoDisciplineMarkersForRun(
+      this.todoReminderMarkers,
+      runId,
+    );
   }
 
   private finishTurn(ctx: ExtensionContext): void {
@@ -503,6 +536,10 @@ export class PlanModeController {
               exists: fs.existsSync(absolutePath),
               isInsideCwd,
               isReviewArtifact: isReviewArtifactPath(ctx.cwd, rawPath),
+              isHtmlArtifact: isHtmlArtifactPathIn(
+                this.htmlArtifactDirs,
+                absolutePath,
+              ),
               wasRead: this.state.hasReadFile(absolutePath),
               wasFreshlyWritten: this.state.wasFileFreshlyWritten(absolutePath),
             };
@@ -574,6 +611,38 @@ export class PlanModeController {
       }
       this.finishTurn(ctx);
       return;
+    }
+    // TODO discipline reminders (②③): run after a normal turn end, before
+    // review obligations. Markers/counts are instance state: markers are
+    // re-armed by any todo update (todo-tool) and by compliant turns here;
+    // the per-run per-reason cap prevents follow-up self-continuation loops.
+    const disciplineDecision = decideTodoDisciplineReminders({
+      run: this.state.activeRun,
+      turnDoneFlips: this.turnDoneFlips,
+      reminderMarkers: this.todoReminderMarkers,
+      reminderCounts: this.todoReminderCounts,
+    });
+    this.todoReminderMarkers = disciplineDecision.nextMarkers;
+    this.todoReminderCounts = disciplineDecision.nextCounts;
+    if (disciplineDecision.reasons.length > 0) {
+      this.pi.sendUserMessage(
+        buildTodoDisciplineReminder(
+          disciplineDecision.reasons,
+          this.getTodoToolNameForCurrentMode(),
+        ),
+        { deliverAs: "followUp" },
+      );
+      this.finishTurn(ctx);
+      return;
+    }
+    if (this.state.activeRun && disciplineDecision.offenses.length === 0) {
+      // Compliant turn (no offense at all): re-arm markers so a future
+      // offense in the same run can remind again. A persistent offense that
+      // is only suppressed by a marker keeps its marker — no re-fire.
+      this.todoReminderMarkers = clearTodoDisciplineMarkersForRun(
+        this.todoReminderMarkers,
+        this.state.activeRun.id,
+      );
     }
     if (this.hasPlanReviewObligation() && this.state.todos.length === 0) {
       const todoToolName = this.getTodoToolNameForCurrentMode();

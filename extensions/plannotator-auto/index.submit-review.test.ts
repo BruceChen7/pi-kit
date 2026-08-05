@@ -6,6 +6,11 @@ import {
   createTempRepo,
   createTestContext,
   flushMicrotasks,
+  lavishChatMessageStdout as lavishChatMessageStdoutFixture,
+  lavishEndedStdout as lavishEndedStdoutFixture,
+  lavishFeedbackStdout as lavishFeedbackStdoutFixture,
+  lavishOpenStdout as lavishOpenStdoutFixture,
+  lavishUserEndedStdout as lavishUserEndedStdoutFixture,
   mockHangingPlannotatorSpawn,
   mockLavishOpenThenHangingSpawn,
   mockLavishSpawn,
@@ -719,7 +724,7 @@ parentFn()
     }
   });
 
-  it("omits markdown-only guidance from the HTML plan gate message", async () => {
+  it("omits markdown-only guidance from the HTML artifact gate message", async () => {
     vi.resetModules();
 
     const plannotatorAuto = await importPlannotatorAuto();
@@ -728,23 +733,23 @@ parentFn()
 
     const repoRoot = await createTempRepo("plannotator-auto-html-gate-");
     const repoName = repoRoot.split("/").pop() ?? "repo";
-    const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.html`;
+    const htmlRelative = `.pi/html/${repoName}/2026-04-16-workflow.html`;
     await writeTestFile(
       repoRoot,
-      planFileRelative,
+      htmlRelative,
       "<!doctype html><html><body>Plan</body></html>",
     );
     const ctx = createTestContext(repoRoot);
 
     try {
       await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, planFileRelative);
+      await emitToolWrite(emit, ctx, htmlRelative);
 
       const gateResult = (await emit("before_agent_start", {}, ctx)) as {
         message?: { content?: string };
       };
       const content = gateResult?.message?.content ?? "";
-      expect(content).toContain(planFileRelative);
+      expect(content).toContain(htmlRelative);
       expect(content).not.toContain("Keep the first # heading");
       expect(content).not.toContain("mermaid fenced blocks");
     } finally {
@@ -788,19 +793,15 @@ describe("lavish HTML artifact review", () => {
     return `.pi/html/${repoName}/2026-04-16-proto.html`;
   };
 
-  const lavishOpenStdout = JSON.stringify({
-    session: { status: "opened" },
-  });
-  const lavishUserEndedStdout = JSON.stringify({
-    session: { status: "user-ended" },
-  });
-  const lavishFeedbackStdout = JSON.stringify({
-    session: { status: "feedback", session_ended: false },
-    prompts: [{ text: "Please refine the layout." }],
-  });
-  const lavishEndedStdout = JSON.stringify({
-    session: { status: "ended" },
-  });
+  // `lavish-axi` emits TOON (not JSON); fixtures use the real shape.
+  const lavishOpenStdout = lavishOpenStdoutFixture("/repo/proto.html");
+  const lavishUserEndedStdout =
+    lavishUserEndedStdoutFixture("/repo/proto.html");
+  const lavishFeedbackStdout = lavishFeedbackStdoutFixture(
+    "/repo/proto.html",
+    "Please refine the layout.",
+  );
+  const lavishEndedStdout = lavishEndedStdoutFixture("/repo/proto.html");
 
   it("reviews HTML artifacts through Lavish open+poll and keeps the gate on feedback", async () => {
     vi.resetModules();
@@ -868,6 +869,61 @@ describe("lavish HTML artifact review", () => {
       expect(gateResult?.message?.content ?? "").not.toContain(
         "Keep the first # heading",
       );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("delivers the real chat message content from Send to Agent, not the static text label", async () => {
+    vi.resetModules();
+    const spawn = mockLavishSpawn(
+      { status: 0, stdout: lavishOpenStdout, stderr: "" },
+      {
+        status: 0,
+        stdout: lavishChatMessageStdoutFixture(
+          "/repo/proto.html",
+          "Make the hero section narrower.",
+        ),
+        stderr: "",
+      },
+    );
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-lavish-msg-");
+    const htmlRelative = getHtmlFileRelative(repoRoot);
+    await writeTestFile(
+      repoRoot,
+      htmlRelative,
+      "<html><body>Prototype</body></html>",
+    );
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, htmlRelative);
+
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: htmlRelative },
+        ctx,
+      )) as {
+        content?: Array<{ text?: string }>;
+        details?: { status?: string };
+      };
+
+      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(result.details?.status).toBe("denied");
+      expect(result.content?.[0]?.text).toContain(
+        "Make the hero section narrower.",
+      );
+      // Regression: real chat-message records carry the content in `prompt`
+      // with `text` set to the static label "Freeform message"; the parser
+      // must not surface the label as the feedback.
+      expect(result.content?.[0]?.text).not.toContain("Freeform message");
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

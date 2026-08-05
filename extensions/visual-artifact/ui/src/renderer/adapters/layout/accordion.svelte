@@ -13,15 +13,27 @@ let {
   _nodePath?: string;
 } = $props();
 
-function initialOpenIndex(): number | null {
-  const idx = items.findIndex((item) => item.defaultOpen === true);
-  return idx >= 0 ? idx : null;
+// 默认全部展开;单项设 defaultOpen: false 可默认折叠
+function initialOpenSet(): Set<number> {
+  const set = new Set<number>();
+  items.forEach((item, i) => {
+    if (item.defaultOpen !== false) {
+      set.add(i);
+    }
+  });
+  return set;
 }
 
-let openIndex = $state<number | null>(initialOpenIndex());
+let openSet = $state<Set<number>>(initialOpenSet());
 
 function toggle(i: number): void {
-  openIndex = openIndex === i ? null : i;
+  const next = new Set(openSet);
+  if (next.has(i)) {
+    next.delete(i);
+  } else {
+    next.add(i);
+  }
+  openSet = next;
 }
 </script>
 
@@ -31,13 +43,13 @@ function toggle(i: number): void {
       <div class="border-b border-border last:border-b-0">
         <button
           type="button"
-          class="flex justify-between items-center w-full px-4 py-3 text-left text-sm font-medium text-foreground bg-transparent border-none cursor-pointer hover:bg-muted/50 {openIndex === i ? 'bg-muted' : ''}"
+          class="flex justify-between items-center w-full px-4 py-3 text-left text-sm font-medium text-foreground bg-transparent border-none cursor-pointer hover:bg-muted/50 {openSet.has(i) ? 'bg-muted' : ''}"
           onclick={() => toggle(i)}
         >
           {item.title}
-          <span class="text-muted-foreground text-xs ml-2 shrink-0">{openIndex === i ? "▾" : "▸"}</span>
+          <span class="text-muted-foreground text-xs ml-2 shrink-0">{openSet.has(i) ? "▾" : "▸"}</span>
         </button>
-        {#if openIndex === i}
+        {#if openSet.has(i)}
           <div class="px-4 pb-4">
             <VisualArtifactRenderer nodes={item.nodes} basePath={`${_nodePath}.props.items.${i}.nodes`} />
           </div>

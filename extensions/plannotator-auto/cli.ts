@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { decodeToon, type ToonObject } from "./lavish-toon.ts";
 
 export type CliReviewDecision = {
   approved: boolean;
@@ -378,53 +379,101 @@ const runLavishCli = async (
 
 const parseLavishOpenOutput = (stdout: string): LavishDecision => {
   const trimmed = stdout.trim();
-  try {
-    const parsed = JSON.parse(trimmed) as { session?: { status?: string } };
-    if (parsed.session?.status === "user-ended") {
-      return { kind: "user-ended" };
-    }
-  } catch {
-    // Fall through — a non-JSON open output still means the open was
-    // attempted; treat it as opened so the poll can run.
+  const session = getToonSession(trimmed);
+  if (session?.status === "user-ended") {
+    return { kind: "user-ended" };
   }
+  // Unknown shape (human-readable open output) still means the open was
+  // attempted; treat it as opened so the poll can run.
   return { kind: "opened" };
+};
+
+type ToonSession = {
+  status?: string;
+  session_ended?: boolean;
+  ended_by?: string;
+};
+
+const getToonSession = (stdout: string): ToonSession | undefined => {
+  const parsed = decodeToon(stdout);
+  if (!parsed) {
+    return undefined;
+  }
+  const session = parsed.session;
+  if (
+    typeof session !== "object" ||
+    session === null ||
+    Array.isArray(session)
+  ) {
+    return undefined;
+  }
+  return session as ToonSession;
+};
+
+const getToonNextStep = (parsed: ToonObject | null): string | undefined => {
+  if (parsed && typeof parsed.next_step === "string") {
+    return parsed.next_step;
+  }
+  return undefined;
 };
 
 const parseLavishPollOutput = (stdout: string): LavishDecision => {
   const trimmed = stdout.trim();
-  try {
-    const parsed = JSON.parse(trimmed) as {
-      session?: {
-        status?: string;
-        session_ended?: boolean;
-        ended_by?: string;
-      };
-      prompts?: Array<{ text?: string; tag?: string }>;
-      next_step?: string;
-    };
-    const prompts = (parsed.prompts ?? [])
-      .map((prompt) => prompt.text ?? "")
-      .filter((text) => text.trim().length > 0);
-    const sessionStatus = parsed.session?.status;
-    if (sessionStatus === "ended") {
-      return {
-        kind: "ended",
-        endedBy: parsed.session?.ended_by,
-        nextStep: parsed.next_step,
-      };
+  const parsed = decodeToon(trimmed);
+  const session = getToonSession(trimmed);
+  const status = session?.status ?? "waiting";
+
+  const prompts: string[] = [];
+  if (parsed && Array.isArray(parsed.prompts)) {
+    for (const prompt of parsed.prompts) {
+      if (typeof prompt === "string") {
+        if (prompt.trim().length > 0) {
+          prompts.push(prompt);
+        }
+        continue;
+      }
+      if (
+        typeof prompt !== "object" ||
+        prompt === null ||
+        Array.isArray(prompt)
+      ) {
+        continue;
+      }
+      const record = prompt as ToonObject;
+      // Real `lavish-axi` prompt records carry the actionable feedback in
+      // `prompt`: chat messages (text is the static label "Freeform
+      // message"), annotations (text is the selected/element text), and
+      // layout-warnings / whiteboard batches (text is a short summary).
+      // The `feedback` tag is the exception — its content lands in `text`
+      // with an empty `prompt`. Prefer `prompt` when non-empty, fall back
+      // to `text`.
+      const text =
+        typeof record.prompt === "string" && record.prompt.trim().length > 0
+          ? record.prompt
+          : typeof record.text === "string"
+            ? record.text
+            : undefined;
+      if (text !== undefined && text.trim().length > 0) {
+        prompts.push(text);
+      }
     }
-    return {
-      kind: "feedback",
-      prompts,
-      sessionEnded: Boolean(parsed.session?.session_ended),
-      endedBy: parsed.session?.ended_by,
-      nextStep: parsed.next_step,
-    };
-  } catch {
-    // Non-JSON poll output (e.g. interrupted wait) — treat as empty feedback;
-    // queued feedback is never lost, so a later poll re-run still delivers it.
-    return { kind: "feedback", prompts: [], sessionEnded: false };
   }
+
+  if (status === "ended") {
+    return {
+      kind: "ended",
+      endedBy: session?.ended_by,
+      nextStep: getToonNextStep(parsed),
+    };
+  }
+
+  return {
+    kind: "feedback",
+    prompts,
+    sessionEnded: session?.session_ended === true,
+    endedBy: session?.ended_by,
+    nextStep: getToonNextStep(parsed),
+  };
 };
 
 export const runLavishOpenCli = async (

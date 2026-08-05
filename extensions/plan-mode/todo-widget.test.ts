@@ -353,23 +353,19 @@ describe("plan-mode extension: todo state and widgets", () => {
     );
   });
 
-  it("toggles plan artifact format for the current session", async () => {
+  it("reports markdown as the only plan artifact format", async () => {
     const { harness, ctx } = await startPlanModeSession();
 
-    await harness.runCommand("plan-mode", "format html", ctx);
     await harness.runCommand("plan-mode", "status", ctx);
 
     expect(ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("planArtifactFormat: html"),
+      expect.stringContaining("planArtifactFormat: markdown"),
       "info",
     );
     expect(ctx.ui.notify).toHaveBeenLastCalledWith(
-      expect.stringContaining("formatSource: session"),
+      expect.stringContaining("formatSource: default"),
       "info",
     );
-    expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-      planArtifactFormatOverride: "html",
-    });
   });
 
   it("normalizes pending todo input to todo", async () => {
@@ -387,10 +383,12 @@ describe("plan-mode extension: todo state and widgets", () => {
       ctx,
     );
 
+    // "pending" normalizes to "todo", then the ① discipline normalization
+    // promotes the first unfinished item to in_progress.
     expect(result).toMatchObject({
-      details: { todos: [{ text: "确认需求", status: "todo" }] },
+      details: { todos: [{ text: "确认需求", status: "in_progress" }] },
     });
-    expect(plainWidgetText(ctx)).toContain("#1 [ ] 确认需求");
+    expect(plainWidgetText(ctx)).toContain("#1 [~] 确认需求");
   });
 
   it("guides agents to use set or add instead of create for TODOs", () => {

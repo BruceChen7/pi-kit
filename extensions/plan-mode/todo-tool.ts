@@ -1,8 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "@sinclair/typebox";
 import type { PlanModeController } from "./controller.ts";
+import { doneFlipsFromSet } from "./controller-decisions.ts";
 import type { PlanModeState } from "./state.ts";
-import { clonePlanRun } from "./state.ts";
+import { clonePlanRun, normalizeTodoStatus } from "./state.ts";
 import { symbolForStatus } from "./ui.ts";
 
 const todoStatusSchema = Type.Union([
@@ -80,16 +81,26 @@ export const registerTodoTool = (
         'one TODO. Do not use action "create"; it is not supported.',
       `Update ${name} items to in_progress before starting a step and ` +
         "done after finishing it so the widget shows the current step.",
+      "Keep at most one in_progress item: mark a step done as soon as it " +
+        "finishes and move in_progress to the next step; do not bulk-mark " +
+        "all items done at the end.",
     ],
     parameters: todoParamsSchema,
     async execute(_toolCallId, params: TodoParams, _signal, _onUpdate, ctx) {
+      let mutatedTodoList = false;
       switch (params.action) {
-        case "set":
+        case "set": {
+          const items = params.items ?? [];
+          for (const flip of doneFlipsFromSet(controller.state.todos, items)) {
+            controller.recordTodoDoneFlip(flip.id, flip.everInProgress);
+          }
           controller.state.replaceTodos(
-            params.items ?? [],
+            items,
             controller.getPlanPathForNewRun(),
           );
+          mutatedTodoList = true;
           break;
+        }
         case "add":
           if (!params.text) {
             return todoToolError("Error: text is required for add.");
@@ -100,10 +111,30 @@ export const registerTodoTool = (
             params.notes,
             controller.getPlanPathForNewRun(),
           );
+          mutatedTodoList = true;
           break;
         case "update":
           if (params.id === undefined) {
             return todoToolError("Error: id is required for update.");
+          }
+          {
+            const existing = controller.state.todos.find(
+              (todo) => todo.id === params.id,
+            );
+            const nextStatus =
+              params.status !== undefined
+                ? normalizeTodoStatus(params.status)
+                : null;
+            if (
+              existing &&
+              existing.status !== "done" &&
+              nextStatus === "done"
+            ) {
+              controller.recordTodoDoneFlip(
+                existing.id,
+                existing.everInProgress ?? false,
+              );
+            }
           }
           if (
             !controller.state.updateTodo(params.id, {
@@ -114,18 +145,27 @@ export const registerTodoTool = (
           ) {
             return todoToolError(`Error: TODO #${params.id} not found.`);
           }
+          mutatedTodoList = true;
           break;
         case "remove":
           if (params.id === undefined) {
             return todoToolError("Error: id is required for remove.");
           }
           controller.state.removeTodo(params.id);
+          mutatedTodoList = true;
           break;
         case "clear":
           controller.state.clearTodos();
           break;
         case "list":
+          // Read-only: must not re-arm the discipline markers below.
           break;
+      }
+      if (mutatedTodoList) {
+        // Re-arm discipline reminders: any successful todo mutation means
+        // the agent is engaging with the list again (read-only `list` and
+        // `clear` — which drops the run — do not).
+        controller.clearTodoReminderMarkers();
       }
 
       controller.updateUi(ctx);

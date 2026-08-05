@@ -3,16 +3,15 @@ import {
   ACT_TODO_TOOL_NAME,
   MODE_WIDGET_KEY,
   PLAN_MODE_COMMAND_OPTIONS,
-  PLAN_MODE_FORMAT_OPTIONS,
   PLAN_MODE_TOGGLE_SHORTCUT,
   STATUS_KEY,
   TODO_TOOL_NAME,
   TODO_WIDGET_KEY,
 } from "./constants.ts";
 import { PlanModeController } from "./controller.ts";
-import { isPlanArtifactFormat, isPlanMode } from "./state.ts";
+import { isPlanMode } from "./state.ts";
 import { registerTodoTool } from "./todo-tool.ts";
-import type { PlanArtifactFormat, PlanMode } from "./types.ts";
+import type { PlanMode } from "./types.ts";
 import { formatPlanModeStatus } from "./ui.ts";
 
 export type CommandCompletion = {
@@ -22,9 +21,7 @@ export type CommandCompletion = {
 
 export type PlanModeCommandDecision =
   | { kind: "status" }
-  | { kind: "format"; value: PlanArtifactFormat }
   | { kind: "mode"; value: PlanMode }
-  | { kind: "invalid-format" }
   | { kind: "invalid-mode"; value: string };
 
 const toCompletions = (
@@ -49,11 +46,6 @@ export const getPlanModeArgumentCompletions = (
   }
 
   const command = trimmedPrefix.slice(0, firstSeparatorIndex);
-  const valuePrefix = trimmedPrefix.slice(firstSeparatorIndex).trimStart();
-  if (command === "format") {
-    return toCompletions(PLAN_MODE_FORMAT_OPTIONS, valuePrefix, `${command} `);
-  }
-
   return toCompletions(PLAN_MODE_COMMAND_OPTIONS, command);
 };
 
@@ -61,13 +53,6 @@ export const parsePlanModeCommand = (args: string): PlanModeCommandDecision => {
   const requested = args.trim();
   if (requested === "status" || requested.length === 0) {
     return { kind: "status" };
-  }
-
-  const [command, value] = requested.split(/\s+/u);
-  if (command === "format") {
-    return isPlanArtifactFormat(value)
-      ? { kind: "format", value }
-      : { kind: "invalid-format" };
   }
 
   return isPlanMode(requested)
@@ -97,14 +82,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
           );
           controller.updateUi(ctx);
           return;
-        case "format":
-          controller.setPlanArtifactFormat(ctx, decision.value);
-          return;
         case "mode":
           controller.setMode(ctx, decision.value);
-          return;
-        case "invalid-format":
-          ctx.ui.notify("Usage: /plan-mode format html|markdown", "error");
           return;
         case "invalid-mode":
           ctx.ui.notify(`Unknown plan-mode: ${decision.value}`, "error");

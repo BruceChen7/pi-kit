@@ -3,7 +3,9 @@ import {
   clampZoom,
   computeView,
   exceedsDragThreshold,
+  FIT_PRESERVE_ASPECT_RATIO,
   fitBoundsToContainer,
+  inlineViewportStyle,
   isAtBaseZoom,
   isZoomModifierDown,
   MAX_ZOOM,
@@ -261,10 +263,33 @@ describe("zoomShortcutForKey", () => {
   });
 });
 
+describe("inlineViewportStyle", () => {
+  it("returns undefined when no aspect is known", () => {
+    expect(inlineViewportStyle(null, false)).toBeUndefined();
+  });
+
+  it("returns undefined when the diagram is expanded", () => {
+    expect(inlineViewportStyle(2, true)).toBeUndefined();
+  });
+
+  it("builds an aspect-ratio style capped at the inline max height", () => {
+    expect(inlineViewportStyle(1.5, false)).toBe(
+      "aspect-ratio: 1.5000; max-height: min(85vh, 44rem)",
+    );
+  });
+
+  it("shares the top-alignment constant with the markup normalizer", () => {
+    expect(FIT_PRESERVE_ASPECT_RATIO).toBe("xMidYMin meet");
+    expect(normalizeSvgMarkup('<svg viewBox="0 0 10 10">')).toContain(
+      `preserveAspectRatio="${FIT_PRESERVE_ASPECT_RATIO}"`,
+    );
+  });
+});
+
 describe("normalizeSvgMarkup", () => {
   it("injects style, preserveAspectRatio, and height when missing", () => {
     expect(normalizeSvgMarkup('<svg viewBox="0 0 10 10">')).toBe(
-      '<svg viewBox="0 0 10 10" style="max-width: none" preserveAspectRatio="xMidYMid meet" height="100%">',
+      '<svg viewBox="0 0 10 10" style="max-width: none" preserveAspectRatio="xMidYMin meet" height="100%">',
     );
   });
 
@@ -272,7 +297,7 @@ describe("normalizeSvgMarkup", () => {
     expect(
       normalizeSvgMarkup('<svg style="max-width: 100%; background: white;">'),
     ).toBe(
-      '<svg style="background: white; max-width: none" preserveAspectRatio="xMidYMid meet" height="100%">',
+      '<svg style="background: white; max-width: none" preserveAspectRatio="xMidYMin meet" height="100%">',
     );
   });
 

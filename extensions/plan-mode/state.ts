@@ -14,7 +14,9 @@ import {
   PLAN_RUN_STATUS_VALUES,
   RECENT_RUN_LIMIT,
   STATE_ENTRY_TYPE,
+  TODO_STATUS_BLOCKED,
   TODO_STATUS_DONE,
+  TODO_STATUS_IN_PROGRESS,
   TODO_STATUS_PENDING,
   TODO_STATUS_TODO,
   TODO_STATUS_VALUES,
@@ -100,6 +102,27 @@ export const phaseForMode = (mode: PlanMode): PlanPhase =>
 export const hasCompletedAllTodos = (todos: TodoItem[]): boolean =>
   todos.length > 0 && todos.every((todo) => todo.status === TODO_STATUS_DONE);
 
+/**
+ * Pure decision for the one-at-a-time discipline normalization (①): the
+ * index of the first todo item that should become in_progress, or -1 when
+ * nothing should be promoted (an item is already in_progress, any item is
+ * blocked, or no pending todo item exists). Mutation is applied by the
+ * caller (PlanModeState.normalizeTodoDiscipline).
+ */
+export const nextTodoToPromoteIndex = (todos: readonly TodoItem[]): number => {
+  const hasInProgress = todos.some(
+    (todo) => todo.status === TODO_STATUS_IN_PROGRESS,
+  );
+  if (hasInProgress) {
+    return -1;
+  }
+  const hasBlocked = todos.some((todo) => todo.status === TODO_STATUS_BLOCKED);
+  if (hasBlocked) {
+    return -1;
+  }
+  return todos.findIndex((todo) => todo.status === TODO_STATUS_TODO);
+};
+
 export const isPlanRunStatus = (value: unknown): value is PlanRunStatus =>
   isStringValue(PLAN_RUN_STATUS_VALUES, value);
 
@@ -122,6 +145,7 @@ export const todoFromSnapshot = (value: unknown): TodoItem | null => {
     text: value.text,
     status: value.status,
     ...(typeof value.notes === "string" ? { notes: value.notes } : {}),
+    ...(value.everInProgress === true ? { everInProgress: true } : {}),
   };
 };
 
@@ -325,11 +349,6 @@ export const snapshotFromEntry = (entry: unknown): PlanModeSnapshot | null => {
         ? data.resumableApprovedPlanPath
         : null,
     endConversationRequested: data.endConversationRequested === true,
-    planArtifactFormatOverride: isPlanArtifactFormat(
-      data.planArtifactFormatOverride,
-    )
-      ? data.planArtifactFormatOverride
-      : null,
     lastAutoDecision: planDecisionFromSnapshot(data.lastAutoDecision),
   };
 };
@@ -379,7 +398,6 @@ export class PlanModeState {
   confirmedApprovedContinuationPath: string | null = null;
   resumableApprovedPlanPath: string | null = null;
   endConversationRequested = false;
-  planArtifactFormatOverride: PlanArtifactFormat | null = null;
   lastAutoDecision: PlanDecisionSummary | null = null;
 
   constructor(defaultMode: PlanMode) {
@@ -403,7 +421,6 @@ export class PlanModeState {
     this.confirmedApprovedContinuationPath = null;
     this.resumableApprovedPlanPath = null;
     this.endConversationRequested = false;
-    this.planArtifactFormatOverride = null;
     this.lastAutoDecision = null;
   }
 
@@ -437,8 +454,6 @@ export class PlanModeState {
       snapshot.confirmedApprovedContinuationPath;
     this.resumableApprovedPlanPath = snapshot.resumableApprovedPlanPath;
     this.endConversationRequested = snapshot.endConversationRequested;
-    this.planArtifactFormatOverride =
-      snapshot.planArtifactFormatOverride ?? null;
     this.lastAutoDecision = snapshot.lastAutoDecision ?? null;
   }
 
@@ -454,10 +469,6 @@ export class PlanModeState {
     if (previousPhase === PLAN_MODE_ACT && this.phase === PLAN_MODE_PLAN) {
       this.clearReviewTracking();
     }
-  }
-
-  setPlanArtifactFormatOverride(format: PlanArtifactFormat): void {
-    this.planArtifactFormatOverride = format;
   }
 
   markFileRead(absolutePath: string): void {
@@ -477,15 +488,10 @@ export class PlanModeState {
   }
 
   getPlanArtifactFormat(config: PlanModeConfig): PlanArtifactFormat {
-    return this.planArtifactFormatOverride ?? config.planArtifactFormat;
+    return config.planArtifactFormat;
   }
 
-  getPlanArtifactFormatSource(
-    config: PlanModeConfig,
-  ): "session" | "config" | "default" {
-    if (this.planArtifactFormatOverride) {
-      return "session";
-    }
+  getPlanArtifactFormatSource(config: PlanModeConfig): "config" | "default" {
     return config.planArtifactFormatSource;
   }
 
@@ -695,7 +701,8 @@ export class PlanModeState {
     for (const item of items) {
       this.addTodo(item.text, item.status ?? TODO_STATUS_TODO, item.notes);
     }
-    this.refreshActiveRunStatus();
+    this.syncActiveRunStatus();
+    this.normalizeTodoDiscipline();
   }
 
   addTodo(
@@ -722,7 +729,9 @@ export class PlanModeState {
     this.nextTodoId += 1;
     this.todos.push(todo);
     this.activeRun.nextTodoId = this.nextTodoId;
-    this.refreshActiveRunStatus();
+    this.touchTodoUpdate();
+    this.syncActiveRunStatus();
+    this.normalizeTodoDiscipline();
     return todo;
   }
 
@@ -735,7 +744,11 @@ export class PlanModeState {
       todo.text = patch.text;
     }
     if (patch.status !== undefined) {
-      todo.status = normalizeTodoStatus(patch.status);
+      const nextStatus = normalizeTodoStatus(patch.status);
+      if (nextStatus === TODO_STATUS_IN_PROGRESS) {
+        todo.everInProgress = true;
+      }
+      todo.status = nextStatus;
     }
     if (patch.notes !== undefined) {
       if (patch.notes) {
@@ -744,7 +757,9 @@ export class PlanModeState {
         delete todo.notes;
       }
     }
-    this.refreshActiveRunStatus();
+    this.touchTodoUpdate();
+    this.syncActiveRunStatus();
+    this.normalizeTodoDiscipline();
     return true;
   }
 
@@ -754,7 +769,11 @@ export class PlanModeState {
     if (this.activeRun) {
       this.activeRun.todos = this.todos;
     }
-    this.refreshActiveRunStatus();
+    if (before !== this.todos.length) {
+      this.touchTodoUpdate();
+    }
+    this.syncActiveRunStatus();
+    this.normalizeTodoDiscipline();
     return before !== this.todos.length;
   }
 
@@ -777,7 +796,38 @@ export class PlanModeState {
     this.activeRun = null;
   }
 
-  refreshActiveRunStatus(): void {
+  /** Record the moment the todo state last changed (widget "updated X ago"). */
+  private touchTodoUpdate(): void {
+    if (this.activeRun) {
+      this.activeRun.lastTodoUpdateAt = new Date().toISOString();
+    }
+  }
+
+  /**
+   * Discipline normalization (①): whenever the run has unfinished items but no
+   * in_progress and no blocked item, promote the first todo item to
+   * in_progress so the widget always shows a current step. Also enforces the
+   * "at most one in_progress" invariant. The decision is the pure
+   * `nextTodoToPromoteIndex`; this method only applies it. Called explicitly
+   * after every todo mutation, alongside `syncActiveRunStatus`.
+   */
+  private normalizeTodoDiscipline(): void {
+    const index = nextTodoToPromoteIndex(this.todos);
+    if (index < 0) {
+      return;
+    }
+    const candidate = this.todos[index];
+    candidate.status = TODO_STATUS_IN_PROGRESS;
+    candidate.everInProgress = true;
+    this.touchTodoUpdate();
+  }
+
+  /**
+   * Recompute the active run status from the todo list after a mutation.
+   * Pure status bookkeeping: does NOT touch todo items (the ① discipline
+   * normalization is applied separately by `normalizeTodoDiscipline`).
+   */
+  private syncActiveRunStatus(): void {
     if (!this.activeRun) {
       return;
     }
@@ -785,18 +835,14 @@ export class PlanModeState {
     this.activeRun.nextTodoId = this.nextTodoId;
 
     const allTodosCompleted = hasCompletedAllTodos(this.todos);
-    if (
-      allTodosCompleted &&
-      this.activeRun.status !== PLAN_RUN_STATUS_COMPLETED
-    ) {
-      this.activeRun.status = PLAN_RUN_STATUS_COMPLETED;
-      this.activeRun.completedAt = new Date().toISOString();
+    if (allTodosCompleted) {
+      if (this.activeRun.status !== PLAN_RUN_STATUS_COMPLETED) {
+        this.activeRun.status = PLAN_RUN_STATUS_COMPLETED;
+        this.activeRun.completedAt = new Date().toISOString();
+      }
       return;
     }
-    if (
-      !allTodosCompleted &&
-      this.activeRun.status === PLAN_RUN_STATUS_COMPLETED
-    ) {
+    if (this.activeRun.status === PLAN_RUN_STATUS_COMPLETED) {
       this.activeRun.status = this.activeRun.planPath
         ? PLAN_RUN_STATUS_EXECUTING
         : PLAN_RUN_STATUS_DRAFT;
@@ -822,7 +868,6 @@ export class PlanModeState {
       confirmedApprovedContinuationPath: this.confirmedApprovedContinuationPath,
       resumableApprovedPlanPath: this.resumableApprovedPlanPath,
       endConversationRequested: this.endConversationRequested,
-      planArtifactFormatOverride: this.planArtifactFormatOverride,
       lastAutoDecision: this.lastAutoDecision
         ? { ...this.lastAutoDecision }
         : null,

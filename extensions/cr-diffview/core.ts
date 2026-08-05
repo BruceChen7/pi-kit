@@ -102,6 +102,8 @@ export type CrAnnotation = {
   line: number;
   side?: string;
   snippet?: string;
+  /** review.nvim-style comment type (fix / note / question). */
+  type?: "fix" | "note" | "question";
   comment: string;
 };
 
@@ -264,6 +266,80 @@ export const parseAnnotationsJsonl = (raw: string): CrAnnotation[] => {
   }
 };
 
+export type InlineReviewOutcome =
+  | { kind: "finished"; message: string; level: "info" }
+  | { kind: "noHandshake"; message: string; level: "warning" };
+
+/**
+ * Describe how an inline (no tmux/herdr) review ended: nvim either finished
+ * with a finish handshake (message reflects its exit code), or exited without
+ * one (crash/kill) and the annotation artifact must be read instead.
+ */
+export const describeInlineOutcome = (
+  exitCode: number,
+  finished: boolean,
+): InlineReviewOutcome =>
+  finished
+    ? {
+        kind: "finished",
+        level: "info",
+        message:
+          exitCode === 0
+            ? "CR review finished"
+            : `CR review finished (nvim exit code ${exitCode})`,
+      }
+    : {
+        kind: "noHandshake",
+        level: "warning",
+        message: "CR review closed (no finish handshake)",
+      };
+
+const LANGUAGE_BY_EXT: Record<string, string> = {
+  ts: "typescript",
+  tsx: "typescriptreact",
+  js: "javascript",
+  jsx: "javascriptreact",
+  py: "python",
+  go: "go",
+  rs: "rust",
+  lua: "lua",
+  sh: "bash",
+  zsh: "bash",
+  json: "json",
+  yml: "yaml",
+  yaml: "yaml",
+  md: "markdown",
+  html: "html",
+  css: "css",
+  sql: "sql",
+  vue: "vue",
+  svelte: "svelte",
+  java: "java",
+  kt: "kotlin",
+  c: "c",
+  h: "c",
+  cpp: "cpp",
+  hpp: "cpp",
+  rb: "ruby",
+  php: "php",
+};
+
+const languageForFile = (file: string): string => {
+  const ext = file.match(/\.([^.\\/]+)$/)?.[1]?.toLowerCase() ?? "";
+  return LANGUAGE_BY_EXT[ext] ?? (ext || "text");
+};
+
+const TYPE_LABELS: Record<NonNullable<CrAnnotation["type"]>, string> = {
+  fix: "FIX",
+  note: "NOTE",
+  question: "QUESTION",
+};
+
+/**
+ * Format annotations as review.nvim-style markdown:
+ * `# Code Review Comments` / `## <file>` / `### [TYPE] <file>:<line>`
+ * with a diff-context code block per comment.
+ */
 export const formatAnnotationsPrompt = (
   annotations: CrAnnotation[],
 ): string => {
@@ -271,17 +347,33 @@ export const formatAnnotationsPrompt = (
     "I annotated the code review diff in Neovim.",
     "Please analyze these comments and propose or apply fixes as appropriate.",
     "",
+    "# Code Review Comments",
+    "",
   ];
 
-  annotations.forEach((annotation, index) => {
-    lines.push(`## CR annotation ${index + 1}`);
-    lines.push(`- File: ${annotation.file}`);
-    lines.push(`- Line: ${annotation.line}`);
-    if (annotation.side) lines.push(`- Side: ${annotation.side}`);
-    if (annotation.snippet) lines.push(`- Snippet: ${annotation.snippet}`);
-    lines.push("- Comment:");
-    lines.push(annotation.comment);
-    lines.push("");
+  let currentFile = "";
+  annotations.forEach((annotation) => {
+    const file = annotation.file;
+    if (file !== currentFile) {
+      currentFile = file;
+      lines.push(`## ${file}`, "");
+    }
+    const typeLabel = annotation.type
+      ? TYPE_LABELS[annotation.type]
+      : undefined;
+    const header = typeLabel
+      ? `### [${typeLabel}] ${file}:${annotation.line}`
+      : `### ${file}:${annotation.line}`;
+    lines.push(header, "");
+    if (annotation.snippet) {
+      lines.push(
+        `\`\`\`${languageForFile(file)}`,
+        annotation.snippet,
+        "```",
+        "",
+      );
+    }
+    lines.push(annotation.comment, "");
   });
 
   return lines.join("\n");

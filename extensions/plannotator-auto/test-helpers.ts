@@ -131,10 +131,7 @@ export function mockLavishOpenThenHangingSpawn(
     if (callCount === 1) {
       const child = createMockPlannotatorChild();
       queueMicrotask(() => {
-        child.stdout.emit(
-          "data",
-          JSON.stringify({ session: { status: "opened" } }),
-        );
+        child.stdout.emit("data", lavishOpenStdout("/repo/proto.html"));
         child.emit("close", 0);
       });
       return child;
@@ -487,3 +484,79 @@ export async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
 }
+
+// --- Lavish (HTML artifact review) TOON output fixtures ---
+//
+// `lavish-axi` serializes its results with `@toon-format/toon`, not JSON.
+// These helpers build the real TOON shapes so tests guard the actual CLI
+// contract instead of a JSON approximation.
+
+const joinToonLines = (lines: string[]): string => `${lines.join("\n")}\n`;
+
+export const lavishOpenStdout = (filePath: string): string =>
+  joinToonLines([
+    "session:",
+    `  file: ${filePath}`,
+    '  url: "http://127.0.0.1:4387/session/test-session"',
+    "  status: opened",
+    'next_step: "Now run `lavish-axi poll` to wait for feedback."',
+  ]);
+
+export const lavishUserEndedStdout = (filePath: string): string =>
+  joinToonLines([
+    "session:",
+    `  file: ${filePath}`,
+    '  url: "http://127.0.0.1:4387/session/test-session"',
+    "  status: user-ended",
+    'next_step: "The user ended the session; do not reopen it."',
+  ]);
+
+const encodeToonScalar = (value: string): string => {
+  if (value === "" || /[,{}[\]:"#\n\r]/.test(value)) {
+    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+  return value;
+};
+
+export const lavishFeedbackStdout = (
+  filePath: string,
+  feedback: string,
+): string =>
+  joinToonLines([
+    "session:",
+    `  file: ${filePath}`,
+    "  status: feedback",
+    'dom_snapshot: ""',
+    "prompts[1]{uid,prompt,selector,tag,text}:",
+    `  "","",,feedback,${encodeToonScalar(feedback)}`,
+    'next_step: "Apply the requested changes and re-poll."',
+  ]);
+
+/**
+ * Real shape for a chat message sent with "Send to Agent": the content is
+ * in `prompt`, while `text` is the static display label "Freeform message"
+ * (lavish-axi chrome-client.js enqueuePrompt). The `feedback`-tag fixture
+ * above puts content in `text`, which must NOT be assumed for other tags.
+ */
+export const lavishChatMessageStdout = (
+  filePath: string,
+  message: string,
+): string =>
+  joinToonLines([
+    "session:",
+    `  file: ${filePath}`,
+    "  status: feedback",
+    'dom_snapshot: ""',
+    "prompts[1]{uid,prompt,selector,tag,text}:",
+    `  "",${encodeToonScalar(message)},,message,Freeform message`,
+    'next_step: "Apply the requested changes and re-poll."',
+  ]);
+
+export const lavishEndedStdout = (filePath: string): string =>
+  joinToonLines([
+    "session:",
+    `  file: ${filePath}`,
+    "  status: ended",
+    "  ended_by: agent",
+    'next_step: "This Lavish Editor session has ended. Stop polling."',
+  ]);

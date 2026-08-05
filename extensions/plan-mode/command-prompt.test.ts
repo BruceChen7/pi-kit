@@ -105,34 +105,38 @@ describe("plan-mode extension: commands and prompt basics", () => {
     expect(result.systemPrompt).not.toContain("关键数据结构");
   });
 
-  it("completes format arguments from pure command values", () => {
+  it("tells the agent where to write HTML review artifacts", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    const result = await sendAgentPrompt(harness, ctx, "make a prototype");
+
+    expect(result.systemPrompt).toContain("HTML review artifacts (Lavish)");
+    expect(result.systemPrompt).toContain("/repo/.pi/html/repo");
+    expect(result.systemPrompt).toContain("YYYY-MM-DD-<slug>.html");
+    expect(result.systemPrompt).toContain("plannotator_auto_submit_review");
+  });
+
+  it("completes plan-mode command arguments from pure command values", () => {
     const completionValues = (prefix: string) =>
       getPlanModeArgumentCompletions(prefix).map(
         (completion) => completion.value,
       );
 
-    expect(completionValues("")).toEqual(["act", "plan", "status", "format"]);
+    expect(completionValues("")).toEqual(["act", "plan", "status"]);
     expect(completionValues("h")).toEqual([]);
-    expect(completionValues("format ")).toEqual([
-      "format html",
-      "format markdown",
-    ]);
-    expect(completionValues("format h")).toEqual(["format html"]);
+    expect(completionValues("format")).toEqual([]);
   });
 
   it("parses plan-mode command arguments as value decisions", () => {
     expect(parsePlanModeCommand("")).toEqual({ kind: "status" });
     expect(parsePlanModeCommand("status")).toEqual({ kind: "status" });
     expect(parsePlanModeCommand("format html")).toEqual({
-      kind: "format",
-      value: "html",
+      kind: "invalid-mode",
+      value: "format html",
     });
     expect(parsePlanModeCommand("plan")).toEqual({
       kind: "mode",
       value: "plan",
-    });
-    expect(parsePlanModeCommand("format pdf")).toEqual({
-      kind: "invalid-format",
     });
     expect(parsePlanModeCommand("auto")).toEqual({
       kind: "invalid-mode",

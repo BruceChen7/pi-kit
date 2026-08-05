@@ -2,7 +2,7 @@ import type { ArtifactPolicyConfig } from "./artifact-policy.ts";
 
 export type PlanMode = "plan" | "act";
 export type PlanPhase = "plan" | "act";
-export type PlanArtifactFormat = "markdown" | "html";
+export type PlanArtifactFormat = "markdown";
 export type PlanArtifactFormatSource = "session" | "config" | "default";
 export type InputSource = "interactive" | "rpc" | "extension" | "unknown";
 export type TodoStatus = "todo" | "in_progress" | "done" | "blocked";
@@ -25,6 +25,9 @@ export type TodoItem = {
   text: string;
   status: TodoStatus;
   notes?: string;
+  /** Internal discipline-tracking flag: whether this item was ever in_progress
+   *  during its run lifetime. Not shown in the widget. */
+  everInProgress?: boolean;
 };
 
 export type PlanRunStatus =
@@ -44,6 +47,8 @@ export type PlanRun = {
   approvedAt?: string;
   completedAt?: string;
   archivedAt?: string;
+  /** ISO timestamp of the last todo-state change (widget "updated X ago"). */
+  lastTodoUpdateAt?: string;
 };
 
 export type PlanDecisionSummary = {
@@ -67,7 +72,6 @@ export type PlanModeSnapshot = {
   confirmedApprovedContinuationPath: string | null;
   resumableApprovedPlanPath: string | null;
   endConversationRequested: boolean;
-  planArtifactFormatOverride?: PlanArtifactFormat | null;
   lastAutoDecision?: PlanDecisionSummary | null;
 };
 

@@ -7,7 +7,7 @@ export const REVIEW_TARGET_SPECS_DIR = "specs";
 export const REVIEW_TARGET_SHAPING_DIR = "shaping";
 export const REVIEW_TARGET_ISSUES_DIR = "issues";
 
-export const PLAN_REVIEW_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.(?:md|html)$/;
+export const PLAN_REVIEW_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
 export const SPEC_REVIEW_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
 export const REVIEW_MARKDOWN_FILE_PATTERN = /^.+\.md$/;
 

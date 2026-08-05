@@ -24,8 +24,14 @@ describe("plan-mode extension: tool guards", () => {
     await expectToolAllowed(harness, ctx, "write", {
       path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md",
     });
-    await expectToolAllowed(harness, ctx, "write", {
+    await expectToolBlocked(harness, ctx, "write", {
       path: ".pi/plans/pi-kit/plan/2026-05-08-demo.html",
+    });
+    await expectToolAllowed(harness, ctx, "write", {
+      path: ".pi/html/repo/2026-05-08-demo.html",
+    });
+    await expectToolBlocked(harness, ctx, "write", {
+      path: ".pi/html/repo/2026-05-08-demo.md",
     });
     await expectToolAllowed(harness, ctx, "edit", {
       patch: `*** Begin Patch

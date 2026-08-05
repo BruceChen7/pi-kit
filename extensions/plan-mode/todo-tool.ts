@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "@sinclair/typebox";
 import type { PlanModeController } from "./controller.ts";
 import type { PlanModeState } from "./state.ts";
-import { clonePlanRun } from "./state.ts";
+import { clonePlanRun, normalizeTodoStatus } from "./state.ts";
 import { symbolForStatus } from "./ui.ts";
 
 const todoStatusSchema = Type.Union([
@@ -80,16 +80,38 @@ export const registerTodoTool = (
         'one TODO. Do not use action "create"; it is not supported.',
       `Update ${name} items to in_progress before starting a step and ` +
         "done after finishing it so the widget shows the current step.",
+      "Keep at most one in_progress item: mark a step done as soon as it " +
+        "finishes and move in_progress to the next step; do not bulk-mark " +
+        "all items done at the end.",
     ],
     parameters: todoParamsSchema,
     async execute(_toolCallId, params: TodoParams, _signal, _onUpdate, ctx) {
       switch (params.action) {
-        case "set":
+        case "set": {
+          // Record todo→done flips (③): replaceTodos assigns fresh ids
+          // 1..N in list order, so compare each new item against the old
+          // item with the same id. A done item whose predecessor was not
+          // done is a flip on a fresh item (everInProgress=false).
+          const oldById = new Map(
+            controller.state.todos.map((todo) => [todo.id, todo]),
+          );
+          const items = params.items ?? [];
+          items.forEach((item, index) => {
+            const status = normalizeTodoStatus(item.status ?? "todo");
+            if (status !== "done") {
+              return;
+            }
+            const previous = oldById.get(index + 1);
+            if (previous?.status !== "done") {
+              controller.recordTodoDoneFlip(index + 1, false);
+            }
+          });
           controller.state.replaceTodos(
-            params.items ?? [],
+            items,
             controller.getPlanPathForNewRun(),
           );
           break;
+        }
         case "add":
           if (!params.text) {
             return todoToolError("Error: text is required for add.");
@@ -104,6 +126,25 @@ export const registerTodoTool = (
         case "update":
           if (params.id === undefined) {
             return todoToolError("Error: id is required for update.");
+          }
+          {
+            const existing = controller.state.todos.find(
+              (todo) => todo.id === params.id,
+            );
+            const nextStatus =
+              params.status !== undefined
+                ? normalizeTodoStatus(params.status)
+                : null;
+            if (
+              existing &&
+              existing.status !== "done" &&
+              nextStatus === "done"
+            ) {
+              controller.recordTodoDoneFlip(
+                existing.id,
+                existing.everInProgress ?? false,
+              );
+            }
           }
           if (
             !controller.state.updateTodo(params.id, {
@@ -127,6 +168,9 @@ export const registerTodoTool = (
         case "list":
           break;
       }
+      // Re-arm discipline reminders: any successful todo mutation means the
+      // agent is engaging with the list again.
+      controller.clearTodoReminderMarkers();
 
       controller.updateUi(ctx);
       controller.persist();

@@ -25,6 +25,9 @@ export type TodoItem = {
   text: string;
   status: TodoStatus;
   notes?: string;
+  /** Internal discipline-tracking flag: whether this item was ever in_progress
+   *  during its run lifetime. Not shown in the widget. */
+  everInProgress?: boolean;
 };
 
 export type PlanRunStatus =
@@ -44,6 +47,8 @@ export type PlanRun = {
   approvedAt?: string;
   completedAt?: string;
   archivedAt?: string;
+  /** ISO timestamp of the last todo-state change (widget "updated X ago"). */
+  lastTodoUpdateAt?: string;
 };
 
 export type PlanDecisionSummary = {

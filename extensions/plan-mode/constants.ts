@@ -129,14 +129,7 @@ export const PLAN_MODE_TOOL_NAMES = new Set([
   ACT_TODO_TOOL_NAME,
 ]);
 export const WRITE_TOOL_NAMES = new Set(["edit", "write"]);
-export const READ_ONLY_PATH_TOOL_NAMES = [
-  "read",
-  "grep",
-  "find",
-  "ls",
-  "rg",
-  "fd",
-];
+export const READ_ONLY_PATH_TOOL_NAMES = ["read", "ls", "rg", "fd"];
 export const PATH_GUARDED_TOOL_NAMES = new Set([
   ...READ_ONLY_PATH_TOOL_NAMES,
   ...WRITE_TOOL_NAMES,
@@ -178,5 +171,11 @@ export const PLAN_REVIEW_ARTIFACT_GUIDANCE = [
   FC_IS_TEST_GUIDANCE,
 ];
 export const ACT_CODE_WRITING_GUIDANCE = [FC_IS_TEST_GUIDANCE];
-export const DIRECT_ACT_TODO_GUIDANCE =
-  "- In direct act mode, create concrete TODOs before using tools or making changes.";
+export const EXECUTION_TODO_DISCIPLINE_GUIDANCE =
+  "- Keep at most one in_progress item: mark a step done as soon as it " +
+  "finishes and move in_progress to the next step; do not bulk-mark all " +
+  "items done at the end.";
+export const DIRECT_ACT_TODO_GUIDANCE = [
+  "- In direct act mode, create concrete TODOs before using tools or making changes.",
+  EXECUTION_TODO_DISCIPLINE_GUIDANCE,
+].join("\n");

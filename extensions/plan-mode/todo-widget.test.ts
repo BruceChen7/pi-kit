@@ -383,10 +383,12 @@ describe("plan-mode extension: todo state and widgets", () => {
       ctx,
     );
 
+    // "pending" normalizes to "todo", then the ① discipline normalization
+    // promotes the first unfinished item to in_progress.
     expect(result).toMatchObject({
-      details: { todos: [{ text: "确认需求", status: "todo" }] },
+      details: { todos: [{ text: "确认需求", status: "in_progress" }] },
     });
-    expect(plainWidgetText(ctx)).toContain("#1 [ ] 确认需求");
+    expect(plainWidgetText(ctx)).toContain("#1 [~] 确认需求");
   });
 
   it("guides agents to use set or add instead of create for TODOs", () => {

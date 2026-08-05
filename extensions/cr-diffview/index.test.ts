@@ -508,6 +508,33 @@ describe("cr-diffview command", () => {
         "warning",
       );
     });
+
+    it("reports an inline review as modal when stop is invoked without tmux/herdr", async () => {
+      const repoRoot = createRepoRoot();
+      const exec = createCrExec(repoRoot);
+      const { ctx, notify } = createInlineContext(repoRoot);
+      const { startHandler, stopHandler } = registerCrCommands(exec);
+
+      const promise = startHandler("main", ctx);
+      await vi.waitFor(() => expect(spawnMock).toHaveBeenCalled());
+
+      await stopHandler("", ctx);
+
+      expect(notify).toHaveBeenCalledWith(
+        "Inline CR review is modal — exit Neovim to end it",
+        "info",
+      );
+      expect(exec).not.toHaveBeenCalledWith("tmux", expect.anything());
+      expect(exec).not.toHaveBeenCalledWith("herdr", expect.anything());
+
+      // finish the inline session so the pending handler resolves
+      await exchangeSocketMessages(spawnEnv().CR_SOCKET, [
+        { type: "hello" },
+        { type: "finish", annotations: [] },
+      ]);
+      lastChild.emit("close", 0);
+      await promise;
+    });
   });
 
   it("opens a direct target diff in a new tmux Neovim window", async () => {
@@ -796,6 +823,19 @@ describe("cr-diffview command", () => {
       "--show-toplevel",
     ]);
     expect(notify).toHaveBeenCalledWith("Closed CR Neovim view", "info");
+  });
+
+  it("reports no active review when stopping without tmux/herdr", async () => {
+    const repoRoot = createRepoRoot();
+    const exec = createCrExec(repoRoot);
+    const { ctx, notify } = createTestContext({ repoRoot, tmux: false });
+    const { stopHandler } = registerCrCommands(exec);
+
+    await stopHandler("", ctx);
+
+    expect(notify).toHaveBeenCalledWith("No active CR review", "info");
+    expect(exec).not.toHaveBeenCalledWith("tmux", expect.anything());
+    expect(exec).not.toHaveBeenCalledWith("herdr", expect.anything());
   });
 
   it("stops an active herdr Neovim CR tab by tab id", async () => {

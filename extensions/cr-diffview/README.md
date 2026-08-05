@@ -24,8 +24,9 @@ same flow with the interactive target picker.
   - review against a base branch (`branch...HEAD`)
 - `/cr-neovim-start main` skips the selector and opens the review for `main...HEAD`.
 - `Alt+R` opens the same interactive selector.
-- `/cr-neovim-stop` closes the active CR review view (tmux/herdr modes; the
-  inline mode is modal and ends when Neovim exits).
+- `/cr-neovim-stop` closes the active CR review view (tmux/herdr modes). Without
+  tmux/herdr (inline mode) the review is modal and ends when Neovim exits, so
+  stop simply reports the review state instead of closing a view.
 
 The review UI mirrors review.nvim's interaction: a Files/Comments sidebar with
 a unified diff pane, typed comments (Fix / Note / Question with templates) on

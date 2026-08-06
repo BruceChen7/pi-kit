@@ -13,7 +13,7 @@ import {
   SelectList,
   Text,
 } from "@earendil-works/pi-tui";
-import { createQueue } from "../shared/deferred-queue/index.ts";
+import { createQueue, type Queue } from "../shared/deferred-queue/index.ts";
 import { log } from "../shared/deferred-queue/logger.ts";
 import type { TaskDefinition } from "../shared/deferred-queue/types.ts";
 import { isTelegramConfigured } from "../shared/telegram.ts";
@@ -97,10 +97,16 @@ export default async function (pi: ExtensionAPI) {
     return;
   }
 
-  // Store a ctx reference for widget updates. Captured from the first event handler.
+  // Store a ctx reference for widget updates. Valid only while this extension
+  // runtime is active: after session_shutdown (reload / new / resume / fork /
+  // quit) pi invalidates every captured ctx and any property access throws.
+  // setWidgetLine is also reachable from the queue timer after shutdown (an
+  // in-flight runCheck may still call onTaskStatus), so guard with `disposed`.
   let widgetCtx: ExtensionContext | undefined;
+  let disposed = true; // no live session until the first session_start
 
   const setWidgetLine = (text: string | undefined) => {
+    if (disposed) return;
     if (!widgetCtx?.hasUI) return;
     if (text === undefined) {
       widgetCtx.ui.setWidget(WIDGET_KEY, undefined);
@@ -110,32 +116,65 @@ export default async function (pi: ExtensionAPI) {
     }
   };
 
-  log.info("creating queue", { tasksFound: discoveredTasks.length });
-  const queue = createQueue({
-    persistPath: PERSIST_FILE,
-    checkIntervalMs: 60_000,
-    onTaskStatus: (taskId, status) => {
-      if (status === "running") {
-        log.info("task widget: running", { taskId });
-        setWidgetLine(`⏳ deferred task running: ${taskId}`);
-      } else {
-        log.info("task widget: idle", { taskId, status });
-        setWidgetLine(undefined);
+  // The queue owns the background check timer. Per pi extension docs, timers
+  // must not be started from the factory (factories can run in invocations
+  // that never start a session): start it from session_start or the command
+  // that needs it, stop it in session_shutdown.
+  let queue: Queue | null = null;
+
+  const ensureQueue = (): Queue => {
+    if (queue) return queue;
+    log.info("creating queue", { tasksFound: discoveredTasks.length });
+    queue = createQueue({
+      persistPath: PERSIST_FILE,
+      checkIntervalMs: 60_000,
+      onTaskStatus: (taskId, status) => {
+        if (status === "running") {
+          log.info("task widget: running", { taskId });
+          setWidgetLine(`⏳ deferred task running: ${taskId}`);
+        } else {
+          log.info("task widget: idle", { taskId, status });
+          setWidgetLine(undefined);
+        }
+      },
+    });
+    for (const task of discoveredTasks) {
+      try {
+        queue.add(task);
+        log.info("task registered to queue", { id: task.id });
+      } catch (err) {
+        log.warn("failed to register task", {
+          id: task.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
-    },
+    }
+    return queue;
+  };
+
+  // Start the check loop only while a session is live, and reestablish the
+  // widget state for the new session's ctx. Per docs: clean up in
+  // session_shutdown, then reestablish in-memory state in session_start.
+  pi.on("session_start", async (event, ctx) => {
+    disposed = false;
+    widgetCtx = ctx;
+    const q = ensureQueue();
+    q.start(); // no-op if already running; resumes after a previous stop
+    log.info("queue running for session", { reason: event.reason });
   });
 
-  for (const task of discoveredTasks) {
-    try {
-      queue.add(task);
-      log.info("task registered to queue", { id: task.id });
-    } catch (err) {
-      log.warn("failed to register task", {
-        id: task.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  // Stop the queue timer and drop the captured ctx when this extension runtime
+  // is torn down (reload / new / resume / fork / quit). Without this, the old
+  // instance's check loop keeps firing after a reload and touches the stale ctx
+  // via onTaskStatus → setWidgetLine → ctx.hasUI, which throws (stale ctx) and
+  // crashes pi with an uncaughtException. session_shutdown handlers run before
+  // pi invalidates the ctx, so queue.stop() and the flag are safe here.
+  pi.on("session_shutdown", async (event) => {
+    disposed = true;
+    widgetCtx = undefined;
+    queue?.stop();
+    log.info("queue stopped for session", { reason: event.reason });
+  });
 
   /**
    * Shared command handler for /tasks.
@@ -143,7 +182,12 @@ export default async function (pi: ExtensionAPI) {
    */
   const tasksHandler = async (_args: string, ctx: ExtensionContext) => {
     widgetCtx = ctx;
-    const taskMetas = queue.listWithMeta();
+    // The queue may not exist yet if this command is the first thing to need
+    // it; ensure it is created and running (docs: a command that needs a
+    // background resource may start it). start() is a no-op if already running.
+    const q = ensureQueue();
+    q.start();
+    const taskMetas = q.listWithMeta();
     if (taskMetas.length === 0) {
       ctx.ui.notify("No deferred tasks registered", "info");
       return;
@@ -235,7 +279,7 @@ export default async function (pi: ExtensionAPI) {
     // Widget lifecycle (running → completed) is managed inside runNow
     // via onTaskStatus. Do NOT setWidgetLine here — the task may already
     // be done by the time await returns, leaving the widget stuck on "running".
-    const result = await queue.runNow(selectedId);
+    const result = await q.runNow(selectedId);
     if (result.executed) {
       ctx.ui.notify(`Task "${selectedId}" triggered successfully`, "info");
     } else {

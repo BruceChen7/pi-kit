@@ -5,7 +5,7 @@ description: Use when the user wants to turn the current conversation, plan, or 
 
 # To Spec
 
-Turn the current conversation context and codebase understanding into a spec (you may know this document as a PRD). Do **not** interview the user from scratch — just synthesize what is already known. Ask only for blockers that cannot be inferred.
+Turn the current conversation context and codebase understanding into a spec. Do **not** interview the user from scratch — just synthesize what is already known. Ask only for blockers that cannot be inferred.
 
 Default to Chinese unless the user explicitly asks for another language.
 

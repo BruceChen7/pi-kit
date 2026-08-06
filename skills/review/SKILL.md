@@ -2,8 +2,8 @@
 name: plan-code-review
 description: >
   Review changes since a fixed point along two axes — Standards (does the diff follow this
-  repo's documented standards?) and Spec (does the diff implement the originating plan, PRD,
-  issue, or user request?). Use when the user wants to review a branch, PR, work-in-progress
+  repo's documented standards?) and Spec (does the diff implement the originating plan, issue,
+  or user request?). Use when the user wants to review a branch, PR, work-in-progress
   changes, or asks to "review since X".
 ---
 
@@ -20,7 +20,7 @@ Default to Chinese unless the user explicitly asks for another language.
 - **Standards** — does the diff follow documented project standards, architecture decisions,
   domain language, style expectations, and Pi workflow rules? Only report issues that violate a
   documented standard or clearly contradict established repo patterns. Cite the source.
-- **Spec** — does the diff faithfully implement the originating issue, PRD, plan, spec, or user
+- **Spec** — does the diff faithfully implement the originating issue, plan, spec, or user
   request? Report missing requirements, partial requirements, scope creep, and behavior that
   appears implemented but wrong.
 

@@ -43,7 +43,7 @@ improve-codebase-architecture|local|skills/improve-codebase-architecture
 to-go-style-design|local|skills/to-go-style-design
 to-spec|local|skills/to-spec
 to-tickets|local|skills/to-tickets
-writing-great-skills|local|skills/writing-great-skills
+writing-for-agents|local|skills/writing-for-agents
 # https://github.com/mattpocock/skills (v1.0.0+)
 resolving-merge-conflicts|local|skills/resolving-merge-conflicts
 # https://github.com/mattpocock/skills (v1.1.0+)

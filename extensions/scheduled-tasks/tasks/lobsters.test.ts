@@ -217,6 +217,38 @@ describe("formatPostLine", () => {
     expect(output).toContain("🔗 https://example.com/test");
   });
 
+  it("adds a clickable Lobsters comments link after the article link", () => {
+    const item = samplePost({
+      short_id: "abc123",
+      comments_url: "https://lobste.rs/s/abc123/comments",
+      url: "https://example.com/article",
+    });
+    const output = formatPostLine(item, 0);
+
+    const lines = output.split("\n");
+    expect(lines).toContain(
+      "   💬 [查看评论](https://lobste.rs/s/abc123/comments)",
+    );
+    // Comments link is its own line, after the article link
+    const urlIdx = lines.indexOf("   🔗 https://example.com/article");
+    const commentsIdx = lines.indexOf(
+      "   💬 [查看评论](https://lobste.rs/s/abc123/comments)",
+    );
+    expect(commentsIdx).toBe(urlIdx + 1);
+    // Markdown link form so the Telegram pipeline converts it to <a href>
+    expect(output).toMatch(
+      /\[查看评论\]\(https:\/\/lobste\.rs\/s\/abc123\/comments\)/,
+    );
+  });
+
+  it("adds the comments link even when comment_count is zero", () => {
+    const item = samplePost({ comment_count: 0 });
+    const output = formatPostLine(item, 0);
+    expect(output).toContain(
+      "💬 [查看评论](https://lobste.rs/s/abc123/comments)",
+    );
+  });
+
   it("includes description_plain when present (truncated at 200 chars)", () => {
     const item = samplePost({
       description_plain: "A short description here",

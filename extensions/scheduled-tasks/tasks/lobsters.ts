@@ -162,6 +162,11 @@ export function displayTag(tag: string): string {
 
 /**
  * Format a single Lobste.rs post as a concise text line (embedded in a section).
+ *
+ * Line order: title line, optional description, external article link, then a
+ * clickable Lobsters comments link (`comments_url`). The comments link is
+ * added unconditionally — the comment count is a snapshot that may be stale,
+ * and new posts often gain comments shortly after the daily fetch.
  */
 export function formatPostLine(
   item: LobstersPost,
@@ -180,6 +185,7 @@ export function formatPostLine(
   }
 
   parts.push(`   🔗 ${item.url}`);
+  parts.push(`   💬 [查看评论](${item.comments_url})`);
 
   return parts.join("\n");
 }
@@ -194,8 +200,10 @@ export function formatPostLine(
  * 1. **Title A** | ⬆ 45 💬 12
  *    💬 Optional description here
  *    🔗 https://example.com
+ *    💬 [查看评论](https://lobste.rs/s/abc/comments)
  * 2. **Title B** | ⬆ 32 💬 8
  *    🔗 https://example.org
+ *    💬 [查看评论](https://lobste.rs/s/def/comments)
  * ```
  *
  * Pure function: no IO, no side effects.

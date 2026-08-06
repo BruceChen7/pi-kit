@@ -7,14 +7,12 @@ same flow with the interactive target picker.
 
 ## Requirements
 
-- A git repository
-- **tmux or herdr, OR a plain interactive terminal** — with tmux/herdr the
-  review opens in a dedicated review view; without either, Pi suspends its TUI
-  and launches Neovim in the foreground terminal (like Ctrl+G), resuming when
-  Neovim exits
-- Neovim on `PATH` as `nvim`
-- The `pi.cr` module available in the Neovim config (`lua/pi/cr/init.lua`),
-  auto-started via the `CR_SOCKET` environment variable or the launch entrypoint
+| Requirement | Details |
+| --- | --- |
+| Git repository | The current directory must be inside a git work tree |
+| Terminal | **tmux or herdr, OR a plain interactive terminal** — with tmux/herdr the review opens in a dedicated review view; without either, Pi suspends its TUI and launches Neovim in the foreground terminal (like Ctrl+G), resuming when Neovim exits |
+| Neovim | On `PATH` as `nvim` |
+| `pi.cr` module | Available in the Neovim config (`lua/pi/cr/init.lua`), auto-started via the `CR_SOCKET` environment variable or the launch entrypoint |
 
 ## Usage
 
@@ -28,11 +26,17 @@ same flow with the interactive target picker.
   tmux/herdr (inline mode) the review is modal and ends when Neovim exits, so
   stop simply reports the review state instead of closing a view.
 
-The review UI mirrors review.nvim's interaction: a Files/Comments sidebar with
-a unified diff pane, typed comments (Fix / Note / Question with templates) on
-diff lines (`c`, `dc`), hunk/file navigation (`]c`/`[c`, `]f`/`[f`), context
-controls (`{`/`}`), stage/unstage (`Space`), and an exit menu that sends the
-comments back to Pi (`q`) or opens the real file (`e`).
+The review UI mirrors review.nvim's interaction:
+
+| Feature | Keys | Details |
+| --- | --- | --- |
+| Sidebar | — | Files/Comments list with Staged/Unstaged sections (worktree scopes) |
+| Diff pane | `{` / `}` | Unified diff with 20 context lines by default, expandable (20 → 50 → 100 → full file) |
+| Commenting | `c`, `dc` | Typed comments (Fix / Note / Question with templates) on diff lines |
+| Navigation | `]c`/`[c`, `]f`/`[f` | Hunk / file navigation |
+| Stage/unstage | `Space` | Toggle staging; files move between the two sidebar sections |
+| Exit flow | `q` → exit menu, `e` | Send the comments back to Pi, or open the real file directly in a new tab (`q` in the file returns to the review) |
+| Submit/discard | `:qa`, `:qa!` | `:qa` submits the comments; `:qa!` discards them and quits |
 
 While a review window is open, Pi shows a `cr-diffview` widget with the active
 review target (tmux/herdr modes).

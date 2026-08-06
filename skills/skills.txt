@@ -29,20 +29,27 @@ debug-pi-coding-agent|local|skills/debug-pi-coding-agent
 chao-go-perf|local|skills/chao-go-perf
 plan-code-review|local|skills/review
 handoff|local|skills/handoff
+# Pi-native local skills
+#breadboarding|local|skills/breadboarding
+#coding-style-line-length|local|skills/coding-style-line-length
+#shaping|local|skills/shaping
 # Shared skills from https://github.com/mattpocock/skills (v1.0.0+)
 codebase-design|local|skills/codebase-design
 domain-modeling|local|skills/domain-modeling
-grilling|local|skills/grilling
-# https://github.com/mattpocock/skills
-prototype|local|skills/prototype
+# https://github.com/mattpocock/skills (v1.0.1+)
 teach|local|skills/teach
+# https://github.com/mattpocock/skills (v1.2.0+)
+grilling|local|skills/grilling
+prototype|local|skills/prototype
 grill-with-docs|local|skills/grill-with-docs
 grill-me|local|skills/grill-me
 improve-codebase-architecture|local|skills/improve-codebase-architecture
 # https://colobu.com/2026/06/23/2026-06-23-how-to-write-design-doc/
 to-go-style-design|local|skills/to-go-style-design
+# https://github.com/mattpocock/skills (v1.1.0+)
 to-spec|local|skills/to-spec
 to-tickets|local|skills/to-tickets
+# https://github.com/mattpocock/skills (v1.2.0+)
 writing-for-agents|local|skills/writing-for-agents
 # https://github.com/mattpocock/skills (v1.0.0+)
 resolving-merge-conflicts|local|skills/resolving-merge-conflicts

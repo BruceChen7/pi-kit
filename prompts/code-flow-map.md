@@ -87,10 +87,20 @@ detailed reference material into `accordion` nodes. 图注占用顶层预算（�
 | 7 | Blast Radius + Tests/Gaps/Gotchas | `accordion` (2 项) | 项 1 "Blast Radius"：callers, dependents, tests, docs, config (file-tree/table)。项 2 "Tests, Gaps & Gotchas"：Coverage table + callout for gaps + list/card of invariants and traps. |
 | 8 | Grill-me starter | `callout` or `card` | The first question you will ask me after creating the artifact. |
 
-**图注规则（所有 mermaid 图强制）：** 每个 mermaid 图之前必须紧跟两行图注，说明这张图是 what、怎么读：
+**图注规则（所有 mermaid 图强制）：** 每个 mermaid 图之前必须紧跟两行图注：`heading`（level `h2`，图名）+ 一行 `text`（≤60 字）。
 
-- `heading`（level `h2`，图名，如 "Participant Diagram: CLI → Plugin Manager → FS"）
-- 一行 `text`（简洁描述，如 "这张图展示跨 boundary 的消息流：谁调用谁、消息带什么；内部分支不在此图"）
+`text` 必须根据这张图**实际画出的内容**撰写，从该图的 mermaid definition 反推，写"图里有什么"：
+
+- 3a：概括真实参与者与消息，如 "CLI → PluginManager → FS 同步调用链，箭头标签为传入参数"；
+- 3b：写真实分支，如 "决策树：拦截链放行 / 降级 / 失败回退"；
+- 4a/4b：写真实状态转换或实体关系。
+
+禁止：
+
+- 套模板句（如一律写 "跨 boundary 的消息流：谁调用谁"）——图注必须能被该图本身验证；
+- 声称图里没有的元素；
+- 在排除句里枚举省略项——"内部分支不在此图"是通用句即可，被省略内容的具体名称由对应图（3b）的正面图注承担；
+- 写 "见 3a/3b" 编号指针（页面上没有可见编号）——跨图指针只允许 "见下方 Logic Diagram"，且仅当 3b 实际产出时写。
 
 图注与图都是独立顶层节点，顺序为 `heading` → `text` → `mermaid`，不允许只丢一个裸 mermaid。每张图 +2 个顶层节点，计入 30 上限；4a/4b 同时产出时各自保留图注（预算紧张时优先合并 3b 图注为一行）。
 
@@ -106,6 +116,7 @@ Always produce a `sequenceDiagram` showing cross-boundary message flow between p
 
 - Each distinct module, process, or external system is a `participant`.
 - Only show calls/messages between participants; do not draw internal branches here.
+- 跨 participant 的 fallback/重试/容灾属于跨 boundary 消息，必须画进 3a（哪怕只是一条 `A->>B: 降级请求`），不算"内部分支"。
 - If the flow has **no cross-boundary interaction** (pure in-process pipeline), note this
 explicitly and fall back to a single `flowchart` that combines 3a + 3b roles.
 
@@ -164,17 +175,17 @@ const spec = {
     // --- Section 3a: participant diagram (强制, 独立顶层节点) ---
     // 图注: heading(图名) + 一行 text(图是 what / 怎么读)，然后才是 mermaid
     { "type": "heading", "props": { "text": "Participant Diagram: CLI → Plugin Manager → FS", "level": "h2" } },
-    { "type": "text", "props": { "text": "跨 boundary 的消息流：谁调用谁、消息带什么；内部分支不在此图。" } },
-    { "type": "mermaid", "props": { "definition": "sequenceDiagram\n  participant A as \"Module A\"\n  participant B as \"Module B\"\n  A->>B: call()\n  B-->>A: result" } },
+    { "type": "text", "props": { "text": "CLI → PluginManager → FS 同步调用链，箭头标签为传入参数；内部分支不在此图。" } },
+    { "type": "mermaid", "props": { "definition": "sequenceDiagram\n  participant CLI as \"CLI\"\n  participant PM as \"PluginManager\"\n  participant FS as \"FS\"\n  CLI->>PM: config\n  PM->>FS: write symlink\n  FS-->>PM: result" } },
 
     // --- Section 3b: logic diagram (条件, 独立顶层节点) ---
     { "type": "heading", "props": { "text": "Logic Diagram: 启用插件的核心决策树", "level": "h2" } },
-    { "type": "text", "props": { "text": "核心分支与回退路径；线性流程不产出此图。" } },
+    { "type": "text", "props": { "text": "决策树：condition 命中 → Path 1，否则 → Path 2。" } },
     { "type": "mermaid", "props": { "definition": "flowchart TD\n  A[\"Entry\"] --> |\"condition\"| B[\"Path 1\"]\n  A --> |\"else\"| C[\"Path 2\"]" } },
 
     // --- Section 4a/b: data/state diagram (至少一个, 独立顶层节点) ---
     { "type": "heading", "props": { "text": "State Diagram: 插件生命周期", "level": "h2" } },
-    { "type": "text", "props": { "text": "状态转换及触发事件；无生命周期则用 table 代替。" } },
+    { "type": "text", "props": { "text": "状态转换：初始 → Active → Disabled → 终态；无生命周期则用 table 代替。" } },
     { "type": "mermaid", "props": { "definition": "stateDiagram-v2\n  [*] --> Active\n  Active --> Disabled\n  Disabled --> [*]" } },
 
     // --- Section 5: walkthrough (强制, 独立顶层节点) ---
@@ -224,7 +235,7 @@ create_visual_artifact({
   complexity. Every diagram must be a **top-level node**, never inside an accordion, and must be
   preceded by its caption (`heading` + one-line `text`). 边界树
   (Section 6 `section`) 同样必须独立顶层节点，不进 accordion。
-- **每个 mermaid 图前必须有图注**：`heading`（h2，图名）+ 一行 `text`（简洁说明这张图是 what、怎么读），然后是 `mermaid`。图注与图都是独立顶层节点，不允许裸 mermaid。
+- **每个 mermaid 图前必须有图注**：`heading`（h2，图名）+ 一行 `text`（≤60 字，根据图的实际内容撰写：写"图里有什么"，禁止模板句、禁止枚举省略项、禁止 "见 3a/3b" 编号指针），然后是 `mermaid`。图注与图都是独立顶层节点，不允许裸 mermaid。
 - Use compact Mermaid diagrams; each diagram should fit on one screen.
 - Always use double-quoted Mermaid labels: `N["label text"]`, not `N[label text]`.
 - Never use parentheses inside unquoted labels.

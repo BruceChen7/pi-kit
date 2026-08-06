@@ -1,6 +1,7 @@
 # qmd-search
 
 Query Markdown Documents — Hybrid search for markdown knowledge bases. Runs on-device with BM25 full-text search and optional vector + LLM reranking via [qmd](https://github.com/tobi/qmd).
+credits: https://github.com/CatChen/knowledge-wiki-template
 
 ## Quick start
 

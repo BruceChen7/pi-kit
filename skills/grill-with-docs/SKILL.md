@@ -13,7 +13,7 @@ Default to Chinese for questions, specs, plans, and summaries unless the user ex
 
 ## Hard Rules
 
-- Ask **one question at a time** and wait for the user's answer before continuing. Asking multiple questions at once is bewildering.
+- Work in **rounds**: ask the whole **frontier** — every question whose prerequisites are already settled — in one numbered round, each with your recommended answer, then wait for the user's answers. Recompute the frontier from the answers and ask the next round.
 - For each question, include your recommended answer and why.
 - If a question can be answered by exploring files, code, docs, or git history, investigate instead of asking the user.
 - Challenge fuzzy terms, overloaded terms, and contradictions with existing code or docs immediately.
@@ -67,7 +67,7 @@ Default to Chinese for questions, specs, plans, and summaries unless the user ex
 
 ### 2. Grill the plan
 
-Walk the design tree one decision at a time:
+Walk the design tree in rounds, asking the whole frontier at once:
 
 - clarify the user goal and success criteria
 - identify actors, data, state transitions, and integration boundaries
@@ -79,15 +79,15 @@ Walk the design tree one decision at a time:
 
 Use `/domain-modeling` (via its `CONTEXT-FORMAT.md` and `ADR-FORMAT.md`) to keep the domain model current as you go — update `.pi/contexts/**/CONTEXT.md` when terms sharpen, and offer ADRs for hard-to-reverse decisions.
 
-Question format:
+Question format (whole frontier per round, answered by number):
 
 ```text
-问题：...
+❓ **Q1** — **<问题标题>**：<问题正文，可能是多段，包括多个选项>
 
-我的建议：...
-
-为什么：...
+➡️ <我的推荐答案，附理由>
 ```
+
+Facts the environment can answer are dispatched to a sub-agent so research never blocks the round; only questions downstream of a running exploration wait for it.
 
 ### 3. Update domain language inline
 

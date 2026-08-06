@@ -133,7 +133,7 @@ HITL tickets can only be resolved through live conversation; an agent can never 
   Link the prototype as an attachment.
   Use when "what does it look like" or "how should it behave" is the key question.
 
-- **Grilling (HITL)**: Conversation through the `/grilling` and `/domain-modeling` skills, one question at a time.
+- **Grilling (HITL)**: Conversation through the `/grilling` and `/domain-modeling` skills, in frontier rounds.
   Default type.
 
 - **Task (HITL or AFK)**: Physical work that must be done before making a **decision** —

@@ -21,7 +21,7 @@ user explicitly asks for another language.
 
 ## Hard Rules
 
-- Ask **one question at a time** and wait for the user's answer before continuing. Asking multiple questions at once is bewildering.
+- Work in **rounds**: ask the whole **frontier** — every question whose prerequisites are already settled — in one numbered round, each with your recommended answer, then wait for the user's answers. Recompute the frontier from the answers and ask the next round.
 - For each question, include your recommended answer and why.
 - If a question can be answered by exploring this repo's code, docs, plans, or history, investigate instead of asking the user.
 - Challenge contradictions, overloaded terms, unclear success criteria, and hidden trade-offs.
@@ -65,12 +65,12 @@ Use this flow in `pi-kit`:
 ## Question Format
 
 ```text
-问题：...
+❓ **Q1** — **<问题标题>**：<问题正文，可能是多段，包括多个选项>
 
-我的建议：...
-
-为什么：...
+➡️ <我的推荐答案，附理由>
 ```
+
+The user answers by number; each round ends when every frontier question has been answered.
 
 ## Grilling Checklist
 

@@ -37,7 +37,8 @@
       "./extensions/tools_intercepted",
       "./extensions/qmd-search",
       "./extensions/herdr-squad",
-      "./extensions/cc-switch"
+      "./extensions/cc-switch",
+      "./extensions/fork-panel"
     ]
   },
   "scripts": {

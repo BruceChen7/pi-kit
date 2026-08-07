@@ -338,7 +338,8 @@ const TYPE_LABELS: Record<NonNullable<CrAnnotation["type"]>, string> = {
 /**
  * Format annotations as review.nvim-style markdown:
  * `# Code Review Comments` / `## <file>` / `### [TYPE] <file>:<line>`
- * with a diff-context code block per comment.
+ * with a diff-context code block per comment. A multi-line annotation shows
+ * `<file>:<line>-<end_line>`.
  */
 export const formatAnnotationsPrompt = (
   annotations: CrAnnotation[],
@@ -361,9 +362,13 @@ export const formatAnnotationsPrompt = (
     const typeLabel = annotation.type
       ? TYPE_LABELS[annotation.type]
       : undefined;
+    const range =
+      annotation.end_line && annotation.end_line !== annotation.line
+        ? `${annotation.line}-${annotation.end_line}`
+        : `${annotation.line}`;
     const header = typeLabel
-      ? `### [${typeLabel}] ${file}:${annotation.line}`
-      : `### ${file}:${annotation.line}`;
+      ? `### [${typeLabel}] ${file}:${range}`
+      : `### ${file}:${range}`;
     lines.push(header, "");
     if (annotation.snippet) {
       lines.push(

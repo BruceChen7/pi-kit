@@ -21,6 +21,7 @@ import type {
   Project,
   Task,
   TaskSort,
+  TaskStatus,
   TasksDb,
   UpdateTaskInput,
 } from "./contract.ts";
@@ -40,6 +41,7 @@ export type {
   Project,
   Task,
   TaskSort,
+  TaskStatus,
   TasksDb,
   UpdateTaskInput,
 } from "./contract.ts";
@@ -451,6 +453,32 @@ export function clearDelegationIfSettled(db: TasksDb, taskId: string): TasksDb {
     ...db,
     tasks: db.tasks.map((t) =>
       t.id === taskId ? { ...t, delegation: null, updatedAt: nowIso() } : t,
+    ),
+  };
+}
+
+/**
+ * Roll back a failed delegation: clear the delegation field and restore the
+ * pre-delegation status. Pure function.
+ */
+export function rollbackDelegation(
+  db: TasksDb,
+  taskId: string,
+  previousStatus: TaskStatus,
+): TasksDb {
+  const existing = findTask(db, taskId);
+  if (!existing) return db;
+  return {
+    ...db,
+    tasks: db.tasks.map((t) =>
+      t.id === taskId
+        ? {
+            ...t,
+            status: previousStatus,
+            delegation: null,
+            updatedAt: nowIso(),
+          }
+        : t,
     ),
   };
 }

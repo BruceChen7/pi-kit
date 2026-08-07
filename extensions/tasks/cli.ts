@@ -694,6 +694,7 @@ export function registerCommands(pi: ExtensionAPI) {
             const result = await withDb<{
               ok: boolean;
               task?: import("./contract.ts").Task;
+              previousStatus?: import("./contract.ts").TaskStatus;
               error?: string;
             }>(dbPath, (db) => {
               const task = S.findTaskByKey(db, key);
@@ -708,13 +709,19 @@ export function registerCommands(pi: ExtensionAPI) {
                 };
               }
               try {
+                const previousStatus = task.status;
                 const r = S.delegateTask(db, {
                   taskId: task.id,
                   agentId: delegatedAgentLabel(task),
                 });
                 return {
                   db: r.db,
-                  result: { ok: true, task: r.task, error: undefined },
+                  result: {
+                    ok: true,
+                    task: r.task,
+                    previousStatus,
+                    error: undefined,
+                  },
                 };
               } catch (err) {
                 return {
@@ -770,7 +777,13 @@ export function registerCommands(pi: ExtensionAPI) {
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
               await withDb(dbPath, (db) => {
-                const r = S.createComment(db, {
+                // Roll back status + delegation; keep the failure comment.
+                const rolledBack = S.rollbackDelegation(
+                  db,
+                  result.task?.id ?? "",
+                  result.previousStatus ?? "backlog",
+                );
+                const r = S.createComment(rolledBack, {
                   taskId: result.task?.id ?? "",
                   kind: "system",
                   authorName: "Tasks",
@@ -780,7 +793,10 @@ export function registerCommands(pi: ExtensionAPI) {
               });
               notify(
                 ctx,
-                [`Delegation failed: ${message}`, "Task state unchanged."],
+                [
+                  `Delegation failed: ${message}`,
+                  "Task rolled back to previous state.",
+                ],
                 "error",
               );
             }

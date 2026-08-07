@@ -88,3 +88,16 @@ When the user asks to "delegate" a task (or says "have an agent do it",
   when ambiguous.
 - **Subtasks**: `task_create` with `parentTaskId` creates a sub-task. Use it
   to break large tasks into verifiable chunks.
+
+## Worktree delegation
+
+`task_delegate` with `worktree: true` (or `/issue delegate <key> --worktree`)
+creates an isolated git worktree before spawning the agent:
+
+- Branch: `task/<key>-<slug>`; path: `<worktreeDir>/<repo>.<key-lower>`.
+- The delegated agent works inside that worktree and never touches the main
+  checkout.
+- The task's delegation record stores `worktreePath`, `branch`, and
+  `workspaceId` so the worktree can be cleaned up later.
+- Clean up with `/issue worktree-remove <key> [--force]` — the worktree is
+  kept after the task finishes so the user can review/merge the branch first.

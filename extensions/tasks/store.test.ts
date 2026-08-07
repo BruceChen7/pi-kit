@@ -803,3 +803,26 @@ describe("status/priority validation", () => {
     }
   });
 });
+
+describe("rollbackDelegation", () => {
+  it("restores status and clears delegation", () => {
+    let db = withProject(freshDb());
+    const project = S.listProjects(db)[0];
+    const { db: db2, task } = S.createTask(db, {
+      projectId: project.id,
+      title: "Rollback me",
+      status: "todo",
+    });
+    db = db2;
+    db = S.delegateTask(db, { taskId: task.id, agentId: "agent-1" }).db;
+    const db3 = S.rollbackDelegation(db, task.id, "todo");
+    expect(S.findTask(db3, task.id)?.status).toBe("todo");
+    expect(S.findTask(db3, task.id)?.delegation).toBeNull();
+  });
+
+  it("is a no-op for unknown tasks", () => {
+    const db = withProject(freshDb());
+    const next = S.rollbackDelegation(db, "nope", "backlog");
+    expect(next.tasks).toHaveLength(0);
+  });
+});

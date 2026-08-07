@@ -186,6 +186,29 @@ describe("plan-mode extension: tool guards", () => {
     });
   });
 
+  it("uses patch headers when an empty multi array is present", async () => {
+    await withTempCtx(async (ctx) => {
+      const targetPath = "src/example.ts";
+      writeSourceFile(ctx, targetPath, "export const value = 1;\n");
+
+      const { harness } = await startPlanModeSession("act", ctx);
+      await markFileRead(harness, ctx, targetPath);
+
+      await expectToolAllowed(harness, ctx, "edit", {
+        multi: [],
+        newText: "",
+        oldText: "",
+        patch: `*** Begin Patch
+*** Update File: ${targetPath}
+@@
+-export const value = 1;
++export const value = 2;
+*** End Patch`,
+        path: "",
+      });
+    });
+  });
+
   it("allows follow-up edits after a successful fresh write in the same session", async () => {
     await withTempCtx(async (ctx) => {
       const targetPath = "src/fresh-write.ts";

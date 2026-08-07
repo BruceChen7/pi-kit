@@ -204,6 +204,29 @@ describe("btw extension", () => {
     });
   });
 
+  it("passes null header-deletion markers through to the model stream unchanged", async () => {
+    streamSimple.mockReturnValue(streamResponse("ok"));
+    const { commands, entries } = createHarness();
+    const ctx = createContext(entries);
+    ctx.modelRegistry.getApiKeyAndHeaders = vi.fn(async () => ({
+      ok: true,
+      apiKey: "test-key",
+      headers: { "x-keep": "yes", "x-drop": null },
+    }));
+
+    await requireCommand(commands, "btw").handler("null header?", ctx);
+    await waitForCompletedBtwEntry(entries);
+
+    expect(streamSimple).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        apiKey: "test-key",
+        headers: { "x-keep": "yes", "x-drop": null },
+      }),
+    );
+  });
+
   it("injects the completed side thread as a follow-up user message and resets it", async () => {
     streamSimple.mockReturnValue(streamResponse("ship it"));
     const { commands, entries, sendUserMessage } = createHarness();

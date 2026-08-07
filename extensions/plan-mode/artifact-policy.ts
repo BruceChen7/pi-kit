@@ -1,8 +1,7 @@
 import {
-  BOUNDARIES_SEQUENCE_GUIDANCE,
-  FLOW_TREE_GUIDANCE,
-  IMPLEMENTATION_CALL_TREE_GUIDANCE,
   MERMAID_CONFIG_LIGHT,
+  PLAN_CONTENT_FORM_RULES,
+  type PlanContentForm,
 } from "./guidance.ts";
 
 export type ArtifactPolicyConfig = {
@@ -132,8 +131,6 @@ const parseTopLevelSections = (content: string): MarkdownSection[] => {
 const normalizeSectionName = (name: string): string =>
   SECTION_ALIASES[name] ?? name;
 
-const stripGuidanceBullet = (line: string): string => line.replace(/^-\s*/, "");
-
 const hasMermaidBlock = (content: string): boolean =>
   content.includes("```mermaid");
 
@@ -147,34 +144,25 @@ type ContentFormCheck = {
   suggestion: string;
 };
 
-const CONTENT_FORM_CHECKS: readonly ContentFormCheck[] = [
-  {
-    section: "Current Flow",
-    ok: hasMermaidBlock,
-    message: "## Current Flow section is missing a Mermaid diagram.",
-    suggestion: `Add a \`\`\`mermaid block. ${stripGuidanceBullet(FLOW_TREE_GUIDANCE[0])}`,
-  },
-  {
-    section: "Desired Flow",
-    ok: hasMermaidBlock,
-    message: "## Desired Flow section is missing a Mermaid diagram.",
-    suggestion: `Add a \`\`\`mermaid block. ${stripGuidanceBullet(FLOW_TREE_GUIDANCE[2])}`,
-  },
-  {
-    section: "Boundaries",
-    ok: hasMermaidBlock,
-    message: "## Boundaries section is missing a Mermaid diagram.",
-    suggestion:
-      "Add a ```mermaid block. " +
-      stripGuidanceBullet(BOUNDARIES_SEQUENCE_GUIDANCE),
-  },
-  {
-    section: "Implementation",
-    ok: hasAsciiCallTree,
-    message: "## Implementation section is missing an ASCII call tree.",
-    suggestion: stripGuidanceBullet(IMPLEMENTATION_CALL_TREE_GUIDANCE[0]),
-  },
-];
+const contentFormOk = (
+  form: PlanContentForm,
+): ((content: string) => boolean) =>
+  form === "mermaid" ? hasMermaidBlock : hasAsciiCallTree;
+
+const contentFormMessage = (section: string, form: PlanContentForm): string =>
+  `## ${section} section is missing a ${
+    form === "mermaid" ? "Mermaid diagram" : "ASCII call tree"
+  }.`;
+
+// Derived from PLAN_CONTENT_FORM_RULES so the enforced checks and the
+// agent-facing pre-submit checklist (guidance.ts) can never drift apart.
+const CONTENT_FORM_CHECKS: readonly ContentFormCheck[] =
+  PLAN_CONTENT_FORM_RULES.map((rule) => ({
+    section: rule.section,
+    ok: contentFormOk(rule.form),
+    message: contentFormMessage(rule.section, rule.form),
+    suggestion: rule.suggestion,
+  }));
 
 const validateContentForms = (
   sectionByName: Map<string, MarkdownSection>,

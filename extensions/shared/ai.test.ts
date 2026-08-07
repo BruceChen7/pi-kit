@@ -42,6 +42,35 @@ describe("shared ai", () => {
     expect(complete).toHaveBeenCalled();
   });
 
+  it("passes null header-deletion markers through unchanged", async () => {
+    vi.mocked(complete).mockResolvedValue({
+      content: [{ type: "text", text: "auth-header-cleanup" }],
+    } as never);
+
+    const result = await generateKebabCaseIdFromDescription(
+      {
+        model: {
+          id: "test-model",
+          provider: "openai",
+          api: "openai-responses",
+          reasoning: false,
+        },
+        modelRegistry: {
+          getApiKeyAndHeaders: vi.fn(async () => ({
+            ok: true,
+            apiKey: "test-key",
+            headers: { "x-keep": "yes", "x-drop": null },
+          })),
+        },
+      } as never,
+      "Drop auth header",
+    );
+
+    expect(result).toBe("auth-header-cleanup");
+    const [, , options] = vi.mocked(complete).mock.calls[0];
+    expect(options.headers).toEqual({ "x-keep": "yes", "x-drop": null });
+  });
+
   it("returns null when there is no active model", async () => {
     const result = await generateKebabCaseIdFromDescription(
       {

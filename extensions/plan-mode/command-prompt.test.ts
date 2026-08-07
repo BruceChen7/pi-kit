@@ -91,6 +91,9 @@ describe("plan-mode extension: commands and prompt basics", () => {
       "Decisions",
       "Non-goals",
     ]);
+    expect(result.systemPrompt).toContain("pre-submit checklist");
+    expect(result.systemPrompt).toContain("```mermaid");
+    expect(result.systemPrompt).toContain("├─");
   });
 
   it("keeps act prompts focused on execution guidance", async () => {
@@ -103,6 +106,7 @@ describe("plan-mode extension: commands and prompt basics", () => {
     expect(result.systemPrompt).not.toContain("flow tree");
     expect(result.systemPrompt).not.toContain("sequenceDiagram");
     expect(result.systemPrompt).not.toContain("关键数据结构");
+    expect(result.systemPrompt).not.toContain("pre-submit checklist");
   });
 
   it("tells the agent where to write HTML review artifacts", async () => {

@@ -3,6 +3,7 @@ import {
   BOUNDARIES_SEQUENCE_GUIDANCE,
   FLOW_TREE_GUIDANCE,
   IMPLEMENTATION_CALL_TREE_GUIDANCE,
+  PLAN_SUBMIT_CHECKLIST,
   todoDisciplineGuidance,
 } from "./guidance.ts";
 
@@ -10,6 +11,7 @@ export {
   BOUNDARIES_SEQUENCE_GUIDANCE,
   FLOW_TREE_GUIDANCE,
   IMPLEMENTATION_CALL_TREE_GUIDANCE,
+  PLAN_SUBMIT_CHECKLIST,
   todoDisciplineGuidance,
 };
 
@@ -162,6 +164,7 @@ export const DECISIONS_ADR_GUIDANCE =
 export const NON_GOALS_GUIDANCE =
   "- Non-goals（或 Out of scope）明确不做什么。";
 export const PLAN_REVIEW_ARTIFACT_GUIDANCE = [
+  ...PLAN_SUBMIT_CHECKLIST,
   "- 从 UX/system flow 出发，先画 flow tree，再确定 architecture boundary。",
   ...FLOW_TREE_GUIDANCE,
   BOUNDARIES_SEQUENCE_GUIDANCE,

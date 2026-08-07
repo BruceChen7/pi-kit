@@ -10,19 +10,21 @@ import {
   isStandardMarkdownPlanArtifactPath,
   validateArtifactPolicy,
 } from "../plan-mode/artifact-policy.ts";
+import { PLAN_SUBMIT_CHECKLIST } from "../plan-mode/guidance.ts";
 import {
   createHandledState,
   type PiKitPlannotatorPendingReviewEvent,
   PLANNOTATOR_PENDING_REVIEW_CHANNEL,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
+import { pathsFromWriteToolInput } from "../shared/tool-targets.ts";
 import {
   type LavishDecision,
   runLavishOpenCli,
   runLavishPollCli,
   runPlannotatorPlanReviewCli,
 } from "./cli.ts";
-import { extractBashPathCandidates, resolveToolPaths } from "./helpers.ts";
+import { extractBashPathCandidates } from "./helpers.ts";
 import {
   checkLavishHtmlCompliance,
   decideLavishHtmlGate,
@@ -45,6 +47,17 @@ const MERMAID_RENDERING_GUIDANCE =
 const PLAN_REVIEW_SUBMIT_TOOL = "plannotator_auto_submit_review";
 const REVIEW_WIDGET_KEY = "plannotator-auto-review";
 const SYNC_PLANNOTATOR_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
+
+/**
+ * Markdown-only guidance appended to pending-review gate messages. HTML
+ * artifacts skip it: they have no `# heading` and no ```mermaid fenced
+ * blocks, so the guidance would actively mislead agents.
+ */
+const formatMarkdownReviewGuidance = (): string =>
+  [
+    ` ${KEEP_PLAN_HEADING_GUIDANCE} ${MERMAID_RENDERING_GUIDANCE}`,
+    ...PLAN_SUBMIT_CHECKLIST,
+  ].join("\n");
 
 const log = createLogger("plannotator-auto", { stderr: null });
 
@@ -185,15 +198,37 @@ export const clearReviewWidget = (ctx: ExtensionContext): void => {
 const formatPlanFileBulletList = (planFiles: string[]): string =>
   `- ${planFiles.join("\n- ")}`;
 
+export type ReviewGuidance = {
+  heading: string;
+  guidance: string;
+  deniedAction: string;
+};
+
+/**
+ * Pure decision: which gate-message pieces apply to a set of pending review
+ * targets. Markdown plans and HTML artifacts get different headings and
+ * guidance; a mixed set must keep the markdown guidance (the pre-submit
+ * checklist) instead of dropping it whenever any HTML target is present.
+ */
+export const selectReviewGuidance = (
+  targets: readonly string[],
+): ReviewGuidance => {
+  const hasHtml = targets.some((file) => isHtmlPath(file));
+  const hasMarkdown = targets.some((file) => !isHtmlPath(file));
+  return {
+    heading: hasHtml
+      ? "[LAVISH REVIEW - PENDING]"
+      : "[PLANNOTATOR AUTO - PENDING REVIEW]",
+    guidance: hasMarkdown ? formatMarkdownReviewGuidance() : "",
+    deniedAction: hasMarkdown
+      ? `If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`
+      : `If the user sends feedback, revise the artifact and call ${PLAN_REVIEW_SUBMIT_TOOL} again (optionally with a reply describing your changes).`,
+  };
+};
+
 const formatPendingPlanReviewGateMessage = (planFiles: string[]): string => {
   const targets = formatPlanFileBulletList(planFiles);
-  const htmlTarget = planFiles.some((file) => isHtmlPath(file));
-  const heading = htmlTarget
-    ? "[LAVISH REVIEW - PENDING]"
-    : "[PLANNOTATOR AUTO - PENDING REVIEW]";
-  const guidance = htmlTarget
-    ? ""
-    : ` ${KEEP_PLAN_HEADING_GUIDANCE} ${MERMAID_RENDERING_GUIDANCE}`;
+  const { heading, guidance } = selectReviewGuidance(planFiles);
   return [
     heading,
     "You still have pending review drafts:",
@@ -204,21 +239,14 @@ const formatPendingPlanReviewGateMessage = (planFiles: string[]): string => {
 
 const formatPendingPlanReviewPrompt = (planFiles: string[]): string => {
   const targets = formatPlanFileBulletList(planFiles);
-  const htmlTarget = planFiles.some((file) => isHtmlPath(file));
+  const {
+    heading,
+    guidance: markdownGuidance,
+    deniedAction,
+  } = selectReviewGuidance(planFiles);
   const nextAction =
     `Your next required action is calling ${PLAN_REVIEW_SUBMIT_TOOL} ` +
     "with one pending path.";
-  const deniedAction = htmlTarget
-    ? `If the user sends feedback, revise the artifact and call ${PLAN_REVIEW_SUBMIT_TOOL} again (optionally with a reply describing your changes).`
-    : `If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`;
-  // Markdown-only guidance: HTML plans have no `# heading` and do not use
-  // ```mermaid fenced blocks, so the guidance would actively mislead agents.
-  const markdownGuidance = htmlTarget
-    ? ""
-    : ` ${KEEP_PLAN_HEADING_GUIDANCE} ${MERMAID_RENDERING_GUIDANCE}`;
-  const heading = htmlTarget
-    ? "[LAVISH REVIEW - PENDING]"
-    : "[PLANNOTATOR AUTO - PENDING REVIEW]";
 
   return [
     heading,
@@ -400,7 +428,11 @@ export const handlePlanFileWrite = (
   args: unknown,
   planConfig: PlanFileConfig | null,
 ): boolean =>
-  queuePlanReviewsForToolPaths(ctx, planConfig, resolveToolPaths(args));
+  queuePlanReviewsForToolPaths(
+    ctx,
+    planConfig,
+    pathsFromWriteToolInput(args).map(({ rawPath }) => rawPath),
+  );
 
 export const handleBashPlanFileWrites = (
   ctx: ExtensionContext,

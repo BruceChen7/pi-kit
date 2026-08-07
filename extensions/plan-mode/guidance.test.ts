@@ -5,6 +5,8 @@ import {
   FLOW_TREE_GUIDANCE,
   IMPLEMENTATION_CALL_TREE_GUIDANCE,
   MERMAID_CONFIG_LIGHT,
+  PLAN_CONTENT_FORM_RULES,
+  PLAN_SUBMIT_CHECKLIST,
   todoDisciplineGuidance,
 } from "./guidance.js";
 
@@ -99,6 +101,54 @@ describe("IMPLEMENTATION_CALL_TREE_GUIDANCE", () => {
     const text = IMPLEMENTATION_CALL_TREE_GUIDANCE.join("\n");
     expect(text).toContain("├─");
     expect(text).toContain("└─");
+  });
+});
+
+describe("PLAN_CONTENT_FORM_RULES", () => {
+  it("defines the required content forms from the review contract", () => {
+    // Literal contract (independent source of truth): the four sections and
+    // their content forms fixed by the plan template review.
+    expect(
+      PLAN_CONTENT_FORM_RULES.map(({ section, form }) => ({ section, form })),
+    ).toEqual([
+      { section: "Current Flow", form: "mermaid" },
+      { section: "Desired Flow", form: "mermaid" },
+      { section: "Boundaries", form: "mermaid" },
+      { section: "Implementation", form: "ascii-call-tree" },
+    ]);
+  });
+
+  it("gives every rule a copyable fix suggestion", () => {
+    for (const rule of PLAN_CONTENT_FORM_RULES) {
+      expect(rule.suggestion).toBeTruthy();
+    }
+  });
+});
+
+describe("PLAN_SUBMIT_CHECKLIST", () => {
+  it("renders a checklist line for every content-form rule", () => {
+    const text = PLAN_SUBMIT_CHECKLIST.join("\n");
+    for (const rule of PLAN_CONTENT_FORM_RULES) {
+      expect(text).toContain(rule.section);
+    }
+  });
+
+  it("mentions the mermaid fence requirement", () => {
+    const text = PLAN_SUBMIT_CHECKLIST.join("\n");
+    expect(text).toContain("```mermaid");
+    expect(text).toContain("~~~mermaid");
+  });
+
+  it("mentions the ASCII call tree requirement", () => {
+    const text = PLAN_SUBMIT_CHECKLIST.join("\n");
+    expect(text).toContain("├─");
+    expect(text).toContain("└─");
+  });
+
+  it("reminds to reuse the same file and keep the first heading", () => {
+    const text = PLAN_SUBMIT_CHECKLIST.join("\n");
+    expect(text).toContain("同一个 plan 文件");
+    expect(text).toContain("第一个 # 标题");
   });
 });
 

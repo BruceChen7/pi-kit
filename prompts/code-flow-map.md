@@ -69,8 +69,9 @@ Build a `spec` object and call `create_visual_artifact` with:
 - `data`: `JSON.stringify(spec.data)` only when useful
 
 Keep the artifact under Visual Artifact limits: max 30 top-level nodes, max 100 total nodes. Fold
-detailed reference material into `accordion` nodes. 图注占用顶层预算（每张图 +2：`heading` + `text`）；
-若 3a/3b/4a/4b 全产出且预算吃紧，优先精简 3b 图注，不要砍 3a 或 Section 6。
+detailed reference material into `accordion` nodes. Captions count toward the top-level budget
+(each diagram +2: `heading` + `text`); if 3a/3b/4a/4b are all produced and the budget is tight,
+trim the 3b caption first — never cut 3a or Section 6.
 
 ### Section-to-node mapping
 
@@ -116,7 +117,6 @@ Always produce a `sequenceDiagram` showing cross-boundary message flow between p
 
 - Each distinct module, process, or external system is a `participant`.
 - Only show calls/messages between participants; do not draw internal branches here.
-- 跨 participant 的 fallback/重试/容灾属于跨 boundary 消息，必须画进 3a（哪怕只是一条 `A->>B: 降级请求`），不算"内部分支"。
 - If the flow has **no cross-boundary interaction** (pure in-process pipeline), note this
 explicitly and fall back to a single `flowchart` that combines 3a + 3b roles.
 
@@ -150,13 +150,14 @@ bootstrapDefaultManagedPlugins(cwd, plugins)
 └─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared
      └─ bootstrapPlugins(...)
           └─ 遍历: disabled.has(name) → skip
-               其余 → enablePlugin()  ← 副作用: 写 symlink, project.ts:142
+               其余 → enablePlugin()  ← 副作用: 写 symlink, extensions/plugin-toggle/project.ts:142
 ```
 
-- **副作用/IO 节点必须带 `file:line`**：`← 副作用: <类型>, <file:line>`，类型用固定词表（读文件/写文件/网络/子进程/时钟/env/全局状态）。
-- 纯逻辑节点（filter、判断）省略行号；一行一个节点，描述 ≤ 60 字符。
-- 深度 ≤ 6、总节点 ≤ 20：过长子树折叠为 `└─ … (N 项)`，更大拆成多棵子树。
-- **IO 完整性**：树必须穷尽所有副作用节点，只允许裁剪纯逻辑细节。
+- **Side-effect/IO nodes must carry `file:line`**: `← side effect: <type>, <full-path>:<line>`,
+  type from a fixed vocabulary (read-file/write-file/network/subprocess/clock/env/global-state).
+- Pure logic nodes (filter, branching) omit the line number; one node per line, description ≤ 60 chars.
+- Depth ≤ 6, total nodes ≤ 20: fold oversized subtrees as `└─ … (N items)`, or split into multiple trees.
+- **IO completeness**: the tree must cover every side-effect node; only pure-logic details may be trimmed.
 
 ### Compact spec shape
 
@@ -196,7 +197,7 @@ const spec = {
     // --- Section 6: boundary tree (强制, 独立顶层节点) ---
     // section 包裹 ASCII 调用树: 副作用节点带 file:line，纯逻辑节点省略行号
     { "type": "section", "props": { "title": "Boundary Map", "nodes": [
-      { "type": "code-block", "props": { "code": "bootstrapDefaultManagedPlugins(cwd, plugins)\n├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）\n└─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared\n     └─ bootstrapPlugins(...)\n          └─ 遍历: disabled.has(name) → skip\n               其余 → enablePlugin()  ← 副作用: 写 symlink, project.ts:142", "language": "text" } }
+      { "type": "code-block", "props": { "code": "bootstrapDefaultManagedPlugins(cwd, plugins)\n├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）\n└─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared\n     └─ bootstrapPlugins(...)\n          └─ 遍历: disabled.has(name) → skip\n               其余 → enablePlugin()  ← 副作用: 写 symlink, extensions/plugin-toggle/project.ts:142", "language": "text" } }
     ] } },
 
     // --- Section 7: details in accordion (2 项) ---
@@ -228,8 +229,6 @@ create_visual_artifact({
 ## Visual Artifact and Mermaid rules
 
 - Use Visual Artifact nodes, not standalone HTML.
-- Do not use `plannotator_auto_submit_review`.
-- Do not open a browser directly; the Visual Artifact tool handles the window.
 - **Diagrams are the highest-priority elements.** Always produce at minimum one `sequenceDiagram`
   (3a) and one data/state diagram (4). The logic `flowchart` (3b) is conditional on branch
   complexity. Every diagram must be a **top-level node**, never inside an accordion, and must be

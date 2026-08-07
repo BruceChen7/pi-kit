@@ -1,7 +1,9 @@
-// Plan artifact writing guidance shared by the plan-phase system prompt
-// (constants.ts) and the submit-time artifact policy (artifact-policy.ts).
-// Kept in a leaf module so both can import it without a cycle:
-// constants.ts imports artifact-policy.ts for getDefaultArtifactPolicyConfig.
+// Plan artifact writing guidance shared across extensions:
+//   - plan-mode system prompt (constants.ts, PLAN_REVIEW_ARTIFACT_GUIDANCE)
+//   - submit-time artifact policy (artifact-policy.ts, CONTENT_FORM_CHECKS)
+//   - plannotator-auto pending-review gate messages (plan-review.ts)
+// This module is a cross-extension seam: keep it a leaf (no extension
+// imports), so any consumer can depend on it without a cycle.
 
 // Mermaid frontmatter config for light-theme readability.
 // Every mermaid block in a plan artifact must start with this config block.
@@ -49,7 +51,7 @@ export const FLOW_TREE_GUIDANCE = [
   "- Desired Flow 标注新增、删除、修改的变化部分。",
   "- Mermaid 代码块必须以 Mermaid frontmatter config（--- / config: / themeVariables: / ---）开头，",
   "  确保浅色主题下文字和线条清晰可辨。示例：",
-  ...MERMAID_CONFIG_EXAMPLE.split("\n").map((l) => "  " + l),
+  ...MERMAID_CONFIG_EXAMPLE.split("\n").map((l) => `  ${l}`),
 ];
 export const BOUNDARIES_SEQUENCE_GUIDANCE =
   "- Boundaries 用 Mermaid sequenceDiagram 表达层间交互和 ownership。" +
@@ -68,6 +70,67 @@ export const IMPLEMENTATION_CALL_TREE_GUIDANCE = [
   "                   其余 → enablePlugin()  ← 副作用: 写 symlink",
   "- Mermaid 留给 Current Flow / Desired Flow / Boundaries 的架构层交互；",
   "  ASCII tree 用于 Implementation 的函数级调用链和条件分支。",
+];
+
+const stripGuidanceBullet = (line: string): string => line.replace(/^-\s*/, "");
+
+/** The content form a standard plan section must contain to pass the policy. */
+export type PlanContentForm = "mermaid" | "ascii-call-tree";
+
+/**
+ * Single source of truth for "what content form each plan section must
+ * have". The submit-time policy checks (artifact-policy.ts
+ * CONTENT_FORM_CHECKS) and the agent-facing pre-submit checklist
+ * (PLAN_SUBMIT_CHECKLIST) are both derived from this list, so the prompt
+ * guidance can never drift from the enforced rules.
+ */
+export const PLAN_CONTENT_FORM_RULES: readonly {
+  section: string;
+  form: PlanContentForm;
+  suggestion: string;
+}[] = [
+  {
+    section: "Current Flow",
+    form: "mermaid",
+    suggestion: `Add a \`\`\`mermaid block. ${stripGuidanceBullet(FLOW_TREE_GUIDANCE[0])}`,
+  },
+  {
+    section: "Desired Flow",
+    form: "mermaid",
+    suggestion: `Add a \`\`\`mermaid block. ${stripGuidanceBullet(FLOW_TREE_GUIDANCE[2])}`,
+  },
+  {
+    section: "Boundaries",
+    form: "mermaid",
+    suggestion: `Add a \`\`\`mermaid block. ${stripGuidanceBullet(BOUNDARIES_SEQUENCE_GUIDANCE)}`,
+  },
+  {
+    section: "Implementation",
+    form: "ascii-call-tree",
+    suggestion: stripGuidanceBullet(IMPLEMENTATION_CALL_TREE_GUIDANCE[0]),
+  },
+];
+
+const PLAN_CONTENT_FORM_HINTS: Record<PlanContentForm, string> = {
+  mermaid: "非空的 ```mermaid 代码块",
+  "ascii-call-tree": "├─ / └─ ASCII 调用树（不是只有文件列表或 prose）",
+};
+
+/**
+ * Pre-submit checklist shown to the agent in the plan-phase prompt and in
+ * the pending-review gate messages, so a first submission passes the local
+ * policy instead of bouncing back with a format-fix round-trip. The
+ * content-form lines are derived from PLAN_CONTENT_FORM_RULES; the fence
+ * and heading lines cover the other submit-time checks.
+ */
+export const PLAN_SUBMIT_CHECKLIST = [
+  "- 提交 plan 前先做一次 pre-submit checklist（对照 artifact policy）:",
+  ...PLAN_CONTENT_FORM_RULES.map(
+    ({ section, form }) =>
+      `  - ## ${section} 包含${PLAN_CONTENT_FORM_HINTS[form]}。`,
+  ),
+  "- Mermaid 使用 ```mermaid 围栏，不要使用 ~~~mermaid；每个代码块都要闭合。",
+  "- 首次提交和被拒绝后的重提都复用同一个 plan 文件，并保持第一个 # 标题不变。",
 ];
 
 /**

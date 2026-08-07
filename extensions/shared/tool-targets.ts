@@ -51,7 +51,7 @@ const pathsFromPatchHeaders = (patch: string): ToolTargetPath[] => {
 export const pathsFromWriteToolInput = (input: unknown): ToolTargetPath[] => {
   const rawPath = stringProperty(input, "path");
 
-  if (isRecord(input) && Array.isArray(input.multi)) {
+  if (isRecord(input) && Array.isArray(input.multi) && input.multi.length > 0) {
     return dedupeTargetPaths(pathsFromMultiEdit(input.multi, rawPath));
   }
 

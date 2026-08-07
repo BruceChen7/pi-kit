@@ -1,4 +1,4 @@
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, ProviderHeaders } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type AiCompletionContext = Pick<ExtensionContext, "model" | "modelRegistry">;
@@ -56,7 +56,7 @@ export async function generateKebabCaseIdFromDescription(
     },
     options: {
       apiKey?: string;
-      headers?: Record<string, string>;
+      headers?: ProviderHeaders;
       reasoningEffort?: "low" | "medium" | "high";
     },
   ) => Promise<{

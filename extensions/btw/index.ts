@@ -136,6 +136,7 @@ import type {
   Api,
   Message,
   Model,
+  ProviderHeaders,
   ThinkingLevel,
   Usage,
 } from "@earendil-works/pi-ai";
@@ -214,7 +215,7 @@ const MODEL_PROFILES: Record<ModelProfileName, ModelProfile> = {
 
 type ModelAuth = {
   apiKey: string;
-  headers?: Record<string, string>;
+  headers?: ProviderHeaders;
 };
 
 type ResolvedModelProfile = {

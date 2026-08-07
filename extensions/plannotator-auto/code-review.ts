@@ -4,8 +4,9 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { pathsFromWriteToolInput } from "../shared/tool-targets.ts";
 import { runPlannotatorAnnotateCli } from "./cli.ts";
-import { extractBashPathCandidates, resolveToolPaths } from "./helpers.ts";
+import { extractBashPathCandidates } from "./helpers.ts";
 import {
   isPathWithinCwd,
   isReviewDocumentPath,
@@ -97,7 +98,9 @@ export const recordSessionReviewDocumentWrites = (
     return;
   }
 
-  for (const toolPath of resolveToolPaths(args)) {
+  for (const toolPath of pathsFromWriteToolInput(args).map(
+    ({ rawPath }) => rawPath,
+  )) {
     recordSessionReviewDocumentPath(ctx, toolPath);
   }
 };

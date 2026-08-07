@@ -106,6 +106,16 @@ describe("multi-edit tool", () => {
         args: { patch: "*** Begin Patch\n*** End Patch" },
         expected: "edit ⚡ multi-edit patch",
       },
+      {
+        args: {
+          multi: [{ path: "a.txt", oldText: "one", newText: "1" }],
+          patch: "",
+          path: "",
+          oldText: "",
+          newText: "",
+        },
+        expected: "edit ⚡ multi-edit multi 1 edits / 1 files",
+      },
     ];
 
     for (const { args, expected } of cases) {
@@ -144,6 +154,79 @@ describe("multi-edit tool", () => {
     expect(result.content[0]?.text).toContain("Applied 2 edit(s) successfully");
     expect(await readFile(join(cwd, "a.txt"), "utf8")).toBe("alpha 1\n");
     expect(await readFile(join(cwd, "b.txt"), "utf8")).toBe("beta 2\n");
+  });
+
+  it("treats empty optional fields as absent placeholders", async () => {
+    const cases = [
+      {
+        name: "multi with empty patch/path/oldText/newText",
+        params: {
+          multi: [{ path: "note.txt", oldText: "before", newText: "after" }],
+          newText: "",
+          oldText: "",
+          patch: "",
+          path: "",
+        },
+        resultText: "Edited note.txt",
+        expectedContent: "after\n",
+      },
+      {
+        name: "patch with an empty multi array",
+        params: {
+          multi: [],
+          newText: "",
+          oldText: "",
+          patch: `*** Begin Patch
+*** Update File: note.txt
+-before
++after
+*** End Patch`,
+          path: "",
+        },
+        resultText: "Applied patch with 1 operation(s)",
+        expectedContent: "after\n",
+      },
+    ];
+
+    for (const { name, params, resultText, expectedContent } of cases) {
+      const cwd = await createTempDir();
+      await writeFile(join(cwd, "note.txt"), "before\n", "utf8");
+
+      const result = await executeEdit(registerToolForTest(), cwd, params);
+
+      expect(result.content[0]?.text, name).toContain(resultText);
+      expect(await readFile(join(cwd, "note.txt"), "utf8"), name).toBe(
+        expectedContent,
+      );
+    }
+  });
+
+  it("still rejects a patch combined with a non-empty multi", async () => {
+    const cwd = await createTempDir();
+    await writeFile(join(cwd, "note.txt"), "before\n", "utf8");
+
+    await expect(
+      executeEdit(registerToolForTest(), cwd, {
+        multi: [{ path: "note.txt", oldText: "before", newText: "after" }],
+        patch: "*** Begin Patch\n*** End Patch",
+      }),
+    ).rejects.toThrow("mutually exclusive");
+
+    expect(await readFile(join(cwd, "note.txt"), "utf8")).toBe("before\n");
+  });
+
+  it("supports single edits that delete text via an empty newText", async () => {
+    const cwd = await createTempDir();
+    await writeFile(join(cwd, "note.txt"), "before\n", "utf8");
+
+    const result = await executeEdit(registerToolForTest(), cwd, {
+      path: "note.txt",
+      oldText: "before",
+      newText: "",
+    });
+
+    expect(result.content[0]?.text).toContain("Edited note.txt");
+    expect(await readFile(join(cwd, "note.txt"), "utf8")).toBe("\n");
   });
 
   it("applies patch add, update, and delete operations", async () => {

@@ -100,6 +100,68 @@ type RenderableEditArgs = ClassicEditInput & {
   patch?: string;
 };
 
+// ---- edit mode classification (pure) -------------------------------------
+//
+// Some model providers serialize omitted optional fields as empty strings or
+// an empty array. These placeholders are treated as absent, while an empty
+// `newText` is preserved for a valid single-edit deletion. All interpretation
+// of the raw tool parameters lives here so execute and renderCall cannot
+// drift apart.
+
+const nonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0;
+
+const nonEmptyArray = (value: unknown): value is unknown[] =>
+  Array.isArray(value) && value.length > 0;
+
+type EditPlan =
+  | { mode: "patch"; patch: string }
+  | {
+      mode: "classic";
+      path?: string;
+      oldText?: string;
+      newText?: string;
+      multi?: MultiEditItem[];
+    };
+
+function normalizeEditParams(
+  raw: ClassicEditInput & { patch?: string },
+): EditPlan {
+  const patch = nonEmptyString(raw.patch) ? raw.patch : undefined;
+  const multi = nonEmptyArray(raw.multi) ? raw.multi : undefined;
+  const hasNonEmptyClassicParam = [raw.path, raw.oldText, raw.newText].some(
+    nonEmptyString,
+  );
+
+  if (patch !== undefined) {
+    if (multi !== undefined || hasNonEmptyClassicParam) {
+      throw new Error(
+        "The `patch` parameter is mutually exclusive with path/oldText/newText/multi.",
+      );
+    }
+    return { mode: "patch", patch };
+  }
+
+  return {
+    mode: "classic",
+    path: nonEmptyString(raw.path) ? raw.path : undefined,
+    oldText:
+      multi !== undefined && raw.oldText === "" ? undefined : raw.oldText,
+    newText:
+      multi !== undefined && raw.newText === "" ? undefined : raw.newText,
+    multi,
+  };
+}
+
+function getEditModeForRender(
+  args: RenderableEditArgs,
+): "patch" | "multi" | "single" | "none" {
+  if (nonEmptyString(args.patch)) return "patch";
+  if (nonEmptyArray(args.multi)) return "multi";
+  if (nonEmptyString(args.path)) return "single";
+  return "none";
+}
+
 interface UpdateChunk {
   changeContext?: string;
   oldLines: string[];
@@ -955,12 +1017,13 @@ function formatEditCall(args: RenderableEditArgs, theme: Theme): string {
   let text = theme.fg("toolTitle", theme.bold("edit "));
   text += theme.fg("muted", "⚡ multi-edit ");
 
-  if (args.patch !== undefined) {
+  const mode = getEditModeForRender(args);
+  if (mode === "patch") {
     return text + theme.fg("muted", "patch");
   }
 
   const paths = getRenderableClassicEditPaths(args);
-  if ((args.multi?.length ?? 0) > 0 || paths.length > 1) {
+  if (mode === "multi" || paths.length > 1) {
     const fileCount = new Set(paths).size;
     return (
       text +
@@ -1028,21 +1091,10 @@ export default function (pi: ExtensionAPI) {
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const { path, oldText, newText, multi, patch } = params;
+      const plan = normalizeEditParams(params);
 
-      const hasAnyClassicParam =
-        path !== undefined ||
-        oldText !== undefined ||
-        newText !== undefined ||
-        multi !== undefined;
-      if (patch !== undefined && hasAnyClassicParam) {
-        throw new Error(
-          "The `patch` parameter is mutually exclusive with path/oldText/newText/multi.",
-        );
-      }
-
-      if (patch !== undefined) {
-        const ops = parsePatch(patch);
+      if (plan.mode === "patch") {
+        const ops = parsePatch(plan.patch);
 
         // Preflight on virtual filesystem before mutating real files.
         await applyPatchOperations(
@@ -1064,7 +1116,7 @@ export default function (pi: ExtensionAPI) {
         return formatPatchResult(applied);
       }
 
-      const edits = buildClassicEdits({ path, oldText, newText, multi });
+      const edits = buildClassicEdits(plan);
 
       // Preflight pass on virtual workspace before mutating real files.
       // Uses sequential occurrence matching so same-file edits are resolved

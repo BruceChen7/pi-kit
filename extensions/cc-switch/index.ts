@@ -1,9 +1,11 @@
 /**
  * cc-switch — LLM provider integration for pi via AIS Switch.
  *
- * Reads the model catalog that cc_switch generates for Codex
- * (`~/.codex/ais-switch-model-catalog.json`) and registers the
- * models as a pi provider through the cc_switch local proxy.
+ * Imperative shell: loads the model catalog that cc_switch generates for
+ * Codex (`~/.codex/ais-switch-model-catalog.json`), converts it with the
+ * pure core (core.ts), and registers the models as a pi provider through
+ * the cc_switch local proxy. Also exposes `/cc-switch` status and
+ * `/cc-switch refresh` commands.
  *
  * Prerequisites:
  *   - AIS Switch (cc_switch) desktop app running with local proxy enabled
@@ -17,6 +19,7 @@ import type {
   ProviderConfig,
 } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "../shared/logger.ts";
+import { type CodexModelCatalog, catalogModelsToPiModels } from "./core.ts";
 
 const log = createLogger("cc-switch");
 
@@ -41,25 +44,7 @@ const CODEX_CATALOG_PATH = path.join(
 
 const PROVIDER_NAME = "cc-switch-gateway";
 
-// ── Types ──────────────────────────────────────────────────────────────────
-
-interface CodexModel {
-  slug: string;
-  display_name: string;
-  description: string;
-  context_window: number;
-  max_context_window: number;
-  input_modalities: string[];
-  default_reasoning_level: string;
-  supported_reasoning_levels: Array<{ effort: string; description: string }>;
-  priority?: number;
-}
-
-interface CodexModelCatalog {
-  models: CodexModel[];
-}
-
-// ── Model catalog loading ──────────────────────────────────────────────────
+// ── Model catalog loading (IO) ─────────────────────────────────────────────
 
 function loadModelCatalog(): CodexModelCatalog | null {
   try {
@@ -68,8 +53,20 @@ function loadModelCatalog(): CodexModelCatalog | null {
       return null;
     }
     const raw = fs.readFileSync(CODEX_CATALOG_PATH, "utf-8");
-    const catalog: CodexModelCatalog = JSON.parse(raw);
-    if (!catalog.models || catalog.models.length === 0) {
+    const parsed: unknown = JSON.parse(raw);
+
+    // IO boundary validation: only a well-formed container reaches the
+    // core. Entry-level defects are handled defensively inside
+    // catalogModelsToPiModels, which re-checks every field at runtime.
+    const maybe = parsed as Partial<CodexModelCatalog> | null;
+    if (!maybe || !Array.isArray(maybe.models)) {
+      log.warn(
+        `Model catalog at ${CODEX_CATALOG_PATH} has an unexpected shape`,
+      );
+      return null;
+    }
+    const catalog = maybe as CodexModelCatalog;
+    if (catalog.models.length === 0) {
       log.warn("Model catalog is empty");
       return null;
     }
@@ -81,69 +78,101 @@ function loadModelCatalog(): CodexModelCatalog | null {
   }
 }
 
-// ── Model conversion ───────────────────────────────────────────────────────
-
-function catalogModelsToPiModels(
-  models: CodexModel[],
-): ProviderConfig["models"] {
-  return models.map((m) => {
-    const input: ("text" | "image")[] = m.input_modalities.includes("image")
-      ? ["text", "image"]
-      : ["text"];
-
-    const thinkingLevelMap: Record<string, string | null> = {};
-    for (const rl of m.supported_reasoning_levels) {
-      const level = rl.effort as "low" | "medium" | "high" | "xhigh" | "max";
-      thinkingLevelMap[level] = level;
-    }
-
-    return {
-      id: m.slug,
-      name: m.display_name,
-      reasoning: true,
-      input,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: m.max_context_window || m.context_window || 1048576,
-      maxTokens: 131072,
-      compat: {
-        supportsDeveloperRole: false,
-        requiresAssistantAfterToolResult: false,
-      },
-    };
-  });
-}
-
-// ── Provider registration ──────────────────────────────────────────────────
+// ── Provider registration (side effect) ────────────────────────────────────
 
 function registerGatewayProvider(
   pi: ExtensionAPI,
   catalog: CodexModelCatalog,
-): void {
+): boolean {
   const models = catalogModelsToPiModels(catalog.models);
+  try {
+    pi.registerProvider(PROVIDER_NAME, {
+      name: "cc_switch Proxy",
+      baseUrl: PROXY_BASE_URL,
+      apiKey: API_KEY,
+      api: API_TYPE,
+      authHeader: true,
+      models,
+    });
+  } catch (err) {
+    log.error(`Failed to register provider "${PROVIDER_NAME}": ${err}`);
+    return false;
+  }
+  const skipped = catalog.models.length - models.length;
+  if (skipped > 0) {
+    log.warn(
+      `Skipped ${skipped} invalid catalog entries; registered ${models.length} models`,
+    );
+  } else {
+    log.info(
+      `Registered provider "${PROVIDER_NAME}" with ${models.length} models`,
+    );
+  }
+  return true;
+}
 
-  pi.registerProvider(PROVIDER_NAME, {
-    name: "cc_switch Proxy",
-    baseUrl: PROXY_BASE_URL,
-    apiKey: API_KEY,
-    api: API_TYPE,
-    authHeader: true,
-    models,
+// ── Commands ───────────────────────────────────────────────────────────────
+
+function registerCommands(pi: ExtensionAPI): void {
+  pi.registerCommand("cc-switch", {
+    description:
+      "Show cc_switch proxy/catalog status; use `refresh` to reload the model catalog",
+    handler: async (args, ctx) => {
+      const arg = args.trim();
+
+      if (arg === "refresh") {
+        const catalog = loadModelCatalog();
+        if (!catalog) {
+          ctx.ui.notify(
+            "cc_switch catalog not found — check that cc_switch is running " +
+              "and a provider with a Codex model catalog is configured",
+            "error",
+          );
+          return;
+        }
+        const ok = registerGatewayProvider(pi, catalog);
+        ctx.ui.notify(
+          ok
+            ? `Reloaded ${catalog.models.length} models from catalog`
+            : "Failed to reload models — see extension logs",
+          ok ? "info" : "error",
+        );
+        return;
+      }
+
+      if (arg !== "") {
+        ctx.ui.notify(
+          `Unknown cc-switch subcommand "${arg}" — use \`/cc-switch\` or \`/cc-switch refresh\``,
+          "error",
+        );
+        return;
+      }
+
+      const catalog = loadModelCatalog();
+      if (!catalog) {
+        ctx.ui.notify(
+          `cc_switch: proxy ${PROXY_BASE_URL} · catalog not loaded (${CODEX_CATALOG_PATH})`,
+          "error",
+        );
+        return;
+      }
+      ctx.ui.notify(
+        `cc_switch: proxy ${PROXY_BASE_URL} · provider ${PROVIDER_NAME} · ${catalog.models.length} models`,
+        "info",
+      );
+    },
   });
-
-  log.info(
-    `Registered provider "${PROVIDER_NAME}" with ${models.length} models`,
-  );
 }
 
 // ── Extension entry point ──────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI): void {
   // Register provider eagerly so models are available when pi resolves model
-  // patterns from settings.json.
+  // patterns from settings.json. After startup, `/cc-switch refresh`
+  // re-registers without a restart.
   const catalog = loadModelCatalog();
   if (catalog) {
     registerGatewayProvider(pi, catalog);
-    log.info(`Registered ${catalog.models.length} models from catalog`);
   } else {
     log.warn(
       "No model catalog found — cc_switch provider not registered. " +
@@ -151,4 +180,5 @@ export default function (pi: ExtensionAPI): void {
         "a Codex model catalog.",
     );
   }
+  registerCommands(pi);
 }

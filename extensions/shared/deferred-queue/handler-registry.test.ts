@@ -6,6 +6,9 @@ import { createExecContext } from "./handler-registry.ts";
  * through the public `exec` interface with a real child process, i.e. that
  * runaway output terminates the child and flags the result instead of
  * crashing the host (RangeError: Invalid string length regression).
+ *
+ * Pure-function tests for subagent arg building / summary extraction live
+ * in subagent-args.test.ts and summary-extractor.test.ts — no child process.
  */
 describe("exec overflow handling", () => {
   it("terminates runaway output and flags the result as truncated", async () => {

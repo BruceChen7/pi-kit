@@ -21,6 +21,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineTask } from "../../shared/deferred-queue/define-task.ts";
 import { log } from "../../shared/deferred-queue/logger.ts";
+import type {
+  SubagentOptions,
+  SubagentResult,
+} from "../../shared/deferred-queue/types.ts";
 import { escapeHtml, sendTelegramNotification } from "../../shared/telegram.ts";
 
 // ── Paths ──────────────────────────────────────────────────────────────────
@@ -54,6 +58,28 @@ const INDEX_SCRIPT = join(
 );
 
 const PROMPT_TEMPLATE_PATH = join(PI_KIT_DIR, "prompts", "wiki-summarize.md");
+
+/**
+ * Model pattern for the wiki-summarize subagent.
+ *
+ * Passed explicitly via `--models`. The subagent runs with
+ * `--no-extensions`, so the cc-switch-gateway provider is not registered
+ * there — without an explicit pattern, pi resolves the global
+ * `enabledModels` from settings and emits "No models match pattern"
+ * warnings for every cc-switch-gateway entry, then silently falls back.
+ * Pin the subagent to the same opencode-go model the main session uses.
+ */
+const SUBAGENT_MODEL = "opencode-go/deepseek-v4-flash";
+
+/**
+ * Subagent output mode.
+ *
+ * `text` keeps stdout to just the final reply (KB scale). The default
+ * `json` mode emits the full session event stream (thinking deltas, tool
+ * I/O) — a 10-minute wiki batch produced ~25MB and got SIGTERMed by the
+ * stdout cap. Text mode removes that failure mode entirely.
+ */
+const SUBAGENT_OUTPUT_MODE = "text" as const;
 
 const QMD_EMBED_MODEL =
   "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf";
@@ -472,6 +498,45 @@ async function runBatchesConcurrently(
 }
 
 /**
+ * Pure: interpret a subagent result into a batch outcome.
+ *
+ * Value in / value out — no IO. The shell (`processBatch`) only needs to
+ * call the subagent, log, and return this function's output.
+ *
+ * Failure rules:
+ * - Non-zero exit code, or the agent reporting `ok: false`, fails the batch.
+ * - The agent's `done` text is authoritative; without it, stderr (truncated
+ *   to 500 chars) is used as the failure reason.
+ *
+ * @param result - Raw subagent result (exit code, stderr, extracted summary)
+ * @returns The batch outcome for aggregation
+ */
+/** @internal Exported for testing only. */
+export function interpretBatchResult(result: {
+  exitCode: number;
+  stderr: string;
+  summary?: string;
+}): BatchResult {
+  const parsed = parseResultJson(result.summary);
+
+  if (result.exitCode !== 0 || parsed?.ok === false) {
+    const stderrSnippet = result.stderr.slice(0, 500);
+    return {
+      ok: false,
+      // `||` not `??`: an empty stderr snippet must still fall through to
+      // the "unknown error" default ("" is not nullish).
+      done: parsed?.done ?? (stderrSnippet || "unknown error"),
+    };
+  }
+
+  return {
+    ok: true,
+    done: parsed?.done,
+    summaries: parsed?.summaries,
+  };
+}
+
+/**
  * Process a batch of stale files through a single Pi subagent call.
  *
  * Builds a scoped prompt for the batch, runs the wiki-summarize pipeline
@@ -482,18 +547,7 @@ async function runBatchesConcurrently(
  * subagent does not know about other batches.
  */
 async function processBatch(
-  exec: {
-    subagent: (opts: {
-      prompt: string;
-      promptTemplatePaths?: string[];
-      timeoutMs?: number;
-    }) => Promise<{
-      exitCode: number;
-      stdout: string;
-      stderr: string;
-      summary?: string;
-    }>;
-  },
+  exec: { subagent: (opts: SubagentOptions) => Promise<SubagentResult> },
   batch: string[],
   batchIndex: number,
   totalBatches: number,
@@ -509,28 +563,22 @@ async function processBatch(
   const result = await exec.subagent({
     prompt,
     promptTemplatePaths: [PROMPT_TEMPLATE_PATH],
+    // Explicit model: resolves against opencode-go instead of the global
+    // enabledModels (which reference cc-switch-gateway models unavailable
+    // under --no-extensions) — no warnings, no silent fallback surprises.
+    model: SUBAGENT_MODEL,
+    // text mode: stdout stays at final-reply scale (KB), so long batches
+    // can no longer hit the stdout cap and get SIGTERMed.
+    outputMode: SUBAGENT_OUTPUT_MODE,
     timeoutMs: SUBAGENT_TIMEOUT_MS,
   });
 
-  const parsed = parseResultJson(result.summary);
   log.info("subagent batch completed", {
     exitCode: result.exitCode,
-    parsedOk: parsed?.ok,
     batch: `${batchIndex + 1}/${totalBatches}`,
   });
 
-  if (result.exitCode !== 0 || parsed?.ok === false) {
-    return {
-      ok: false,
-      done: parsed?.done ?? result.stderr.slice(0, 500) ?? "unknown error",
-    };
-  }
-
-  return {
-    ok: true,
-    done: parsed?.done,
-    summaries: parsed?.summaries,
-  };
+  return interpretBatchResult(result);
 }
 
 // ── Shell: run a qmd CLI step with error handling ────────────────────────
@@ -682,18 +730,7 @@ interface SummarizePipelineResult {
  */
 /** @internal Exported for testing only. */
 export async function runSummarizePipeline(
-  exec: {
-    subagent: (opts: {
-      prompt: string;
-      promptTemplatePaths?: string[];
-      timeoutMs?: number;
-    }) => Promise<{
-      exitCode: number;
-      stdout: string;
-      stderr: string;
-      summary?: string;
-    }>;
-  },
+  exec: { subagent: (opts: SubagentOptions) => Promise<SubagentResult> },
   staleFiles: string[],
 ): Promise<SummarizePipelineResult> {
   if (staleFiles.length === 0) {

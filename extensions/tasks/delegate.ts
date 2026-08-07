@@ -248,13 +248,9 @@ export async function runDelegation(
           ).trim(),
         );
       }
-      const wtJson = parseJson(wtResponse.stdout) ?? {};
-      const wtResult =
-        typeof wtJson.result === "object" && wtJson.result !== null
-          ? (wtJson.result as Record<string, unknown>)
-          : {};
-      workspaceId = String(wtResult.workspace_id ?? wtJson.workspace_id ?? "");
-      tabId = String(wtResult.tab_id ?? wtJson.tab_id ?? "");
+      const created = parseCreatedResponse(wtResponse.stdout);
+      workspaceId = created.workspaceId;
+      tabId = created.tabId;
     }
 
     const promptPath = path.join(runDir, "prompt.md");
@@ -297,34 +293,14 @@ export async function runDelegation(
           ).trim(),
         );
       }
-      const tabJson = parseJson(tabResponse.stdout) ?? {};
-      const tabResult =
-        typeof tabJson.result === "object" && tabJson.result !== null
-          ? (tabJson.result as Record<string, unknown>)
-          : {};
-      tabId = String(tabResult.tab_id ?? tabJson.tab_id ?? "");
-      workspaceId = String(
-        tabResult.workspace_id ?? tabJson.workspace_id ?? "",
-      );
+      const created = parseCreatedResponse(tabResponse.stdout);
+      workspaceId = created.workspaceId;
+      tabId = created.tabId;
     }
 
-    // Find the pane created in this tab.
-    const paneResponse = await pi.exec(
-      "herdr",
-      ["pane", "list", "--workspace", workspaceId],
-      { timeout: 10_000 },
-    );
-    const paneJson = parseJson(paneResponse.stdout) ?? {};
-    const paneResult =
-      typeof paneJson.result === "object" && paneJson.result !== null
-        ? (paneJson.result as Record<string, unknown>)
-        : {};
-    const panes = (paneResult.panes ?? []) as Array<Record<string, unknown>>;
-    const pane = panes.find((p) => p.tab_id === tabId);
-    if (!pane?.pane_id) {
-      throw new Error(`No pane found for tab ${tabId}`);
-    }
-    const paneId = String(pane.pane_id);
+    // The created tab's root pane is where we spawn the agent. For tabs
+    // created by us (both modes), root_pane is the single fresh pane.
+    const paneId = await resolvePaneId(pi, workspaceId, tabId);
 
     // Rename the pane to the agent label.
     await pi.exec("herdr", ["pane", "rename", paneId, agentLabel], {
@@ -414,11 +390,9 @@ export async function removeWorktree(
     const worktrees = (listResult.worktrees ?? []) as Array<
       Record<string, unknown>
     >;
-    workspaceId = String(
-      listResult.workspace_id ??
-        worktrees.find((w) => w.path === worktreePath)?.workspace_id ??
-        "",
-    );
+    // Each entry carries open_workspace_id (herdr worktree_list schema).
+    const entry = worktrees.find((w) => w.path === worktreePath);
+    workspaceId = String(entry?.open_workspace_id ?? entry?.workspace_id ?? "");
   }
 
   if (!workspaceId) {
@@ -448,6 +422,74 @@ function parseJson(raw: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Extract tab/workspace/pane ids from a herdr "created" response. Real
+ * response shape (herdr api/schema/response.rs):
+ *   result: { tab: { tab_id, workspace_id, ... },
+ *             root_pane: { pane_id, tab_id, workspace_id, ... },
+ *             workspace: { id, ... }, worktree: {...} }
+ * Both `tab create` (TabCreated) and `worktree create` (WorktreeCreated)
+ * share this shape.
+ */
+function parseCreatedResponse(raw: string): {
+  tabId: string;
+  workspaceId: string;
+  paneId: string;
+} {
+  const json = parseJson(raw) ?? {};
+  const result =
+    typeof json.result === "object" && json.result !== null
+      ? (json.result as Record<string, unknown>)
+      : {};
+  const tab =
+    typeof result.tab === "object" && result.tab !== null
+      ? (result.tab as Record<string, unknown>)
+      : {};
+  const rootPane =
+    typeof result.root_pane === "object" && result.root_pane !== null
+      ? (result.root_pane as Record<string, unknown>)
+      : {};
+  const workspace =
+    typeof result.workspace === "object" && result.workspace !== null
+      ? (result.workspace as Record<string, unknown>)
+      : {};
+  return {
+    tabId: String(tab.tab_id ?? ""),
+    workspaceId: String(
+      workspace.id ?? tab.workspace_id ?? rootPane.workspace_id ?? "",
+    ),
+    paneId: String(rootPane.pane_id ?? ""),
+  };
+}
+
+/**
+ * Resolve the pane to spawn in for a tab. Prefers the root pane reported at
+ * creation (fresh tab = single pane), falling back to a pane list lookup.
+ */
+async function resolvePaneId(
+  pi: ExtensionAPI,
+  workspaceId: string,
+  tabId: string,
+): Promise<string> {
+  // Try pane list first (authoritative current state).
+  const paneResponse = await pi.exec(
+    "herdr",
+    ["pane", "list", "--workspace", workspaceId],
+    { timeout: 10_000 },
+  );
+  if (paneResponse.code === 0) {
+    const paneJson = parseJson(paneResponse.stdout) ?? {};
+    const paneResult =
+      typeof paneJson.result === "object" && paneJson.result !== null
+        ? (paneJson.result as Record<string, unknown>)
+        : {};
+    const panes = (paneResult.panes ?? []) as Array<Record<string, unknown>>;
+    const pane = panes.find((p) => p.tab_id === tabId);
+    if (pane?.pane_id) return String(pane.pane_id);
+  }
+  throw new Error(`No pane found for tab ${tabId}`);
 }
 
 export function shellQuote(value: string): string {

@@ -482,9 +482,10 @@ export function registerTools(pi: ExtensionAPI, getProjectRoot: () => string) {
       try {
         const dbPath = defaultDbPath(getProjectRoot());
         const projectRoot = getProjectRoot();
-        const { ok, task, error } = await withDb<{
+        const { ok, task, previousStatus, error } = await withDb<{
           ok: boolean;
           task?: S.Task | null;
+          previousStatus?: S.TaskStatus | null;
           error?: string | null;
         }>(dbPath, (db) => {
           const task = S.findTaskByKey(db, String(params.taskKey));
@@ -499,13 +500,19 @@ export function registerTools(pi: ExtensionAPI, getProjectRoot: () => string) {
             };
           }
           try {
+            const previousStatus = task.status;
             const r = S.delegateTask(db, {
               taskId: task.id,
               agentId: delegatedAgentLabel(task),
             });
             return {
               db: r.db,
-              result: { ok: true, task: r.task, error: null },
+              result: {
+                ok: true,
+                task: r.task,
+                previousStatus,
+                error: null,
+              },
             };
           } catch (err) {
             return {
@@ -552,7 +559,13 @@ export function registerTools(pi: ExtensionAPI, getProjectRoot: () => string) {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           await withDb(dbPath, (db) => {
-            const r = S.createComment(db, {
+            // Roll back status + delegation; keep the failure comment.
+            const rolledBack = S.rollbackDelegation(
+              db,
+              task.id,
+              previousStatus ?? "backlog",
+            );
+            const r = S.createComment(rolledBack, {
               taskId: task.id,
               kind: "system",
               authorName: "Tasks",
@@ -561,7 +574,7 @@ export function registerTools(pi: ExtensionAPI, getProjectRoot: () => string) {
             return { db: r.db, result: null };
           });
           return errorResult(
-            `Delegation failed: ${message}. Task state unchanged (system comment recorded).`,
+            `Delegation failed: ${message}. Task rolled back to previous state (system comment recorded).`,
           );
         }
       } catch (err) {

@@ -100,6 +100,8 @@ export type CrSession = {
 export type CrAnnotation = {
   file: string;
   line: number;
+  /** End line for multi-line ranges (optional). */
+  end_line?: number;
   side?: string;
   snippet?: string;
   /** review.nvim-style comment type (fix / note / question). */

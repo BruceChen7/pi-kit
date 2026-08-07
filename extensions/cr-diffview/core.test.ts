@@ -127,7 +127,13 @@ describe("cr-diffview socket payload core", () => {
 
   it("shows line ranges when end_line differs from line", () => {
     const prompt = formatAnnotationsPrompt([
-      { file: "src/a.ts", line: 10, end_line: 14, type: "fix", comment: "range fix" },
+      {
+        file: "src/a.ts",
+        line: 10,
+        end_line: 14,
+        type: "fix",
+        comment: "range fix",
+      },
       { file: "src/a.ts", line: 20, comment: "single line" },
     ]);
 

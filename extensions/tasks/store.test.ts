@@ -752,7 +752,10 @@ describe("status/priority validation", () => {
     });
     db = db2;
     expect(() =>
-      S.updateTask(db, { taskId: task.id, priority: "hi" as unknown as import("./contract.ts").TaskPriority }),
+      S.updateTask(db, {
+        taskId: task.id,
+        priority: "hi" as unknown as import("./contract.ts").TaskPriority,
+      }),
     ).toThrow("Invalid priority: hi");
   });
 
@@ -765,7 +768,10 @@ describe("status/priority validation", () => {
     });
     db = db2;
     expect(() =>
-      S.boardMove(db, { taskId: task.id, status: "nope" as unknown as import("./contract.ts").TaskStatus }),
+      S.boardMove(db, {
+        taskId: task.id,
+        status: "nope" as unknown as import("./contract.ts").TaskStatus,
+      }),
     ).toThrow("Invalid status: nope");
   });
 

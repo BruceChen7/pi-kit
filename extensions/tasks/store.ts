@@ -24,6 +24,7 @@ import type {
   TasksDb,
   UpdateTaskInput,
 } from "./contract.ts";
+import { TASK_PRIORITIES, TASK_STATUSES } from "./contract.ts";
 
 export type {
   BoardMoveInput,
@@ -269,6 +270,16 @@ export function createTask(
   }
   const status = input.status ?? "backlog";
   const priority = input.priority ?? "none";
+  if (!TASK_STATUSES.includes(status)) {
+    throw new Error(
+      `Invalid status: ${status}. Expected one of ${TASK_STATUSES.join("|")}`,
+    );
+  }
+  if (!TASK_PRIORITIES.includes(priority)) {
+    throw new Error(
+      `Invalid priority: ${priority}. Expected one of ${TASK_PRIORITIES.join("|")}`,
+    );
+  }
   const labelIds = input.labelIds ?? [];
   // Validate labelIds belong to the project (when provided).
   for (const labelId of labelIds) {
@@ -326,6 +337,19 @@ export function updateTask(
 ): { db: TasksDb; task: Task } {
   const existing = findTask(db, input.taskId);
   if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+  if (input.status !== undefined && !TASK_STATUSES.includes(input.status)) {
+    throw new Error(
+      `Invalid status: ${input.status}. Expected one of ${TASK_STATUSES.join("|")}`,
+    );
+  }
+  if (
+    input.priority !== undefined &&
+    !TASK_PRIORITIES.includes(input.priority)
+  ) {
+    throw new Error(
+      `Invalid priority: ${input.priority}. Expected one of ${TASK_PRIORITIES.join("|")}`,
+    );
+  }
 
   const next: Task = {
     ...existing,
@@ -550,6 +574,11 @@ export function boardMove(
 ): { db: TasksDb; task: Task } {
   const existing = findTask(db, input.taskId);
   if (!existing) throw new Error(`Task not found: ${input.taskId}`);
+  if (!TASK_STATUSES.includes(input.status)) {
+    throw new Error(
+      `Invalid status: ${input.status}. Expected one of ${TASK_STATUSES.join("|")}`,
+    );
+  }
 
   const group = db.tasks
     .filter(

@@ -717,3 +717,83 @@ describe("clearWorktreeInfo", () => {
     expect(S.findTask(db3, task.id)?.delegation).toBeNull();
   });
 });
+
+describe("status/priority validation", () => {
+  it("rejects invalid priority on create", () => {
+    const db = withProject(freshDb());
+    const project = S.listProjects(db)[0];
+    expect(() =>
+      S.createTask(db, {
+        projectId: project.id,
+        title: "Bad priority",
+        priority: "hi" as unknown as import("./contract.ts").TaskPriority,
+      }),
+    ).toThrow("Invalid priority: hi");
+  });
+
+  it("rejects invalid status on create", () => {
+    const db = withProject(freshDb());
+    const project = S.listProjects(db)[0];
+    expect(() =>
+      S.createTask(db, {
+        projectId: project.id,
+        title: "Bad status",
+        status: "wip" as unknown as import("./contract.ts").TaskStatus,
+      }),
+    ).toThrow("Invalid status: wip");
+  });
+
+  it("rejects invalid priority on update", () => {
+    let db = withProject(freshDb());
+    const project = S.listProjects(db)[0];
+    const { db: db2, task } = S.createTask(db, {
+      projectId: project.id,
+      title: "T",
+    });
+    db = db2;
+    expect(() =>
+      S.updateTask(db, { taskId: task.id, priority: "hi" as unknown as import("./contract.ts").TaskPriority }),
+    ).toThrow("Invalid priority: hi");
+  });
+
+  it("rejects invalid status on board move", () => {
+    let db = withProject(freshDb());
+    const project = S.listProjects(db)[0];
+    const { db: db2, task } = S.createTask(db, {
+      projectId: project.id,
+      title: "T",
+    });
+    db = db2;
+    expect(() =>
+      S.boardMove(db, { taskId: task.id, status: "nope" as unknown as import("./contract.ts").TaskStatus }),
+    ).toThrow("Invalid status: nope");
+  });
+
+  it("accepts valid priorities and statuses", () => {
+    const db = withProject(freshDb());
+    const project = S.listProjects(db)[0];
+    for (const priority of ["urgent", "high", "medium", "low", "none"]) {
+      const r = S.createTask(db, {
+        projectId: project.id,
+        title: `p-${priority}`,
+        priority: priority as import("./contract.ts").TaskPriority,
+      });
+      expect(r.task.priority).toBe(priority);
+    }
+    for (const status of [
+      "backlog",
+      "todo",
+      "in_progress",
+      "in_review",
+      "done",
+      "canceled",
+    ]) {
+      const r = S.createTask(db, {
+        projectId: project.id,
+        title: `s-${status}`,
+        status: status as import("./contract.ts").TaskStatus,
+      });
+      expect(r.task.status).toBe(status);
+    }
+  });
+});

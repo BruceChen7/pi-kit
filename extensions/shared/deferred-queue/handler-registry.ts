@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { log } from "./logger.ts";
 import { bindCollector, createOutputCollector } from "./output-collector.ts";
-import { extractAssistantSummary } from "./summary-extractor.ts";
+import { buildSubagentArgs, extractSubagentSummary } from "./subagent-args.ts";
 import type {
   ExecContext,
   ExecResult,
@@ -14,10 +13,16 @@ import type {
  * Output caps (in characters) for spawned child processes.
  * Subagent caps match the librarian runner conventions; exec is more
  * generous since CLI output is the task's data, not a control stream.
+ *
+ * Subagents run with `--mode json` by default, so their stdout carries the
+ * full session event stream (thinking deltas, tool I/O, messages).
+ * Long-running summary tasks easily exceed a 2MB cap within a minute;
+ * 16MB matches the exec cap and leaves headroom. Per-call overrides via
+ * SubagentOptions.
  */
 const MAX_EXEC_STDOUT_CHARS = 16 * 1024 * 1024;
 const MAX_EXEC_STDERR_CHARS = 512 * 1024;
-const MAX_SUBAGENT_STDOUT_CHARS = 2 * 1024 * 1024;
+const MAX_SUBAGENT_STDOUT_CHARS = 16 * 1024 * 1024;
 const MAX_SUBAGENT_STDERR_CHARS = 512 * 1024;
 
 /**
@@ -89,37 +94,16 @@ function createExecHandler(): ExecContext["exec"] {
  * Reference: extensions/librarian/index.ts
  */
 function createSubagentHandler(): ExecContext["subagent"] {
-  const _SUBAGENT_EXTENSION_PATH = fileURLToPath(import.meta.url);
-
   return (options: SubagentOptions): Promise<SubagentResult> => {
     const {
       prompt,
-      extensionPaths,
-      promptTemplatePaths,
+      maxStdoutChars,
+      outputMode = "json",
       timeoutMs = 30_000,
       spawnOptions,
     } = options;
 
-    const args = [
-      "--mode",
-      "json",
-      "-p",
-      "--no-session",
-      "--no-extensions",
-      "--no-themes",
-    ];
-
-    if (extensionPaths && extensionPaths.length > 0) {
-      for (const ext of extensionPaths) {
-        args.push("-e", ext);
-      }
-    }
-
-    if (promptTemplatePaths && promptTemplatePaths.length > 0) {
-      for (const pt of promptTemplatePaths) {
-        args.push("--prompt-template", pt);
-      }
-    }
+    const args = buildSubagentArgs(options);
 
     log.info("subagent: spawning pi process", {
       promptPreview: prompt.slice(0, 100),
@@ -134,7 +118,8 @@ function createSubagentHandler(): ExecContext["subagent"] {
         ...spawnOptions,
       });
 
-      const stdout = createOutputCollector(MAX_SUBAGENT_STDOUT_CHARS);
+      const stdoutCap = maxStdoutChars ?? MAX_SUBAGENT_STDOUT_CHARS;
+      const stdout = createOutputCollector(stdoutCap);
       const stderr = createOutputCollector(MAX_SUBAGENT_STDERR_CHARS);
       // Summary extracted just before truncation, so the last assistant
       // message survives even when the tail of the stream is dropped.
@@ -151,9 +136,9 @@ function createSubagentHandler(): ExecContext["subagent"] {
 
       bindCollector(proc.stdout, stdout, () => {
         log.warn("subagent: stdout exceeded cap, terminating", {
-          maxChars: MAX_SUBAGENT_STDOUT_CHARS,
+          maxChars: stdoutCap,
         });
-        fallbackSummary ??= extractAssistantSummary(stdout.value);
+        fallbackSummary ??= extractSubagentSummary(outputMode, stdout.value);
         proc.kill("SIGTERM");
       });
 
@@ -177,7 +162,11 @@ function createSubagentHandler(): ExecContext["subagent"] {
         settled = true;
         clearTimeout(timer);
         const finalStdout = stdout.value;
-        const summary = extractAssistantSummary(finalStdout) ?? fallbackSummary;
+        const summary = extractSubagentSummary(
+          outputMode,
+          finalStdout,
+          fallbackSummary,
+        );
         log.info("subagent: completed", {
           exitCode,
           stdoutLength: finalStdout.length,

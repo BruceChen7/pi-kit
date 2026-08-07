@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   aggregateBatchResults,
   buildSubagentPrompt,
+  interpretBatchResult,
   parseResultJson,
   runQmdStep,
   runShardMigration,
@@ -419,6 +420,69 @@ describe("aggregateBatchResults", () => {
   });
 });
 
+// ── interpretBatchResult ──────────────────────────────
+
+describe("interpretBatchResult", () => {
+  const okSummary = (done = "done") =>
+    JSON.stringify({ ok: true, done, summaries: ["S1"] });
+
+  it("succeeds on exit 0 with an ok:true summary", () => {
+    expect(
+      interpretBatchResult({
+        exitCode: 0,
+        stderr: "",
+        summary: okSummary("Phase 1 done"),
+      }),
+    ).toEqual({ ok: true, done: "Phase 1 done", summaries: ["S1"] });
+  });
+
+  it("fails on non-zero exit code even when the summary says ok", () => {
+    const result = interpretBatchResult({
+      exitCode: 143,
+      stderr: "",
+      summary: okSummary(),
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("fails when the agent reports ok:false and uses its done text", () => {
+    const result = interpretBatchResult({
+      exitCode: 0,
+      stderr: "",
+      summary: JSON.stringify({ ok: false, done: "Phase 2 failed: boom" }),
+    });
+    expect(result).toEqual({ ok: false, done: "Phase 2 failed: boom" });
+  });
+
+  it("falls back to stderr (truncated to 500 chars) when done text is missing", () => {
+    const stderr = "x".repeat(600);
+    const result = interpretBatchResult({
+      exitCode: 1,
+      stderr,
+      summary: undefined,
+    });
+    expect(result).toEqual({ ok: false, done: "x".repeat(500) });
+  });
+
+  it("uses 'unknown error' when both done text and stderr are empty", () => {
+    const result = interpretBatchResult({
+      exitCode: 1,
+      stderr: "",
+      summary: undefined,
+    });
+    expect(result).toEqual({ ok: false, done: "unknown error" });
+  });
+
+  it("prefers the agent's done text over stderr", () => {
+    const result = interpretBatchResult({
+      exitCode: 1,
+      stderr: "noise in stderr",
+      summary: JSON.stringify({ ok: false, done: "agent says why" }),
+    });
+    expect(result).toEqual({ ok: false, done: "agent says why" });
+  });
+});
+
 // ── runSummarizePipeline ──────────────────────────────
 
 describe("runSummarizePipeline", () => {
@@ -482,6 +546,40 @@ describe("runSummarizePipeline", () => {
     expect(mock.maxInFlight).toBe(3);
     expect(mock.subagent).toHaveBeenCalledTimes(4);
     expect(result.wikiSummaryDone).toContain("Batch 4");
+  });
+
+  // Configuration-contract test: runSummarizePipeline's public return value
+  // cannot observe what options reach the subagent, so this asserts the
+  // wiring of the pinned model/outputMode constants. It is not a
+  // behavior test — behavior lives in interpretBatchResult's table tests.
+  it("pins the subagent model, output mode, and timeout for every batch", async () => {
+    const mock = deferredSubagentMock();
+
+    // BATCH_SIZE = 3 → 4 files → 2 batches.
+    const files = ["A.md", "B.md", "C.md", "D.md"];
+    const pipelinePromise = runSummarizePipeline(
+      { subagent: mock.subagent },
+      files,
+    );
+
+    await vi.waitFor(() => expect(mock.resolvers).toHaveLength(2));
+    for (const resolve of mock.resolvers) {
+      resolve(makeOkResult());
+    }
+    await pipelinePromise;
+
+    for (const call of mock.subagent.mock.calls) {
+      const options = call[0] as {
+        model?: string;
+        outputMode?: "json" | "text";
+        promptTemplatePaths?: string[];
+        timeoutMs?: number;
+      };
+      expect(options.model).toBe("opencode-go/deepseek-v4-flash");
+      expect(options.outputMode).toBe("text");
+      expect(options.promptTemplatePaths).toHaveLength(1);
+      expect(options.timeoutMs).toBe(600_000);
+    }
   });
 
   it("collects results in batch order regardless of completion order", async () => {

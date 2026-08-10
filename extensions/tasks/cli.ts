@@ -666,7 +666,7 @@ export function registerCommands(pi: ExtensionAPI) {
         case "board": {
           notify(ctx, ["Opening board view..."]);
           try {
-            await openTasksBoard(getProjectRoot());
+            await openTasksBoard(pi, getProjectRoot());
           } catch (err) {
             notify(ctx, [`Failed to open board: ${err}`], "error");
           }
@@ -685,9 +685,16 @@ export function registerCommands(pi: ExtensionAPI) {
           }
           let instructions: string | undefined;
           let useWorktree = false;
+          let delegateBranch: string | undefined;
+          let baseBranch: string | undefined;
           for (let i = 1; i < rest.length; i++) {
             if (rest[i] === "--instructions") instructions = rest[i + 1];
-            if (rest[i] === "--worktree") useWorktree = true;
+            else if (rest[i] === "--worktree") useWorktree = true;
+            else if (rest[i] === "--branch" && rest[i + 1]) {
+              delegateBranch = rest[++i];
+            } else if (rest[i] === "--base" && rest[i + 1]) {
+              baseBranch = rest[++i];
+            }
           }
           const projectRoot = getProjectRoot();
           try {
@@ -749,6 +756,8 @@ export function registerCommands(pi: ExtensionAPI) {
                   projectRoot,
                   instructions,
                   worktree: useWorktree,
+                  branch: delegateBranch,
+                  baseBranch,
                 },
               );
               if (d.worktreePath && d.branch && d.workspaceId && result.task) {
@@ -756,6 +765,7 @@ export function registerCommands(pi: ExtensionAPI) {
                   db: S.updateDelegationWorktree(db, result.task.id, {
                     worktreePath: d.worktreePath,
                     branch: d.branch,
+                    baseBranch: d.baseBranch,
                     workspaceId: d.workspaceId,
                   }),
                   result: null,

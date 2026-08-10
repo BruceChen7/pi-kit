@@ -4,7 +4,7 @@
  * Replaces the legacy todos/kanban/feature-workflow systems. Provides:
  *  - Custom tools (task_create/list/show/update/comment/project_list)
  *  - /issue CLI commands
- *  - Glimpse board/list/detail UI (方案 A layout)
+ *  - Interactive Glimpse board UI (Svelte + ui-bridge + fs.watch realtime)
  *  - Agent skill (skills/tasks/SKILL.md)
  */
 

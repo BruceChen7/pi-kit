@@ -10,12 +10,21 @@
     "includes": [
       "**",
       "!extensions/cache-graph/ui-dist",
-      "!skills/render-markdown/scripts"
+      "!skills/render-markdown/scripts",
+      "!skills"
     ]
   },
   "overrides": [
     {
       "includes": ["extensions/visual-artifact/ui/src/styles/globals.css"],
+      "css": {
+        "parser": {
+          "tailwindDirectives": true
+        }
+      }
+    },
+    {
+      "includes": ["extensions/tasks/ui/src/styles.css"],
       "css": {
         "parser": {
           "tailwindDirectives": true

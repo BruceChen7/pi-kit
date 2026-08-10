@@ -53,6 +53,7 @@
     "test:wiki-concept": "vitest run skills/knowledge-wiki/concept/wiki-concept.test.ts",
     "cache-graph:ui:build": "vite build --config extensions/cache-graph/vite.config.mts",
     "visual-artifact:ui:build": "vite build --config extensions/visual-artifact/vite.config.mts",
+    "tasks:ui:build": "vite build --config extensions/tasks/vite.config.mts",
     "pi-webterm:dev": "cd pi-webterm/server && npx tsx watch src/index.ts",
     "pi-webterm:start": "cd pi-webterm/server && npx tsx src/index.ts --cwd ~/work --username 123 --password my654321",
     "pi-webterm:ui:build": "cd pi-webterm/ui && npx vite build",

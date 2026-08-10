@@ -89,7 +89,7 @@ export interface BuildSeedPromptInput {
   projectRoot: string;
   extraInstructions?: string;
   /** Worktree mode: branch + path of the delegated worktree. */
-  worktree?: { branch: string; path: string };
+  worktree?: { branch: string; path: string; baseBranch?: string };
 }
 
 export function buildSeedPrompt(input: BuildSeedPromptInput): string {
@@ -115,6 +115,7 @@ export function buildSeedPrompt(input: BuildSeedPromptInput): string {
         "Worktree",
         [
           `- Branch: ${input.worktree.branch}`,
+          `- Base branch: ${input.worktree.baseBranch ?? "default"}`,
           `- Path: ${input.worktree.path}`,
           "你在这个 worktree 中工作。所有修改都发生在该 worktree，不要碰主 checkout。",
         ].join("\n"),
@@ -165,6 +166,10 @@ export interface DelegateOptions {
   instructions?: string;
   /** Worktree mode: create a git worktree and spawn the agent there. */
   worktree?: boolean;
+  /** Worktree mode: custom branch name (overrides buildWorktreeBranch). */
+  branch?: string;
+  /** Worktree mode: base branch the worktree branches from (herdr --base). */
+  baseBranch?: string;
 }
 
 export interface DelegateResult {
@@ -174,6 +179,7 @@ export interface DelegateResult {
   /** Worktree mode: created worktree info. */
   worktreePath?: string;
   branch?: string;
+  baseBranch?: string;
   workspaceId?: string;
 }
 
@@ -219,26 +225,28 @@ export async function runDelegation(
 
   try {
     if (options.worktree) {
-      branch = buildWorktreeBranch(task);
+      branch = options.branch ?? buildWorktreeBranch(task);
       const repoName = path.basename(options.projectRoot);
       worktreePath = buildWorktreePath(worktreeDirectory(), repoName, task);
-      const wtResponse = await pi.exec(
-        "herdr",
-        [
-          "worktree",
-          "create",
-          "--cwd",
-          options.projectRoot,
-          "--branch",
-          branch,
-          "--path",
-          worktreePath,
-          "--label",
-          agentLabel,
-          "--focus",
-        ],
-        { timeout: 30_000 },
-      );
+      const wtArgs = [
+        "worktree",
+        "create",
+        "--cwd",
+        options.projectRoot,
+        "--branch",
+        branch,
+        "--path",
+        worktreePath,
+        "--label",
+        agentLabel,
+        "--focus",
+      ];
+      if (options.baseBranch) {
+        wtArgs.push("--base", options.baseBranch);
+      }
+      const wtResponse = await pi.exec("herdr", wtArgs, {
+        timeout: 30_000,
+      });
       if (wtResponse.code !== 0) {
         throw new Error(
           (

@@ -120,6 +120,8 @@ export const taskSchema = z.object({
       worktreePath: z.string().optional(),
       /** worktree 模式：分支名，如 task/TASK-1-implement-board */
       branch: z.string().optional(),
+      /** worktree 模式：worktree 切出的基础分支（herdr worktree create --base） */
+      baseBranch: z.string().optional(),
       /** worktree 模式：herdr workspace id（用于 remove） */
       workspaceId: z.string().optional(),
     })

@@ -477,6 +477,18 @@ export function registerTools(pi: ExtensionAPI, getProjectRoot: () => string) {
             "Create a git worktree (branch task/<key>-<slug>) and work there instead of the current checkout",
         }),
       ),
+      branch: Type.Optional(
+        Type.String({
+          description:
+            "Custom worktree branch name (overrides the auto-generated task/<key>-<slug>)",
+        }),
+      ),
+      baseBranch: Type.Optional(
+        Type.String({
+          description:
+            "Base branch the worktree branches from (default: repo default branch)",
+        }),
+      ),
     }),
     async execute(_callId, params, _signal, _onUpdate, _ctx) {
       try {
@@ -538,12 +550,17 @@ export function registerTools(pi: ExtensionAPI, getProjectRoot: () => string) {
               ? String(params.instructions)
               : undefined,
             worktree: params.worktree === true,
+            branch: params.branch ? String(params.branch) : undefined,
+            baseBranch: params.baseBranch
+              ? String(params.baseBranch)
+              : undefined,
           });
           if (d.worktreePath && d.branch && d.workspaceId) {
             await withDb(dbPath, (db) => ({
               db: S.updateDelegationWorktree(db, task.id, {
                 worktreePath: d.worktreePath,
                 branch: d.branch,
+                baseBranch: d.baseBranch,
                 workspaceId: d.workspaceId,
               }),
               result: null,

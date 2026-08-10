@@ -22,6 +22,7 @@
     ".git",
     ".pi",
     "dist",
-    "skills/render-markdown/scripts"
+    "skills/render-markdown/scripts",
+    "skills"
   ]
 }

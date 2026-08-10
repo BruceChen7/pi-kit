@@ -128,6 +128,103 @@ describe("checkPlannotatorHtmlCompliance", () => {
     );
     expect(issues.some((i) => i.rule === "review-hint-missing")).toBe(false);
   });
+
+  it("errors when all scripts are empty inline blocks (v3 blank-shell)", () => {
+    const issues = checkPlannotatorHtmlCompliance(
+      `<html><head></head><body><div id="app"></div>` +
+        `<script></script></body></html>`,
+    );
+    const r4 = issues.find((i) => i.rule === "script-absent-or-empty");
+    expect(r4?.severity).toBe("error");
+    expect(r4?.message).toContain("黑屏");
+  });
+
+  it("warns when an empty inline block coexists with a valid script", () => {
+    const issues = checkPlannotatorHtmlCompliance(
+      `<html><body><script></script>` +
+        `<script src="https://cdn.example.com/app.js"></script></body></html>`,
+    );
+    const r4 = issues.find((i) => i.rule === "script-absent-or-empty");
+    expect(r4?.severity).toBe("warning");
+  });
+
+  it("errors when interactive controls exist but no script at all", () => {
+    const issues = checkPlannotatorHtmlCompliance(
+      `<style>.arrow { cursor: pointer }</style>` +
+        `<div id="switcher"><span class="arrow">◀</span></div>`,
+    );
+    const r4 = issues.find((i) => i.rule === "script-absent-or-empty");
+    expect(r4?.severity).toBe("error");
+    expect(r4?.message).toContain("交互控件");
+  });
+
+  it("passes a normal bundle with non-empty script content", () => {
+    const issues = checkPlannotatorHtmlCompliance(
+      `<html><body><div id="app"></div>` +
+        `<script>const app = mount(App, { target: document.getElementById("app") });</script>` +
+        `</body></html>`,
+    );
+    expect(issues.some((i) => i.rule === "script-absent-or-empty")).toBe(false);
+  });
+
+  it("errors when a head script touches the DOM without DOMContentLoaded", () => {
+    const issues = checkPlannotatorHtmlCompliance(
+      `<html><head><script>` +
+        `document.getElementById("app").innerHTML = "x";` +
+        `</script></head><body><div id="app"></div></body></html>`,
+    );
+    const r5 = issues.find((i) => i.rule === "script-before-dom-ready");
+    expect(r5?.severity).toBe("error");
+    expect(r5?.message).toContain("DOMContentLoaded");
+  });
+
+  it("exempts a head script wrapped in DOMContentLoaded", () => {
+    const issues = checkPlannotatorHtmlCompliance(
+      `<html><head><script>` +
+        `document.addEventListener("DOMContentLoaded", () => {` +
+        `  mount(App, { target: document.getElementById("app") });` +
+        `});` +
+        `</script></head><body><div id="app"></div></body></html>`,
+    );
+    expect(issues.some((i) => i.rule === "script-before-dom-ready")).toBe(
+      false,
+    );
+  });
+
+  it("exempts a body-end script after #app", () => {
+    const issues = checkPlannotatorHtmlCompliance(
+      `<html><body><div id="app"></div>` +
+        `<script>mount(App, { target: document.getElementById("app") });</script>` +
+        `</body></html>`,
+    );
+    expect(issues.some((i) => i.rule === "script-before-dom-ready")).toBe(
+      false,
+    );
+  });
+
+  it("warns when an app-like script has no error-visibility fallback", () => {
+    const issues = checkPlannotatorHtmlCompliance(
+      `<html><body><div id="app"></div>` +
+        `<script>mount(App, { target: document.getElementById("app") });</script>` +
+        `</body></html>`,
+    );
+    const r6 = issues.find((i) => i.rule === "error-visibility-missing");
+    expect(r6?.severity).toBe("warning");
+    expect(r6?.message).toContain("window.onerror");
+  });
+
+  it("does not warn when the script installs window.onerror", () => {
+    const issues = checkPlannotatorHtmlCompliance(
+      `<html><body><div id="app"></div>` +
+        `<script>` +
+        `window.onerror = (msg) => { document.body.innerHTML = String(msg); };` +
+        `mount(App, { target: document.getElementById("app") });` +
+        `</script></body></html>`,
+    );
+    expect(issues.some((i) => i.rule === "error-visibility-missing")).toBe(
+      false,
+    );
+  });
 });
 
 describe("decidePlannotatorHtmlGate", () => {

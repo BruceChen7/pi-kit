@@ -230,10 +230,12 @@ Folder（文件夹，可嵌套一层）
 ### 委托与 worktree
 
 ```text
-/issue delegate <key> [--instructions "..."]    # 委托给 herdr agent 执行
+/issue delegate <key> [--instructions "..."]              # 委托给 herdr agent 执行
 /issue delegate PROD-12 --instructions "先跑测试再提交"
-/issue delegate PROD-13 --worktree              # 在独立 git worktree 中工作
-/issue worktree-remove <key> [--force]          # 清理已完成的 worktree
+/issue delegate PROD-13 --worktree                        # 在独立 git worktree 中工作
+/issue delegate PROD-13 --worktree --base develop         # 从 develop 分支切出
+/issue delegate PROD-13 --worktree --branch task/prod-13-custom  # 自定义分支名
+/issue worktree-remove <key> [--force]                    # 清理已完成的 worktree
 ```
 
 ## Agent 工具（自然语言）

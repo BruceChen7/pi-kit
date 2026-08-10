@@ -73,6 +73,14 @@ export function findProject(db: TasksDb, projectId: string): Project | null {
   return db.projects.find((p) => p.id === projectId) ?? null;
 }
 
+export function findProjectByPrefix(
+  db: TasksDb,
+  prefix: string,
+): Project | null {
+  const upper = prefix.trim().toUpperCase();
+  return db.projects.find((p) => p.prefix.toUpperCase() === upper) ?? null;
+}
+
 export function findTask(db: TasksDb, taskId: string): Task | null {
   return db.tasks.find((t) => t.id === taskId) ?? null;
 }
@@ -191,6 +199,29 @@ export function createProject(
 export function listProjects(db: TasksDb, folderId?: string): Project[] {
   if (folderId === undefined) return db.projects;
   return db.projects.filter((p) => p.folderId === folderId);
+}
+
+export function updateProject(
+  db: TasksDb,
+  projectId: string,
+  patch: { name?: string; color?: string; folderId?: string | null },
+): { db: TasksDb; project: Project } {
+  const existing = findProject(db, projectId);
+  if (!existing) throw new Error(`Project not found: ${projectId}`);
+  const next: Project = {
+    ...existing,
+    name: patch.name !== undefined ? patch.name.trim() : existing.name,
+    color: patch.color ?? existing.color,
+    folderId: patch.folderId !== undefined ? patch.folderId : existing.folderId,
+  };
+  if (!next.name) throw new Error("项目名称不能为空");
+  return {
+    db: {
+      ...db,
+      projects: db.projects.map((p) => (p.id === projectId ? next : p)),
+    },
+    project: next,
+  };
 }
 
 export function deleteProject(
@@ -490,7 +521,12 @@ export function rollbackDelegation(
 export function updateDelegationWorktree(
   db: TasksDb,
   taskId: string,
-  info: { worktreePath: string; branch: string; workspaceId: string },
+  info: {
+    worktreePath: string;
+    branch: string;
+    workspaceId: string;
+    baseBranch?: string;
+  },
 ): TasksDb {
   const existing = findTask(db, taskId);
   if (!existing || existing.delegation == null) return db;
@@ -505,6 +541,7 @@ export function updateDelegationWorktree(
               startedAt: existing.delegation.startedAt,
               worktreePath: info.worktreePath,
               branch: info.branch,
+              baseBranch: info.baseBranch,
               workspaceId: info.workspaceId,
             },
           }

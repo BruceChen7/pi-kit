@@ -136,6 +136,33 @@ describe("projects", () => {
   });
 });
 
+describe("project update", () => {
+  it("updates name/color/folder and keeps prefix stable", () => {
+    const db = withProject(freshDb());
+    const project = S.listProjects(db)[0];
+    const { db: db2, project: updated } = S.updateProject(db, project.id, {
+      name: "重命名",
+      color: "#22c55e",
+      folderId: null,
+    });
+    expect(updated.name).toBe("重命名");
+    expect(updated.color).toBe("#22c55e");
+    expect(updated.prefix).toBe(project.prefix);
+    expect(S.findProject(db2, project.id)?.name).toBe("重命名");
+  });
+
+  it("rejects blank name and unknown project", () => {
+    const db = withProject(freshDb());
+    const project = S.listProjects(db)[0];
+    expect(() => S.updateProject(db, project.id, { name: "  " })).toThrow(
+      "不能为空",
+    );
+    expect(() => S.updateProject(db, "nope", { name: "x" })).toThrow(
+      "not found",
+    );
+  });
+});
+
 /* ================================================================ */
 /*  Label CRUD                                                       */
 /* ================================================================ */

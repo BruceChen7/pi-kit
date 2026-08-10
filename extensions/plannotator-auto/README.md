@@ -37,6 +37,23 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 - **Markdown** (plan/spec/issue) → plan-review hook mode so version history and plan diffs are available (`plannotator` CLI with a PermissionRequest hook payload).
 - **HTML** (plan `.html` and `.pi/html/` artifacts) → one-shot annotate review (`plannotator annotate <file> --gate --json`). The CLI blocks until the reviewer decides in the browser, then emits a decision JSON: `approved` clears the pending target and settles the path, `annotated` keeps it pending (denied semantics — revise and resubmit), `dismissed` releases the gate without settling (the next write re-queues). Before opening, a static compliance gate blocks artifacts that would break inside the review sandbox (localStorage/history/location APIs) or miss keyboard fallbacks / review hints. Re-submissions automatically show a version diff vs the previous submission (the CLI keeps per-file annotate history), replacing the old `--agent-reply` round-trip. Interrupted submits keep no session state — a retry simply re-runs the annotate command.
 
+### HTML artifact compliance rules (submit-time static gate)
+
+- **R1 `sandbox-storage-unsafe`** (error for prototypes, warning otherwise): the script uses `localStorage` / `sessionStorage` / `history.replaceState` / `history.pushState` / `location.search` — all unusable inside the review sandbox (srcdoc iframe, `sandbox="allow-scripts"`, opaque origin).
+- **R2 `keyboard-fallback-missing`** (warning): custom interactive controls (non-native `cursor:pointer` elements) exist but the script has no ArrowLeft/ArrowRight keydown handling, so pinpoint-mode reviews have no way to operate them.
+- **R3 `review-hint-missing`** (warning, prototypes only): the top-of-file comment does not mention the review controls (drag-select = annotate, toolstrip input-method switch, resubmit shows a version diff).
+- **R4 `script-absent-or-empty`** (error/warning): the artifact declares `<script>` tags but ships no executable JS (all inline blocks empty, no src), or interactive controls exist with no script at all — the review surface would be a blank page. Empty blocks alongside valid scripts downgrade to a warning.
+- **R5 `script-before-dom-ready`** (error): an inline script placed before `<body>` (or before the `#app` root) touches the DOM (getElementById / querySelector / mount) without waiting for `DOMContentLoaded` — it runs before the body exists, `getElementById("app")` returns null, and the mount fails → blank page.
+- **R6 `error-visibility-missing`** (warning): an app-like script (mount / getElementById / `$state`) has no `window.onerror` fallback. The review sandbox swallows console output, so runtime errors render as a blank page with no clue.
+
+**Artifact author self-check** (what the gate verifies, do it locally before submitting):
+
+1. Script content is non-empty (inline a real bundle, not an empty shell; inline by reading the `src` file, never by regex-matching a self-closing `<script src=...></script>` tag).
+2. Script runs after the DOM is ready: place it at the end of `<body>` (after `#app`) or wrap in `DOMContentLoaded` — never in `<head>`.
+3. Install a `window.onerror` fallback that paints the error text into the page (the review sandbox hides console output — without it, runtime errors look like a black screen).
+
+**Black-screen triage order**: before suspecting the pipeline, check your own generated artifact — is the script content empty, is it placed after `#app`, does it wait for the DOM? The Plannotator pipeline rewrites only an in-memory copy for asset serving; it never rewrites your file on disk.
+
 ## Configuration
 
 Global config file:

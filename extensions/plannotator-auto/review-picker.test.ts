@@ -11,134 +11,12 @@ import {
 } from "./test-helpers.js";
 
 // ---------------------------------------------------------------------------
-// Pure function: pickTopPlanFiles
+// Shell integration: scanReviewableFiles (with temp filesystem)
 // ---------------------------------------------------------------------------
 
-import { type FileItem, pickTopPlanFiles } from "./review-picker.js";
+import { scanReviewableFiles } from "./review-picker.js";
 
-describe("pickTopPlanFiles", () => {
-  it("returns empty when both inputs are empty", () => {
-    const result = pickTopPlanFiles([], [], 5);
-    expect(result).toEqual([]);
-  });
-
-  it("returns pending entries when no scanned files", () => {
-    const pending: FileItem[] = [
-      {
-        absolutePath: "/repo/.pi/plans/repo/plan/2026-01-01-plan.md",
-        relativePath: ".pi/plans/repo/plan/2026-01-01-plan.md",
-        mtimeMs: 1000,
-      },
-    ];
-    const result = pickTopPlanFiles(pending, [], 5);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.absolutePath).toBe(pending[0]?.absolutePath);
-  });
-
-  it("returns scanned entries when no pending targets", () => {
-    const scanned: FileItem[] = [
-      {
-        absolutePath: "/repo/.pi/plans/repo/plan/2026-01-01-plan.md",
-        relativePath: ".pi/plans/repo/plan/2026-01-01-plan.md",
-        mtimeMs: 1000,
-      },
-    ];
-    const result = pickTopPlanFiles([], scanned, 5);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.absolutePath).toBe(scanned[0]?.absolutePath);
-  });
-
-  it("deduplicates by absolutePath (pending wins over scanned)", () => {
-    const pending: FileItem[] = [
-      {
-        absolutePath: "/repo/.pi/plans/repo/plan/2026-01-01-plan.md",
-        relativePath: "pending-path.md",
-        mtimeMs: 100,
-      },
-    ];
-    const scanned: FileItem[] = [
-      {
-        absolutePath: "/repo/.pi/plans/repo/plan/2026-01-01-plan.md",
-        relativePath: "scanned-path.md",
-        mtimeMs: 200,
-      },
-    ];
-    const result = pickTopPlanFiles(pending, scanned, 5);
-
-    expect(result).toHaveLength(1);
-    expect(result[0]?.absolutePath).toBe(
-      "/repo/.pi/plans/repo/plan/2026-01-01-plan.md",
-    );
-  });
-
-  it("sorts by mtime descending", () => {
-    const scanned: FileItem[] = [
-      {
-        absolutePath: "/repo/a.md",
-        relativePath: "a.md",
-        mtimeMs: 100,
-      },
-      {
-        absolutePath: "/repo/b.md",
-        relativePath: "b.md",
-        mtimeMs: 300,
-      },
-      {
-        absolutePath: "/repo/c.md",
-        relativePath: "c.md",
-        mtimeMs: 200,
-      },
-    ];
-    const result = pickTopPlanFiles([], scanned, 5);
-    expect(result).toHaveLength(3);
-    expect(result[0]?.relativePath).toBe("b.md");
-    expect(result[1]?.relativePath).toBe("c.md");
-    expect(result[2]?.relativePath).toBe("a.md");
-  });
-
-  it("caps at maxFiles", () => {
-    const scanned: FileItem[] = Array.from({ length: 10 }, (_, i) => ({
-      absolutePath: `/repo/file-${i}.md`,
-      relativePath: `file-${i}.md`,
-      mtimeMs: 1000 - i,
-    }));
-    const result = pickTopPlanFiles([], scanned, 3);
-    expect(result).toHaveLength(3);
-  });
-
-  it("interleaves pending and scanned entries sorted by mtime", () => {
-    const pending: FileItem[] = [
-      {
-        absolutePath: "/repo/pending-old.md",
-        relativePath: "pending-old.md",
-        mtimeMs: 10,
-      },
-    ];
-    const scanned: FileItem[] = [
-      {
-        absolutePath: "/repo/fresh.md",
-        relativePath: "fresh.md",
-        mtimeMs: 500,
-      },
-      {
-        absolutePath: "/repo/mid.md",
-        relativePath: "mid.md",
-        mtimeMs: 200,
-      },
-    ];
-    const result = pickTopPlanFiles(pending, scanned, 5);
-    expect(result).toHaveLength(3);
-    expect(result[0]?.relativePath).toBe("fresh.md");
-    expect(result[1]?.relativePath).toBe("mid.md");
-    expect(result[2]?.relativePath).toBe("pending-old.md");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Shell integration: scanPlanFiles (with temp filesystem)
-// ---------------------------------------------------------------------------
-
-describe("scanPlanFiles (shell integration)", () => {
+describe("scanReviewableFiles (shell integration)", () => {
   let repoRoot: string;
 
   afterEach(async () => {
@@ -148,77 +26,85 @@ describe("scanPlanFiles (shell integration)", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns empty when plan dir does not exist", async () => {
-    repoRoot = await createTempRepo("scan-plan-empty");
+  it("returns empty when .pi does not exist", async () => {
+    repoRoot = await createTempRepo("scan-pi-empty");
     fs.mkdirSync(path.join(repoRoot, ".git"), { recursive: true });
 
-    vi.doMock("../shared/settings.ts", () => ({
-      loadGlobalSettings: vi.fn(() => ({
-        globalPath: path.join(
-          repoRoot,
-          ".pi",
-          "agent",
-          "third_extension_settings.json",
-        ),
-        global: {},
-      })),
-      loadSettings: vi.fn(() => ({
-        merged: { plannotatorAuto: {} },
-      })),
-    }));
-    vi.doMock("../shared/git.ts", () => ({
-      DEFAULT_GIT_TIMEOUT_MS: 1_000,
-      getRepoRoot: vi.fn(() => repoRoot),
-      getGitCommonDir: vi.fn(() => path.join(repoRoot, ".git")),
-    }));
-
-    vi.resetModules();
-    const { scanPlanFiles } = await import("./review-picker.js");
     const ctx = createTestContext(repoRoot);
-
-    const files = scanPlanFiles(ctx as never);
+    const files = scanReviewableFiles(ctx as never);
     expect(files).toEqual([]);
   });
 
-  it("finds plan files in default plan directory", async () => {
-    repoRoot = await createTempRepo("scan-plan-found");
-    const slug = path.basename(repoRoot);
-    const planDir = path.join(repoRoot, ".pi", "plans", slug, "plan");
+  it("recursively finds .md and .html files under .pi, sorted by mtime", async () => {
+    repoRoot = await createTempRepo("scan-pi-found");
+    const planDir = path.join(repoRoot, ".pi", "plans", "repo", "plan");
+    const htmlDir = path.join(repoRoot, ".pi", "html", "repo");
+    const lessonsDir = path.join(repoRoot, ".pi", "teach", "topic", "lessons");
     fs.mkdirSync(planDir, { recursive: true });
+    fs.mkdirSync(htmlDir, { recursive: true });
+    fs.mkdirSync(lessonsDir, { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, ".pi", "agent"), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, ".pi", "skills", "demo"), {
+      recursive: true,
+    });
+
+    // Reviewable: plan md, html artifact, teach lesson md, nested skill md
     fs.writeFileSync(
       path.join(planDir, "2026-01-01-my-plan.md"),
       "# Plan",
       "utf-8",
     );
-    fs.mkdirSync(path.join(repoRoot, ".git"), { recursive: true });
+    fs.writeFileSync(
+      path.join(htmlDir, "2026-01-01-overview.html"),
+      "<h1>HTML</h1>",
+      "utf-8",
+    );
+    fs.writeFileSync(path.join(lessonsDir, "lesson-1.md"), "# Lesson", "utf-8");
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "skills", "demo", "SKILL.md"),
+      "# Skill",
+      "utf-8",
+    );
 
-    vi.doMock("../shared/settings.ts", () => ({
-      loadGlobalSettings: vi.fn(() => ({
-        globalPath: path.join(
-          repoRoot,
-          ".pi",
-          "agent",
-          "third_extension_settings.json",
-        ),
-        global: {},
-      })),
-      loadSettings: vi.fn(() => ({
-        merged: { plannotatorAuto: {} },
-      })),
-    }));
-    vi.doMock("../shared/git.ts", () => ({
-      DEFAULT_GIT_TIMEOUT_MS: 1_000,
-      getRepoRoot: vi.fn(() => repoRoot),
-      getGitCommonDir: vi.fn(() => path.join(repoRoot, ".git")),
-    }));
+    // Not reviewable: non-md/html files
+    fs.writeFileSync(
+      path.join(repoRoot, ".pi", "agent", "settings.json"),
+      "{}",
+      "utf-8",
+    );
+    fs.writeFileSync(path.join(planDir, "notes.txt"), "notes", "utf-8");
 
-    vi.resetModules();
-    const { scanPlanFiles } = await import("./review-picker.js");
     const ctx = createTestContext(repoRoot);
+    const files = scanReviewableFiles(ctx as never);
 
-    const files = scanPlanFiles(ctx as never);
-    expect(files).toHaveLength(1);
-    expect(files[0]?.relativePath).toContain("2026-01-01-my-plan.md");
+    expect(files).toHaveLength(4);
+    expect(files.map((f) => f.relativePath).sort()).toEqual([
+      ".pi/html/repo/2026-01-01-overview.html",
+      ".pi/plans/repo/plan/2026-01-01-my-plan.md",
+      ".pi/skills/demo/SKILL.md",
+      ".pi/teach/topic/lessons/lesson-1.md",
+    ]);
+    // Sorted by mtime descending
+    for (let i = 1; i < files.length; i++) {
+      expect(files[i - 1]!.mtimeMs).toBeGreaterThanOrEqual(files[i]!.mtimeMs);
+    }
+  });
+
+  it("caps the list at MAX_PLAN_FILES (5)", async () => {
+    repoRoot = await createTempRepo("scan-pi-cap");
+    const dir = path.join(repoRoot, ".pi", "plans", "repo", "plan");
+    fs.mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 8; i++) {
+      fs.writeFileSync(
+        path.join(dir, `2026-01-01-plan-${i}.md`),
+        `# Plan ${i}`,
+        "utf-8",
+      );
+    }
+
+    const ctx = createTestContext(repoRoot);
+    const files = scanReviewableFiles(ctx as never);
+    expect(files).toHaveLength(5);
   });
 });
 

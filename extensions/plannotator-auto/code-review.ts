@@ -229,7 +229,7 @@ const annotateLatestReviewDocument = async (
   }
 };
 
-export const registerCodeReviewHandlers = (pi: ExtensionAPI): void => {
+export const registerReviewHandlers = (pi: ExtensionAPI): void => {
   pi.registerCommand("plannotator-review", {
     description:
       "Select and submit a plan/spec document for Plannotator review",

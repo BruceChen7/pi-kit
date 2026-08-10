@@ -396,43 +396,6 @@ describe("plan review trigger timing", () => {
       },
     );
   });
-
-  it("gates files matching configured extra review targets until explicit submission", async () => {
-    await withPlannotatorAutoTest(
-      "plannotator-auto-extra-target-review-",
-      async ({ api, emit, repoRoot, startPlanReview, createCtx }) => {
-        const extraTargetRelative =
-          ".pi/plans/pi-kit/office-hours/ming-main-office-hours-20260422-123456.md";
-        await writeTestFile(repoRoot, extraTargetRelative, "# Office Hours\n");
-        await writeTestFile(
-          repoRoot,
-          ".pi/third_extension_settings.json",
-          `${JSON.stringify(
-            {
-              plannotatorAuto: {
-                extraReviewTargets: [
-                  {
-                    dir: ".pi/plans/pi-kit/office-hours",
-                    filePattern: "^[^/]+-office-hours-\\d{8}-\\d{6}\\.md$",
-                  },
-                ],
-              },
-            },
-            null,
-            2,
-          )}\n`,
-        );
-        const ctx = createCtx({ isIdle: false });
-
-        await emit("session_start", {}, ctx);
-        await emitToolWrite(emit, ctx, extraTargetRelative);
-        await emit("agent_end", {}, ctx);
-
-        expect(startPlanReview).not.toHaveBeenCalled();
-        expect(api.sendUserMessage).not.toHaveBeenCalled();
-      },
-    );
-  });
 });
 
 describe("selectReviewGuidance", () => {

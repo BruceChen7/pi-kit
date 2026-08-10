@@ -1,5 +1,5 @@
 .PHONY: help install install-all install-plugins install-skills install-third-party \
-	install-opencli-adapters update-peer-deps update-skills test lint
+	install-clis install-opencli-adapters update-peer-deps update-skills test lint
 
 PLUGIN_SCOPE ?= --library
 THIRD_PARTY_MODE ?= --install-only
@@ -7,11 +7,12 @@ SKILLS_COMMAND ?= import
 
 help:
 	@echo "pi-kit installer targets:"
-	@echo "  make install                 Install all: plugins, skills, third-party, opencli adapters, peer deps"
+	@echo "  make install                 Install all: plugins, skills, third-party, extension CLIs, opencli adapters, peer deps"
 	@echo "  make install-plugins         Install repo plugins (PLUGIN_SCOPE=--library|--project|--autoload)"
 	@echo "  make install-skills          Install prompts and skills; uninstall skills removed from skills.txt"
 	@echo "                              (SKILLS_COMMAND=import|update|export)"
 	@echo "  make install-third-party     Install third-party plugins (THIRD_PARTY_MODE=--install-only|--enable-defaults)"
+	@echo "  make install-clis            Install external CLIs required by extensions/ (codex, qmd, plannotator, gh, ...)"
 	@echo "  make install-opencli-adapters Install opencli adapters under opencli/clis/"
 	@echo "  make update-peer-deps        Sync pi peerDependencies to local pi --version"
 	@echo ""
@@ -22,7 +23,7 @@ help:
 
 install: install-all
 
-install-all: install-plugins install-skills install-third-party install-opencli-adapters update-peer-deps
+install-all: install-plugins install-skills install-third-party install-clis install-opencli-adapters update-peer-deps
 
 install-plugins:
 	./install-plugins.sh $(PLUGIN_SCOPE)
@@ -32,6 +33,9 @@ install-skills:
 
 install-third-party:
 	./install-third-party-plugins.sh $(THIRD_PARTY_MODE)
+
+install-clis:
+	./install-extension-clis.sh
 
 install-opencli-adapters:
 	./install-opencli-adapters.sh

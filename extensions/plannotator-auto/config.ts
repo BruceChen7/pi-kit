@@ -1,44 +1,17 @@
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
 
-export type ExtraReviewTargetConfig = {
-  dir: string;
-  filePattern: string;
-};
-
 export type PlannotatorAutoConfig = {
   planFile?: string | null;
   htmlDirs?: string[] | null;
-  extraReviewTargets?: ExtraReviewTargetConfig[];
+  callflowContext?: {
+    enabled: boolean;
+    from?: string;
+  } | null;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
-
-const sanitizeExtraReviewTargets = (
-  value: unknown,
-): ExtraReviewTargetConfig[] | undefined => {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-
-  const next = value.flatMap((entry) => {
-    if (!isRecord(entry)) {
-      return [];
-    }
-
-    const dir = typeof entry.dir === "string" ? entry.dir.trim() : "";
-    const filePattern =
-      typeof entry.filePattern === "string" ? entry.filePattern.trim() : "";
-    if (dir.length === 0 || filePattern.length === 0) {
-      return [];
-    }
-
-    return [{ dir, filePattern }];
-  });
-
-  return next.length > 0 ? next : undefined;
-};
 
 const sanitizeHtmlDirs = (value: unknown): string[] | null | undefined => {
   if (value === null) {
@@ -57,6 +30,26 @@ const sanitizeHtmlDirs = (value: unknown): string[] | null | undefined => {
   });
 
   return next;
+};
+
+const sanitizeCallflowContext = (
+  value: unknown,
+): PlannotatorAutoConfig["callflowContext"] => {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "boolean") {
+    return { enabled: value };
+  }
+  if (isRecord(value)) {
+    return {
+      enabled: value.enabled === true,
+      ...(typeof value.from === "string" && value.from.trim().length > 0
+        ? { from: value.from.trim() }
+        : {}),
+    };
+  }
+  return undefined;
 };
 
 const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
@@ -80,11 +73,9 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
     next.htmlDirs = htmlDirs;
   }
 
-  const extraReviewTargets = sanitizeExtraReviewTargets(
-    value.extraReviewTargets,
-  );
-  if (extraReviewTargets) {
-    next.extraReviewTargets = extraReviewTargets;
+  const callflowContext = sanitizeCallflowContext(value.callflowContext);
+  if (callflowContext !== undefined) {
+    next.callflowContext = callflowContext;
   }
 
   return next;
@@ -111,7 +102,7 @@ export const loadConfig = (
     cwd,
     planFile: config.planFile,
     htmlDirs: config.htmlDirs,
-    extraReviewTargetCount: config.extraReviewTargets?.length ?? 0,
+    callflowContext: config.callflowContext?.enabled ?? false,
   });
   return config;
 };

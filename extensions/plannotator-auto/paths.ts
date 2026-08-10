@@ -9,13 +9,8 @@ import {
   resolveHtmlReviewDirs,
   SPEC_REVIEW_FILE_PATTERN,
 } from "../shared/review-targets.ts";
-import type { ExtraReviewTargetConfig } from "./config.ts";
 import { loadConfig } from "./config.ts";
-import type {
-  ExtraReviewTarget,
-  PlanFileConfig,
-  ReviewTargetKind,
-} from "./plan-review/types.ts";
+import type { PlanFileConfig, ReviewTargetKind } from "./plan-review/types.ts";
 
 const getDefaultReviewRoots = (cwd: string): string[] => {
   const candidates = [
@@ -39,23 +34,6 @@ export const getDefaultSpecDirs = (cwd: string): string[] =>
   getDefaultReviewRoots(cwd).map((root) =>
     path.join(root, REVIEW_TARGET_SPECS_DIR),
   );
-
-export const resolveExtraReviewTargets = (
-  cwd: string,
-  extraReviewTargets: ExtraReviewTargetConfig[] | undefined,
-): ExtraReviewTarget[] =>
-  (extraReviewTargets ?? []).flatMap((target) => {
-    try {
-      return [
-        {
-          dir: path.resolve(cwd, target.dir),
-          pattern: new RegExp(target.filePattern),
-        },
-      ];
-    } catch {
-      return [];
-    }
-  });
 
 export const toRepoRelativePath = (
   ctx: { cwd: string },
@@ -100,25 +78,12 @@ const isHtmlFileMatchAny = (htmlDirs: string[], targetPath: string): boolean =>
 const isSpecFileMatch = (specDir: string, targetPath: string): boolean =>
   isDirectChildFileMatch(specDir, SPEC_REVIEW_FILE_PATTERN, targetPath);
 
-const isExtraReviewTargetMatch = (
-  target: ExtraReviewTarget,
-  targetPath: string,
-): boolean => isDirectChildFileMatch(target.dir, target.pattern, targetPath);
-
 const isSpecFileMatchAny = (specDirs: string[], targetPath: string): boolean =>
   specDirs.some((specDir) => isSpecFileMatch(specDir, targetPath));
 
 const getCwdFromPlanConfig = (planConfig: PlanFileConfig): string =>
   path.dirname(
     path.dirname(path.dirname(path.dirname(planConfig.resolvedPlanPath))),
-  );
-
-const isExtraReviewTargetMatchAny = (
-  targets: ExtraReviewTarget[] | undefined,
-  targetPath: string,
-): boolean =>
-  (targets ?? []).some((target) =>
-    isExtraReviewTargetMatch(target, targetPath),
   );
 
 type ReviewTargetMatch = {
@@ -146,10 +111,6 @@ const getReviewTargetKind = (
 
   if (isHtmlFileMatchAny(planConfig.resolvedHtmlPaths, targetPath)) {
     return "html";
-  }
-
-  if (isExtraReviewTargetMatchAny(planConfig.extraReviewTargets, targetPath)) {
-    return "plan";
   }
 
   return null;
@@ -198,10 +159,6 @@ export const getPlanFileConfig = (ctx: {
   const resolvedPlanPaths = resolvePlanPaths(ctx.cwd, planFiles);
   const resolvedSpecPaths = resolvePlanPaths(ctx.cwd, specFiles);
   const resolvedHtmlPaths = resolveHtmlReviewDirs(ctx.cwd, config.htmlDirs);
-  const extraReviewTargets = resolveExtraReviewTargets(
-    ctx.cwd,
-    config.extraReviewTargets,
-  );
 
   return {
     planFile,
@@ -209,7 +166,6 @@ export const getPlanFileConfig = (ctx: {
     resolvedPlanPaths,
     resolvedSpecPaths,
     resolvedHtmlPaths,
-    extraReviewTargets,
   };
 };
 

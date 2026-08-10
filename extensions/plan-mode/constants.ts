@@ -116,6 +116,7 @@ export const DEFAULT_CONFIG: PlanModeConfig = {
     readBeforeWrite: true,
   },
   artifactPolicy: getDefaultArtifactPolicyConfig(),
+  callflowSummary: false,
 };
 
 export const BUILTIN_TOOL_NAMES = [

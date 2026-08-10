@@ -12,7 +12,7 @@ import { createLogger } from "../shared/logger.ts";
 import { countTrackedChildren, killTrackedChildren } from "./cli.ts";
 import {
   recordSessionReviewDocumentWrites,
-  registerCodeReviewHandlers,
+  registerReviewHandlers,
 } from "./code-review.ts";
 import { isRecord, summarizeToolArgs } from "./helpers.ts";
 import { getPlanFileConfig } from "./paths.ts";
@@ -54,7 +54,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
   const log = createLogger("plannotator-auto", { stderr: null });
 
   registerPlanReviewSubmitTool(pi, planReviewSubmitToolParameters);
-  registerCodeReviewHandlers(pi);
+  registerReviewHandlers(pi);
 
   pi.on("session_start", (_event, ctx) => {
     const sessionKey = getSessionKey(ctx);

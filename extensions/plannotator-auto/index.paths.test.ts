@@ -22,10 +22,6 @@ type PlanConfig = {
   resolvedPlanPaths: string[];
   resolvedSpecPaths?: string[];
   resolvedHtmlPaths?: string[];
-  extraReviewTargets?: Array<{
-    dir: string;
-    pattern: RegExp;
-  }>;
 };
 
 async function importPlannotatorAuto(): Promise<ImportedModule> {
@@ -181,21 +177,6 @@ describe("index path helpers", () => {
         targetPath: "/repo/.pi/html/repo/2026-04-16-prototype.html",
         expected: ".pi/html/repo/2026-04-16-prototype.html",
       },
-      {
-        name: "matches configured extra review targets",
-        config: createPlanConfig({
-          extraReviewTargets: [
-            {
-              dir: "/repo/.pi/plans/repo/office-hours",
-              pattern: /^[^/]+-office-hours-\d{8}-\d{6}\.md$/,
-            },
-          ],
-        }),
-        targetPath:
-          "/repo/.pi/plans/repo/office-hours/ming-main-office-hours-20260422-123456.md",
-        expected:
-          ".pi/plans/repo/office-hours/ming-main-office-hours-20260422-123456.md",
-      },
     ])("$name", async ({ config, targetPath, expected }) => {
       const { resolvePlanFileForReview } = await importPlannotatorAuto();
 
@@ -275,20 +256,6 @@ describe("index path helpers", () => {
         name: "skips issue markdown files without a topic directory (any .pi md)",
         config: createPlanConfig(),
         targetPath: "/repo/.pi/plans/repo/issues/01-root-issue.md",
-        expected: false,
-      },
-      {
-        name: "skips configured extra review targets",
-        config: createPlanConfig({
-          extraReviewTargets: [
-            {
-              dir: "/repo/.pi/plans/repo/office-hours",
-              pattern: /^[^/]+-office-hours-\d{8}-\d{6}\.md$/,
-            },
-          ],
-        }),
-        targetPath:
-          "/repo/.pi/plans/repo/office-hours/ming-main-office-hours-20260422-123456.md",
         expected: false,
       },
       {

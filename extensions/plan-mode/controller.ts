@@ -25,6 +25,10 @@ import {
   validateArtifactPolicy,
 } from "./artifact-policy.ts";
 import {
+  captureGitHead,
+  maybeSendCallflowSummary,
+} from "./callflow-summary.ts";
+import {
   ACT_CODE_WRITING_GUIDANCE,
   ACT_TODO_TOOL_NAME,
   BUILTIN_TOOL_NAMES,
@@ -636,8 +640,27 @@ export class PlanModeController {
       this.state.phase === "act" &&
       this.state.pendingApprovedPlanContinuationPath
     ) {
+      const runId = this.state.activeRun?.id ?? null;
+      const approvedHeadRef = this.state.activeRun?.approvedHeadRef ?? null;
       this.state.clearPendingApprovedPlanContinuation();
       this.persist();
+      // Post-execution call-flow summary (opt-in, best-effort). Sent after
+      // clearing the continuation so the queued follow-up cannot re-trigger
+      // this branch and self-continue the agent loop. The "sent" flag lives
+      // on the persisted run so a restart cannot double-send; a re-approval
+      // after return-to-draft resets it for the new episode.
+      if (
+        this.config.callflowSummary &&
+        runId !== null &&
+        approvedHeadRef !== null &&
+        !this.state.activeRun?.callflowSummarySent
+      ) {
+        if (this.state.activeRun) {
+          this.state.activeRun.callflowSummarySent = true;
+          this.persist();
+        }
+        await maybeSendCallflowSummary(this.pi, ctx, approvedHeadRef);
+      }
       this.finishTurn(ctx);
       return;
     }
@@ -745,6 +768,10 @@ export class PlanModeController {
         ? "completed"
         : "executing";
       this.state.activeRun.approvedAt = new Date().toISOString();
+      // Capture the baseline ref for the post-execution calldiff summary
+      // (best-effort; null outside git).
+      this.state.activeRun.approvedHeadRef =
+        captureGitHead(ctx.cwd) ?? undefined;
     }
     const wasDirectAct = this.state.mode === "act";
     this.state.switchApprovedPlanToAct(wasDirectAct);

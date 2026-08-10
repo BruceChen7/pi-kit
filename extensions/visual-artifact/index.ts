@@ -7,12 +7,14 @@ import {
   readArtifact,
   writeArtifact,
 } from "./artifact-store.ts";
+import { registerCalldiffTool } from "./calldiff-tool.ts";
 import { openVisualArtifactWindow } from "./glimpse-host.ts";
 import {
   formatMermaidValidationErrors,
   validateMermaidNodesInSpec,
 } from "./mermaid-boundary.ts";
 import { deriveProjectName, getDefaultProjectRoot } from "./paths.ts";
+import { errorResult, normalizeSlug, result } from "./tool-helpers.ts";
 
 const log = createLogger("visual-artifact");
 
@@ -61,14 +63,6 @@ const CreateArtifactParams = Type.Object({
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-function normalizeSlug(input: string): string {
-  return input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 function tryParseJson(raw: string): unknown {
   try {
     return JSON.parse(raw);
@@ -77,27 +71,13 @@ function tryParseJson(raw: string): unknown {
   }
 }
 
-function result(text: string) {
-  return {
-    content: [{ type: "text" as const, text }],
-    details: {},
-    isError: false,
-  };
-}
-
-function errorResult(text: string) {
-  return {
-    content: [{ type: "text" as const, text }],
-    details: {},
-    isError: true,
-  };
-}
-
 /* ------------------------------------------------------------------ */
 /*  Extension entry point                                              */
 /* ------------------------------------------------------------------ */
 
 export default function visualArtifactExtension(pi: ExtensionAPI): void {
+  registerCalldiffTool(pi);
+
   /* ---- Tool: create_visual_artifact ---- */
   pi.registerTool({
     name: "create_visual_artifact",

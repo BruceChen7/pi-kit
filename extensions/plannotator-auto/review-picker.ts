@@ -11,19 +11,12 @@ import {
   SelectList,
   Text,
 } from "@earendil-works/pi-tui";
-import {
-  PLAN_REVIEW_FILE_PATTERN,
-  SPEC_REVIEW_FILE_PATTERN,
-} from "../shared/review-targets.ts";
 import { type CliReviewResult, runPlannotatorPlanReviewCli } from "./cli.ts";
 import { scanMermaidBlocks } from "./mermaid-validator.ts";
-import { getPlanFileConfig } from "./paths.ts";
 import {
-  listPendingPlanReviews,
   preprocessPlanMarkdown,
   runPlannotatorHtmlReviewOnce,
 } from "./plan-review.ts";
-import { getSessionState } from "./session.ts";
 
 const SYNC_REVIEW_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const MAX_PLAN_FILES = 5;
@@ -38,45 +31,6 @@ export type FileItem = {
   relativePath: string;
   mtimeMs: number;
 };
-
-// ---------------------------------------------------------------------------
-// Pure core: pick top-N files from pending + scanned entries (P1)
-// ---------------------------------------------------------------------------
-
-/**
- * Select up to `maxFiles` items giving priority to pending targets.
- * Deduplicates by absolutePath and sorts by mtime descending.
- * Pure function — no IO, testable with table-driven tests.
- */
-export function pickTopPlanFiles(
-  pendingEntries: FileItem[],
-  scannedEntries: FileItem[],
-  maxFiles: number,
-): FileItem[] {
-  const seen = new Set<string>();
-  const items: FileItem[] = [];
-
-  // Pending targets first
-  for (const entry of pendingEntries) {
-    if (seen.has(entry.absolutePath)) {
-      continue;
-    }
-    seen.add(entry.absolutePath);
-    items.push(entry);
-  }
-
-  // Then scanned entries (dedup against pending)
-  for (const entry of scannedEntries) {
-    if (seen.has(entry.absolutePath)) {
-      continue;
-    }
-    seen.add(entry.absolutePath);
-    items.push(entry);
-  }
-
-  // Sort by mtime descending, take top N
-  return items.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, maxFiles);
-}
 
 // ---------------------------------------------------------------------------
 // SelectList theme builder
@@ -94,111 +48,48 @@ const buildSelectListTheme = (theme: {
 });
 
 // ---------------------------------------------------------------------------
-// Shell: scan plan/spec directories (P1 — IO kept here, filtering delegated)
+// Shell: scan .pi recursively for reviewable documents (md/html)
 // Exported for testing.
-export const scanPlanFiles = (ctx: ExtensionContext): FileItem[] => {
-  const config = getPlanFileConfig(ctx);
-  if (!config) {
-    return [];
-  }
+export const scanReviewableFiles = (ctx: ExtensionContext): FileItem[] => {
+  const files: FileItem[] = [];
+  const stack = [path.join(ctx.cwd, ".pi")];
 
-  // 1. Resolve pending targets (with filesystem stat for mtime)
-  const pendingEntries: FileItem[] = [];
-  for (const pending of listPendingPlanReviews(getSessionState(ctx), ctx.cwd)) {
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let entries: fs.Dirent[];
     try {
-      const stats = fs.statSync(pending.resolvedPlanPath);
-      pendingEntries.push({
-        absolutePath: pending.resolvedPlanPath,
-        relativePath: pending.planFile,
-        mtimeMs: stats.mtimeMs,
-      });
-    } catch {
-      // stale entry, skip
-    }
-  }
-
-  // 2. Scan plan/spec directories for matching files
-  const scannedEntries: FileItem[] = [];
-  const scanDirs = [...config.resolvedPlanPaths, ...config.resolvedSpecPaths];
-
-  for (const dir of scanDirs) {
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(dir);
+      entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch {
       continue;
     }
 
     for (const entry of entries) {
-      const fullPath = path.join(dir, entry);
-
-      // Match against shared regex patterns (P3 fix)
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
       if (
-        !PLAN_REVIEW_FILE_PATTERN.test(entry) &&
-        !SPEC_REVIEW_FILE_PATTERN.test(entry)
+        !entry.isFile() ||
+        (!entry.name.endsWith(".md") && !entry.name.endsWith(".html"))
       ) {
         continue;
       }
 
       try {
-        if (!fs.statSync(fullPath).isFile()) {
-          continue;
-        }
+        files.push({
+          absolutePath: fullPath,
+          relativePath: path.relative(ctx.cwd, fullPath),
+          mtimeMs: fs.statSync(fullPath).mtimeMs,
+        });
       } catch {
-        continue;
+        // unreadable file — skip
       }
-
-      scannedEntries.push({
-        absolutePath: fullPath,
-        relativePath: path.relative(ctx.cwd, fullPath),
-        mtimeMs: fs.statSync(fullPath).mtimeMs,
-      });
     }
   }
 
-  // 3. Scan .pi/teach/<topic>/lessons/ directories for teach lesson files
-  const teachRoot = path.join(ctx.cwd, ".pi", "teach");
-  let topicDirs: string[];
-  try {
-    topicDirs = fs.readdirSync(teachRoot);
-  } catch {
-    topicDirs = [];
-  }
-
-  for (const topicDir of topicDirs) {
-    const lessonsDir = path.join(teachRoot, topicDir, "lessons");
-    let lessonEntries: string[];
-    try {
-      lessonEntries = fs.readdirSync(lessonsDir);
-    } catch {
-      continue;
-    }
-
-    for (const entry of lessonEntries) {
-      if (!entry.endsWith(".html") && !entry.endsWith(".md")) {
-        continue;
-      }
-
-      const fullPath = path.join(lessonsDir, entry);
-
-      try {
-        if (!fs.statSync(fullPath).isFile()) {
-          continue;
-        }
-      } catch {
-        continue;
-      }
-
-      scannedEntries.push({
-        absolutePath: fullPath,
-        relativePath: path.relative(ctx.cwd, fullPath),
-        mtimeMs: fs.statSync(fullPath).mtimeMs,
-      });
-    }
-  }
-
-  // 4. Pure core: merge, dedup, sort, cap — easily testable
-  return pickTopPlanFiles(pendingEntries, scannedEntries, MAX_PLAN_FILES);
+  // Most recently modified first, capped for the picker list
+  return files.sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, MAX_PLAN_FILES);
 };
 
 // ---------------------------------------------------------------------------
@@ -350,7 +241,7 @@ const runPlanReview = async (
 
 /**
  * Show the plan/spec file picker:
- *   Choose a plan/spec file from pending + filesystem scan (max 5)
+ *   Choose any .md/.html file under .pi (most recently modified first, max 5)
  *
  * Execute the selected review directly with Plannotator CLI, bypassing the
  * auto pending-gate flow for plan reviews.
@@ -364,8 +255,8 @@ export const showPlanFilePicker = async (
     return;
   }
 
-  // Find plan/spec files
-  const files = scanPlanFiles(ctx);
+  // Find reviewable files under .pi
+  const files = scanReviewableFiles(ctx);
   if (files.length === 0) {
     ctx.ui.notify(
       "No plan or spec files found for review. " +

@@ -18,6 +18,7 @@ import {
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
 import { pathsFromWriteToolInput } from "../shared/tool-targets.ts";
+import { attachCallflowContext } from "./callflow-context.ts";
 import {
   runPlannotatorAnnotateCli,
   runPlannotatorPlanReviewCli,
@@ -952,10 +953,22 @@ export const registerPlanReviewSubmitTool = (
       setReviewWidget(ctx);
 
       try {
-        const cliResult = await runPlannotatorPlanReviewCli(ctx, preprocessed, {
-          signal,
-          timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
-        });
+        // Best-effort call-flow context: append a calldiff diff appendix to
+        // the review payload only (never the plan file on disk). Skipped
+        // silently when disabled or when calldiff is unavailable.
+        const { markdown: reviewContent } = await attachCallflowContext(
+          ctx,
+          preprocessed,
+        );
+
+        const cliResult = await runPlannotatorPlanReviewCli(
+          ctx,
+          reviewContent,
+          {
+            signal,
+            timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+          },
+        );
 
         if (cliResult.status === "error") {
           return {

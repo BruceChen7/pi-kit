@@ -1,0 +1,72 @@
+{
+  "mode": "diff",
+  "from": "HEAD",
+  "to": "working tree",
+  "trees": [
+    {
+      "entry": "runCheckout",
+      "ascii": "  runCheckout(options)\n  ├─ gatherPaths(options)\n  │  ├─ if (options.force)\n+ │  └─ mergeWorktrees()\n- ├─ sendEmail(paths)\n- │  └─ console.log()\n+ └─ notifyUser(paths)\n+    └─ console.log()",
+      "tree": {
+        "key": "runCheckout",
+        "label": "runCheckout(options)",
+        "status": "same",
+        "kind": "call",
+        "children": [
+          {
+            "key": "gatherPaths",
+            "label": "gatherPaths(options)",
+            "status": "same",
+            "kind": "call",
+            "children": [
+              {
+                "key": "if:options.force",
+                "label": "if (options.force)",
+                "status": "same",
+                "kind": "branch",
+                "children": []
+              },
+              {
+                "key": "mergeWorktrees",
+                "label": "mergeWorktrees()",
+                "status": "added",
+                "kind": "call",
+                "children": []
+              }
+            ]
+          },
+          {
+            "key": "sendEmail",
+            "label": "sendEmail(paths)",
+            "status": "removed",
+            "kind": "call",
+            "children": [
+              {
+                "key": "console.log",
+                "label": "console.log()",
+                "status": "removed",
+                "kind": "call",
+                "children": []
+              }
+            ]
+          },
+          {
+            "key": "notifyUser",
+            "label": "notifyUser(paths)",
+            "status": "added",
+            "kind": "call",
+            "children": [
+              {
+                "key": "console.log",
+                "label": "console.log()",
+                "status": "added",
+                "kind": "call",
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "ascii": "calldiff diff HEAD → working tree\n\n  runCheckout(options)\n  ├─ gatherPaths(options)\n  │  ├─ if (options.force)\n+ │  └─ mergeWorktrees()\n- ├─ sendEmail(paths)\n- │  └─ console.log()\n+ └─ notifyUser(paths)\n+    └─ console.log()"
+}

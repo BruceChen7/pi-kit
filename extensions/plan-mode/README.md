@@ -158,6 +158,10 @@ Presets:
 
 Explicit settings override preset defaults.
 
+Optional:
+
+- `callflowSummary` (default `false`): when `true`, Plan Mode captures the git HEAD ref the moment a plan is approved, and when the approved-execution turn ends it runs `calldiff diff <ref>` and sends a follow-up message summarizing which call trees changed (+/- per entrypoint, condensed ASCII). When nothing changed it sends a one-line "no call-flow changes" notice instead. Best-effort: skipped silently outside git, or when `calldiff` is unavailable (PATH with npx fallback; first run downloads tree-sitter grammars). Visualize the same data anytime with the `create_calldiff_artifact` tool (visual-artifact extension).
+
 ## Troubleshooting
 
 If Pi is not editing files:

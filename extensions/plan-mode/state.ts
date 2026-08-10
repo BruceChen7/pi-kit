@@ -195,6 +195,13 @@ export const runFromSnapshot = (value: unknown): PlanRun | null => {
     ...(typeof value.archivedAt === "string"
       ? { archivedAt: value.archivedAt }
       : {}),
+    ...(typeof value.approvedHeadRef === "string" &&
+    value.approvedHeadRef.length > 0
+      ? { approvedHeadRef: value.approvedHeadRef }
+      : {}),
+    ...(typeof value.callflowSummarySent === "boolean"
+      ? { callflowSummarySent: value.callflowSummarySent }
+      : {}),
   };
 };
 
@@ -228,6 +235,7 @@ export const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
     requireReview: DEFAULT_CONFIG.requireReview,
     guards: { ...DEFAULT_CONFIG.guards },
     artifactPolicy: { ...DEFAULT_CONFIG.artifactPolicy },
+    callflowSummary: DEFAULT_CONFIG.callflowSummary,
   };
 
   if (raw.preset === "solo") {
@@ -248,6 +256,9 @@ export const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
   }
   if (isRecord(raw.guards)) {
     applyBooleanOverride(config.guards, raw.guards, "readBeforeWrite");
+  }
+  if (typeof raw.callflowSummary === "boolean") {
+    config.callflowSummary = raw.callflowSummary;
   }
   if (isRecord(raw.artifactPolicy)) {
     const artifactPolicy = raw.artifactPolicy;
@@ -643,7 +654,12 @@ export class PlanModeState {
     }
     this.phase = PLAN_MODE_PLAN;
     this.activeRun.status = PLAN_RUN_STATUS_DRAFT;
+    // Approval-scoped fields are reset together: a later re-approval is a
+    // fresh execution episode and must re-capture the baseline ref and
+    // re-allow the callflow summary.
     delete this.activeRun.approvedAt;
+    delete this.activeRun.approvedHeadRef;
+    this.activeRun.callflowSummarySent = false;
   }
 
   abortApprovedExecution(planPath: string | null): boolean {

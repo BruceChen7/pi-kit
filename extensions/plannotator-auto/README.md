@@ -17,8 +17,6 @@ When `planFile` is not explicitly configured, worktree sessions accept both alia
 
 `specs/` is always resolved as the sibling directory of the active `plan/` directory.
 
-Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as `{ dir, filePattern }` entries.
-
 ## What it does
 
 - `write` / `edit` to a matching **plan** file (`.md` or `.html`) → queue a pending plan review gate.
@@ -67,16 +65,7 @@ Example:
   "plannotatorAuto": {
     "planFile": ".pi/plans/my-repo/plan",
     "htmlDirs": [".pi/html"],
-    "extraReviewTargets": [
-      {
-        "dir": ".pi/plans/my-repo/office-hours",
-        "filePattern": "^[^/]+-office-hours-\\d{8}-\\d{6}\\.md$"
-      },
-      {
-        "dir": ".pi/plans/my-repo/plan-eng-review",
-        "filePattern": "^[^/]+-test-plan-\\d{8}-\\d{6}\\.md$"
-      }
-    ]
+    "callflowContext": true
   }
 }
 ```
@@ -85,8 +74,8 @@ Notes:
 
 - `planFile` supports **directory path only**.
 - `htmlDirs` configures the HTML artifact review directories (default `[".pi/html"]`, resolved against the session cwd with the same repo-slug aliases as `planFile`); set `htmlDirs: null` or `[]` to disable HTML artifact review.
-- `extraReviewTargets` entries use `{ dir, filePattern }`, where `filePattern` is a basename regex applied to direct child files only.
 - Set `planFile: null` to disable plan/spec review auto-trigger.
+- `callflowContext` (default off) appends a best-effort call-flow context appendix to the review payload when submitting a plan/spec — a `calldiff diff` summary (which entrypoints' call trees changed, with +/- counts and condensed ASCII trees). It never modifies the plan file on disk, and is skipped silently when the session is not a git repo, `calldiff` is unavailable, or nothing changed. Accepts `true`/`false` or `{ "enabled": true, "from": "HEAD~1" }` to choose the diff base ref. Requires the `calldiff` CLI (resolved from PATH with an npx fallback; first run downloads tree-sitter grammars into `~/.cache/calldiff`).
 
 ## CLI commands used
 

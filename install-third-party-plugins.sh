@@ -26,8 +26,7 @@ NC='\033[0m'
 MODE="install-only"
 LIBRARY_DIR="${PI_PLUGIN_LIBRARY_DIR:-$HOME/.agents/pi-plugins}"
 MANIFEST_FILE="$LIBRARY_DIR/.manifest.json"
-PLANNOTATOR_CLI_INSTALL_DIR="${PLANNOTATOR_CLI_INSTALL_DIR:-$HOME/.local/bin}"
-PLANNOTATOR_REPO="${PLANNOTATOR_REPO:-backnotprop/plannotator}"
+source "$(dirname "$0")/scripts/install-plannotator-cli.sh"
 
 DEFAULT_PLUGINS=(
   "npm:pi-context"
@@ -136,71 +135,6 @@ install_github_plugin() {
   else
     git clone --depth 1 "$(github_clone_url "$source")" "$target" >/dev/null
   fi
-}
-
-plannotator_platform() {
-  local os
-  local arch
-
-  case "$(uname -s)" in
-    Darwin) os="darwin" ;;
-    Linux) os="linux" ;;
-    *) echo "Unsupported OS for plannotator CLI install: $(uname -s)" >&2; return 1 ;;
-  esac
-
-  case "$(uname -m)" in
-    x86_64|amd64) arch="x64" ;;
-    arm64|aarch64) arch="arm64" ;;
-    *) echo "Unsupported architecture for plannotator CLI install: $(uname -m)" >&2; return 1 ;;
-  esac
-
-  printf '%s-%s\n' "$os" "$arch"
-}
-
-sha256_file() {
-  local file_path="$1"
-
-  if [ "$(uname -s)" = "Darwin" ]; then
-    shasum -a 256 "$file_path" | cut -d' ' -f1
-    return
-  fi
-
-  sha256sum "$file_path" | cut -d' ' -f1
-}
-
-install_plannotator_cli() {
-  local platform
-  local binary_name
-  local binary_url
-  local checksum_url
-  local tmp_file
-  local expected_checksum
-  local actual_checksum
-
-  platform="$(plannotator_platform)"
-  binary_name="plannotator-${platform}"
-
-  echo -e "${BLUE}Installing:${NC} plannotator CLI"
-  binary_url="https://github.com/${PLANNOTATOR_REPO}/releases/latest/download/${binary_name}"
-  checksum_url="${binary_url}.sha256"
-
-  mkdir -p "$PLANNOTATOR_CLI_INSTALL_DIR"
-  tmp_file="$(mktemp)"
-  curl -fsSL -o "$tmp_file" "$binary_url"
-  expected_checksum="$(curl -fsSL "$checksum_url" | cut -d' ' -f1)"
-  actual_checksum="$(sha256_file "$tmp_file")"
-
-  if [ "$actual_checksum" != "$expected_checksum" ]; then
-    echo "Checksum verification failed for plannotator CLI latest release" >&2
-    rm -f "$tmp_file"
-    return 1
-  fi
-
-  rm -f "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator" "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator.exe" 2>/dev/null || true
-  mv "$tmp_file" "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator"
-  chmod +x "$PLANNOTATOR_CLI_INSTALL_DIR/plannotator"
-  echo -e "  ${GREEN}✓${NC} Installed plannotator to $PLANNOTATOR_CLI_INSTALL_DIR/plannotator"
-  echo ""
 }
 
 normalize_declared_extension_paths() {

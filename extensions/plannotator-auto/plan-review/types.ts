@@ -1,17 +1,11 @@
 export type ReviewTargetKind = "plan" | "spec" | "html";
 
-export type ExtraReviewTarget = {
-  dir: string;
-  pattern: RegExp;
-};
-
 export type PlanFileConfig = {
   planFile: string;
   resolvedPlanPath: string;
   resolvedPlanPaths: string[];
   resolvedSpecPaths: string[];
   resolvedHtmlPaths: string[];
-  extraReviewTargets: ExtraReviewTarget[];
 };
 
 export type PendingPlanReview = {

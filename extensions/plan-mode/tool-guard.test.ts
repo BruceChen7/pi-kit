@@ -24,13 +24,13 @@ describe("plan-mode extension: tool guards", () => {
     await expectToolAllowed(harness, ctx, "write", {
       path: ".pi/plans/pi-kit/plan/2026-05-08-demo.md",
     });
-    await expectToolBlocked(harness, ctx, "write", {
+    await expectToolAllowed(harness, ctx, "write", {
       path: ".pi/plans/pi-kit/plan/2026-05-08-demo.html",
     });
     await expectToolAllowed(harness, ctx, "write", {
       path: ".pi/html/repo/2026-05-08-demo.html",
     });
-    await expectToolBlocked(harness, ctx, "write", {
+    await expectToolAllowed(harness, ctx, "write", {
       path: ".pi/html/repo/2026-05-08-demo.md",
     });
     await expectToolAllowed(harness, ctx, "edit", {
@@ -50,11 +50,20 @@ describe("plan-mode extension: tool guards", () => {
     await expectToolAllowed(harness, ctx, "write", {
       path: ".pi/plans/pi-kit/shaping/current-notes.md",
     });
-    await expectToolBlocked(harness, ctx, "write", {
+    await expectToolAllowed(harness, ctx, "write", {
       path: ".pi/plans/pi-kit/specs/2026-05-08-demo-design.html",
     });
-    await expectToolBlocked(harness, ctx, "write", {
+    await expectToolAllowed(harness, ctx, "write", {
       path: ".pi/plans/pi-kit/issues/01-root-issue.md",
+    });
+    await expectToolAllowed(harness, ctx, "write", {
+      path: ".pi/scratch/notes.md",
+    });
+    await expectToolBlocked(harness, ctx, "write", {
+      path: "docs/notes.md",
+    });
+    await expectToolBlocked(harness, ctx, "write", {
+      path: ".pi/notes.txt",
     });
 
     await harness.runCommand("plan-mode", "act", ctx);
@@ -82,7 +91,7 @@ describe("plan-mode extension: tool guards", () => {
 
     const result = await harness.runToolCall(
       "write",
-      { path: ".pi/plans/pi-kit/plan/demo.md" },
+      { path: "docs/demo.md" },
       ctx,
     );
 

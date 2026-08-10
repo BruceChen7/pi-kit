@@ -118,7 +118,7 @@ describe("plan-mode guard policy", () => {
     ).toBeUndefined();
   });
 
-  it("blocks plan-phase writes to non-date HTML files even under htmlDirs", () => {
+  it("blocks plan-phase writes to HTML files outside .pi and htmlDirs", () => {
     expect(
       decideToolBlock(
         input({
@@ -127,9 +127,30 @@ describe("plan-mode guard policy", () => {
             target({
               isReviewArtifact: false,
               isHtmlArtifact: false,
-              rawPath: ".pi/html/repo/foo.html",
+              rawPath: "docs/proto.html",
               exists: false,
             }),
+          ],
+        }),
+      ),
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("current phase can only write"),
+    });
+  });
+
+  it("blocks plan-phase writes when any target is not a review artifact", () => {
+    expect(
+      decideToolBlock(
+        input({
+          isPlanPhase: true,
+          targets: [
+            target({
+              isReviewArtifact: true,
+              rawPath: ".pi/notes.md",
+              exists: false,
+            }),
+            target({ isReviewArtifact: false, rawPath: "src/app.ts" }),
           ],
         }),
       ),

@@ -1,16 +1,11 @@
 import path from "node:path";
 import { DEFAULT_GIT_TIMEOUT_MS, getGitCommonDir } from "./git.ts";
 
-export type SharedReviewTargetKind = "plan" | "spec";
-
 export const REVIEW_TARGET_PLAN_DIR = "plan";
 export const REVIEW_TARGET_SPECS_DIR = "specs";
-export const REVIEW_TARGET_SHAPING_DIR = "shaping";
-export const REVIEW_TARGET_ISSUES_DIR = "issues";
 
 export const PLAN_REVIEW_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.md$/;
 export const SPEC_REVIEW_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+-design\.md$/;
-export const REVIEW_MARKDOWN_FILE_PATTERN = /^.+\.md$/;
 export const HTML_REVIEW_FILE_PATTERN = /^\d{4}-\d{2}-\d{2}-.+\.html$/;
 
 export const getRepoSlugFromGitCommonDir = (cwd: string): string | null => {
@@ -72,57 +67,33 @@ export const resolveHtmlReviewDirs = (
 const normalizeRelativePath = (relativePath: string): string =>
   relativePath.replaceAll("\\", "/").replace(/^@/, "");
 
+/**
+ * Classify a repo-relative path as a review target.
+ *
+ * The rule is deliberately broad: every `.md`/`.html` file anywhere under
+ * the project `.pi/` directory counts as a review target. The well-known
+ * locations (`.pi/plans/<repo>/{plan,specs,shaping,issues}`, `.pi/html/…`)
+ * are subsumed by this single rule, which is shared by plan-mode (the
+ * plan-phase write guard) and plannotator-auto (the review queue) so the
+ * two extensions can never disagree.
+ *
+ * The agent-facing guidance about WHERE to write stays intentionally
+ * narrower (`.pi/plans/<repo>/plan/…` etc.): the gate is permissive, the
+ * guidance is prescriptive.
+ */
 export const defaultReviewTargetKindFromRelativePath = (
   relativePath: string,
-): SharedReviewTargetKind | null => {
+): "plan" | null => {
   const normalized = normalizeRelativePath(relativePath);
   const parts = normalized.split("/");
-  const [dotPi, plans, repoSlug, targetDir, fileName, issueFileName] = parts;
-
-  if (dotPi !== ".pi" || plans !== "plans" || !repoSlug || !targetDir) {
-    return null;
-  }
-
-  if (parts.length === 5) {
-    if (
-      targetDir === REVIEW_TARGET_PLAN_DIR &&
-      PLAN_REVIEW_FILE_PATTERN.test(fileName)
-    ) {
-      return "plan";
-    }
-
-    if (
-      targetDir === REVIEW_TARGET_SPECS_DIR &&
-      SPEC_REVIEW_FILE_PATTERN.test(fileName)
-    ) {
-      return "spec";
-    }
-
-    if (
-      targetDir === REVIEW_TARGET_SHAPING_DIR &&
-      REVIEW_MARKDOWN_FILE_PATTERN.test(fileName)
-    ) {
-      return "spec";
-    }
-  }
-
-  const topicSlug = fileName;
-  if (
-    parts.length === 6 &&
-    targetDir === REVIEW_TARGET_ISSUES_DIR &&
-    topicSlug &&
-    REVIEW_MARKDOWN_FILE_PATTERN.test(issueFileName)
-  ) {
-    return "plan";
-  }
-
-  return null;
+  const leafName = parts[parts.length - 1] ?? "";
+  return parts[0] === ".pi" && /\.(?:md|html)$/i.test(leafName) ? "plan" : null;
 };
 
 export const defaultReviewTargetKindFromAbsolutePath = (
   cwd: string,
   targetPath: string,
-): SharedReviewTargetKind | null => {
+): "plan" | null => {
   const relative = path.relative(cwd, targetPath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     return null;

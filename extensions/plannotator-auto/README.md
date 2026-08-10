@@ -64,8 +64,7 @@ Example:
 {
   "plannotatorAuto": {
     "planFile": ".pi/plans/my-repo/plan",
-    "htmlDirs": [".pi/html"],
-    "callflowContext": true
+    "htmlDirs": [".pi/html"]
   }
 }
 ```
@@ -75,7 +74,6 @@ Notes:
 - `planFile` supports **directory path only**.
 - `htmlDirs` configures the HTML artifact review directories (default `[".pi/html"]`, resolved against the session cwd with the same repo-slug aliases as `planFile`); set `htmlDirs: null` or `[]` to disable HTML artifact review.
 - Set `planFile: null` to disable plan/spec review auto-trigger.
-- `callflowContext` (default off) appends a best-effort call-flow context appendix to the review payload when submitting a plan/spec — a `calldiff diff` summary (which entrypoints' call trees changed, with +/- counts and condensed ASCII trees). It never modifies the plan file on disk, and is skipped silently when the session is not a git repo, `calldiff` is unavailable, or nothing changed. Accepts `true`/`false` or `{ "enabled": true, "from": "HEAD~1" }` to choose the diff base ref. Requires the `calldiff` CLI (resolved from PATH with an npx fallback; first run downloads tree-sitter grammars into `~/.cache/calldiff`).
 
 ## CLI commands used
 

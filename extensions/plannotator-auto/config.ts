@@ -4,10 +4,6 @@ import { loadSettings } from "../shared/settings.ts";
 export type PlannotatorAutoConfig = {
   planFile?: string | null;
   htmlDirs?: string[] | null;
-  callflowContext?: {
-    enabled: boolean;
-    from?: string;
-  } | null;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -32,26 +28,6 @@ const sanitizeHtmlDirs = (value: unknown): string[] | null | undefined => {
   return next;
 };
 
-const sanitizeCallflowContext = (
-  value: unknown,
-): PlannotatorAutoConfig["callflowContext"] => {
-  if (value === null) {
-    return null;
-  }
-  if (typeof value === "boolean") {
-    return { enabled: value };
-  }
-  if (isRecord(value)) {
-    return {
-      enabled: value.enabled === true,
-      ...(typeof value.from === "string" && value.from.trim().length > 0
-        ? { from: value.from.trim() }
-        : {}),
-    };
-  }
-  return undefined;
-};
-
 const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
   if (!isRecord(value)) {
     return {};
@@ -71,11 +47,6 @@ const sanitizeConfig = (value: unknown): PlannotatorAutoConfig => {
   const htmlDirs = sanitizeHtmlDirs(value.htmlDirs);
   if (htmlDirs !== undefined) {
     next.htmlDirs = htmlDirs;
-  }
-
-  const callflowContext = sanitizeCallflowContext(value.callflowContext);
-  if (callflowContext !== undefined) {
-    next.callflowContext = callflowContext;
   }
 
   return next;
@@ -102,7 +73,6 @@ export const loadConfig = (
     cwd,
     planFile: config.planFile,
     htmlDirs: config.htmlDirs,
-    callflowContext: config.callflowContext?.enabled ?? false,
   });
   return config;
 };

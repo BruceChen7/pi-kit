@@ -51,6 +51,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:wiki-concept": "vitest run skills/knowledge-wiki/concept/wiki-concept.test.ts",
+    "test:tools-intercepted": "vitest run extensions/tools_intercepted/",
     "cache-graph:ui:build": "vite build --config extensions/cache-graph/vite.config.mts",
     "visual-artifact:ui:build": "vite build --config extensions/visual-artifact/vite.config.mts",
     "pi-webterm:dev": "cd pi-webterm/server && npx tsx watch src/index.ts",

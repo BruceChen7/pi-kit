@@ -13,6 +13,12 @@
 #   grep -T = initial-tab        | rg -T = type-not         -> handled
 #   grep -U = binary (no strip)  | rg -U = multiline        -> handled
 #   grep -I = ignore binary      | rg -I = no-filename      -> handled
+#
+# Combined short flags (grep -iE, -nE, -in, ...) are expanded into
+# individual flags before parsing so conflicting letters (-E, -s, -L, ...)
+# hit the translation rules instead of leaking into rg verbatim.
+# Clusters containing arg-taking flags (-C3, -ePAT, -m5, -iC3) are left
+# untouched: rg's parser resolves them with the same semantics as grep.
 
 set -o pipefail
 
@@ -463,6 +469,45 @@ parse_args() {
     done
 }
 
+# ---------------------------------------------------------------------------
+# Expand combined short flags before parsing so conflicting single letters
+# (-E, -s, -L, -T, -U, -I, ...) hit the translation rules above instead of
+# leaking into rg verbatim (rg -E means --encoding, not extended regex).
+#
+# getopt-style expansion: boolean letters become individual flags; an
+# arg-taking letter (C A B m e f d D) keeps any remaining chars as its
+# attached value. Clusters with attached values (-C1, -ePAT, -m5) can also
+# be left for rg's native parser — both paths are grep-compatible.
+# ---------------------------------------------------------------------------
+ARG_TAKING_LETTERS="CABmefdD"
+EXPANDED_ARGS=()
+AFTER_DDASH=false
+for arg in "$@"; do
+    if $AFTER_DDASH; then
+        EXPANDED_ARGS+=("$arg")
+    elif [ "$arg" = "--" ]; then
+        AFTER_DDASH=true
+        EXPANDED_ARGS+=("$arg")
+    elif [[ "$arg" =~ ^-[A-Za-z]{2,}$ ]]; then
+        letters="${arg:1}"
+        i=0
+        while [ $i -lt ${#letters} ]; do
+            ch="${letters:$i:1}"
+            if [[ "$ARG_TAKING_LETTERS" == *"$ch"* ]]; then
+                # arg-taking letter: keep it + remainder as one token
+                EXPANDED_ARGS+=("-${letters:$i}")
+                i=${#letters}
+            else
+                EXPANDED_ARGS+=("-$ch")
+                i=$((i + 1))
+            fi
+        done
+    else
+        EXPANDED_ARGS+=("$arg")
+    fi
+done
+set -- "${EXPANDED_ARGS[@]}"
+
 parse_args "$@"
 
 # ---------------------------------------------------------------------------
@@ -478,8 +523,15 @@ fi
 # ---------------------------------------------------------------------------
 # Use --hidden to also search hidden files (like grep)
 # But skip .git/ which grep doesn't search by default either
-if [ ${#FILES[@]} -gt 0 ]; then
-    exec rg --color=never --hidden --glob '!**/.git/**' "${RG_ARGS[@]}" "$PATTERN" "${FILES[@]}"
+# Emit a literal `--` before the pattern if it starts with '-' so rg treats
+# it as a pattern (the shim's own `--` handling is internal only).
+if [[ "$PATTERN" == -* ]]; then
+    PATTERN_SEP=(--)
 else
-    exec rg --color=never --hidden --glob '!**/.git/**' "${RG_ARGS[@]}" "$PATTERN"
+    PATTERN_SEP=()
+fi
+if [ ${#FILES[@]} -gt 0 ]; then
+    exec rg --color=never --hidden --glob '!**/.git/**' "${RG_ARGS[@]}" "${PATTERN_SEP[@]}" "$PATTERN" "${FILES[@]}"
+else
+    exec rg --color=never --hidden --glob '!**/.git/**' "${RG_ARGS[@]}" "${PATTERN_SEP[@]}" "$PATTERN"
 fi

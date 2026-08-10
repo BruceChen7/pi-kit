@@ -24,14 +24,6 @@
       }
     },
     {
-      "includes": ["extensions/tasks/ui/src/styles.css"],
-      "css": {
-        "parser": {
-          "tailwindDirectives": true
-        }
-      }
-    },
-    {
       "includes": ["**/*.svelte"],
       "formatter": {
         "indentWidth": 2

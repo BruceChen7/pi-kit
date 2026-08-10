@@ -22,5 +22,3 @@ docs/
 .alma-snapshots
 
 .pi/
-extensions/tasks/ui-dist/
-extensions/tasks/ui/dist/

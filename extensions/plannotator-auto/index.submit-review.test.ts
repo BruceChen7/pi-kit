@@ -6,14 +6,7 @@ import {
   createTempRepo,
   createTestContext,
   flushMicrotasks,
-  lavishChatMessageStdout as lavishChatMessageStdoutFixture,
-  lavishEndedStdout as lavishEndedStdoutFixture,
-  lavishFeedbackStdout as lavishFeedbackStdoutFixture,
-  lavishOpenStdout as lavishOpenStdoutFixture,
-  lavishUserEndedStdout as lavishUserEndedStdoutFixture,
   mockHangingPlannotatorSpawn,
-  mockLavishOpenThenHangingSpawn,
-  mockLavishSpawn,
   mockPlannotatorSpawn,
   removeTempRepo,
   writeTestFile,
@@ -787,34 +780,30 @@ parentFn()
   });
 });
 
-describe("lavish HTML artifact review", () => {
+describe("Plannotator HTML artifact review", () => {
   const getHtmlFileRelative = (repoRoot: string): string => {
     const repoName = repoRoot.split("/").pop() ?? "repo";
     return `.pi/html/${repoName}/2026-04-16-proto.html`;
   };
 
-  // `lavish-axi` emits TOON (not JSON); fixtures use the real shape.
-  const lavishOpenStdout = lavishOpenStdoutFixture("/repo/proto.html");
-  const lavishUserEndedStdout =
-    lavishUserEndedStdoutFixture("/repo/proto.html");
-  const lavishFeedbackStdout = lavishFeedbackStdoutFixture(
-    "/repo/proto.html",
-    "Please refine the layout.",
-  );
-  const lavishEndedStdout = lavishEndedStdoutFixture("/repo/proto.html");
+  const cliAnnotatedStdout = (feedback: string) =>
+    JSON.stringify({ decision: "annotated", feedback });
+  const cliApprovedStdout = JSON.stringify({ decision: "approved" });
+  const cliDismissedStdout = JSON.stringify({ decision: "dismissed" });
 
-  it("reviews HTML artifacts through Lavish open+poll and keeps the gate on feedback", async () => {
+  it("reviews HTML artifacts through plannotator annotate --gate --json and keeps the gate on feedback", async () => {
     vi.resetModules();
-    const spawn = mockLavishSpawn(
-      { status: 0, stdout: lavishOpenStdout, stderr: "" },
-      { status: 0, stdout: lavishFeedbackStdout, stderr: "" },
-    );
+    const spawn = mockPlannotatorSpawn({
+      status: 0,
+      stdout: cliAnnotatedStdout("Please refine the layout."),
+      stderr: "",
+    });
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
 
-    const repoRoot = await createTempRepo("plannotator-auto-lavish-");
+    const repoRoot = await createTempRepo("plannotator-auto-html-annotate-");
     const htmlRelative = getHtmlFileRelative(repoRoot);
     const htmlPath = path.join(repoRoot, htmlRelative);
     await writeTestFile(
@@ -844,16 +833,9 @@ describe("lavish HTML artifact review", () => {
         details?: { status?: string };
       };
 
-      expect(spawn).toHaveBeenNthCalledWith(
-        1,
-        "npx",
-        ["-y", "lavish-axi", "open", htmlPath],
-        expect.objectContaining({ cwd: repoRoot }),
-      );
-      expect(spawn).toHaveBeenNthCalledWith(
-        2,
-        "npx",
-        ["-y", "lavish-axi", "poll", htmlPath],
+      expect(spawn).toHaveBeenCalledWith(
+        "plannotator",
+        ["annotate", htmlPath, "--gate", "--json"],
         expect.objectContaining({ cwd: repoRoot }),
       );
       expect(result.details?.status).toBe("denied");
@@ -864,7 +846,7 @@ describe("lavish HTML artifact review", () => {
         message?: { content?: string };
       };
       expect(gateResult?.message?.content ?? "").toContain(
-        "[LAVISH REVIEW - PENDING]",
+        "[PLANNOTATOR REVIEW - PENDING]",
       );
       expect(gateResult?.message?.content ?? "").not.toContain(
         "Keep the first # heading",
@@ -875,25 +857,121 @@ describe("lavish HTML artifact review", () => {
     }
   });
 
-  it("delivers the real chat message content from Send to Agent, not the static text label", async () => {
+  it("settles the review when the HTML artifact is approved", async () => {
     vi.resetModules();
-    const spawn = mockLavishSpawn(
-      { status: 0, stdout: lavishOpenStdout, stderr: "" },
-      {
-        status: 0,
-        stdout: lavishChatMessageStdoutFixture(
-          "/repo/proto.html",
-          "Make the hero section narrower.",
-        ),
-        stderr: "",
-      },
-    );
+    const spawn = mockPlannotatorSpawn({
+      status: 0,
+      stdout: cliApprovedStdout,
+      stderr: "",
+    });
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
 
-    const repoRoot = await createTempRepo("plannotator-auto-lavish-msg-");
+    const repoRoot = await createTempRepo("plannotator-auto-html-approved-");
+    const htmlRelative = getHtmlFileRelative(repoRoot);
+    await writeTestFile(
+      repoRoot,
+      htmlRelative,
+      "<html><body>Prototype</body></html>",
+    );
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, htmlRelative);
+
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: htmlRelative },
+        ctx,
+      )) as { details?: { status?: string } };
+      expect(result.details?.status).toBe("approved");
+
+      // Gate released: no pending-review message.
+      const gateResult = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+      expect(gateResult?.message).toBeUndefined();
+
+      // Settled: rewriting the same file does not re-queue.
+      await emitToolWrite(emit, ctx, htmlRelative);
+      const gateAgain = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+      expect(gateAgain?.message).toBeUndefined();
+      expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("releases the gate without settling when the HTML review is dismissed", async () => {
+    vi.resetModules();
+    mockPlannotatorSpawn({
+      status: 0,
+      stdout: cliDismissedStdout,
+      stderr: "",
+    });
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-html-dismiss-");
+    const htmlRelative = getHtmlFileRelative(repoRoot);
+    await writeTestFile(
+      repoRoot,
+      htmlRelative,
+      "<html><body>Prototype</body></html>",
+    );
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, htmlRelative);
+
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: htmlRelative },
+        ctx,
+      )) as { details?: { status?: string } };
+      expect(result.details?.status).toBe("dismissed");
+
+      // Gate released: no pending-review message on the next agent turn.
+      const gateResult = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+      expect(gateResult).toBeUndefined();
+
+      // Not settled: the next write to the same file re-queues the review.
+      await emitToolWrite(emit, ctx, htmlRelative);
+      const requeuedGate = (await emit("before_agent_start", {}, ctx)) as {
+        message?: { content?: string };
+      };
+      expect(requeuedGate?.message?.content ?? "").toContain(
+        "plannotator_auto_submit_review",
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("keeps the pending target when the annotate CLI fails to start", async () => {
+    vi.resetModules();
+    const spawn = mockPlannotatorSpawn({
+      status: 2,
+      stderr: "plannotator: annotate UI assets missing",
+    });
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-html-error-");
     const htmlRelative = getHtmlFileRelative(repoRoot);
     await writeTestFile(
       repoRoot,
@@ -915,222 +993,35 @@ describe("lavish HTML artifact review", () => {
         details?: { status?: string };
       };
 
-      expect(spawn).toHaveBeenCalledTimes(2);
-      expect(result.details?.status).toBe("denied");
-      expect(result.content?.[0]?.text).toContain(
-        "Make the hero section narrower.",
-      );
-      // Regression: real chat-message records carry the content in `prompt`
-      // with `text` set to the static label "Freeform message"; the parser
-      // must not surface the label as the feedback.
-      expect(result.content?.[0]?.text).not.toContain("Freeform message");
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
-  });
-
-  it("re-submits HTML artifacts with --agent-reply after feedback", async () => {
-    vi.resetModules();
-    const spawn = mockLavishSpawn(
-      { status: 0, stdout: lavishOpenStdout, stderr: "" },
-      { status: 0, stdout: lavishFeedbackStdout, stderr: "" },
-    );
-
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { emit, runTool, api } = createFakePi();
-    plannotatorAuto(api as never);
-
-    const repoRoot = await createTempRepo("plannotator-auto-lavish-reply-");
-    const htmlRelative = getHtmlFileRelative(repoRoot);
-    const htmlPath = path.join(repoRoot, htmlRelative);
-    await writeTestFile(
-      repoRoot,
-      htmlRelative,
-      "<html><body>Prototype v2</body></html>",
-    );
-    const ctx = createTestContext(repoRoot);
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, htmlRelative);
-
-      await runTool(
-        "plannotator_auto_submit_review",
-        { path: htmlRelative },
-        ctx,
-      );
-
-      const second = (await runTool(
-        "plannotator_auto_submit_review",
-        { path: htmlRelative, reply: "Fixed the layout." },
-        ctx,
-      )) as { details?: { status?: string } };
-
-      expect(second.details?.status).toBe("denied");
-      expect(spawn).toHaveBeenNthCalledWith(
-        3,
-        "npx",
-        [
-          "-y",
-          "lavish-axi",
-          "poll",
-          htmlPath,
-          "--agent-reply",
-          "Fixed the layout.",
-        ],
+      expect(result.details?.status).toBe("error");
+      expect(result.content?.[0]?.text).toContain("UI assets missing");
+      expect(spawn).toHaveBeenCalledWith(
+        "plannotator",
+        ["annotate", path.join(repoRoot, htmlRelative), "--gate", "--json"],
         expect.objectContaining({ cwd: repoRoot }),
       );
-      // No second open.
-      expect(spawn).toHaveBeenCalledTimes(3);
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
-  });
 
-  it("releases the gate and settles when Lavish poll returns ended", async () => {
-    vi.resetModules();
-    const spawn = mockLavishSpawn(
-      { status: 0, stdout: lavishOpenStdout, stderr: "" },
-      { status: 0, stdout: lavishEndedStdout, stderr: "" },
-    );
-
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { emit, runTool, api } = createFakePi();
-    plannotatorAuto(api as never);
-
-    const repoRoot = await createTempRepo("plannotator-auto-lavish-ended-");
-    const htmlRelative = getHtmlFileRelative(repoRoot);
-    await writeTestFile(
-      repoRoot,
-      htmlRelative,
-      "<html><body>Prototype</body></html>",
-    );
-    const ctx = createTestContext(repoRoot);
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, htmlRelative);
-
-      const result = (await runTool(
-        "plannotator_auto_submit_review",
-        { path: htmlRelative },
-        ctx,
-      )) as { details?: { status?: string } };
-      expect(result.details?.status).toBe("approved");
-      expect(spawn).toHaveBeenCalledTimes(2);
-
-      // Gate released: no pending-review message.
+      // Pending stays: the gate message is still present.
       const gateResult = (await emit("before_agent_start", {}, ctx)) as {
         message?: { content?: string };
       };
-      expect(gateResult?.message).toBeUndefined();
-
-      // Settled: rewriting the same file does not re-queue.
-      await emitToolWrite(emit, ctx, htmlRelative);
-      const gateAgain = (await emit("before_agent_start", {}, ctx)) as {
-        message?: { content?: string };
-      };
-      expect(gateAgain?.message).toBeUndefined();
+      expect(gateResult?.message?.content ?? "").toContain(htmlRelative);
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);
     }
   });
 
-  it("treats a user-ended open as review complete", async () => {
+  it("re-runs the full annotate command after an interrupted HTML review", async () => {
     vi.resetModules();
-    const spawn = mockLavishSpawn(
-      { status: 0, stdout: lavishUserEndedStdout, stderr: "" },
-      { status: 0, stdout: lavishEndedStdout, stderr: "" },
-    );
+    const { spawn, getChild } = mockHangingPlannotatorSpawn();
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
 
-    const repoRoot = await createTempRepo("plannotator-auto-lavish-usrend-");
+    const repoRoot = await createTempRepo("plannotator-auto-html-abort-");
     const htmlRelative = getHtmlFileRelative(repoRoot);
-    await writeTestFile(
-      repoRoot,
-      htmlRelative,
-      "<html><body>Prototype</body></html>",
-    );
-    const ctx = createTestContext(repoRoot);
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, htmlRelative);
-
-      const result = (await runTool(
-        "plannotator_auto_submit_review",
-        { path: htmlRelative },
-        ctx,
-      )) as { details?: { status?: string } };
-      expect(result.details?.status).toBe("approved");
-      // Only the open was attempted.
-      expect(spawn).toHaveBeenCalledTimes(1);
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
-  });
-
-  it("uses lavish-axi directly when it is on PATH", async () => {
-    vi.resetModules();
-    const spawn = mockLavishSpawn(
-      { status: 0, stdout: lavishOpenStdout, stderr: "" },
-      { status: 0, stdout: lavishFeedbackStdout, stderr: "" },
-      { lavishOnPath: true },
-    );
-
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { emit, runTool, api } = createFakePi();
-    plannotatorAuto(api as never);
-
-    const repoRoot = await createTempRepo("plannotator-auto-lavish-path-");
-    const htmlRelative = getHtmlFileRelative(repoRoot);
-    const htmlPath = path.join(repoRoot, htmlRelative);
-    await writeTestFile(
-      repoRoot,
-      htmlRelative,
-      "<html><body>Prototype</body></html>",
-    );
-    const ctx = createTestContext(repoRoot);
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, htmlRelative);
-      await runTool(
-        "plannotator_auto_submit_review",
-        { path: htmlRelative },
-        ctx,
-      );
-
-      expect(spawn).toHaveBeenNthCalledWith(
-        1,
-        "lavish-axi",
-        ["open", htmlPath],
-        expect.objectContaining({ cwd: repoRoot }),
-      );
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
-  });
-
-  it("re-polls without reopening after an interrupted Lavish poll", async () => {
-    vi.resetModules();
-    const { spawn, getHangingChild } = mockLavishOpenThenHangingSpawn();
-
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { emit, runTool, api } = createFakePi();
-    plannotatorAuto(api as never);
-
-    const repoRoot = await createTempRepo("plannotator-auto-lavish-repoll-");
-    const htmlRelative = getHtmlFileRelative(repoRoot);
-    const htmlPath = path.join(repoRoot, htmlRelative);
     await writeTestFile(
       repoRoot,
       htmlRelative,
@@ -1143,7 +1034,6 @@ describe("lavish HTML artifact review", () => {
       await emit("session_start", {}, ctx);
       await emitToolWrite(emit, ctx, htmlRelative);
 
-      // First submit: open succeeds, poll hangs → abort.
       const firstPromise = runTool(
         "plannotator_auto_submit_review",
         { path: htmlRelative },
@@ -1155,10 +1045,9 @@ describe("lavish HTML artifact review", () => {
       const first = await firstPromise;
 
       expect(first.details?.status).toBe("aborted");
-      expect(getHangingChild()?.kill).toHaveBeenCalled();
-      expect(spawn).toHaveBeenCalledTimes(2);
+      expect(getChild()?.kill).toHaveBeenCalled();
 
-      // Retry: poll only (no second open), with the default agent reply.
+      // Retry: a fresh annotate invocation (no persisted session state).
       const retryController = new AbortController();
       const retryPromise = runTool(
         "plannotator_auto_submit_review",
@@ -1167,18 +1056,11 @@ describe("lavish HTML artifact review", () => {
         retryController.signal,
       ) as Promise<{ details?: { status?: string } }>;
       await flushMicrotasks();
-      expect(spawn).toHaveBeenCalledTimes(3);
+      expect(spawn).toHaveBeenCalledTimes(2);
       expect(spawn).toHaveBeenNthCalledWith(
-        3,
-        "npx",
-        [
-          "-y",
-          "lavish-axi",
-          "poll",
-          htmlPath,
-          "--agent-reply",
-          expect.any(String),
-        ],
+        2,
+        "plannotator",
+        ["annotate", path.join(repoRoot, htmlRelative), "--gate", "--json"],
         expect.objectContaining({ cwd: repoRoot }),
       );
       retryController.abort();
@@ -1189,24 +1071,26 @@ describe("lavish HTML artifact review", () => {
     }
   });
 
-  it("blocks submission when the HTML fails the Lavish compliance gate", async () => {
+  it("blocks submission when the HTML fails the Plannotator compliance gate", async () => {
     vi.resetModules();
-    const spawn = mockLavishSpawn(
-      { status: 0, stdout: lavishOpenStdout, stderr: "" },
-      { status: 0, stdout: lavishEndedStdout, stderr: "" },
-    );
+    const spawn = mockPlannotatorSpawn({
+      status: 0,
+      stdout: cliApprovedStdout,
+      stderr: "",
+    });
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
 
-    const repoRoot = await createTempRepo("plannotator-auto-lavish-block-");
+    const repoRoot = await createTempRepo("plannotator-auto-html-block-");
     const htmlRelative = getHtmlFileRelative(repoRoot);
-    // Unmarked custom interactive control: annotate mode would swallow clicks.
+    // Prototype switcher relying on localStorage: crashes inside the review
+    // sandbox (srcdoc, sandbox="allow-scripts", no same-origin).
     await writeTestFile(
       repoRoot,
       htmlRelative,
-      '<style>.arrow { cursor: pointer }</style><div id="switcher"><span class="arrow">◀</span></div>',
+      '<div id="switcher"></div><script>localStorage.setItem("v", "B");</script>',
     );
     const ctx = createTestContext(repoRoot);
 
@@ -1224,12 +1108,12 @@ describe("lavish HTML artifact review", () => {
       };
 
       expect(result.details?.status).toBe("error");
-      expect(result.details?.reason).toBe("lavish-html-compliance");
+      expect(result.details?.reason).toBe("plannotator-html-compliance");
       expect(result.content?.[0]?.text).toContain(
-        "[LAVISH HTML 合规检查未通过]",
+        "[PLANNOTATOR HTML 合规检查未通过]",
       );
-      expect(result.content?.[0]?.text).toContain("data-lavish-action");
-      // Lavish must never be opened for a blocked artifact.
+      expect(result.content?.[0]?.text).toContain("localStorage");
+      // Plannotator must never be opened for a blocked artifact.
       expect(spawn).not.toHaveBeenCalled();
     } finally {
       await emit("session_shutdown", {}, ctx);
@@ -1237,24 +1121,27 @@ describe("lavish HTML artifact review", () => {
     }
   });
 
-  it("attaches compliance warnings to the first Lavish submit result", async () => {
+  it("attaches compliance warnings to the HTML submit result", async () => {
     vi.resetModules();
-    const spawn = mockLavishSpawn(
-      { status: 0, stdout: lavishOpenStdout, stderr: "" },
-      { status: 0, stdout: lavishEndedStdout, stderr: "" },
-    );
+    const spawn = mockPlannotatorSpawn({
+      status: 0,
+      stdout: cliApprovedStdout,
+      stderr: "",
+    });
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { emit, runTool, api } = createFakePi();
     plannotatorAuto(api as never);
 
-    const repoRoot = await createTempRepo("plannotator-auto-lavish-warn-");
+    const repoRoot = await createTempRepo("plannotator-auto-html-warn-");
     const htmlRelative = getHtmlFileRelative(repoRoot);
+    // Prototype with a keyboard-backed custom control but no review hint:
+    // passes the gate with a non-blocking warning.
     await writeTestFile(
       repoRoot,
       htmlRelative,
       "<style>.arrow { cursor: pointer }</style>\n" +
-        '<div id="switcher" data-lavish-action><span class="arrow">◀</span></div>\n' +
+        '<div id="switcher"><span class="arrow">◀</span></div>\n' +
         "<script>\n" +
         '  document.addEventListener("keydown", (e) => {\n' +
         '    if (e.key === "ArrowLeft") cycle(-1);\n' +
@@ -1277,12 +1164,12 @@ describe("lavish HTML artifact review", () => {
         details?: { status?: string };
       };
 
-      // Compliant: Lavish opens normally and the gate is released.
+      // Compliant: Plannotator opens normally and the gate is released.
       expect(spawn).toHaveBeenCalled();
       expect(result.details?.status).toBe("approved");
       // The missing header hint surfaces as a non-blocking warning.
       expect(result.content?.[0]?.text).toContain(
-        "[LAVISH HTML 合规提示(不阻塞提交,建议修复)]",
+        "[PLANNOTATOR HTML 合规提示(不阻塞提交,建议修复)]",
       );
       expect(result.content?.[0]?.text).toContain("review-hint-missing");
     } finally {

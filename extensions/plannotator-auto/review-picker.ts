@@ -21,7 +21,7 @@ import { getPlanFileConfig } from "./paths.ts";
 import {
   listPendingPlanReviews,
   preprocessPlanMarkdown,
-  runLavishReviewOnce,
+  runPlannotatorHtmlReviewOnce,
 } from "./plan-review.ts";
 import { getSessionState } from "./session.ts";
 
@@ -306,8 +306,8 @@ const runPlanReview = async (
 
   try {
     if (filePath.endsWith(".html")) {
-      // HTML artifacts review through Lavish (open + poll once).
-      await runLavishReviewOnce(pi, ctx, filePath);
+      // HTML artifacts review through Plannotator annotate (one-shot).
+      await runPlannotatorHtmlReviewOnce(pi, ctx, filePath);
       return;
     }
 

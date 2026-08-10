@@ -55,7 +55,7 @@ export const REVIEW_ARTIFACT_WRITE_GUIDANCE = [
 export const HTML_ARTIFACT_REVIEW_LOCATION_HINT =
   ".pi/html/<repo>/YYYY-MM-DD-<slug>.html";
 export const HTML_ARTIFACT_REVIEW_GUIDANCE =
-  "- HTML review artifacts (Lavish) must be written under " +
+  "- HTML review artifacts must be written under " +
   "<htmlDirs> as YYYY-MM-DD-<slug>.html, then submitted with " +
   PLANNOTATOR_SUBMIT_TOOL_NAME +
   ".";

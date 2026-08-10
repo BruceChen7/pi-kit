@@ -51,7 +51,7 @@ Choose scenarios that demonstrate the awkward cases — the happy path, a tricky
 
 Keep it beautiful but restrained: clean typography, generous spacing, one accent colour. No animations, no gimmicks — nothing that competes with the state and the buttons.
 
-Write the file next to the module it validates (per [SKILL.md](SKILL.md) rule 1). If the user wants the Lavish review loop, write it under `.pi/html/<repo>/YYYY-MM-DD-<slug>.html` instead and submit via `plannotator_auto_submit_review` — but a logic demo's main job is being double-clicked, not reviewed.
+Write the file next to the module it validates (per [SKILL.md](SKILL.md) rule 1). If the user wants the Plannotator review loop, write it under `.pi/html/<repo>/YYYY-MM-DD-<slug>.html` instead and submit via `plannotator_auto_submit_review` — but a logic demo's main job is being double-clicked, not reviewed.
 
 ### 4. Hand it over
 

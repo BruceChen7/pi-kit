@@ -42,9 +42,6 @@ function mockSpawnSync(result: SpawnSyncMockResult) {
   vi.doMock("node:child_process", async (importOriginal) => ({
     ...(await importOriginal<typeof import("node:child_process")>()),
     spawn: spawnSync,
-    // resolveLavishCommand probes `lavish-axi --version` through spawnSync;
-    // default to not-on-PATH so tests exercise the npx fallback deterministically.
-    spawnSync: vi.fn(() => ({ status: 1 })),
   }));
   return spawnSync;
 }
@@ -53,9 +50,7 @@ import {
   createFakePi,
   createTempRepo,
   createTestContext,
-  lavishFeedbackStdout,
-  lavishOpenStdout,
-  mockLavishSpawn,
+  mockPlannotatorSpawn,
   removeTempRepo,
   writeTestFile,
 } from "./test-helpers.js";
@@ -138,23 +133,16 @@ describe("annotate latest document shortcut", () => {
     }
   });
 
-  it("opens latest HTML document through Lavish open+poll", async () => {
+  it("opens latest HTML document through plannotator annotate", async () => {
     vi.resetModules();
-    const spawn = mockLavishSpawn(
-      {
-        status: 0,
-        stdout: lavishOpenStdout("/repo/visual.html"),
-        stderr: "",
-      },
-      {
-        status: 0,
-        stdout: lavishFeedbackStdout(
-          "/repo/visual.html",
-          "Please refine the HTML layout.",
-        ),
-        stderr: "",
-      },
-    );
+    const spawn = mockPlannotatorSpawn({
+      status: 0,
+      stdout: JSON.stringify({
+        decision: "annotated",
+        feedback: "Please refine the HTML layout.",
+      }),
+      stderr: "",
+    });
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { api, emit, runShortcut } = createFakePi();
@@ -176,13 +164,8 @@ describe("annotate latest document shortcut", () => {
       await runShortcut("ctrl+alt+l", ctx);
 
       expect(spawn).toHaveBeenCalledWith(
-        "npx",
-        ["-y", "lavish-axi", "open", latestPath],
-        expect.objectContaining({ cwd: repoRoot }),
-      );
-      expect(spawn).toHaveBeenCalledWith(
-        "npx",
-        ["-y", "lavish-axi", "poll", latestPath],
+        "plannotator",
+        ["annotate", latestPath, "--json"],
         expect.objectContaining({ cwd: repoRoot }),
       );
       expect(api.sendUserMessage).toHaveBeenCalledWith(

@@ -1,6 +1,6 @@
-# UI Prototype（静态 HTML + Lavish 评审）
+# UI Prototype（静态 HTML + Plannotator 评审）
 
-Generate **several radically different UI variations in a single self-contained HTML file**, switchable from a floating bottom bar, reviewed through **Lavish Editor**. The user flips between variants in the browser, annotates what they like/dislike, sends feedback, and you iterate until they end the review.
+Generate **several radically different UI variations in a single self-contained HTML file**, switchable from a floating bottom bar, reviewed through **Plannotator**. The user flips between variants in the browser, drag-selects or pinpoints elements to annotate, sends feedback, and you iterate until they approve.
 
 Default to Chinese unless the user explicitly asks for another language.
 
@@ -21,7 +21,7 @@ Write the prototype to a **single self-contained HTML file** under the HTML arti
 .pi/html/<repo>/YYYY-MM-DD-<slug>.html
 ```
 
-(`<repo>` follows the same slug resolution as plan files — the repo name or cwd basename.) Writing there auto-queues a pending review gate, and submitting it runs the **Lavish Editor** review loop (open + poll). Do NOT write prototype HTML anywhere else if you want the review loop.
+(`<repo>` follows the same slug resolution as plan files — the repo name or cwd basename.) Writing there auto-queues a pending review gate, and submitting it opens the **Plannotator annotate** review (one-shot; re-submissions show a version diff). Do NOT write prototype HTML anywhere else if you want the review loop.
 
 ## Process
 
@@ -31,7 +31,7 @@ Default to **3 variants**. More than 5 stops being radically different and start
 
 Write down the plan in a top-of-file HTML comment:
 
-> "配置页面的三种变体，通过 `?variant=` 切换，评审走 Lavish。"
+> "配置页面的三种变体，评审走 Plannotator。"
 
 ### 2. Generate radically different variants
 
@@ -55,37 +55,31 @@ All variants live in the same HTML file; one JS switcher shows/hides them:
 
 Switcher behavior:
 
-- **State** — the current variant is read from `location.search` (`?variant=B`) first, falling back to `localStorage`; switching writes **both** (`history.replaceState` + `localStorage.setItem`). This keeps the variant stable across Lavish live reloads — the user is reviewing variant B, you edit the file, the reload must not bounce them back to A.
+- **State** — a plain module-level variable. Do NOT use `localStorage`, `history.replaceState`, or `location.search`: the review sandbox blocks all three (see §4b). Optionally, keep a `<meta name="pn-review-variant" content="B">` tag in `<head>`; the switcher reads it at startup (falling back to the first variant), and the agent updates it to the variant the user's feedback referred to when revising — so the next review session opens on the variant being iterated instead of bouncing back to A.
 - **Floating bar** — a small fixed-position bar at the bottom-centre, visually distinct from the page (high-contrast pill, subtle shadow): left arrow cycles back, variant label shows the key (+ name if useful, e.g. `B — Sidebar layout`), right arrow cycles forward. Wraps around.
 - **Keyboard** — `←` / `→` also cycle. Don't intercept arrow keys when an `<input>`, `<textarea>`, or `[contenteditable]` is focused.
 - On load, hide all variants except the active one.
 
-### 4. Generate constraints (Lavish compatibility)
+### 4. Generate constraints (Plannotator review-surface compatibility)
 
-The file is reviewed inside Lavish's sandboxed iframe, so:
+The file is reviewed inside Plannotator's sandboxed iframe (srcdoc, `sandbox="allow-scripts"`), so:
 
-- **Self-contained**: inline all CSS and JS. CDN references (fonts, Tailwind, Mermaid) are acceptable; local assets must be copied next to the HTML file and referenced with **relative paths** (never root-prefixed `/assets/...` — Lavish won't resolve them). See the `teach` skill's "Review-surface compatibility" section for the same constraints in detail.
+- **Self-contained**: inline all CSS and JS. CDN references (fonts, Tailwind, Mermaid) are acceptable; local assets must be copied next to the HTML file and referenced with **relative paths** (never root-prefixed `/assets/...`). See the `teach` skill's "Review-surface compatibility" section for the same constraints in detail.
 - No external CSS files via `<link href="../...">`.
-- The artifact must render identically standalone and inside Lavish.
+- The artifact must render identically standalone and inside the review.
 
-### 4b. Interactive controls (Lavish annotate mode)
+### 4b. Interactive controls (Plannotator review)
 
-Lavish opens in **annotate mode**: clicks on unmarked custom elements and drag-selections are captured to open an annotation card. Interactive controls in the prototype must follow these rules or reviewers cannot operate them:
+Plannotator's review opens in **drag mode**: text drags open the annotation card, but plain clicks pass through — custom interactive controls work without any marking. Only **pinpoint mode** (the reviewer toggles it in the toolstrip to annotate a specific element) intercepts clicks. Rules:
 
-- **Meta-controls must be marked.** The variant switcher bar, demo buttons, tabs — any custom clickable element that is *not itself under review* — gets `data-lavish-action` on the container/element. Lavish then lets clicks through and shows a pointer cursor (its `closest` check covers children, so marking the container suffices):
-  ```html
-  <div id="switcher" data-lavish-action>…◀ ▶…</div>
-  ```
-- **Native controls pass through for free.** `<button>`, `<a href>`, `<input>`, `<select>`, `<textarea>`, `<label>`, `<summary>` need no marking.
-- **Do NOT mark review targets.** Variant sections, rows, cards, and body text must stay annotatable (click/drag = annotate). That is the point of the review.
-- **Keyboard fallback is mandatory.** Because clicking a review target opens the annotation card, every select/switch interaction in the prototype must also work from the keyboard (`←`/`→` to cycle variants, `↑`/`↓` to move rows, Enter to confirm). `←`/`→` cycling is already required in step 3; extend it to any row/option selection.
-- **Tell the reviewer how to operate.** Add a short note to the top-of-file HTML comment: `⌘I / Ctrl+I` toggles annotate/explore mode (explore = free clicking and text selection), and the keyboard shortcuts. Optionally render a transient hint bar that only shows inside Lavish, detected via the SDK's public handle:
-  ```js
-  if (window.lavish) { /* show "⌘I 切换批注/浏览 · ←/→ 切方案 · 拖选=批注" hint */ }
-  ```
-- **Self-check before submitting**: (1) marked controls are clickable in annotate mode; (2) clicking a review target still opens the annotation card; (3) keyboard paths cover every selection/switch.
+- **No marking needed.** Do NOT add `data-lavish-action` or any review-specific attribute; review targets and controls alike render exactly as standalone.
+- **Native controls pass through for free.** `<button>`, `<a href>`, `<input>`, `<select>`, `<textarea>`, `<label>`, `<summary>` need nothing.
+- **Keyboard fallback is mandatory.** Because a pinpoint-mode review intercepts clicks on every element, every select/switch interaction must also work from the keyboard (`←`/`→` to cycle variants, `↑`/`↓` to move rows, Enter to confirm). `←`/`→` cycling is already required in step 3; extend it to any row/option selection.
+- **Browser storage/history/location APIs are unavailable.** The review iframe is srcdoc with `sandbox="allow-scripts"` (no same-origin): `localStorage`/`sessionStorage` reads and writes throw, `history.replaceState`/`pushState` throw, `location.search` is always empty. Keep switch state in memory (§3); never rely on these APIs.
+- **Tell the reviewer how to operate.** Add a short note to the top-of-file HTML comment: 拖选文字即批注；toolstrip 切换 pinpoint 模式点元素批注；重提后自动显示与上一版的 diff。
+- **Self-check before submitting**: (1) every select/switch works from the keyboard; (2) the script contains no `localStorage` / `history.replaceState` / `location.search` usage; (3) a fresh open starts on the variant the last feedback referred to (or the first variant).
 
-### 5. Review loop (Lavish)
+### 5. Review loop (Plannotator)
 
 Immediately after writing the file, call:
 
@@ -93,15 +87,16 @@ Immediately after writing the file, call:
 plannotator_auto_submit_review({ path: ".pi/html/<repo>/YYYY-MM-DD-<slug>.html" })
 ```
 
-This opens Lavish in the browser and waits for the first feedback batch. Then:
+This opens the Plannotator annotate UI in the browser (one-shot session) and waits for the decision. Then:
 
-- **Feedback arrives** → the pending gate stays locked. Revise the HTML file, then re-submit with a reply summarizing your changes:
+- **Feedback arrives** (`annotated`) → the pending gate stays locked. Revise the HTML file (sync the `pn-review-variant` meta to the variant the feedback referred to), then re-submit:
   ```
-  plannotator_auto_submit_review({ path: "...", reply: "已按反馈调整：B 方案改用侧边栏布局…" })
+  plannotator_auto_submit_review({ path: "..." })
   ```
-  The reply is shown to the user in Lavish (`--agent-reply`) and re-enables their sending.
-- **Keep iterating** until the poll returns `ended` — the user clicked **Send & End** (or you end the session). After `ended`: stop polling, do NOT reopen the session uninvited, deliver any remaining updates in the conversation.
-- If the user ends the session **without** feedback (or you cannot open Lavish — CLI unavailable), the review is treated as complete; don't force another round.
+  The new session opens with a **version diff** vs the previous submission, so the reviewer sees exactly what changed.
+- **Keep iterating** until the reviewer clicks **Approve** (`approved`) — the pending target settles and the review is complete.
+- If the reviewer closes the tab without deciding (`dismissed`), the gate releases without settling; the next write to the file re-queues the review.
+- If the review cannot open (CLI unavailable), report the error and don't force another round.
 
 ### 6. Capture the answer and keep the prototype
 

@@ -291,7 +291,7 @@ export class PlanModeController {
     }
     const dirList = dirs.join(", ");
     return [
-      `- HTML review artifacts (Lavish) must be written under ${dirList} ` +
+      `- HTML review artifacts must be written under ${dirList} ` +
         `as YYYY-MM-DD-<slug>.html, then submitted with ` +
         `${PLANNOTATOR_SUBMIT_TOOL_NAME}.`,
     ];

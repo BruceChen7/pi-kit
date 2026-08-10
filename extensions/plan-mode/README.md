@@ -131,7 +131,7 @@ Flow trees use Mermaid sequenceDiagram + tree format. Module boundaries are the 
 
 Plans and specs are Markdown only. HTML artifacts for visual review (prototypes, explainers,
 visual plans) live under `.pi/html/<repo>/YYYY-MM-DD-<slug>.html` and are reviewed through the
-Lavish Editor loop (`plannotator_auto_submit_review`); they do not gate plan→act execution.
+Plannotator annotate loop (`plannotator_auto_submit_review`); they do not gate plan→act execution.
 
 ## Configuration
 

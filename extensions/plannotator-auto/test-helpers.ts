@@ -31,10 +31,7 @@ export function createMockPlannotatorChild(): MockPlannotatorChild {
   return child;
 }
 
-export function mockPlannotatorSpawn(
-  result: MockPlannotatorCliResult,
-  options: { lavishOnPath?: boolean } = {},
-) {
+export function mockPlannotatorSpawn(result: MockPlannotatorCliResult) {
   const spawn = vi.fn(() => {
     const child = createMockPlannotatorChild();
     queueMicrotask(() => {
@@ -55,16 +52,11 @@ export function mockPlannotatorSpawn(
   vi.doMock("node:child_process", async (importOriginal) => ({
     ...(await importOriginal<typeof import("node:child_process")>()),
     spawn,
-    // resolveLavishCommand probes `lavish-axi --version` through spawnSync;
-    // default to not-on-PATH so tests exercise the npx fallback deterministically.
-    spawnSync: vi.fn(() => ({ status: options.lavishOnPath ? 0 : 1 })),
   }));
   return spawn;
 }
 
-export function mockHangingPlannotatorSpawn(
-  options: { lavishOnPath?: boolean } = {},
-) {
+export function mockHangingPlannotatorSpawn() {
   let child: MockPlannotatorChild | null = null;
   const spawn = vi.fn(() => {
     child = createMockPlannotatorChild();
@@ -73,78 +65,8 @@ export function mockHangingPlannotatorSpawn(
   vi.doMock("node:child_process", async (importOriginal) => ({
     ...(await importOriginal<typeof import("node:child_process")>()),
     spawn,
-    spawnSync: vi.fn(() => ({ status: options.lavishOnPath ? 0 : 1 })),
   }));
   return { spawn, getChild: () => child };
-}
-
-/**
- * Mock the lavish-axi open+poll spawn sequence: the first spawn returns
- * `openResult`, every later spawn returns `pollResult` (re-queued poll).
- * Resolves the lavish command to `npx -y lavish-axi` unless `lavishOnPath`.
- */
-export function mockLavishSpawn(
-  openResult: MockPlannotatorCliResult,
-  pollResult: MockPlannotatorCliResult,
-  options: { lavishOnPath?: boolean } = {},
-) {
-  const results = [openResult, pollResult];
-  let callCount = 0;
-  const spawn = vi.fn(() => {
-    const result = results[Math.min(callCount, results.length - 1)];
-    callCount += 1;
-    const child = createMockPlannotatorChild();
-    queueMicrotask(() => {
-      if (result.error) {
-        child.emit("error", result.error);
-        return;
-      }
-      if (result.stdout) {
-        child.stdout.emit("data", result.stdout);
-      }
-      if (result.stderr) {
-        child.stderr.emit("data", result.stderr);
-      }
-      child.emit("close", result.status);
-    });
-    return child;
-  });
-  vi.doMock("node:child_process", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("node:child_process")>()),
-    spawn,
-    spawnSync: vi.fn(() => ({ status: options.lavishOnPath ? 0 : 1 })),
-  }));
-  return spawn;
-}
-
-/**
- * Mock lavish-axi where the first spawn (open) succeeds and every later
- * spawn (poll) hangs — used to test interrupted polls and re-poll retries.
- */
-export function mockLavishOpenThenHangingSpawn(
-  options: { lavishOnPath?: boolean } = {},
-) {
-  let hangingChild: MockPlannotatorChild | null = null;
-  let callCount = 0;
-  const spawn = vi.fn(() => {
-    callCount += 1;
-    if (callCount === 1) {
-      const child = createMockPlannotatorChild();
-      queueMicrotask(() => {
-        child.stdout.emit("data", lavishOpenStdout("/repo/proto.html"));
-        child.emit("close", 0);
-      });
-      return child;
-    }
-    hangingChild = createMockPlannotatorChild();
-    return hangingChild;
-  });
-  vi.doMock("node:child_process", async (importOriginal) => ({
-    ...(await importOriginal<typeof import("node:child_process")>()),
-    spawn,
-    spawnSync: vi.fn(() => ({ status: options.lavishOnPath ? 0 : 1 })),
-  }));
-  return { spawn, getHangingChild: () => hangingChild };
 }
 
 export type TestCtx = {
@@ -484,79 +406,3 @@ export async function flushMicrotasks(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
 }
-
-// --- Lavish (HTML artifact review) TOON output fixtures ---
-//
-// `lavish-axi` serializes its results with `@toon-format/toon`, not JSON.
-// These helpers build the real TOON shapes so tests guard the actual CLI
-// contract instead of a JSON approximation.
-
-const joinToonLines = (lines: string[]): string => `${lines.join("\n")}\n`;
-
-export const lavishOpenStdout = (filePath: string): string =>
-  joinToonLines([
-    "session:",
-    `  file: ${filePath}`,
-    '  url: "http://127.0.0.1:4387/session/test-session"',
-    "  status: opened",
-    'next_step: "Now run `lavish-axi poll` to wait for feedback."',
-  ]);
-
-export const lavishUserEndedStdout = (filePath: string): string =>
-  joinToonLines([
-    "session:",
-    `  file: ${filePath}`,
-    '  url: "http://127.0.0.1:4387/session/test-session"',
-    "  status: user-ended",
-    'next_step: "The user ended the session; do not reopen it."',
-  ]);
-
-const encodeToonScalar = (value: string): string => {
-  if (value === "" || /[,{}[\]:"#\n\r]/.test(value)) {
-    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-  }
-  return value;
-};
-
-export const lavishFeedbackStdout = (
-  filePath: string,
-  feedback: string,
-): string =>
-  joinToonLines([
-    "session:",
-    `  file: ${filePath}`,
-    "  status: feedback",
-    'dom_snapshot: ""',
-    "prompts[1]{uid,prompt,selector,tag,text}:",
-    `  "","",,feedback,${encodeToonScalar(feedback)}`,
-    'next_step: "Apply the requested changes and re-poll."',
-  ]);
-
-/**
- * Real shape for a chat message sent with "Send to Agent": the content is
- * in `prompt`, while `text` is the static display label "Freeform message"
- * (lavish-axi chrome-client.js enqueuePrompt). The `feedback`-tag fixture
- * above puts content in `text`, which must NOT be assumed for other tags.
- */
-export const lavishChatMessageStdout = (
-  filePath: string,
-  message: string,
-): string =>
-  joinToonLines([
-    "session:",
-    `  file: ${filePath}`,
-    "  status: feedback",
-    'dom_snapshot: ""',
-    "prompts[1]{uid,prompt,selector,tag,text}:",
-    `  "",${encodeToonScalar(message)},,message,Freeform message`,
-    'next_step: "Apply the requested changes and re-poll."',
-  ]);
-
-export const lavishEndedStdout = (filePath: string): string =>
-  joinToonLines([
-    "session:",
-    `  file: ${filePath}`,
-    "  status: ended",
-    "  ended_by: agent",
-    'next_step: "This Lavish Editor session has ended. Stop polling."',
-  ]);

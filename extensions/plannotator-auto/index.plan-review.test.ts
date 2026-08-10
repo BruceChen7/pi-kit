@@ -446,16 +446,16 @@ describe("selectReviewGuidance", () => {
     expect(result.deniedAction).toContain("revise that same file");
   });
 
-  it("uses the lavish heading and no markdown guidance for HTML targets", () => {
+  it("uses the plannotator heading and no markdown guidance for HTML targets", () => {
     const result = selectReviewGuidance([HTML]);
-    expect(result.heading).toBe("[LAVISH REVIEW - PENDING]");
+    expect(result.heading).toBe("[PLANNOTATOR REVIEW - PENDING]");
     expect(result.guidance).toBe("");
     expect(result.deniedAction).toContain("revise the artifact");
   });
 
   it("keeps the markdown guidance when a mixed md+html set is pending", () => {
     const result = selectReviewGuidance([MD, HTML]);
-    expect(result.heading).toBe("[LAVISH REVIEW - PENDING]");
+    expect(result.heading).toBe("[PLANNOTATOR REVIEW - PENDING]");
     expect(result.guidance).toContain("pre-submit checklist");
   });
 

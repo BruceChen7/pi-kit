@@ -19,24 +19,22 @@ import {
 import { createLogger } from "../shared/logger.ts";
 import { pathsFromWriteToolInput } from "../shared/tool-targets.ts";
 import {
-  type LavishDecision,
-  runLavishOpenCli,
-  runLavishPollCli,
+  runPlannotatorAnnotateCli,
   runPlannotatorPlanReviewCli,
 } from "./cli.ts";
 import { extractBashPathCandidates } from "./helpers.ts";
-import {
-  checkLavishHtmlCompliance,
-  decideLavishHtmlGate,
-  formatLavishHtmlIssues,
-  type LavishHtmlIssue,
-} from "./lavish-html-check.ts";
 import {
   formatPlanMermaidErrors,
   runPlanMermaidValidation,
 } from "./mermaid-validator.ts";
 import { isHtmlPath, resolveReviewTargetMatch } from "./paths.ts";
 import type { PendingPlanReview, PlanFileConfig } from "./plan-review/types.ts";
+import {
+  checkPlannotatorHtmlCompliance,
+  decidePlannotatorHtmlGate,
+  formatPlannotatorHtmlIssues,
+  type PlannotatorHtmlIssue,
+} from "./plannotator-html-check.ts";
 import { getSessionState, type SessionRuntimeState } from "./session.ts";
 
 const KEEP_PLAN_HEADING_GUIDANCE =
@@ -67,7 +65,6 @@ type PendingPlanReviewEventHandle = {
 
 type PlanReviewSubmitToolParams = {
   path?: unknown;
-  reply?: unknown;
 };
 
 type PlanReviewDecisionLike = {
@@ -140,7 +137,7 @@ const getReviewWidgetMessage = (
   }
 
   return isHtmlPath(planReviewActive.resolvedPlanPath)
-    ? "Lavish review is active"
+    ? "HTML review is active"
     : "Plan/Spec review is active";
 };
 
@@ -217,12 +214,12 @@ export const selectReviewGuidance = (
   const hasMarkdown = targets.some((file) => !isHtmlPath(file));
   return {
     heading: hasHtml
-      ? "[LAVISH REVIEW - PENDING]"
+      ? "[PLANNOTATOR REVIEW - PENDING]"
       : "[PLANNOTATOR AUTO - PENDING REVIEW]",
     guidance: hasMarkdown ? formatMarkdownReviewGuidance() : "",
     deniedAction: hasMarkdown
       ? `If a review is denied, revise that same file and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`
-      : `If the user sends feedback, revise the artifact and call ${PLAN_REVIEW_SUBMIT_TOOL} again (optionally with a reply describing your changes).`,
+      : `If the user sends feedback, revise the artifact and call ${PLAN_REVIEW_SUBMIT_TOOL} again.`,
   };
 };
 
@@ -310,7 +307,6 @@ const emitPendingPlanReviewEvent = (
   pendingPlanReviews: PendingPlanReview[],
 ): void => {
   const planFiles = pendingPlanReviews.map((pending) => pending.planFile);
-  const htmlTarget = planFiles.some((file) => isHtmlPath(file));
   const body = formatPendingPlanReviewGateMessage(planFiles);
   const handled = createHandledState();
   trackPendingPlanReviewEvent(state, ctx.cwd, pendingPlanReviews, handled);
@@ -319,7 +315,7 @@ const emitPendingPlanReviewEvent = (
     type: "plannotator-auto.pending-review",
     requestId: `plannotator_pending_review_${Date.now()}`,
     createdAt: Date.now(),
-    title: htmlTarget ? "Lavish review pending" : "Plannotator review pending",
+    title: "Plannotator review pending",
     body,
     planFiles,
     contextPreview: [body],
@@ -600,216 +596,119 @@ export const createPendingReviewGateMessage = (
   };
 };
 
-// --- Lavish (HTML artifact) review flow ---
-
-const LAVISH_DEFAULT_REPLY = "Agent updated the artifact. Please review again.";
+// --- Plannotator (HTML artifact) review flow ---
 
 type ReviewToolResult = {
   content: Array<{ type: "text"; text: string }>;
   details: Record<string, unknown>;
 };
 
-export const formatLavishFeedback = (
-  planFile: string,
-  decision: Extract<LavishDecision, { kind: "feedback" }>,
-): string => {
-  const promptLines =
-    decision.prompts.length > 0
-      ? decision.prompts.map((prompt) => `- ${prompt}`)
-      : ["(no feedback text)"];
-  return [
-    "[LAVISH REVIEW FEEDBACK]",
-    `Review feedback for ${planFile}:`,
-    ...promptLines,
-    decision.nextStep ? `\n${decision.nextStep}` : "",
-  ]
-    .join("\n")
-    .trim();
-};
-
 /**
- * Hard-gate Lavish review loop for a pending HTML artifact:
- *   first submit  → `lavish-axi open` + `poll` (wait for the first batch)
- *   later submits → `poll --agent-reply <reply>` + keep waiting
- * feedback stays pending (= denied semantics); ended / user-ended / final
- * feedback batch releases the gate (= approved semantics). Interrupted
- * submits never re-open the session (`lavishSessionOpened`).
+ * One-shot Plannotator review for a pending HTML artifact:
+ *   `plannotator annotate <file> --gate --json` blocks until the reviewer
+ *   decides in the browser, then maps the decision JSON onto the pending
+ *   gate semantics: approved → settle, annotated → denied (pending stays,
+ *   gate stays locked), dismissed → released without settling. Interrupted
+ *   submits keep no session state — a retry simply re-runs the annotate
+ *   command (the reviewer's fresh session shows the version diff vs the
+ *   previous submission via Plannotator's per-file annotate history).
  */
-const runLavishReviewFlow = async (
+const runPlannotatorHtmlReviewFlow = async (
   ctx: ExtensionContext,
   state: SessionRuntimeState,
   pendingPlanReviews: Map<string, PendingPlanReview>,
   pendingPlanReview: PendingPlanReview,
-  reply: string | undefined,
   signal: AbortSignal,
 ): Promise<ReviewToolResult> => {
-  const openedNow = !pendingPlanReview.lavishSessionOpened;
-  if (openedNow) {
-    const openResult = await runLavishOpenCli(
-      ctx,
-      pendingPlanReview.resolvedPlanPath,
-      {
-        signal,
-        timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
-      },
-    );
-    if (openResult.status === "error") {
-      return {
-        content: [{ type: "text", text: openResult.error }],
-        details: { status: "error" },
-      };
-    }
-    if (openResult.status === "aborted") {
-      return {
-        content: [{ type: "text", text: "Lavish review interrupted." }],
-        details: { status: "aborted" },
-      };
-    }
-    if (openResult.result.kind === "user-ended") {
-      approvePendingPlanReview(
-        state,
-        ctx.cwd,
-        pendingPlanReviews,
-        pendingPlanReview,
-      );
-      return {
-        content: [
-          {
-            type: "text",
-            text: `The user ended the Lavish review session for ${pendingPlanReview.planFile}; review is complete.`,
-          },
-        ],
-        details: { status: "approved" },
-      };
-    }
-    pendingPlanReview.lavishSessionOpened = true;
-  }
-
-  const pollResult = await runLavishPollCli(
+  const cliResult = await runPlannotatorAnnotateCli(
     ctx,
     pendingPlanReview.resolvedPlanPath,
     {
-      agentReply: openedNow ? undefined : (reply ?? LAVISH_DEFAULT_REPLY),
+      gate: true,
       signal,
       timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
     },
   );
-  if (pollResult.status === "error") {
+  if (cliResult.status === "error") {
     return {
-      content: [{ type: "text", text: pollResult.error }],
+      content: [{ type: "text", text: cliResult.error }],
       details: { status: "error" },
     };
   }
-  if (pollResult.status === "aborted") {
+  if (cliResult.status === "aborted") {
     return {
-      content: [{ type: "text", text: "Lavish review interrupted." }],
+      content: [{ type: "text", text: "Plannotator review interrupted." }],
       details: { status: "aborted" },
     };
   }
 
-  const decision = pollResult.result;
-  if (decision.kind === "ended") {
-    approvePendingPlanReview(
+  const decision = cliResult.result;
+  if (decision.approved) {
+    return approvePendingPlanReview(
       state,
       ctx.cwd,
       pendingPlanReviews,
       pendingPlanReview,
     );
-    const endedByNote =
-      decision.endedBy === "user" ? " (ended by the user)" : "";
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Lavish review ended${endedByNote} for ${pendingPlanReview.planFile}.`,
-        },
-      ],
-      details: { status: "approved" },
-    };
   }
-
-  // Final feedback batch with session ended = review complete: deliver the
-  // feedback and release the gate (the user cannot send more feedback).
-  if (decision.kind === "feedback" && decision.sessionEnded) {
-    approvePendingPlanReview(
+  if (decision.dismissed) {
+    return dismissPendingPlanReview(
       state,
       ctx.cwd,
       pendingPlanReviews,
       pendingPlanReview,
     );
-    return {
-      content: [
-        {
-          type: "text",
-          text: `${formatLavishFeedback(pendingPlanReview.planFile, decision)}\n\nThe user ended the Lavish session with this feedback; review is complete. Revise ${pendingPlanReview.planFile} and deliver updates in this conversation.`,
-        },
-      ],
-      details: { status: "approved" },
-    };
   }
-
-  // Ordinary feedback = denied semantics: pending stays, gate stays locked.
-  if (decision.kind === "feedback") {
-    return {
-      content: [
-        {
-          type: "text",
-          text: formatLavishFeedback(pendingPlanReview.planFile, decision),
-        },
-      ],
-      details: { status: "denied" },
-    };
-  }
-
-  // opened / user-ended never come from poll — defensive fallback.
-  return {
-    content: [
-      {
-        type: "text",
-        text: "Lavish poll returned an unexpected result.",
-      },
-    ],
-    details: { status: "error" },
-  };
+  return denyPendingPlanReview(pendingPlanReview, decision.feedback);
 };
 
 /**
- * Read an HTML artifact and run the static Lavish-annotate compliance check.
- * Errors block submission; warnings only annotate the result.
+ * Read an HTML artifact and run the static Plannotator-annotate compliance
+ * check. Errors block submission; warnings only annotate the result.
  */
-const readLavishHtmlCompliance = (
+const readPlannotatorHtmlCompliance = (
   filePath: string,
-): { status: "read-error" } | { status: "ok"; issues: LavishHtmlIssue[] } => {
+):
+  | {
+      status: "read-error";
+    }
+  | {
+      status: "ok";
+      issues: PlannotatorHtmlIssue[];
+    } => {
   try {
     const html = fs.readFileSync(filePath, "utf-8");
-    return { status: "ok", issues: checkLavishHtmlCompliance(html) };
+    return { status: "ok", issues: checkPlannotatorHtmlCompliance(html) };
   } catch {
     return { status: "read-error" };
   }
 };
 
 /**
- * Manual-entry Lavish review (picker / Ctrl+Alt+L): open + poll once, deliver
- * the first feedback batch as a follow-up. No pending gate involvement.
+ * Manual-entry Plannotator HTML review (picker / Ctrl+Alt+L): run the
+ * annotate CLI once and deliver the feedback as a follow-up. No pending
+ * gate involvement. The compliance gate still guards the entry: errors
+ * block with a notification (the artifact would break inside the review
+ * sandbox), warnings notify but let the review open.
  */
-export const runLavishReviewOnce = async (
+export const runPlannotatorHtmlReviewOnce = async (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   filePath: string,
 ): Promise<void> => {
-  const compliance = readLavishHtmlCompliance(filePath);
+  const compliance = readPlannotatorHtmlCompliance(filePath);
   if (compliance.status === "read-error") {
     ctx.ui.notify(
-      `Could not read ${path.relative(ctx.cwd, filePath)} before opening Lavish.`,
+      `Could not read ${path.relative(ctx.cwd, filePath)} before opening the review.`,
       "warning",
     );
     return;
   }
-  const gate = decideLavishHtmlGate(compliance.issues);
+  const gate = decidePlannotatorHtmlGate(compliance.issues);
   if (gate.kind !== "pass") {
     const planFile = path.relative(ctx.cwd, filePath);
     ctx.ui.notify(
-      formatLavishHtmlIssues(gate.issues, {
+      formatPlannotatorHtmlIssues(gate.issues, {
         blocked: gate.kind === "block",
         planFile,
       }),
@@ -819,57 +718,31 @@ export const runLavishReviewOnce = async (
       return;
     }
   }
-  ctx.ui.notify("Opening Lavish review…", "info");
-  const openResult = await runLavishOpenCli(ctx, filePath, {
+
+  const response = await runPlannotatorAnnotateCli(ctx, filePath, {
     signal: ctx.signal,
     timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
   });
-  if (openResult.status === "error") {
-    ctx.ui.notify(openResult.error, "warning");
+  if (response.status === "error") {
+    ctx.ui.notify(response.error, "warning");
     return;
   }
-  if (openResult.status === "aborted") {
-    ctx.ui.notify("Lavish review interrupted.", "info");
+  if (response.status === "aborted") {
+    ctx.ui.notify("Plannotator review interrupted.", "info");
     return;
   }
-  if (openResult.result.kind === "user-ended") {
+
+  const feedback = response.result.feedback ?? "";
+  if (response.result.approved || !feedback.trim()) {
     ctx.ui.notify(
-      "The user ended the Lavish review session; not reopened.",
+      response.result.approved
+        ? "Plannotator review approved."
+        : "Plannotator review closed (no feedback).",
       "info",
     );
     return;
   }
-
-  const pollResult = await runLavishPollCli(ctx, filePath, {
-    signal: ctx.signal,
-    timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
-  });
-  if (pollResult.status === "error") {
-    ctx.ui.notify(pollResult.error, "warning");
-    return;
-  }
-  if (pollResult.status === "aborted") {
-    ctx.ui.notify("Lavish review interrupted.", "info");
-    return;
-  }
-
-  const decision = pollResult.result;
-  if (decision.kind === "ended") {
-    ctx.ui.notify("Lavish review ended.", "info");
-    return;
-  }
-  if (
-    decision.kind === "feedback" &&
-    (decision.prompts.length > 0 || decision.nextStep)
-  ) {
-    const feedback = formatLavishFeedback(
-      path.relative(ctx.cwd, filePath),
-      decision,
-    );
-    await pi.sendUserMessage(feedback, { deliverAs: "followUp" });
-    return;
-  }
-  ctx.ui.notify("Lavish review closed (no feedback).", "info");
+  await pi.sendUserMessage(feedback, { deliverAs: "followUp" });
 };
 
 export const registerPlanReviewSubmitTool = (
@@ -880,7 +753,7 @@ export const registerPlanReviewSubmitTool = (
     name: PLAN_REVIEW_SUBMIT_TOOL,
     label: "Submit Plannotator Auto Review",
     description:
-      "Submit a pending plan/spec/extra review target to Plannotator, or a pending HTML artifact to Lavish, and wait for approval or feedback.",
+      "Submit a pending plan/spec/extra review target, or a pending HTML artifact, to Plannotator and wait for approval or feedback.",
     parameters: planReviewSubmitToolParameters,
     async execute(_toolCallId, rawParams, signal, _onUpdate, ctx) {
       const params = rawParams as PlanReviewSubmitToolParams;
@@ -934,12 +807,13 @@ export const registerPlanReviewSubmitTool = (
         };
       }
 
-      // HTML artifacts review through the Lavish open/poll loop instead of the
-      // Plannotator plan-review hook. Before opening, run the static
-      // Lavish-annotate compliance gate: errors block the submission, warnings
-      // are attached to the first-submit result so the agent can fix them.
+      // HTML artifacts review through the Plannotator annotate CLI
+      // (one-shot, --gate --json) instead of the plan-review hook. Before
+      // opening, run the static Plannotator-annotate compliance gate: errors
+      // block the submission, warnings are attached to the result so the
+      // agent can fix them.
       if (isHtmlPath(pendingPlanReview.resolvedPlanPath)) {
-        const compliance = readLavishHtmlCompliance(
+        const compliance = readPlannotatorHtmlCompliance(
           pendingPlanReview.resolvedPlanPath,
         );
         if (compliance.status === "read-error") {
@@ -953,22 +827,24 @@ export const registerPlanReviewSubmitTool = (
             details: { status: "error" },
           };
         }
-        const gate = decideLavishHtmlGate(compliance.issues);
+        const gate = decidePlannotatorHtmlGate(compliance.issues);
         if (gate.kind === "block") {
           return {
             content: [
               {
                 type: "text",
-                text: formatLavishHtmlIssues(gate.issues, {
+                text: formatPlannotatorHtmlIssues(gate.issues, {
                   blocked: true,
                   planFile: pendingPlanReview.planFile,
                 }),
               },
             ],
-            details: { status: "error", reason: "lavish-html-compliance" },
+            details: {
+              status: "error",
+              reason: "plannotator-html-compliance",
+            },
           };
         }
-        const openedBefore = pendingPlanReview.lavishSessionOpened;
         state.activePlanReviewByCwd.set(ctx.cwd, {
           reviewId: `cli:${Date.now()}`,
           kind: pendingPlanReview.kind,
@@ -979,15 +855,14 @@ export const registerPlanReviewSubmitTool = (
         });
         setReviewWidget(ctx);
         try {
-          const result = await runLavishReviewFlow(
+          const result = await runPlannotatorHtmlReviewFlow(
             ctx,
             state,
             pendingPlanReviews,
             pendingPlanReview,
-            typeof params.reply === "string" ? params.reply : undefined,
             signal,
           );
-          if (gate.kind === "warn" && !openedBefore) {
+          if (gate.kind === "warn") {
             const existing = result.content[0]?.text ?? "";
             result.content = [
               {
@@ -995,7 +870,7 @@ export const registerPlanReviewSubmitTool = (
                 text:
                   existing +
                   "\n\n" +
-                  formatLavishHtmlIssues(gate.issues, {
+                  formatPlannotatorHtmlIssues(gate.issues, {
                     blocked: false,
                     planFile: pendingPlanReview.planFile,
                   }),

@@ -19,8 +19,6 @@ export type PendingPlanReview = {
   planFile: string;
   resolvedPlanPath: string;
   updatedAt: number;
-  /** True once a lavish-axi session was opened for this artifact; retries must not re-open. */
-  lavishSessionOpened?: boolean;
 };
 
 export type ActivePlanReview = {

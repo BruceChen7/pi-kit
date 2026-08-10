@@ -114,7 +114,9 @@ describe("plan-mode extension: commands and prompt basics", () => {
 
     const result = await sendAgentPrompt(harness, ctx, "make a prototype");
 
-    expect(result.systemPrompt).toContain("HTML review artifacts (Lavish)");
+    expect(result.systemPrompt).toContain(
+      "HTML review artifacts must be written under",
+    );
     expect(result.systemPrompt).toContain("/repo/.pi/html/repo");
     expect(result.systemPrompt).toContain("YYYY-MM-DD-<slug>.html");
     expect(result.systemPrompt).toContain("plannotator_auto_submit_review");

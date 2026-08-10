@@ -34,8 +34,8 @@ Optional extra targets can be added with `plannotatorAuto.extraReviewTargets` as
 
 ### Backends by file type
 
-- **Markdown** (plan/spec/issue) → Plannotator plan-review hook mode so version history and plan diffs are available (`plannotator` CLI with a PermissionRequest hook payload).
-- **HTML** (plan `.html` and `.pi/html/` artifacts) → **Lavish Editor** (`lavish-axi` CLI, falling back to `npx -y lavish-axi`). First submit runs `lavish-axi open` + `poll`; after feedback the pending gate stays locked, and re-submitting with `reply` runs `poll --agent-reply <reply>` until the user ends the session (`ended` clears the pending target and settles the path). A poll interrupted by timeout/abort can be safely re-run — queued feedback is never lost.
+- **Markdown** (plan/spec/issue) → plan-review hook mode so version history and plan diffs are available (`plannotator` CLI with a PermissionRequest hook payload).
+- **HTML** (plan `.html` and `.pi/html/` artifacts) → one-shot annotate review (`plannotator annotate <file> --gate --json`). The CLI blocks until the reviewer decides in the browser, then emits a decision JSON: `approved` clears the pending target and settles the path, `annotated` keeps it pending (denied semantics — revise and resubmit), `dismissed` releases the gate without settling (the next write re-queues). Before opening, a static compliance gate blocks artifacts that would break inside the review sandbox (localStorage/history/location APIs) or miss keyboard fallbacks / review hints. Re-submissions automatically show a version diff vs the previous submission (the CLI keeps per-file annotate history), replacing the old `--agent-reply` round-trip. Interrupted submits keep no session state — a retry simply re-runs the annotate command.
 
 ## Configuration
 
@@ -73,11 +73,11 @@ Notes:
 
 ## CLI commands used
 
-Plannotator Auto requires the `plannotator` CLI (Markdown review) and `lavish-axi` (HTML artifact review, falling back to `npx -y lavish-axi`) to be available on `PATH`.
+Plannotator Auto requires the `plannotator` CLI to be available on `PATH`.
 
 - `plannotator` with a PermissionRequest hook payload on stdin for Markdown plan/spec/issue review
 - `plannotator annotate <file> --json` for manual Markdown annotation
-- `lavish-axi open <file>` / `lavish-axi poll <file> [--agent-reply "..."]` for HTML artifact review
+- `plannotator annotate <file> --gate --json` for HTML artifact review (pending-gate flow)
 
 ## Logging
 

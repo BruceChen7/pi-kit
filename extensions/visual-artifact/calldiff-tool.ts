@@ -1,29 +1,26 @@
 /**
  * Tool registration: `create_calldiff_artifact`.
  *
- * Runs the calldiff CLI in the session cwd (git repo required), converts
- * the structured JSON output into a VisualArtifactSpec (calldiff-bridge),
- * and opens it in a Glimpse window — reusing the same store/host pipeline
- * as `create_visual_artifact`.
+ * Thin wrapper: builds a single-node `calldiff-callflow` spec and funnels it
+ * through the shared materialization pipeline (resolve → validate → write →
+ * open window) that `create_visual_artifact` uses, so the standalone
+ * "just show me the call flow" path stays available with exactly one
+ * implementation. A failed calldiff run surfaces as an error result (never a
+ * useless empty artifact), while embedded nodes inside larger artifacts
+ * degrade to a callout instead.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import {
-  type CalldiffRunOptions,
-  runCalldiffJson,
-} from "../shared/calldiff-runner.ts";
 import { createLogger } from "../shared/logger.ts";
-import { validate } from "./artifact-schema.ts";
-import { writeArtifact } from "./artifact-store.ts";
-import { calldiffResultToSpec, parseCalldiffJson } from "./calldiff-bridge.ts";
-import { openVisualArtifactWindow } from "./glimpse-host.ts";
+import { materializeArtifact } from "./artifact-pipeline.ts";
+import type { VisualArtifactSpec } from "./artifact-schema.ts";
 import {
-  formatMermaidValidationErrors,
-  validateMermaidNodesInSpec,
-} from "./mermaid-boundary.ts";
-import { deriveProjectName, getDefaultProjectRoot } from "./paths.ts";
-import { errorResult, result } from "./tool-helpers.ts";
+  toEntries,
+  toOptionalString,
+  toStringArray,
+} from "./resolve-calldiff-node.ts";
+import { errorResult, normalizeSlug, result } from "./tool-helpers.ts";
 
 const log = createLogger("visual-artifact");
 
@@ -82,35 +79,55 @@ const CalldiffToolParams = Type.Object({
   ),
 });
 
-const toEntries = (value: unknown): string[] | undefined => {
-  if (typeof value === "string") {
-    return value.trim().length > 0 ? [value.trim()] : undefined;
-  }
-  if (Array.isArray(value)) {
-    const entries = value
-      .filter((item): item is string => typeof item === "string")
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
-    return entries.length > 0 ? entries : undefined;
-  }
+const firstSymbol = (value: unknown): string | undefined => {
+  if (typeof value === "string") return toOptionalString(value);
+  if (Array.isArray(value)) return toOptionalString(value[0]);
   return undefined;
 };
 
-const toStringArray = (value: unknown): string[] | undefined => {
-  if (!Array.isArray(value)) {
-    return undefined;
+const defaultSlug = (
+  mode: string,
+  from: string | undefined,
+  to: string | undefined,
+  entry: unknown,
+  target: string | undefined,
+): string => {
+  if (mode === "tree") {
+    return normalizeSlug(
+      `calldiff-tree-${toOptionalString(from) ?? "WORKTREE"}`,
+    );
   }
-  const items = value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-  return items.length > 0 ? items : undefined;
+  if (mode === "reach") {
+    // Reach paths run between symbols, not refs: entry → target. `from`/`to`
+    // are refs here and must not leak "X → Y" placeholders into the slug.
+    const src = firstSymbol(entry);
+    const dst = toOptionalString(target);
+    return src && dst
+      ? normalizeSlug(`calldiff-reach-${src}-to-${dst}`)
+      : "calldiff-reach";
+  }
+  return normalizeSlug(
+    `calldiff-diff-${toOptionalString(from) ?? "HEAD"}-${toOptionalString(to) ?? "WORKTREE"}`,
+  );
 };
 
-const toOptionalString = (value: unknown): string | undefined =>
-  typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : undefined;
+const defaultTitle = (
+  mode: string,
+  from: string | undefined,
+  to: string | undefined,
+  entry: unknown,
+  target: string | undefined,
+): string => {
+  if (mode === "tree") {
+    return `Call tree: ${toOptionalString(from) ?? "WORKTREE"}`;
+  }
+  if (mode === "reach") {
+    const src = firstSymbol(entry);
+    const dst = toOptionalString(target);
+    return src && dst ? `Call paths: ${src} → ${dst}` : "Call paths";
+  }
+  return `Call-flow diff: ${toOptionalString(from) ?? "HEAD"} → ${toOptionalString(to) ?? "WORKTREE"}`;
+};
 
 export const registerCalldiffTool = (pi: ExtensionAPI): void => {
   pi.registerTool({
@@ -118,7 +135,7 @@ export const registerCalldiffTool = (pi: ExtensionAPI): void => {
     label: "Create Calldiff Artifact",
     description:
       "Visualize call-stack changes between git refs (calldiff: who-calls-whom diff, " +
-      "22 languages, AST-based). Runs `calldiff diff --format json` in the current " +
+      "22 languages, AST-based). Runs `calldiff <mode> --format json` in the current " +
       "repo and renders the result as a visual artifact: per-entry mermaid call trees " +
       "colored by added/removed/same, a change summary table, and the raw ASCII diff. " +
       "Requires a git work tree; the calldiff binary is resolved from PATH with an " +
@@ -136,115 +153,69 @@ export const registerCalldiffTool = (pi: ExtensionAPI): void => {
         return errorResult("Missing session cwd.");
       }
 
-      const runOptions: CalldiffRunOptions = {
-        cwd,
-        signal,
-        mode:
-          params.mode === "tree" || params.mode === "reach"
-            ? params.mode
-            : "diff",
-        from: toOptionalString(params.from),
-        to: toOptionalString(params.to),
-        entries: toEntries(params.entry),
+      const mode =
+        params.mode === "tree" || params.mode === "reach"
+          ? params.mode
+          : "diff";
+      const props: Record<string, unknown> = {
+        mode,
+        from: params.from,
+        to: params.to,
+        entry: toEntries(params.entry),
         target: toOptionalString(params.target),
         paths: toStringArray(params.paths),
         maxDepth:
           typeof params.maxDepth === "number" && params.maxDepth > 0
             ? params.maxDepth
             : undefined,
+        title: toOptionalString(params.title),
       };
 
-      if (runOptions.mode !== "diff" && !runOptions.entries) {
-        return errorResult(
-          "calldiff tree/reach require --entry (functionName or ClassName.method).",
+      const slug =
+        normalizeSlug(String(params.slug ?? "")) ||
+        defaultSlug(
+          String(mode),
+          toOptionalString(params.from),
+          toOptionalString(params.to),
+          params.entry,
+          toOptionalString(params.target),
         );
-      }
-      if (runOptions.mode === "reach" && !runOptions.target) {
-        return errorResult("calldiff reach requires a target symbol.");
-      }
 
-      const outcome = await runCalldiffJson(runOptions);
-      if (outcome.status === "error") {
-        if (outcome.code === "no-git-repo") {
-          return errorResult(
-            "calldiff needs a git work tree — this session is not inside one. " +
-              "Run the tool from a git repository directory.",
-          );
-        }
-        if (outcome.code === "aborted") {
-          return errorResult("calldiff run aborted.");
-        }
-        log.warn(`calldiff failed (${outcome.code}): ${outcome.message}`);
-        return errorResult(
-          `calldiff failed (${outcome.code}): ${outcome.message} ` +
-            "Install it with `npm install -g calldiff` or retry when a network " +
-            "connection is available for the npx fallback.",
-        );
-      }
+      const spec: VisualArtifactSpec = {
+        slug,
+        title:
+          toOptionalString(params.title) ??
+          defaultTitle(
+            String(mode),
+            toOptionalString(params.from),
+            toOptionalString(params.to),
+            params.entry,
+            toOptionalString(params.target),
+          ),
+        artifactType: "diagram",
+        topics: ["calldiff", "call-flow"],
+        nodes: [{ type: "calldiff-callflow", props }],
+      };
 
-      const parsed = parseCalldiffJson(outcome.stdout);
-      if (parsed.status === "error") {
-        return errorResult(
-          `calldiff output could not be parsed: ${parsed.error}`,
-        );
-      }
-
-      const spec = calldiffResultToSpec(parsed.result, {
-        title: toOptionalString(params.title),
-        slug: toOptionalString(params.slug),
+      const outcome = await materializeArtifact(spec, {
+        cwd,
+        signal,
+        strictCalldiff: true,
+        baseText: `Calldiff artifact "${spec.title}" created. Slug: ${slug}`,
+        log: {
+          warn: (message: string) => log.warn(message),
+          error: (message: string) => log.error(message),
+        },
+        sendFeedback: async (text) => {
+          pi.sendUserMessage(text, { deliverAs: "followUp" });
+        },
       });
 
-      const validated = validate(spec);
-      if (!validated.ok) {
-        return errorResult(
-          `Artifact validation failed:\n- ${(validated as { errors: string[] }).errors.join("\n- ")}`,
-        );
+      if (!outcome.ok) {
+        return errorResult(outcome.text);
       }
 
-      const { errors: mermaidErrors } = await validateMermaidNodesInSpec(
-        validated.spec,
-      );
-      if (mermaidErrors.length > 0) {
-        log.warn(`Mermaid validation failed:\n${mermaidErrors.join("\n")}`);
-        return errorResult(formatMermaidValidationErrors(mermaidErrors));
-      }
-
-      const projectRoot = getDefaultProjectRoot();
-      const projectName = deriveProjectName(projectRoot);
-      writeArtifact(projectRoot, projectName, validated.spec);
-
-      try {
-        await openVisualArtifactWindow({
-          bootData: {
-            view: "artifact",
-            projectName,
-            artifactSlug: validated.spec.slug,
-            artifactSpec: validated.spec,
-          },
-          projectRoot,
-          projectName,
-          sendFeedback: async (text) => {
-            pi.sendUserMessage(text, { deliverAs: "followUp" });
-          },
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        log.error(`Failed to open Glimpse window: ${message}`);
-        return errorResult(
-          `Calldiff artifact saved, but failed to open Glimpse window: ${message}. ` +
-            "It can be opened later via the /visual-artifact command.",
-        );
-      }
-
-      const detail =
-        parsed.result.mode === "diff"
-          ? `${parsed.result.trees.length} entrypoint(s) with changed call trees`
-          : parsed.result.mode === "tree"
-            ? `${parsed.result.trees.length} entrypoint(s)`
-            : `${parsed.result.paths.length} path(s)`;
-      return result(
-        `Calldiff artifact "${validated.spec.title}" created (${detail}). Slug: ${validated.spec.slug}`,
-      );
+      return result(outcome.text);
     },
   });
 };

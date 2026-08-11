@@ -22,6 +22,8 @@ import {
   FILE_WATCHER_CONTROL_CHANNEL,
   type PiKitFileWatcherControlEvent,
 } from "../shared/internal-events.ts";
+import { createLogger } from "../shared/logger.ts";
+import { isStaleSessionContextError } from "../shared/stale-context.ts";
 import {
   annotationsFromFinishPayload,
   branchScope,
@@ -70,6 +72,8 @@ const CR_FILE_WATCHER_SOURCE = "cr-diffview";
  * exits before falling back to reading the annotation artifact.
  */
 const FINISH_HANDSHAKE_GRACE_MS = 150;
+
+const log = createLogger("cr-diffview", { stderr: null });
 
 type WidgetContext = ExtensionContext & {
   ui?: ExtensionContext["ui"] & {
@@ -676,18 +680,28 @@ const startCrSocketServer = async (
           continue;
         }
         if (payload?.type === "finish") {
-          sendAnnotationsToPi(pi, annotationsFromFinishPayload(payload));
-          if (multiplexer) {
-            if (session.originViewId) {
+          try {
+            sendAnnotationsToPi(pi, annotationsFromFinishPayload(payload));
+            if (multiplexer && session.originViewId) {
               void multiplexer.focusView(session.originViewId);
             }
-            if (session.reviewViewId) {
+            if (multiplexer && session.reviewViewId) {
               void multiplexer.closeReviewView({
                 reviewViewId: session.reviewViewId,
               });
             }
+            onFinish?.();
+          } catch (error) {
+            // pi.exec / pi.sendUserMessage / pi.events.emit throw synchronously
+            // once the extension ctx is stale after session replacement or
+            // reload. The session_shutdown handler closes this server, but a
+            // finish handshake already in flight can still land here; the
+            // review belongs to the dead session, so drop the UI actions
+            // instead of letting the throw crash pi.
+            if (!isStaleSessionContextError(error)) {
+              log.error("finish handshake failed", error);
+            }
           }
-          onFinish?.();
           closeCrSocketServer(server, session.crSocketPath);
         }
       }
@@ -750,6 +764,33 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     return true;
   };
 
+  /**
+   * The CR socket server outlives the command that started it (nvim in a
+   * tmux/herdr view connects later), so it must be tracked for teardown:
+   * session_shutdown closes it, or a finish handshake landing after session
+   * replacement would use a stale extension ctx and crash pi.
+   */
+  let activeCrSocketServer: net.Server | null = null;
+  let activeCrSocketPath: string | null = null;
+
+  const trackCrSocketServer = (
+    server: net.Server,
+    socketPath: string,
+  ): void => {
+    activeCrSocketServer = server;
+    activeCrSocketPath = socketPath;
+  };
+
+  const closeTrackedCrSocketServer = (): void => {
+    const server = activeCrSocketServer;
+    const socketPath = activeCrSocketPath;
+    activeCrSocketServer = null;
+    activeCrSocketPath = null;
+    if (server && socketPath) {
+      closeCrSocketServer(server, socketPath);
+    }
+  };
+
   const clearVisibleCrWidget = (ctx: WidgetContext): void => {
     clearCrWidget(ctx);
     crWidgetVisible = false;
@@ -782,10 +823,11 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
       inlineFinished = true;
       clearActiveSessionIfCurrent(session.sessionId);
     });
+    trackCrSocketServer(crSocketServer, session.crSocketPath);
 
     const suspender = await captureTuiSuspender(ctx);
     if (!suspender) {
-      closeCrSocketServer(crSocketServer, session.crSocketPath);
+      closeTrackedCrSocketServer();
       clearActiveSessionIfCurrent(session.sessionId);
       ctx.ui.notify(`/${START_COMMAND} requires interactive mode`, "error");
       return;
@@ -802,7 +844,7 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     if (outcome.kind === "noHandshake") {
       // nvim exited without a finish handshake (crash/kill): read the artifact.
       sendArtifactAnnotationsToPi(pi, session);
-      closeCrSocketServer(crSocketServer, session.crSocketPath);
+      closeTrackedCrSocketServer();
       clearActiveSessionIfCurrent(session.sessionId);
     }
     ctx.ui.notify(outcome.message, outcome.level);
@@ -863,13 +905,14 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
         clearVisibleCrWidget(widgetCtx);
       },
     );
+    trackCrSocketServer(crSocketServer, session.crSocketPath);
     const openResult = await multiplexer.openReviewView(
       reviewViewName,
       buildReviewViewLaunch(session),
     );
 
     if (openResult.code !== 0) {
-      closeCrSocketServer(crSocketServer, session.crSocketPath);
+      closeTrackedCrSocketServer();
       clearVisibleCrWidget(widgetCtx);
       ctx.ui.notify(
         openResult.stderr.trim() || "Failed to open CR Neovim view",
@@ -964,6 +1007,35 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     }
 
     return { action: "continue" };
+  });
+
+  pi.on("session_shutdown", async (_event, ctx) => {
+    // Session replacement (/new, /resume, /fork) and /reload invalidate this
+    // extension instance right after this handler returns: any captured pi or
+    // ctx becomes stale and throws. Long-lived resources started by this
+    // instance (CR socket server, file watcher) must therefore be torn down
+    // here, and the review view closed, or a late finish handshake from nvim
+    // would call into the stale ctx and crash pi.
+    const session = activeSession;
+    activeSession = null;
+    closeTrackedCrSocketServer();
+    if (!session) return;
+    try {
+      stopCrFileWatcher(session, ctx);
+      clearVisibleCrWidget(ctx as WidgetContext);
+      crWidgetVisible = false;
+      const multiplexer = createMultiplexer(pi, getExtensionEnv(ctx));
+      if (multiplexer && session.reviewViewId) {
+        await multiplexer.closeReviewView({
+          reviewViewId: session.reviewViewId,
+          resolveReviewViewName: () =>
+            resolveFallbackReviewViewName(pi, session),
+        });
+      }
+    } catch (error) {
+      // Shutdown cleanup must never throw into pi's teardown flow.
+      log.error("session shutdown cleanup failed", error);
+    }
   });
 
   pi.registerCommand(STOP_COMMAND, {

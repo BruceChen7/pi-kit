@@ -129,16 +129,25 @@ export const diffNodeToMermaid = (
 /*  Spec assembly                                                      */
 /* ------------------------------------------------------------------ */
 
-export type CalldiffArtifactOptions = {
+/**
+ * Render knobs shared by the standalone calldiff artifact and embedded
+ * `calldiff-callflow` node expansion — single source of truth so the macro
+ * node props (resolve-calldiff-node.ts) and the bridge options can't drift
+ * apart on these fields.
+ */
+export type CalldiffRenderOptions = {
   title?: string;
-  slug?: string;
-  description?: string;
   /** Max per-entry call trees rendered as detailed sections (default 8). */
   maxEntries?: number;
   /** Max mermaid nodes per tree (default 80). */
   maxNodesPerTree?: number;
   /** Max ascii lines per code-block (default 60; 0 = omit code-block). */
   maxAsciiLines?: number;
+};
+
+export type CalldiffArtifactOptions = CalldiffRenderOptions & {
+  slug?: string;
+  description?: string;
 };
 
 const DEFAULT_MAX_ENTRIES = 8;

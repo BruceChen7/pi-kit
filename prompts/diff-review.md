@@ -42,7 +42,7 @@ Sections 1-3 are the visual anchor — use one concise `text` node with `size: "
 | 1 | **Executive summary** | `heading` (h1) + `text` (xl) + `badge` | Lead with intuition, then scope. Use text xl for the lead paragraph. |
 | 2 | **KPI dashboard** | `kpi-grid` | Use 4-6 high-signal metrics only, with at most 3 columns. Omit redundant zero-value metrics. Put CHANGELOG/docs status in badges, not KPI cards. |
 | 3 | **Module architecture** | `mermaid` | Include one compact dependency graph only when it clarifies a non-obvious relationship. Do not wrap Mermaid in another card. |
-| — | **Calldiff call-flow** (必选) | `section` + `mermaid` + `table` + `code-block` | Required: per-entry call trees colored by added/removed/same plus ASCII diff; "No call-flow changes" callout when nothing changed. See Calldiff call-flow rendering. |
+| — | **Calldiff call-flow** (必选) | `calldiff-callflow` | Declare a `calldiff-callflow` node; the extension expands it into summary heading + per-entry table + colored mermaid call trees + ASCII diff. Degrades to a "Call-flow unavailable" callout when calldiff/git is missing. See Calldiff call-flow rendering. |
 | 4 | **Major feature comparisons** | `side-by-side` | Use at most two focused comparisons for genuinely different before/after behavior. Set `leftLabel`/`rightLabel` for headers. |
 | 5 | **Flow diagrams** | `mermaid` | Include at most one additional flow/sequence diagram and only when it adds information not already shown by the architecture graph. |
 | 6 | **File map** | `file-tree` | Full tree with `status: "added"\|"modified"\|"deleted"` on items. Wrap in `accordion` (collapsed by default) to save top-level slots. |
@@ -88,14 +88,10 @@ Use the following structure to minimize top-level node count for the in-memory `
       "right": [ /* after content nodes */ ]
     } },
 
-    // Calldiff rendering (required) — use create_calldiff_artifact
-    // (it emits this shape itself); or compose it manually with a
-    // titled `section` node:
-    { "type": "section", "props": { "title": "Call-flow diff: <from> → <to>", "nodes": [
-      { "type": "table", "props": { "headers": ["Entry", "Added", "Removed", "Unchanged"], "rows": [...] } },
-      { "type": "mermaid", "props": { "definition": "flowchart TD\n  n0[\"entry()\"] --> n1[\"helper()\"]" } },
-      { "type": "code-block", "props": { "code": "<condensed ascii diff>", "language": "text" } }
-    ] } },
+    // Calldiff call-flow (required) — declare a calldiff-callflow node;
+    // the extension runs calldiff and expands it into the summary heading,
+    // per-entrypoint table, mermaid call trees, and ASCII code-blocks:
+    { "type": "calldiff-callflow", "props": { "from": "<from>", "to": "<to>" } },
 
     // Sections 6-10: accordion-wrapped
     { "type": "accordion", "props": { "items": [
@@ -144,7 +140,7 @@ Refer to the `create_visual_artifact` tool's `nodes` parameter for the full list
 | `kpi-grid` | Dashboard-style KPI grid |
 | `file-tree` | Nested file tree with optional `status` (added/modified/deleted) |
 | `accordion` | Collapsible groups (use for reference sections 6-10) |
-| `section` | Grouping container with optional `title` (rendered as a titled block) and nested `nodes` — used for per-entrypoint calldiff sections |
+| `section` | Grouping container with optional `title` (rendered as a titled block) and nested `nodes` |
 
 ### Mermaid guidelines (always follow)
 
@@ -155,19 +151,20 @@ Refer to the `create_visual_artifact` tool's `nodes` parameter for the full list
 
 ### Calldiff call-flow rendering
 
-**Required in every diff review.** Use the `create_calldiff_artifact` tool — never hand-drawn graphs — for the call-structure dimension: it runs `calldiff diff --format json` (AST-based, 22 languages) in the current repo and renders the artifact directly. Requires a git work tree; the `calldiff` binary is resolved from PATH with an npx fallback (best-effort: if the session is outside a git work tree or `calldiff` is unavailable, note that and continue). Render it as a direct top-level section. When no call trees changed, the tool emits a "No call-flow changes" callout instead of entry sections — include that too.
+**Required in every diff review.** Declare a `calldiff-callflow` node inside the spec (see the example spec above) — **never hand-drawn mermaid call graphs**. While processing the spec, the extension runs `calldiff <mode> --format json` (AST-based, 22 languages) against the session git repo and expands the node into the call-flow section: a summary heading, a per-entrypoint change table, colored mermaid call trees, and condensed ASCII code-blocks. Place it as a direct top-level section.
 
-Its layout — which you can also compose manually via `create_visual_artifact`:
+- All props are optional: `from` (before-ref, default HEAD), `to` (after-ref, default worktree), `entry`, `target`, `paths`, `maxDepth`, `title`, and `mode` (`diff`/`tree`/`reach`, default `diff`). Align `from`/`to` with the refs you already diffed.
+- When nothing changed, the node expands to a "No call-flow changes" callout — include that outcome and say so in prose.
+- If calldiff is unavailable or the session is outside a git work tree, the node **degrades to a "Call-flow unavailable" callout** and the rest of the review still renders — note the degradation and continue; do not abandon the artifact.
+- Truncation (detailed entry sections, mermaid nodes per tree, ASCII lines per code-block) is applied automatically by the host, budget-aware; you do not need to track caps.
+- Use `entry` to focus on genuinely interesting entrypoints when the diff is large.
+
+The generated layout — for reference only (you do not build it by hand):
 
 - `heading` h1: `Call-flow diff: <from> → <to>`
 - `text`: one-line summary — entrypoint count plus added/removed/unchanged totals
 - `table`: one row per changed entrypoint, headers `Entry | Added | Removed | Unchanged`
-- Per entrypoint, a `section` node (`title` = entrypoint name) containing:
-  - `mermaid` `flowchart TD` call tree with `classDef` status colors — `added` (green), `removed` (red), `same` (gray), `branch` (amber)
-  - `code-block` (`language: "text"`) with the condensed ASCII diff
-- `callout` (`variant: "info"`) with "No call-flow changes" when nothing changed
-
-Caps: 8 detailed entry sections, 80 mermaid nodes per tree (truncation appends a `… N+ more nodes omitted` node), 60 ASCII lines per code-block.
+- Per entrypoint, a `section` node (`title` = entrypoint name) containing `mermaid` `flowchart TD` call trees with `classDef` status colors — `added` (green), `removed` (red), `same` (gray), `branch` (amber) — plus a `code-block` (`language: "text"`) with the condensed ASCII diff
 
 After assembling the full `spec` object, call `create_visual_artifact` with `slug`, `title`, `artifactType`, and `description` from `spec`, plus `nodes: JSON.stringify(spec.nodes)` and `data: JSON.stringify(spec.data)` when `spec.data` exists.
 

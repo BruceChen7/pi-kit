@@ -48,6 +48,10 @@ type InputHandler = (
   event: Record<string, unknown>,
   ctx: Record<string, unknown>,
 ) => { action: string };
+type SessionShutdownHandler = (
+  event: Record<string, unknown>,
+  ctx: Record<string, unknown>,
+) => Promise<void>;
 
 type ExecResult = { code: number; stdout: string; stderr: string };
 
@@ -130,15 +134,19 @@ const registerCrCommands = (exec: ReturnType<typeof vi.fn>) => {
   const stopHandler = commands.get(STOP_COMMAND);
   const startShortcutHandler = shortcuts.get(START_SHORTCUT);
   const inputHandler = events.get("input");
+  const sessionShutdownHandler = events.get("session_shutdown");
   expect(startHandler).toBeTypeOf("function");
   expect(stopHandler).toBeTypeOf("function");
   expect(startShortcutHandler).toBeTypeOf("function");
   expect(inputHandler).toBeTypeOf("function");
+  expect(sessionShutdownHandler).toBeTypeOf("function");
   return {
     startHandler: startHandler as CommandHandler,
     stopHandler: stopHandler as CommandHandler,
     startShortcutHandler: startShortcutHandler as ShortcutHandler,
     inputHandler: inputHandler as InputHandler,
+    sessionShutdownHandler:
+      sessionShutdownHandler as unknown as SessionShutdownHandler,
     sendUserMessage,
     internalEvents,
   };
@@ -773,6 +781,108 @@ describe("cr-diffview command", () => {
       "Opened CR diffview for main...HEAD",
       "info",
     );
+  });
+
+  describe("session replacement", () => {
+    it("closes the socket server, file watcher, and tmux review view on session shutdown", async () => {
+      const {
+        ctx,
+        exec,
+        internalEvents,
+        repoRoot,
+        sessionShutdownHandler,
+        setWidget,
+      } = await startCrReview();
+      exec.mockClear();
+      internalEvents.emit.mockClear();
+      setWidget.mockClear();
+
+      await sessionShutdownHandler({ reason: "new" }, ctx);
+
+      expect(exec).toHaveBeenCalledWith(
+        "tmux",
+        buildCrTmuxKillWindowArgs(buildCrTmuxWindowName(repoRoot)),
+      );
+      expectFileWatcherControlEvent(
+        internalEvents.emit,
+        "file-watcher.stop",
+        repoRoot,
+      );
+      expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
+    });
+
+    it("closes an active herdr review tab by id on session shutdown", async () => {
+      const { ctx, exec, sessionShutdownHandler } = await startCrReview({
+        tmux: false,
+        herdr: true,
+      });
+      exec.mockClear();
+
+      await sessionShutdownHandler({ reason: "fork" }, ctx);
+
+      expect(exec).toHaveBeenCalledWith("herdr", [
+        "tab",
+        "close",
+        HERDR_REVIEW_TAB_ID,
+      ]);
+    });
+
+    it("does not touch tmux or herdr on shutdown without an active review", async () => {
+      const exec = createCrExec("/repo");
+      const { ctx } = createTestContext();
+      const { sessionShutdownHandler } = registerCrCommands(exec);
+
+      await sessionShutdownHandler({ reason: "quit" }, ctx);
+
+      expect(exec).not.toHaveBeenCalledWith("tmux", expect.anything());
+      expect(exec).not.toHaveBeenCalledWith("herdr", expect.anything());
+    });
+
+    it("drops a stale finish handshake instead of crashing pi", async () => {
+      const { exec, sendUserMessage } = await startCrReview({
+        tmuxPane: "%42",
+      });
+      const socketPath = socketFromTmuxCommand(exec);
+      const staleError = new Error(
+        "This extension ctx is stale after session replacement or reload.",
+      );
+      // The runner is invalidated after session replacement: every pi action
+      // throws synchronously (same as pi's assertActive).
+      exec.mockImplementation(() => {
+        throw staleError;
+      });
+      sendUserMessage.mockImplementation(() => {
+        throw staleError;
+      });
+
+      // nvim's finish handshake lands after the session was already replaced.
+      // It must not surface as an uncaught exception that kills pi.
+      await exchangeSocketMessages(socketPath, [
+        { type: "hello" },
+        {
+          type: "finish",
+          annotations: [
+            { file: "src/a.ts", line: 7, comment: "Late handshake" },
+          ],
+        },
+      ]);
+
+      // The stale actions were attempted, then dropped...
+      expect(sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Late handshake"),
+        { deliverAs: "followUp" },
+      );
+      // ...and the socket server was still closed (no new connections).
+      await expect(
+        new Promise<void>((resolve, reject) => {
+          const client = net.createConnection(socketPath, () => {
+            client.destroy();
+            reject(new Error("CR socket still accepting connections"));
+          });
+          client.on("error", () => resolve());
+        }),
+      ).resolves.toBeUndefined();
+    });
   });
 
   it("builds session data as a pure value-in value-out function", () => {

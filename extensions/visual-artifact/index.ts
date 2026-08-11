@@ -1,18 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createLogger } from "../shared/logger.ts";
-import { type VisualArtifactSpec, validate } from "./artifact-schema.ts";
-import {
-  listArtifacts,
-  readArtifact,
-  writeArtifact,
-} from "./artifact-store.ts";
+import { materializeArtifact } from "./artifact-pipeline.ts";
+import type { VisualArtifactSpec } from "./artifact-schema.ts";
+import { listArtifacts, readArtifact } from "./artifact-store.ts";
 import { registerCalldiffTool } from "./calldiff-tool.ts";
 import { openVisualArtifactWindow } from "./glimpse-host.ts";
-import {
-  formatMermaidValidationErrors,
-  validateMermaidNodesInSpec,
-} from "./mermaid-boundary.ts";
 import { deriveProjectName, getDefaultProjectRoot } from "./paths.ts";
 import { errorResult, normalizeSlug, result } from "./tool-helpers.ts";
 
@@ -89,10 +82,11 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
     async execute(
       _toolCallId: string,
       params: Record<string, unknown>,
-      _signal: AbortSignal | undefined,
+      signal: AbortSignal | undefined,
       _onUpdate: unknown,
-      _ctx: unknown,
+      ctx: unknown,
     ) {
+      const cwd = (ctx as { cwd?: string }).cwd;
       const slug = normalizeSlug(String(params.slug ?? ""));
       if (!slug) {
         return errorResult("slug is required and must be a non-empty string.");
@@ -129,55 +123,23 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
           : undefined,
       };
 
-      const validated = validate(spec);
-      if (!validated.ok) {
-        return errorResult(
-          `Validation failed:\n- ${(validated as { errors: string[] }).errors.join("\n- ")}`,
-        );
+      const outcome = await materializeArtifact(spec, {
+        cwd,
+        signal,
+        baseText: `Visual artifact "${title}" created. Slug: ${slug}`,
+        log: {
+          warn: (message: string) => log.warn(message),
+          error: (message: string) => log.error(message),
+        },
+        sendFeedback: async (text) => {
+          pi.sendUserMessage(text, { deliverAs: "followUp" });
+        },
+      });
+
+      if (!outcome.ok) {
+        return errorResult(outcome.text);
       }
-
-      const { errors: mermaidErrors } = await validateMermaidNodesInSpec(
-        validated.spec,
-      );
-
-      // No auto-fix: agent-provided mermaid code is rendered as-is once it
-      // parses; anything that fails is reported back for the agent to fix.
-      const finalSpec = validated.spec;
-
-      if (mermaidErrors.length > 0) {
-        log.warn(`Mermaid validation failed:\n${mermaidErrors.join("\n")}`);
-        return errorResult(formatMermaidValidationErrors(mermaidErrors));
-      }
-
-      const projectRoot = getDefaultProjectRoot();
-      const projectName = deriveProjectName(projectRoot);
-
-      writeArtifact(projectRoot, projectName, finalSpec);
-
-      try {
-        await openVisualArtifactWindow({
-          bootData: {
-            view: "artifact",
-            projectName,
-            artifactSlug: slug,
-            artifactSpec: finalSpec,
-          },
-          projectRoot,
-          projectName,
-          sendFeedback: async (text) => {
-            pi.sendUserMessage(text, { deliverAs: "followUp" });
-          },
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        log.error(`Failed to open Glimpse window for "${slug}": ${message}`);
-        return errorResult(
-          `Artifact saved, but failed to open Glimpse window: ${message}. ` +
-            "The artifact can still be opened later via the /visual-artifact command.",
-        );
-      }
-
-      return result(`Visual artifact "${title}" created. Slug: ${slug}`);
+      return result(outcome.text);
     },
   });
 

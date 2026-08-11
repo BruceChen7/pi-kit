@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LIMITS, validate } from "./artifact-schema.ts";
+import { LIMITS, NODE_TYPE_CATALOG, validate } from "./artifact-schema.ts";
 
 const minimalValidSpec = {
   slug: "test-report",
@@ -374,5 +374,47 @@ describe("validate", () => {
     if (result.ok) {
       expect(result.spec.layout).toBe("vertical");
     }
+  });
+
+  it("accepts a calldiff-callflow node with no props (all optional)", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [{ type: "calldiff-callflow", props: {} }],
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("accepts calldiff-callflow nested inside containers", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [
+        {
+          type: "accordion",
+          props: {
+            items: [
+              {
+                title: "Call flow",
+                nodes: [
+                  {
+                    type: "calldiff-callflow",
+                    props: { mode: "diff", from: "main", to: "HEAD" },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("registers calldiff-callflow in the agent-facing catalog with guidelines", () => {
+    const entry = NODE_TYPE_CATALOG.find((e) => e.type === "calldiff-callflow");
+    expect(entry).toBeDefined();
+    expect(entry?.props).toHaveProperty("mode");
+    expect(entry?.props).toHaveProperty("entry");
+    expect(entry?.props).toHaveProperty("target");
+    expect(entry?.guidelines?.length).toBeGreaterThan(0);
   });
 });

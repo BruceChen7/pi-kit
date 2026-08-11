@@ -28,7 +28,7 @@ import {
   runPlanMermaidValidation,
 } from "./mermaid-validator.ts";
 import { isHtmlPath, resolveReviewTargetMatch } from "./paths.ts";
-import type { PendingPlanReview, PlanFileConfig } from "./plan-review/types.ts";
+import type { PendingPlanReview } from "./plan-review/types.ts";
 import {
   checkPlannotatorHtmlCompliance,
   decidePlannotatorHtmlGate,
@@ -373,7 +373,7 @@ export const isPlanReviewSettled = (
 
 const queuePlanReviewForToolPath = (
   ctx: ExtensionContext,
-  planConfig: PlanFileConfig,
+  htmlDirs: readonly string[],
   toolPath: string,
 ): boolean => {
   const state = getSessionState(ctx);
@@ -382,7 +382,7 @@ const queuePlanReviewForToolPath = (
     return false;
   }
 
-  const reviewTarget = resolveReviewTargetMatch(ctx, planConfig, targetPath);
+  const reviewTarget = resolveReviewTargetMatch(ctx, htmlDirs, targetPath);
   if (!reviewTarget) {
     return false;
   }
@@ -402,16 +402,12 @@ const queuePlanReviewForToolPath = (
 
 const queuePlanReviewsForToolPaths = (
   ctx: ExtensionContext,
-  planConfig: PlanFileConfig | null,
+  htmlDirs: readonly string[],
   toolPaths: Iterable<string>,
 ): boolean => {
-  if (!planConfig) {
-    return false;
-  }
-
   let queued = false;
   for (const toolPath of toolPaths) {
-    if (queuePlanReviewForToolPath(ctx, planConfig, toolPath)) {
+    if (queuePlanReviewForToolPath(ctx, htmlDirs, toolPath)) {
       queued = true;
     }
   }
@@ -422,24 +418,20 @@ const queuePlanReviewsForToolPaths = (
 export const handlePlanFileWrite = (
   ctx: ExtensionContext,
   args: unknown,
-  planConfig: PlanFileConfig | null,
+  htmlDirs: readonly string[],
 ): boolean =>
   queuePlanReviewsForToolPaths(
     ctx,
-    planConfig,
+    htmlDirs,
     pathsFromWriteToolInput(args).map(({ rawPath }) => rawPath),
   );
 
 export const handleBashPlanFileWrites = (
   ctx: ExtensionContext,
   args: unknown,
-  planConfig: PlanFileConfig | null,
+  htmlDirs: readonly string[],
 ): boolean =>
-  queuePlanReviewsForToolPaths(
-    ctx,
-    planConfig,
-    extractBashPathCandidates(args),
-  );
+  queuePlanReviewsForToolPaths(ctx, htmlDirs, extractBashPathCandidates(args));
 
 const clearPendingPlanReviewTarget = (
   state: SessionRuntimeState,

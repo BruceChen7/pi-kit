@@ -31,38 +31,16 @@ export const getDefaultHtmlDirs = (cwd: string): string[] =>
 /**
  * Resolve the HTML artifact review dirs for `cwd` as absolute paths.
  *
- * Single source of truth for both extensions (plannotator-auto's review
- * queue and plan-mode's prompt guidance + plan-phase write guard), so the
- * two can never disagree on when HTML review is enabled:
- * - `null` → HTML review disabled ([]);
- * - `[]` → disabled ([]);
- * - `undefined`/non-array → defaults (`.pi/html/<repo>/`);
- * - non-empty array → those dirs, resolved absolute against `cwd`.
+ * HTML review locations are convention-based — always `.pi/html/<repo>/`
+ * (repo slug from the git common dir, falling back to the cwd basename) —
+ * and are NOT configurable. Single source of truth for both extensions
+ * (plannotator-auto's review queue and plan-mode's prompt guidance +
+ * plan-phase write guard), so the two can never disagree.
  */
-export const resolveHtmlReviewDirs = (
-  cwd: string,
-  htmlDirs: unknown,
-): string[] => {
-  if (htmlDirs === null) {
-    return [];
-  }
-  const configured = Array.isArray(htmlDirs)
-    ? htmlDirs.flatMap((entry) => {
-        if (typeof entry !== "string") {
-          return [];
-        }
-        const trimmed = entry.trim();
-        return trimmed.length > 0 ? [trimmed] : [];
-      })
-    : [];
-  const dirs =
-    configured.length > 0
-      ? configured
-      : htmlDirs === undefined
-        ? getDefaultHtmlDirs(cwd)
-        : [];
-  return Array.from(new Set(dirs.map((dir) => path.resolve(cwd, dir))));
-};
+export const resolveHtmlReviewDirs = (cwd: string): string[] =>
+  Array.from(
+    new Set(getDefaultHtmlDirs(cwd).map((dir) => path.resolve(cwd, dir))),
+  );
 
 const normalizeRelativePath = (relativePath: string): string =>
   relativePath.replaceAll("\\", "/").replace(/^@/, "");
@@ -100,4 +78,50 @@ export const defaultReviewTargetKindFromAbsolutePath = (
   }
 
   return defaultReviewTargetKindFromRelativePath(relative);
+};
+
+/**
+ * Narrow rule: which files are eligible for the AUTO review flow (pending
+ * gate → `plannotator_auto_submit_review`). Only files whose parent directory
+ * is exactly `plan` (md or html) or `specs` (md only) count; any repo slug
+ * under `.pi/` works. Everything else under `.pi/` (teach, issues, shaping,
+ * contexts, skills, …) is excluded from auto review, while manual review
+ * (picker / Ctrl+Alt+L) still covers the whole `.pi/` tree.
+ *
+ * This complements (not replaces) the broad rule above: the broad rule keeps
+ * gating what the agent may WRITE during plan phase (permissive), the narrow
+ * rule gates what may QUEUE for auto review.
+ */
+export const defaultAutoReviewTargetKindFromRelativePath = (
+  relativePath: string,
+): "plan" | "spec" | null => {
+  const normalized = normalizeRelativePath(relativePath);
+  const parts = normalized.split("/");
+  if (parts.length < 3 || parts[0] !== ".pi") {
+    return null;
+  }
+
+  const dirName = parts[parts.length - 2];
+  const fileName = parts[parts.length - 1];
+  if (dirName === "plan") {
+    return /^\d{4}-\d{2}-\d{2}-.+\.(?:md|html)$/i.test(fileName)
+      ? "plan"
+      : null;
+  }
+  if (dirName === "specs") {
+    return /^\d{4}-\d{2}-\d{2}-.+-design\.md$/i.test(fileName) ? "spec" : null;
+  }
+  return null;
+};
+
+export const defaultAutoReviewTargetKindFromAbsolutePath = (
+  cwd: string,
+  targetPath: string,
+): "plan" | "spec" | null => {
+  const relative = path.relative(cwd, targetPath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return null;
+  }
+
+  return defaultAutoReviewTargetKindFromRelativePath(relative);
 };

@@ -1,65 +1,20 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-afterEach(() => {
-  vi.restoreAllMocks();
-  vi.doUnmock("../shared/settings.js");
-});
-
-const mockHtmlDirsSetting = (htmlDirs: string[] | null | undefined) => {
-  vi.resetModules();
-  vi.doMock("../shared/settings.js", async (importOriginal) => {
-    const original =
-      await importOriginal<typeof import("../shared/settings.js")>();
-    return {
-      ...original,
-      loadSettings: () => ({
-        global: {},
-        project: {},
-        merged: {
-          ...(htmlDirs === undefined ? {} : { plannotatorAuto: { htmlDirs } }),
-        },
-      }),
-    };
-  });
-  return import("./html-dirs.js");
-};
+import { describe, expect, it } from "vitest";
+import { isHtmlArtifactPathIn, resolveHtmlArtifactDirs } from "./html-dirs.js";
 
 describe("resolveHtmlArtifactDirs", () => {
-  it("falls back to the default .pi/html/<repo> dir when no config is set", async () => {
-    const { resolveHtmlArtifactDirs } = await mockHtmlDirsSetting(undefined);
+  it("resolves the convention .pi/html/<repo> dir (cwd basename fallback)", () => {
     expect(resolveHtmlArtifactDirs("/repo")).toContain("/repo/.pi/html/repo");
   });
 
-  it("uses configured plannotatorAuto.htmlDirs when present", async () => {
-    const { resolveHtmlArtifactDirs } = await mockHtmlDirsSetting([
-      ".pi/html/custom",
-    ]);
-    expect(resolveHtmlArtifactDirs("/repo")).toContain("/repo/.pi/html/custom");
-    expect(resolveHtmlArtifactDirs("/repo")).not.toContain(
-      "/repo/.pi/html/repo",
-    );
-  });
-
-  it("disables HTML review when htmlDirs is null (matches plannotator-auto)", async () => {
-    const { resolveHtmlArtifactDirs } = await mockHtmlDirsSetting(null);
-    expect(resolveHtmlArtifactDirs("/repo")).toEqual([]);
-  });
-
-  it("disables HTML review when htmlDirs is an empty array", async () => {
-    const { resolveHtmlArtifactDirs } = await mockHtmlDirsSetting([]);
-    expect(resolveHtmlArtifactDirs("/repo")).toEqual([]);
-  });
-
-  it("disables HTML review when htmlDirs entries are all blank", async () => {
-    const { resolveHtmlArtifactDirs } = await mockHtmlDirsSetting(["  "]);
-    expect(resolveHtmlArtifactDirs("/repo")).toEqual([]);
+  it("is not configurable — no settings are read", () => {
+    // HTML review locations are convention-based; the result must not
+    // depend on any plannotatorAuto.htmlDirs setting.
+    expect(resolveHtmlArtifactDirs("/repo")).toEqual(["/repo/.pi/html/repo"]);
   });
 });
 
 describe("isHtmlArtifactPathIn", () => {
-  it("matches dated HTML files under the given dirs", async () => {
-    const { isHtmlArtifactPathIn, resolveHtmlArtifactDirs } =
-      await mockHtmlDirsSetting(undefined);
+  it("matches dated HTML files under the given dirs", () => {
     expect(
       isHtmlArtifactPathIn(
         resolveHtmlArtifactDirs("/repo"),
@@ -68,9 +23,7 @@ describe("isHtmlArtifactPathIn", () => {
     ).toBe(true);
   });
 
-  it("rejects non-dated filenames", async () => {
-    const { isHtmlArtifactPathIn, resolveHtmlArtifactDirs } =
-      await mockHtmlDirsSetting(undefined);
+  it("rejects non-dated filenames", () => {
     expect(
       isHtmlArtifactPathIn(
         resolveHtmlArtifactDirs("/repo"),
@@ -79,9 +32,7 @@ describe("isHtmlArtifactPathIn", () => {
     ).toBe(false);
   });
 
-  it("rejects non-HTML files", async () => {
-    const { isHtmlArtifactPathIn, resolveHtmlArtifactDirs } =
-      await mockHtmlDirsSetting(undefined);
+  it("rejects non-HTML files", () => {
     expect(
       isHtmlArtifactPathIn(
         resolveHtmlArtifactDirs("/repo"),
@@ -90,24 +41,11 @@ describe("isHtmlArtifactPathIn", () => {
     ).toBe(false);
   });
 
-  it("rejects files outside the html dirs", async () => {
-    const { isHtmlArtifactPathIn, resolveHtmlArtifactDirs } =
-      await mockHtmlDirsSetting(undefined);
+  it("rejects files outside the html dirs", () => {
     expect(
       isHtmlArtifactPathIn(
         resolveHtmlArtifactDirs("/repo"),
         "/repo/.pi/plans/repo/plan/2026-08-05-x.html",
-      ),
-    ).toBe(false);
-  });
-
-  it("rejects everything when HTML review is disabled (empty dirs)", async () => {
-    const { isHtmlArtifactPathIn, resolveHtmlArtifactDirs } =
-      await mockHtmlDirsSetting(null);
-    expect(
-      isHtmlArtifactPathIn(
-        resolveHtmlArtifactDirs("/repo"),
-        "/repo/.pi/html/repo/2026-08-05-proto.html",
       ),
     ).toBe(false);
   });

@@ -4,12 +4,16 @@ import type {
   ToolCallEvent,
   ToolResultEvent,
 } from "@earendil-works/pi-coding-agent";
-import { defaultReviewTargetKindFromAbsolutePath } from "../shared/review-targets.ts";
+import {
+  defaultAutoReviewTargetKindFromAbsolutePath,
+  defaultReviewTargetKindFromAbsolutePath,
+} from "../shared/review-targets.ts";
 import {
   pathsFromWriteToolInput,
   type ToolTargetPath,
 } from "../shared/tool-targets.ts";
 import { WRITE_TOOL_NAMES } from "./constants.ts";
+import { isHtmlArtifactPathIn } from "./html-dirs.ts";
 import type { PlanModeState } from "./state.ts";
 import { isRecord, stringProperty } from "./state.ts";
 
@@ -60,6 +64,26 @@ export const isReviewArtifactPath = (cwd: string, rawPath: string): boolean =>
     cwd,
     normalizeToolPath(cwd, rawPath),
   ) !== null;
+
+/**
+ * Narrow predicate for the AUTO review flow: plan/specs dirs (any repo slug
+ * under `.pi/`) or configured HTML artifact dirs. Drives write tracking,
+ * date-prefix validation and re-review nudges, so stray `.pi/` content
+ * (teach, issues, shaping, …) no longer enters the auto review lifecycle.
+ * The broad `isReviewArtifactPath` above stays for the plan-phase write
+ * guard (permissive: the agent may write any `.pi`-rooted md/html artifact).
+ */
+export const isAutoReviewTargetPath = (
+  cwd: string,
+  rawPath: string,
+  htmlDirs: readonly string[],
+): boolean => {
+  const absolutePath = normalizeToolPath(cwd, rawPath);
+  return (
+    defaultAutoReviewTargetKindFromAbsolutePath(cwd, absolutePath) !== null ||
+    isHtmlArtifactPathIn(htmlDirs, absolutePath)
+  );
+};
 
 export const extractTextContent = (event: ToolResultEvent): string => {
   const rawContent = (event as { content?: unknown }).content;

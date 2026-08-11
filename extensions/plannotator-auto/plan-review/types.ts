@@ -1,13 +1,5 @@
 export type ReviewTargetKind = "plan" | "spec" | "html";
 
-export type PlanFileConfig = {
-  planFile: string;
-  resolvedPlanPath: string;
-  resolvedPlanPaths: string[];
-  resolvedSpecPaths: string[];
-  resolvedHtmlPaths: string[];
-};
-
 export type PendingPlanReview = {
   kind: ReviewTargetKind;
   planFile: string;

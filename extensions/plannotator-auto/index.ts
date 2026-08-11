@@ -1,21 +1,17 @@
 // Re-exported public API for tests and other extensions
-export {
-  getPlanFileConfig,
-  resolvePlanFileForReview,
-  shouldQueueReviewForToolPath,
-} from "./paths.ts";
+export { resolvePlanFileForReview } from "./paths.ts";
 export { getSessionKey } from "./session.ts";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createLogger } from "../shared/logger.ts";
+import { resolveHtmlReviewDirs } from "../shared/review-targets.ts";
 import { countTrackedChildren, killTrackedChildren } from "./cli.ts";
 import {
   recordSessionReviewDocumentWrites,
   registerReviewHandlers,
 } from "./code-review.ts";
 import { isRecord, summarizeToolArgs } from "./helpers.ts";
-import { getPlanFileConfig } from "./paths.ts";
 import {
   clearReviewWidget,
   createPendingReviewGateMessage,
@@ -156,14 +152,14 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
 
     recordSessionReviewDocumentWrites(ctx, event.toolName, args);
 
-    const planConfig = getPlanFileConfig(ctx);
+    const htmlDirs = resolveHtmlReviewDirs(ctx.cwd);
     const toolPath = resolveToolPath(args);
     if (toolPath) {
       log.debug("plannotator-auto captured tool path for review gating", {
         cwd: ctx.cwd,
         toolName: event.toolName,
         toolPath,
-        configuredPlanPath: planConfig?.resolvedPlanPath ?? null,
+        htmlDirs,
         sessionKey: getSessionKey(ctx),
       });
     } else if (event.toolName !== "bash") {
@@ -177,8 +173,8 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
 
     const queuedPlanReview =
       event.toolName === "bash"
-        ? handleBashPlanFileWrites(ctx, args, planConfig)
-        : handlePlanFileWrite(ctx, args, planConfig);
+        ? handleBashPlanFileWrites(ctx, args, htmlDirs)
+        : handlePlanFileWrite(ctx, args, htmlDirs);
 
     notifyPendingReviewGateIfNeeded(pi, ctx, state, queuedPlanReview);
     setReviewWidget(ctx);

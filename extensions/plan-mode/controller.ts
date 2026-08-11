@@ -60,6 +60,7 @@ import { decideToolBlock, type GuardPolicyTarget } from "./guard-policy.ts";
 import {
   formatReviewWaitReason,
   getApprovedReviewPath,
+  isAutoReviewTargetPath,
   isReviewArtifactPath,
   normalizeToolPath,
   pathFromToolCall,
@@ -701,7 +702,7 @@ export class PlanModeController {
         const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
         this.state.markFileFreshlyWritten(absolutePath);
         wroteTrackedPath = true;
-        if (isReviewArtifactPath(ctx.cwd, rawPath)) {
+        if (isAutoReviewTargetPath(ctx.cwd, rawPath, this.htmlArtifactDirs)) {
           const policyPath = relativeToolPath(ctx.cwd, rawPath);
           // Validate the date prefix before marking — a wrong-date path
           // should not pollute latestReviewArtifactPath in state.
@@ -734,7 +735,8 @@ export class PlanModeController {
 
     const approvedPath = getApprovedReviewPath(event, ctx);
     const reviewArtifactPath =
-      approvedPath && isReviewArtifactPath(ctx.cwd, approvedPath)
+      approvedPath &&
+      isAutoReviewTargetPath(ctx.cwd, approvedPath, this.htmlArtifactDirs)
         ? approvedPath
         : null;
     const pathToQueue = getApprovedReviewPathToQueue({

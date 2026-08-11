@@ -15,10 +15,12 @@ import {
   expectNoApprovedContinuationFollowUp,
   expectToolAllowed,
   expectToolBlocked,
+  fs,
   invalidPlanContent,
   lastPersistedPlanModeSnapshot,
   PLAN_MODE_TODO_TOOL,
   PLANNOTATOR_REVIEW_TOOL,
+  path,
   plainWidgetText,
   planModeExtension,
   sendAgentPrompt,
@@ -558,6 +560,93 @@ describe("plan-mode extension: review lifecycle", () => {
         expect.stringContaining("approved Plannotator plan/spec"),
         { deliverAs: "followUp" },
       );
+    });
+  });
+
+  it("does not require re-review when a non-auto-review artifact (teach) is written", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await startApprovedDemoRun(harness, ctx);
+
+      await emitReviewArtifactWrite(
+        harness,
+        ctx,
+        ".pi/teach/sideshow-pipe/lessons/0001-sideshow-pipe-intro.html",
+      );
+
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      expectNoApprovedArtifactChangedFollowUp(harness);
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        mode: "act",
+        phase: "act",
+        activePlanPath: demoPlanPath,
+        latestReviewArtifactPath: demoPlanPath,
+        reviewApprovedPlanPaths: [demoPlanPath],
+        activeRun: {
+          status: "executing",
+          planPath: demoPlanPath,
+        },
+      });
+    });
+  });
+
+  it("still tracks html artifacts under the configured html dir as review targets", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await startApprovedDemoRun(harness, ctx);
+
+      const today = new Date().toISOString().slice(0, 10);
+      const htmlPath = `.pi/html/${path.basename(ctx.cwd)}/${today}-proto.html`;
+      writePlanArtifact(ctx.cwd, htmlPath, "<!doctype html><div>proto</div>");
+      await emitReviewArtifactWrite(harness, ctx, htmlPath);
+
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      // The html artifact write still enters the auto-review lifecycle
+      // (latestReviewArtifactPath tracking), unlike teach writes.
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        mode: "act",
+        phase: "act",
+        activePlanPath: demoPlanPath,
+        latestReviewArtifactPath: htmlPath,
+        reviewApprovedPlanPaths: [demoPlanPath],
+      });
+    });
+  });
+
+  it("validates date prefixes only for auto-review targets, not teach writes", async () => {
+    await withTempCtx(async (ctx) => {
+      const staleTeachPath = ".pi/teach/sideshow-pipe/2020-01-01-old-lesson.md";
+      const stalePlanPath = ".pi/plans/pi-kit/plan/2020-01-01-old-plan.md";
+      writePlanArtifact(ctx.cwd, staleTeachPath, "# old lesson");
+      writePlanArtifact(ctx.cwd, stalePlanPath, validPlanContent);
+      const { harness } = await startPlanModeSession("act", ctx);
+
+      // A teach file with a stale date prefix is not an auto-review target:
+      // no date error, the file stays on disk.
+      const teachResult = await harness.emit(
+        "tool_result",
+        { toolName: "write", isError: false, input: { path: staleTeachPath } },
+        ctx,
+      );
+      expect(teachResult).toBeUndefined();
+      expect(fs.existsSync(path.join(ctx.cwd, staleTeachPath))).toBe(true);
+
+      // A plan file with a stale date prefix still fails and is removed.
+      const planResult = await harness.emit(
+        "tool_result",
+        { toolName: "write", isError: false, input: { path: stalePlanPath } },
+        ctx,
+      );
+      expect(planResult).toMatchObject({ isError: true });
+      expect(fs.existsSync(path.join(ctx.cwd, stalePlanPath))).toBe(false);
     });
   });
 

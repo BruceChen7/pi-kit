@@ -1,29 +1,30 @@
 # Plannotator Auto
 
-Auto-detects generated plan/spec files, gates the next agent turn until the agent explicitly submits the pending draft to Plannotator, and supports configurable extra review targets.
+Auto-detects generated plan/spec files, gates the next agent turn until the agent explicitly submits the pending draft to Plannotator.
 
 ## What it watches
 
-Default targets:
+Auto review (pending-gate → `plannotator_auto_submit_review`) accepts only files in
+`plan` / `specs` directories and HTML artifact dirs:
 
-- Plans: `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` or `.html`
-- Specs: `.pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md`
-- Issues: `.pi/plans/<repo>/issues/<topic-slug>/*.md`
+- Plans: any directory named `plan` — `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` or `.html`
+- Specs: any directory named `specs` — `.pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md` (`.md` only)
+- HTML artifacts: `.pi/html/<repo>/YYYY-MM-DD-<slug>.html`
 
-When `planFile` is not explicitly configured, worktree sessions accept both aliases:
+Everything else under `.pi/` (teach workspaces, `issues/`, `shaping/`, notes, …) never
+queues an auto review. Review those files manually with the picker (`Ctrl+Shift+R`) or
+`Ctrl+Alt+L`, which scan all of `.pi/`.
 
-- `.pi/plans/<root-repo>/plan/`
-- `.pi/plans/<cwd-basename>/plan/`
-
-`specs/` is always resolved as the sibling directory of the active `plan/` directory.
+All review locations are convention-based and NOT configurable: any directory named
+`plan` / `specs` under `.pi/` (covering every repo slug and worktree alias), and
+`.pi/html/<repo>/` for HTML artifacts.
 
 ## What it does
 
 - `write` / `edit` to a matching **plan** file (`.md` or `.html`) → queue a pending plan review gate.
 - `write` / `edit` to a matching **spec** file (`.md` only) → queue a pending spec review gate.
-- `write` / `edit` to a matching **issue** file → queue a pending plan review gate.
 - Matching `bash` output redirects are treated the same as `write` / `edit`.
-- When a plan/spec/issue review target is pending, emit a handled pending-review event and use a hidden next-turn gate that requires `plannotator_auto_submit_review`.
+- When a plan/spec review target is pending, emit a handled pending-review event and use a hidden next-turn gate that requires `plannotator_auto_submit_review`.
 - Multiple review-target writes before submission are tracked by target path and shown together in the pending gate.
 - `plannotator_auto_submit_review` is the only plan/spec review runner. While it waits for a result, the same session will not ask for another submit; approval clears the pending target, while denial keeps it pending for a later retry. Denied retries should revise the same file and preserve the first `#` heading so Plannotator can show version diffs.
 - `/plannotator-review` opens an interactive plan/spec file picker and submits the selected file for Plannotator review.
@@ -54,26 +55,9 @@ When `planFile` is not explicitly configured, worktree sessions accept both alia
 
 ## Configuration
 
-Global config file:
-
-- `~/.pi/agent/third_extension_settings.json`
-
-Example:
-
-```json
-{
-  "plannotatorAuto": {
-    "planFile": ".pi/plans/my-repo/plan",
-    "htmlDirs": [".pi/html"]
-  }
-}
-```
-
-Notes:
-
-- `planFile` supports **directory path only**.
-- `htmlDirs` configures the HTML artifact review directories (default `[".pi/html"]`, resolved against the session cwd with the same repo-slug aliases as `planFile`); set `htmlDirs: null` or `[]` to disable HTML artifact review.
-- Set `planFile: null` to disable plan/spec review auto-trigger.
+None. All review locations are convention-based (`plan` / `specs` directories under
+`.pi/`, and `.pi/html/<repo>/` for HTML artifacts); any legacy `plannotatorAuto`
+settings (`planFile`, `htmlDirs`) are ignored.
 
 ## CLI commands used
 

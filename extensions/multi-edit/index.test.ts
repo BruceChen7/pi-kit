@@ -253,6 +253,55 @@ describe("multi-edit tool", () => {
     await expect(readFile(join(cwd, "remove.txt"), "utf8")).rejects.toThrow();
   });
 
+  it("serializes concurrent same-file edits so both land", async () => {
+    // Pi executes sibling tool calls from one assistant message in parallel.
+    // Two concurrent edit calls on the same file must both land; without the
+    // per-file mutation queue both read the same original content and the
+    // last write silently drops the other edit.
+    const cwd = await createTempDir();
+    await writeFile(join(cwd, "note.txt"), "one two\n", "utf8");
+
+    const tool = registerToolForTest();
+    const [r1, r2] = await Promise.all([
+      executeEdit(tool, cwd, {
+        path: "note.txt",
+        oldText: "one",
+        newText: "1",
+      }),
+      executeEdit(tool, cwd, {
+        path: "note.txt",
+        oldText: "two",
+        newText: "2",
+      }),
+    ]);
+
+    expect(r1.content[0]?.text).toContain("Edited note.txt");
+    expect(r2.content[0]?.text).toContain("Edited note.txt");
+    expect(await readFile(join(cwd, "note.txt"), "utf8")).toBe("1 2\n");
+  });
+
+  it("serializes concurrent same-file patch updates so both land", async () => {
+    const cwd = await createTempDir();
+    await writeFile(join(cwd, "note.txt"), "one\ntwo\n", "utf8");
+
+    const tool = registerToolForTest();
+    const patchFor = (oldText: string, newText: string) => ({
+      patch: `*** Begin Patch
+*** Update File: note.txt
+-${oldText}
++${newText}
+*** End Patch`,
+    });
+    const [r1, r2] = await Promise.all([
+      executeEdit(tool, cwd, patchFor("one", "1")),
+      executeEdit(tool, cwd, patchFor("two", "2")),
+    ]);
+
+    expect(r1.content[0]?.text).toContain("Applied patch with 1 operation(s)");
+    expect(r2.content[0]?.text).toContain("Applied patch with 1 operation(s)");
+    expect(await readFile(join(cwd, "note.txt"), "utf8")).toBe("1\n2\n");
+  });
+
   it("does not mutate real files when preflight fails", async () => {
     const cwd = await createTempDir();
     await writeFile(join(cwd, "a.txt"), "old\n", "utf8");

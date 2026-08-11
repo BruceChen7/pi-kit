@@ -3,9 +3,13 @@
  *
  * Functional Core / Imperative Shell split:
  * - Pure: traversal, param mapping/validation, budget math, error phrasing,
- *   summary phrasing — all testable with injected deps, no IO.
+ *   summary phrasing — all testable with injected deps, no IO, no process
+ *   globals. Nesting rules are imported from the schema module (single
+ *   source of truth); the session-cwd default is resolved by the pipeline
+ *   shell, not here.
  * - Shell (injected): `runCalldiffJson` (spawns the CLI), `parseCalldiffJson`,
- *   `calldiffResultToSpec` (bridge).
+ *   `calldiffResultToSpec` (bridge). The abort `signal` is attached to the
+ *   runner call here (it is not part of the pure options mapping).
  *
  * Identical embedded nodes (same run options) are deduplicated within one
  * resolution: the CLI subprocess runs once, and each node still re-expands
@@ -32,10 +36,14 @@ import type {
   CalldiffRenderOptions,
 } from "./calldiff-bridge.ts";
 import {
+  CONTAINER_GROUP_KEYS,
+  getNestedNodeGroups,
+  NESTED_GROUP_KEYS,
   type ArtifactNode,
   LIMITS,
   type VisualArtifactSpec,
 } from "./artifact-schema.ts";
+import { toEntries, toOptionalString, toStringArray } from "./tool-helpers.ts";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -90,7 +98,11 @@ export type CalldiffReport =
   | { ok: false; summary: string };
 
 export type CalldiffResolveDeps = {
-  cwd: string | undefined;
+  /**
+   * Session working directory — already resolved by the pipeline shell
+   * (defaults to `process.cwd()` there, never inside the pure core).
+   */
+  cwd: string;
   signal?: AbortSignal;
   runCalldiffJson: (options: CalldiffRunOptions) => Promise<CalldiffRunOutcome>;
   parseCalldiffJson: (raw: string) => ParseCalldiffResult;
@@ -103,15 +115,11 @@ export type CalldiffResolveDeps = {
 export type CalldiffResolveResult = {
   spec: VisualArtifactSpec;
   reports: CalldiffReport[];
-  updated: boolean;
 };
 
 /* ------------------------------------------------------------------ */
-/*  Pure: node traversal (mirrors artifact-schema nesting rules)       */
+/*  Pure: node traversal (shares the schema's nesting rules)           */
 /* ------------------------------------------------------------------ */
-
-const NODE_GROUPS = ["nodes", "left", "right"] as const;
-const CONTAINERS = ["tabs", "items", "cards"] as const;
 
 export const isCalldiffNode = (node: ArtifactNode): boolean =>
   node.type === "calldiff-callflow";
@@ -120,6 +128,20 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+
+/**
+ * All nested node groups of a record, wherever they live: the spec carries
+ * its groups at the top level (`spec.nodes`), nodes carry theirs under
+ * `props`. Both levels are merged so traversal is uniform for specs and
+ * nodes — the exact nesting rules the schema validator applies.
+ */
+const groupsOf = (record: Record<string, unknown>): ArtifactNode[][] => {
+  const props = asRecord(record.props);
+  return [
+    ...getNestedNodeGroups(record),
+    ...(props ? getNestedNodeGroups(props) : []),
+  ];
+};
 
 /** True when the spec (top-level or nested) contains a calldiff node. */
 export const hasCalldiffNodes = (value: unknown): boolean => {
@@ -130,19 +152,11 @@ export const hasCalldiffNodes = (value: unknown): boolean => {
   if (!record) return false;
   if (
     record.type === "calldiff-callflow" ||
-    (record.props && asRecord(record.props)?.type === "calldiff-callflow")
+    asRecord(record.props)?.type === "calldiff-callflow"
   ) {
     return true;
   }
-  for (const key of [...NODE_GROUPS, ...CONTAINERS]) {
-    if (hasCalldiffNodes(record[key])) return true;
-  }
-  if (asRecord(record.props)) {
-    for (const key of [...NODE_GROUPS, ...CONTAINERS]) {
-      if (hasCalldiffNodes(record.props?.[key])) return true;
-    }
-  }
-  return false;
+  return groupsOf(record).some((group) => hasCalldiffNodes(group));
 };
 
 /**
@@ -160,7 +174,7 @@ const walkGroups = async (
   let changed = false;
   const nextProps: Record<string, unknown> = { ...props };
 
-  for (const key of NODE_GROUPS) {
+  for (const key of NESTED_GROUP_KEYS) {
     const group = props[key];
     if (!Array.isArray(group)) continue;
     const next = await walk(group as ArtifactNode[]);
@@ -170,7 +184,7 @@ const walkGroups = async (
     }
   }
 
-  for (const key of CONTAINERS) {
+  for (const key of CONTAINER_GROUP_KEYS) {
     const list = props[key];
     if (!Array.isArray(list)) continue;
     const nextList: unknown[] = [];
@@ -198,7 +212,11 @@ const walkGroups = async (
   return changed ? ({ ...node, props: nextProps } as ArtifactNode) : node;
 };
 
-/** Count every node (top-level + nested groups) recursively. */
+/**
+ * Count every node (spec + all nested groups) recursively — mirrors the
+ * validator's `maxTotalNodes` accounting so the budget stays aligned with
+ * what `validate` enforces on the expanded spec.
+ */
 export const countNodesDeep = (value: unknown): number => {
   if (Array.isArray(value)) {
     let total = 0;
@@ -208,18 +226,8 @@ export const countNodesDeep = (value: unknown): number => {
   const record = asRecord(value);
   if (!record) return 0;
   let total = 1;
-  for (const key of NODE_GROUPS) {
-    if (Array.isArray(record[key])) total += countNodesDeep(record[key]);
-  }
-  for (const key of CONTAINERS) {
-    const list = record[key];
-    if (!Array.isArray(list)) continue;
-    for (const item of list) {
-      const rec = asRecord(item);
-      if (rec && Array.isArray(rec.nodes)) {
-        total += countNodesDeep(rec.nodes);
-      }
-    }
+  for (const group of groupsOf(record)) {
+    total += countNodesDeep(group);
   }
   return total;
 };
@@ -228,45 +236,13 @@ export const countNodesDeep = (value: unknown): number => {
 /*  Pure: params → run options (with validation)                       */
 /* ------------------------------------------------------------------ */
 
-const toEntries = (value: unknown): string[] | undefined => {
-  if (typeof value === "string") {
-    return value.trim().length > 0 ? [value.trim()] : undefined;
-  }
-  if (Array.isArray(value)) {
-    const entries = value
-      .filter((item): item is string => typeof item === "string")
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
-    return entries.length > 0 ? entries : undefined;
-  }
-  return undefined;
-};
-
-export { toEntries };
-
-const toStringArray = (value: unknown): string[] | undefined => {
-  if (!Array.isArray(value)) return undefined;
-  const items = value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-  return items.length > 0 ? items : undefined;
-};
-
-export { toStringArray };
-
-export const toOptionalString = (value: unknown): string | undefined =>
-  typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : undefined;
-
 export type RunOptionsResult =
   | { ok: true; options: CalldiffRunOptions }
   | { ok: false; error: string };
 
 export const toCalldiffRunOptions = (
   props: Record<string, unknown>,
-  cwd: string | undefined,
+  cwd: string,
 ): RunOptionsResult => {
   const mode =
     props.mode === "tree" || props.mode === "reach" ? props.mode : "diff";
@@ -287,7 +263,7 @@ export const toCalldiffRunOptions = (
   return {
     ok: true,
     options: {
-      cwd: cwd ?? process.cwd(),
+      cwd,
       mode,
       from: toOptionalString(props.from),
       to: toOptionalString(props.to),
@@ -474,10 +450,15 @@ const expandNode = async (
 
   // Dedup: identical run options across nodes in one resolution run the CLI
   // exactly once; each node still re-expands with its own title/budget.
+  // The abort signal is shell state, attached at call time — deliberately not
+  // part of the cache key (the shared run must be abortable).
   const key = runOptionsKey(paramResult.options);
   let outcome = runCache.get(key);
   if (!outcome) {
-    outcome = await deps.runCalldiffJson(paramResult.options);
+    outcome = await deps.runCalldiffJson({
+      ...paramResult.options,
+      ...(deps.signal ? { signal: deps.signal } : {}),
+    });
     runCache.set(key, outcome);
   }
   if (outcome.status !== "ok") {
@@ -550,7 +531,7 @@ export const resolveCalldiffNodes = async (
   deps: CalldiffResolveDeps,
 ): Promise<CalldiffResolveResult> => {
   if (!hasCalldiffNodes(spec)) {
-    return { spec, reports: [], updated: false };
+    return { spec, reports: [] };
   }
 
   const reports: CalldiffReport[] = [];
@@ -585,6 +566,5 @@ export const resolveCalldiffNodes = async (
   return {
     spec: { ...spec, nodes: nextNodes },
     reports,
-    updated: true,
   };
 };

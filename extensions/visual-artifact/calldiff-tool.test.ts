@@ -1,11 +1,12 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type {
-  CalldiffRunErrorCode,
-  CalldiffRunOutcome,
-} from "../shared/calldiff-runner.ts";
-import type { CalldiffResult } from "./calldiff-bridge.ts";
 import { registerCalldiffTool } from "./calldiff-tool.ts";
+import {
+  createToolHarness,
+  diffResult,
+  errOutcome,
+  okOutcome,
+  type ToolHarness,
+} from "./test-kit.ts";
 
 /* ------------------------------------------------------------------ */
 /*  Module mocks — keep the pipeline off real IO / CLI                 */
@@ -22,6 +23,11 @@ vi.mock("./artifact-store.ts", () => ({
 vi.mock("./glimpse-host.ts", () => ({
   openVisualArtifactWindow: vi.fn(),
 }));
+// getDefaultProjectRoot spawns `git rev-parse` — keep unit tests off it.
+vi.mock("./paths.ts", () => ({
+  getDefaultProjectRoot: () => "/repo",
+  deriveProjectName: () => "repo",
+}));
 
 import { runCalldiffJson } from "../shared/calldiff-runner.ts";
 import { writeArtifact } from "./artifact-store.ts";
@@ -32,89 +38,25 @@ const mockedWrite = vi.mocked(writeArtifact);
 const mockedOpen = vi.mocked(openVisualArtifactWindow);
 
 /* ------------------------------------------------------------------ */
-/*  Fixtures                                                           */
-/* ------------------------------------------------------------------ */
-
-const makeNode = (
-  key: string,
-  label: string,
-  status: "same" | "added" | "removed" = "same",
-) => ({
-  key,
-  label,
-  status,
-  children: [],
-});
-
-const diffResult: CalldiffResult = {
-  mode: "diff",
-  from: "abc123",
-  to: "WORKTREE",
-  trees: [
-    {
-      entry: "boot",
-      ascii: "  boot()\n+ ├─ register()",
-      tree: makeNode("boot", "boot()"),
-    },
-  ],
-  ascii: "  1 entrypoint",
-};
-
-const okOutcome = (result: CalldiffResult): CalldiffRunOutcome => ({
-  status: "ok",
-  stdout: JSON.stringify(result),
-});
-
-const errOutcome = (
-  code: CalldiffRunErrorCode,
-  message: string,
-): CalldiffRunOutcome => ({ status: "error", code, message });
-
-/* ------------------------------------------------------------------ */
-/*  Fake pi + tool capture                                             */
-/* ------------------------------------------------------------------ */
-
-type ToolExecute = (
-  toolCallId: string,
-  params: Record<string, unknown>,
-  signal: AbortSignal | undefined,
-  onUpdate: unknown,
-  ctx: { cwd?: string },
-) => Promise<{
-  content: Array<{ type: string; text: string }>;
-  details?: Record<string, unknown>;
-  isError?: boolean;
-}>;
-
-type RegisteredTool = { name: string; execute: ToolExecute };
-
-const tools = new Map<string, RegisteredTool>();
-const pi = {
-  registerTool: vi.fn((tool: RegisteredTool) => tools.set(tool.name, tool)),
-  sendUserMessage: vi.fn(),
-} as unknown as ExtensionAPI;
-
-const callTool = async (params: Record<string, unknown>) => {
-  const tool = tools.get("create_calldiff_artifact");
-  if (!tool) throw new Error("create_calldiff_artifact not registered");
-  return tool.execute("t1", params, undefined, undefined, { cwd: "/repo" });
-};
-
-/* ------------------------------------------------------------------ */
 /*  Tests                                                              */
 /* ------------------------------------------------------------------ */
 
 describe("create_calldiff_artifact (thin wrapper)", () => {
+  let harness: ToolHarness;
+
   beforeEach(() => {
-    tools.clear();
     vi.clearAllMocks();
-    registerCalldiffTool(pi);
+    harness = createToolHarness();
+    registerCalldiffTool(harness.pi);
   });
 
   it("runs the shared pipeline and reports the call-flow summary", async () => {
     mockedRun.mockResolvedValue(okOutcome(diffResult));
 
-    const res = await callTool({ from: "abc123", to: "WORKTREE" });
+    const res = await harness.callTool("create_calldiff_artifact", {
+      from: "abc123",
+      to: "WORKTREE",
+    });
 
     expect(res.isError).toBeFalsy();
     const text = res.content[0].text;
@@ -140,7 +82,7 @@ describe("create_calldiff_artifact (thin wrapper)", () => {
   it("returns an error result when the only node degrades (no git repo)", async () => {
     mockedRun.mockResolvedValue(errOutcome("no-git-repo", "not a repo"));
 
-    const res = await callTool({});
+    const res = await harness.callTool("create_calldiff_artifact", {});
 
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain("calldiff failed");
@@ -150,26 +92,32 @@ describe("create_calldiff_artifact (thin wrapper)", () => {
   });
 
   it("returns an error result for missing session cwd", async () => {
-    const tool = tools.get("create_calldiff_artifact");
-    expect(tool).toBeDefined();
-    if (!tool) throw new Error("create_calldiff_artifact not registered");
-    const res = await tool.execute("t1", {}, undefined, undefined, {});
+    const res = await harness.callTool("create_calldiff_artifact", {}, {});
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain("Missing session cwd");
   });
 
   it("validates tree mode requires entry without running calldiff", async () => {
-    const res = await callTool({ mode: "tree" });
+    const res = await harness.callTool("create_calldiff_artifact", {
+      mode: "tree",
+    });
 
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain("--entry");
     expect(mockedRun).not.toHaveBeenCalled();
   });
 
+  // Single DTO smoke: the tool's params → runner-options mapping is already
+  // unit-tested (toCalldiffRunOptions) and integration-tested
+  // (resolveCalldiffNodes) — this only proves the full chain stays wired.
   it("passes mode/entry/target through to the runner", async () => {
     mockedRun.mockResolvedValue(okOutcome(diffResult));
 
-    await callTool({ mode: "reach", entry: "A", target: "B" });
+    await harness.callTool("create_calldiff_artifact", {
+      mode: "reach",
+      entry: "A",
+      target: "B",
+    });
 
     expect(mockedRun).toHaveBeenCalledTimes(1);
     expect(mockedRun.mock.calls[0][0]).toMatchObject({
@@ -198,7 +146,11 @@ describe("create_calldiff_artifact (thin wrapper)", () => {
       }),
     );
 
-    const res = await callTool({ mode: "reach", entry: "A", target: "B" });
+    const res = await harness.callTool("create_calldiff_artifact", {
+      mode: "reach",
+      entry: "A",
+      target: "B",
+    });
 
     expect(res.isError).toBeFalsy();
     const boot = mockedOpen.mock.calls[0][0].bootData as {
@@ -211,7 +163,9 @@ describe("create_calldiff_artifact (thin wrapper)", () => {
   it("never leaks 'X → Y' placeholders into reach titles", async () => {
     mockedRun.mockResolvedValue(errOutcome("no-git-repo", "not a repo"));
 
-    const res = await callTool({ mode: "reach" });
+    const res = await harness.callTool("create_calldiff_artifact", {
+      mode: "reach",
+    });
 
     expect(res.isError).toBe(true);
     expect(res.content[0].text).not.toContain("Call paths: ?");

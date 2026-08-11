@@ -932,16 +932,26 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     ctx.ui.notify(`Opened CR diffview for ${session.label}`, "info");
   };
 
-  const closeSession = async (
+  /**
+   * Shared teardown for a CR session's long-lived resources. Used by `/stop`
+   * (annotations sent first, review view closed by id-or-name) and by
+   * session_shutdown (annotations skipped — pi actions would throw stale on
+   * the dead ctx; review view closed by id only so a replacement session's
+   * view is never touched). Returns the close outcome, or null when there is
+   * no multiplexer (inline mode) or nothing to close.
+   */
+  const teardownSession = async (
     session: CrSession | null,
-    multiplexer: CrMultiplexer,
+    multiplexer: CrMultiplexer | null,
     ctx: WidgetContext,
-  ): Promise<ExecResult> => {
-    if (session) {
+    options: { sendAnnotations: boolean; closeView: "by-id" | "by-id-or-name" },
+  ): Promise<ExecResult | null> => {
+    if (session && options.sendAnnotations) {
       sendArtifactAnnotationsToPi(pi, session);
     }
     stopCrFileWatcher(session, ctx);
-
+    if (!multiplexer) return null;
+    if (options.closeView === "by-id" && !session?.reviewViewId) return null;
     return multiplexer.closeReviewView({
       reviewViewId: session?.reviewViewId,
       resolveReviewViewName: () => resolveFallbackReviewViewName(pi, session),
@@ -963,18 +973,19 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
       return;
     }
     const widgetCtx = ctx as WidgetContext;
-    const closeResult = await closeSession(
+    const closeResult = await teardownSession(
       activeSession,
       multiplexer,
       widgetCtx,
+      { sendAnnotations: true, closeView: "by-id-or-name" },
     );
 
     activeSession = null;
     clearVisibleCrWidget(widgetCtx);
 
-    if (closeResult.code !== 0) {
+    if (closeResult === null || closeResult.code !== 0) {
       ctx.ui.notify(
-        closeResult.stderr.trim() || "Failed to close CR Neovim view",
+        closeResult?.stderr.trim() || "Failed to close CR Neovim view",
         "error",
       );
       return;
@@ -1021,17 +1032,13 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     closeTrackedCrSocketServer();
     if (!session) return;
     try {
-      stopCrFileWatcher(session, ctx);
+      const multiplexer = createMultiplexer(pi, getExtensionEnv(ctx));
+      await teardownSession(session, multiplexer, ctx as WidgetContext, {
+        sendAnnotations: false,
+        closeView: "by-id",
+      });
       clearVisibleCrWidget(ctx as WidgetContext);
       crWidgetVisible = false;
-      const multiplexer = createMultiplexer(pi, getExtensionEnv(ctx));
-      if (multiplexer && session.reviewViewId) {
-        await multiplexer.closeReviewView({
-          reviewViewId: session.reviewViewId,
-          resolveReviewViewName: () =>
-            resolveFallbackReviewViewName(pi, session),
-        });
-      }
     } catch (error) {
       // Shutdown cleanup must never throw into pi's teardown flow.
       log.error("session shutdown cleanup failed", error);

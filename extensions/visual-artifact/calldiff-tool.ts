@@ -16,11 +16,13 @@ import { createLogger } from "../shared/logger.ts";
 import { materializeArtifact } from "./artifact-pipeline.ts";
 import type { VisualArtifactSpec } from "./artifact-schema.ts";
 import {
+  errorResult,
+  normalizeSlug,
+  result,
   toEntries,
   toOptionalString,
   toStringArray,
-} from "./resolve-calldiff-node.ts";
-import { errorResult, normalizeSlug, result } from "./tool-helpers.ts";
+} from "./tool-helpers.ts";
 
 const log = createLogger("visual-artifact");
 
@@ -85,6 +87,13 @@ const firstSymbol = (value: unknown): string | undefined => {
   return undefined;
 };
 
+/**
+ * Param-derived slug/title defaults, computed BEFORE the calldiff run (the
+ * tool result message needs them before the result exists). The bridge
+ * derives its own defaults from the *result* afterwards
+ * (calldiff-bridge.ts `defaultSlug`) — keep the two in sync: same mode
+ * prefixes, same `HEAD`/`WORKTREE` fallbacks.
+ */
 const defaultSlug = (
   mode: string,
   from: string | undefined,

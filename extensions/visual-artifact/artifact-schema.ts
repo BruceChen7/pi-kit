@@ -553,41 +553,37 @@ function estimateJsonBytes(value: unknown): number {
   return new TextEncoder().encode(JSON.stringify(value)).length;
 }
 
-function getNestedNodeGroups(props: Record<string, unknown>): ArtifactNode[][] {
+/**
+ * Node-group keys that hold arrays of nodes directly (one nesting level:
+ * `props.nodes`, `props.left`, `props.right`). Single source of truth for
+ * the schema's nesting rules — shared with the calldiff-callflow resolver
+ * (resolve-calldiff-node.ts) and the validator.
+ */
+export const NESTED_GROUP_KEYS = ["nodes", "left", "right"] as const;
+
+/**
+ * Container keys that hold arrays of `{ ..., nodes }` records (two nesting
+ * levels: accordion items, tabs, card-grid cards).
+ */
+export const CONTAINER_GROUP_KEYS = ["tabs", "items", "cards"] as const;
+
+export function getNestedNodeGroups(
+  props: Record<string, unknown>,
+): ArtifactNode[][] {
   const groups: ArtifactNode[][] = [];
 
-  if (Array.isArray(props.nodes)) {
-    groups.push(props.nodes as ArtifactNode[]);
-  }
-
-  if (Array.isArray(props.left)) {
-    groups.push(props.left as ArtifactNode[]);
-  }
-
-  if (Array.isArray(props.right)) {
-    groups.push(props.right as ArtifactNode[]);
-  }
-
-  if (Array.isArray(props.tabs)) {
-    for (const tab of props.tabs) {
-      if (isRecord(tab) && Array.isArray(tab.nodes)) {
-        groups.push(tab.nodes as ArtifactNode[]);
-      }
+  for (const key of NESTED_GROUP_KEYS) {
+    if (Array.isArray(props[key])) {
+      groups.push(props[key] as ArtifactNode[]);
     }
   }
 
-  if (Array.isArray(props.items)) {
-    for (const item of props.items) {
+  for (const key of CONTAINER_GROUP_KEYS) {
+    const list = props[key];
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
       if (isRecord(item) && Array.isArray(item.nodes)) {
         groups.push(item.nodes as ArtifactNode[]);
-      }
-    }
-  }
-
-  if (Array.isArray(props.cards)) {
-    for (const card of props.cards) {
-      if (isRecord(card) && Array.isArray(card.nodes)) {
-        groups.push(card.nodes as ArtifactNode[]);
       }
     }
   }
@@ -686,7 +682,7 @@ function validateNestedNodes(
   validateGroup(props.left, `${parentPath}.props.left`);
   validateGroup(props.right, `${parentPath}.props.right`);
 
-  for (const containerName of ["tabs", "items", "cards"] as const) {
+  for (const containerName of CONTAINER_GROUP_KEYS) {
     const containers = props[containerName];
     if (!Array.isArray(containers)) continue;
     for (const [containerIndex, container] of containers.entries()) {

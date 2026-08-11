@@ -7,7 +7,6 @@ import {
   type CalldiffNode,
   type CalldiffResult,
   calldiffResultToSpec,
-  countDiffStatuses,
   parseCalldiffJson,
 } from "./calldiff-bridge.ts";
 import {
@@ -20,7 +19,7 @@ import {
   resolveCalldiffNodes,
   toCalldiffRunOptions,
 } from "./resolve-calldiff-node.ts";
-import { NODE_TYPE_CATALOG } from "./artifact-schema.ts";
+import { getNestedNodeGroups, NODE_TYPE_CATALOG } from "./artifact-schema.ts";
 
 /* ------------------------------------------------------------------ */
 /*  Fixtures                                                           */
@@ -137,9 +136,32 @@ const calldiffNode = (props: Record<string, unknown> = {}) => ({
 const typesOf = (nodes: { type: string }[]): string[] =>
   nodes.map((n) => n.type);
 
-const hasTypeDeep = (nodes: unknown[], type: string): boolean =>
-  JSON.stringify(nodes).includes(`"type":"${type}"`) ||
-  JSON.stringify(nodes).includes(`"type": "${type}"`);
+/**
+ * Collect every node type (spec + nested groups), following the same nesting
+ * rules the resolver and validator share — no string matching on JSON.
+ */
+const collectTypesDeep = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectTypesDeep(item));
+  }
+  const record = value as Record<string, unknown> | null;
+  if (!record || typeof record !== "object") return [];
+  const out: string[] = [];
+  if (typeof record.type === "string") out.push(record.type);
+  const props =
+    record.props && typeof record.props === "object"
+      ? (record.props as Record<string, unknown>)
+      : undefined;
+  for (const group of getNestedNodeGroups(record)) {
+    out.push(...collectTypesDeep(group));
+  }
+  if (props) {
+    for (const group of getNestedNodeGroups(props)) {
+      out.push(...collectTypesDeep(group));
+    }
+  }
+  return out;
+};
 
 /* ------------------------------------------------------------------ */
 /*  Traversal                                                          */
@@ -183,7 +205,6 @@ describe("resolveCalldiffNodes", () => {
       nodes: [{ type: "text", props: { text: "hi", size: "md" } }],
     };
     const result = await resolveCalldiffNodes(spec, deps);
-    expect(result.updated).toBe(false);
     expect(result.reports).toEqual([]);
     expect(result.spec).toBe(spec);
   });
@@ -198,21 +219,18 @@ describe("resolveCalldiffNodes", () => {
     const result = await resolveCalldiffNodes(spec, deps);
 
     expect(runMock).toHaveBeenCalledTimes(1);
-    expect(runMock.mock.calls[0][0]).toMatchObject({
-      cwd: "/repo",
-      mode: "diff",
-      from: "abc123",
-      to: "WORKTREE",
-    });
 
     const types = typesOf(result.spec.nodes);
     expect(types).toContain("heading");
     expect(types).toContain("text");
     expect(types).toContain("table");
     expect(types).toContain("section");
-    expect(hasTypeDeep(result.spec.nodes, "mermaid")).toBe(true);
-    expect(hasTypeDeep(result.spec.nodes, "code-block")).toBe(true);
-    expect(types).not.toContain("calldiff-callflow");
+    expect(collectTypesDeep(result.spec.nodes)).toEqual(
+      expect.arrayContaining(["mermaid", "code-block"]),
+    );
+    expect(collectTypesDeep(result.spec.nodes)).not.toContain(
+      "calldiff-callflow",
+    );
 
     expect(result.reports).toHaveLength(1);
     expect(result.reports[0].ok).toBe(true);
@@ -220,6 +238,20 @@ describe("resolveCalldiffNodes", () => {
       expect(result.reports[0].summary).toContain("2 entrypoint(s)");
       expect(result.reports[0].summary).toContain("+2 / -1");
     }
+  });
+
+  it("forwards the abort signal to the CLI runner", async () => {
+    const { deps, runMock } = makeDeps(() => okOutcome(diffResult));
+    const controller = new AbortController();
+    const result = await resolveCalldiffNodes(
+      { slug: "s", title: "T", nodes: [calldiffNode({})] },
+      { ...deps, signal: controller.signal },
+    );
+    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(runMock.mock.calls[0][0]).toMatchObject({
+      signal: controller.signal,
+    });
+    expect(result.reports[0].ok).toBe(true);
   });
 
   it("expands nodes nested inside containers", async () => {
@@ -251,9 +283,9 @@ describe("resolveCalldiffNodes", () => {
     const result = await resolveCalldiffNodes(spec, deps);
     expect(runMock).toHaveBeenCalledTimes(2);
     expect(result.reports).toHaveLength(2);
-    const json = JSON.stringify(result.spec);
-    expect(json).not.toContain("calldiff-callflow");
-    expect(json).toContain("mermaid");
+    const types = collectTypesDeep(result.spec.nodes);
+    expect(types).not.toContain("calldiff-callflow");
+    expect(types).toContain("mermaid");
   });
 
   it("dedupes identical run options: one CLI run, per-node expansion", async () => {
@@ -291,15 +323,6 @@ describe("resolveCalldiffNodes", () => {
       deps,
     );
     expect(runMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("defaults mode to diff", async () => {
-    const { deps, runMock } = makeDeps(() => okOutcome(diffResult));
-    await resolveCalldiffNodes(
-      { slug: "s", title: "T", nodes: [calldiffNode({})] },
-      deps,
-    );
-    expect(runMock.mock.calls[0][0]).toMatchObject({ mode: "diff" });
   });
 
   it("degrades tree without entry to a callout without running calldiff", async () => {
@@ -419,7 +442,7 @@ describe("resolveCalldiffNodes", () => {
       expect(tree.reports[0].summary).toContain("1 entrypoint(s)");
     }
     expect(tree.spec.nodes.some((n) => n.type === "section")).toBe(true);
-    expect(hasTypeDeep(tree.spec.nodes, "mermaid")).toBe(true);
+    expect(collectTypesDeep(tree.spec.nodes)).toContain("mermaid");
 
     const reachDeps = makeDeps(() => okOutcome(reachResult));
     const reach = await resolveCalldiffNodes(
@@ -555,12 +578,19 @@ describe("toCalldiffRunOptions", () => {
     }
   });
 
-  it("falls back to a default cwd when none is provided", () => {
-    const r = toCalldiffRunOptions({}, undefined);
+  it("defaults mode to diff when absent or unknown", () => {
+    const absent = toCalldiffRunOptions({}, "/repo");
+    expect(absent.ok).toBe(true);
+    if (absent.ok) expect(absent.options.mode).toBe("diff");
+    const unknown = toCalldiffRunOptions({ mode: "bogus" }, "/repo");
+    expect(unknown.ok).toBe(true);
+    if (unknown.ok) expect(unknown.options.mode).toBe("diff");
+  });
+
+  it("passes the shell-resolved cwd through", () => {
+    const r = toCalldiffRunOptions({}, "/repo");
     expect(r.ok).toBe(true);
-    if (r.ok) {
-      expect(r.options.cwd).toBe(process.cwd());
-    }
+    if (r.ok) expect(r.options.cwd).toBe("/repo");
   });
 });
 
@@ -585,7 +615,7 @@ describe("calldiff-callflow prop contract", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/*  Budget helper linkage                                              */
+/*  Budget helper                                                      */
 /* ------------------------------------------------------------------ */
 
 describe("createBudget", () => {
@@ -600,13 +630,5 @@ describe("createBudget", () => {
     };
     const budget = createBudget(spec);
     expect(budget.usedTop).toBe(1);
-  });
-
-  it("imports countDiffStatuses from the bridge (linkage smoke)", () => {
-    expect(countDiffStatuses(diffResult.trees[0].tree)).toEqual({
-      added: 1,
-      removed: 1,
-      same: 1,
-    });
   });
 });

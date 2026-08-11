@@ -8,8 +8,9 @@
  *   → write to store → open Glimpse window → phrase the tool result.
  *
  * IO lives here (store, window); the expansion itself is delegated to
- * `resolve-calldiff-node.ts` (core). Window opening and feedback delivery are
- * injectable so tests can drive the pipeline without a real Glimpse window.
+ * `resolve-calldiff-node.ts` (core). Feedback delivery is injectable so the
+ * tools can route it to pi; the store/window IO is not injectable — tests
+ * stub those modules at the module boundary instead.
  */
 
 import { runCalldiffJson } from "../shared/calldiff-runner.ts";
@@ -48,10 +49,8 @@ export type MaterializeDeps = {
    * still degrade (default false).
    */
   strictCalldiff?: boolean;
-  openWindow?: OpenVisualArtifactWindowOptions["openWindow"];
   sendFeedback: (text: string) => Promise<void>;
   log: PipelineLogger;
-  writeArtifactFn?: typeof writeArtifact;
 };
 
 export type MaterializeResult =
@@ -102,9 +101,11 @@ export const materializeArtifact = async (
     };
   }
 
-  /* ---- 2. Resolve macro nodes (host-side calldiff expansion) ---- */
+  /* ---- 2. Resolve macro nodes (host-side calldiff expansion) ----
+     The session-cwd default (process cwd) is a shell decision: it is
+     resolved here, once, and the pure core never reads process globals. */
   const resolved = await resolveCalldiffNodes(declared.spec, {
-    cwd: deps.cwd,
+    cwd: deps.cwd ?? process.cwd(),
     signal: deps.signal,
     runCalldiffJson,
     parseCalldiffJson,
@@ -149,8 +150,7 @@ export const materializeArtifact = async (
   /* ---- 5. Write the self-contained (expanded) snapshot ---- */
   const projectRoot = getDefaultProjectRoot();
   const projectName = deriveProjectName(projectRoot);
-  const write = deps.writeArtifactFn ?? writeArtifact;
-  write(projectRoot, projectName, validated.spec);
+  writeArtifact(projectRoot, projectName, validated.spec);
 
   /* ---- 6. Open the window ---- */
   try {
@@ -159,7 +159,6 @@ export const materializeArtifact = async (
       projectRoot,
       projectName,
       sendFeedback: deps.sendFeedback,
-      ...(deps.openWindow ? { openWindow: deps.openWindow } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -172,7 +171,7 @@ export const materializeArtifact = async (
     };
   }
 
-  /* ---- 6. Phrase the result (append calldiff summaries when present) ---- */
+  /* ---- 7. Phrase the result (append calldiff summaries when present) ---- */
   const summary = summarizeReports(resolved.reports);
   const text = summary ? `${deps.baseText}\n\n${summary}` : deps.baseText;
   return { ok: true, text, reports: resolved.reports };

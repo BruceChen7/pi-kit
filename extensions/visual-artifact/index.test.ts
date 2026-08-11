@@ -1,8 +1,12 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CalldiffRunOutcome } from "../shared/calldiff-runner.ts";
-import type { CalldiffResult } from "./calldiff-bridge.ts";
 import visualArtifactExtension from "./index.ts";
+import {
+  createToolHarness,
+  diffResult,
+  okOutcome,
+  type ToolHarness,
+} from "./test-kit.ts";
 
 /* ------------------------------------------------------------------ */
 /*  Module mocks — keep the pipeline off real IO / CLI                 */
@@ -19,6 +23,11 @@ vi.mock("./artifact-store.ts", () => ({
 vi.mock("./glimpse-host.ts", () => ({
   openVisualArtifactWindow: vi.fn(),
 }));
+// getDefaultProjectRoot spawns `git rev-parse` — keep unit tests off it.
+vi.mock("./paths.ts", () => ({
+  getDefaultProjectRoot: () => "/repo",
+  deriveProjectName: () => "repo",
+}));
 
 import { runCalldiffJson } from "../shared/calldiff-runner.ts";
 import { writeArtifact } from "./artifact-store.ts";
@@ -29,59 +38,8 @@ const mockedWrite = vi.mocked(writeArtifact);
 const mockedOpen = vi.mocked(openVisualArtifactWindow);
 
 /* ------------------------------------------------------------------ */
-/*  Fixtures                                                           */
+/*  Tests                                                              */
 /* ------------------------------------------------------------------ */
-
-const diffResult: CalldiffResult = {
-  mode: "diff",
-  from: "main",
-  to: "HEAD",
-  trees: [
-    {
-      entry: "boot",
-      ascii: "  boot()\n+ ├─ register()",
-      tree: { key: "boot", label: "boot()", status: "same", children: [] },
-    },
-  ],
-  ascii: "  1 entrypoint",
-};
-
-const okOutcome = (result: CalldiffResult): CalldiffRunOutcome => ({
-  status: "ok",
-  stdout: JSON.stringify(result),
-});
-
-/* ------------------------------------------------------------------ */
-/*  Fake pi + tool capture                                             */
-/* ------------------------------------------------------------------ */
-
-type ToolExecute = (
-  toolCallId: string,
-  params: Record<string, unknown>,
-  signal: AbortSignal | undefined,
-  onUpdate: unknown,
-  ctx: { cwd?: string },
-) => Promise<{
-  content: Array<{ type: string; text: string }>;
-  details?: Record<string, unknown>;
-  isError?: boolean;
-}>;
-
-const tools = new Map<string, { name: string; execute: ToolExecute }>();
-
-const pi = {
-  registerTool: vi.fn((tool: { name: string; execute: ToolExecute }) =>
-    tools.set(tool.name, tool),
-  ),
-  registerCommand: vi.fn(),
-  sendUserMessage: vi.fn(),
-} as unknown as ExtensionAPI;
-
-const callVisualArtifact = async (params: Record<string, unknown>) => {
-  const tool = tools.get("create_visual_artifact");
-  if (!tool) throw new Error("create_visual_artifact not registered");
-  return tool.execute("t1", params, undefined, undefined, { cwd: "/repo" });
-};
 
 const specParams = (nodes: unknown[], extra: Record<string, unknown> = {}) => ({
   slug: "diff-review-test",
@@ -91,16 +49,17 @@ const specParams = (nodes: unknown[], extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-/* ------------------------------------------------------------------ */
-/*  Tests                                                              */
-/* ------------------------------------------------------------------ */
-
 describe("create_visual_artifact with calldiff-callflow", () => {
+  let harness: ToolHarness;
+
   beforeEach(() => {
-    tools.clear();
     vi.clearAllMocks();
-    visualArtifactExtension(pi);
+    harness = createToolHarness();
+    visualArtifactExtension(harness.pi);
   });
+
+  const callVisualArtifact = (params: Record<string, unknown>) =>
+    harness.callTool("create_visual_artifact", params);
 
   it("keeps zero behavior change when the spec has no calldiff nodes", async () => {
     const res = await callVisualArtifact(
@@ -150,7 +109,7 @@ describe("create_visual_artifact with calldiff-callflow", () => {
       status: "error",
       code: "no-git-repo",
       message: "not a repo",
-    });
+    } satisfies CalldiffRunOutcome);
 
     const res = await callVisualArtifact(
       specParams([

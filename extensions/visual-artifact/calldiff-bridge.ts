@@ -201,6 +201,9 @@ const defaultSlug = (result: CalldiffResult): string => {
   }
   return `calldiff-reach-${result.from}-to-${result.to}`;
 };
+// NOTE: kept in sync with calldiff-tool.ts `defaultSlug`/`defaultTitle`,
+// which derive the same values from the *requested* params before the run
+// (the tool result message needs them early).
 
 const capEntries = (count: number, options: CalldiffArtifactOptions): number =>
   Math.max(0, Math.min(count, options.maxEntries ?? DEFAULT_MAX_ENTRIES));

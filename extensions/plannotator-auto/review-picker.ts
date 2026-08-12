@@ -19,7 +19,7 @@ import {
 } from "./plan-review.ts";
 
 const SYNC_REVIEW_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
-const MAX_PLAN_FILES = 5;
+const MAX_PLAN_FILES = 50;
 const SELECT_LIST_MAX_VISIBLE = 10;
 
 // ---------------------------------------------------------------------------

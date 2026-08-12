@@ -335,4 +335,24 @@ describe("formatResults", () => {
         "⊘ 1 remaining edit(s) skipped due to error.",
     );
   });
+
+  it("marks preflight-passing edits as not applied in preflight mode", () => {
+    // Preflight failures abort the batch before any file is written. Edits
+    // that passed the preflight simulation must not be reported with the
+    // same "✓ ... Edited" wording as real writes — that phrasing made the
+    // model believe edits were applied and then silently reverted.
+    expect(
+      formatResults(
+        [
+          { path: "a.ts", success: true, message: "Edited a.ts." },
+          { path: "b.ts", success: false, message: "Could not find text." },
+        ],
+        2,
+        "preflight",
+      ),
+    ).toBe(
+      "⊘ Edit 1/2 (a.ts): preflight OK — not applied (batch aborted).\n" +
+        "✗ Edit 2/2 (b.ts): Could not find text.",
+    );
+  });
 });

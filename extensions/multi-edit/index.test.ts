@@ -317,4 +317,44 @@ describe("multi-edit tool", () => {
 
     expect(await readFile(join(cwd, "a.txt"), "utf8")).toBe("old\n");
   });
+
+  it("does not report unapplied edits as 'Edited' when preflight fails", async () => {
+    // Regression: the preflight failure report used to print
+    // "✓ Edit N/M (...): Edited ..." for edits that only passed the virtual
+    // simulation, implying they were written. The model then saw the file
+    // unchanged and concluded the batch had been "silently reverted".
+    const cwd = await createTempDir();
+    await writeFile(
+      join(cwd, "plan.md"),
+      "line one\nline two\nline three\n",
+      "utf8",
+    );
+
+    let error: Error | undefined;
+    try {
+      await executeEdit(registerToolForTest(), cwd, {
+        multi: [
+          { path: "plan.md", oldText: "line one", newText: "ONE" },
+          { path: "plan.md", oldText: "missing line", newText: "X" },
+        ],
+      });
+    } catch (err) {
+      error = err as Error;
+    }
+
+    expect(error).toBeDefined();
+    const message = error?.message ?? "";
+    expect(message).toContain("Preflight failed before mutating files");
+    // The preflight-passing edit was simulated only — never written. It must
+    // not carry the "✓ ... Edited" wording of a real write.
+    expect(message).not.toMatch(/✓ Edit \d+\/\d+ .*: Edited/);
+    // ... and must be explicitly marked as not applied.
+    expect(message).toContain("not applied");
+    // The failing edit still reports the reason.
+    expect(message).toContain("Could not find the exact text");
+    // Nothing was written.
+    expect(await readFile(join(cwd, "plan.md"), "utf8")).toBe(
+      "line one\nline two\nline three\n",
+    );
+  });
 });

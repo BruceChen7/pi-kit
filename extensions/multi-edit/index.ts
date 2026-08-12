@@ -280,9 +280,13 @@ async function applyClassicEdits(
   workspace: Workspace,
   cwd: string,
   signal?: AbortSignal,
-  options?: { collectDiff?: boolean },
+  options?: {
+    collectDiff?: boolean;
+    formatMode?: "preflight" | "apply";
+  },
 ): Promise<EditResult[]> {
   const collectDiff = options?.collectDiff ?? false;
+  const formatMode = options?.formatMode ?? "apply";
 
   // Group edits by resolved absolute path, preserving order.
   const fileGroups = new Map<string, { index: number; edit: EditItem }[]>();
@@ -386,7 +390,7 @@ async function applyClassicEdits(
             { length: edits.length },
             (_, i) => results[i],
           ).filter(Boolean);
-          throw new Error(formatResults(filled, edits.length));
+          throw new Error(formatResults(filled, edits.length, formatMode));
         }
 
         content =
@@ -635,14 +639,15 @@ export default function (pi: ExtensionAPI) {
 
       // Preflight pass on virtual workspace before mutating real files.
       // Uses sequential occurrence matching so same-file edits are resolved
-      // in file order (positional ordering).
+      // in file order (positional ordering). Failures report preflight-mode
+      // results: passing edits are marked "not applied", never "Edited".
       try {
         await applyClassicEdits(
           edits,
           createVirtualWorkspace(ctx.cwd),
           ctx.cwd,
           signal,
-          { collectDiff: false },
+          { collectDiff: false, formatMode: "preflight" },
         );
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);

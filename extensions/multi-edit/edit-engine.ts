@@ -126,11 +126,22 @@ export function getEditModeForRender(
 export function formatResults(
   results: EditResult[],
   totalEdits: number,
+  mode: "preflight" | "apply" = "apply",
 ): string {
   const lines: string[] = [];
 
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
+    if (mode === "preflight" && r.success) {
+      // Preflight runs on a virtual workspace: a passing edit was simulated
+      // only, never written. Report it with ⊘ (not done) instead of the
+      // "✓ ... Edited" wording used for real writes, so the batch-abort
+      // report can never be read as "applied then reverted".
+      lines.push(
+        `⊘ Edit ${i + 1}/${totalEdits} (${r.path}): preflight OK — not applied (batch aborted).`,
+      );
+      continue;
+    }
     const status = r.success ? "✓" : "✗";
     lines.push(
       `${status} Edit ${i + 1}/${totalEdits} (${r.path}): ${r.message}`,

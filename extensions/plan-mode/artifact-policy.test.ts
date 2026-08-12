@@ -453,9 +453,10 @@ describe("plan artifact content forms", () => {
     // Extract each mermaid code block to verify it starts with the frontmatter
     const mermaidBlocks = reason.match(/```mermaid\n[\s\S]*?```/g);
     expect(mermaidBlocks).not.toBeNull();
-    expect(mermaidBlocks!.length).toBeGreaterThanOrEqual(3);
+    const blocks = mermaidBlocks ?? expect.fail("no mermaid blocks");
+    expect(blocks.length).toBeGreaterThanOrEqual(3);
 
-    for (const block of mermaidBlocks!) {
+    for (const block of blocks) {
       // Each block must start with ```mermaid\n---\nconfig:\n  theme: base
       expect(block).toMatch(/```mermaid\n---\nconfig:\n {2}theme: base/);
       expect(block).toContain("themeVariables:");

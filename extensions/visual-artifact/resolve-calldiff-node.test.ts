@@ -3,6 +3,7 @@ import type {
   CalldiffRunErrorCode,
   CalldiffRunOutcome,
 } from "../shared/calldiff-runner.ts";
+import { getNestedNodeGroups, NODE_TYPE_CATALOG } from "./artifact-schema.ts";
 import {
   type CalldiffNode,
   type CalldiffResult,
@@ -10,16 +11,15 @@ import {
   parseCalldiffJson,
 } from "./calldiff-bridge.ts";
 import {
-  type CalldiffResolveDeps,
   CALLLDIFF_NODE_PROP_KEYS,
   type CalldiffNodeProps,
+  type CalldiffResolveDeps,
   computeEntryCap,
   createBudget,
   hasCalldiffNodes,
   resolveCalldiffNodes,
   toCalldiffRunOptions,
 } from "./resolve-calldiff-node.ts";
-import { getNestedNodeGroups, NODE_TYPE_CATALOG } from "./artifact-schema.ts";
 
 /* ------------------------------------------------------------------ */
 /*  Fixtures                                                           */

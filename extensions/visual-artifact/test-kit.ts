@@ -1,5 +1,5 @@
-import { vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { vi } from "vitest";
 import type {
   CalldiffRunErrorCode,
   CalldiffRunOutcome,

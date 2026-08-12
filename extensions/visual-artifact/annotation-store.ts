@@ -15,10 +15,7 @@ import {
 import path from "node:path";
 import { getArtifactBundleDir, getTempDir } from "./paths.ts";
 import type {
-  AnnotationAnchor,
-  AnnotationAuthor,
   AnnotationDocument,
-  AnnotationMessage,
   AnnotationMutation,
   AnnotationThread,
 } from "./shared/annotation-types.ts";

@@ -57,6 +57,11 @@ type RegisteredExtension = {
   tools: RegisteredTool[];
 };
 
+function expectDefined<T>(value: T | undefined): T {
+  expect(value).toBeDefined();
+  return value as T;
+}
+
 function expectPrimaryBinaryDetectionCall(): void {
   expect(vi.mocked(execFile)).toHaveBeenNthCalledWith(
     1,
@@ -235,21 +240,21 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = (await tool.execute?.(
-      "call-1",
-      {
-        query: "authenticate",
-        kind: "implementation",
-        path: "src",
-        language: "ts",
-        max_results: 2,
-      },
-      undefined,
-      undefined,
-      ctx,
-    ))!;
-
-    expect(result).toBeDefined();
+    const result = expectDefined(
+      await tool.execute?.(
+        "call-1",
+        {
+          query: "authenticate",
+          kind: "implementation",
+          path: "src",
+          language: "ts",
+          max_results: 2,
+        },
+        undefined,
+        undefined,
+        ctx,
+      ),
+    );
 
     expect(vi.mocked(execFile)).toHaveBeenNthCalledWith(
       3,
@@ -352,20 +357,21 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = (await tool.execute?.(
-      "call-1b",
-      {
-        query: "authenticate",
-        path: "src",
-        language: "ts",
-        max_results: 2,
-      },
-      undefined,
-      undefined,
-      ctx,
-    ))!;
+    const result = expectDefined(
+      await tool.execute?.(
+        "call-1b",
+        {
+          query: "authenticate",
+          path: "src",
+          language: "ts",
+          max_results: 2,
+        },
+        undefined,
+        undefined,
+        ctx,
+      ),
+    );
 
-    expect(result).toBeDefined();
     expect(result.content[0].text).toContain(
       "export function authenticate() {}",
     );
@@ -423,15 +429,15 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = (await tool.execute?.(
-      "call-2",
-      { query: "auth", path: "src", language: "ts", max_results: 3 },
-      undefined,
-      undefined,
-      ctx,
-    ))!;
-
-    expect(result).toBeDefined();
+    const result = expectDefined(
+      await tool.execute?.(
+        "call-2",
+        { query: "auth", path: "src", language: "ts", max_results: 3 },
+        undefined,
+        undefined,
+        ctx,
+      ),
+    );
 
     expect(result.content[0].text).toContain("Top 1 ranked result for: auth");
     expect(result.content[0].text).toContain("src/auth.ts:28");
@@ -469,20 +475,21 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = (await tool.execute?.(
-      "call-2b",
-      {
-        query: "cs_search extension",
-        path: "extensions",
-        language: "ts",
-        max_results: 3,
-      },
-      undefined,
-      undefined,
-      ctx,
-    ))!;
+    const result = expectDefined(
+      await tool.execute?.(
+        "call-2b",
+        {
+          query: "cs_search extension",
+          path: "extensions",
+          language: "ts",
+          max_results: 3,
+        },
+        undefined,
+        undefined,
+        ctx,
+      ),
+    );
 
-    expect(result).toBeDefined();
     expect(result.content[0].text).toContain(
       "/repo/extensions/cs-search/index.ts:251",
     );
@@ -544,13 +551,15 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = (await tool.execute?.(
-      "call-4",
-      { query: "missing" },
-      undefined,
-      undefined,
-      ctx,
-    ))!;
+    const result = expectDefined(
+      await tool.execute?.(
+        "call-4",
+        { query: "missing" },
+        undefined,
+        undefined,
+        ctx,
+      ),
+    );
 
     expect(result.content[0].text).toContain("No ranked results found.");
     expect(result.details).toEqual(
@@ -578,13 +587,15 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = (await tool.execute?.(
-      "call-malformed",
-      { query: "broken" },
-      undefined,
-      undefined,
-      ctx,
-    ))!;
+    const result = expectDefined(
+      await tool.execute?.(
+        "call-malformed",
+        { query: "broken" },
+        undefined,
+        undefined,
+        ctx,
+      ),
+    );
 
     expect(result.content[0].text).toContain(
       "cs_search failed: invalid cs JSON output.",
@@ -611,13 +622,15 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = (await tool.execute?.(
-      "call-exec-error",
-      { query: "broken" },
-      undefined,
-      undefined,
-      ctx,
-    ))!;
+    const result = expectDefined(
+      await tool.execute?.(
+        "call-exec-error",
+        { query: "broken" },
+        undefined,
+        undefined,
+        ctx,
+      ),
+    );
 
     expect(result.content[0].text).toContain(
       "cs_search failed: cs execution failed.",
@@ -665,13 +678,15 @@ describe("cs-search extension", () => {
 
     const tool = await registerAndGetTool();
     const ctx = { cwd: "/repo", signal: undefined } as never;
-    const result = (await tool.execute?.(
-      "call-5",
-      { query: "skill-toggle", path: ".pi/extensions" },
-      undefined,
-      undefined,
-      ctx,
-    ))!;
+    const result = expectDefined(
+      await tool.execute?.(
+        "call-5",
+        { query: "skill-toggle", path: ".pi/extensions" },
+        undefined,
+        undefined,
+        ctx,
+      ),
+    );
 
     expect(vi.mocked(execFile)).toHaveBeenNthCalledWith(
       3,

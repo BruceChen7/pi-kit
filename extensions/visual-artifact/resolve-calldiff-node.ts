@@ -31,18 +31,18 @@ import type {
   CalldiffRunOptions,
   CalldiffRunOutcome,
 } from "../shared/calldiff-runner.ts";
+import {
+  type ArtifactNode,
+  CONTAINER_GROUP_KEYS,
+  getNestedNodeGroups,
+  LIMITS,
+  NESTED_GROUP_KEYS,
+  type VisualArtifactSpec,
+} from "./artifact-schema.ts";
 import type {
   CalldiffArtifactOptions,
   CalldiffRenderOptions,
 } from "./calldiff-bridge.ts";
-import {
-  CONTAINER_GROUP_KEYS,
-  getNestedNodeGroups,
-  NESTED_GROUP_KEYS,
-  type ArtifactNode,
-  LIMITS,
-  type VisualArtifactSpec,
-} from "./artifact-schema.ts";
 import { toEntries, toOptionalString, toStringArray } from "./tool-helpers.ts";
 
 /* ------------------------------------------------------------------ */

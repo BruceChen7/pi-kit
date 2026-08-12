@@ -136,8 +136,8 @@ function summarySentence(content: string): string {
   if (!content) return "";
   const match = content.match(/^[^。？！.!?\n]+[。？！.!?\n]?/);
   if (!match) {
-    return content.length > 100 ? content.slice(0, 100) + "…" : content;
+    return content.length > 100 ? `${content.slice(0, 100)}…` : content;
   }
   const sentence = match[0].trim();
-  return sentence.length > 100 ? sentence.slice(0, 100) + "…" : sentence;
+  return sentence.length > 100 ? `${sentence.slice(0, 100)}…` : sentence;
 }

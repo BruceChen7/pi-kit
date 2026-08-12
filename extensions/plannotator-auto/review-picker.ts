@@ -55,7 +55,8 @@ export const scanReviewableFiles = (ctx: ExtensionContext): FileItem[] => {
   const stack = [path.join(ctx.cwd, ".pi")];
 
   while (stack.length > 0) {
-    const dir = stack.pop()!;
+    const dir = stack.pop();
+    if (!dir) break;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });

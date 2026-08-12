@@ -8,7 +8,6 @@ import {
   generateConnectionCard,
   generateQaCard,
   generateSummaryCard,
-  type ParsedConcept,
   parseConceptContent,
   summarizeSection,
 } from "./cards.js";

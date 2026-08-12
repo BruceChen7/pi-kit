@@ -173,7 +173,7 @@ export function extractBodySections(content: string): BodySection[] {
   // 按 ## 标题分段
   const sections: BodySection[] = [];
   const headingPattern = /^##\s+(.+)$/gm;
-  let lastIndex = 0;
+  let _lastIndex = 0;
   let lastHeading = "";
 
   // 查找第一个 ## 标题
@@ -190,7 +190,7 @@ export function extractBodySections(content: string): BodySection[] {
     sections.push({ heading: "概述", content: beforeFirstHeading });
   }
 
-  lastIndex = firstMatch.index;
+  _lastIndex = firstMatch.index;
   lastHeading = firstMatch[1].trim();
   let lastMatch = firstMatch;
 
@@ -204,7 +204,7 @@ export function extractBodySections(content: string): BodySection[] {
     if (sectionContent) {
       sections.push({ heading: lastHeading, content: sectionContent });
     }
-    lastIndex = match.index;
+    _lastIndex = match.index;
     lastHeading = match[1].trim();
     lastMatch = match;
     match = headingPattern.exec(body);
@@ -244,7 +244,9 @@ export function evaluateSubstance(
   const bodyMatch = content.match(/^#\s+.*$/m);
   if (!bodyMatch) return false;
 
-  const afterTitle = content.slice(bodyMatch.index! + bodyMatch[0].length);
+  const afterTitle = content.slice(
+    (bodyMatch.index ?? 0) + bodyMatch[0].length,
+  );
   const sourcesIdx = afterTitle.search(/^##\s+Sources/m);
   const bodyText =
     sourcesIdx !== -1 ? afterTitle.slice(0, sourcesIdx) : afterTitle;
@@ -417,7 +419,7 @@ export function summarizeSection(content: string): string {
 
   // 限制长度 200 字符
   if (result.length > 200) {
-    result = result.slice(0, 200) + "…";
+    result = `${result.slice(0, 200)}…`;
   }
 
   return result;

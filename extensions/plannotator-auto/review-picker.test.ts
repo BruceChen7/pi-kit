@@ -86,15 +86,15 @@ describe("scanReviewableFiles (shell integration)", () => {
     ]);
     // Sorted by mtime descending
     for (let i = 1; i < files.length; i++) {
-      expect(files[i - 1]!.mtimeMs).toBeGreaterThanOrEqual(files[i]!.mtimeMs);
+      expect(files[i - 1].mtimeMs).toBeGreaterThanOrEqual(files[i].mtimeMs);
     }
   });
 
-  it("caps the list at MAX_PLAN_FILES (5)", async () => {
+  it("caps the list at MAX_PLAN_FILES (50)", async () => {
     repoRoot = await createTempRepo("scan-pi-cap");
     const dir = path.join(repoRoot, ".pi", "plans", "repo", "plan");
     fs.mkdirSync(dir, { recursive: true });
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 60; i++) {
       fs.writeFileSync(
         path.join(dir, `2026-01-01-plan-${i}.md`),
         `# Plan ${i}`,
@@ -104,7 +104,7 @@ describe("scanReviewableFiles (shell integration)", () => {
 
     const ctx = createTestContext(repoRoot);
     const files = scanReviewableFiles(ctx as never);
-    expect(files).toHaveLength(5);
+    expect(files).toHaveLength(50);
   });
 });
 

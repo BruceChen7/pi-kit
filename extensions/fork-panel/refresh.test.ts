@@ -131,7 +131,7 @@ describe("fork-panel refresh 机制（Spike 1）", () => {
     const u3 = a.appendMessage(userMsg("继续"));
     expect(a.getLeafId()).toBe(u3);
     const entriesAfter = readEntries(file);
-    const a2Node =
+    const _a2Node =
       entriesAfter.find((e) => e.id === a2) ?? expect.fail("a2 节点不存在");
     const children = entriesAfter
       .filter((e) => e.parentId === a2)
@@ -145,7 +145,7 @@ describe("fork-panel refresh 机制（Spike 1）", () => {
     const sessionDir = join(dir, "sessions");
 
     const a = SessionManager.create(dir, sessionDir);
-    const file = a.getSessionFile()!;
+    const file = a.getSessionFile() ?? expect.fail("未创建 session 文件");
     a.appendMessage(userMsg("hi"));
     a.appendMessage(assistantMsg("hello"));
     a.appendMessage(userMsg("q2"));

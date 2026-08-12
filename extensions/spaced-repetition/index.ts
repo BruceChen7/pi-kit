@@ -23,7 +23,7 @@ import {
   type ParsedConcept,
   parseConceptContent,
 } from "./cards.ts";
-import { type ConceptEntry, computeNextReview, createNewEntry } from "./sm2.ts";
+import { computeNextReview } from "./sm2.ts";
 import {
   loadState,
   type ReviewState,
@@ -256,7 +256,7 @@ async function runRecallSession(
   const parsedConcepts: ParsedConcept[] = [];
   for (const slug of selectedSlugs) {
     const parsed = readConcept(config.conceptsDir, slug);
-    if (parsed && parsed.hasSubstance) {
+    if (parsed?.hasSubstance) {
       parsedConcepts.push(parsed);
     } else {
       log.info("skipping thin concept", { slug });
@@ -299,7 +299,7 @@ async function runRecallSession(
   const widgetResult = await ctx.ui.custom<{
     results: CardResult[];
     cancelled: boolean;
-  }>((tui, theme, _kb, done) => createCardWidget(reviewCards, theme, done));
+  }>((_tui, theme, _kb, done) => createCardWidget(reviewCards, theme, done));
 
   if (widgetResult.cancelled) {
     ctx.ui.notify("复习已取消", "info");
@@ -345,7 +345,7 @@ async function runRecallSession(
     ).length;
     const totalCount = widgetResult.results.length;
 
-    const stats = summarizeState(updatedState, now);
+    const _stats = summarizeState(updatedState, now);
     const msg = formatCardsForTelegram(reviewCards, correctCount, totalCount);
 
     try {

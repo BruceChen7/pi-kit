@@ -139,7 +139,7 @@ export function createCardWidget(
     const card = currentCard();
 
     // ── 标题行 ──
-    const totalStr = `${results.length + (flipped && !results.some((r) => r.slug === card?.slug) ? 0 : 0)}/${cards.length}`;
+    const _totalStr = `${results.length + (flipped && !results.some((r) => r.slug === card?.slug) ? 0 : 0)}/${cards.length}`;
     const correctCount = results.filter((r) => r.grade === 4).length;
     const title = card
       ? ` 📇 ${truncateToWidth(card.concept, Math.floor(width * 0.5))}`
@@ -276,7 +276,7 @@ function renderAnswer(
  * 渲染完成总结界面。
  */
 function renderCompletion(
-  width: number,
+  _width: number,
   correctCount: number,
   totalCount: number,
 ): string[] {

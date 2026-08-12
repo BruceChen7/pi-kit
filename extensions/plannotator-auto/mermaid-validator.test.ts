@@ -285,7 +285,7 @@ describe("validatePlanMermaidBlocks", () => {
 
     const errors = await validatePlanMermaidBlocks(
       markdown,
-      failingParser([blockBodies[1]!, blockBodies[3]!]),
+      failingParser([blockBodies[1], blockBodies[3]]),
     );
 
     expect(errors).toHaveLength(2);

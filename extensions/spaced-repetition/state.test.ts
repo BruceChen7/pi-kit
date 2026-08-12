@@ -10,7 +10,7 @@ import {
 
 // ── Test helpers ───────────────────────────────────────
 
-const HOUR = 3_600_000;
+const _HOUR = 3_600_000;
 const DAY = 86_400_000;
 
 function makeEntry(

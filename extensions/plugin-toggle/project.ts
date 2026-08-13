@@ -154,6 +154,7 @@ export function isPluginEnabled(cwd: string, plugin: PluginEntry): boolean {
 
 export function enablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
   const settingsStore = new PluginToggleSettingsStore(cwd);
+  const defaultDisabled = settingsStore.readDefaultDisabledPlugins();
   const targetPath = pluginTargetPath(cwd, plugin);
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 
@@ -163,7 +164,7 @@ export function enablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
     case "matched": {
       const sharedConflict = ensureSharedDependency(cwd, plugin);
       if (sharedConflict) return sharedConflict;
-      settingsStore.markEnabled(plugin.name);
+      settingsStore.setPluginState(plugin.name, true, defaultDisabled);
       return { status: "already-enabled" };
     }
     case "broken-matching": {
@@ -180,30 +181,59 @@ export function enablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
   if (sharedConflict) return sharedConflict;
 
   fs.symlinkSync(plugin.sourcePath, targetPath);
-  settingsStore.markEnabled(plugin.name);
+  settingsStore.setPluginState(plugin.name, true, defaultDisabled);
   return { status: "enabled" };
 }
 
 export function disablePlugin(cwd: string, plugin: PluginEntry): ToggleResult {
   const settingsStore = new PluginToggleSettingsStore(cwd);
+  const defaultDisabled = settingsStore.readDefaultDisabledPlugins();
   const targetPath = pluginTargetPath(cwd, plugin);
-  const enabled = settingsStore.readEnabledPlugins();
 
   const state = evaluateTargetState(targetPath, plugin);
 
   if (state.kind === "absent") {
-    settingsStore.markDisabled(plugin.name);
+    settingsStore.setPluginState(plugin.name, false, defaultDisabled);
     return { status: "already-disabled" };
   }
 
-  if (state.kind === "conflict" || !enabled.has(normalizeName(plugin.name))) {
+  if (state.kind === "conflict") {
     return { status: "conflict", path: targetPath };
   }
 
-  // Symlink exists and belongs to this plugin
+  // Symlink exists and belongs to this plugin (matched or broken-matching)
   fs.unlinkSync(targetPath);
-  settingsStore.markDisabled(plugin.name);
+  settingsStore.setPluginState(plugin.name, false, defaultDisabled);
   return { status: "disabled" };
+}
+
+/**
+ * Remove the project symlink for a plugin, but only when it belongs to the
+ * managed library (valid link pointing at the plugin source, or a broken
+ * link whose recorded target matches). Non-symlink paths are never touched.
+ * Returns true when a symlink was removed.
+ */
+export function removePluginSymlink(cwd: string, plugin: PluginEntry): boolean {
+  const targetPath = pluginTargetPath(cwd, plugin);
+
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(targetPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT") throw error;
+    return false;
+  }
+  if (!stat.isSymbolicLink()) return false;
+
+  if (fs.existsSync(targetPath)) {
+    if (!symlinkPointsToPlugin(targetPath, plugin)) return false;
+  } else if (!symlinkTargetMatchesPath(targetPath, plugin.sourcePath)) {
+    return false;
+  }
+
+  fs.unlinkSync(targetPath);
+  return true;
 }
 
 export function cleanupBrokenPluginSymlinks(
@@ -253,11 +283,15 @@ export function getEnabledManagedPlugins(
   cwd: string,
   plugins: PluginEntry[],
 ): string[] {
-  const enabled = new PluginToggleSettingsStore(cwd).readEnabledPlugins();
+  const settingsStore = new PluginToggleSettingsStore(cwd);
+  const effective = settingsStore.readEffectivePlugins(
+    plugins.map((plugin) => plugin.name),
+  );
   return plugins
     .filter(
       (plugin) =>
-        enabled.has(normalizeName(plugin.name)) && isPluginEnabled(cwd, plugin),
+        effective.has(normalizeName(plugin.name)) &&
+        isPluginEnabled(cwd, plugin),
     )
     .map((plugin) => plugin.name)
     .sort((left, right) => left.localeCompare(right));

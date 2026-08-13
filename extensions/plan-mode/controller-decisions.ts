@@ -126,3 +126,23 @@ export const getApprovedReviewPathToQueue = ({
 
   return approvalAlreadyQueued ? null : reviewArtifactPath;
 };
+
+export type TodoReconciliationInput = {
+  activeRunPlanPath: string | null;
+  approvedPlanPath: string;
+  hasUnfinishedTodos: boolean;
+};
+
+/**
+ * Whether an approved plan needs a todo-reconciliation reminder: the active
+ * run carries unfinished todos that are not bound to the approved plan
+ * (created before this plan was approved, or bound to an earlier plan). A
+ * run with no unfinished todos (already completed) or one already bound to
+ * the approved plan needs no reminder.
+ */
+export const shouldRemindTodoReconciliation = ({
+  activeRunPlanPath,
+  approvedPlanPath,
+  hasUnfinishedTodos,
+}: TodoReconciliationInput): boolean =>
+  hasUnfinishedTodos && activeRunPlanPath !== approvedPlanPath;

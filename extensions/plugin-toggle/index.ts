@@ -4,7 +4,6 @@
  * Manage project-local Pi extension symlinks from a shared plugin library.
  */
 
-import fs from "node:fs";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -13,11 +12,9 @@ import { bootstrapDefaultManagedPlugins } from "./bootstrap.ts";
 import {
   DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE,
   DEFAULT_LIBRARY_DIR,
-  GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES,
-  GLOBAL_EXTENSION_DIR,
+  WORKTREE_LINK_CREATED_MESSAGE,
 } from "./constants.ts";
 import { discoverPlugins } from "./library.ts";
-import { migrateGlobalPlugins } from "./migration.ts";
 import { PluginTogglePicker } from "./picker.ts";
 import {
   cleanupBrokenPluginSymlinks,
@@ -33,6 +30,7 @@ import type {
   ToggleResult,
 } from "./types.ts";
 import { normalizeName } from "./utils.ts";
+import { ensureSharedWorktreeConfig } from "./worktree.ts";
 
 export { bootstrapDefaultManagedPlugins } from "./bootstrap.ts";
 export {
@@ -41,7 +39,6 @@ export {
   installThirdPartyPluginToLibrary,
   readPluginLibraryManifest,
 } from "./library.ts";
-export { migrateGlobalPlugins } from "./migration.ts";
 export { PluginTogglePicker } from "./picker.ts";
 export {
   cleanupBrokenPluginSymlinks,
@@ -52,11 +49,20 @@ export {
   getEnabledManagedPlugins,
   getInstalledProjectPlugins,
   isPluginEnabled,
+  removePluginSymlink,
 } from "./project.ts";
 export type {
+  PluginToggleSettings,
+  PluginToggleSettingsEntry,
+  ResolvedPluginToggleEntry,
+} from "./settings-store.ts";
+export {
+  computeDiffs,
+  computeEffectivePlugins,
+  PluginToggleSettingsStore,
+} from "./settings-store.ts";
+export type {
   DefaultBootstrapResult,
-  MigrationItem,
-  MigrationOptions,
   PluginEntry,
   PluginLibraryManifest,
   PluginLibraryManifestEntry,
@@ -65,6 +71,12 @@ export type {
   ThirdPartySourceKind,
   ToggleResult,
 } from "./types.ts";
+export {
+  ensureSharedWorktreeConfig,
+  findGitWorktreeRoot,
+  parseMainWorktreePath,
+  resolveSharedProjectRoot,
+} from "./worktree.ts";
 
 function notifyDefaultBootstrapWarnings(
   ctx: ExtensionContext,
@@ -75,14 +87,6 @@ function notifyDefaultBootstrapWarnings(
   ctx.ui.notify(
     `Default plugin bootstrap skipped conflicting paths: ${bootstrap.conflicts.join(", ")}`,
     "warning",
-  );
-}
-
-function isGlobalAutoloadPlugin(entry: string): boolean {
-  return (
-    !entry.startsWith(".") &&
-    !entry.endsWith(".log") &&
-    !GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES.has(entry)
   );
 }
 
@@ -168,46 +172,18 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
     },
   });
 
-  pi.registerCommand("migrate-global-plugins", {
-    description:
-      "Move global symlink plugins to ~/.agents/pi-plugins for project opt-in",
-    handler: async (_args: string, ctx: ExtensionContext) => {
-      const result = migrateGlobalPlugins();
-      const parts = [
-        `${result.migrated.length} migrated`,
-        `${result.needsConfirmation.length} need confirmation`,
-        `${result.skipped.length} skipped`,
-      ];
-      ctx.ui.notify(`Global plugin migration: ${parts.join(", ")}`, "info");
-      if (result.needsConfirmation.length > 0) {
-        ctx.ui.notify(
-          `Real global plugins were left untouched: ${result.needsConfirmation.map((item) => item.name).join(", ")}`,
-          "warning",
-        );
-      }
-    },
-  });
-
   pi.on("session_start", async (_event, ctx) => {
+    const worktreeStatus = ensureSharedWorktreeConfig(ctx.cwd);
+    if (worktreeStatus === "created" && ctx.hasUI) {
+      ctx.ui.notify(WORKTREE_LINK_CREATED_MESSAGE, "info");
+    }
     const plugins = discoverPlugins();
     cleanupBrokenPluginSymlinks(ctx.cwd, plugins);
     const bootstrap = bootstrapDefaultManagedPlugins(ctx.cwd, plugins);
     notifyDefaultBootstrapWarnings(ctx, bootstrap);
-    if (bootstrap.enabled.length > 0) {
+    if (bootstrap.enabled.length > 0 || bootstrap.removed.length > 0) {
       if (ctx.hasUI) {
         ctx.ui.notify(DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE, "info");
-      }
-      return;
-    }
-    if (fs.existsSync(GLOBAL_EXTENSION_DIR)) {
-      const globals = fs
-        .readdirSync(GLOBAL_EXTENSION_DIR)
-        .filter(isGlobalAutoloadPlugin);
-      if (globals.length > 0 && ctx.hasUI) {
-        ctx.ui.notify(
-          "Global plugins still auto-load in every project. Use /migrate-global-plugins to opt in per project.",
-          "info",
-        );
       }
     }
   });

@@ -34,20 +34,10 @@ export interface DefaultBootstrapResult {
   enabled: string[];
   skippedDefaultDisabled: string[];
   conflicts: string[];
+  /** Symlinks removed because the plugin is not in the effective enabled set. */
+  removed: string[];
 }
 
 export type ToggleResult =
   | { status: "enabled" | "disabled" | "already-enabled" | "already-disabled" }
   | { status: "conflict"; path: string };
-
-export interface MigrationItem {
-  name: string;
-  sourcePath: string;
-  targetPath: string;
-}
-
-export interface MigrationOptions {
-  home?: string;
-  globalDir?: string;
-  libraryDir?: string;
-}

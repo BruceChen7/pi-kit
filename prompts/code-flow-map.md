@@ -147,10 +147,10 @@ IO 边界/副作用用 ASCII 调用树呈现，取代平表。顶层是一个 `s
 ```text
 bootstrapDefaultManagedPlugins(cwd, plugins)
 ├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）
-└─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared
-     └─ bootstrapPlugins(...)
-          └─ 遍历: disabled.has(name) → skip
-               其余 → enablePlugin()  ← 副作用: 写 symlink, extensions/plugin-toggle/project.ts:142
+└─ 遍历库插件（排除全局 autoload: plugin-toggle, shared, cc-switch）
+     ├─ effective = (library − defaultDisabled − 差异) ∪ 差异enabled
+     └─ effective.has(name) ? enablePlugin()   ← 副作用: 写 symlink, extensions/plugin-toggle/project.ts:180
+          : removePluginSymlink()              ← 副作用: 删 symlink, extensions/plugin-toggle/project.ts:203
 ```
 
 - **Side-effect/IO nodes must carry `file:line`**: `← side effect: <type>, <full-path>:<line>`,

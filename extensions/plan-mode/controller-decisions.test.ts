@@ -4,6 +4,7 @@ import {
   decideAgentStartPreActions,
   decidePlanReviewObligation,
   getApprovedReviewPathToQueue,
+  shouldRemindTodoReconciliation,
 } from "./controller-decisions.js";
 
 const reviewArtifactPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
@@ -147,5 +148,46 @@ describe("plan-mode controller decisions", () => {
     },
   ])("$name", ({ input, expected }) => {
     expect(getApprovedReviewPathToQueue(input)).toBe(expected);
+  });
+
+  it.each([
+    {
+      name: "reminds when the run has unfinished todos not bound to the approved plan",
+      input: {
+        activeRunPlanPath: null,
+        approvedPlanPath: reviewArtifactPath,
+        hasUnfinishedTodos: true,
+      },
+      expected: true,
+    },
+    {
+      name: "reminds when the run is bound to an earlier plan",
+      input: {
+        activeRunPlanPath: ".pi/plans/pi-kit/plan/2026-05-08-earlier.md",
+        approvedPlanPath: reviewArtifactPath,
+        hasUnfinishedTodos: true,
+      },
+      expected: true,
+    },
+    {
+      name: "does not remind when the run is already bound to the approved plan",
+      input: {
+        activeRunPlanPath: reviewArtifactPath,
+        approvedPlanPath: reviewArtifactPath,
+        hasUnfinishedTodos: true,
+      },
+      expected: false,
+    },
+    {
+      name: "does not remind when all todos are done",
+      input: {
+        activeRunPlanPath: null,
+        approvedPlanPath: reviewArtifactPath,
+        hasUnfinishedTodos: false,
+      },
+      expected: false,
+    },
+  ])("$name", ({ input, expected }) => {
+    expect(shouldRemindTodoReconciliation(input)).toBe(expected);
   });
 });

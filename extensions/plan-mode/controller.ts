@@ -55,6 +55,7 @@ import {
   decideAgentStartPreActions,
   decidePlanReviewObligation,
   getApprovedReviewPathToQueue,
+  shouldRemindTodoReconciliation,
 } from "./controller-decisions.ts";
 import { decideToolBlock, type GuardPolicyTarget } from "./guard-policy.ts";
 import {
@@ -100,6 +101,10 @@ const APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE =
   "Plan Mode is waiting for an approved Plannotator plan/spec. The " +
   "approved artifact changed and must be reviewed again before " +
   "continuing approved execution.";
+// Todo-reconciliation reminder sent once when an approval arrives for a
+// plan the active run is not bound to (todos created before approval).
+const TODO_RECONCILE_AFTER_APPROVAL_MESSAGE =
+  "Plan approved. Reconcile the act_mode_todo list with the approved plan: ";
 // APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE removed - no longer used.
 // The abort path now uses ctx.ui.notify() instead of sendUserMessage()
 // to avoid restarting the agent (which caused an infinite retry loop).
@@ -756,6 +761,17 @@ export class PlanModeController {
       return;
     }
 
+    // Todos created before this plan was approved (run not yet bound to it)
+    // may not match the approved plan after review iterations — remind the
+    // agent to reconcile them once before execution starts. The reminder
+    // fires at most once: the binding below makes the condition false for
+    // every later approval of the same plan.
+    const remindTodoReconciliation = shouldRemindTodoReconciliation({
+      activeRunPlanPath: this.state.activeRun?.planPath ?? null,
+      approvedPlanPath: pathToQueue,
+      hasUnfinishedTodos: this.state.hasUnfinishedTodos(),
+    });
+
     this.state.activePlanPath = pathToQueue;
     this.state.latestReviewArtifactPath = pathToQueue;
     this.state.reviewApprovedPlanPaths.add(pathToQueue);
@@ -777,6 +793,16 @@ export class PlanModeController {
     }
     const wasDirectAct = this.state.mode === "act";
     this.state.switchApprovedPlanToAct(wasDirectAct);
+    if (remindTodoReconciliation) {
+      this.pi.sendUserMessage(
+        TODO_RECONCILE_AFTER_APPROVAL_MESSAGE +
+          pathToQueue +
+          " — the current list was not created for this plan. " +
+          "Use act_mode_todo list to compare, then set to align before " +
+          "starting execution.",
+        { deliverAs: "followUp" },
+      );
+    }
     this.applyMode(ctx);
     this.persist();
   }

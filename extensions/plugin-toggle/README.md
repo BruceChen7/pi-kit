@@ -16,14 +16,63 @@ A project enables a plugin by symlinking it into:
 
 Disable removes the project symlink only; it does not delete the shared plugin source.
 
-Enable/disable state is tracked per project as three states — enabled,
-disabled, or never seen. Disabling a plugin is persistent: once disabled,
-session-start sync will never auto-enable it again in that project (re-enable
-it any time with `/toggle-plugin`). Plugins that appear in the shared library
-later are auto-enabled on the next session start, unless they are listed in
-the global `pluginToggle.defaultDisabledPlugins` setting (defaults to
-`copyx` and `pi-autoresearch`), which only acts as the initial default for
-plugins a project has never seen.
+## Configuration model: one default + per-project differences
+
+The library is the single common plugin list: **every library plugin is enabled
+in every project by default**. The settings file only records deviations:
+
+```jsonc
+{
+  "pluginToggle": {
+    // Optional: override the hardcoded default-disabled list
+    // (constants.ts DEFAULT_DISABLED_PLUGINS = copyx, pi-autoresearch).
+    "defaultDisabledPlugins": ["copyx", "pi-autoresearch"],
+    "byCwd": {
+      "/path/to/project-a": {
+        "enabledPlugins": ["copyx"]        // force-on override for a default-disabled plugin
+      },
+      "/path/to/project-b": {
+        "disabledPlugins": ["qmd-search"]  // turned off relative to the default
+      }
+    }
+  }
+}
+```
+
+- Projects with no entry (or an empty one) get the full default: all library
+  plugins, minus the default-disabled list.
+- Effective state is computed, never stored:
+  `effective = (library − defaultDisabled − entry.disabledPlugins) ∪ entry.enabledPlugins`.
+- Toggling a plugin back to its default state removes the recorded difference
+  (and deletes the entry when it becomes empty), so the settings file stays
+  minimal. Bootstrap never writes settings — it only converges symlinks.
+
+On every session start the plugin converges the project symlinks: missing
+symlinks for effective-enabled plugins are linked, and symlinks pointing into
+the library are removed for effective-disabled plugins. Non-symlink paths
+(user plugins) are never touched. Plugins added to the library later are
+auto-enabled on the next session start, unless they are default-disabled or
+explicitly disabled in the project's `disabledPlugins`.
+
+## Worktrees
+
+A session inside a linked git worktree shares the main repo's configuration.
+On session start the extension detects the worktree (via its `.git` file) and
+links `<worktree>/.pi` to `<main-repo>/.pi`, so Pi loads the same project
+extensions/skills/prompts/themes/settings as the root repo. Plugin settings
+are keyed by the main repo root, so toggling a plugin in the worktree applies
+to the root repo (and every other linked worktree) and vice versa; the root
+repo's `.pi/extensions` is the single source of truth.
+
+- The first session in a fresh worktree creates the link; run `/reload` once
+  to load the shared project plugins.
+- If the worktree already has its own real `.pi` directory (for example the
+  branch tracks `.pi`), it is never overwritten and the worktree keeps its
+  own per-worktree configuration.
+- Sessions launched in a subdirectory of a worktree keep Pi's plain
+  per-directory scoping (Pi reads `<cwd>/.pi`), unchanged from non-worktree
+  projects.
+- Non-git directories and regular repositories are unaffected.
 
 ## Install plugins from this repo
 

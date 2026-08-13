@@ -8,6 +8,7 @@
 import {
   type CalldiffNode,
   type CalldiffResult,
+  type CalldiffTreeResult,
   countDiffStatuses,
   type DiffStatusCounts,
 } from "../shared/calldiff-json.ts";
@@ -42,6 +43,12 @@ const escapeMermaidLabel = (label: string): string => {
   return cleaned.length > 0 ? cleaned : "?";
 };
 
+/** `file:line` suffix for changed, source-located nodes (diff rendering). */
+const nodeLocationSuffix = (node: CalldiffNode): string => {
+  if (!node.file) return "";
+  return `${node.file}${node.line ? `:${node.line}` : ""}`;
+};
+
 type MermaidBuildState = {
   lines: string[];
   nextId: number;
@@ -61,7 +68,13 @@ const emitMermaidNode = (
   }
   const id = `n${state.nextId}`;
   state.nextId += 1;
-  state.lines.push(`${id}["${escapeMermaidLabel(node.label)}"]`);
+
+  let label = escapeMermaidLabel(node.label);
+  if (withStatus && node.status !== undefined && node.status !== "same") {
+    const location = nodeLocationSuffix(node);
+    if (location) label = `${label} (${location})`;
+  }
+  state.lines.push(`${id}["${label}"]`);
 
   if (node.kind === "branch") {
     state.lines.push(`class ${id} branch`);
@@ -126,6 +139,109 @@ export const diffNodeToMermaid = (
 };
 
 /* ------------------------------------------------------------------ */
+/*  Pure helpers: node counts, file impacts, file filter               */
+/* ------------------------------------------------------------------ */
+
+/** Total node count of a call tree (recursive). */
+export const countNodes = (root: CalldiffNode): number => {
+  let total = 1;
+  for (const child of root.children) {
+    total += countNodes(child);
+  }
+  return total;
+};
+
+/** Aggregated per-file impact of a diff result (the `fileImpacts` view). */
+export type FileImpact = {
+  file: string;
+  /** Entry trees containing at least one changed node in this file. */
+  entries: string[];
+  /** Unique changed nodes in this file (deduped by node key). */
+  changedNodes: number;
+  added: number;
+  removed: number;
+};
+
+/**
+ * Reverse index: changed files → affected entries → changed-step counts.
+ * Nodes are deduped by (file, key) so a node reachable through several
+ * entry trees counts once. Sorted by changedNodes desc, then file name.
+ */
+export const buildFileImpacts = (
+  result: Extract<CalldiffResult, { mode: "diff" }>,
+): FileImpact[] => {
+  const byFile = new Map<string, FileImpact>();
+  const seenKeys = new Map<string, Set<string>>();
+
+  const visit = (node: CalldiffNode, entry: string): void => {
+    if (node.status !== undefined && node.status !== "same" && node.file) {
+      let impact = byFile.get(node.file);
+      if (!impact) {
+        impact = {
+          file: node.file,
+          entries: [],
+          changedNodes: 0,
+          added: 0,
+          removed: 0,
+        };
+        byFile.set(node.file, impact);
+      }
+      if (!impact.entries.includes(entry)) {
+        impact.entries.push(entry);
+      }
+      let seen = seenKeys.get(node.file);
+      if (!seen) {
+        seen = new Set();
+        seenKeys.set(node.file, seen);
+      }
+      if (!seen.has(node.key)) {
+        seen.add(node.key);
+        impact.changedNodes += 1;
+        if (node.status === "added") impact.added += 1;
+        else impact.removed += 1;
+      }
+    }
+    for (const child of node.children) {
+      visit(child, entry);
+    }
+  };
+
+  for (const tree of result.trees) {
+    visit(tree.tree, tree.entry);
+  }
+
+  return [...byFile.values()].sort(
+    (a, b) => b.changedNodes - a.changedNodes || a.file.localeCompare(b.file),
+  );
+};
+
+/**
+ * Lens-style file filter: keep only entry trees containing at least one
+ * changed node in `file`. Filtering happens only at the entry boundary —
+ * matched trees are kept complete, never pruned. Returns the same result
+ * (trees possibly empty) so callers can degrade to a per-file empty state.
+ */
+export const filterDiffResultForFile = (
+  result: Extract<CalldiffResult, { mode: "diff" }>,
+  file: string,
+): Extract<CalldiffResult, { mode: "diff" }> => {
+  const treeTouchesFile = (node: CalldiffNode): boolean => {
+    if (
+      node.status !== undefined &&
+      node.status !== "same" &&
+      node.file === file
+    ) {
+      return true;
+    }
+    return node.children.some((child) => treeTouchesFile(child));
+  };
+  return {
+    ...result,
+    trees: result.trees.filter((tree) => treeTouchesFile(tree.tree)),
+  };
+};
+
+/* ------------------------------------------------------------------ */
 /*  Spec assembly                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -143,6 +259,17 @@ export type CalldiffRenderOptions = {
   maxNodesPerTree?: number;
   /** Max ascii lines per code-block (default 60; 0 = omit code-block). */
   maxAsciiLines?: number;
+  /**
+   * Max call-tree nodes that still render as a mermaid diagram (default 25).
+   * Larger trees render ASCII only — mermaid layouts degrade badly past
+   * roughly 30 nodes.
+   */
+  maxMermaidNodes?: number;
+  /**
+   * Diff mode only: keep only complete entry trees containing a changed
+   * node in this file (Lens-style filter; matched trees are never pruned).
+   */
+  file?: string;
 };
 
 export type CalldiffArtifactOptions = CalldiffRenderOptions & {
@@ -152,6 +279,7 @@ export type CalldiffArtifactOptions = CalldiffRenderOptions & {
 
 const DEFAULT_MAX_ENTRIES = 8;
 const DEFAULT_MAX_ASCII_LINES = 60;
+const DEFAULT_MAX_MERMAID_NODES = 25;
 
 const asciiCodeBlock = (
   ascii: string,
@@ -166,31 +294,51 @@ const asciiCodeBlock = (
   };
 };
 
-const entrySection = (
+/**
+ * One accordion item per entry: mermaid (when the tree is small enough),
+ * then the per-entry ASCII block. Large trees skip the diagram — a short
+ * note replaces it so the section still explains what happened.
+ */
+const entryAccordionItem = (
   entry: string,
   ascii: string,
-  mermaid: string,
+  tree: CalldiffNode,
   options: CalldiffArtifactOptions,
-): ArtifactNode => ({
-  type: "section",
-  props: {
-    title: entry,
-    nodes: [
-      { type: "mermaid", props: { definition: mermaid } },
-      ...(asciiCodeBlock(
-        ascii,
-        options.maxAsciiLines ?? DEFAULT_MAX_ASCII_LINES,
-      )
-        ? [
-            asciiCodeBlock(
-              ascii,
-              options.maxAsciiLines ?? DEFAULT_MAX_ASCII_LINES,
-            ),
-          ]
-        : []),
-    ],
-  },
-});
+  withStatus: boolean,
+): { title: string; nodes: ArtifactNode[]; defaultOpen: boolean } => {
+  const maxMermaidNodes = options.maxMermaidNodes ?? DEFAULT_MAX_MERMAID_NODES;
+  const nodes: ArtifactNode[] = [];
+  const nodeCount = countNodes(tree);
+
+  if (nodeCount <= maxMermaidNodes) {
+    nodes.push({
+      type: "mermaid",
+      props: {
+        definition: (withStatus ? diffNodeToMermaid : callNodeToMermaid)(tree, {
+          maxNodes: options.maxNodesPerTree,
+        }),
+      },
+    });
+  } else {
+    nodes.push({
+      type: "text",
+      props: {
+        text: `Diagram omitted: ${nodeCount} nodes exceeds the ${maxMermaidNodes} node diagram limit; ASCII below.`,
+        size: "sm",
+      },
+    });
+  }
+
+  const asciiNode = asciiCodeBlock(
+    ascii,
+    options.maxAsciiLines ?? DEFAULT_MAX_ASCII_LINES,
+  );
+  if (asciiNode) {
+    nodes.push(asciiNode);
+  }
+
+  return { title: entry, nodes, defaultOpen: false };
+};
 
 const defaultSlug = (result: CalldiffResult): string => {
   if (result.mode === "diff") {
@@ -208,12 +356,153 @@ const defaultSlug = (result: CalldiffResult): string => {
 const capEntries = (count: number, options: CalldiffArtifactOptions): number =>
   Math.max(0, Math.min(count, options.maxEntries ?? DEFAULT_MAX_ENTRIES));
 
+/** "Paths" tab: per-entry table + collapsible trees + qualification. */
+const diffPathsTab = (
+  trees: Extract<CalldiffResult, { mode: "diff" }>["trees"],
+  total: DiffStatusCounts,
+  entries: number,
+  options: CalldiffArtifactOptions,
+): ArtifactNode[] => {
+  const nodes: ArtifactNode[] = [
+    {
+      type: "table",
+      props: {
+        headers: ["Entry", "Added", "Removed", "Unchanged"],
+        rows: trees.map((entry) => {
+          const counts = countDiffStatuses(entry.tree);
+          return [
+            entry.entry,
+            String(counts.added),
+            String(counts.removed),
+            String(counts.same),
+          ];
+        }),
+      },
+    },
+    {
+      type: "accordion",
+      props: {
+        items: trees
+          .slice(0, entries)
+          .map((entry) =>
+            entryAccordionItem(
+              entry.entry,
+              entry.ascii,
+              entry.tree,
+              options,
+              true,
+            ),
+          ),
+      },
+    },
+  ];
+
+  if (trees.length > entries) {
+    nodes.push({
+      type: "text",
+      props: {
+        text: `… ${trees.length - entries} more entrypoint(s) listed above (detail sections capped at ${entries}).`,
+        size: "sm",
+      },
+    });
+  }
+
+  if (total.added + total.removed > 0) {
+    nodes.push({
+      type: "callout",
+      props: {
+        title: "Syntactic analysis",
+        text:
+          "CallDiff is syntactic evidence, not a runtime trace: no type or import resolution, " +
+          "dataflow, or dynamic dispatch. Moves or reorderings can appear as remove/add pairs, " +
+          "and duplicate bare symbol names can be ambiguous.",
+        variant: "info",
+      },
+    });
+  }
+
+  return nodes;
+};
+
+/** "Raw" tab: the whole canonical CallDiff rendering (bounded, copyable). */
+const rawTab = (
+  ascii: string,
+  options: CalldiffArtifactOptions,
+): ArtifactNode[] => {
+  const codeBlock = asciiCodeBlock(
+    ascii,
+    options.maxAsciiLines ?? DEFAULT_MAX_ASCII_LINES,
+  );
+  if (codeBlock) {
+    return [codeBlock];
+  }
+  return [
+    {
+      type: "text",
+      props: { text: "No raw output.", size: "sm" },
+    },
+  ];
+};
+
+const entryTabSpec = (
+  entries: number,
+  treeEntry: CalldiffTreeResult[],
+  ascii: string,
+  options: CalldiffArtifactOptions,
+): ArtifactNode[] => {
+  const nodes: ArtifactNode[] = [
+    {
+      type: "tabs",
+      props: {
+        tabs: [
+          {
+            label: "Paths",
+            nodes: [
+              {
+                type: "accordion",
+                props: {
+                  items: treeEntry
+                    .slice(0, entries)
+                    .map((entry) =>
+                      entryAccordionItem(
+                        entry.entry,
+                        entry.ascii,
+                        entry.tree,
+                        options,
+                        false,
+                      ),
+                    ),
+                },
+              },
+            ],
+          },
+          { label: "Raw", nodes: rawTab(ascii, options) },
+        ],
+      },
+    },
+  ];
+  if (treeEntry.length > entries) {
+    nodes.push({
+      type: "text",
+      props: {
+        text: `… ${treeEntry.length - entries} more entrypoint(s) listed above (detail sections capped at ${entries}).`,
+        size: "sm",
+      },
+    });
+  }
+  return nodes;
+};
+
 export const diffResultToSpec = (
   result: Extract<CalldiffResult, { mode: "diff" }>,
   options: CalldiffArtifactOptions = {},
 ): VisualArtifactSpec => {
-  const entries = capEntries(result.trees.length, options);
-  const total = result.trees.reduce<DiffStatusCounts>(
+  const file = options.file;
+  const trees = file
+    ? filterDiffResultForFile(result, file).trees
+    : result.trees;
+  const entries = capEntries(trees.length, options);
+  const total = trees.reduce<DiffStatusCounts>(
     (acc, entry) => {
       const counts = countDiffStatuses(entry.tree);
       acc.added += counts.added;
@@ -223,6 +512,11 @@ export const diffResultToSpec = (
     },
     { added: 0, removed: 0, same: 0 },
   );
+  const impacts = buildFileImpacts({ ...result, trees });
+
+  const defaultDescription = file
+    ? `calldiff diff \`${result.from}\` \`${result.to}\` — ${trees.length} entrypoint(s) with changed call trees touching \`${file}\` (${total.added} added, ${total.removed} removed, ${total.same} unchanged).`
+    : `calldiff diff \`${result.from}\` \`${result.to}\` — ${trees.length} entrypoint(s) with changed call trees (${total.added} added, ${total.removed} removed, ${total.same} unchanged).`;
 
   const nodes: ArtifactNode[] = [
     {
@@ -235,23 +529,20 @@ export const diffResultToSpec = (
     {
       type: "text",
       props: {
-        text:
-          options.description ??
-          `calldiff diff \`${result.from}\` \`${result.to}\` — ${
-            result.trees.length
-          } entrypoint(s) with changed call trees (${total.added} added, ${total.removed} removed, ${total.same} unchanged).`,
+        text: options.description ?? defaultDescription,
       },
     },
   ];
 
-  if (result.trees.length === 0) {
+  if (trees.length === 0) {
     nodes.push({
       type: "callout",
       props: {
         title: "No call-flow changes",
-        text:
-          result.message ??
-          "No exported function call trees changed between the two refs.",
+        text: file
+          ? `No changed call trees touch \`${file}\`.`
+          : (result.message ??
+            "No exported function call trees changed between the two refs."),
         variant: "info",
       },
     });
@@ -266,41 +557,42 @@ export const diffResultToSpec = (
   }
 
   nodes.push({
-    type: "table",
+    type: "kpi-grid",
     props: {
-      headers: ["Entry", "Added", "Removed", "Unchanged"],
-      rows: result.trees.map((entry) => {
-        const counts = countDiffStatuses(entry.tree);
-        return [
-          entry.entry,
-          String(counts.added),
-          String(counts.removed),
-          String(counts.same),
-        ];
-      }),
+      columns: 4,
+      items: [
+        { label: "Changed steps", value: total.added + total.removed },
+        { label: "Impacted files", value: impacts.length },
+        { label: "Added", value: total.added },
+        { label: "Removed", value: total.removed },
+      ],
     },
   });
 
-  for (const entry of result.trees.slice(0, entries)) {
-    nodes.push(
-      entrySection(
-        entry.entry,
-        entry.ascii,
-        diffNodeToMermaid(entry.tree, { maxNodes: options.maxNodesPerTree }),
-        options,
-      ),
-    );
-  }
-
-  if (result.trees.length > entries) {
-    nodes.push({
-      type: "text",
+  const pathsTabNodes = diffPathsTab(trees, total, entries, options);
+  if (impacts.length > 0) {
+    pathsTabNodes.unshift({
+      type: "table",
       props: {
-        text: `… ${result.trees.length - entries} more entrypoint(s) listed above (detail sections capped at ${entries}).`,
-        size: "sm",
+        headers: ["File", "Affected entries", "Added", "Removed"],
+        rows: impacts.map((impact) => [
+          impact.file,
+          impact.entries.join(", "),
+          String(impact.added),
+          String(impact.removed),
+        ]),
       },
     });
   }
+  nodes.push({
+    type: "tabs",
+    props: {
+      tabs: [
+        { label: "Paths", nodes: pathsTabNodes },
+        { label: "Raw", nodes: rawTab(result.ascii, options) },
+      ],
+    },
+  });
 
   return {
     slug: normalizeSlug(options.slug ?? defaultSlug(result)),
@@ -330,17 +622,8 @@ export const treeResultToSpec = (
           `calldiff tree \`${result.ref}\` — ${result.trees.length} entrypoint(s).`,
       },
     },
+    ...entryTabSpec(entries, result.trees, result.ascii, options),
   ];
-  for (const entry of result.trees.slice(0, entries)) {
-    nodes.push(
-      entrySection(
-        entry.entry,
-        entry.ascii,
-        callNodeToMermaid(entry.tree, { maxNodes: options.maxNodesPerTree }),
-        options,
-      ),
-    );
-  }
   return {
     slug: normalizeSlug(options.slug ?? defaultSlug(result)),
     title: options.title ?? `Call tree: ${result.ref}`,
@@ -372,17 +655,8 @@ export const reachResultToSpec = (
           `calldiff reach \`${result.from}\` → \`${result.to}\` at \`${result.ref}\` — ${result.paths.length} path(s).`,
       },
     },
+    ...entryTabSpec(entries, result.paths, result.ascii, options),
   ];
-  for (const entry of result.paths.slice(0, entries)) {
-    nodes.push(
-      entrySection(
-        entry.entry,
-        entry.ascii,
-        callNodeToMermaid(entry.tree, { maxNodes: options.maxNodesPerTree }),
-        options,
-      ),
-    );
-  }
   return {
     slug: normalizeSlug(options.slug ?? defaultSlug(result)),
     title: options.title ?? `Call paths: ${result.from} → ${result.to}`,

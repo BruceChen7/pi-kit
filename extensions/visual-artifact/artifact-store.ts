@@ -28,6 +28,11 @@ export type ArtifactSummary = {
   description?: string;
   artifactType?: string;
   createdAt: string;
+  topics?: string[];
+  /** Number of top-level nodes in the spec. */
+  nodeCount: number;
+  /** Unique node types in first-appearance order, capped for display. */
+  nodeTypes: string[];
 };
 
 function ensureDir(dir: string): void {
@@ -109,6 +114,28 @@ export function listProjects(projectRoot: string): string[] {
 }
 
 /**
+ * Summarize a spec's nodes for list display: total count + unique types
+ * (first-appearance order, capped so summaries stay small).
+ */
+export function summarizeNodes(
+  spec: Pick<VisualArtifactSpec, "nodes">,
+  maxTypes = 6,
+): { nodeCount: number; nodeTypes: string[] } {
+  const nodes = Array.isArray(spec.nodes) ? spec.nodes : [];
+  const seen: string[] = [];
+  for (const node of nodes) {
+    const type =
+      typeof node === "object" && node !== null && "type" in node
+        ? String((node as { type?: unknown }).type ?? "unknown")
+        : "unknown";
+    if (!seen.includes(type) && seen.length < maxTypes) {
+      seen.push(type);
+    }
+  }
+  return { nodeCount: nodes.length, nodeTypes: seen };
+}
+
+/**
  * List artifact summaries for a project.
  */
 export function listArtifacts(
@@ -128,14 +155,17 @@ export function listArtifacts(
     for (const slug of slugs) {
       const spec = readArtifact(projectRoot, projectName, slug);
       if (spec) {
+        const nodeSummary = summarizeNodes(spec);
         summaries.push({
           slug: spec.slug,
           title: spec.title,
           description: spec.description,
           artifactType: spec.artifactType,
+          topics: spec.topics,
           createdAt: getCreationTime(
             getArtifactJsonPath(projectRoot, projectName, slug),
           ),
+          ...nodeSummary,
         });
       }
     }

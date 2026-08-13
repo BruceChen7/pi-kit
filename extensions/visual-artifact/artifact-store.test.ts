@@ -9,6 +9,7 @@ import {
   listArtifacts,
   listProjects,
   readArtifact,
+  summarizeNodes,
   writeArtifact,
 } from "./artifact-store.ts";
 import { getArtifactJsonPath } from "./paths.ts";
@@ -37,6 +38,7 @@ describe("artifact-store", () => {
     deleteArtifact(TEST_ROOT, TEST_PROJECT, TEST_SLUG);
     deleteArtifact(TEST_ROOT, TEST_PROJECT, "artifact-2");
     deleteArtifact(TEST_ROOT, TEST_PROJECT, "legacy-mermaid");
+    deleteArtifact(TEST_ROOT, TEST_PROJECT, "typed-artifact");
     deleteArtifact(TEST_ROOT, SECOND_PROJECT, TEST_SLUG);
   });
 
@@ -44,6 +46,7 @@ describe("artifact-store", () => {
     deleteArtifact(TEST_ROOT, TEST_PROJECT, TEST_SLUG);
     deleteArtifact(TEST_ROOT, TEST_PROJECT, "artifact-2");
     deleteArtifact(TEST_ROOT, TEST_PROJECT, "legacy-mermaid");
+    deleteArtifact(TEST_ROOT, TEST_PROJECT, "typed-artifact");
     deleteArtifact(TEST_ROOT, SECOND_PROJECT, TEST_SLUG);
   });
 
@@ -114,6 +117,41 @@ describe("artifact-store", () => {
     expect(artifacts).toHaveLength(2);
     const slugs = artifacts.map((a) => a.slug).sort();
     expect(slugs).toEqual(["artifact-2", TEST_SLUG]);
+  });
+
+  it("summarizes nodes for the artifact list (count + unique types)", () => {
+    writeArtifact(TEST_ROOT, TEST_PROJECT, {
+      slug: "typed-artifact",
+      title: "Typed Artifact",
+      nodes: [
+        { type: "heading", props: { text: "H", level: "h1" } },
+        { type: "mermaid", props: { definition: "flowchart LR\n A --> B" } },
+        { type: "text", props: { text: "body" } },
+        { type: "mermaid", props: { definition: "flowchart LR\n B --> C" } },
+        { type: "kpi-grid", props: { columns: 2, items: [] } },
+      ],
+    });
+
+    const artifacts = listArtifacts(TEST_ROOT, TEST_PROJECT);
+    const summary = artifacts.find((a) => a.slug === "typed-artifact");
+
+    expect(summary?.nodeCount).toBe(5);
+    expect(summary?.nodeTypes).toEqual([
+      "heading",
+      "mermaid",
+      "text",
+      "kpi-grid",
+    ]);
+  });
+
+  it("caps node types in the summary at a display limit", () => {
+    const types = Array.from({ length: 10 }, (_, i) => `type-${i}`);
+    const summary = summarizeNodes({
+      nodes: types.map((type) => ({ type, props: {} })),
+    });
+    expect(summary.nodeCount).toBe(10);
+    expect(summary.nodeTypes).toHaveLength(6);
+    expect(summary.nodeTypes[0]).toBe("type-0");
   });
 
   it("deletes an artifact", () => {

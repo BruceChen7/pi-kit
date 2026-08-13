@@ -486,7 +486,7 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
     type: "calldiff-callflow",
     label: "Calldiff Call Flow",
     description:
-      "Host-resolved macro node: declares a calldiff call-flow diff/tree/reach analysis embedded in this artifact. The extension runs `calldiff <mode> --format json` against the session git repo while processing the spec and expands this node into a summary heading, per-entrypoint table, mermaid call trees, and ASCII code-blocks. All props are optional.",
+      "Host-resolved macro node: declares a calldiff call-flow diff/tree/reach analysis embedded in this artifact. The extension runs `calldiff <mode> --format json` against the session git repo while processing the spec and expands this node into a KPI overview, per-entrypoint table, collapsible call trees, and a Raw view tab. All props are optional.",
     props: {
       mode: '"diff" | "tree" | "reach" (optional, default diff)',
       from: "string (optional) — diff: before-ref (default HEAD); tree/reach: the tree ref (default worktree)",
@@ -495,17 +495,21 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
       target: "string (optional) — reach target symbol; required for reach",
       paths: "string[] (optional) — limit analysis to path prefixes",
       maxDepth: "number (optional)",
+      file: "string (optional) — diff mode only: keep only complete entry trees containing a changed node in this file (Lens-style filter; matched trees are never pruned)",
       title: "string (optional) — section title override",
       maxEntries: "number (optional, default 8)",
       maxNodesPerTree: "number (optional, default 80)",
+      maxMermaidNodes:
+        "number (optional, default 25) — larger call trees render ASCII only",
       maxAsciiLines: "number (optional, default 60; 0 = omit code-block)",
     },
     guidelines: [
-      "Host-resolved: you declare parameters only — the extension runs the calldiff CLI and replaces this node with rendered heading/table/mermaid/code-block nodes. Nothing to hand-draw.",
+      "Host-resolved: you declare parameters only — the extension runs the calldiff CLI and replaces this node with rendered KPI/table/tabs/accordion/code-block nodes. Nothing to hand-draw.",
       "Requires a git work tree; requires the calldiff binary on PATH (npx fallback, best-effort).",
       "When calldiff is unavailable or the session is not in a git repo, this node degrades to a 'Call-flow unavailable' callout — the rest of the artifact renders normally.",
       "When nothing changed, it expands to a 'No call-flow changes' callout instead of entry sections.",
       "tree/reach modes require entry; reach additionally requires target.",
+      "file filters diff results to entry trees touching that file; in tree/reach modes it degrades to a callout.",
       "Expansion is budget-aware: the host caps maxEntries so the expanded artifact stays within the node limits; extra entrypoints are summarized with an '… N more' note.",
     ],
   },

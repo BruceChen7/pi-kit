@@ -29,12 +29,6 @@ import {
 } from "./mermaid-validator.ts";
 import { isHtmlPath, resolveReviewTargetMatch } from "./paths.ts";
 import type { PendingPlanReview } from "./plan-review/types.ts";
-import {
-  checkPlannotatorHtmlCompliance,
-  decidePlannotatorHtmlGate,
-  formatPlannotatorHtmlIssues,
-  type PlannotatorHtmlIssue,
-} from "./plannotator-html-check.ts";
 import { getSessionState, type SessionRuntimeState } from "./session.ts";
 
 const KEEP_PLAN_HEADING_GUIDANCE =
@@ -655,62 +649,15 @@ const runPlannotatorHtmlReviewFlow = async (
 };
 
 /**
- * Read an HTML artifact and run the static Plannotator-annotate compliance
- * check. Errors block submission; warnings only annotate the result.
- */
-const readPlannotatorHtmlCompliance = (
-  filePath: string,
-):
-  | {
-      status: "read-error";
-    }
-  | {
-      status: "ok";
-      issues: PlannotatorHtmlIssue[];
-    } => {
-  try {
-    const html = fs.readFileSync(filePath, "utf-8");
-    return { status: "ok", issues: checkPlannotatorHtmlCompliance(html) };
-  } catch {
-    return { status: "read-error" };
-  }
-};
-
-/**
  * Manual-entry Plannotator HTML review (picker / Ctrl+Alt+L): run the
  * annotate CLI once and deliver the feedback as a follow-up. No pending
- * gate involvement. The compliance gate still guards the entry: errors
- * block with a notification (the artifact would break inside the review
- * sandbox), warnings notify but let the review open.
+ * gate involvement.
  */
 export const runPlannotatorHtmlReviewOnce = async (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   filePath: string,
 ): Promise<void> => {
-  const compliance = readPlannotatorHtmlCompliance(filePath);
-  if (compliance.status === "read-error") {
-    ctx.ui.notify(
-      `Could not read ${path.relative(ctx.cwd, filePath)} before opening the review.`,
-      "warning",
-    );
-    return;
-  }
-  const gate = decidePlannotatorHtmlGate(compliance.issues);
-  if (gate.kind !== "pass") {
-    const planFile = path.relative(ctx.cwd, filePath);
-    ctx.ui.notify(
-      formatPlannotatorHtmlIssues(gate.issues, {
-        blocked: gate.kind === "block",
-        planFile,
-      }),
-      gate.kind === "block" ? "warning" : "info",
-    );
-    if (gate.kind === "block") {
-      return;
-    }
-  }
-
   const response = await runPlannotatorAnnotateCli(ctx, filePath, {
     signal: ctx.signal,
     timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
@@ -800,43 +747,8 @@ export const registerPlanReviewSubmitTool = (
       }
 
       // HTML artifacts review through the Plannotator annotate CLI
-      // (one-shot, --gate --json) instead of the plan-review hook. Before
-      // opening, run the static Plannotator-annotate compliance gate: errors
-      // block the submission, warnings are attached to the result so the
-      // agent can fix them.
+      // (one-shot, --gate --json) instead of the plan-review hook.
       if (isHtmlPath(pendingPlanReview.resolvedPlanPath)) {
-        const compliance = readPlannotatorHtmlCompliance(
-          pendingPlanReview.resolvedPlanPath,
-        );
-        if (compliance.status === "read-error") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `Error: could not read ${pendingPlanReview.planFile} before submitting review.`,
-              },
-            ],
-            details: { status: "error" },
-          };
-        }
-        const gate = decidePlannotatorHtmlGate(compliance.issues);
-        if (gate.kind === "block") {
-          return {
-            content: [
-              {
-                type: "text",
-                text: formatPlannotatorHtmlIssues(gate.issues, {
-                  blocked: true,
-                  planFile: pendingPlanReview.planFile,
-                }),
-              },
-            ],
-            details: {
-              status: "error",
-              reason: "plannotator-html-compliance",
-            },
-          };
-        }
         state.activePlanReviewByCwd.set(ctx.cwd, {
           reviewId: `cli:${Date.now()}`,
           kind: pendingPlanReview.kind,
@@ -847,29 +759,13 @@ export const registerPlanReviewSubmitTool = (
         });
         setReviewWidget(ctx);
         try {
-          const result = await runPlannotatorHtmlReviewFlow(
+          return await runPlannotatorHtmlReviewFlow(
             ctx,
             state,
             pendingPlanReviews,
             pendingPlanReview,
             signal,
           );
-          if (gate.kind === "warn") {
-            const existing = result.content[0]?.text ?? "";
-            result.content = [
-              {
-                type: "text",
-                text:
-                  existing +
-                  "\n\n" +
-                  formatPlannotatorHtmlIssues(gate.issues, {
-                    blocked: false,
-                    planFile: pendingPlanReview.planFile,
-                  }),
-              },
-            ];
-          }
-          return result;
         } finally {
           state.activePlanReviewByCwd.delete(ctx.cwd);
           setReviewWidget(ctx);

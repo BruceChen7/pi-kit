@@ -1071,57 +1071,7 @@ describe("Plannotator HTML artifact review", () => {
     }
   });
 
-  it("blocks submission when the HTML fails the Plannotator compliance gate", async () => {
-    vi.resetModules();
-    const spawn = mockPlannotatorSpawn({
-      status: 0,
-      stdout: cliApprovedStdout,
-      stderr: "",
-    });
-
-    const plannotatorAuto = await importPlannotatorAuto();
-    const { emit, runTool, api } = createFakePi();
-    plannotatorAuto(api as never);
-
-    const repoRoot = await createTempRepo("plannotator-auto-html-block-");
-    const htmlRelative = getHtmlFileRelative(repoRoot);
-    // Prototype switcher relying on localStorage: crashes inside the review
-    // sandbox (srcdoc, sandbox="allow-scripts", no same-origin).
-    await writeTestFile(
-      repoRoot,
-      htmlRelative,
-      '<div id="switcher"></div><script>localStorage.setItem("v", "B");</script>',
-    );
-    const ctx = createTestContext(repoRoot);
-
-    try {
-      await emit("session_start", {}, ctx);
-      await emitToolWrite(emit, ctx, htmlRelative);
-
-      const result = (await runTool(
-        "plannotator_auto_submit_review",
-        { path: htmlRelative },
-        ctx,
-      )) as {
-        content?: Array<{ text?: string }>;
-        details?: { status?: string; reason?: string };
-      };
-
-      expect(result.details?.status).toBe("error");
-      expect(result.details?.reason).toBe("plannotator-html-compliance");
-      expect(result.content?.[0]?.text).toContain(
-        "[PLANNOTATOR HTML 合规检查未通过]",
-      );
-      expect(result.content?.[0]?.text).toContain("localStorage");
-      // Plannotator must never be opened for a blocked artifact.
-      expect(spawn).not.toHaveBeenCalled();
-    } finally {
-      await emit("session_shutdown", {}, ctx);
-      await removeTempRepo(repoRoot);
-    }
-  });
-
-  it("attaches compliance warnings to the HTML submit result", async () => {
+  it("attaches the approved HTML submit result", async () => {
     vi.resetModules();
     const spawn = mockPlannotatorSpawn({
       status: 0,
@@ -1135,8 +1085,6 @@ describe("Plannotator HTML artifact review", () => {
 
     const repoRoot = await createTempRepo("plannotator-auto-html-warn-");
     const htmlRelative = getHtmlFileRelative(repoRoot);
-    // Prototype with a keyboard-backed custom control but no review hint:
-    // passes the gate with a non-blocking warning.
     await writeTestFile(
       repoRoot,
       htmlRelative,
@@ -1164,14 +1112,9 @@ describe("Plannotator HTML artifact review", () => {
         details?: { status?: string };
       };
 
-      // Compliant: Plannotator opens normally and the gate is released.
+      // Plannotator opens normally and the gate is released.
       expect(spawn).toHaveBeenCalled();
       expect(result.details?.status).toBe("approved");
-      // The missing header hint surfaces as a non-blocking warning.
-      expect(result.content?.[0]?.text).toContain(
-        "[PLANNOTATOR HTML 合规提示(不阻塞提交,建议修复)]",
-      );
-      expect(result.content?.[0]?.text).toContain("review-hint-missing");
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

@@ -223,10 +223,10 @@ describe("resolveCalldiffNodes", () => {
     const types = typesOf(result.spec.nodes);
     expect(types).toContain("heading");
     expect(types).toContain("text");
-    expect(types).toContain("table");
-    expect(types).toContain("section");
+    expect(types).toContain("kpi-grid");
+    expect(types).toContain("tabs");
     expect(collectTypesDeep(result.spec.nodes)).toEqual(
-      expect.arrayContaining(["mermaid", "code-block"]),
+      expect.arrayContaining(["mermaid", "code-block", "accordion"]),
     );
     expect(collectTypesDeep(result.spec.nodes)).not.toContain(
       "calldiff-callflow",
@@ -323,6 +323,132 @@ describe("resolveCalldiffNodes", () => {
       deps,
     );
     expect(runMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("file prop shares one CLI run but filters per node", async () => {
+    const located: CalldiffResult = {
+      ...diffResult,
+      trees: [
+        {
+          entry: "run",
+          ascii: "a",
+          tree: makeNode("run", "run()", {
+            status: "same",
+            children: [
+              makeNode("x", "x()", { status: "added", file: "src/x.ts" }),
+            ],
+          }),
+        },
+        {
+          entry: "other",
+          ascii: "b",
+          tree: makeNode("other", "other()", {
+            status: "same",
+            children: [
+              makeNode("y", "y()", { status: "removed", file: "src/y.ts" }),
+            ],
+          }),
+        },
+      ],
+    };
+    const { deps, runMock } = makeDeps(() => okOutcome(located));
+    const result = await resolveCalldiffNodes(
+      {
+        slug: "s",
+        title: "T",
+        nodes: [
+          calldiffNode({ from: "abc123", to: "WORKTREE", file: "src/x.ts" }),
+          calldiffNode({ from: "abc123", to: "WORKTREE", file: "src/y.ts" }),
+        ],
+      },
+      deps,
+    );
+    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(result.reports).toHaveLength(2);
+    if (result.reports[0].ok) {
+      expect(result.reports[0].summary).toContain("src/x.ts: 1 entrypoint(s)");
+    }
+    if (result.reports[1].ok) {
+      expect(result.reports[1].summary).toContain("src/y.ts: 1 entrypoint(s)");
+    }
+  });
+
+  it("file prop with no matches expands a per-file empty callout", async () => {
+    const { deps, runMock } = makeDeps(() => okOutcome(diffResult));
+    const result = await resolveCalldiffNodes(
+      {
+        slug: "s",
+        title: "T",
+        nodes: [calldiffNode({ file: "src/missing.ts" })],
+      },
+      deps,
+    );
+    expect(runMock).toHaveBeenCalledTimes(1);
+    expect(
+      result.spec.nodes.some(
+        (n) =>
+          n.type === "callout" &&
+          JSON.stringify(n).includes("No call-flow changes"),
+      ),
+    ).toBe(true);
+    if (result.reports[0].ok) {
+      expect(result.reports[0].summary).toContain(
+        "no call-flow changes in src/missing.ts",
+      );
+    }
+  });
+
+  it("file prop on tree mode degrades without running calldiff", async () => {
+    const { deps, runMock } = makeDeps(() => okOutcome(treeResult));
+    const result = await resolveCalldiffNodes(
+      {
+        slug: "s",
+        title: "T",
+        nodes: [
+          calldiffNode({ mode: "tree", entry: "boot", file: "src/x.ts" }),
+        ],
+      },
+      deps,
+    );
+    expect(runMock).not.toHaveBeenCalled();
+    expect(
+      result.spec.nodes.some(
+        (n) =>
+          n.type === "callout" &&
+          JSON.stringify(n).includes("file filter requires diff mode"),
+      ),
+    ).toBe(true);
+    expect(result.reports[0].ok).toBe(false);
+  });
+
+  it("maxMermaidNodes prop reaches the bridge rendering", async () => {
+    const bigTree: CalldiffResult = {
+      ...diffResult,
+      trees: [
+        {
+          entry: "root",
+          ascii: "root ascii",
+          tree: makeNode("root", "root()", {
+            status: "same",
+            children: Array.from({ length: 20 }, (_, i) =>
+              makeNode(`c${i}`, `call${i}()`, { status: "added" }),
+            ),
+          }),
+        },
+      ],
+    };
+    const { deps } = makeDeps(() => okOutcome(bigTree));
+    const result = await resolveCalldiffNodes(
+      {
+        slug: "s",
+        title: "T",
+        nodes: [calldiffNode({ maxMermaidNodes: 5 })],
+      },
+      deps,
+    );
+    const serialized = JSON.stringify(result.spec.nodes);
+    expect(serialized).toContain("Diagram omitted");
+    expect(serialized).not.toContain('"type":"mermaid"');
   });
 
   it("degrades tree without entry to a callout without running calldiff", async () => {
@@ -441,7 +567,7 @@ describe("resolveCalldiffNodes", () => {
     if (tree.reports[0].ok) {
       expect(tree.reports[0].summary).toContain("1 entrypoint(s)");
     }
-    expect(tree.spec.nodes.some((n) => n.type === "section")).toBe(true);
+    expect(tree.spec.nodes.some((n) => n.type === "tabs")).toBe(true);
     expect(collectTypesDeep(tree.spec.nodes)).toContain("mermaid");
 
     const reachDeps = makeDeps(() => okOutcome(reachResult));
@@ -511,15 +637,27 @@ describe("computeEntryCap", () => {
     expect(cap).toBe(0);
   });
 
-  it("shrinks the cap when the top-level budget is nearly exhausted", () => {
+  it("shrinks the cap when the top-level base cannot fit", () => {
+    const cap = computeEntryCap(
+      "diff",
+      12,
+      { maxEntries: undefined },
+      { usedTop: 29, usedTotal: 29 },
+    );
+    // remainingTop = 1 < baseTop 4 → no room for the heading/text/kpi/tabs
+    expect(cap).toBe(0);
+  });
+
+  it("no longer charges entries against the top-level budget", () => {
     const cap = computeEntryCap(
       "diff",
       12,
       { maxEntries: undefined },
       { usedTop: 25, usedTotal: 25 },
     );
-    // remainingTop = 5 → floor((5 - 3 - 1) / 3) = 0 → degraded later
-    expect(cap).toBe(0);
+    // Entries nest inside the accordion: top-level has room for the base,
+    // total budget still caps the deep nodes → floor((100-25-8-1)/2) = 33.
+    expect(cap).toBe(8);
   });
 
   it("caps total nodes too", () => {

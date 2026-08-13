@@ -98,9 +98,7 @@ describe("create_visual_artifact with calldiff-callflow", () => {
       "calldiff-callflow",
     );
     expect(
-      (writtenSpec.nodes as { type?: string }[]).some(
-        (n) => n.type === "section",
-      ),
+      (writtenSpec.nodes as { type?: string }[]).some((n) => n.type === "tabs"),
     ).toBe(true);
   });
 

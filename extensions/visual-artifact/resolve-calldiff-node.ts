@@ -43,6 +43,7 @@ import type {
   CalldiffArtifactOptions,
   CalldiffRenderOptions,
 } from "./calldiff-bridge.ts";
+import { filterDiffResultForFile } from "./calldiff-bridge.ts";
 import { toEntries, toOptionalString, toStringArray } from "./tool-helpers.ts";
 
 /* ------------------------------------------------------------------ */
@@ -78,9 +79,11 @@ export const CALLLDIFF_NODE_PROP_KEYS = [
   "target",
   "paths",
   "maxDepth",
+  "file",
   "title",
   "maxEntries",
   "maxNodesPerTree",
+  "maxMermaidNodes",
   "maxAsciiLines",
 ] as const;
 
@@ -312,18 +315,20 @@ export type Budget = {
 };
 
 /** Cost model for an expanded node before capping (conservative: code-block present). */
+// Top-level cost: heading + summary text + KPI grid + tabs (diff); the
+// entry trees nest inside one accordion node, so entries cost no top-level
+// nodes — only total (deep) nodes.
 const EXPANDED_BASE_TOP: Record<string, number> = {
-  diff: 3, // heading + summary text + table (or callout when empty)
-  tree: 2, // heading + summary text
-  reach: 2,
+  diff: 4, // heading + summary text + kpi-grid + tabs
+  tree: 3, // heading + summary text + tabs
+  reach: 3,
 };
 const EXPANDED_BASE_TOTAL: Record<string, number> = {
-  diff: 3,
-  tree: 2,
-  reach: 2,
+  diff: 8, // base 4 + entry table + accordion + raw code-block + qualification callout
+  tree: 5, // base 3 + accordion + raw code-block
+  reach: 5,
 };
-const PER_ENTRY_TOP = 3; // section + mermaid + code-block
-const PER_ENTRY_TOTAL = 3;
+const PER_ENTRY_TOTAL = 2; // mermaid (or too-large note) + code-block
 
 export const createBudget = (spec: VisualArtifactSpec): Budget => {
   const topLevel: ArtifactNode[] = [];
@@ -352,10 +357,9 @@ export const computeEntryCap = (
   const remainingTop = LIMITS.maxTopLevelNodes - budget.usedTop;
   const remainingTotal = LIMITS.maxTotalNodes - budget.usedTotal;
 
-  const byTop = Math.max(
-    0,
-    Math.floor((remainingTop - baseTop - 1) / PER_ENTRY_TOP),
-  );
+  // Entries are nested inside the accordion: the top-level budget only needs
+  // to fit the base (heading/text/kpi/tabs).
+  const byTop = remainingTop >= baseTop ? Number.MAX_SAFE_INTEGER : 0;
   const byTotal = Math.max(
     0,
     Math.floor((remainingTotal - baseTotal - 1) / PER_ENTRY_TOTAL),
@@ -372,9 +376,10 @@ const summarizeDiff = (
   result: Extract<CalldiffResult, { mode: "diff" }>,
   capped: boolean,
   cap: number,
+  file?: string,
 ): string => {
   if (result.trees.length === 0) {
-    return "no call-flow changes";
+    return file ? `no call-flow changes in ${file}` : "no call-flow changes";
   }
   const total = result.trees.reduce<DiffStatusCounts>(
     (acc, entry) => {
@@ -387,16 +392,18 @@ const summarizeDiff = (
     { added: 0, removed: 0, same: 0 },
   );
   const shown = capped ? ` (${cap} entrypoint(s) shown)` : "";
-  return `${result.trees.length} entrypoint(s) with changed call trees (+${total.added} / -${total.removed} / ~${total.same})${shown}`;
+  const prefix = file ? `${file}: ` : "";
+  return `${prefix}${result.trees.length} entrypoint(s) with changed call trees (+${total.added} / -${total.removed} / ~${total.same})${shown}`;
 };
 
 const summarizeResult = (
   result: CalldiffResult,
   capped: boolean,
   cap: number,
+  file?: string,
 ): string => {
   if (result.mode === "diff") {
-    return summarizeDiff(result, capped, cap);
+    return summarizeDiff(result, capped, cap, file);
   }
   if (result.mode === "tree") {
     const shown = capped ? ` (${cap} entrypoint(s) shown)` : "";
@@ -439,12 +446,23 @@ const expandNode = async (
   runCache: Map<string, CalldiffRunOutcome>,
 ): Promise<{ nodes: ArtifactNode[]; report: CalldiffReport }> => {
   const props = node.props;
+  const file = toOptionalString(props.file);
 
   const paramResult = toCalldiffRunOptions(props, deps.cwd);
   if (paramResult.ok === false) {
     return {
       nodes: [unavailableCallout(paramResult.error)],
       report: { ok: false, summary: `calldiff-callflow: ${paramResult.error}` },
+    };
+  }
+
+  // The Lens-style file filter needs diff statuses; refuse before burning a
+  // subprocess on tree/reach nodes that cannot honor it.
+  if (file && paramResult.options.mode !== "diff") {
+    const reason = "The file filter requires diff mode.";
+    return {
+      nodes: [unavailableCallout(reason)],
+      report: { ok: false, summary: `calldiff-callflow: ${reason}` },
     };
   }
 
@@ -479,9 +497,16 @@ const expandNode = async (
   }
 
   const result = parsed.result;
-  const mode = result.mode;
+  // Lens-style file filter: keep only complete entry trees containing a
+  // changed node in the file. Run options are unchanged (one shared CLI run
+  // across nodes with the same run params), only the rendered trees differ.
+  const effective =
+    file && result.mode === "diff"
+      ? filterDiffResultForFile(result, file)
+      : result;
+  const mode = effective.mode;
   const available =
-    mode === "reach" ? result.paths.length : result.trees.length;
+    mode === "reach" ? effective.paths.length : effective.trees.length;
   const cap = computeEntryCap(mode, available, props, budget);
 
   // Budget exhausted: expanding even the base (heading/table/… ) would blow
@@ -498,22 +523,26 @@ const expandNode = async (
       },
     };
   }
-
   const title = toOptionalString(props.title);
 
-  const expanded = deps.calldiffResultToSpec(result, {
+  const expanded = deps.calldiffResultToSpec(effective, {
     title,
+    file,
     maxEntries: cap,
     maxNodesPerTree:
       typeof props.maxNodesPerTree === "number" && props.maxNodesPerTree > 0
         ? props.maxNodesPerTree
+        : undefined,
+    maxMermaidNodes:
+      typeof props.maxMermaidNodes === "number" && props.maxMermaidNodes > 0
+        ? props.maxMermaidNodes
         : undefined,
     maxAsciiLines:
       typeof props.maxAsciiLines === "number" ? props.maxAsciiLines : undefined,
   });
 
   const capped = cap < available;
-  const summary = summarizeResult(result, capped, cap);
+  const summary = summarizeResult(effective, capped, cap, file);
 
   // Update budget with the actually expanded footprint.
   budget.usedTop += expanded.nodes.length;

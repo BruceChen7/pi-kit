@@ -48,7 +48,12 @@ export type CalldiffRunOutcome =
   | { status: "ok"; stdout: string }
   | { status: "error"; code: CalldiffRunErrorCode; message: string };
 
-export const DEFAULT_CALLDIFF_TIMEOUT_MS = 60_000;
+/**
+ * Default CLI timeout. 120s (was 60s): AST parsing of large repos alone can
+ * take ~55s warm, and a cold grammar cache adds an on-demand npm install
+ * (~5-30s) on top — 60s killed legitimate runs mid-parse.
+ */
+export const DEFAULT_CALLDIFF_TIMEOUT_MS = 120_000;
 
 /* ------------------------------------------------------------------ */
 /*  Pure decision helpers (unit-tested)                                */

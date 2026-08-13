@@ -5,6 +5,7 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { SessionMessageEntry } from "@earendil-works/pi-coding-agent";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
+import { expectDefined } from "../shared/test-kit.js";
 
 // ─── 帮助函数 ────────────────────────────────────────────────────────
 
@@ -79,7 +80,7 @@ describe("fork-panel refresh 机制（Spike 1）", () => {
 
     // 进程 A：创建会话并写满一条分支（user→assistant×2），触发落盘
     const a = SessionManager.create(dir, sessionDir);
-    const file = a.getSessionFile() ?? expect.fail("未创建 session 文件");
+    const file = expectDefined(a.getSessionFile());
     a.appendMessage(userMsg("hi"));
     a.appendMessage(assistantMsg("hello"));
     a.appendMessage(userMsg("q2"));
@@ -110,7 +111,7 @@ describe("fork-panel refresh 机制（Spike 1）", () => {
     const leaf0 = a.getLeafId();
     a.setSessionFile(file);
     expect(a.getLeafId()).toBe(p2); // 重读后 leaf 指向文件尾部（B 的最后一条）
-    a.branch(leaf0 ?? expect.fail("无 leaf"));
+    a.branch(expectDefined(leaf0));
     expect(a.getLeafId()).toBe(a2);
 
     // A 的 tree 现在应包含两条分支：a2 有两个孩子（p1 与 A 尚未新增的旧分支孩子）
@@ -131,8 +132,7 @@ describe("fork-panel refresh 机制（Spike 1）", () => {
     const u3 = a.appendMessage(userMsg("继续"));
     expect(a.getLeafId()).toBe(u3);
     const entriesAfter = readEntries(file);
-    const _a2Node =
-      entriesAfter.find((e) => e.id === a2) ?? expect.fail("a2 节点不存在");
+    expect(entriesAfter.some((e) => e.id === a2)).toBe(true);
     const children = entriesAfter
       .filter((e) => e.parentId === a2)
       .map((e) => e.id)
@@ -145,7 +145,7 @@ describe("fork-panel refresh 机制（Spike 1）", () => {
     const sessionDir = join(dir, "sessions");
 
     const a = SessionManager.create(dir, sessionDir);
-    const file = a.getSessionFile() ?? expect.fail("未创建 session 文件");
+    const file = expectDefined(a.getSessionFile());
     a.appendMessage(userMsg("hi"));
     a.appendMessage(assistantMsg("hello"));
     a.appendMessage(userMsg("q2"));
@@ -163,7 +163,7 @@ describe("fork-panel refresh 机制（Spike 1）", () => {
     expect(leaf0).toBe(p2);
     b.setSessionFile(file);
     expect(b.getLeafId()).toBe(u3);
-    b.branch(leaf0 ?? expect.fail("无 leaf"));
+    b.branch(expectDefined(leaf0));
     expect(b.getLeafId()).toBe(p2);
 
     // B 继续 append → 挂回 p2 之下

@@ -29,7 +29,6 @@ import {
   type ReviewState,
   saveState,
   selectConcepts,
-  summarizeState,
   syncConcepts,
 } from "./state.ts";
 import { formatCardsForTelegram } from "./telegram.ts";
@@ -345,7 +344,6 @@ async function runRecallSession(
     ).length;
     const totalCount = widgetResult.results.length;
 
-    const _stats = summarizeState(updatedState, now);
     const msg = formatCardsForTelegram(reviewCards, correctCount, totalCount);
 
     try {

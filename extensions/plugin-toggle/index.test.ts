@@ -947,6 +947,69 @@ describe("default project bootstrap", () => {
   });
 });
 
+describe("decideBootstrapAction", () => {
+  const importBootstrap = async () => {
+    vi.resetModules();
+    return await import("./bootstrap.js");
+  };
+
+  it("skips global autoload entries without noting them", async () => {
+    const { decideBootstrapAction } = await importBootstrap();
+    expect(
+      decideBootstrapAction({
+        isGlobalAutoload: true,
+        isDefaultDisabled: false,
+        isEffective: true,
+        isLinked: false,
+      }),
+    ).toEqual({ noteDefaultDisabled: false, action: "skip" });
+  });
+
+  it("keeps effective plugins that are already linked", async () => {
+    const { decideBootstrapAction } = await importBootstrap();
+    expect(
+      decideBootstrapAction({
+        isGlobalAutoload: false,
+        isDefaultDisabled: false,
+        isEffective: true,
+        isLinked: true,
+      }),
+    ).toEqual({ noteDefaultDisabled: false, action: "keep" });
+  });
+
+  it("enables effective plugins that are not linked", async () => {
+    const { decideBootstrapAction } = await importBootstrap();
+    expect(
+      decideBootstrapAction({
+        isGlobalAutoload: false,
+        isDefaultDisabled: true,
+        isEffective: true,
+        isLinked: false,
+      }),
+    ).toEqual({ noteDefaultDisabled: false, action: "enable" });
+  });
+
+  it("removes not-effective plugins and notes default-disabled ones", async () => {
+    const { decideBootstrapAction } = await importBootstrap();
+    expect(
+      decideBootstrapAction({
+        isGlobalAutoload: false,
+        isDefaultDisabled: true,
+        isEffective: false,
+        isLinked: false,
+      }),
+    ).toEqual({ noteDefaultDisabled: true, action: "remove" });
+    expect(
+      decideBootstrapAction({
+        isGlobalAutoload: false,
+        isDefaultDisabled: false,
+        isEffective: false,
+        isLinked: true,
+      }),
+    ).toEqual({ noteDefaultDisabled: false, action: "remove" });
+  });
+});
+
 describe("plugin toggle settings store", () => {
   const importSettingsStore = async () => {
     vi.resetModules();
@@ -1013,6 +1076,74 @@ describe("plugin toggle settings store", () => {
     );
 
     expect(Array.from(effective).sort()).toEqual(["alpha"]);
+  });
+
+  it("decideNextEntry records no difference when the state matches the default", async () => {
+    const { decideNextEntry } = await importSettingsStore();
+    expect(decideNextEntry(undefined, "alpha", true, true)).toEqual({
+      kind: "remove",
+    });
+    expect(decideNextEntry(undefined, "copyx", false, false)).toEqual({
+      kind: "remove",
+    });
+  });
+
+  it("decideNextEntry records a disabled override for a default-enabled plugin", async () => {
+    const { decideNextEntry } = await importSettingsStore();
+    expect(decideNextEntry(undefined, "alpha", false, true)).toEqual({
+      kind: "write",
+      entry: { disabledPlugins: ["alpha"] },
+    });
+  });
+
+  it("decideNextEntry records an enabled override for a default-disabled plugin", async () => {
+    const { decideNextEntry } = await importSettingsStore();
+    expect(decideNextEntry(undefined, "copyx", true, false)).toEqual({
+      kind: "write",
+      entry: { enabledPlugins: ["copyx"] },
+    });
+  });
+
+  it("decideNextEntry moves a name between the two lists", async () => {
+    const { decideNextEntry } = await importSettingsStore();
+    expect(
+      decideNextEntry(
+        { enabledPlugins: ["copyx"], disabledPlugins: ["alpha"] },
+        "alpha",
+        true,
+        true,
+      ),
+    ).toEqual({ kind: "write", entry: { enabledPlugins: ["copyx"] } });
+    expect(
+      decideNextEntry(
+        { enabledPlugins: ["copyx"], disabledPlugins: ["alpha"] },
+        "copyx",
+        false,
+        false,
+      ),
+    ).toEqual({ kind: "write", entry: { disabledPlugins: ["alpha"] } });
+  });
+
+  it("decideNextEntry drops the entry when the last override is undone", async () => {
+    const { decideNextEntry } = await importSettingsStore();
+    expect(
+      decideNextEntry({ disabledPlugins: ["alpha"] }, "alpha", true, true),
+    ).toEqual({ kind: "remove" });
+    expect(
+      decideNextEntry({ enabledPlugins: ["copyx"] }, "copyx", false, false),
+    ).toEqual({ kind: "remove" });
+  });
+
+  it("decideNextEntry keeps other names and normalizes the plugin name", async () => {
+    const { decideNextEntry } = await importSettingsStore();
+    expect(
+      decideNextEntry(
+        { disabledPlugins: ["Alpha", "beta"] },
+        "ALPHA",
+        true,
+        true,
+      ),
+    ).toEqual({ kind: "write", entry: { disabledPlugins: ["beta"] } });
   });
 
   it("setPluginState writes no entry when the state matches the default", async () => {

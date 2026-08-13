@@ -9,6 +9,7 @@ import {
   type CalldiffResult,
   calldiffResultToSpec,
   callNodeToMermaid,
+  countChangedSteps,
   countDiffStatuses,
   countNodes,
   diffNodeToMermaid,
@@ -654,6 +655,73 @@ describe("countNodes", () => {
       ],
     });
     expect(countNodes(tree)).toBe(4);
+  });
+});
+
+describe("countChangedSteps", () => {
+  it("dedupes changed nodes by key across entry trees", () => {
+    const result: CalldiffResult = {
+      mode: "diff",
+      from: "a",
+      to: "b",
+      trees: [
+        {
+          entry: "run",
+          ascii: "",
+          // "shared" is reachable through both entries: one step.
+          tree: makeNode("run", "run()", {
+            status: "same",
+            children: [makeNode("shared", "shared()", { status: "added" })],
+          }),
+        },
+        {
+          entry: "main",
+          ascii: "",
+          tree: makeNode("main", "main()", {
+            status: "same",
+            children: [makeNode("shared", "shared()", { status: "added" })],
+          }),
+        },
+      ],
+      ascii: "",
+    };
+    expect(countChangedSteps(result)).toEqual({
+      added: 1,
+      removed: 0,
+      same: 2,
+    });
+  });
+
+  it("counts distinct keys across entries", () => {
+    const result: CalldiffResult = {
+      mode: "diff",
+      from: "a",
+      to: "b",
+      trees: [
+        {
+          entry: "run",
+          ascii: "",
+          tree: makeNode("run", "run()", {
+            status: "same",
+            children: [makeNode("a", "a()", { status: "removed" })],
+          }),
+        },
+        {
+          entry: "main",
+          ascii: "",
+          tree: makeNode("main", "main()", {
+            status: "same",
+            children: [makeNode("b", "b()", { status: "added" })],
+          }),
+        },
+      ],
+      ascii: "",
+    };
+    expect(countChangedSteps(result)).toEqual({
+      added: 1,
+      removed: 1,
+      same: 2,
+    });
   });
 });
 

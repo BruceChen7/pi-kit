@@ -142,13 +142,44 @@ export const diffNodeToMermaid = (
 /*  Pure helpers: node counts, file impacts, file filter               */
 /* ------------------------------------------------------------------ */
 
-/** Total node count of a call tree (recursive). */
+/**
+ * Total node count of a call tree (recursive).
+ */
 export const countNodes = (root: CalldiffNode): number => {
   let total = 1;
   for (const child of root.children) {
     total += countNodes(child);
   }
   return total;
+};
+
+/**
+ * Aggregate diff-status counts deduped by node key across all entry trees
+ * (the KPI/description semantics): a symbol reachable through several entry
+ * trees is one step — the same dedup rule {@link buildFileImpacts} applies
+ * per file, so the "Changed steps" KPI, the description, and the file-impacts
+ * table stay comparable. Per-entry tables still use {@link countDiffStatuses}.
+ */
+export const countChangedSteps = (
+  result: Extract<CalldiffResult, { mode: "diff" }>,
+): DiffStatusCounts => {
+  const counts: DiffStatusCounts = { added: 0, removed: 0, same: 0 };
+  const seen = new Set<string>();
+  const visit = (node: CalldiffNode): void => {
+    if (!seen.has(node.key)) {
+      seen.add(node.key);
+      if (node.status === "added") counts.added += 1;
+      else if (node.status === "removed") counts.removed += 1;
+      else counts.same += 1;
+    }
+    for (const child of node.children) {
+      visit(child);
+    }
+  };
+  for (const tree of result.trees) {
+    visit(tree.tree);
+  }
+  return counts;
 };
 
 /** Aggregated per-file impact of a diff result (the `fileImpacts` view). */
@@ -502,16 +533,9 @@ export const diffResultToSpec = (
     ? filterDiffResultForFile(result, file).trees
     : result.trees;
   const entries = capEntries(trees.length, options);
-  const total = trees.reduce<DiffStatusCounts>(
-    (acc, entry) => {
-      const counts = countDiffStatuses(entry.tree);
-      acc.added += counts.added;
-      acc.removed += counts.removed;
-      acc.same += counts.same;
-      return acc;
-    },
-    { added: 0, removed: 0, same: 0 },
-  );
+  // Aggregate counts deduped by node key (see countChangedSteps) so the
+  // description and KPI stay comparable with the file-impacts table.
+  const total = countChangedSteps({ ...result, trees });
   const impacts = buildFileImpacts({ ...result, trees });
 
   const defaultDescription = file

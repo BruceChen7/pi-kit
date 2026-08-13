@@ -134,7 +134,17 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
             plugins,
             enabled,
             (plugin) => {
-              const result = toggleManagedPlugin(ctx.cwd, plugin, enabled);
+              const { result, nextEnabled } = toggleManagedPlugin(
+                ctx.cwd,
+                plugin,
+                enabled,
+              );
+              // The picker shares the same Set instance; sync it in the
+              // shell so the checkbox state follows the toggle result.
+              enabled.clear();
+              for (const name of nextEnabled) {
+                enabled.add(name);
+              }
               notifyResult(ctx, plugin, result);
               tui.requestRender();
             },

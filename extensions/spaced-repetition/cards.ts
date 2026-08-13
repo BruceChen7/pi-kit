@@ -173,7 +173,6 @@ export function extractBodySections(content: string): BodySection[] {
   // 按 ## 标题分段
   const sections: BodySection[] = [];
   const headingPattern = /^##\s+(.+)$/gm;
-  let _lastIndex = 0;
   let lastHeading = "";
 
   // 查找第一个 ## 标题
@@ -190,7 +189,6 @@ export function extractBodySections(content: string): BodySection[] {
     sections.push({ heading: "概述", content: beforeFirstHeading });
   }
 
-  _lastIndex = firstMatch.index;
   lastHeading = firstMatch[1].trim();
   let lastMatch = firstMatch;
 
@@ -204,7 +202,6 @@ export function extractBodySections(content: string): BodySection[] {
     if (sectionContent) {
       sections.push({ heading: lastHeading, content: sectionContent });
     }
-    _lastIndex = match.index;
     lastHeading = match[1].trim();
     lastMatch = match;
     match = headingPattern.exec(body);

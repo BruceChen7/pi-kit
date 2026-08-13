@@ -359,14 +359,26 @@ function syncEnabledSet(
   }
 }
 
+export type ToggleManagedOutcome = {
+  result: ToggleResult;
+  /** The effective enabled set after the toggle (the input is not mutated). */
+  nextEnabled: Set<string>;
+};
+
+/**
+ * Toggle a plugin's enabled state without mutating the caller's set:
+ * returns the new effective set alongside the IO result, so the shell
+ * (picker handler) decides how to sync its own state.
+ */
 export function toggleManagedPlugin(
   cwd: string,
   plugin: PluginEntry,
   enabled: Set<string>,
-): ToggleResult {
+): ToggleManagedOutcome {
   const result = enabled.has(normalizeName(plugin.name))
     ? disablePlugin(cwd, plugin)
     : enablePlugin(cwd, plugin);
-  syncEnabledSet(enabled, plugin.name, result);
-  return result;
+  const nextEnabled = new Set(enabled);
+  syncEnabledSet(nextEnabled, plugin.name, result);
+  return { result, nextEnabled };
 }

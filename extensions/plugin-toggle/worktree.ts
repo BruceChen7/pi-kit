@@ -32,8 +32,22 @@ export type SharedConfigStatus =
 
 const WORKTREE_LINK_PREFIX = "gitdir: ";
 
-/** Process-wide cache: worktreeRoot -> mainRoot (or null when unresolved). */
-const mainRootCache = new Map<string, string | null>();
+/**
+ * Process-wide cache: worktreeRoot -> mainRoot (resolved successfully).
+ * Only successful resolutions are cached — a transient `git worktree list`
+ * failure must not pin a permanent negative result. Bounded: the map is
+ * capped and evicts oldest entries first (Map insertion order).
+ */
+const mainRootCache = new Map<string, string>();
+const MAIN_ROOT_CACHE_MAX = 64;
+
+function cacheMainRoot(worktreeRoot: string, mainRoot: string): void {
+  if (mainRootCache.size >= MAIN_ROOT_CACHE_MAX) {
+    const oldest = mainRootCache.keys().next().value;
+    if (oldest !== undefined) mainRootCache.delete(oldest);
+  }
+  mainRootCache.set(worktreeRoot, mainRoot);
+}
 
 /**
  * Pure decision: extract the main worktree path from
@@ -86,8 +100,9 @@ export function findGitWorktreeRoot(cwd: string): WorktreeScope | null {
 
       const worktreeRoot = dir;
       const cached = mainRootCache.get(worktreeRoot);
-      if (cached !== undefined)
-        return cached ? { worktreeRoot, mainRoot: cached } : null;
+      if (cached !== undefined) {
+        return { worktreeRoot, mainRoot: cached };
+      }
 
       const porcelain = runGit(worktreeRoot, [
         "worktree",
@@ -99,10 +114,11 @@ export function findGitWorktreeRoot(cwd: string): WorktreeScope | null {
           ? parseMainWorktreePath(porcelain.stdout)
           : null;
 
-      mainRootCache.set(worktreeRoot, mainRoot);
-      return mainRoot && mainRoot !== worktreeRoot
-        ? { worktreeRoot, mainRoot }
-        : null;
+      if (mainRoot && mainRoot !== worktreeRoot) {
+        cacheMainRoot(worktreeRoot, mainRoot);
+        return { worktreeRoot, mainRoot };
+      }
+      return null;
     }
 
     if (gitStat?.isDirectory()) return null; // regular repo
@@ -113,13 +129,28 @@ export function findGitWorktreeRoot(cwd: string): WorktreeScope | null {
   }
 }
 
-/** True when `<worktreeRoot>/.pi` is a symlink (shared mode established). */
-function isSharedPiLink(worktreeRoot: string): boolean {
+/**
+ * The state of `<worktreeRoot>/.pi` on disk (one lstat, value-in/value-out).
+ */
+function piStateAt(worktreeRoot: string): "symlink" | "absent" | "real-dir" {
   try {
-    return fs.lstatSync(path.join(worktreeRoot, ".pi")).isSymbolicLink();
+    const stat = fs.lstatSync(path.join(worktreeRoot, ".pi"));
+    return stat.isSymbolicLink() ? "symlink" : "real-dir";
   } catch {
-    return false;
+    return "absent";
   }
+}
+
+/**
+ * Pure decision: whether a worktree shares the main repo's `.pi`.
+ * Shared when the path is already a symlink or not present at all (the
+ * session_start hook creates the link before anything else runs). A real
+ * per-worktree `.pi` directory means per-worktree behavior.
+ */
+export function isSharedPiScope(
+  state: "symlink" | "absent" | "real-dir",
+): boolean {
+  return state === "symlink" || state === "absent";
 }
 
 /**
@@ -134,18 +165,7 @@ export function resolveSharedProjectRoot(cwd: string): string {
   const scope = findGitWorktreeRoot(cwd);
   if (!scope) return canonicalPath(cwd);
 
-  const piPath = path.join(scope.worktreeRoot, ".pi");
-  const piExists = (() => {
-    try {
-      fs.lstatSync(piPath);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-  // Shared mode when .pi is already a symlink or not present at all (the
-  // session_start hook creates the link before anything else runs).
-  if (!piExists || isSharedPiLink(scope.worktreeRoot)) {
+  if (isSharedPiScope(piStateAt(scope.worktreeRoot))) {
     return scope.mainRoot;
   }
   return canonicalPath(cwd); // real per-worktree .pi: keep per-worktree key
@@ -176,11 +196,8 @@ export function ensureSharedWorktreeConfig(cwd: string): SharedConfigStatus {
   if (!scope) return "not-worktree";
 
   const piPath = path.join(scope.worktreeRoot, ".pi");
-  try {
-    fs.lstatSync(piPath);
+  if (piStateAt(scope.worktreeRoot) !== "absent") {
     return "existing";
-  } catch {
-    // ENOENT: proceed to create the link
   }
 
   try {

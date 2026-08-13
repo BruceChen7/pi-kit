@@ -83,6 +83,48 @@ export function computeEffectivePlugins(
 }
 
 /**
+ * Pure decision (Functional Core): the minimal difference entry needed to
+ * record `wantEnabled` for a plugin, given the default state. When the
+ * wanted state equals the default, no difference is recorded and an entry
+ * that ends up empty is removed entirely ("remove" — the caller also drops
+ * any legacy key). Value in → value out, no IO.
+ */
+export type NextEntryDecision =
+  | { kind: "write"; entry: PluginToggleSettingsEntry }
+  | { kind: "remove" };
+
+export function decideNextEntry(
+  existing: PluginToggleSettingsEntry | undefined,
+  pluginName: string,
+  wantEnabled: boolean,
+  defaultEnabled: boolean,
+): NextEntryDecision {
+  const normalized = normalizeName(pluginName);
+
+  const enabled = toStringList(existing?.enabledPlugins).filter(
+    (name) => normalizeName(name) !== normalized,
+  );
+  const disabled = toStringList(existing?.disabledPlugins).filter(
+    (name) => normalizeName(name) !== normalized,
+  );
+
+  if (wantEnabled !== defaultEnabled) {
+    if (wantEnabled) enabled.push(normalized);
+    else disabled.push(normalized);
+  }
+
+  const nextEntry: PluginToggleSettingsEntry = {};
+  if (enabled.length > 0) nextEntry.enabledPlugins = [...enabled].sort();
+  if (disabled.length > 0) nextEntry.disabledPlugins = [...disabled].sort();
+  // Legacy field is never written back.
+
+  if (Object.keys(nextEntry).length === 0) {
+    return { kind: "remove" };
+  }
+  return { kind: "write", entry: nextEntry };
+}
+
+/**
  * Pure decision: derive the minimal per-cwd difference entry that reproduces
  * `linked` as the effective enabled set (round-trips through
  * `computeEffectivePlugins`). Used by the one-off settings migration.
@@ -162,6 +204,9 @@ export class PluginToggleSettingsStore {
    * Persist the minimal difference needed to record `wantEnabled` for a
    * plugin. When the wanted state equals the default, no difference is
    * recorded and an entry that ends up empty is removed entirely.
+   *
+   * Shell: read state → call the pure {@link decideNextEntry} → interpret
+   * the decision (drop legacy key on write/remove) → persist.
    */
   setPluginState(
     pluginName: string,
@@ -177,24 +222,13 @@ export class PluginToggleSettingsStore {
         ? byCwd[this.legacyCwdKey]
         : undefined;
 
-    const enabled = toStringList(existing?.enabledPlugins).filter(
-      (name) => normalizeName(name) !== normalized,
+    const decision = decideNextEntry(
+      existing,
+      normalized,
+      wantEnabled,
+      defaultEnabled,
     );
-    const disabled = toStringList(existing?.disabledPlugins).filter(
-      (name) => normalizeName(name) !== normalized,
-    );
-
-    if (wantEnabled !== defaultEnabled) {
-      if (wantEnabled) enabled.push(normalized);
-      else disabled.push(normalized);
-    }
-
-    const nextEntry: PluginToggleSettingsEntry = {};
-    if (enabled.length > 0) nextEntry.enabledPlugins = [...enabled].sort();
-    if (disabled.length > 0) nextEntry.disabledPlugins = [...disabled].sort();
-    // Legacy field is never written back.
-
-    if (Object.keys(nextEntry).length === 0) {
+    if (decision.kind === "remove") {
       if (existing) {
         delete byCwd[this.cwdKey];
         if (this.legacyCwdKey !== this.cwdKey) {
@@ -206,7 +240,7 @@ export class PluginToggleSettingsStore {
       return;
     }
 
-    byCwd[this.cwdKey] = nextEntry;
+    byCwd[this.cwdKey] = decision.entry;
     if (this.legacyCwdKey !== this.cwdKey) {
       delete byCwd[this.legacyCwdKey];
     }

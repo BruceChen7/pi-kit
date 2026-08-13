@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { expectDefined } from "../shared/test-kit.js";
 import {
   formatArtifactPolicyFailure,
   validateArtifactPolicy,
@@ -453,7 +454,7 @@ describe("plan artifact content forms", () => {
     // Extract each mermaid code block to verify it starts with the frontmatter
     const mermaidBlocks = reason.match(/```mermaid\n[\s\S]*?```/g);
     expect(mermaidBlocks).not.toBeNull();
-    const blocks = mermaidBlocks ?? expect.fail("no mermaid blocks");
+    const blocks = expectDefined(mermaidBlocks);
     expect(blocks.length).toBeGreaterThanOrEqual(3);
 
     for (const block of blocks) {

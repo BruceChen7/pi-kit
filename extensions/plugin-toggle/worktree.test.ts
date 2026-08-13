@@ -10,7 +10,7 @@ import {
   writeSettingsFile,
 } from "../shared/settings.js";
 import { PluginToggleSettingsStore } from "./settings-store.js";
-import { parseMainWorktreePath } from "./worktree.js";
+import { isSharedPiScope, parseMainWorktreePath } from "./worktree.js";
 
 const tempDirs: string[] = [];
 const originalHome = process.env.HOME;
@@ -134,6 +134,14 @@ describe("parseMainWorktreePath", () => {
     expect(
       parseMainWorktreePath("HEAD deadbeef\nbranch refs/heads/x\n"),
     ).toBeNull();
+  });
+});
+
+describe("isSharedPiScope", () => {
+  it("shares when .pi is a symlink or absent, keeps per-worktree on a real dir", () => {
+    expect(isSharedPiScope("symlink")).toBe(true);
+    expect(isSharedPiScope("absent")).toBe(true);
+    expect(isSharedPiScope("real-dir")).toBe(false);
   });
 });
 
@@ -333,8 +341,6 @@ describe("worktree shared configuration", () => {
 
     // The shared key resolves to the main repo root; the legacy entry is readable.
     const store = new PluginToggleSettingsStore(worktree);
-    const storeKey = (store as unknown as { cwdKey: string }).cwdKey;
-    expect(storeKey).toBe(fs.realpathSync(root));
     expect(store.readEntry()).toEqual({
       enabledPlugins: [],
       disabledPlugins: ["alpha"],

@@ -39,6 +39,16 @@ export function uniqueTypeKeys(nodeTypes: string[], max = 4): string[] {
   return seen;
 }
 
+/**
+ * Display locale: follow the browser's language when available (the UI is
+ * rendered in a Glimpse window); deterministic "en-US" fallback outside
+ * browsers (tests, SSR) so assertions stay stable.
+ */
+const DISPLAY_LOCALE =
+  typeof window !== "undefined" && window.navigator?.language
+    ? window.navigator.language
+    : "en-US";
+
 /** Ordering weight for type buckets (unused buckets sort last). */
 export function typeRank(key: string): number {
   const rank = TYPE_ORDER.indexOf(key);
@@ -61,7 +71,7 @@ export function dayLabel(iso: string, now: Date = new Date()): string {
   );
   if (diffDays === 0) return "Today";
   if (diffDays === 1) return "Yesterday";
-  return date.toLocaleDateString("en-US", {
+  return date.toLocaleDateString(DISPLAY_LOCALE, {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -72,7 +82,7 @@ export function dayLabel(iso: string, now: Date = new Date()): string {
 export function timeLabel(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString("en-US", {
+  return date.toLocaleTimeString(DISPLAY_LOCALE, {
     hour: "2-digit",
     minute: "2-digit",
   });

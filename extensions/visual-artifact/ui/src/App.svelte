@@ -15,11 +15,16 @@ import VisualArtifactRenderer from "./renderer/visual-artifact-renderer.svelte";
 
 type ViewType = "home" | "project";
 type ProjectSummary = { name: string; artifactCount: number };
+// Mirror of ArtifactSummary in artifact-store.ts (the bridge passes those
+// summaries through verbatim). Keep this in sync — the UI cannot import
+// artifact-store.ts because it pulls in node:fs. `topics` is read by the
+// search filter below.
 type ArtifactSummary = {
   slug: string;
   title: string;
   description?: string;
   createdAt: string;
+  topics?: string[];
   nodeCount: number;
   nodeTypes: string[];
 };

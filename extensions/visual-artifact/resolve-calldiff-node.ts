@@ -21,11 +21,9 @@
  * calldiff artifact used to produce. Agents declare parameters only.
  */
 
-import {
-  type CalldiffResult,
-  countDiffStatuses,
-  type DiffStatusCounts,
-  type ParseCalldiffResult,
+import type {
+  CalldiffResult,
+  ParseCalldiffResult,
 } from "../shared/calldiff-json.ts";
 import type {
   CalldiffRunOptions,
@@ -43,7 +41,10 @@ import type {
   CalldiffArtifactOptions,
   CalldiffRenderOptions,
 } from "./calldiff-bridge.ts";
-import { filterDiffResultForFile } from "./calldiff-bridge.ts";
+import {
+  countChangedSteps,
+  filterDiffResultForFile,
+} from "./calldiff-bridge.ts";
 import { toEntries, toOptionalString, toStringArray } from "./tool-helpers.ts";
 
 /* ------------------------------------------------------------------ */
@@ -381,16 +382,9 @@ const summarizeDiff = (
   if (result.trees.length === 0) {
     return file ? `no call-flow changes in ${file}` : "no call-flow changes";
   }
-  const total = result.trees.reduce<DiffStatusCounts>(
-    (acc, entry) => {
-      const counts = countDiffStatuses(entry.tree);
-      acc.added += counts.added;
-      acc.removed += counts.removed;
-      acc.same += counts.same;
-      return acc;
-    },
-    { added: 0, removed: 0, same: 0 },
-  );
+  // Same deduped-by-key semantics as the artifact KPI (countChangedSteps),
+  // so the report and the rendered artifact never disagree.
+  const total = countChangedSteps(result);
   const shown = capped ? ` (${cap} entrypoint(s) shown)` : "";
   const prefix = file ? `${file}: ` : "";
   return `${prefix}${result.trees.length} entrypoint(s) with changed call trees (+${total.added} / -${total.removed} / ~${total.same})${shown}`;

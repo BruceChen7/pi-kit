@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { expectDefined } from "../shared/test-kit.js";
 
 // Mock child_process.execFile so findCsBinary and executeSearch don't run real commands
 vi.mock("node:child_process", () => {
@@ -56,11 +57,6 @@ type RegisteredExtension = {
   handlers: Map<string, SessionStartHandler>;
   tools: RegisteredTool[];
 };
-
-function expectDefined<T>(value: T | undefined): T {
-  expect(value).toBeDefined();
-  return value as T;
-}
 
 function expectPrimaryBinaryDetectionCall(): void {
   expect(vi.mocked(execFile)).toHaveBeenNthCalledWith(

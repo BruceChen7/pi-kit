@@ -101,8 +101,11 @@ const APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE =
   "Plan Mode is waiting for an approved Plannotator plan/spec. The " +
   "approved artifact changed and must be reviewed again before " +
   "continuing approved execution.";
-// Todo-reconciliation reminder sent once when an approval arrives for a
-// plan the active run is not bound to (todos created before approval).
+// Todo-reconciliation reminder. Decided at approval time (run not bound to
+// the approved plan, todos unfinished), but delivered only at the next
+// agent_end — the followUp queue drains at turn boundaries, so an
+// immediate send would surface minutes later with stale state. Latest
+// approval wins, so a spec→plan approval pair collapses into one reminder.
 const TODO_RECONCILE_AFTER_APPROVAL_MESSAGE =
   "Plan approved. Reconcile the act_mode_todo list with the approved plan: ";
 // APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE removed - no longer used.
@@ -156,6 +159,9 @@ export class PlanModeController {
   //   · policy pass     — artifact fixed; a new failure text queues again.
   private reReviewReminderSentFor: string | null = null;
   private policyReminderSentFor: string | null = null;
+  // Set at approval time when the active run is not yet bound to the
+  // approved plan; delivered (or dropped) at the next agent_end.
+  private todoReconcileReminderPending: string | null = null;
   // Session-scoped values, resolved in restore() (no IO at construction).
   private htmlArtifactDirs: string[] = [];
   constructor(private readonly pi: ExtensionAPI) {}
@@ -171,6 +177,7 @@ export class PlanModeController {
     this.approvedPlanContinuationForTurn = false;
     this.reReviewReminderSentFor = null;
     this.policyReminderSentFor = null;
+    this.todoReconcileReminderPending = null;
   }
 
   persist(): void {
@@ -588,6 +595,12 @@ export class PlanModeController {
       this.finishTurn(ctx);
       return;
     }
+
+    // Todo-reconciliation reminder deferred from approval time: the
+    // followUp queue only drains at turn boundaries, so deliver (or drop)
+    // it here with a fresh todo-completion check.
+    this.deliverPendingTodoReconcileReminder();
+
     if (this.hasPlanReviewObligation() && this.state.todos.length === 0) {
       const todoToolName = this.getTodoToolNameForCurrentMode();
       this.pi.sendUserMessage(
@@ -794,16 +807,40 @@ export class PlanModeController {
     const wasDirectAct = this.state.mode === "act";
     this.state.switchApprovedPlanToAct(wasDirectAct);
     if (remindTodoReconciliation) {
-      this.pi.sendUserMessage(
-        TODO_RECONCILE_AFTER_APPROVAL_MESSAGE +
-          pathToQueue +
-          " — the current list was not created for this plan. " +
-          "Use act_mode_todo list to compare, then set to align before " +
-          "starting execution.",
-        { deliverAs: "followUp" },
-      );
+      // Defer delivery to the next agent_end: sendUserMessage(followUp)
+      // only surfaces at the next turn boundary anyway, and by then the
+      // run may have completed or the list been reconciled. Latest
+      // approval wins, so a spec→plan approval pair yields one reminder.
+      this.todoReconcileReminderPending = pathToQueue;
     }
     this.applyMode(ctx);
     this.persist();
+  }
+
+  private deliverPendingTodoReconcileReminder(): void {
+    const pendingPath = this.todoReconcileReminderPending;
+    this.todoReconcileReminderPending = null;
+    if (
+      pendingPath === null ||
+      !this.state.hasUnfinishedTodos() ||
+      !this.state.isApprovedReviewArtifactPath(pendingPath)
+    ) {
+      // Dropped: the run completed (or cleared its todos) before the
+      // reminder could be delivered — "reconcile before starting
+      // execution" is noise after the work is done — or the approval
+      // was cleared (e.g. ESC abort) — the message claims the plan is
+      // approved, so it must not fire for a no-longer-approved plan.
+      return;
+    }
+    this.pi.sendUserMessage(
+      TODO_RECONCILE_AFTER_APPROVAL_MESSAGE +
+        pendingPath +
+        " — the current list was not created for this plan. " +
+        "Use act_mode_todo list to compare, then set to align before " +
+        "starting execution. This is an automated approval notice and " +
+        "does not resolve open questions; if the list already matches " +
+        "the approved plan, verify and continue.",
+      { deliverAs: "followUp" },
+    );
   }
 }

@@ -69,6 +69,11 @@ describe("plan-mode extension: review lifecycle", () => {
 
       await approveDemoPlan(harness, ctx);
 
+      // The reminder is deferred to the next turn boundary: the followUp
+      // queue only drains at agent_end, so the send happens there with a
+      // fresh todo-completion check.
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
       expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
         expect.stringContaining(
           `Reconcile the act_mode_todo list with the approved plan: ${demoPlanPath}`,
@@ -113,6 +118,7 @@ describe("plan-mode extension: review lifecycle", () => {
 
       await approveDemoPlan(harness, ctx);
       await approveDemoPlan(harness, ctx);
+      await harness.emit("agent_end", { messages: [] }, ctx);
 
       const reconcileCalls = harness.api.sendUserMessage.mock.calls.filter(
         ([message]) =>
@@ -120,6 +126,85 @@ describe("plan-mode extension: review lifecycle", () => {
           message.includes("Reconcile the act_mode_todo list"),
       );
       expect(reconcileCalls).toHaveLength(1);
+    });
+  });
+
+  it("drops the todo-reconcile reminder when the run completes before the next turn boundary", async () => {
+    // Regression: an approval queued a followUp while todos were
+    // unfinished, but by the time the followUp is delivered (next
+    // agent_end) the run is already complete. The reminder must be
+    // dropped — "reconcile before starting execution" is pure noise
+    // after the work is done.
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await harness.runCommand("plan-mode", "plan", ctx);
+      await harness.runTool(
+        PLAN_MODE_TODO_TOOL,
+        {
+          action: "set",
+          items: [{ text: "first task", status: "todo" }],
+        },
+        ctx,
+      );
+
+      await approveDemoPlan(harness, ctx);
+      // Run completes before the queued followUp would be delivered.
+      await harness.runTool(
+        PLAN_MODE_TODO_TOOL,
+        { action: "update", id: 1, status: "done" },
+        ctx,
+      );
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      const reconcileCalls = harness.api.sendUserMessage.mock.calls.filter(
+        ([message]) =>
+          typeof message === "string" &&
+          message.includes("Reconcile the act_mode_todo list"),
+      );
+      expect(reconcileCalls).toHaveLength(0);
+    });
+  });
+
+  it("sends a single todo-reconcile reminder for a spec-then-plan approval sequence", async () => {
+    // Regression: the normal spec→plan→execute flow approves two
+    // artifacts before the agent yields. Both approvals match the
+    // "run not bound to the approved plan" condition, but the second
+    // supersedes the first — one reminder (for the latest approval),
+    // not one per approval.
+    await withTempCtx(async (ctx) => {
+      const specPath = ".pi/plans/pi-kit/specs/2026-08-13-demo-design.md";
+      const planPath = ".pi/plans/pi-kit/plan/2026-08-13-demo.md";
+      writePlanArtifact(ctx.cwd, specPath, validPlanContent);
+      writePlanArtifact(ctx.cwd, planPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await harness.runCommand("plan-mode", "plan", ctx);
+      await harness.runTool(
+        PLAN_MODE_TODO_TOOL,
+        {
+          action: "set",
+          items: [{ text: "first task", status: "todo" }],
+        },
+        ctx,
+      );
+
+      await emitReviewArtifactWrite(harness, ctx, specPath);
+      await emitApprovedReview(harness, ctx, specPath);
+      await emitReviewArtifactWrite(harness, ctx, planPath);
+      await emitApprovedReview(harness, ctx, planPath);
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      const reconcileCalls = harness.api.sendUserMessage.mock.calls.filter(
+        ([message]) =>
+          typeof message === "string" &&
+          message.includes("Reconcile the act_mode_todo list"),
+      );
+      expect(reconcileCalls).toHaveLength(1);
+      expect(String(reconcileCalls[0][0])).toContain(planPath);
     });
   });
 

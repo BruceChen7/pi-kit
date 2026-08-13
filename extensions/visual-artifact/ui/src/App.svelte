@@ -222,6 +222,14 @@ function toggleFeedback(): void {
   feedbackOpen = !feedbackOpen;
 }
 
+/* ---- History sidebar toggle (variant A: push-collapse) ---- */
+
+let historyOpen = $state(true);
+
+function toggleHistory(): void {
+  historyOpen = !historyOpen;
+}
+
 /* ---- Cleanup actions ---- */
 
 type ConfirmAction =
@@ -295,6 +303,11 @@ function handleKeydown(e: KeyboardEvent): void {
   }
   if (currentView !== "project") return;
 
+  if (e.key === "h" || e.key === "H") {
+    toggleHistory();
+    return;
+  }
+
   if (e.key === "ArrowLeft") {
     goHome();
   } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -317,6 +330,16 @@ function handleKeydown(e: KeyboardEvent): void {
   <header class="titlebar">
     {#if currentView === "project"}
       <button type="button" class="back-button" onclick={goHome} title="Back to projects (&larr;)">&larr;</button>
+      <button
+        type="button"
+        class="sidebar-toggle"
+        class:active={historyOpen}
+        onclick={toggleHistory}
+        aria-label={historyOpen ? "Collapse history panel" : "Show history panel"}
+        title="Toggle history (H)"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+      </button>
     {/if}
     <h1>Visual Artifact</h1>
     {#if currentView === "project" && projectName}
@@ -366,13 +389,22 @@ function handleKeydown(e: KeyboardEvent): void {
       {/if}
 
     {:else if currentView === "project"}
-      <div class="history-layout">
+      <div class="history-layout" class:history-collapsed={!historyOpen}>
         <!-- ============ Left: history list ============ -->
         <aside class="history-panel" aria-label="Artifact history">
           <div class="history-head">
             <div class="history-head-top">
               <h2>History</h2>
               <span class="count-pill">{visibleArtifacts.length} artifact{visibleArtifacts.length !== 1 ? "s" : ""}</span>
+              <button
+                type="button"
+                class="collapse-btn"
+                onclick={toggleHistory}
+                title="Collapse history (H)"
+                aria-label="Collapse history panel"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></svg>
+              </button>
             </div>
             <div class="search">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -502,6 +534,17 @@ function handleKeydown(e: KeyboardEvent): void {
           {/if}
         </section>
       </div>
+
+      <button
+        type="button"
+        class="reopen-pill"
+        class:show={!historyOpen}
+        onclick={toggleHistory}
+        title="Show history (H)"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+        History
+      </button>
     {/if}
   </section>
 
@@ -534,6 +577,7 @@ function handleKeydown(e: KeyboardEvent): void {
     color: var(--foreground);
     background: var(--background);
     min-height: 100vh;
+    position: relative;
   }
 
   .titlebar {
@@ -568,6 +612,37 @@ function handleKeydown(e: KeyboardEvent): void {
     padding: 0 4px;
   }
 
+  .sidebar-toggle {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--foreground);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    flex: none;
+  }
+
+  .sidebar-toggle svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .sidebar-toggle:hover {
+    border-color: var(--clay);
+    color: var(--clay-dark);
+  }
+
+  .sidebar-toggle.active {
+    border-color: color-mix(in oklch, var(--clay), transparent 55%);
+    color: var(--clay-dark);
+    background: color-mix(in oklch, var(--clay), transparent 94%);
+  }
+
   .feedback-button {
     background: none;
     border: 1px solid color-mix(in oklch, var(--border), var(--foreground) 18%);
@@ -599,6 +674,14 @@ function handleKeydown(e: KeyboardEvent): void {
     grid-template-columns: 320px minmax(0, 1fr);
     gap: 20px;
     align-items: start;
+    transition:
+      grid-template-columns 0.22s ease,
+      gap 0.22s ease;
+  }
+
+  .history-layout.history-collapsed {
+    grid-template-columns: 0 minmax(0, 1fr);
+    gap: 0;
   }
 
   /* ---- Left: history list ---- */
@@ -626,6 +709,33 @@ function handleKeydown(e: KeyboardEvent): void {
     align-items: center;
     gap: 8px;
     margin-bottom: 10px;
+  }
+
+  .collapse-btn {
+    margin-left: auto;
+    width: 26px;
+    height: 26px;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: none;
+    color: var(--muted-foreground);
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .collapse-btn svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .collapse-btn:hover {
+    background: color-mix(in oklch, var(--foreground), transparent 95%);
+    color: var(--foreground);
+    border-color: var(--border);
   }
 
   .history-head h2 {
@@ -1023,6 +1133,49 @@ function handleKeydown(e: KeyboardEvent): void {
     font-size: 12.5px;
     padding: 48px 12px;
     text-align: center;
+  }
+
+  /* ---- Collapsed-sidebar reopen pill ---- */
+
+  .reopen-pill {
+    position: absolute;
+    top: 56px;
+    left: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+    color: var(--foreground);
+    box-shadow: var(--shadow-card-sm);
+    opacity: 0;
+    transform: translateY(-8px);
+    pointer-events: none;
+    transition:
+      opacity 0.2s ease,
+      transform 0.2s ease;
+  }
+
+  .reopen-pill svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  .reopen-pill:hover {
+    border-color: var(--clay);
+    color: var(--clay-dark);
+  }
+
+  .reopen-pill.show {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
   }
 
   /* ---- Home: projects ---- */

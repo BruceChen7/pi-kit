@@ -11,7 +11,8 @@
       "**",
       "!extensions/cache-graph/ui-dist",
       "!skills/render-markdown/scripts",
-      "!skills"
+      "!skills",
+      "!extensions/impeccable/engine"
     ]
   },
   "overrides": [

@@ -1,0 +1,17 @@
+{
+  "name": "herdr-menubar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Herdr agent 状态系统菜单栏 (glimpse statusItem demo)",
+  "type": "module",
+  "scripts": {
+    "start": "node src/menubar.mjs",
+    "test": "node --test",
+    "build:native": "swiftc -O native/glimpse.swift -o bin/glimpse && cp bin/glimpse ../node_modules/glimpseui/src/glimpse",
+    "install:launch-agent": "bash scripts/install-launch-agent.sh",
+    "uninstall:launch-agent": "bash scripts/install-launch-agent.sh --uninstall"
+  },
+  "dependencies": {
+    "glimpseui": "^0.8.1"
+  }
+}

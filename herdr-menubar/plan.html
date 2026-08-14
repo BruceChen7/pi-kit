@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Herdr Agent Menubar — 技术方案</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel2: #1e2230;
+    --border: #2a2f3f; --text: #e6e9f2; --muted: #9aa3b8;
+    --accent: #5b8cff; --green: #4ade80; --yellow: #facc15;
+    --red: #f87171; --gray: #6b7280; --blue: #60a5fa; --purple: #c084fc;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.7 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; padding: 48px 24px 80px; }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 28px; margin-bottom: 6px; letter-spacing: -0.02em; }
+  h2 { font-size: 20px; margin: 44px 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 24px 0 8px; }
+  h4 { font-size: 14.5px; margin: 20px 0 8px; color: #cdd3e0; }
+  .fig { font-size: 12px; color: var(--muted); text-align: center; margin: 6px 0 0; }
+  p { margin: 8px 0; color: #cdd3e0; }
+  .lead { color: var(--muted); font-size: 16px; }
+  .verdict { display: flex; gap: 14px; align-items: center; background: linear-gradient(135deg, rgba(74,222,128,.12), rgba(91,140,255,.08)); border: 1px solid rgba(74,222,128,.35); border-radius: 12px; padding: 16px 20px; margin: 18px 0; }
+  .verdict .badge { font-size: 13px; font-weight: 700; background: var(--green); color: #052e16; padding: 4px 12px; border-radius: 99px; white-space: nowrap; }
+  .verdict p { margin: 0; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 12px 0; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .card h3 { margin-top: 0; font-size: 15px; }
+  .card ul { padding-left: 18px; }
+  .card li { margin: 5px 0; font-size: 14px; color: #cdd3e0; }
+  code { font-family: var(--mono); font-size: 0.9em; background: var(--panel2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; color: #a5c8ff; }
+  pre { background: #0b0d13; border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.55; margin: 10px 0; }
+  pre code { background: none; border: none; padding: 0; color: #d6e2f5; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 8px 10px; font-size: 13px; }
+  td { padding: 8px 10px; border-bottom: 1px solid rgba(42,47,63,.6); vertical-align: top; }
+  tr:hover td { background: rgba(91,140,255,.04); }
+  .tag { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 99px; margin-right: 6px; vertical-align: 1px; }
+  .tag.green { background: rgba(74,222,128,.15); color: var(--green); }
+  .tag.yellow { background: rgba(250,204,21,.15); color: var(--yellow); }
+  .tag.red { background: rgba(248,113,113,.15); color: var(--red); }
+  .tag.blue { background: rgba(96,165,250,.15); color: var(--blue); }
+  .tag.gray { background: rgba(107,114,128,.2); color: var(--gray); }
+  .tag.purple { background: rgba(192,132,252,.15); color: var(--purple); }
+  .ok { color: var(--green); } .warn { color: var(--yellow); } .err { color: var(--red); }
+  .probe { background: #0b0d13; border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; color: #aab6d0; overflow-x: auto; }
+  .probe .k { color: #7dd3fc; } .probe .v { color: #86efac; } .probe .d { color: #64748b; }
+  .flow { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin: 14px 0; }
+  .flow .step { display: flex; gap: 12px; align-items: flex-start; padding: 9px 0; border-bottom: 1px dashed var(--border); }
+  .flow .step:last-child { border-bottom: none; }
+  .flow .num { flex: 0 0 26px; height: 26px; background: var(--accent); color: #fff; border-radius: 8px; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .flow .step p { margin: 0; font-size: 14px; }
+  .flow .step small { color: var(--muted); display: block; margin-top: 2px; font-size: 12.5px; }
+  .diagram { background: #0b0d13; border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin: 14px 0; text-align: center; overflow-x: auto; }
+  .diagram svg text { font-family: var(--mono); }
+  .foot { margin-top: 48px; color: var(--muted); font-size: 12.5px; text-align: center; }
+  .inline-note { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Herdr Agent 状态菜单栏</h1>
+<p class="lead">用 Glimpse 的 macOS 菜单栏模式(statusItem)展示 Herdr 中所有 agent 的运行状态与完成消息</p>
+
+<div class="verdict">
+  <span class="badge">✅ 可行</span>
+  <p><strong>零改动 herdr 源码</strong>:通过 herdr 原生 Unix Socket JSON API 读取 + 订阅事件,配合 glimpseui 的 <code>statusItem()</code> <strong>系统菜单栏模式</strong>(popover 内为集中式列表),纯 Node.js 即可实现;点击行可直接拉起对应 agent。核心链路已在本机实测通过。</p>
+</div>
+
+<h2>1. 背景与目标</h2>
+<div class="cols">
+  <div class="card">
+    <h3>🎯 目标</h3>
+    <ul>
+      <li><strong>系统菜单栏图标</strong>:显示 working 汇总(如 <code>● 2</code>),点击弹出集中式列表</li>
+      <li>popover 内按 workspace 列出所有 agent 及其状态(working / idle / blocked / done / unknown),含<strong>最后一条消息</strong></li>
+      <li><strong>点击某一行拉起对应 agent</strong>(herdr 切到该 workspace 并聚焦该 agent 的 pane)</li>
+      <li>herdr 未运行时显示离线状态</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>🧩 技术栈</h3>
+    <ul>
+      <li><strong>herdr</strong> v0.8.0 (Rust) — 已内置 JSON API 服务端</li>
+      <li><strong>glimpseui</strong> v0.8.1 (pi-kit/node_modules) — WebView 微 UI,菜单栏 popover + 双向 JSON 通信</li>
+      <li><strong>Node.js</strong> ≥18 — 胶水层:连 socket、维护状态、驱动 Glimpse</li>
+      <li>无 Electron、无第三方依赖</li>
+    </ul>
+  </div>
+</div>
+
+<h2>2. 可行性调研结果</h2>
+
+<h3>2.1 Herdr 侧:原生 API 完全够用</h3>
+<table>
+  <tr><th>能力</th><th>API</th><th>说明</th></tr>
+  <tr><td>全量状态</td><td><code>session.snapshot</code></td><td>返回 workspaces / tabs / panes / agents 全量,每个 pane 带 <code>agent_status</code></td></tr>
+  <tr><td>推送订阅</td><td><code>events.subscribe</code></td><td>订阅 <code>pane.agent_status_changed</code>,服务端推送状态变更事件</td></tr>
+  <tr><td>生命周期</td><td><code>workspace.*</code> <code>pane.*</code> <code>tab.*</code> 事件</td><td>维护 workspace/pane 集合的新增、关闭、agent 进出</td></tr>
+  <tr><td>跳转/拉起</td><td><code>workspace.focus</code> / <code>agent.focus</code></td><td>popover 点击行 → 拉起该 agent(切 workspace 并聚焦其 pane)</td></tr>
+  <tr><td>健康检查</td><td><code>ping</code></td><td>返回 version / protocol / capabilities</td></tr>
+</table>
+
+<p><strong>Agent 状态模型</strong>(herdr <code>src/api/schema/common.rs</code>):</p>
+<pre><code>AgentStatus = idle | working | blocked | done | unknown</code></pre>
+<p class="inline-note">状态由 herdr 的 <code>detect/</code> 模块根据 manifest 规则(输出模式匹配 + 前台进程识别)得出。已内置 <code>pi.toml</code>、<code>claude.toml</code>、<code>codex.toml</code> 等 19 个 agent manifest,<strong>pi agent 开箱即用</strong>。</p>
+
+<h3>2.2 Glimpse 侧:系统菜单栏模式(statusItem)</h3>
+<div class="cols">
+  <div class="card">
+    <h3><code>statusItem(html, opts)</code></h3>
+    <ul>
+      <li>菜单栏图标 + 点击弹出 <code>NSPopover</code>(WebView 渲染 HTML)</li>
+      <li><code>item.setTitle('● 2')</code> — 动态更新图标文字(working 汇总)</li>
+      <li><code>win.send(js)</code> — 推送最新 JSON 到 popover 增量重绘</li>
+      <li><code>window.glimpse.send(data)</code> — 页面内点击事件回传 Node</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>⚠️ 注意点</h3>
+    <ul>
+      <li>菜单栏模式 <strong>仅 macOS</strong>(本需求正好是 macOS)</li>
+      <li>popover 为 transient — 点外部自动收起,收起时仅图标可见;数据持续在 Node 内存更新,再次展开即最新</li>
+      <li>原生二进制已编译:<code>node_modules/glimpseui/src/glimpse</code> ✅</li>
+    </ul>
+  </div>
+</div>
+
+<h3>2.2.1 UI 形态:系统菜单栏 + popover 集中式列表</h3>
+<p>采用 Glimpse 的 <code>statusItem()</code> 菜单栏模式:<strong>菜单栏图标常驻</strong>(零屏幕占用),点击弹出 <code>NSPopover</code> — popover 内是集中式列表 UI:按 workspace 分组,每行 = 状态 + 标题 + <strong>完成后最后一条消息</strong>,可筛选/排序。收起后菜单栏图标保留汇总数字(如 <code>● 2</code>);数据持续在 Node 内存中更新,每次展开都是最新状态。<strong>不采用常驻浮动窗口方案</strong>(用户明确要求系统菜单栏,不需要常驻显示)。</p>
+<p><strong>核心特性 ① — 展示完成后最后一条消息</strong>:agent 状态由 <code>working</code> 变为 <code>idle/done</code>(本轮完成)时,Node 侧调用 <code>pane.read</code>(<code>source: recent</code>, <code>lines: N</code>, <code>format: text</code>, <code>strip_ansi: true</code>)读取该 pane 最近输出,取最后一条完整消息存入 store,popover 行内以摘要形式展示;点击摘要可展开全文。读取仅发生在状态切换瞬间,不做高频轮询。</p>
+<p><strong>核心特性 ② — 点击行拉起 agent(已实测通过)</strong>:点击某一行时,Node 发送 <code>workspace.focus { workspace_id }</code> 切到该 workspace,再发 <code>agent.focus { target: pane_id }</code>(target 用 <strong>pane id</strong> 而非 agent 名 — 同名 agent 不唯一时会报 NotFound);herdr 立即切到该 workspace 并聚焦对应 agent 的 pane。实测:焦点由 <code>w4Z:p1</code> 切到 <code>w10:p4</code>,两步请求均返回成功,且可恢复原焦点。</p>
+<p><strong>焦点在 popover 上也能拉起</strong>:focus 请求走 Unix socket,与用户当前焦点在哪个 app 无关 — 即使焦点停在本 popover 上,herdr 内部也会照常切换。唯一区别是 macOS 前台窗口:herdr 收到 focus 请求后不会自动把自己激活到前台(源码中 activate 仅用于通知),因此 Node 在发完请求后再补一步 <code>osascript</code> 将 herdr 进程置前,用户即可立即看到该 agent 的终端。</p>
+
+<h4>UI 示意图</h4>
+<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">
+  <figure style="flex:1;min-width:330px;margin:0">
+    <div class="diagram" style="padding:14px">
+      <svg width="440" height="300" viewBox="0 0 440 300" style="max-width:100%">
+        <title>系统菜单栏 UI 示意图</title>
+        <defs><marker id="mkr-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5b8cff"/></marker></defs>
+        <rect x="10" y="8" width="420" height="26" rx="5" fill="#20242f"/>
+        <text x="24" y="26" fill="#9aa3b8" font-size="10.5" font-family="ui-monospace,Menlo,monospace">文件  编辑  显示  窗口  帮助</text>
+        <circle cx="372" cy="21" r="5" fill="#4ade80"/>
+        <text x="384" y="25.5" fill="#e6e9f2" font-size="12" font-family="ui-monospace,Menlo,monospace">2</text>
+        <path d="M 300 34 C 300 38 300 40 300 44" stroke="#5b8cff" stroke-width="1.4" stroke-dasharray="4 3" fill="none" marker-end="url(#mkr-a)"/>
+        <rect x="196" y="44" width="234" height="246" rx="12" fill="#171a23" stroke="#2a2f3f"/>
+        <rect x="196" y="44" width="234" height="26" rx="12" fill="#1e2230"/>
+        <rect x="196" y="58" width="234" height="12" fill="#1e2230"/>
+        <text x="212" y="62" fill="#9aa3b8" font-size="11">9 agents · 2 working</text>
+        <text x="212" y="84" fill="#5b8cff" font-size="9.5" font-family="ui-monospace,Menlo,monospace">WORKSPACE pi-kit</text>
+        <circle cx="218" cy="102" r="4" fill="#4ade80"/>
+        <text x="232" y="106" fill="#e6e9f2" font-size="11.5" font-family="ui-monospace,Menlo,monospace">π - pi-kit · working</text>
+        <text x="232" y="120" fill="#9aa3b8" font-size="9.5" font-family="ui-monospace,Menlo,monospace">正在重构 herdr-client 订阅层…</text>
+        <circle cx="218" cy="142" r="4" fill="#60a5fa"/>
+        <text x="232" y="146" fill="#e6e9f2" font-size="11.5" font-family="ui-monospace,Menlo,monospace">π - pi-kit · done</text>
+        <text x="232" y="160" fill="#9aa3b8" font-size="9.5" font-family="ui-monospace,Menlo,monospace">✅ 事件订阅重构完成,测试全部通过</text>
+        <text x="212" y="184" fill="#5b8cff" font-size="9.5" font-family="ui-monospace,Menlo,monospace">WORKSPACE video</text>
+        <circle cx="218" cy="202" r="4" fill="#60a5fa"/>
+        <text x="232" y="206" fill="#e6e9f2" font-size="11.5" font-family="ui-monospace,Menlo,monospace">π - video · done</text>
+        <text x="232" y="220" fill="#9aa3b8" font-size="9.5" font-family="ui-monospace,Menlo,monospace">✅ 迁移 12 个文件,README 已更新</text>
+        <circle cx="218" cy="242" r="4" fill="#facc15"/>
+        <text x="232" y="246" fill="#e6e9f2" font-size="11.5" font-family="ui-monospace,Menlo,monospace">π - protocol · blocked</text>
+        <text x="232" y="260" fill="#9aa3b8" font-size="9.5" font-family="ui-monospace,Menlo,monospace">⛔ 等待 API key,已挂起 12 分钟</text>
+        <text x="212" y="280" fill="#64748b" font-size="10">点击行 → 拉起该 agent · 点击摘要 → 展开全文 · 外部点击收起</text>
+      </svg>
+    </div>
+    <figcaption class="fig">系统菜单栏:图标显示汇总(● 2),popover 内为带最后消息的集中式列表</figcaption>
+  </figure>
+</div>
+
+<h4>交互流程(状态推送 + 完成消息读取 + 聚焦)</h4>
+<div class="diagram">
+  <svg width="880" height="380" viewBox="0 0 880 380" style="max-width:100%">
+    <title>交互流程示意图(状态推送 + 完成消息读取 + 聚焦)</title>
+    <defs><marker id="mkr-i" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#5b8cff"/></marker></defs>
+    <text x="80" y="22" text-anchor="middle" fill="#e6e9f2" font-size="12" font-weight="600">用户</text>
+    <text x="280" y="22" text-anchor="middle" fill="#e6e9f2" font-size="12" font-weight="600">菜单栏 popover(点击展开)</text>
+    <text x="530" y="22" text-anchor="middle" fill="#e6e9f2" font-size="12" font-weight="600">Node 常驻进程</text>
+    <text x="770" y="22" text-anchor="middle" fill="#e6e9f2" font-size="12" font-weight="600">herdr 服务端</text>
+    <path d="M 160 36 L 160 350" stroke="#2a2f3f" stroke-dasharray="4 5" stroke-width="1"/>
+    <path d="M 400 36 L 400 350" stroke="#2a2f3f" stroke-dasharray="4 5" stroke-width="1"/>
+    <path d="M 660 36 L 660 350" stroke="#2a2f3f" stroke-dasharray="4 5" stroke-width="1"/>
+    <path d="M 770 60 L 530 60" stroke="#4ade80" stroke-width="1.6" stroke-dasharray="6 4" fill="none" marker-end="url(#mkr-i)"/>
+    <text x="660" y="52" text-anchor="middle" fill="#4ade80" font-size="11">① 事件推送 pane.agent_status_changed(working → idle/done)</text>
+    <path d="M 530 100 L 770 100" stroke="#5b8cff" stroke-width="1.6" fill="none" marker-end="url(#mkr-i)"/>
+    <text x="650" y="92" text-anchor="middle" fill="#5b8cff" font-size="11">② pane.read(recent, strip_ansi) → 取最后一条消息</text>
+    <path d="M 530 140 L 280 140" stroke="#5b8cff" stroke-width="1.6" fill="none" marker-end="url(#mkr-i)"/>
+    <text x="405" y="132" text-anchor="middle" fill="#5b8cff" font-size="11">③ win.send(js) 增量重绘:状态 + 最后消息 + 汇总</text>
+    <path d="M 80 190 L 280 190" stroke="#facc15" stroke-width="1.6" fill="none" marker-end="url(#mkr-i)"/>
+    <text x="180" y="182" text-anchor="middle" fill="#facc15" font-size="11">④ 点击菜单栏图标展开 popover;点击 agent 行(拉起)</text>
+    <path d="M 280 240 L 530 240" stroke="#f87171" stroke-width="1.6" fill="none" marker-end="url(#mkr-i)"/>
+    <text x="405" y="232" text-anchor="middle" fill="#f87171" font-size="11">⑤ window.glimpse.send({ wsId, target: paneId })</text>
+    <path d="M 530 285 L 770 285" stroke="#5b8cff" stroke-width="1.6" fill="none" marker-end="url(#mkr-i)"/>
+    <text x="650" y="277" text-anchor="middle" fill="#5b8cff" font-size="11">⑥ workspace.focus + agent.focus → herdr 切到该 agent 的 pane(拉起)</text>
+    <path d="M 80 330 L 280 330" stroke="#facc15" stroke-width="1.6" fill="none" marker-end="url(#mkr-i)"/>
+    <text x="180" y="322" text-anchor="middle" fill="#facc15" font-size="11">⑦ 点击消息摘要 → 展开全文 · 外部点击 → 自动收起</text>
+    <text x="660" y="368" text-anchor="middle" fill="#f87171" font-size="10.5">⑧ Node 另发 osascript → 将 herdr 置为 macOS 前台(焦点在 popover 上也生效)</text>
+  </svg>
+</div>
+<p class="inline-note">实线 = 请求/渲染链路;虚线 = herdr 事件推送。popover 为 transient,外部点击自动收起,收起时菜单栏图标保留汇总(<code>● 2</code>);数据持续在 Node 内存更新,展开即最新;断线(herdr 退出/重启)时 Node 重连并重新 snapshot + 订阅。</p>
+
+<h3>2.3 实测验证(本机真实 herdr 实例)</h3>
+<p>用 Node 直接连 <code>~/.config/herdr/herdr.sock</code> 验证了完整链路:</p>
+<div class="probe"><span class="d"># ① session.snapshot — 全量状态</span>
+<span class="k">connected to</span> <span class="v">~/.config/herdr/herdr.sock</span>
+<span class="k">version:</span> <span class="v">0.8.0</span>  <span class="k">workspaces:</span> <span class="v">33</span>  <span class="k">panes:</span> <span class="v">49</span>  <span class="k">agents:</span> <span class="v">9</span>
+<span class="k">pane w4Z:p1</span>  ws=w4Z  agent=<span class="v">pi</span>  status=<span class="v">working</span>  title=<span class="v">"π - pi-kit"</span>  <span class="d">← 当前会话,正在工作</span>
+<span class="k">pane w10:p4</span>  ws=w10  agent=<span class="v">pi</span>  status=<span class="v">idle</span>    title=<span class="v">"π - bff_user"</span>
+<span class="k">pane w38:p13</span> ws=w38  agent=<span class="v">pi</span>  status=<span class="v">idle</span>    title=<span class="v">"π - pi-kit"</span>
+<span class="d"># ...共 9 个 pi agent(其余 40 个 pane 无 agent)</span>
+
+<span class="d"># ② events.subscribe — 推送订阅(独立连接)</span>
+<span class="k">SUBSCRIBE ack:</span> <span class="v">{"type":"subscription_started"}</span>
+<span class="d"># 之后同一连接持续推送 pane.agent_status_changed 事件,直到断开</span>
+</div>
+
+<div class="probe" style="margin-top:10px"><span class="d"># ③ 订阅事件负载(schema: PaneAgentStatusChangedEvent)</span>
+<span class="k">{ "event": "pane.agent_status_changed",</span>
+  <span class="k">"data": { "pane_id": "w4Z:p1", "workspace_id": "w4Z",</span>
+           <span class="k">"agent_status": "working", "agent": "pi",</span>
+           <span class="k">"title": "π - pi-kit", "display_agent": "pi",</span>
+           <span class="k">"state_labels": { "phase": "implementing" } } }</span>
+</div>
+
+<div class="probe" style="margin-top:10px"><span class="d"># ④ 点击行拉起 agent — workspace.focus + agent.focus(实测)</span>
+<span class="k">workspace.focus</span> <span class="v">{"workspace_id":"w10"}</span> <span class="k">→</span> <span class="v">{"type":"workspace_info","workspace":{...,"focused":true}}</span>
+<span class="k">agent.focus</span>     <span class="v">{"target":"w10:p4"}</span>      <span class="k">→</span> <span class="v">{"type":"agent_info","agent":{"agent":"pi","terminal_title":"π - bff_user",...}}</span>
+<span class="k">焦点变化:</span> <span class="v">w4Z:p1 → w10:p4</span> <span class="d">(snapshot 确认;测后已恢复原焦点 w4Z:p1)</span>
+</div>
+<p class="inline-note">注:herdr 收到 focus 请求后内部立即切换,但其窗口不会自动置前(macOS 前台);需 Node 补发 <code>osascript</code> 激活 herdr 进程 — 该步骤与用户当前焦点在哪个 app 无关。</p>
+
+<h2>3. 架构设计</h2>
+
+<div class="diagram">
+<svg width="860" height="300" viewBox="0 0 860 300">
+  <title>点击行拉起 agent 流程图</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b8cff"/>
+    </marker>
+    <marker id="arrowg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4ade80"/>
+    </marker>
+  </defs>
+  <style>.bx{fill:#171a23;stroke:#2a2f3f;rx:10}.tt{fill:#e6e9f2;font-size:13px;font-weight:600}.st{fill:#9aa3b8;font-size:11px}.lbl{fill:#5b8cff;font-size:11px}</style>
+
+  <!-- Herdr -->
+  <rect class="bx" x="20" y="30" width="230" height="150"/>
+  <text class="tt" x="135" y="55" text-anchor="middle">herdr (Rust 进程)</text>
+  <rect x="45" y="70" width="180" height="34" rx="7" fill="#1e2230" stroke="#2a2f3f"/>
+  <text x="135" y="91" text-anchor="middle" fill="#a5c8ff" font-size="12">JSON API Server (JSON Lines)</text>
+  <rect x="45" y="112" width="180" height="34" rx="7" fill="#1e2230" stroke="#2a2f3f"/>
+  <text x="135" y="133" text-anchor="middle" fill="#86efac" font-size="12">EventHub + 状态检测</text>
+  <text x="135" y="165" text-anchor="middle" fill="#64748b" font-size="11">~/.config/herdr/herdr.sock</text>
+
+  <!-- Node host -->
+  <rect class="bx" x="330" y="30" width="240" height="150"/>
+  <text class="tt" x="450" y="55" text-anchor="middle">menubar.mjs (Node 常驻进程)</text>
+  <rect x="355" y="70" width="190" height="30" rx="7" fill="#1e2230" stroke="#2a2f3f"/>
+  <text x="450" y="89" text-anchor="middle" fill="#c084fc" font-size="11.5">herdr-client: snapshot + subscribe</text>
+  <rect x="355" y="106" width="190" height="30" rx="7" fill="#1e2230" stroke="#2a2f3f"/>
+  <text x="450" y="125" text-anchor="middle" fill="#c084fc" font-size="11.5">状态聚合器 (AgentStore · 最后消息)</text>
+  <rect x="355" y="142" width="190" height="30" rx="7" fill="#1e2230" stroke="#2a2f3f"/>
+  <text x="450" y="161" text-anchor="middle" fill="#facc15" font-size="11.5">渲染: setTitle 图标 + win.send(js) popover</text>
+
+  <!-- Glimpse -->
+  <rect class="bx" x="640" y="30" width="200" height="150"/>
+  <text class="tt" x="740" y="55" text-anchor="middle">glimpse (Swift 二进制)</text>
+  <rect x="665" y="70" width="150" height="34" rx="7" fill="#1e2230" stroke="#2a2f3f"/>
+  <text x="740" y="91" text-anchor="middle" fill="#f87171" font-size="11.5">NSStatusItem 图标</text>
+  <rect x="665" y="112" width="150" height="34" rx="7" fill="#1e2230" stroke="#2a2f3f"/>
+  <text x="740" y="133" text-anchor="middle" fill="#60a5fa" font-size="11.5">NSPopover + WKWebView</text>
+
+  <!-- edges -->
+  <path d="M 250 90 C 285 90 285 90 330 90" stroke="#5b8cff" stroke-width="1.8" fill="none" marker-end="url(#arrow)"/>
+  <text x="290" y="80" text-anchor="middle" fill="#5b8cff" font-size="10.5">Unix socket · JSON Lines</text>
+  <path d="M 570 90 C 600 90 600 90 640 90" stroke="#4ade80" stroke-width="1.8" fill="none" marker-end="url(#arrowg)"/>
+  <text x="605" y="80" text-anchor="middle" fill="#4ade80" font-size="10.5">spawn + stdin/stdout</text>
+  <path d="M 570 157 C 600 170 600 170 640 157" stroke="#facc15" stroke-width="1.2" stroke-dasharray="4 3" fill="none" marker-end="url(#arrowg)"/>
+  <text x="605" y="180" text-anchor="middle" fill="#facc15" font-size="10.5">win.send(js) 刷新内容</text>
+
+  <!-- click flow -->
+  <path d="M 740 200 L 740 240 L 450 240 L 450 185" stroke="#f87171" stroke-width="1.2" stroke-dasharray="4 3" fill="none" marker-end="url(#arrow)"/>
+  <text x="595" y="233" text-anchor="middle" fill="#f87171" font-size="10.5">点击行 → workspace.focus + agent.focus 拉起 agent</text>
+</svg>
+</div>
+
+<div class="flow">
+  <div class="step"><div class="num">1</div><p>启动时 <code>session.snapshot</code> 拉全量<small>单次请求连接,获取所有 pane 的 agent / agent_status / title / workspace_id</small></p></div>
+  <div class="step"><div class="num">2</div><p>开启订阅连接 <code>events.subscribe</code><small>对每个有 agent 的 pane 订阅 <code>pane.agent_status_changed</code>;同时订阅 <code>workspace.created/closed</code>、<code>pane.created/closed</code>、<code>pane.agent_detected</code> 维护集合变化;此连接长驻,服务端推送事件</small></p></div>
+  <div class="step"><div class="num">3</div><p>事件驱动更新 AgentStore<small>status 变化 → 更新内存状态 → 聚合统计(working 数 / 总数 / 按 workspace 分组);状态由 working 变为 idle/done 时,调用 <code>pane.read</code> 读取最近输出并截取最后一条消息,存入该 agent 条目</small></p></div>
+  <div class="step"><div class="num">4</div><p>增量渲染(双通道)<small>图标: <code>item.setTitle('● 2')</code> 更新汇总;popover: <code>win.send(js)</code> 推送最新 viewData(含最后消息)重绘 — 收起时数据也持续更新,展开即最新</small></p></div>
+  <div class="step"><div class="num">5</div><p>交互回传<small>点击 agent 行 → <code>window.glimpse.send({wsId, target: paneId})</code> → Node 发 <code>workspace.focus</code> + <code>agent.focus</code> 拉起该 agent;点击消息摘要 → popover 内展开全文</small></p></div>
+  <div class="step"><div class="num">6</div><p>断线与重连<small>socket 消失/连接错误 → 图标变灰 "herdr 离线";每 2s 探测 socket,恢复后重新 snapshot + 订阅</small></p></div>
+</div>
+
+<h2>4. 实现方案</h2>
+
+<h3>4.1 项目结构(<code>~/work/pi-kit/herdr-menubar/</code>)</h3>
+<pre><code>herdr-menubar/                # pi-kit 仓库内的独立子项目
+├── package.json          # 依赖 glimpseui, "start": "node src/menubar.mjs"
+├── src/
+│   ├── menubar.mjs       # 入口:菜单栏 statusItem + popover、装配各模块
+│   ├── herdr-client.mjs  # socket 客户端:request() / subscribe() / readRecentText() (JSON Lines)
+│   ├── agent-store.mjs   # 纯逻辑:事件 → 状态模型 + 最后消息 → 渲染视图数据 (可单测)
+│   ├── view.mjs          # 生成 popover HTML + 增量更新脚本(__render / __expand)
+│   └── socket-detect.mjs # 定位 socket:HERDR_SOCKET_PATH → ~/.config/herdr/herdr.sock
+│                         #   → ~/.config/herdr/sessions/*/herdr.sock
+└── test/agent-store.test.mjs</code></pre>
+
+<h3>4.2 核心代码骨架</h3>
+<p><strong>herdr-client.mjs</strong> — 连接与协议:</p>
+<pre><code>import net from 'node:net';
+import { EventEmitter } from 'node:events';
+
+export class HerdrClient extends EventEmitter {
+  constructor(socketPath) { super(); this.socketPath = socketPath; }
+
+  /** 单次请求:发一行 JSON,读一行响应(协议: newline-delimited JSON over unix socket) */
+  request(id, method, params) {
+    return new Promise((resolve, reject) => {
+      const sock = net.createConnection(this.socketPath);
+      let line = '';
+      sock.on('connect', () => sock.write(
+        JSON.stringify({ id, method, params }) + '\n'));
+      sock.on('data', (c) => {
+        line += c;
+        if (line.includes('\n')) {
+          const msg = JSON.parse(line.slice(0, line.indexOf('\n')));
+          msg.error ? reject(new Error(msg.error.message)) : resolve(msg.result);
+          sock.destroy();
+        }
+      });
+      sock.on('error', reject);
+      sock.setTimeout(3000, () => { reject(new Error('timeout')); sock.destroy(); });
+    });
+  }
+
+  /** 订阅:独立长连接,服务端先回 subscription_started,之后持续推事件 */
+  subscribe(subscriptions, onEvent) {
+    const sock = net.createConnection(this.socketPath);
+    let buf = '';
+    sock.on('connect', () => sock.write(JSON.stringify(
+      { id: 'sub', method: 'events.subscribe', params: { subscriptions } }) + '\n'));
+    sock.on('data', (chunk) => {
+      buf += chunk;
+      let i; while ((i = buf.indexOf('\n')) >= 0) {
+        const msg = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
+        if (msg.event) onEvent(msg);   // { event, data }
+      }
+    });
+    sock.on('close', () => this.emit('sub-closed'));
+    sock.on('error', () => this.emit('sub-closed'));
+    return sock;
+  }
+}</code></pre>
+
+<p><strong>agent-store.mjs</strong> — 纯函数状态机(可单测):</p>
+<pre><code>// statuses: idle | working | blocked | done | unknown
+export function initFromSnapshot(snapshot) {
+  const panes = new Map();
+  for (const p of snapshot.panes) if (p.agent) panes.set(p.pane_id, toPane(p));
+  return panes;
+}
+export function applyEvent(panes, ev) {
+  const d = ev.data;
+  switch (ev.event) {
+    case 'pane.agent_status_changed':
+      if (panes.has(d.pane_id))
+        panes.set(d.pane_id, { ...panes.get(d.pane_id),
+          status: d.agent_status, title: d.title ?? panes.get(d.pane_id).title });
+      break;
+    case 'pane.agent_detected':   /* 新 agent 进入 → 需要 pane.get 补详情 */
+    case 'pane.closed': panes.delete(d.pane_id); break;
+    /* workspace.created/closed → 维护 workspace 元信息 */
+  }
+  return panes;
+}
+export function viewData(panes, workspaces) {
+  const byStatus = { working: 0, idle: 0, blocked: 0, done: 0, unknown: 0 };
+  const rows = [...panes.values()].map(p => ({
+    ...p, wsLabel: workspaces.get(p.workspace_id)?.label ?? p.workspace_id,
+  })).sort((a, b) => (a.status === 'working') - (b.status === 'working') || a.wsLabel.localeCompare(b.wsLabel));
+  rows.forEach(r => byStatus[r.status]++);
+  return { byStatus, rows };
+}</code></pre>
+
+<p><strong>menubar.mjs</strong> — 入口:系统菜单栏 + popover 集中式列表:</p>
+<pre><code>import { statusItem } from 'glimpseui';      // 系统菜单栏 + popover
+import { HerdrClient } from './herdr-client.mjs';
+import { initFromSnapshot, applyEvent, viewData } from './agent-store.mjs';
+import { renderPanelHtml } from './view.mjs';
+
+const item = statusItem(renderPanelHtml(emptyView()), {
+  title: '…', width: 380, height: 520,
+});
+
+// 图标 = working 汇总;popover = 集中式列表(含最后消息)
+function paint() {
+  const v = viewData(panes, workspaces);
+  item.setTitle(v.byStatus.working > 0 ? `● ${v.byStatus.working}` : '○');
+  item.send(`window.__render(${JSON.stringify(v)})`);   // 收起时也持续更新,展开即最新
+}
+
+async function onStatusChanged(ev) {
+  const prev = panes.get(ev.data.pane_id)?.status;
+  panes = applyEvent(panes, ev);
+  // 本轮完成 → 读最后一条消息(仅在状态切换瞬间,不做高频轮询)
+  if (prev === 'working' && ['idle', 'done'].includes(ev.data.agent_status)) {
+    const pane = panes.get(ev.data.pane_id);
+    pane.lastMessage = await readRecentText(client, pane.pane_id, 40);
+  }
+  paint();
+}
+
+// 点击 agent 行 → 拉起该 agent;点击摘要 → 展开全文
+item.on('message', (m) => {
+  if (m.wsId) client.request('w', 'workspace.focus', { workspace_id: m.wsId });
+  if (m.target) {
+    client.request('a', 'agent.focus', { target: m.target });  // target = pane_id(实测通过)
+    activateHerdr();   // 焦点在本 popover 上也生效: 请求走 socket, 与前台无关
+  }
+  if (m.expand) item.send(`window.__expand(${JSON.stringify(m.expand)})`);
+});
+
+// macOS 前台激活 — herdr 收到 focus 不会自动置前窗口, 需补一步 osascript
+import { execFile } from 'node:child_process';
+function activateHerdr() {
+  execFile('osascript', ['-e',
+    'tell application "System Events" to set frontmost of first process whose name is "herdr" to true']);
+}</code></pre>
+
+<p><strong>herdr-client.mjs</strong> — 读取 pane 最近输出(完成后取最后消息):</p>
+<pre><code>// pane.read: source=recent, lines=N, format=text, strip_ansi → 最近 N 行纯文本
+export async function readRecentText(client, paneId, lines = 40) {
+  const r = await client.request('r', 'pane.read', {
+    pane_id: paneId, source: 'recent', lines, format: 'text', strip_ansi: true,
+  });
+  return r.text;   // PaneReadResult { pane_id, text, revision, truncated, ... }
+}
+// 最后一条消息 = 按空行分段取最后一个完整段落,剔除状态行/滚动噪声</code></pre>
+
+<h3>4.3 UX 设计(菜单栏 + popover)</h3>
+<table>
+  <tr><th>状态</th><th>图标</th><th>含义</th></tr>
+  <tr><td>有 working agent</td><td><code>● 2</code>(绿色圆点 + 数量)</td><td>正在工作的 agent 数;数量为 0 时显示 <code>○</code></td></tr>
+  <tr><td>全部空闲</td><td><code>○</code>(灰色)</td><td>herdr 在跑但没有 agent 在工作</td></tr>
+  <tr><td>herdr 离线</td><td><code>✕</code>(红色)</td><td>socket 不存在或连接失败,自动重连</td></tr>
+  <tr><td>popover(集中式列表)</td><td>点击展开</td><td>按 workspace 分组;每行 = 状态色点 + 标题 + <strong>完成后的最后一条消息摘要</strong>(点击展开全文);<strong>点击行拉起该 agent</strong>(workspace.focus + agent.focus);外部点击自动收起,展开即最新</td></tr>
+</table>
+<p class="inline-note">状态色:working <span class="tag green">绿</span> · idle <span class="tag gray">灰</span> · blocked <span class="tag yellow">黄</span> · done <span class="tag blue">蓝</span> · unknown <span class="tag purple">紫</span></p>
+
+<h2>5. 风险与边界</h2>
+<table>
+  <tr><th>风险</th><th>影响</th><th>对策</th></tr>
+  <tr><td>订阅连接断开(herdr 重启)</td><td>状态停更</td><td>连接 close/error → 重连并重新 snapshot + 订阅</td></tr>
+  <tr><td>named session(多实例)</td><td>socket 不在默认路径</td><td>扫描 <code>sessions/*/herdr.sock</code>,支持 <code>HERDR_SOCKET_PATH</code> 环境变量,可合并显示多实例</td></tr>
+  <tr><td>popover 为 transient</td><td>收起后无交互</td><td>收起时靠菜单栏图标汇总表达;数据持续在内存更新,展开即最新</td></tr>
+  <tr><td>agent 检测依赖 herdr manifest</td><td>新 agent 可能识别为 unknown</td><td>unknown 状态照常显示;herdr manifest 机制可持续更新</td></tr>
+  <tr><td>事件突发(滚动输出)</td><td>频繁重绘</td><td>状态变化事件天然低频(仅 status 切换);渲染 debounce 100ms</td></tr>
+  <tr><td>状态一致性</td><td>订阅遗漏事件</td><td>事件带 <code>state_change_seq</code>;定期(如 30s)静默重新 snapshot 对账,防止漂移</td></tr>
+</table>
+
+<h2>6. 里程碑</h2>
+<div class="flow">
+  <div class="step"><div class="num">1</div><p>M1 — 最小可用<small>菜单栏图标 + popover 列表:snapshot + 订阅 + 按 workspace 分组的 agent 状态列表(约半天)</small></p></div>
+  <div class="step"><div class="num">2</div><p>M2 — 最后消息与交互<small>状态切换瞬间 pane.read 取最后一条消息并展示、点击行拉起 agent、离线重连、对账刷新</small></p></div>
+  <div class="step"><div class="num">3</div><p>M3 — 打磨<small>消息展开/全文查看、筛选排序、暗色主题、popover 尺寸自适应、开机自启(LaunchAgent)</small></p></div>
+</div>
+
+<div class="foot">调研基于 herdr v0.8.0 (~/work/herdr) 与 glimpseui v0.8.1 (pi-kit/node_modules/glimpseui),所有协议细节经本机实测验证 · 2025</div>
+
+</div>
+</body>
+</html>

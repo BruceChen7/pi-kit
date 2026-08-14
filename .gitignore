@@ -6,6 +6,7 @@ PLAN.md
 .DS_Store
 dist/
 build/
+bin/
 extensions/kanban-worktree/ui-dist/
 extensions/cache-graph/ui-dist/
 extensions/visual-artifact/ui-dist/

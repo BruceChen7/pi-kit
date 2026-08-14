@@ -81,6 +81,7 @@ export const CALLLDIFF_NODE_PROP_KEYS = [
   "paths",
   "maxDepth",
   "file",
+  "pin",
   "title",
   "maxEntries",
   "maxNodesPerTree",
@@ -522,6 +523,7 @@ const expandNode = async (
   const expanded = deps.calldiffResultToSpec(effective, {
     title,
     file,
+    pin: toStringArray(props.pin),
     maxEntries: cap,
     maxNodesPerTree:
       typeof props.maxNodesPerTree === "number" && props.maxNodesPerTree > 0

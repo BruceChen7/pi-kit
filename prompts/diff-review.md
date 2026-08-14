@@ -91,7 +91,7 @@ Use the following structure to minimize top-level node count for the in-memory `
     // Calldiff call-flow (required) — declare a calldiff-callflow node;
     // the extension runs calldiff and expands it into the summary heading,
     // per-entrypoint table, mermaid call trees, and ASCII code-blocks:
-    { "type": "calldiff-callflow", "props": { "from": "<from>", "to": "<to>" } },
+    { "type": "calldiff-callflow", "props": { "from": "<from>", "to": "<to>", "pin": ["<KeyProductionSymbol.Entry>"] } },
 
     // Sections 6-10: accordion-wrapped
     { "type": "accordion", "props": { "items": [
@@ -153,11 +153,11 @@ Refer to the `create_visual_artifact` tool's `nodes` parameter for the full list
 
 **Required in every diff review.** Declare a `calldiff-callflow` node inside the spec (see the example spec above) — **never hand-drawn mermaid call graphs**. While processing the spec, the extension runs `calldiff <mode> --format json` (AST-based, 22 languages) against the session git repo and expands the node into the call-flow section: a summary heading, a per-entrypoint change table, colored mermaid call trees, and condensed ASCII code-blocks. Place it as a direct top-level section.
 
-- All props are optional: `from` (before-ref, default HEAD), `to` (after-ref, default worktree), `entry`, `target`, `paths`, `maxDepth`, `title`, and `mode` (`diff`/`tree`/`reach`, default `diff`). Align `from`/`to` with the refs you already diffed.
+- All props are optional: `from` (before-ref, default HEAD), `to` (after-ref, default worktree), `entry`, `target`, `paths`, `maxDepth`, `title`, `pin`, and `mode` (`diff`/`tree`/`reach`, default `diff`). Align `from`/`to` with the refs you already diffed.
 - When nothing changed, the node expands to a "No call-flow changes" callout — include that outcome and say so in prose.
 - If calldiff is unavailable or the session is outside a git work tree, the node **degrades to a "Call-flow unavailable" callout** and the rest of the review still renders — note the degradation and continue; do not abandon the artifact.
 - Truncation (detailed entry sections, mermaid nodes per tree, ASCII lines per code-block) is applied automatically by the host, budget-aware; you do not need to track caps.
-- Use `entry` to focus on genuinely interesting entrypoints when the diff is large.
+- **Use `pin` to focus the capped entry list**: declare the key entrypoints (the new/changed production symbols — exclude tests and mocks) as `pin: ["Symbol.Entry", ...]`; they render first in declared order and get a ★ marker. Without `pin`, entries rank by change impact, which can bury core flows under tests. `entry` (filter) is for genuinely small diffs where you want to show only specific entrypoints.
 
 The generated layout — for reference only (you do not build it by hand):
 

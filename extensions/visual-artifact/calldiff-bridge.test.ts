@@ -16,6 +16,7 @@ import {
   diffResultToSpec,
   filterDiffResultForFile,
   parseCalldiffJson,
+  rankDiffTrees,
   treeResultToSpec,
 } from "./calldiff-bridge.ts";
 
@@ -403,8 +404,9 @@ describe("diffResultToSpec", () => {
     const pathsNodes = pathsTabNodes(spec);
     const table = pathsNodes.find((node) => node.type === "table");
     expect(table?.props.rows).toHaveLength(2);
+    // Rank #1 gets the ★ key marker (impact 3 > boot's 0).
     expect(table?.props.rows[0]).toEqual([
-      "PiService.createAgentSession",
+      "★ PiService.createAgentSession",
       "2",
       "1",
       "1",
@@ -413,9 +415,10 @@ describe("diffResultToSpec", () => {
     const items = accordionItems(spec);
     expect(items).toHaveLength(2);
     expect(items[0]?.title).toBe("PiService.createAgentSession");
-    expect(items[0]?.defaultOpen).toBe(false);
+    expect(items[0]?.defaultOpen).toBe(true);
     expect(items[0]?.nodes[0]).toMatchObject({ type: "mermaid" });
     expect(items[0]?.nodes[1]).toMatchObject({ type: "code-block" });
+    expect(items[1]?.defaultOpen).toBe(false);
 
     const raw = rawTabNodes(spec);
     expect(raw[0]).toMatchObject({
@@ -605,7 +608,8 @@ describe("diffResultToSpec", () => {
     expect(table).toBeDefined();
     const tableProps = (table as ArtifactNode).props as { rows?: string[][] };
     expect(tableProps.rows).toHaveLength(1);
-    expect(tableProps.rows?.[0]?.[0]).toBe("run");
+    // The single filtered entry ranks #1 → key marker.
+    expect(tableProps.rows?.[0]?.[0]).toBe("★ run");
     // The matched tree stays complete (unchanged context included).
     const items = accordionItems(spec);
     expect(items).toHaveLength(1);
@@ -919,5 +923,200 @@ describe("calldiffResultToSpec dispatch", () => {
     expect(calldiffResultToSpec(reach).slug).toBe(
       "calldiff-reach-runcheckout-to-sendemail",
     );
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  rankDiffTrees: focus ranking (pin → impact → name)                */
+/* ------------------------------------------------------------------ */
+
+const treeWithImpact = (entry: string, added: number, removed = 0) => ({
+  entry,
+  ascii: `ascii ${entry}`,
+  tree: makeNode(entry, `${entry}()`, {
+    status: "same",
+    children: [
+      ...Array.from({ length: added }, (_, i) =>
+        makeNode(`${entry}:a${i}`, `a${i}()`, { status: "added" }),
+      ),
+      ...Array.from({ length: removed }, (_, i) =>
+        makeNode(`${entry}:r${i}`, `r${i}()`, { status: "removed" }),
+      ),
+    ],
+  }),
+});
+
+describe("rankDiffTrees", () => {
+  it("ranks by impact (added+removed) descending", () => {
+    const trees = [
+      treeWithImpact("small", 1),
+      treeWithImpact("big", 9),
+      treeWithImpact("mid", 5),
+    ];
+    expect(rankDiffTrees(trees).map((t) => t.entry)).toEqual([
+      "big",
+      "mid",
+      "small",
+    ]);
+  });
+
+  it("breaks ties by entry name (stable, deterministic)", () => {
+    const trees = [
+      treeWithImpact("zeta", 2),
+      treeWithImpact("alpha", 2),
+      treeWithImpact("mid", 2),
+    ];
+    expect(rankDiffTrees(trees).map((t) => t.entry)).toEqual([
+      "alpha",
+      "mid",
+      "zeta",
+    ]);
+  });
+
+  it("pins entries first in declared order; unmatched names are ignored", () => {
+    const trees = [
+      treeWithImpact("CheckUserGroupByID", 27),
+      treeWithImpact("FetchData", 8),
+      treeWithImpact("MergeData", 4),
+      treeWithImpact("IsCriticalData", 1),
+    ];
+    const ranked = rankDiffTrees(trees, [
+      "MergeData",
+      "FetchData",
+      "DoesNotExist",
+    ]);
+    expect(ranked.map((t) => t.entry)).toEqual([
+      "MergeData",
+      "FetchData",
+      "CheckUserGroupByID",
+      "IsCriticalData",
+    ]);
+  });
+
+  it("does not mutate the input and handles empty pin", () => {
+    const trees = [treeWithImpact("a", 2), treeWithImpact("b", 1)];
+    const before = trees.map((t) => t.entry);
+    rankDiffTrees(trees, []);
+    expect(trees.map((t) => t.entry)).toEqual(before);
+    expect(rankDiffTrees(trees, undefined).map((t) => t.entry)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("dedupes repeated pin entries", () => {
+    const trees = [treeWithImpact("a", 1), treeWithImpact("b", 2)];
+    const ranked = rankDiffTrees(trees, ["a", "a", "b"]);
+    expect(ranked.map((t) => t.entry)).toEqual(["a", "b"]);
+  });
+});
+
+describe("diffResultToSpec focus rendering", () => {
+  // Real diff-review fixture (SPV-50476): calldiff diff release HEAD —
+  // 14 entrypoints; the alphabetically-first 8 would bury the fetcher chain.
+  const spvImpacts: Record<string, { added: number; removed: number }> = {
+    "AccountUPPClientImpl.CheckUserGroupByID": { added: 27, removed: 0 },
+    "AccountUPPClientImpl.CheckUserGroups": { added: 11, removed: 10 },
+    "MockAccountUPPClient.CheckUserGroupByID": { added: 3, removed: 0 },
+    "MockAccountUPPClientMockRecorder.CheckUserGroupByID": {
+      added: 4,
+      removed: 0,
+    },
+    NewUserQuickCheckoutPipeline: { added: 4, removed: 0 },
+    TestUserQuickCheckoutFetchDataGroupNotConfigured: { added: 8, removed: 0 },
+    TestUserQuickCheckoutMergeDataInGroup: { added: 5, removed: 0 },
+    TestUserQuickCheckoutMergeDataNilSkips: { added: 5, removed: 0 },
+    TestUserQuickCheckoutMergeDataNotInGroup: { added: 5, removed: 0 },
+    TestUserQuickCheckoutNeedExecute: { added: 9, removed: 0 },
+    "userHandlerStruct.GetUserDetail": { added: 1, removed: 0 },
+    "UserQuickCheckoutFetcher.FetchData": { added: 8, removed: 0 },
+    "UserQuickCheckoutFetcher.IsCriticalData": { added: 1, removed: 0 },
+    "UserQuickCheckoutFetcher.MergeData": { added: 4, removed: 0 },
+  };
+  const spvTrees = Object.entries(spvImpacts).map(([entry, impact]) =>
+    treeWithImpact(entry, impact.added, impact.removed),
+  );
+  const spvResult: CalldiffResult = {
+    mode: "diff",
+    from: "release",
+    to: "HEAD",
+    trees: spvTrees,
+    ascii: "full ascii output",
+  };
+
+  const accordionTitles = (spec: ReturnType<typeof diffResultToSpec>) =>
+    accordionItems(spec).map((item) => item.title);
+
+  it("ranks by impact so the biggest production change leads", () => {
+    const spec = diffResultToSpec(spvResult);
+    const items = accordionItems(spec);
+    expect(items[0]?.title).toBe("AccountUPPClientImpl.CheckUserGroupByID");
+    expect(items[0]?.defaultOpen).toBe(true);
+    expect(accordionTitles(spec).slice(0, 8)).toEqual([
+      "AccountUPPClientImpl.CheckUserGroupByID", // 27
+      "AccountUPPClientImpl.CheckUserGroups", // 21
+      "TestUserQuickCheckoutNeedExecute", // 9
+      "TestUserQuickCheckoutFetchDataGroupNotConfigured", // 8 (tie: T < U)
+      "UserQuickCheckoutFetcher.FetchData", // 8
+      "TestUserQuickCheckoutMergeDataInGroup", // 5
+      "TestUserQuickCheckoutMergeDataNilSkips", // 5
+      "TestUserQuickCheckoutMergeDataNotInGroup", // 5
+    ]);
+  });
+
+  it("pins the fetcher chain so the key flows survive the cap", () => {
+    const spec = diffResultToSpec(spvResult, {
+      pin: [
+        "UserQuickCheckoutFetcher.FetchData",
+        "UserQuickCheckoutFetcher.MergeData",
+        "UserQuickCheckoutFetcher.IsCriticalData",
+      ],
+    });
+    const titles = accordionTitles(spec);
+    expect(titles.slice(0, 3)).toEqual([
+      "UserQuickCheckoutFetcher.FetchData",
+      "UserQuickCheckoutFetcher.MergeData",
+      "UserQuickCheckoutFetcher.IsCriticalData",
+    ]);
+    for (const key of titles.slice(0, 3)) {
+      expect(titles.slice(0, 8)).toContain(key);
+    }
+  });
+
+  it("marks pinned entries with ★ even beyond the top-3 slots", () => {
+    const spec = diffResultToSpec(spvResult, {
+      pin: [
+        "UserQuickCheckoutFetcher.IsCriticalData", // impact 1 → would rank ~12
+        "MockAccountUPPClient.CheckUserGroupByID", // impact 3
+        "NewUserQuickCheckoutPipeline", // impact 4
+        "userHandlerStruct.GetUserDetail", // impact 1 → 4th pinned slot
+      ],
+    });
+    const pathsNodes = pathsTabNodes(spec);
+    const table = pathsNodes.find((node) => node.type === "table");
+    const rows = table?.props.rows as string[][];
+    const labels = rows.map((row) => row[0]);
+    // All four pins carry ★ (4th pin sits at rank 3, outside the top-3 slots).
+    for (const entry of [
+      "UserQuickCheckoutFetcher.IsCriticalData",
+      "MockAccountUPPClient.CheckUserGroupByID",
+      "NewUserQuickCheckoutPipeline",
+      "userHandlerStruct.GetUserDetail",
+    ]) {
+      expect(labels).toContain(`★ ${entry}`);
+    }
+    // Top-3 by rank that are not pinned carry ★ too.
+    expect(labels[0]).toBe("★ UserQuickCheckoutFetcher.IsCriticalData");
+  });
+
+  it("stars the top-3 by rank even when nothing is pinned", () => {
+    const spec = diffResultToSpec(diffResult);
+    const pathsNodes = pathsTabNodes(spec);
+    const table = pathsNodes.find((node) => node.type === "table");
+    const rows = table?.props.rows as string[][];
+    expect(rows.map((row) => row[0])).toEqual([
+      "★ PiService.createAgentSession",
+      "★ boot",
+    ]);
   });
 });

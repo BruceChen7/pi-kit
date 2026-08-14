@@ -286,6 +286,12 @@ export type CalldiffRenderOptions = {
   title?: string;
   /** Max per-entry call trees rendered as detailed sections (default 8). */
   maxEntries?: number;
+  /**
+   * Diff mode only: entry names ranked first, in declared order (unmatched
+   * entries are ignored; the rest follow the impact ranking). The only
+   * focus mechanism — no name heuristics.
+   */
+  pin?: string[];
   /** Max mermaid nodes per tree (default 80). */
   maxNodesPerTree?: number;
   /** Max ascii lines per code-block (default 60; 0 = omit code-block). */
@@ -336,6 +342,7 @@ const entryAccordionItem = (
   tree: CalldiffNode,
   options: CalldiffArtifactOptions,
   withStatus: boolean,
+  defaultOpen = false,
 ): { title: string; nodes: ArtifactNode[]; defaultOpen: boolean } => {
   const maxMermaidNodes = options.maxMermaidNodes ?? DEFAULT_MAX_MERMAID_NODES;
   const nodes: ArtifactNode[] = [];
@@ -368,7 +375,7 @@ const entryAccordionItem = (
     nodes.push(asciiNode);
   }
 
-  return { title: entry, nodes, defaultOpen: false };
+  return { title: entry, nodes, defaultOpen };
 };
 
 const defaultSlug = (result: CalldiffResult): string => {
@@ -387,6 +394,57 @@ const defaultSlug = (result: CalldiffResult): string => {
 const capEntries = (count: number, options: CalldiffArtifactOptions): number =>
   Math.max(0, Math.min(count, options.maxEntries ?? DEFAULT_MAX_ENTRIES));
 
+/** Number of key-entry slots marked with ★ in the entry table. */
+const KEY_ENTRY_SLOTS = 3;
+
+/**
+ * Rank diff entry trees for display: pinned entries first in declared
+ * order (unmatched names ignored), then impact (added+removed counts,
+ * matching the per-entry table numbers) descending, then entry name
+ * ascending for a stable tiebreak. Pure — no name heuristics.
+ */
+export const rankDiffTrees = (
+  trees: CalldiffTreeResult[],
+  pin?: string[],
+): CalldiffTreeResult[] => {
+  if ((pin?.length ?? 0) === 0) {
+    return [...trees].sort(compareByImpact);
+  }
+  const byName = new Map(trees.map((tree) => [tree.entry, tree]));
+  const seen = new Set<string>();
+  const pinned: CalldiffTreeResult[] = [];
+  for (const name of pin ?? []) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const tree = byName.get(name);
+    if (tree) pinned.push(tree);
+  }
+  const rest = trees
+    .filter((tree) => !seen.has(tree.entry))
+    .sort(compareByImpact);
+  return [...pinned, ...rest];
+};
+
+const compareByImpact = (
+  a: CalldiffTreeResult,
+  b: CalldiffTreeResult,
+): number => {
+  const impact = (tree: CalldiffTreeResult): number => {
+    const counts = countDiffStatuses(tree.tree);
+    return counts.added + counts.removed;
+  };
+  const diff = impact(b) - impact(a);
+  if (diff !== 0) return diff;
+  return a.entry < b.entry ? -1 : a.entry > b.entry ? 1 : 0;
+};
+
+/** True when a ranked entry gets the ★ marker: pinned or top-N by rank. */
+const isKeyEntry = (
+  tree: CalldiffTreeResult,
+  rank: number,
+  pin?: string[],
+): boolean => (pin ?? []).includes(tree.entry) || rank < KEY_ENTRY_SLOTS;
+
 /** "Paths" tab: per-entry table + collapsible trees + qualification. */
 const diffPathsTab = (
   trees: Extract<CalldiffResult, { mode: "diff" }>["trees"],
@@ -394,15 +452,19 @@ const diffPathsTab = (
   entries: number,
   options: CalldiffArtifactOptions,
 ): ArtifactNode[] => {
+  const ranked = rankDiffTrees(trees, options.pin);
   const nodes: ArtifactNode[] = [
     {
       type: "table",
       props: {
         headers: ["Entry", "Added", "Removed", "Unchanged"],
-        rows: trees.map((entry) => {
+        rows: ranked.map((entry, rank) => {
           const counts = countDiffStatuses(entry.tree);
+          const label = isKeyEntry(entry, rank, options.pin)
+            ? `★ ${entry.entry}`
+            : entry.entry;
           return [
-            entry.entry,
+            label,
             String(counts.added),
             String(counts.removed),
             String(counts.same),
@@ -413,15 +475,16 @@ const diffPathsTab = (
     {
       type: "accordion",
       props: {
-        items: trees
+        items: ranked
           .slice(0, entries)
-          .map((entry) =>
+          .map((entry, rank) =>
             entryAccordionItem(
               entry.entry,
               entry.ascii,
               entry.tree,
               options,
               true,
+              rank === 0,
             ),
           ),
       },

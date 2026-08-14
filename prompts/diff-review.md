@@ -157,7 +157,7 @@ Refer to the `create_visual_artifact` tool's `nodes` parameter for the full list
 - When nothing changed, the node expands to a "No call-flow changes" callout — include that outcome and say so in prose.
 - If calldiff is unavailable or the session is outside a git work tree, the node **degrades to a "Call-flow unavailable" callout** and the rest of the review still renders — note the degradation and continue; do not abandon the artifact.
 - Truncation (detailed entry sections, mermaid nodes per tree, ASCII lines per code-block) is applied automatically by the host, budget-aware; you do not need to track caps.
-- **Use `pin` to focus the capped entry list**: declare the key entrypoints (the new/changed production symbols — exclude tests and mocks) as `pin: ["Symbol.Entry", ...]`; they render first in declared order and get a ★ marker. Without `pin`, entries rank by change impact, which can bury core flows under tests. `entry` (filter) is for genuinely small diffs where you want to show only specific entrypoints.
+- **必须声明 `pin`**(diff review 必填):把关键入口写成 `pin: ["Symbol.Entry", ...]` — 即新增/核心链路的生产符号,排除测试与 mock;它们按声明顺序置顶并带 ★ 标记。只靠影响度排序效果很差:测试改动计数通常不小,会挤占名额、把核心链路埋掉。`entry`(过滤)仅用于确实很小、只想展示特定入口的 diff。
 
 The generated layout — for reference only (you do not build it by hand):
 

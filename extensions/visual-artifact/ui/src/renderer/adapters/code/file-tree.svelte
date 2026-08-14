@@ -1,12 +1,10 @@
 <script lang="ts">
 import FileTree from "./file-tree.svelte";
-
-type FileTreeItem = {
-  name: string;
-  type?: "file" | "directory";
-  status?: "added" | "modified" | "deleted";
-  children?: FileTreeItem[];
-};
+import {
+  type FileTreeItem,
+  fileTreeItemName,
+  isFileTreeDirectory,
+} from "./file-tree-shape.ts";
 
 let {
   items = [],
@@ -54,8 +52,9 @@ const fileIcon = (s?: string) => (s ? "+" : "·");
 
 {#snippet treeItems()}
   {#each items as item}
-    {@const path = makePath(_parentPath, item.name)}
-    {@const isDir = item.type === "directory" || (item.children?.length ?? 0) > 0}
+    {@const name = fileTreeItemName(item)}
+    {@const path = makePath(_parentPath, name)}
+    {@const isDir = isFileTreeDirectory(item)}
     {@const isExpanded = activeExpanded.has(path)}
     {@const sc = item.status ? statusColors[item.status] : ""}
     <div>
@@ -67,7 +66,12 @@ const fileIcon = (s?: string) => (s ? "+" : "·");
         <span class="w-3 text-muted-foreground text-[10px] shrink-0">
           {isDir ? dirIcon(isExpanded) : fileIcon(item.status)}
         </span>
-        <span class="min-w-0 break-all">{item.name}</span>
+        <span class="min-w-0 break-all">{name}</span>
+        {#if item.note}
+          <span class="min-w-0 truncate text-muted-foreground/70 text-[10px] italic" title={item.note}>
+            — {item.note}
+          </span>
+        {/if}
         {#if sc}
           <span class="ml-auto text-[9px] font-bold uppercase leading-4 px-1.5 rounded-full {sc}">{item.status}</span>
         {/if}

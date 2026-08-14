@@ -359,7 +359,13 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
   {
     type: "file-tree",
     label: "File Tree",
-    description: "Nested file/directory tree.",
+    description:
+      "Nested file/directory tree. Each item: { name: string (label), " +
+      "path?: string (full or parent-relative path; label falls back to its " +
+      "basename when name is absent), type?: 'file' | 'directory', " +
+      "status?: 'added' | 'modified' | 'deleted', note?: string (small " +
+      "annotation), children?: FileTreeItem[] }. Nest directories via " +
+      "children; prefer name over path.",
     props: { items: "FileTreeItem[]" },
   },
   {

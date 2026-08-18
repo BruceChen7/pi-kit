@@ -22,16 +22,18 @@ const lines = $derived(code.split("\n"));
       {language}
     </div>
   {/if}
-  <pre class="m-0 p-4 bg-primary text-primary-foreground font-mono text-sm leading-relaxed overflow-x-auto">
-    {#if showLineNumbers}
-      {#each lines as line, i}
-        <code class="table-row">
-          <span class="table-cell w-8 text-right pr-4 select-none text-muted-foreground/60">{i + 1}</span>
-          <span class="table-cell whitespace-pre">{line}</span>
-        </code>
-      {/each}
-    {:else}
-      <code class="whitespace-pre">{code}</code>
-    {/if}
-  </pre>
+  {#if showLineNumbers}
+    <div class="m-0 p-4 bg-primary text-primary-foreground font-mono text-sm leading-relaxed overflow-x-auto">
+      <code class="table min-w-full border-collapse">
+        {#each lines as line, i}
+          <span class="table-row">
+            <span class="table-cell w-8 text-right pr-4 select-none text-muted-foreground/60">{i + 1}</span>
+            <span class="table-cell whitespace-pre">{line}</span>
+          </span>
+        {/each}
+      </code>
+    </div>
+  {:else}
+    <pre class="m-0 p-4 bg-primary text-primary-foreground font-mono text-sm leading-relaxed overflow-x-auto"><code class="block whitespace-pre">{code}</code></pre>
+  {/if}
 </div>

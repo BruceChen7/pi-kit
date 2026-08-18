@@ -39,7 +39,8 @@
       "./extensions/herdr-squad",
       "./extensions/cc-switch",
       "./extensions/fork-panel",
-      "./extensions/impeccable"
+      "./extensions/impeccable",
+      "./extensions/confluence"
     ]
   },
   "scripts": {

@@ -107,6 +107,48 @@ const MAX_CONCURRENT_BATCHES = 3;
  */
 const SUBAGENT_TIMEOUT_MS = 600_000;
 
+export interface StageTiming {
+  label: string;
+  startedAt: number;
+  durationMs: number;
+  ok: boolean;
+}
+
+interface TimedStageResult<T> {
+  value: T;
+  timing: StageTiming;
+}
+
+export function formatStageStartTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+export function formatDuration(durationMs: number): string {
+  const seconds = Math.max(0, durationMs) / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds.toString().padStart(2, "0")}s`;
+}
+
+async function runTimedStage<T>(
+  label: string,
+  action: () => Promise<T>,
+): Promise<TimedStageResult<T>> {
+  const startedAt = Date.now();
+  const value = await action();
+  return {
+    value,
+    timing: { label, startedAt, durationMs: Date.now() - startedAt, ok: true },
+  };
+}
+
 // ── Subagent prompt builder ───────────────────────────────────────────────
 
 /**
@@ -299,15 +341,31 @@ async function listStaleFiles(exec: {
  * @param qmdUpdateOk - Whether qmd update succeeded.
  * @param qmdEmbedOk - Whether qmd embed succeeded.
  */
-function buildTelegramSuccessMessage(
+export function buildTelegramSuccessMessage(
   staleFiles: string[],
   summaries: string[] | undefined,
   wikiSummary: string,
   qmdUpdateOk: boolean,
   qmdEmbedOk: boolean,
+  timings: StageTiming[] = [],
 ): string {
   const lines: string[] = ["✅ 知识库维护完成", ""];
   const maxFiles = 10;
+
+  if (timings.length > 0) {
+    lines.push("<b>⏱️ 执行摘要</b>");
+    for (const [index, stage] of timings.entries()) {
+      lines.push(
+        `${index + 1}. <b>${escapeHtml(stage.label)}</b> · ${
+          stage.ok ? "✓" : "✗"
+        }`,
+      );
+      lines.push(
+        `   开始：<code>${formatStageStartTime(stage.startedAt)}</code> · 耗时：<code>${formatDuration(stage.durationMs)}</code>`,
+      );
+    }
+    lines.push("");
+  }
 
   // ── Section: created summary files (authoritative, from subagent) ────
   if (summaries && summaries.length > 0) {
@@ -335,7 +393,16 @@ function buildTelegramSuccessMessage(
     lines.push("");
   }
 
-  lines.push(`📝 wiki-summarize：${wikiSummary}`);
+  if (wikiSummary.trim()) {
+    lines.push("<b>📝 wiki-summarize</b>");
+    const batchSummaries = wikiSummary
+      .split(" | ")
+      .map((summary) => summary.trim())
+      .filter(Boolean);
+    for (const summary of batchSummaries) {
+      lines.push(`  • ${escapeHtml(summary)}`);
+    }
+  }
   lines.push(`🔍 qmd update：${qmdUpdateOk ? "✓" : "✗"}`);
   lines.push(`🧠 qmd embed：${qmdEmbedOk ? "✓" : "✗"}`);
 
@@ -805,28 +872,46 @@ export default defineTask({
 
   handler: async (exec) => {
     // ── Step 0: split DailyNotes into per-year shards (idempotent migration) ──
-    await runShardMigration(exec);
+    const timings: StageTiming[] = [];
+    const migration = await runTimedStage("Step 0 · 拆分 DailyNotes", () =>
+      runShardMigration(exec),
+    );
+    timings.push(migration.timing);
 
     // ── Pre-step: list stale files ──
     log.info("Pre-step: list-stale");
-    const staleFiles = await listStaleFiles(exec);
+    const staleFilesResult = await runTimedStage("Pre-step · list-stale", () =>
+      listStaleFiles(exec),
+    );
+    timings.push(staleFilesResult.timing);
+    const staleFiles = staleFilesResult.value;
     log.info("stale files found", { count: staleFiles.length });
 
     // ── Step 1-3: wiki-summarize pipeline ──
     log.info("Step 1-3: subagent — wiki-summarize full pipeline");
-    const { createdSummaries, wikiSummaryDone } = await runSummarizePipeline(
-      exec,
-      staleFiles,
+    const summarizeResult = await runTimedStage(
+      "Step 1–3 · wiki-summarize",
+      () => runSummarizePipeline(exec, staleFiles),
     );
+    timings.push(summarizeResult.timing);
+    const { createdSummaries, wikiSummaryDone } = summarizeResult.value;
 
     // ── Step 4: qmd update ──
-    const qmdUpdateOk = await runQmdStep(exec, "4", "qmd update", ["update"]);
+    const qmdUpdateResult = await runTimedStage("Step 4 · qmd update", () =>
+      runQmdStep(exec, "4", "qmd update", ["update"]),
+    );
+    timings.push(qmdUpdateResult.timing);
+    const qmdUpdateOk = qmdUpdateResult.value;
     if (!qmdUpdateOk) return;
 
     // ── Step 5: qmd embed ──
-    const qmdEmbedOk = await runQmdStep(exec, "5", "qmd embed", ["embed"], {
-      QMD_EMBED_MODEL,
-    });
+    const qmdEmbedResult = await runTimedStage("Step 5 · qmd embed", () =>
+      runQmdStep(exec, "5", "qmd embed", ["embed"], {
+        QMD_EMBED_MODEL,
+      }),
+    );
+    timings.push(qmdEmbedResult.timing);
+    const qmdEmbedOk = qmdEmbedResult.value;
     if (!qmdEmbedOk) return;
 
     // ── Success notification ──
@@ -836,6 +921,7 @@ export default defineTask({
       wikiSummaryDone,
       qmdUpdateOk,
       qmdEmbedOk,
+      timings,
     );
     log.info("knowledge-wiki-daily task completed successfully");
     await sendTelegramNotification(successMsg, undefined, true).catch((e) =>

@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   aggregateBatchResults,
   buildSubagentPrompt,
+  buildTelegramSuccessMessage,
+  formatDuration,
+  formatStageStartTime,
   interpretBatchResult,
   parseResultJson,
   runQmdStep,
@@ -15,7 +18,11 @@ import {
 // Mock Telegram to prevent actual network calls during shell function tests.
 vi.mock("../../shared/telegram.ts", () => ({
   sendTelegramNotification: vi.fn(() => Promise.resolve()),
-  escapeHtml: (text: string) => text,
+  escapeHtml: (text: string) =>
+    text
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;"),
 }));
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -261,7 +268,58 @@ describe("parseResultJson", () => {
   });
 });
 
-// ── runQmdStep ────────────────────────────────────────
+// ── Telegram summary formatting ───────────────────────
+
+describe("Telegram summary formatting", () => {
+  it("formats stage times and durations for mobile-readable output", () => {
+    const timestamp = Date.UTC(2026, 5, 30, 10, 11, 12);
+    expect(formatStageStartTime(timestamp)).toBe(
+      new Date(timestamp).toLocaleTimeString("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }),
+    );
+    expect(formatDuration(450)).toBe("0.5s");
+    expect(formatDuration(68_000)).toBe("1m 08s");
+  });
+
+  it("renders batch summaries as escaped bullet points with timings", () => {
+    const message = buildTelegramSuccessMessage(
+      ["Notes/source.md"],
+      ["Wiki/Summaries/source.summary.md"],
+      "Batch 1: 2 summaries <ready> | Batch 2: 1 summary & linked",
+      true,
+      true,
+      [
+        {
+          label: "Step 1–3 · wiki-summarize",
+          startedAt: Date.UTC(2026, 5, 30, 10, 11, 12),
+          durationMs: 42_800,
+          ok: true,
+        },
+      ],
+    );
+
+    expect(message).toContain("<b>⏱️ 执行摘要</b>");
+    expect(message).toContain(
+      `开始：<code>${formatStageStartTime(Date.UTC(2026, 5, 30, 10, 11, 12))}</code>`,
+    );
+    expect(message).toContain("耗时：<code>42.8s</code>");
+    expect(message).toContain("• Batch 1: 2 summaries &lt;ready&gt;");
+    expect(message).toContain("• Batch 2: 1 summary &amp; linked");
+    expect(message).toContain("Wiki/Summaries/source.summary.md");
+    expect(message).not.toContain("Batch 1: 2 summaries <ready> | Batch 2");
+  });
+
+  it("omits an empty wiki summary without leaving an empty section", () => {
+    const message = buildTelegramSuccessMessage([], undefined, "", true, true);
+    expect(message).not.toContain("wiki-summarize");
+    expect(message).toContain("qmd update：✓");
+    expect(message).toContain("qmd embed：✓");
+  });
+});
 
 describe("runQmdStep", () => {
   it("returns true when exec succeeds with code 0", async () => {

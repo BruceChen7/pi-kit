@@ -434,6 +434,60 @@ describe("plan-mode extension: todo state and widgets", () => {
     });
   });
 
+  it("does not erase a todo text when update receives an empty text field", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    await harness.runTool(
+      ACT_MODE_TODO_TOOL,
+      {
+        action: "set",
+        items: [{ text: "保留这个任务文本", status: "in_progress" }],
+      },
+      ctx,
+    );
+
+    const result = (await harness.runTool(
+      ACT_MODE_TODO_TOOL,
+      {
+        action: "update",
+        id: 1,
+        // This mirrors the malformed call captured in the session: the full
+        // list is present, while the optional top-level text is empty.
+        items: [{ text: "保留这个任务文本", status: "done" }],
+        status: "done",
+        text: "",
+      },
+      ctx,
+    )) as { content: Array<{ text: string }> };
+
+    expect(result.content[0]?.text).toContain("#1 [✓] 保留这个任务文本");
+    expect(plainWidgetText(ctx)).toContain("#1 保留这个任务文本");
+  });
+
+  it("uses an action-specific schema that excludes items from update", () => {
+    const harness = buildHarness();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+
+    const todoTool = registeredTool(harness, ACT_MODE_TODO_TOOL);
+    const schema = todoTool.parameters as {
+      anyOf: Array<{
+        additionalProperties?: boolean;
+        properties?: Record<string, unknown>;
+      }>;
+    };
+    const updateSchema = schema.anyOf.find(
+      (variant) =>
+        (variant.properties?.action as { const?: string })?.const === "update",
+    );
+
+    expect(updateSchema).toBeDefined();
+    expect(updateSchema?.additionalProperties).toBe(false);
+    expect(updateSchema?.properties?.items).toBeUndefined();
+  });
+
   it("restores mode and todos from the latest session snapshot", async () => {
     const restoredEntries: CustomEntry[] = [
       planModeStateEntry({

@@ -15,26 +15,58 @@ const todoStatusSchema = Type.Union([
 ]);
 
 const todoInputSchema = Type.Object({
-  text: Type.String({ description: "TODO text" }),
+  text: Type.String({ minLength: 1, description: "TODO text" }),
   status: Type.Optional(todoStatusSchema),
   notes: Type.Optional(Type.String({ description: "Optional note" })),
 });
 
-const todoParamsSchema = Type.Object({
-  action: Type.Union([
-    Type.Literal("list"),
-    Type.Literal("set"),
-    Type.Literal("add"),
-    Type.Literal("update"),
-    Type.Literal("remove"),
-    Type.Literal("clear"),
-  ]),
-  items: Type.Optional(Type.Array(todoInputSchema)),
-  id: Type.Optional(Type.Number()),
-  text: Type.Optional(Type.String()),
-  status: Type.Optional(todoStatusSchema),
-  notes: Type.Optional(Type.String()),
-});
+const todoParamsSchema = Type.Union([
+  Type.Object(
+    {
+      action: Type.Literal("list"),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      action: Type.Literal("set"),
+      items: Type.Array(todoInputSchema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      action: Type.Literal("add"),
+      text: Type.String({ minLength: 1 }),
+      status: Type.Optional(todoStatusSchema),
+      notes: Type.Optional(Type.String()),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      action: Type.Literal("update"),
+      id: Type.Number(),
+      text: Type.Optional(Type.String()),
+      status: Type.Optional(todoStatusSchema),
+      notes: Type.Optional(Type.String()),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      action: Type.Literal("remove"),
+      id: Type.Number(),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    {
+      action: Type.Literal("clear"),
+    },
+    { additionalProperties: false },
+  ),
+]);
 
 type TodoParams = Static<typeof todoParamsSchema>;
 type TodoToolOptions = {
@@ -79,6 +111,8 @@ export const registerTodoTool = (
         `${phaseName} phase before implementation.`,
       'Use action "set" to replace the TODO list, or action "add" to append ' +
         'one TODO. Do not use action "create"; it is not supported.',
+      `For action "update", pass only id plus the fields to patch; do not pass ` +
+        'items. Use action "set" when replacing the whole list.',
       todoDisciplineGuidance(name),
     ],
     parameters: todoParamsSchema,
@@ -109,7 +143,7 @@ export const registerTodoTool = (
           }
           if (
             !controller.state.updateTodo(params.id, {
-              ...(params.text !== undefined ? { text: params.text } : {}),
+              ...(params.text?.trim() ? { text: params.text } : {}),
               ...(params.status !== undefined ? { status: params.status } : {}),
               ...(params.notes !== undefined ? { notes: params.notes } : {}),
             })

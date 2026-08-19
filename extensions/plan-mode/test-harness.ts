@@ -44,6 +44,7 @@ export type ToolRegistration = {
   label?: string;
   description?: string;
   promptGuidelines?: string[];
+  parameters?: unknown;
   execute: (
     toolCallId: string,
     params: Record<string, unknown>,

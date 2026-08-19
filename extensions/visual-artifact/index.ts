@@ -41,8 +41,9 @@ const CreateArtifactParams = Type.Object({
     description:
       "JSON string of ArtifactNode[]. Each node has type and props. " +
       "Available types: text, heading, list, card, stat-card, table, diff, code-block, " +
-      "mermaid, log, badge, divider, card-grid, tabs, accordion, section, " +
-      "svg-diagram, image, video, file-tree, link, timeline, step, quote, callout, blockquote.",
+      "mermaid, er-diagram, architecture-diagram, layer-diagram, log, badge, divider, " +
+      "link, file-tree, card-grid, tabs, accordion, section, svg-diagram, image, video, " +
+      "timeline, step, quote, callout, blockquote, side-by-side, kpi-grid.",
   }),
   data: Type.Optional(
     Type.String({

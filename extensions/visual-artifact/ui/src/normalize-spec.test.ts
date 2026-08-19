@@ -16,6 +16,15 @@ describe("normalizeArtifactNode", () => {
     expect(node.props.definition).toBe("flowchart LR\nA-->B");
   });
 
+  it("keeps svg-diagram input under the canonical svg prop", () => {
+    const node = normalizeArtifactNode({
+      type: "svg-diagram",
+      props: { svg: '<svg viewBox="0 0 10 10"></svg>' },
+    });
+
+    expect(node.props.svg).toBe('<svg viewBox="0 0 10 10"></svg>');
+  });
+
   it("maps card content to nested text node", () => {
     const node = normalizeArtifactNode({
       type: "card",

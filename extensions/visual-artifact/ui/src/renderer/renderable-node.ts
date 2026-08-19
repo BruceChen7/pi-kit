@@ -34,8 +34,14 @@ export function isRenderableNode(node: RenderableNode): boolean {
       return nonEmptyString(props.code);
     case "mermaid":
       return nonEmptyString(props.definition);
+    case "er-diagram":
+      return nonEmptyArray(props.entities);
+    case "architecture-diagram":
+      return nonEmptyArray(props.nodes);
+    case "layer-diagram":
+      return nonEmptyArray(props.layers);
     case "svg-diagram":
-      return nonEmptyString(props.html);
+      return nonEmptyString(props.svg);
     case "text":
     case "heading":
     case "badge":

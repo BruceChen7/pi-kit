@@ -20,6 +20,21 @@ describe("isRenderableNode", () => {
     ).toBe(true);
   });
 
+  it("requires the canonical svg prop for svg diagrams", () => {
+    expect(
+      isRenderableNode({
+        type: "svg-diagram",
+        props: { html: '<svg viewBox="0 0 10 10"></svg>' },
+      }),
+    ).toBe(false);
+    expect(
+      isRenderableNode({
+        type: "svg-diagram",
+        props: { svg: '<svg viewBox="0 0 10 10"></svg>' },
+      }),
+    ).toBe(true);
+  });
+
   it("hides untitled cards whose nested nodes are empty", () => {
     expect(
       isRenderableCard({

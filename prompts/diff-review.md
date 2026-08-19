@@ -51,7 +51,16 @@ Sections 1-3 are the visual anchor — use one concise `text` node with `size: "
 | 9 | **Decision log** | `card` + `badge` + `text` | Per decision: `card` with Decision (bold text), Rationale (prose), Alternatives (list), Confidence (badge: green=high, default=medium, warning=low). Low-confidence cards: include a note to document before committing. |
 | 10 | **Re-entry context** | `accordion` (collapsed) | Collapsed by default. Inside: `list` items for Key invariants, Non-obvious coupling, Gotchas, Don't-forget. |
 
-### Folding strategy (top-level node conservation)
+### Additional structured diagram sections (optional)
+
+Keep the original mapping above Mermaid-first. Add a separate direct top-level section only when structured evidence makes a native layout more informative than another Mermaid diagram:
+
+- **Architecture section**: `heading` + `text` + `architecture-diagram` for components, groups, boundaries, and verified edges.
+- **Entity/data-model section**: `heading` + `text` + `er-diagram` for entities, fields, keys, and verified relationships.
+- **Layer section**: `heading` + `text` + `layer-diagram` for ordered application, data, security, or governance layers.
+
+These native sections complement the original Mermaid architecture/flow diagrams; they do not replace them. The mandatory `calldiff-callflow` section remains separate and required.
+
 
 The `create_visual_artifact` tool has a 30 top-level node limit. Sections 6-10 should be wrapped in `accordion` nodes (each accordion counts as 1 top-level node) to stay well under the limit while keeping all content accessible.
 
@@ -80,12 +89,38 @@ Use the following structure to minimize top-level node count for the in-memory `
     } },
 
     // Sections 3-5: direct nodes
-    { "type": "mermaid", "props": { "definition": "<flowchart>" } },
+    { "type": "mermaid", "props": { "definition": "flowchart LR\n  A[\"+ new module\"] --> B[\"~ changed handler\"]" } },
     { "type": "side-by-side", "props": {
       "leftLabel": "Before",
       "rightLabel": "After",
       "left": [ /* before content nodes */ ],
       "right": [ /* after content nodes */ ]
+    } },
+
+    // Additional structured diagram section examples — additive; keep the Mermaid flowchart above.
+    { "type": "architecture-diagram", "props": {
+      "nodes": [
+        { "id": "client", "label": "Client", "kind": "external" },
+        { "id": "service", "label": "~ Service", "kind": "service", "focal": true },
+        { "id": "store", "label": "+ Store", "kind": "store" }
+      ],
+      "groups": [{ "id": "runtime", "label": "Runtime", "members": ["service", "store"] }],
+      "edges": [{ "from": "client", "to": "service", "label": "request" }, { "from": "service", "to": "store", "label": "new dependency" }]
+    } },
+    { "type": "er-diagram", "props": {
+      "entities": [
+        { "id": "request", "name": "Request", "fields": [{ "name": "id", "type": "string", "key": "PK" }] },
+        { "id": "record", "name": "Record", "fields": [{ "name": "request_id", "type": "string", "key": "FK" }] }
+      ],
+      "relationships": [{ "from": "request", "to": "record", "cardinality": "one-to-many" }]
+    } },
+    { "type": "layer-diagram", "props": {
+      "layers": [
+        { "id": "api", "label": "API", "items": ["Endpoint"] },
+        { "id": "domain", "label": "Domain", "items": [{ "id": "policy", "label": "Policy", "focal": true }] },
+        { "id": "data", "label": "Data", "items": ["Store"] }
+      ],
+      "edges": [{ "from": "policy", "to": "Store", "label": "persists" }]
     } },
 
     // Calldiff call-flow (required) — declare a calldiff-callflow node;
@@ -133,7 +168,10 @@ Refer to the `create_visual_artifact` tool's `nodes` parameter for the full list
 | `table` | Rows and columns of data |
 | `diff` | Code-level before/after diff |
 | `code-block` | Highlighted code |
-| `mermaid` | Flowcharts, sequence diagrams, state diagrams |
+| `mermaid` | Flowcharts, sequence diagrams, state diagrams, or source-authoritative definitions |
+| `er-diagram` | Structured entity/schema changes with fields and relationships |
+| `architecture-diagram` | Structured components, groups, boundaries, and dependency edges |
+| `layer-diagram` | Ordered abstraction, data, security, or governance layers |
 | `badge` | Short colored labels (info/success/warning/danger/default) |
 | `callout` | Info/success/warning/danger callouts |
 | `side-by-side` | Before/after comparison panels |
@@ -149,7 +187,17 @@ Refer to the `create_visual_artifact` tool's `nodes` parameter for the full list
 - Apply `:::` class on a separate line, NOT inline
 - Keep diagram type simple: `flowchart LR`, `sequenceDiagram`, `stateDiagram-v2`
 
-### Calldiff call-flow rendering
+### Structured diagram selection
+
+Keep Mermaid as the default for the existing architecture and flow sections. Add a native Visual Artifact diagram only as an additional section when the diff data is structured and the native layout adds a distinct axis of understanding:
+
+- `architecture-diagram`: components, groups, trust boundaries, stores, and verified dependency edges. Use `focal: true` sparingly for the one or two changed/high-signal nodes.
+- `er-diagram`: entities, fields, keys, and relationships changed by a schema or data-model diff. Every `relationships[].from` and `relationships[].to` must reference a declared entity.
+- `layer-diagram`: ordered application, data, security, or governance layers. Use stable item IDs for `edges` and do not imply a layer relationship that the diff does not support.
+- `calldiff-callflow` remains required in every diff review. Native architecture, ER, and layer diagrams complement the call-flow analysis; they do not replace it.
+
+A native diagram is still a direct top-level visual section when it is part of Sections 3-5; keep its surrounding prose concise and put detailed evidence in the reference accordion. Do not put a diagram inside `side-by-side` merely to save a top-level slot unless the comparison itself is the point.
+
 
 **Required in every diff review.** Declare a `calldiff-callflow` node inside the spec (see the example spec above) — **never hand-drawn mermaid call graphs**. While processing the spec, the extension runs `calldiff <mode> --format json` (AST-based, 22 languages) against the session git repo and expands the node into the call-flow section: a summary heading, a per-entrypoint change table, colored mermaid call trees, and condensed ASCII code-blocks. Place it as a direct top-level section.
 

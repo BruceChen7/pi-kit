@@ -82,19 +82,19 @@ trim the 3b caption first — never cut 3a or Section 6.
 | 3a | **Participant diagram** (强制) | `heading` + `text` 图注, `mermaid` `sequenceDiagram` | 跨参与者/跨 boundary 的消息和调用链，不画内部分支。标注每个 participant。 |
 | 3b | **Logic diagram** (条件) | `heading` + `text` 图注, `mermaid` `flowchart` | 仅当存在非平凡分支（≥3 条路径、状态机、重试/回退）时才产出。聚焦核心决策树。 |
 | 4a | **State/lifecycle diagram** (条件) | `heading` + `text` 图注, `mermaid` `stateDiagram` | 有生命周期/状态转换时产出（enable→disable、draft→published 等）。 |
-| 4b | **Entity/relationship diagram** (条件) | `heading` + `text` 图注, `mermaid` `erDiagram` | 有多个实体 + 关系时产出。无状态机也无实体关系时降级为 `table`。 |
+| 4b | **Entity/relationship diagram** (条件) | `heading` + `text` 图注, `mermaid` `erDiagram`（结构化替代：`er-diagram`） | 有多个实体 + 关系时产出。默认保留 Mermaid 结构；只有实体、字段、关系已经结构化时才改用 `er-diagram`。无状态机也无实体关系时降级为 `table`。 |
 | 5 | Walkthrough (强制) | `timeline` | Step-by-step execution with file/function references. Same priority as diagrams — do not fold into accordion. |
 | 6 | **Boundary tree** (强制, 独立顶层节点) | `section` (title: "Boundary Map") 内含 `code-block` | ASCII 调用树：副作用/IO 节点带 `← 注释` + `file:line`；纯逻辑节点省略行号。见 Boundary tree guidance。 |
 | 7 | Blast Radius + Tests/Gaps/Gotchas | `accordion` (2 项) | 项 1 "Blast Radius"：callers, dependents, tests, docs, config (file-tree/table)。项 2 "Tests, Gaps & Gotchas"：Coverage table + callout for gaps + list/card of invariants and traps. |
 | 8 | Grill-me starter | `callout` or `card` | The first question you will ask me after creating the artifact. |
 
-**图注规则（所有 mermaid 图强制）：** 每个 mermaid 图之前必须紧跟两行图注：`heading`（level `h2`，图名）+ 一行 `text`（≤60 字）。
+**图注规则（原有 Mermaid 图强制）：** 每个 `mermaid` 图之前必须紧跟两行图注：`heading`（level `h2`，图名）+ 一行 `text`（≤60 字）。如果选择下面的结构化节点替代 Mermaid，也沿用同样的图注格式。
 
-`text` 必须根据这张图**实际画出的内容**撰写，从该图的 mermaid definition 反推，写"图里有什么"：
+`text` 必须根据这张图**实际画出的内容**撰写，从该图的 Mermaid definition 或结构化 props 反推，写"图里有什么"：
 
 - 3a：概括真实参与者与消息，如 "CLI → PluginManager → FS 同步调用链，箭头标签为传入参数"；
 - 3b：写真实分支，如 "决策树：拦截链放行 / 降级 / 失败回退"；
-- 4a/4b：写真实状态转换或实体关系。
+- 4a/4b：写真实状态转换、实体字段或实体关系。
 
 禁止：
 
@@ -103,7 +103,7 @@ trim the 3b caption first — never cut 3a or Section 6.
 - 在排除句里枚举省略项——"内部分支不在此图"是通用句即可，被省略内容的具体名称由对应图（3b）的正面图注承担；
 - 写 "见 3a/3b" 编号指针（页面上没有可见编号）——跨图指针只允许 "见下方 Logic Diagram"，且仅当 3b 实际产出时写。
 
-图注与图都是独立顶层节点，顺序为 `heading` → `text` → `mermaid`，不允许只丢一个裸 mermaid。每张图 +2 个顶层节点，计入 30 上限；4a/4b 同时产出时各自保留图注（预算紧张时优先合并 3b 图注为一行）。
+图注与图都是独立顶层节点，顺序为 `heading` → `text` → `mermaid`（或明确标识的结构化 diagram node），不允许只丢一个裸图。每张图 +2 个顶层节点，计入 30 上限；4a/4b 同时产出时各自保留图注（预算紧张时优先合并 3b 图注为一行）。
 
 ### Diagram selection guide
 
@@ -135,10 +135,20 @@ Focus on the core decision tree. Skip 3b for linear flows.
 Choose based on what the flow's data actually does:
 
 - Has **lifecycle / state transitions** (enable→disable, pending→active→done) → `stateDiagram-v2`
-- Has **multiple entities with relationships** (Plugin→Settings, Project→Symlink) → `erDiagram`
+- Has **multiple entities with relationships** (Plugin→Settings, Project→Symlink) → `erDiagram`; use `er-diagram` only when the entities, fields, and relationships are already structured as data
 - Has **neither** → fall back to a `table` of key structures
 
 If the flow has both state transitions and entity relationships, produce both 4a and 4b.
+
+### Optional structured diagram alternatives
+
+Keep the original Mermaid sections above as the default. Add these nodes only when the evidence is already structured and the native layout adds information without inventing it:
+
+- `architecture-diagram`: components, groups, boundaries, and verified edges.
+- `layer-diagram`: ordered abstraction, data, security, or governance layers.
+- `er-diagram`: entities, fields, keys, and verified relationships.
+
+For each optional node, use the same `heading` → `text` caption pair and keep it as a direct top-level node. Use Mermaid when the source definition is authoritative or when Mermaid syntax is the clearer representation.
 
 **Section 6 — Boundary tree (强制, 独立顶层节点):**
 
@@ -189,6 +199,37 @@ const spec = {
     { "type": "text", "props": { "text": "状态转换：初始 → Active → Disabled → 终态；无生命周期则用 table 代替。" } },
     { "type": "mermaid", "props": { "definition": "stateDiagram-v2\n  [*] --> Active\n  Active --> Disabled\n  Disabled --> [*]" } },
 
+    // --- Optional additional structured sections (do not replace 3a/3b/4a/4b) ---
+    { "type": "heading", "props": { "text": "Architecture Diagram: 组件与边界", "level": "h2" } },
+    { "type": "text", "props": { "text": "组件、分组、边界和已验证连接；不把未证实的依赖画进图里。" } },
+    { "type": "architecture-diagram", "props": {
+      "nodes": [
+        { "id": "client", "label": "Client", "kind": "external" },
+        { "id": "api", "label": "API", "kind": "service", "focal": true },
+        { "id": "store", "label": "Store", "kind": "store" }
+      ],
+      "groups": [{ "id": "runtime", "label": "Runtime", "members": ["api", "store"] }],
+      "edges": [{ "from": "client", "to": "api", "label": "request" }, { "from": "api", "to": "store", "label": "read/write" }]
+    } },
+    { "type": "heading", "props": { "text": "Entity Diagram: 实体与关系", "level": "h2" } },
+    { "type": "text", "props": { "text": "结构化实体、字段和关系；每条关系都引用已声明的实体 ID。" } },
+    { "type": "er-diagram", "props": {
+      "entities": [
+        { "id": "user", "name": "User", "fields": [{ "name": "id", "type": "string", "key": "PK" }] },
+        { "id": "order", "name": "Order", "fields": [{ "name": "user_id", "type": "string", "key": "FK" }] }
+      ],
+      "relationships": [{ "from": "user", "to": "order", "cardinality": "one-to-many" }]
+    } },
+    { "type": "heading", "props": { "text": "Layer Diagram: 抽象层级", "level": "h2" } },
+    { "type": "text", "props": { "text": "按层展示抽象或治理边界；条目和跨层关系必须来自证据。" } },
+    { "type": "layer-diagram", "props": {
+      "layers": [
+        { "id": "application", "label": "Application", "items": [{ "id": "handler", "label": "Handler", "focal": true }] },
+        { "id": "data", "label": "Data", "items": ["Cache", "Database"] }
+      ],
+      "edges": [{ "from": "handler", "to": "Cache", "label": "lookup" }]
+    } },
+
     // --- Section 5: walkthrough (强制, 独立顶层节点) ---
     { "type": "timeline", "props": { "items": [
       { "step": 1, "title": "<step name>", "description": "<what happens and where>" }
@@ -226,6 +267,49 @@ create_visual_artifact({
 });
 ```
 
+### Additional structured diagram sections (optional)
+
+Keep the original Mermaid sections 3a, 3b, 4a, and 4b unchanged by default. When the evidence is already structured, add a **separate section** for the native diagram instead of replacing the corresponding Mermaid diagram:
+
+- **Architecture section**: `heading` + `text` caption + `architecture-diagram` for components, groups, boundaries, and verified edges.
+- **Entity/data-model section**: `heading` + `text` caption + `er-diagram` for entities, fields, keys, and verified relationships.
+- **Layer section**: `heading` + `text` caption + `layer-diagram` for ordered abstraction, data, security, or governance layers.
+
+Place each additional section as an independent top-level node at the relevant point in the walkthrough. Add it only when it contributes a distinct axis of understanding; do not duplicate a Mermaid graph just to use the new node.
+
+Examples of the diagram node inside its new section:
+
+```json
+{
+  "type": "architecture-diagram",
+  "props": {
+    "nodes": [{ "id": "api", "label": "API", "kind": "service", "focal": true }],
+    "groups": [{ "id": "runtime", "label": "Runtime", "members": ["api"] }],
+    "edges": []
+  }
+}
+```
+
+```json
+{
+  "type": "er-diagram",
+  "props": {
+    "entities": [{ "id": "user", "name": "User", "fields": [{ "name": "id", "key": "PK" }] }],
+    "relationships": []
+  }
+}
+```
+
+```json
+{
+  "type": "layer-diagram",
+  "props": {
+    "layers": [{ "id": "data", "label": "Data", "items": ["Cache", "Database"] }],
+    "edges": []
+  }
+}
+```
+
 ## Visual Artifact and Mermaid rules
 
 - Use Visual Artifact nodes, not standalone HTML.
@@ -234,7 +318,8 @@ create_visual_artifact({
   complexity. Every diagram must be a **top-level node**, never inside an accordion, and must be
   preceded by its caption (`heading` + one-line `text`). 边界树
   (Section 6 `section`) 同样必须独立顶层节点，不进 accordion。
-- **每个 mermaid 图前必须有图注**：`heading`（h2，图名）+ 一行 `text`（≤60 字，根据图的实际内容撰写：写"图里有什么"，禁止模板句、禁止枚举省略项、禁止 "见 3a/3b" 编号指针），然后是 `mermaid`。图注与图都是独立顶层节点，不允许裸 mermaid。
+- **每个 mermaid 图前必须有图注**：`heading`（h2，图名）+ 一行 `text`（≤60 字，根据图的实际内容撰写：写"图里有什么"，禁止模板句、禁止枚举省略项、禁止 "见 3a/3b" 编号指针），然后是 `mermaid`。结构化替代节点也必须使用相同的 caption pair。
+- Native `er-diagram`, `architecture-diagram`, and `layer-diagram` are optional **additional sections**, not replacements for the existing Mermaid sections. Add one only when its structured layout contributes a distinct axis of understanding.
 - Use compact Mermaid diagrams; each diagram should fit on one screen.
 - Always use double-quoted Mermaid labels: `N["label text"]`, not `N[label text]`.
 - Never use parentheses inside unquoted labels.

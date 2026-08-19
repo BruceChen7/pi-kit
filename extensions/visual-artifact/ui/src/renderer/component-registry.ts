@@ -15,7 +15,10 @@ import CardGridAdapter from "./adapters/layout/card-grid.svelte";
 import KpiGridAdapter from "./adapters/layout/kpi-grid.svelte";
 import SectionAdapter from "./adapters/layout/section.svelte";
 import TabsAdapter from "./adapters/layout/tabs.svelte";
+import ArchitectureDiagramAdapter from "./adapters/media/architecture-diagram.svelte";
+import ErDiagramAdapter from "./adapters/media/er-diagram.svelte";
 import ImageAdapter from "./adapters/media/image.svelte";
+import LayerDiagramAdapter from "./adapters/media/layer-diagram.svelte";
 import MermaidAdapter from "./adapters/media/mermaid.svelte";
 import SvgDiagramAdapter from "./adapters/media/svg-diagram.svelte";
 import VideoAdapter from "./adapters/media/video.svelte";
@@ -56,6 +59,9 @@ const registry: Record<string, AdapterComponent> = {
   section: SectionAdapter,
   // media
   mermaid: MermaidAdapter,
+  "er-diagram": ErDiagramAdapter,
+  "architecture-diagram": ArchitectureDiagramAdapter,
+  "layer-diagram": LayerDiagramAdapter,
   "svg-diagram": SvgDiagramAdapter,
   image: ImageAdapter,
   video: VideoAdapter,

@@ -1,6 +1,4 @@
-/**
- * Shared type definitions, resource limits, and validation for VisualArtifactSpec.
- */
+import { validateDiagramProps } from "./diagram-core.ts";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -328,6 +326,109 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
     },
   },
   {
+    type: "er-diagram",
+    label: "ER Diagram",
+    description:
+      "Structured entities, fields, and relationships rendered as SVG.",
+    props: {
+      entities:
+        "{ id: string; name?: string; fields: { name: string; type?: string; key?: 'PK' | 'FK' | 'UK' }[] }[]",
+      relationships:
+        "{ from: string; to: string; label?: string; cardinality?: 'one-to-one' | 'one-to-many' | 'many-to-many' }[]",
+      direction: '"horizontal" | "vertical" (optional)',
+      title: "string (optional)",
+      description: "string (optional)",
+    },
+    example: {
+      type: "er-diagram",
+      props: {
+        entities: [
+          {
+            id: "user",
+            name: "User",
+            fields: [{ name: "id", type: "int", key: "PK" }],
+          },
+          {
+            id: "order",
+            name: "Order",
+            fields: [{ name: "user_id", type: "int", key: "FK" }],
+          },
+        ],
+        relationships: [
+          {
+            from: "user",
+            to: "order",
+            label: "places",
+            cardinality: "one-to-many",
+          },
+        ],
+      },
+    },
+  },
+  {
+    type: "architecture-diagram",
+    label: "Architecture Diagram",
+    description:
+      "Structured components, boundaries, groups, and connections rendered as SVG.",
+    props: {
+      nodes:
+        "{ id: string; label: string; kind?: 'service' | 'store' | 'external' | 'actor' | 'queue' | 'boundary'; sublabel?: string; focal?: boolean }[]",
+      groups: "{ id: string; label: string; members: string[] }[] (optional)",
+      edges:
+        "{ from: string; to: string; label?: string; style?: 'solid' | 'dashed' | 'dotted' }[] (optional)",
+      direction: '"horizontal" | "vertical" (optional)',
+      title: "string (optional)",
+      description: "string (optional)",
+    },
+    example: {
+      type: "architecture-diagram",
+      props: {
+        nodes: [
+          { id: "web", label: "Web app", kind: "service" },
+          { id: "api", label: "API", kind: "service", focal: true },
+          { id: "db", label: "Postgres", kind: "store" },
+        ],
+        edges: [
+          { from: "web", to: "api", label: "HTTPS" },
+          { from: "api", to: "db", label: "SQL" },
+        ],
+      },
+    },
+  },
+  {
+    type: "layer-diagram",
+    label: "Layer Diagram",
+    description:
+      "Ordered abstraction layers with items and optional cross-layer relationships.",
+    props: {
+      layers:
+        "{ id: string; label: string; items: (string | { id: string; label: string; kind?: string; focal?: boolean })[] }[]",
+      edges:
+        "{ from: string; to: string; label?: string; style?: 'solid' | 'dashed' | 'dotted' }[] (optional)",
+      direction: '"vertical" | "horizontal" (optional)',
+      title: "string (optional)",
+      description: "string (optional)",
+    },
+    example: {
+      type: "layer-diagram",
+      props: {
+        layers: [
+          {
+            id: "presentation",
+            label: "Presentation",
+            items: ["Web", "Mobile"],
+          },
+          {
+            id: "application",
+            label: "Application",
+            items: [{ id: "api", label: "API", focal: true }],
+          },
+          { id: "data", label: "Data", items: ["Postgres", "Redis"] },
+        ],
+      },
+    },
+  },
+  {
     type: "log",
     label: "Log",
     description: "Timestamped log lines.",
@@ -540,6 +641,10 @@ const REQUIRED_NODE_PROPS: Record<string, string[]> = {
   "stat-card": ["label", "value"],
   "side-by-side": ["left", "right"],
   "kpi-grid": ["items"],
+  "er-diagram": ["entities"],
+  "architecture-diagram": ["nodes"],
+  "layer-diagram": ["layers"],
+  "svg-diagram": ["svg"],
 };
 
 const LEGACY_PROP_NAMES: Record<string, Record<string, string>> = {
@@ -676,12 +781,27 @@ function validateNodeProps(
       errors.push(`Node "mermaid" requires prop "definition"${suffix}.`);
     }
   }
+
+  if (
+    type === "er-diagram" ||
+    type === "architecture-diagram" ||
+    type === "layer-diagram"
+  ) {
+    for (const diagramError of validateDiagramProps(type, props)) {
+      const diagramPath =
+        diagramError.path === "props" ? "props" : `props.${diagramError.path}`;
+      errors.push(
+        `Node "${type}" ${diagramPath}: ${diagramError.message}${suffix}.`,
+      );
+    }
+  }
 }
 
 function validateNestedNodes(
   props: Record<string, unknown>,
   parentPath: string,
   errors: string[],
+  parentType?: string,
 ): void {
   const validateGroup = (value: unknown, groupPath: string): void => {
     if (!Array.isArray(value)) return;
@@ -690,7 +810,9 @@ function validateNestedNodes(
     }
   };
 
-  validateGroup(props.nodes, `${parentPath}.props.nodes`);
+  if (parentType !== "architecture-diagram") {
+    validateGroup(props.nodes, `${parentPath}.props.nodes`);
+  }
   validateGroup(props.left, `${parentPath}.props.left`);
   validateGroup(props.right, `${parentPath}.props.right`);
 
@@ -737,7 +859,7 @@ function validateNodeTree(
     errors,
     includePath ? path : undefined,
   );
-  validateNestedNodes(value.props, path, errors);
+  validateNestedNodes(value.props, path, errors, value.type);
 }
 
 function _countFileTreeDepth(items: unknown[], currentDepth: number): number {

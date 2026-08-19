@@ -376,6 +376,84 @@ describe("validate", () => {
     }
   });
 
+  it("accepts the three structured diagram node types", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [
+        {
+          type: "er-diagram",
+          props: {
+            entities: [{ id: "user", fields: [{ name: "id", key: "PK" }] }],
+            relationships: [],
+          },
+        },
+        {
+          type: "architecture-diagram",
+          props: {
+            nodes: [{ id: "api", label: "API" }],
+            edges: [],
+          },
+        },
+        {
+          type: "layer-diagram",
+          props: {
+            layers: [{ id: "app", label: "Application", items: ["API"] }],
+          },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("reports structured diagram reference errors with node paths", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [
+        {
+          type: "architecture-diagram",
+          props: {
+            nodes: [{ id: "api", label: "API" }],
+            edges: [{ from: "api", to: "missing" }],
+          },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.errors).toContain(
+        'Node "architecture-diagram" props.edges[0].to: unknown node "missing".',
+      );
+    }
+  });
+
+  it("registers the structured diagram nodes in the agent-facing catalog", () => {
+    for (const type of [
+      "er-diagram",
+      "architecture-diagram",
+      "layer-diagram",
+    ]) {
+      expect(
+        NODE_TYPE_CATALOG.find((entry) => entry.type === type),
+      ).toBeDefined();
+    }
+  });
+
+  it("requires canonical svg props for svg-diagram nodes", () => {
+    const result = validate({
+      ...minimalValidSpec,
+      nodes: [{ type: "svg-diagram", props: { html: "<svg></svg>" } }],
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.errors).toContain(
+        'Node "svg-diagram" requires prop "svg".',
+      );
+    }
+  });
+
   it("accepts a calldiff-callflow node with no props (all optional)", () => {
     const result = validate({
       ...minimalValidSpec,

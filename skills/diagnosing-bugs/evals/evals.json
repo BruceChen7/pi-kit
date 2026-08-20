@@ -1,0 +1,50 @@
+{
+  "skill_name": "diagnosing-bugs",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "On macOS I run a terminal multiplexer inside Ghostty. Mouse selection shows ‘copied to clipboard’, Cmd+V pastes the selected text, and pbpaste returns it, but Raycast Clipboard History cannot find a brand-new test token. Normal Cmd+C in Ghostty and `printf manual-token | pbcopy` both appear in Raycast. Ignore Apps is empty. Please investigate the root cause; do not patch the multiplexer until you can prove which component owns the failure.",
+      "expected_output": "A disciplined diagnosis plan that treats the general pasteboard as a shared multi-process boundary, captures ordered changes and semantic types with a privacy-safe sidecar observer, correlates process/OS evidence, ranks falsifiable hypotheses, and confirms the later writer with a reversible one-actor A/B run before assigning fix ownership.",
+      "files": [],
+      "expectations": [
+        "Defines the exact red signal as missing clipboard-history persistence rather than merely failed pasteboard text writes.",
+        "Proposes a read-only, timestamped observer of pasteboard change counters, semantic types or flags, byte length, and a hash instead of dumping clipboard contents.",
+        "Compares the mouse-selection failure with equivalent working Cmd+C or manual pbcopy paths using unique benign tokens.",
+        "Looks for a second writer or same-payload rewrite and correlates it with independent OS/process evidence.",
+        "Generates ranked falsifiable hypotheses before changing or disabling software.",
+        "Requests consent and disables or excludes exactly one suspected external actor for a repeatable A/B confirmation.",
+        "Rechecks Raycast history and restores external applications or temporary monitors during cleanup without proposing a racing multiplexer rewrite."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "A CLI command updates `~/.config/acme/config.toml` to `feature.enabled = true` and logs success. Reading the file immediately shows true, but 300–900 ms later it is back to false. This machine has several launch agents and editor plugins that watch the config directory. Help me identify the real writer. Do not add retries or a delayed rewrite to the CLI as a workaround.",
+      "expected_output": "A minimal shared-file boundary investigation that observes the sequence of file changes, hashes and metadata; captures process attribution from independent OS evidence; compares a clean working path to the failing watcher path; and confirms one writer through reversible isolation before choosing a fix boundary.",
+      "files": [],
+      "expectations": [
+        "Defines a red-capable loop that asserts the later reversion, not only the CLI's successful initial write.",
+        "Proposes observing ordered filesystem transitions with timestamps, event or inode metadata, byte length, and content hashes.",
+        "Uses a unique benign value and compares working and failing timelines while changing one trigger at a time.",
+        "Correlates the observer with process-aware evidence such as filesystem tracing, open files, launch agents, or watcher logs.",
+        "Ranks multiple falsifiable hypotheses rather than blaming the first watcher found.",
+        "Confirms attribution by pausing or excluding one watcher with user consent and repeating the same trigger.",
+        "Rejects retries or delayed competing writes and includes restoration and temporary-artifact cleanup."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "The `/api/preferences` response is correct and contains `compactMode: true`, and our React state initially renders true. About 300 ms later the DOM flips to the expanded layout, but only in my normal Chrome profile; a clean profile works. Several extensions inject scripts. Give me a root-cause investigation plan before touching application state management.",
+      "expected_output": "A cross-boundary browser investigation that observes the post-response DOM/state transition, timestamps extension or injected-script activity, compares clean and failing profiles, protects user data, and isolates one extension or actor at a time before assigning ownership.",
+      "files": [],
+      "expectations": [
+        "Defines the red signal as the later DOM/layout mutation after a correct response and initial render.",
+        "Proposes a read-only browser-side observer or trace that records ordered DOM/state mutations, timestamps, actor context where available, and privacy-safe fingerprints.",
+        "Compares equivalent unique test inputs in the normal and clean profiles.",
+        "Correlates mutation evidence with independent extension, injected-script, console, performance, or browser process evidence.",
+        "Produces ranked falsifiable hypotheses before changing application code.",
+        "Disables one extension or actor at a time and repeats the identical trigger to confirm causality.",
+        "Rechecks the user-visible layout and restores the browser profile or extension state while removing temporary instrumentation."
+      ]
+    }
+  ]
+}

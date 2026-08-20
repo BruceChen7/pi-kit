@@ -67,10 +67,11 @@ Spend disproportionate effort here. **Be aggressive. Be creative. Refuse to give
 4. **Headless browser script** (Playwright / Puppeteer) — drives the UI, asserts on DOM/console/network.
 5. **Replay a captured trace.** Save a real network request / payload / event log to disk; replay it through the code path in isolation.
 6. **Throwaway harness.** Spin up a minimal subset of the system (one service, mocked deps) that exercises the bug code path with a single function call.
-7. **Property / fuzz loop.** If the bug is "sometimes wrong output", run 1000 random inputs and look for the failure mode.
-8. **Bisection harness.** If the bug appeared between two known states (commit, dataset, version), automate "boot at state X, check, repeat" so you can `git bisect run` it.
-9. **Differential loop.** Run the same input through old-version vs new-version (or two configs) and diff outputs.
-10. **HITL bash script.** Last resort. If a human must click, drive *them* with a structured script so the loop is still repeatable. Captured output feeds back to you.
+7. **Sidecar observer program.** When product logs stop at an OS/GUI/third-party boundary, observe the shared state from a small read-only process. Capture ordered transitions, semantic metadata, actor context, and privacy-safe hashes; see [sidecar-observer-sop.md](sidecar-observer-sop.md).
+8. **Property / fuzz loop.** If the bug is "sometimes wrong output", run 1000 random inputs and look for the failure mode.
+9. **Bisection harness.** If the bug appeared between two known states (commit, dataset, version), automate "boot at state X, check, repeat" so you can `git bisect run` it.
+10. **Differential loop.** Run the same input through old-version vs new-version (or two configs) and diff outputs.
+11. **HITL bash script.** Last resort. If a human must click, drive *them* with a structured script so the loop is still repeatable. Captured output feeds back to you.
 
 Build the right feedback loop, and the bug is 90% fixed.
 
@@ -141,6 +142,7 @@ Before forming hypotheses, look for patterns:
 2. **Compare Against References** — if implementing a known pattern, read the reference implementation completely. Don't skim — read every line. Understand the pattern fully before applying.
 3. **Identify Differences** — what's different between working and broken? List every difference, however small. Don't assume "that can't matter."
 4. **Trace Data Flow** — where does the bad value originate? What called this with a bad value? Keep tracing up until you find the source. See [root-cause-tracing.md](root-cause-tracing.md) for the complete backward tracing technique.
+5. **Compare Transitions, Not Only Snapshots** — at shared OS/GUI boundaries, compare sequence counters, timestamps, semantic types/flags, and payload hashes. The final bytes can be correct even when a later writer changed how downstream consumers interpret them.
 
 ---
 
@@ -169,6 +171,10 @@ Tool preference:
 3. Never "log everything and grep".
 
 **Tag every debug log** with a unique prefix, e.g. `[DEBUG-a4f2]`. Cleanup at the end becomes a single grep. Untagged logs survive; tagged logs die.
+
+**Cross-process boundary branch.** If the suspected behavior leaves the product process, instrument the shared boundary before modifying product code. Use a read-only sidecar observer that records ordered state changes, semantic metadata, actor context, byte counts, and hashes rather than sensitive payloads. Correlate it with independent OS/process evidence, then confirm attribution by disabling exactly one external actor with user consent. Follow [sidecar-observer-sop.md](sidecar-observer-sop.md).
+
+A single final-state read is not enough when another process can rewrite the same payload with different metadata or within a consumer's polling window.
 
 **Perf branch.** For performance regressions, logs are usually wrong. Instead: establish a baseline measurement (timing harness, `performance.now()`, profiler, query plan), then bisect. Measure first, fix second.
 
@@ -204,7 +210,8 @@ Required before declaring done:
 - [ ] Original repro no longer reproduces (re-run the Phase 1 loop)
 - [ ] Regression test passes (or absence of seam is documented)
 - [ ] All `[DEBUG-...]` instrumentation removed (`grep` the prefix)
-- [ ] Throwaway prototypes deleted (or moved to a clearly-marked debug location)
+- [ ] Throwaway prototypes, observer source/binaries, PID files, and logs deleted (or moved to a clearly-marked debug location)
+- [ ] External applications/processes paused or quit for A/B testing restored, or the user is explicitly told what remains changed
 - [ ] The hypothesis that turned out correct is stated in the commit / PR message — so the next debugger learns
 
 **Then ask: what would have prevented this bug?** If the answer involves architectural change (no good test seam, tangled callers, hidden coupling) hand off to `/improve-codebase-architecture` with the specifics. Make the recommendation **after** the fix is in, not before — you have more information now than when you started.
@@ -239,6 +246,8 @@ This skill's directory includes:
 
 - **[root-cause-tracing.md](root-cause-tracing.md)** — Trace bugs backward through the call stack to find the original trigger.
 - **[defense-in-depth.md](defense-in-depth.md)** — Add validation at multiple layers after finding root cause.
+- **[sidecar-observer-sop.md](sidecar-observer-sop.md)** — Build a privacy-safe, read-only observer for OS/GUI/third-party boundaries; compare timelines, identify later writers, and confirm with controlled A/B isolation.
+- **[evals/evals.json](evals/evals.json)** — Maintenance-only regression prompts for this skill. Do not load during normal bug diagnosis.
 
 ## Quick Reference
 

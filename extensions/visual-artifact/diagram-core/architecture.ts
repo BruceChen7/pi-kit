@@ -1,26 +1,24 @@
 import {
+  layoutArchitectureDiagram,
+  orthogonalPath,
+} from "./layout/architecture.ts";
+import {
   type ArchitectureDiagramInput,
   type ArchitectureEdge,
   type ArchitectureGroup,
   type ArchitectureNode,
   arrowMarker,
-  type Box,
   baseSvg,
   COLORS,
   type DiagramError,
   type DiagramRenderOptions,
   type DiagramResult,
-  edgeLabelPoint,
   edgeMarkup,
-  edgePath,
   error,
-  escapeXml,
   isRecord,
-  label,
   MAX_ARCHITECTURE_NODES,
   nodeArray,
   parseDirection,
-  positionInGrid,
   rect,
   resultFromErrors,
   stringValue,
@@ -147,143 +145,37 @@ function architectureNodeStyle(kind: ArchitectureNode["kind"]): string {
   return "";
 }
 
-export function renderArchitectureDiagram(
-  props: unknown,
-  options: DiagramRenderOptions = {},
+function renderArchitectureLayout(
+  input: ArchitectureDiagramInput,
+  direction: "horizontal" | "vertical",
+  options: DiagramRenderOptions,
 ): DiagramResult {
-  const parsed = parseArchitectureInput(props);
-  if (parsed.errors.length > 0 || !parsed.input)
-    return resultFromErrors(parsed.errors);
-  const input = parsed.input;
-  const direction = input.direction ?? options.direction ?? "horizontal";
-  const groups = input.groups ?? [];
-  const groupedIds = new Set(groups.flatMap((group) => group.members));
-  const ungrouped = input.nodes.filter((node) => !groupedIds.has(node.id));
-  const horizontalWithGroups =
-    direction === "horizontal" && groups.length > 0 && ungrouped.length > 0;
-  // Leave a real routing lane between external nodes and grouped content.
-  // Edge labels are rendered inside this lane, so a narrow gap makes their
-  // background collide with both node borders (and becomes especially noisy
-  // after the SVG is scaled to a wide viewport).
-  const externalLaneWidth = 96;
-  const groupOriginX = horizontalWithGroups ? 24 + 220 + externalLaneWidth : 24;
-  const groupBoxes = positionInGrid(
-    groups,
-    direction === "vertical" ? 1 : Math.min(2, Math.max(1, groups.length)),
-    300,
-    148,
-    52,
-    42,
-    groupOriginX,
-    62,
+  const idPrefix = options.idPrefix ?? "architecture";
+  const layout = layoutArchitectureDiagram(
+    input,
+    direction,
+    undefined,
+    idPrefix,
   );
-  const nodeBoxes = new Map<string, Box>();
-  let maxGroupBottom = 0;
-  let maxGroupRight = 0;
-  let groupBody = "";
-  for (const { item: group, box } of groupBoxes) {
-    const members = group.members
-      .map((member) => input.nodes.find((node) => node.id === member))
-      .filter((node): node is ArchitectureNode => Boolean(node));
-    const memberPositions = positionInGrid(
-      members,
-      1,
-      244,
-      48,
-      0,
-      28,
-      box.x + 28,
-      box.y + 46,
-    );
-    const lastMember = memberPositions.at(-1)?.box;
-    const groupHeight = Math.max(
-      box.height,
-      lastMember ? lastMember.y + lastMember.height - box.y + 28 : 0,
-    );
-    const groupBox = { ...box, height: groupHeight };
-    maxGroupBottom = Math.max(maxGroupBottom, groupBox.y + groupBox.height);
-    maxGroupRight = Math.max(maxGroupRight, groupBox.x + groupBox.width);
-    groupBody += `<rect x="${groupBox.x}" y="${groupBox.y}" width="${groupBox.width}" height="${groupBox.height}" rx="12" fill="${COLORS.mutedTint}" stroke="${COLORS.border}" stroke-dasharray="6 5"/><text x="${groupBox.x + 18}" y="${groupBox.y + 24}" class="eyebrow">${escapeXml(label(group.label, 32))}</text>`;
-    for (const { item: node, box: memberBox } of memberPositions)
-      nodeBoxes.set(node.id, memberBox);
+  let body = arrowMarker(`${idPrefix}-edge`);
+  for (const group of input.groups ?? []) {
+    const box = layout.groups.get(group.id);
+    if (!box) continue;
+    body += `<rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="12" fill="${COLORS.mutedTint}" stroke="${COLORS.border}" stroke-dasharray="6 5"/>`;
+    body += text(box.x + 18, box.y + 25, group.label, "eyebrow");
   }
-
-  if (horizontalWithGroups) {
-    const outgoing = new Set(
-      (input.edges ?? []).filter((edge) => edge.from).map((edge) => edge.from),
-    );
-    const incoming = new Set(
-      (input.edges ?? []).filter((edge) => edge.to).map((edge) => edge.to),
-    );
-    const leftNodes: ArchitectureNode[] = [];
-    const rightNodes: ArchitectureNode[] = [];
-    for (const [index, node] of ungrouped.entries()) {
-      if (outgoing.has(node.id) && !incoming.has(node.id)) {
-        leftNodes.push(node);
-      } else if (incoming.has(node.id) && !outgoing.has(node.id)) {
-        rightNodes.push(node);
-      } else if (index % 2 === 0) {
-        leftNodes.push(node);
-      } else {
-        rightNodes.push(node);
-      }
-    }
-    const placeExternal = (nodes: ArchitectureNode[], x: number): void => {
-      for (const [index, node] of nodes.entries()) {
-        nodeBoxes.set(node.id, {
-          x,
-          y: 104 + index * 96,
-          width: 220,
-          height: 64,
-        });
-      }
-    };
-    placeExternal(leftNodes, 24);
-    placeExternal(rightNodes, maxGroupRight + externalLaneWidth);
-  } else {
-    const ungroupedPositions = positionInGrid(
-      ungrouped,
-      direction === "vertical" ? 1 : 3,
-      220,
-      58,
-      28,
-      28,
-      24,
-      groupBoxes.length > 0 ? maxGroupBottom + 44 : 62,
-    );
-    for (const { item: node, box } of ungroupedPositions)
-      nodeBoxes.set(node.id, box);
-  }
-  const allBoxes = [...nodeBoxes.values()];
-  const width = Math.max(
-    420,
-    (allBoxes.length
-      ? Math.max(...allBoxes.map((box) => box.x + box.width))
-      : 380) + 28,
-  );
-  const height = Math.max(
-    180,
-    (allBoxes.length
-      ? Math.max(...allBoxes.map((box) => box.y + box.height))
-      : 150) + 28,
-  );
-  let body =
-    arrowMarker(`${options.idPrefix ?? "architecture"}-edge`) + groupBody;
-  for (const edge of input.edges ?? []) {
-    const from = nodeBoxes.get(edge.from);
-    const to = nodeBoxes.get(edge.to);
-    if (!from || !to) continue;
+  for (const [index, edge] of layout.edges.entries()) {
     body += edgeMarkup(
-      edgePath(from, to, direction),
-      `${options.idPrefix ?? "architecture"}-${edge.from}-${edge.to}`,
-      edge.label,
-      edge.style,
-      `${options.idPrefix ?? "architecture"}-edge`,
-      edgeLabelPoint(from, to, direction),
+      orthogonalPath(edge.points),
+      `${idPrefix}-${edge.source.from}-${edge.source.to}-${index}`,
+      edge.label?.text,
+      edge.source.style,
+      `${idPrefix}-edge`,
+      edge.label?.point,
     );
   }
   for (const node of input.nodes) {
-    const box = nodeBoxes.get(node.id);
+    const box = layout.nodes.get(node.id);
     if (!box) continue;
     body += rect(
       box,
@@ -296,27 +188,40 @@ export function renderArchitectureDiagram(
       "eyebrow",
       "end",
     );
-    body += text(box.x + 14, box.y + (node.sublabel ? 28 : 35), node.label);
+    body += text(box.x + 14, box.y + (node.sublabel ? 30 : 35), node.label);
     if (node.sublabel)
-      body += text(box.x + 14, box.y + 44, node.sublabel, "sub");
+      body += text(box.x + 14, box.y + 50, node.sublabel, "sub");
   }
   return {
     ok: true,
     value: {
       svg: baseSvg(
-        options.idPrefix ?? "architecture-diagram",
+        idPrefix,
         input.title ?? options.title ?? "Architecture diagram",
         input.description ??
           options.description ??
           "Components, boundaries, and connections.",
-        width,
-        height,
+        Math.ceil(layout.bounds.width),
+        Math.ceil(layout.bounds.height),
         body,
       ),
-      width,
-      height,
+      width: Math.ceil(layout.bounds.width),
+      height: Math.ceil(layout.bounds.height),
+      warnings: layout.warnings,
     },
   };
+}
+
+export function renderArchitectureDiagram(
+  props: unknown,
+  options: DiagramRenderOptions = {},
+): DiagramResult {
+  const parsed = parseArchitectureInput(props);
+  if (parsed.errors.length > 0 || !parsed.input)
+    return resultFromErrors(parsed.errors);
+  const input = parsed.input;
+  const direction = input.direction ?? options.direction ?? "horizontal";
+  return renderArchitectureLayout(input, direction, options);
 }
 
 export function validateArchitectureProps(props: unknown): DiagramError[] {

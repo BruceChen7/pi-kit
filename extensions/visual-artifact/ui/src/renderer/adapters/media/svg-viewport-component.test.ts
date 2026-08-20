@@ -39,12 +39,12 @@ describe("SvgViewport diagram mount", () => {
     // contract lives in svg-viewport.ts and is covered by svg-viewport.test.ts
     // (fitBoundsToContainer and friends). These source assertions only guard
     // the shell's two DOM decisions against accidental regression:
-    // 1) measure the fit against the SVG mount rather than the outer card,
-    //    because the mount reserves the toolbar-safe gutter (pr-14);
-    // 2) keep that gutter on the mount wrapper.
+    // 1) measure the fit against the SVG mount rather than the outer card;
+    // 2) keep the toolbar in a separate grid column.
     const source = await readFile(componentPath, "utf8");
 
-    expect(source).toContain('class="h-full w-full box-border pr-14"');
+    expect(source).toContain("grid-cols-[minmax(0,1fr)_2.75rem] gap-2");
+    expect(source).toContain("justify-self-end");
     expect(source).toContain("const rect = svgEl.getBoundingClientRect()");
   });
 });

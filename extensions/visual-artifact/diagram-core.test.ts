@@ -101,6 +101,7 @@ describe("diagram core", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok === false) return;
+    expect(result.value.warnings).toEqual([]);
 
     const rects = [
       ...result.value.svg.matchAll(
@@ -116,8 +117,8 @@ describe("diagram core", () => {
     const group = rects.find((rect) =>
       rect.markup.includes('stroke-dasharray="6 5"'),
     );
-    const external = rects.filter(
-      (rect) => rect.width === 220 && rect.height === 64,
+    const external = rects.filter((rect) =>
+      rect.markup.includes('stroke-dasharray="5 4"'),
     );
 
     expect(group).toBeDefined();
@@ -188,28 +189,28 @@ describe("diagram core", () => {
     ).at(0);
     const members = boxesFrom(
       result.value.svg,
-      (m) => m.includes('width="244"') && m.includes('height="48"'),
+      (m) => m.includes('rx="8"') && !m.includes('stroke-dasharray="5 4"'),
     );
-    const externals = boxesFrom(
-      result.value.svg,
-      (m) => m.includes('width="220"') && m.includes('stroke-dasharray="5 4"'),
+    const externals = boxesFrom(result.value.svg, (m) =>
+      m.includes('stroke-dasharray="5 4"'),
     );
     const edgeLabels = boxesFrom(result.value.svg, (m) => m.includes('rx="3"'));
 
     expect(group).toBeDefined();
     expect(members).toHaveLength(4);
     expect(externals).toHaveLength(2);
+    if (!group) return;
 
     // The group box encloses every member row, and members leave routing
     // lanes (28px gap) between adjacent rows.
     for (const member of members) {
-      expect(member.x).toBeGreaterThanOrEqual(group!.x);
-      expect(member.y).toBeGreaterThanOrEqual(group!.y);
+      expect(member.x).toBeGreaterThanOrEqual(group.x);
+      expect(member.y).toBeGreaterThanOrEqual(group.y);
       expect(member.x + member.width).toBeLessThanOrEqual(
-        group!.x + group!.width,
+        group.x + group.width,
       );
       expect(member.y + member.height).toBeLessThanOrEqual(
-        group!.y + group!.height,
+        group.y + group.height,
       );
     }
     const sortedByY = [...members].sort((a, b) => a.y - b.y);

@@ -1,216 +1,69 @@
-// # btw — Side Conversations for pi
+// # btw — Side Conversations for pi（pi-btw 思路重构版）
 //
-// A pi extension that lets you have a separate, parallel conversation
-// with the LLM while the main agent is working. Think of it as
-// whispering to an assistant without interrupting the one doing the
-// actual work.
+// `/btw` 在 pi 的 TUI 里开一个 top-center overlay，问一个「旁边」的问题，
+// 不打断主 agent。侧 agent 是一个真实 in-memory、只读（read/grep/find/ls）
+// 的 AgentSession 子会话，seed 了主会话的消息，可从当前 repo 查证后回答。
 //
-// ## Why?
+// 架构（Functional Core, Imperative Shell）：
+//   core.ts     纯逻辑：线程选中/裁剪/格式化（无 IO、无 TUI）
+//   session.ts  壳：子会话 boot/seed/dispose（唯一的会话副作用出口）
+//   overlay.ts  展示：top-center overlay 组件（移植自 L2ncE/pi-btw）
+//   index.ts    壳：命令/快捷键注册、编排、reset 生命周期
 //
-// When pi is in the middle of a long task, you often want to:
-// - Ask clarifying questions about what it's doing
-// - Think through next steps or plan ahead
-// - Get a quick answer without derailing the main session
+// 命令：
+//   /btw <q>          发起侧问（无参则仅打开 overlay）
+//   /btw:new [q]      开新线程（dispose 子会话 + 清空历史），可选直接问
+//   /btw:clear        关闭 overlay + 清空线程
+//   /btw:inject [指令] 把整个 btw 线程作为 followUp 注入主 agent，然后重置
+//   /btw:summarize [指令] 用 fast 模型摘要后注入主 agent，然后重置
 //
-// `/btw` gives you a side channel for all of this. The main agent never
-// sees your side conversation — it keeps working undisturbed.
+// 交互（overlay）：Enter 追问 · Esc 中止/关闭 · c 复制 · ←→ 历史 · ↑↓ 滚动 ·
+//                 alt+/（或 ctrl+alt+w）切回主编辑。
 //
-// ## Commands
-//
-// | Command | Description |
-// |---------|-------------|
-// | `/btw <message>` | Send a message in the side conversation. Streams
-// the response in a widget above the editor. Works while the agent is
-// running. |
-// | `/btw:new [message]` | Start a fresh side thread. Optionally kick
-// it off with a message. Clears the previous thread. |
-// | `/btw:clear` | Dismiss the widget and clear the current thread. |
-// | `/btw:inject [instructions]` | Inject the full btw thread into the
-// main agent's context as a user message. Optionally add instructions
-// like "implement this plan". Clears the widget after. |
-// | `/btw:summarize [instructions]` | Summarize the btw thread via LLM,
-// then inject the summary into the main agent's context. Lighter weight
-// than full inject. Clears the widget after. |
-//
-// ## How it works
-//
-// ### Side conversation
-//
-// Each `/btw` call builds context from:
-// 1. **Main session messages** — the current branch conversation (user
-// + assistant messages)
-// 2. **Previous btw thread** — all prior btw exchanges in the current
-// thread
-//
-// The btw agent sees everything the main agent has done, plus your
-// ongoing side conversation. A system prompt tells it this is an aside
-// — it won't try to pick up or continue unfinished work from the main
-// session.
-//
-// The response streams in a compact widget above the editor using the
-// strong model profile. The widget shows only the latest exchange by
-// default. When collapsed, it keeps the header and shows the tail of
-// the latest response so streaming progress stays visible; press
-// ctrl+shift+b to expand/collapse it.
-//
-// ### Continuous threads
-//
-// The btw thread is continuous by default. Each `/btw` call sees all
-// prior btw Q&As, so you can have a multi-turn side conversation. Use
-// `/btw:new` to start fresh.
-//
-// ### Bringing context back
-//
-// When you've worked something out in the side conversation and want
-// the main agent to act on it:
-// - `/btw:inject` — sends the full thread verbatim as a user message
-// (delivered as a follow-up after the agent finishes)
-// - `/btw:summarize` — LLM-summarizes the thread first (using the fast
-// model profile), then injects the summary
-// - Both accept optional instructions: `/btw:inject implement the auth
-// plan we discussed`
-// - Both clear the widget and reset the thread after injecting
-//
-// ### Persistence
-//
-// - Btw entries (question, thinking, answer, model) are persisted in
-// the session file via `appendEntry`
-// - These are `custom` entries — invisible to the TUI conversation
-// thread and the main agent's context
-// - Thread reset markers (`btw-reset`) are also persisted, so
-// `/btw:clear`, `/btw:new`, `/btw:inject`, and `/btw:summarize` resets
-// survive restarts
-// - On session restore, the widget reappears with the active thread if
-// one exists
-// - In-memory thread state (`pendingBtwThread`) tracks completed
-// exchanges for continuity between `/btw` calls before they're
-// persisted, so rapid-fire btw calls during a single agent run see each
-// other's results
-//
-// ### Widget
-//
-// - Renders above the editor as a compact left-rail transcript
-// - Shows only the latest exchange by default
-// - Collapsed mode keeps the header plus the tail of long responses
-// - Press ctrl+shift+b to expand/collapse long responses
-// - User messages shown with green `›` prefix
-// - Thinking content shown in dim italic
-// - Streaming cursor `▍` shown while thinking or answering
-// - Status line shown at bottom of widget during `/btw:summarize`
-// - `/btw:clear` to dismiss and reset thread
-//
-// ## Architecture
-//
-// ```
-// ┌─────────────────────────────────────────────┐
-// │ Main pi session                             │
-// │  User ↔ Agent (read, bash, edit, write...)  │
-// │                                             │
-// │  /btw fires a separate streamSimple() call  │
-// │  using the strong model profile,            │
-// │  conversation context + a system prompt     │
-// │  that frames it as an aside conversation    │
-// │                                             │
-// │  btw responses stream into a widget         │
-// │  above the editor — never enter the main    │
-// │  agent's context                            │
-// │                                             │
-// │  /btw:inject or /btw:summarize sends the    │
-// │  btw thread to the main agent via           │
-// │  sendUserMessage (deliverAs: "followUp")    │
-// │  then resets the thread                     │
-// └─────────────────────────────────────────────┘
-// ```
-//
-// ## Session storage
-//
-// Btw uses two custom entry types in the session JSONL:
-// - `btw` — stores `{ question, thinking, answer, model }` for each
-// completed exchange
-// - `btw-reset` — stores `{ timestamp }` to mark thread boundaries
-//
-// These are `custom` entries (not `custom_message`), so they don't
-// appear in the TUI conversation or the agent's LLM context.
+// 持久化：无（纯内存）。重启 / reload 即清——因侧对话是旁支，不值得落盘。
 
 import type {
   Api,
-  Message,
   Model,
   ProviderHeaders,
   ThinkingLevel,
-  Usage,
 } from "@earendil-works/pi-ai";
-import { completeSimple, streamSimple } from "@earendil-works/pi-ai/compat";
-import type {
-  ExtensionAPI,
-  ExtensionContext,
+import { contentText } from "@earendil-works/pi-ai";
+import {
+  completeSimple,
+  type SimpleStreamOptions,
+} from "@earendil-works/pi-ai/compat";
+import {
+  type AgentSession,
+  copyToClipboard,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import {
+  type BtwActive,
+  type BtwExchange,
+  capHistory,
+  currentSelection,
+  extractTextContent,
+  formatInjectedPayload,
+  formatThread,
+  getErrorMessage,
+} from "./core.ts";
+import { type BtwOverlayCallbacks, BtwOverlayComponent } from "./overlay.ts";
+import {
+  type AgentSessionEvent,
+  bootBtwSession,
+  disposeBtwSession,
+  reSyncBtwSession,
+} from "./session.ts";
 
-interface BtwDetails {
-  question: string;
-  thinking: string;
-  answer: string;
-  model: string;
-}
+// ── 摘要模型（fast profile，仅 summarize 使用）─────────────────────
 
-interface BtwSlot {
-  question: string;
-  model: string;
-  thinking: string;
-  answer: string;
-  done: boolean;
-}
-
-type TextContent = {
-  type: "text";
-  text: string;
-};
-
-type SessionMessage = {
-  role?: string;
-  content?: unknown;
-  model?: string;
-  provider?: string;
-  api?: string;
-  usage?: Usage;
-  timestamp?: number;
-};
-
-type BranchEntry = {
-  type: string;
-  timestamp: string;
-  customType?: string;
-  data?: unknown;
-  message?: SessionMessage;
-};
-
-const BTW_TYPE = "btw";
-
-type ModelProfileName = "fast" | "strong" | "deep";
-
-type ModelProfile = {
-  provider: string;
-  id: string;
-  reasoning: ThinkingLevel;
-};
-
-const MODEL_PROFILES: Record<ModelProfileName, ModelProfile> = {
-  fast: {
-    provider: "google",
-    id: "gemini-flash-lite-latest",
-    reasoning: "low",
-  },
-  strong: {
-    provider: "openai",
-    id: "gpt-5.3-codex",
-    reasoning: "medium",
-  },
-  deep: {
-    provider: "openai",
-    id: "gpt-5.5",
-    reasoning: "xhigh",
-  },
+const FAST_PROFILE = {
+  provider: "google",
+  id: "gemini-flash-lite-latest",
+  reasoning: "low" as ThinkingLevel,
 };
 
 type ModelAuth = {
@@ -218,54 +71,11 @@ type ModelAuth = {
   headers?: ProviderHeaders;
 };
 
-type ResolvedModelProfile = {
-  name: ModelProfileName;
-  source: "profile" | "active";
+type SummaryModel = {
   model: Model<Api>;
-  auth: ModelAuth;
-  options: ModelAuth & { reasoning?: ThinkingLevel };
+  label: string;
+  options: SimpleStreamOptions;
 };
-
-function describeModelProfile(profile: ResolvedModelProfile): string {
-  const model = `${profile.model.provider}/${profile.model.id}`;
-  return profile.source === "profile"
-    ? `${profile.name}: ${model}`
-    : `active: ${model}`;
-}
-
-async function getModelProfile(
-  ctx: ExtensionContext,
-  name: ModelProfileName,
-): Promise<ResolvedModelProfile | undefined> {
-  const profile = MODEL_PROFILES[name];
-  const profileModel = ctx.modelRegistry.find(profile.provider, profile.id);
-
-  if (profileModel) {
-    const auth = await getModelAuth(ctx, profileModel);
-    if (auth) {
-      return {
-        name,
-        source: "profile",
-        model: profileModel,
-        auth,
-        options: { ...auth, reasoning: profile.reasoning },
-      };
-    }
-  }
-
-  if (!ctx.model) return undefined;
-
-  const auth = await getModelAuth(ctx, ctx.model);
-  if (!auth) return undefined;
-
-  return {
-    name,
-    source: "active",
-    model: ctx.model,
-    auth,
-    options: auth,
-  };
-}
 
 async function getModelAuth(
   ctx: ExtensionContext,
@@ -276,441 +86,345 @@ async function getModelAuth(
   return { apiKey: auth.apiKey, headers: auth.headers };
 }
 
-const emptyUsage = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
-
-function asBranchEntry(entry: unknown): BranchEntry | undefined {
-  if (!entry || typeof entry !== "object") return undefined;
-  return entry as BranchEntry;
-}
-
-function asBtwDetails(data: unknown): BtwDetails | undefined {
-  if (!data || typeof data !== "object") return undefined;
-  const details = data as Partial<BtwDetails>;
-  if (typeof details.question !== "string") return undefined;
-  if (typeof details.answer !== "string") return undefined;
-  return {
-    question: details.question,
-    thinking: typeof details.thinking === "string" ? details.thinking : "",
-    answer: details.answer,
-    model: typeof details.model === "string" ? details.model : "unknown",
-  };
-}
-
-function isTextContent(content: unknown): content is TextContent {
-  if (!content || typeof content !== "object") return false;
-  const textContent = content as TextContent;
-  return textContent.type === "text" && typeof textContent.text === "string";
-}
-
-function extractTextContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .filter(isTextContent)
-    .map((c) => c.text)
-    .join("\n");
-}
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
-
-/**
- * /btw <question>      — Side conversation, streams answer in a widget
- * /btw:new <question>   — Fresh btw thread
- * /btw:clear            — Dismiss the widget
- * /btw:inject [msg]     — Inject full btw thread into main agent context
- * /btw:summarize [msg]  — Summarize btw thread and inject into main agent context
- */
-export default function (pi: ExtensionAPI) {
-  let btwThreadStart = 0;
-  const pendingBtwThread: BtwDetails[] = [];
-
-  // Active widget slots — each /btw call gets one, streams into it
-  const slots: BtwSlot[] = [];
-  let widgetStatus: string | null = null;
-  let widgetExpanded = false;
-
-  const COLLAPSED_MAX_LINES = 10;
-
-  // ── Restore state from session on reload/restart ─────────────────
-
-  const BTW_RESET_TYPE = "btw-reset";
-
-  pi.on("session_start", async (_event, ctx) => {
-    pendingBtwThread.length = 0;
-    slots.length = 0;
-    btwThreadStart = 0;
-
-    // Find the latest reset marker to know which btw entries are active
-    for (const rawEntry of ctx.sessionManager.getBranch()) {
-      const entry = asBranchEntry(rawEntry);
-      if (entry?.type !== "custom" || entry.customType !== BTW_RESET_TYPE) {
-        continue;
-      }
-      const data = entry.data as { timestamp?: number } | undefined;
-      btwThreadStart = data?.timestamp ?? 0;
+async function resolveSummaryModel(
+  ctx: ExtensionContext,
+): Promise<SummaryModel | undefined> {
+  const fast = ctx.modelRegistry.find(FAST_PROFILE.provider, FAST_PROFILE.id);
+  if (fast) {
+    const auth = await getModelAuth(ctx, fast);
+    if (auth) {
+      return {
+        model: fast,
+        label: `fast: ${fast.provider}/${fast.id}`,
+        options: { ...auth, reasoning: FAST_PROFILE.reasoning },
+      };
     }
+  }
+  if (!ctx.model) return undefined;
+  return { model: ctx.model, label: "active", options: {} };
+}
 
-    // Reconstruct thread from entries after the last reset
-    for (const rawEntry of ctx.sessionManager.getBranch()) {
-      const entry = asBranchEntry(rawEntry);
-      if (entry?.type !== "custom" || entry.customType !== BTW_TYPE) continue;
-      const entryTime = Date.parse(entry.timestamp) || 0;
-      if (entryTime <= btwThreadStart) continue;
-      const data = asBtwDetails(entry.data);
-      if (data?.question && data?.answer && !data.answer.startsWith("❌")) {
-        pendingBtwThread.push(data);
-        slots.push({
-          question: data.question,
-          model: data.model,
-          thinking: data.thinking || "",
-          answer: data.answer,
-          done: true,
-        });
-      }
+// ── Overlay 运行时 ────────────────────────────────────────────────
+
+interface OverlayRuntime {
+  handle?: OverlayHandleLike;
+  refresh?: () => void;
+  setStatus?: (status: string) => void;
+  finish?: () => void;
+  closed?: boolean;
+  close: () => void;
+}
+
+interface OverlayHandleLike {
+  focus(): void;
+  unfocus(): void;
+  hide(): void;
+}
+
+export default function btw(pi: ExtensionAPI) {
+  // ── 状态（纯内存）───────────────────────────────────────────────
+  let subSession: AgentSession | null = null;
+  let subscribed = false;
+  let active: BtwActive | null = null;
+  let exchanges: BtwExchange[] = [];
+  let viewIndex = 0;
+  let overlayRuntime: OverlayRuntime | null = null;
+
+  // ── overlay 控制 ─────────────────────────────────────────────────
+  function setStatus(status: string): void {
+    if (overlayRuntime?.setStatus) overlayRuntime.setStatus(status);
+  }
+
+  function refreshOverlay(): void {
+    overlayRuntime?.refresh?.();
+  }
+
+  function closeOverlay(): void {
+    overlayRuntime?.close();
+  }
+
+  function notify(
+    ctx: ExtensionCommandContext,
+    message: string,
+    level: "info" | "warning" | "error",
+  ): void {
+    try {
+      ctx.ui.notify(message, level);
+    } catch {
+      // Context may be replaced while an async ask is in flight.
     }
+  }
 
-    if (slots.length > 0) {
-      renderWidget(ctx);
-    }
-  });
-
-  // ── Widget rendering ─────────────────────────────────────────────
-
-  function renderWidget(ctx: ExtensionContext) {
-    if (slots.length === 0) {
-      ctx.ui.setWidget("btw", undefined);
+  function ensureOverlay(ctx: ExtensionCommandContext): void {
+    if (overlayRuntime?.handle) {
+      overlayRuntime.handle.focus();
+      refreshOverlay();
       return;
     }
-
-    ctx.ui.setWidget(
-      "btw",
-      (_tui, theme) => {
-        const dim = (s: string) => theme.fg("dim", s);
-        const green = (s: string) => theme.fg("success", s);
-        const italic = (s: string) => theme.fg("dim", theme.italic(s));
-        const yellow = (s: string) => theme.fg("warning", s);
-
-        return {
-          render(width: number) {
-            const rail = dim("│ ");
-            const contentWidth = Math.max(1, width - 2);
-            const toggleHint = widgetExpanded
-              ? "ctrl+shift+b collapse"
-              : "ctrl+shift+b expand";
-            const parts: string[] = [
-              truncateToWidth(
-                dim(`💭 btw ── ${toggleHint} ── /btw:clear to dismiss`),
-                width,
-              ),
-            ];
-
-            const addRailText = (text: string) => {
-              for (const line of wrapTextWithAnsi(text, contentWidth)) {
-                parts.push(rail + line);
-              }
-            };
-
-            const latestSlot = slots[slots.length - 1];
-            if (latestSlot) {
-              addRailText(green("› ") + latestSlot.question);
-              if (latestSlot.thinking) {
-                const cursor =
-                  !latestSlot.answer && !latestSlot.done ? yellow(" ▍") : "";
-                addRailText(italic(latestSlot.thinking) + cursor);
-              }
-              if (latestSlot.answer) {
-                const cursor = !latestSlot.done ? yellow(" ▍") : "";
-                addRailText(latestSlot.answer + cursor);
-              } else if (!latestSlot.thinking && !latestSlot.done) {
-                parts.push(rail + yellow("⏳ thinking..."));
-              }
-            }
-
-            if (widgetStatus) {
-              parts.push(rail + yellow(widgetStatus));
-            }
-
-            if (!widgetExpanded && parts.length > COLLAPSED_MAX_LINES) {
-              return [
-                parts[0],
-                rail + dim("… truncated, ctrl+shift+b to expand"),
-                ...parts.slice(-(COLLAPSED_MAX_LINES - 2)),
-              ];
-            }
-
-            return parts;
-          },
-          invalidate() {},
-        };
+    const runtime: OverlayRuntime = {
+      close: () => {
+        if (runtime.closed) return;
+        runtime.closed = true;
+        runtime.handle?.hide();
+        if (overlayRuntime === runtime) overlayRuntime = null;
+        runtime.finish?.();
       },
-      { placement: "aboveEditor" },
-    );
+    };
+    overlayRuntime = runtime;
+
+    void ctx.ui
+      .custom<void>(
+        (tui, theme, _keybindings, done) => {
+          runtime.finish = () => done();
+
+          const callbacks: BtwOverlayCallbacks = {
+            readExchanges: () => exchanges,
+            readActive: () => active,
+            readViewIndex: () => viewIndex,
+            readCurrent: () => currentSelection(active, exchanges, viewIndex),
+            setViewIndex: (index: number) => {
+              viewIndex = index;
+            },
+            onSubmit: (value: string) => {
+              void ask(ctx, value.trim());
+            },
+            onDismiss: () => {
+              if (active) {
+                void abortActive();
+                return;
+              }
+              closeOverlay();
+            },
+            onCopy: () => {
+              void copyCurrentAnswer(ctx);
+            },
+            onUnfocus: () => {
+              overlayRuntime?.handle?.unfocus();
+              refreshOverlay();
+            },
+          };
+
+          const overlay = new BtwOverlayComponent(tui, theme, callbacks);
+
+          runtime.refresh = () => overlay.refresh();
+          runtime.setStatus = (status: string) => overlay.setStatus(status);
+
+          return overlay;
+        },
+        {
+          overlay: true,
+          overlayOptions: {
+            width: "78%",
+            minWidth: 64,
+            maxHeight: "78%",
+            anchor: "top-center",
+            margin: { top: 1, left: 2, right: 2 },
+            nonCapturing: true,
+          },
+          onHandle: (handle) => {
+            runtime.handle = handle;
+            handle.focus();
+            if (runtime.closed) runtime.close();
+          },
+        },
+      )
+      .catch((error: unknown) => {
+        if (overlayRuntime === runtime) overlayRuntime = null;
+        notify(ctx, getErrorMessage(error), "error");
+      });
   }
 
-  // ── Helpers ──────────────────────────────────────────────────────
-
-  /** Reset the btw thread — clears state and persists a reset marker */
-  function resetThread(ctx: ExtensionContext) {
-    btwThreadStart = Date.now();
-    pendingBtwThread.length = 0;
-    slots.length = 0;
-    widgetStatus = null;
-    pi.appendEntry(BTW_RESET_TYPE, { timestamp: btwThreadStart });
-    renderWidget(ctx);
+  // ── 子会话 ──────────────────────────────────────────────────────
+  async function ensureBtwSession(
+    ctx: ExtensionCommandContext,
+  ): Promise<AgentSession | null> {
+    if (subSession) return subSession;
+    const session = await bootBtwSession(ctx, pi);
+    subSession = session;
+    return session;
   }
 
-  /** Collect btw thread — pendingBtwThread is the source of truth
-   *  (reconstructed from session on startup, appended live during session) */
-  function collectBtwThread(): BtwDetails[] {
-    return pendingBtwThread.filter((d) => !d.answer.startsWith("❌"));
-  }
-
-  function formatThread(thread: BtwDetails[]): string {
-    return thread
-      .map((d) => `User: ${d.question.trim()}\nAssistant: ${d.answer.trim()}`)
-      .join("\n\n---\n\n");
-  }
-
-  function formatInjectedPayload(
-    kind: "thread" | "summary",
-    body: string,
-    instructions: string,
-  ): string {
-    const tag = kind === "thread" ? "btw-thread" : "btw-summary";
-    const intro = getInjectedPayloadIntro(kind, instructions);
-    return `${intro}\n\n<${tag}>\n${body}\n</${tag}>`;
-  }
-
-  function getInjectedPayloadIntro(
-    kind: "thread" | "summary",
-    instructions: string,
-  ): string {
-    if (kind === "thread") {
-      return instructions
-        ? `Here's a side conversation I had. ${instructions}`
-        : "Here's a side conversation I had for additional context:";
+  function handleSessionEvent(event: AgentSessionEvent): void {
+    if (!active) return;
+    if (event.type === "message_update" && event.message.role === "assistant") {
+      active.answer = contentText(event.message.content).trim();
+      refreshOverlay();
+    } else if (event.type === "tool_execution_start") {
+      active.toolName = event.toolName;
+      refreshOverlay();
+    } else if (event.type === "tool_execution_end") {
+      active.toolName = null;
+      refreshOverlay();
     }
-
-    return instructions
-      ? `Here's a summary of a side conversation I had. ${instructions}`
-      : "Here's a summary of a side conversation I had:";
   }
 
-  function buildMainMessages(
-    ctx: ExtensionContext,
-    model: Model<Api>,
-  ): Message[] {
-    const messages: Message[] = [];
-    for (const rawEntry of ctx.sessionManager.getBranch()) {
-      const entry = asBranchEntry(rawEntry);
-      if (entry?.type !== "message") continue;
-      const msg = entry.message;
-      if (!msg) continue;
-
-      if (msg.role === "user") {
-        const content = extractTextContent(msg.content);
-        if (content) {
-          messages.push({
-            role: "user",
-            content: [{ type: "text", text: content }],
-            timestamp: msg.timestamp ?? Date.now(),
-          });
-        }
-      } else if (msg.role === "assistant") {
-        const content = extractTextContent(msg.content);
-        if (content) {
-          messages.push({
-            role: "assistant",
-            content: [{ type: "text", text: content }],
-            model: msg.model ?? model.id,
-            provider: msg.provider ?? model.provider,
-            api: msg.api ?? "",
-            usage: msg.usage ?? emptyUsage,
-            stopReason: "stop",
-            timestamp: msg.timestamp ?? Date.now(),
-          });
-        }
-      }
-    }
-    return messages;
+  function finishExchange(exchange: BtwExchange, status: string): void {
+    exchanges.push(exchange);
+    active = null;
+    viewIndex = exchanges.length - 1;
+    const capped = capHistory(exchanges, viewIndex);
+    exchanges = capped.exchanges;
+    viewIndex = capped.viewIndex;
+    setStatus(status);
+    refreshOverlay();
   }
 
-  function buildBtwMessages(
-    ctx: ExtensionContext,
-    model: Model<Api>,
+  async function ask(
+    ctx: ExtensionCommandContext,
     question: string,
-  ): Message[] {
-    const mainMessages = buildMainMessages(ctx, model);
-    const thread = collectBtwThread();
-    const all: Message[] = [...mainMessages];
-
-    if (thread.length > 0) {
-      all.push({
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: "[The following is a separate side conversation. Continue this thread.]",
-          },
-        ],
-        timestamp: Date.now(),
-      });
-      all.push({
-        role: "assistant",
-        content: [
-          {
-            type: "text",
-            text: "Understood, continuing our side conversation.",
-          },
-        ],
-        model: model.id,
-        provider: model.provider,
-        api: "",
-        usage: emptyUsage,
-        stopReason: "stop",
-        timestamp: Date.now(),
-      });
-      for (const d of thread) {
-        all.push({
-          role: "user",
-          content: [{ type: "text", text: d.question }],
-          timestamp: Date.now(),
-        });
-        all.push({
-          role: "assistant",
-          content: [{ type: "text", text: d.answer }],
-          model: model.id,
-          provider: model.provider,
-          api: "",
-          usage: emptyUsage,
-          stopReason: "stop",
-          timestamp: Date.now(),
-        });
-      }
+  ): Promise<void> {
+    if (active) {
+      setStatus("Still answering — press Esc to abort first.");
+      return;
     }
-
-    all.push({
-      role: "user",
-      content: [{ type: "text", text: question }],
-      timestamp: Date.now(),
-    });
-
-    return all;
-  }
-
-  async function fireBtw(ctx: ExtensionContext, question: string) {
-    const profile = await getModelProfile(ctx, "strong");
-    if (!profile) {
-      ctx.ui.notify("No model available for btw chat", "error");
+    if (!question) return;
+    const session = await ensureBtwSession(ctx);
+    if (!session) {
+      notify(ctx, "No active model for /btw", "error");
       return;
     }
 
-    const modelLabel = describeModelProfile(profile);
-    const allMessages = buildBtwMessages(ctx, profile.model, question);
+    if (!subscribed) {
+      session.subscribe(handleSessionEvent);
+      subscribed = true;
+    }
 
-    // Create a slot for this btw call
-    const slot: BtwSlot = {
-      question,
-      model: modelLabel,
-      thinking: "",
-      answer: "",
-      done: false,
-    };
-    slots.push(slot);
-    renderWidget(ctx);
+    // Follow the main session's current model and thinking level.
+    await reSyncBtwSession(session, ctx, pi);
 
-    (async () => {
-      try {
-        const eventStream = streamSimple(
-          profile.model,
-          {
-            systemPrompt:
-              "You are having an aside conversation with the user, separate from their main working session. The main session messages are provided for context only — that work is being handled by another agent. Focus on answering the user's side questions, helping them think through ideas, or planning next steps. Do not act as if you need to complete or continue the main session's work.",
-            messages: allMessages,
-          },
-          profile.options,
-        );
+    active = { question, answer: "", toolName: null };
+    refreshOverlay();
+    setStatus("streaming…");
 
-        for await (const event of eventStream) {
-          if (event.type === "thinking_delta") {
-            slot.thinking += event.delta;
-            renderWidget(ctx);
-          } else if (event.type === "text_delta") {
-            slot.answer += event.delta;
-            renderWidget(ctx);
-          } else if (event.type === "error") {
-            slot.answer += `\n❌ ${event.error.errorMessage ?? "unknown error"}`;
-            slot.done = true;
-            renderWidget(ctx);
-            return;
-          }
-        }
-
-        slot.done = true;
-        renderWidget(ctx);
-
-        const details = {
+    try {
+      await session.prompt(question, { source: "extension" });
+    } catch (error) {
+      finishExchange(
+        {
           question,
-          thinking: slot.thinking,
-          answer: slot.answer,
-          model: modelLabel,
-        } satisfies BtwDetails;
-        pendingBtwThread.push(details);
+          answer: active.answer,
+          error: getErrorMessage(error),
+        },
+        "error",
+      );
+      return;
+    }
 
-        // Persist in session (hidden from TUI, filtered from agent context)
-        pi.appendEntry(BTW_TYPE, details);
-      } catch (err: unknown) {
-        slot.answer = `❌ ${getErrorMessage(err)}`;
-        slot.done = true;
-        renderWidget(ctx);
-      }
-    })();
+    const response = [...session.messages]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    if (response?.stopReason === "aborted") {
+      finishExchange(
+        {
+          question,
+          answer: contentText(response.content).trim(),
+          aborted: true,
+        },
+        "aborted",
+      );
+    } else if (response && response.stopReason !== "error") {
+      finishExchange(
+        {
+          question,
+          answer: contentText(response.content).trim() || "(no answer)",
+        },
+        "",
+      );
+    } else {
+      finishExchange(
+        {
+          question,
+          answer: active.answer,
+          error: response?.errorMessage ?? "The side agent returned an error.",
+        },
+        "error",
+      );
+    }
   }
 
-  // Note: btw entries are stored via appendEntry (custom type, not in LLM context)
-  // No context filter needed — custom entries don't participate in LLM context
+  async function abortActive(): Promise<void> {
+    if (!active || !subSession) return;
+    try {
+      await subSession.abort();
+    } catch {
+      // Abort races are fine; the prompt() call resolves with stopReason "aborted".
+    }
+  }
 
-  pi.registerShortcut("ctrl+shift+b", {
-    description: "Toggle btw widget expansion",
-    handler: async (ctx) => {
-      if (slots.length === 0) return;
-      widgetExpanded = !widgetExpanded;
-      renderWidget(ctx);
-    },
-  });
+  /** reset：Abort → dispose 子会话 → 清空三态 → 关闭 overlay。下次 ask 懒重建。 */
+  async function resetThread(): Promise<void> {
+    if (active && subSession) await abortActive();
+    if (subSession) {
+      disposeBtwSession(subSession);
+      subSession = null;
+      subscribed = false;
+    }
+    active = null;
+    exchanges = [];
+    viewIndex = 0;
+    closeOverlay();
+  }
 
-  // ── Commands ─────────────────────────────────────────────────────
+  async function copyCurrentAnswer(
+    ctx: ExtensionCommandContext,
+  ): Promise<void> {
+    const selection = currentSelection(active, exchanges, viewIndex);
+    const answer = selection?.answer;
+    if (!answer) {
+      setStatus("Nothing to copy yet.");
+      return;
+    }
+    try {
+      await copyToClipboard(answer);
+      setStatus("Copied markdown answer to clipboard.");
+    } catch (error) {
+      notify(ctx, `Copy failed: ${getErrorMessage(error)}`, "error");
+    }
+  }
 
+  // ── 快捷键 ──────────────────────────────────────────────────────
+  // 焦点在主编辑与 overlay 之间切换（overlay 保持可见）。
+  for (const shortcut of ["alt+/", "ctrl+alt+w"]) {
+    pi.registerShortcut(shortcut as never, {
+      description: "Focus the /btw overlay",
+      handler: () => {
+        if (!overlayRuntime?.handle) return;
+        overlayRuntime.handle.focus();
+        refreshOverlay();
+      },
+    });
+  }
+
+  // ── 命令 ────────────────────────────────────────────────────────
   pi.registerCommand("btw", {
     description:
-      "Ask a side question using current context (doesn't affect main session)",
+      "Ask a quick side question in a top-center overlay without interrupting the main conversation",
     handler: async (args, ctx) => {
-      const question = args.trim();
-      if (!question) {
-        ctx.ui.notify("Usage: /btw <question>", "warning");
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("/btw requires interactive TUI mode", "error");
         return;
       }
-      await fireBtw(ctx, question);
+      const question = args.trim();
+      if (!question) {
+        // No question: just open the overlay on the latest history entry.
+        ensureOverlay(ctx);
+        refreshOverlay();
+        return;
+      }
+      ensureOverlay(ctx);
+      await ask(ctx, question);
     },
   });
 
   pi.registerCommand("btw:new", {
-    description: "Start a fresh btw thread, optionally with a new question",
+    description:
+      "Start a fresh btw thread (disposes the side session), optionally with a new question",
     handler: async (args, ctx) => {
-      resetThread(ctx);
+      await resetThread();
       const question = args.trim();
       if (question) {
-        await fireBtw(ctx, question);
+        ensureOverlay(ctx);
+        await ask(ctx, question);
       } else {
         ctx.ui.notify("💭 btw: started fresh thread", "info");
       }
@@ -718,58 +432,54 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("btw:clear", {
-    description: "Dismiss the btw widget and clear thread",
-    handler: async (_args, ctx) => {
-      resetThread(ctx);
+    description: "Dismiss the btw overlay and clear the thread",
+    handler: async () => {
+      await resetThread();
     },
   });
 
   pi.registerCommand("btw:inject", {
     description:
-      "Inject btw thread into main agent context [optional instructions]",
+      "Inject the btw thread into the main agent context [optional instructions]",
     handler: async (args, ctx) => {
-      const thread = collectBtwThread();
-      if (thread.length === 0 || slots.length === 0) {
+      if (exchanges.length === 0) {
         ctx.ui.notify("No active btw thread to inject", "warning");
         return;
       }
-
+      const count = exchanges.length;
       const instructions = args.trim();
-      const threadText = formatThread(thread);
-      const content = formatInjectedPayload("thread", threadText, instructions);
-
-      pi.sendUserMessage(content, { deliverAs: "followUp" });
-      resetThread(ctx);
-      ctx.ui.notify(
-        `💭 btw → main: injected ${thread.length} exchange(s)`,
-        "info",
+      const content = formatInjectedPayload(
+        "thread",
+        formatThread(exchanges),
+        instructions,
       );
+      pi.sendUserMessage(content, { deliverAs: "followUp" });
+      await resetThread();
+      ctx.ui.notify(`💭 btw → main: injected ${count} exchange(s)`, "info");
     },
   });
 
   pi.registerCommand("btw:summarize", {
     description:
-      "Summarize btw thread and inject into main agent context [optional instructions]",
+      "Summarize the btw thread (fast model) and inject into the main agent context [optional instructions]",
     handler: async (args, ctx) => {
-      const thread = collectBtwThread();
-      if (thread.length === 0 || slots.length === 0) {
+      if (exchanges.length === 0) {
         ctx.ui.notify("No active btw thread to summarize", "warning");
         return;
       }
-
-      const profile = await getModelProfile(ctx, "fast");
-      if (!profile) {
+      const count = exchanges.length;
+      const summaryModel = await resolveSummaryModel(ctx);
+      if (!summaryModel) {
         ctx.ui.notify("No model available for btw summary", "error");
         return;
       }
 
-      widgetStatus = `⏳ summarizing (${describeModelProfile(profile)})...`;
-      renderWidget(ctx);
+      setStatus(`⏳ summarizing (${summaryModel.label})…`);
 
       try {
-        const threadText = formatThread(thread);
+        const threadText = formatThread(exchanges);
         const response = await completeSimple(
-          profile.model,
+          summaryModel.model,
           {
             messages: [
               {
@@ -791,24 +501,22 @@ export default function (pi: ExtensionAPI) {
               },
             ],
           },
-          profile.options,
+          summaryModel.options,
         );
 
         const summary = extractTextContent(response.content);
-
         const instructions = args.trim();
         const content = formatInjectedPayload("summary", summary, instructions);
 
         pi.sendUserMessage(content, { deliverAs: "followUp" });
-
-        resetThread(ctx);
+        await resetThread();
         ctx.ui.notify(
-          `💭 btw → main: injected summary of ${thread.length} exchange(s)`,
+          `💭 btw → main: injected summary of ${count} exchange(s)`,
           "info",
         );
       } catch (err: unknown) {
-        widgetStatus = null;
-        renderWidget(ctx);
+        setStatus("");
+        refreshOverlay();
         ctx.ui.notify(`btw:summarize error — ${getErrorMessage(err)}`, "error");
       }
     },

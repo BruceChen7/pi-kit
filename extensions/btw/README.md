@@ -1,8 +1,12 @@
 # btw
 
-`btw` is a side conversation plugin for pi. Use it when the main agent is working and you want to ask a quick question, think through an idea, or prepare context without interrupting the active run.
+`btw` is a side-conversation plugin for pi. When the main agent is working, use
+`/btw` to ask a quick question, think through an idea, or prepare context
+without interrupting the active run.
 
-The side conversation is separate from the main agent by default. The main agent will not see your `btw` messages unless you explicitly inject or summarize them back into the main session.
+The side conversation happens in a **real, read-only pi sub-session** that can
+inspect the repository, and its answers stream into a **top-center overlay**.
+Nothing reaches the main agent unless you explicitly inject it back.
 
 ## When to use it
 
@@ -10,38 +14,34 @@ Use `/btw` when you want to:
 
 - Ask what the agent is doing while it continues working.
 - Discuss an alternative plan without changing the current task.
+- Have a side agent read files in the repo and answer with evidence.
 - Draft follow-up instructions before sending them to the main agent.
-- Keep a short side thread during a long implementation or review.
 
 ## Commands
 
-### `/btw <message>`
+### `/btw [message]`
 
-Ask a side question using the current session as context.
+Open the side-conversation overlay. With a message, it asks immediately using
+the current session as context; without one, it just opens the overlay on the
+latest exchange.
 
 ```text
 /btw is this implementation plan too risky?
+/btw what does this error actually mean?
 ```
-
-The answer appears in a small widget above the editor. This does not send anything to the main agent.
 
 ### `/btw:new [message]`
 
-Start a fresh side thread. If you include a message, it asks that question immediately.
+Start a fresh side thread (disposes the old side session). Optionally kick it
+off with a message.
 
 ```text
 /btw:new help me compare two API designs
 ```
 
-Use this when the previous side conversation is no longer relevant.
-
 ### `/btw:clear`
 
-Dismiss the widget and clear the current side thread.
-
-```text
-/btw:clear
-```
+Dismiss the overlay and clear the current side thread.
 
 ### `/btw:inject [instructions]`
 
@@ -51,42 +51,86 @@ Send the full side conversation to the main agent as follow-up context.
 /btw:inject implement the approach we discussed
 ```
 
-Use this when the side conversation contains details the main agent should act on. After injection, the side thread is cleared.
-
 ### `/btw:summarize [instructions]`
 
-Summarize the side conversation first, then send the summary to the main agent.
+Summarize the side conversation first (using a fast model), then send the
+summary to the main agent.
 
 ```text
 /btw:summarize use this as the implementation direction
 ```
 
-Use this instead of `/btw:inject` when the side thread is long or noisy. After the summary is injected, the side thread is cleared.
+`/btw:inject` and `/btw:summarize` both reset the thread and dismiss the
+overlay after injecting.
 
-## Widget controls
+## Overlay keys
 
-- The `btw` widget appears above the editor.
-- It shows the latest exchange by default.
-- Press `ctrl+shift+b` to expand or collapse long output.
-- Run `/btw:clear` to dismiss it.
+The overlay is a top-center floating panel (requires the pi TUI).
+
+| Key | Action |
+|-----|--------|
+| `Enter` | submit a follow-up in the input |
+| `Esc` | abort while answering; close when idle |
+| `c` | copy the current answer (raw markdown) to the clipboard |
+| `←` / `→` | page through this session's side Q&A history |
+| `↑` / `↓` | scroll a long answer |
+| `Alt+/` | toggle focus between the overlay and the main editor (overlay stays visible; `Ctrl+Alt+W` as fallback) |
+
+Earlier questions appear as a dimmed list above the current answer. History is
+capped at the most recent 20 exchanges.
 
 ## How context works
 
-Each `/btw` message sees:
+Each `/btw` ask runs against a lazily-created **in-memory sub-session**:
 
-1. The visible main session conversation so far.
-2. Previous messages in the current `btw` side thread.
-3. Your new side question.
+1. Seeded with the main session's current messages.
+2. Given read-only tools (`read`, `grep`, `find`, `ls`) — it can inspect the
+   repository but cannot modify anything.
+3. Its system prompt is composed from the main session's prompt plus a "btw
+   role" prompt, so it understands your project rules.
+4. Model and thinking level follow the main session's current model, re-synced
+   before every ask.
 
-The main agent does not automatically see the side thread. To bring side-thread context back into the main session, use `/btw:inject` or `/btw:summarize`.
+Follow-ups typed into the overlay continue the same sub-session. The side
+thread exists only in memory as `exchanges[]`; the main agent sees it only when
+you run `/btw:inject` or `/btw:summarize`.
 
-## Persistence
+## Persistence / environment
 
-`btw` side conversations are saved with the session and restored after restart. Clearing, injecting, summarizing, or starting a new thread creates a reset point so old side messages do not leak into the next thread.
+- **In-memory only.** Restarting or reloading pi clears the side thread — it is
+  a side note, not session state.
+- **TUI only.** The overlay needs interactive TUI mode; `/btw` outside the TUI
+  shows an error.
+- Reads `grep` via the standard tool; no `bash`/`edit`/`write`.
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Main pi session (TUI)                                    │
+│  User ↔ Main agent                                        │
+│                                                           │
+│  /btw ──▶ overlay (top-center, ctx.ui.custom)             │
+│             │ exchanges[] = display + inject 单一真源      │
+│             ▼                                             │
+│  read-only AgentSession 子会话 (in-memory)                │
+│   ├─ seed 主会话消息 (buildSessionContext+convertToLlm)    │
+│   ├─ tools: read/grep/find/ls                             │
+│   ├─ 继承主会话模型 + thinking level                      │
+│   └─ subscribe 事件 → overlay 实时渲染                    │
+│                                                           │
+│  inject/summarize → sendUserMessage(followUp) → reset     │
+└──────────────────────────────────────────────────────────┘
+
+模块：core.ts（纯逻辑）· session.ts（子会话 boot/dispose）·
+      overlay.ts（展示组件）· index.ts（编排/命令）
+```
 
 ## Tips
 
-- Use `/btw` for thinking and clarification.
+- Use `/btw` for thinking and clarification; the side agent can read files for
+  you.
 - Use `/btw:summarize` before injecting a long discussion.
 - Use `/btw:new` when switching topics.
-- Be explicit in injection instructions, for example: `implement this`, `use this as review feedback`, or `only consider this as background`.
+- Be explicit in injection instructions, for example: `implement this`, `use
+  this as review feedback`, or `only consider this as background`.

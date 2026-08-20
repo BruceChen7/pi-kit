@@ -450,7 +450,7 @@ function handleClick(event: MouseEvent): void {
   -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="absolute top-2 right-2 z-10 flex flex-col items-center gap-1"
+    class="relative z-10 flex w-10 flex-col items-center gap-1 self-start justify-self-end"
     onmousedown={(e) => e.stopPropagation()}
   >
     {#if source}
@@ -607,33 +607,35 @@ function handleClick(event: MouseEvent): void {
     Inline mode: container height follows the diagram's natural aspect
     ratio (capped) so wide diagrams fill the width. Without a parseable
     viewBox, fall back to the previous fixed-height viewport.
-    This div is the controls' positioning context (relative). It always
-    fills the artifact column so consecutive Mermaid diagrams align, while
-    the SVG itself remains fitted within the viewport.
+    The wrapper keeps the SVG and toolbar in separate columns so the toolbar
+    never consumes or covers diagram content, while the SVG itself remains
+    fitted within the viewport.
   -->
-  <div
-    bind:this={containerEl}
-    class="relative w-full cursor-grab overflow-hidden rounded-xl border border-border bg-card select-none {isExpanded
-      ? 'h-full min-h-0'
-      : viewportAspect
-        ? 'min-h-[20rem]'
-        : 'h-[min(65vh,36rem)] min-h-[20rem]'}"
-    style={inlineViewportStyle(viewportAspect, isExpanded)}
-    onmousedown={handleMouseDown}
-    onmousemove={handleMouseMove}
-    onmouseup={stopDragging}
-    onmouseleave={stopDragging}
-    onclick={handleClick}
-  >
-    {@render controls()}
-    <!--
+  <div class="relative grid h-full min-h-0 w-full grid-cols-[minmax(0,1fr)_2.75rem] gap-2">
+    <div
+      bind:this={containerEl}
+      class="relative w-full cursor-grab overflow-hidden rounded-xl border border-border bg-card select-none {isExpanded
+        ? 'h-full min-h-0'
+        : viewportAspect
+          ? 'min-h-[20rem]'
+          : 'h-[min(65vh,36rem)] min-h-[20rem]'}"
+      style={inlineViewportStyle(viewportAspect, isExpanded)}
+      onmousedown={handleMouseDown}
+      onmousemove={handleMouseMove}
+      onmouseup={stopDragging}
+      onmouseleave={stopDragging}
+      onclick={handleClick}
+    >
+      <!--
       Keep the injected Mermaid SVG in its own mount layer. The controls also
       contain SVG icons, so querying the whole viewport would select an icon
       and resize it to the diagram's dimensions.
     -->
-    <div bind:this={svgContentEl} class="h-full w-full box-border pr-14">
-      {@html normalizedSvg}
+      <div bind:this={svgContentEl} class="h-full w-full">
+        {@html normalizedSvg}
+      </div>
     </div>
+    {@render controls()}
   </div>
 {/snippet}
 

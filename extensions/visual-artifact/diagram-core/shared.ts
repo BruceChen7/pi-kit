@@ -4,6 +4,8 @@ export type DiagramRenderResult = {
   svg: string;
   width: number;
   height: number;
+  /** Non-fatal geometry issues found after layout. */
+  warnings?: string[];
 };
 
 export type DiagramError = {

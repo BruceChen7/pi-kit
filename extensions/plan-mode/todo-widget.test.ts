@@ -467,25 +467,32 @@ describe("plan-mode extension: todo state and widgets", () => {
     expect(plainWidgetText(ctx)).toContain("#1 保留这个任务文本");
   });
 
-  it("uses an action-specific schema that excludes items from update", () => {
+  it("uses a top-level object schema for Console Go / DeepSeek compatibility", () => {
     const harness = buildHarness();
     planModeExtension(harness.api as unknown as ExtensionAPI);
 
-    const todoTool = registeredTool(harness, ACT_MODE_TODO_TOOL);
-    const schema = todoTool.parameters as {
-      anyOf: Array<{
+    // Both tools share one todoParamsSchema; guard them together so a future
+    // per-action Type.Union regression is caught for plan and act modes alike.
+    for (const toolName of [PLAN_MODE_TODO_TOOL, ACT_MODE_TODO_TOOL]) {
+      const todoTool = registeredTool(harness, toolName);
+      const schema = todoTool.parameters as {
+        type?: string;
         additionalProperties?: boolean;
         properties?: Record<string, unknown>;
-      }>;
-    };
-    const updateSchema = schema.anyOf.find(
-      (variant) =>
-        (variant.properties?.action as { const?: string })?.const === "update",
-    );
+        required?: string[];
+        anyOf?: unknown;
+      };
 
-    expect(updateSchema).toBeDefined();
-    expect(updateSchema?.additionalProperties).toBe(false);
-    expect(updateSchema?.properties?.items).toBeUndefined();
+      // DeepSeek via Console Go requires top-level `type: "object"` (strict OpenAI compat).
+      // Previously this was a Type.Union (top-level anyOf without type) which fails with
+      // `schema must be a JSON Schema of 'type: \"object\"', got 'type: null'`.
+      expect(schema.type).toBe("object");
+      expect(schema.additionalProperties).toBe(false);
+      expect(schema.properties?.action).toBeDefined();
+      expect(schema.required).toContain("action");
+      // Per-action strictness is now enforced in execute() rather than via anyOf branches.
+      expect(schema.anyOf).toBeUndefined();
+    }
   });
 
   it("restores mode and todos from the latest session snapshot", async () => {

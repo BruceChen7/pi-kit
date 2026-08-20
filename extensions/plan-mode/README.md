@@ -83,6 +83,23 @@ During implementation, Pi should:
 
 Completed runs remain visible briefly as an `已交付` task list, then clear on the next run or user turn.
 
+## Extension reloading and tool schema constraints
+
+Two operational constraints learned from the Console Go / DeepSeek regression
+(`5a52fed`):
+
+- **Extension source changes require `/reload` or a pi restart.** Extensions
+  are loaded into a per-process module cache (`loadExtensionsCached`);
+  editing a worktree file under `extensions/` does not affect already running
+  pi processes until they reload or restart.
+- **Tool schemas must resolve to a top-level `type: "object"`.** OpenAI-strict
+  compatible gateways (opencode-go Console Go, DeepSeek) reject tools whose
+  `parameters` schema is a `Type.Union` (top-level `anyOf` without `type`)
+  with `schema must be a JSON Schema of 'type: "object"', got 'type: null'`.
+  Keep a single object schema and enforce per-action strictness in
+  `execute()` instead. The "uses a top-level object schema" test guards both
+  `plan_mode_todo` and `act_mode_todo`.
+
 ## Writing a plan or spec
 
 For reviewed implementation work, write artifacts in one of these paths:

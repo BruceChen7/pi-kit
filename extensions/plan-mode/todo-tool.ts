@@ -20,53 +20,28 @@ const todoInputSchema = Type.Object({
   notes: Type.Optional(Type.String({ description: "Optional note" })),
 });
 
-const todoParamsSchema = Type.Union([
-  Type.Object(
-    {
-      action: Type.Literal("list"),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      action: Type.Literal("set"),
-      items: Type.Array(todoInputSchema),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      action: Type.Literal("add"),
-      text: Type.String({ minLength: 1 }),
-      status: Type.Optional(todoStatusSchema),
-      notes: Type.Optional(Type.String()),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      action: Type.Literal("update"),
-      id: Type.Number(),
-      text: Type.Optional(Type.String()),
-      status: Type.Optional(todoStatusSchema),
-      notes: Type.Optional(Type.String()),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      action: Type.Literal("remove"),
-      id: Type.Number(),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Object(
-    {
-      action: Type.Literal("clear"),
-    },
-    { additionalProperties: false },
-  ),
-]);
+// Console Go (DeepSeek) requires top-level `type: "object"` for function parameters.
+// Type.Union of objects yields top-level `anyOf` without `type`, which fails strict validation
+// (Error: schema must be a JSON Schema of 'type: \"object\"', got 'type: null').
+// Use a single object schema to satisfy the provider; per-action required checks remain in execute().
+const todoParamsSchema = Type.Object(
+  {
+    action: Type.Union([
+      Type.Literal("list"),
+      Type.Literal("set"),
+      Type.Literal("add"),
+      Type.Literal("update"),
+      Type.Literal("remove"),
+      Type.Literal("clear"),
+    ]),
+    items: Type.Optional(Type.Array(todoInputSchema)),
+    text: Type.Optional(Type.String({ minLength: 1 })),
+    id: Type.Optional(Type.Number()),
+    status: Type.Optional(todoStatusSchema),
+    notes: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
 
 type TodoParams = Static<typeof todoParamsSchema>;
 type TodoToolOptions = {

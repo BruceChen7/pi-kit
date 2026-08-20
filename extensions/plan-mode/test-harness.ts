@@ -443,7 +443,8 @@ export const actOneItemCompletedSummary =
   prefixedCompletedSummary("完成第一批任务");
 export const planOneItemCompletedSummary =
   prefixedCompletedSummary("完成后清理");
-export const demoPlanPath = ".pi/plans/pi-kit/plan/2026-05-08-demo.md";
+export const demoPlanPath =
+  `.pi/plans/pi-kit/plan/${new Date().toISOString().slice(0, 10)}-demo.md`;
 export const demoCompletedSummary = completedTaskSummary(
   "✅ 计划「demo」已完成 · 3/3 项任务已交付",
   ["编写测试", "实现改动", "验证结果"],

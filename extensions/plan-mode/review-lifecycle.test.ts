@@ -175,8 +175,11 @@ describe("plan-mode extension: review lifecycle", () => {
     // supersedes the first — one reminder (for the latest approval),
     // not one per approval.
     await withTempCtx(async (ctx) => {
-      const specPath = ".pi/plans/pi-kit/specs/2026-08-13-demo-design.md";
-      const planPath = ".pi/plans/pi-kit/plan/2026-08-13-demo.md";
+      // Paths must carry today's date: validatePathDate rejects artifacts
+      // whose date prefix is not *today* (a hard time-bomb if hard-coded).
+      const today = new Date().toISOString().slice(0, 10);
+      const specPath = `.pi/plans/pi-kit/specs/${today}-demo-design.md`;
+      const planPath = `.pi/plans/pi-kit/plan/${today}-demo.md`;
       writePlanArtifact(ctx.cwd, specPath, validPlanContent);
       writePlanArtifact(ctx.cwd, planPath, validPlanContent);
       const harness = buildHarness();

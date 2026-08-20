@@ -17,6 +17,10 @@
  * - rg: structured ripgrep output (same format as built-in grep)
  * - fd: structured fd output (same format as built-in find)
  *
+ * The active-tool correction is enforced at session_start AND before every
+ * agent turn (before_agent_start), so sessions that started before this
+ * extension was loaded/reloaded still get grep/find removed and rg/fd added.
+ *
  * Notes:
  * - No auto-download for rg/fd. Missing binaries return install hints + error.
  * - --hidden and .gitignore behavior is preserved.
@@ -300,8 +304,22 @@ function applyInterceptedPath(reason: string): void {
   });
 }
 
-function applyActiveTools(pi: ExtensionAPI, reason: string): void {
-  const active = new Set(pi.getActiveTools());
+function applyActiveTools(pi: ExtensionAPI, reason: string): boolean {
+  const current = pi.getActiveTools();
+  const hasGrep = current.includes("grep");
+  const hasFind = current.includes("find");
+  const hasRg = current.includes("rg");
+  const hasFd = current.includes("fd");
+
+  if (!hasGrep && !hasFind && hasRg && hasFd) {
+    log?.debug("Active tools already correct, skipping", {
+      reason,
+      current,
+    });
+    return false;
+  }
+
+  const active = new Set(current);
   active.delete("grep");
   active.delete("find");
   active.add("rg");
@@ -313,6 +331,7 @@ function applyActiveTools(pi: ExtensionAPI, reason: string): void {
     reason,
     activeTools: Array.from(active),
   });
+  return true;
 }
 
 function createDisabledTool(name: "grep" | "find", replacement: string) {
@@ -867,5 +886,16 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", (event) => {
     applyInterceptedPath(event.reason);
     applyActiveTools(pi, event.reason);
+  });
+
+  // Per-turn safety net: enforce the rg/fd tool set before every agent turn.
+  // session_start is only emitted at startup/reload, so long-running instances
+  // that (re)loaded the extension after their session began would otherwise keep
+  // the built-in grep/find tools active forever (TUI still shows "grep").
+  // When the tool set actually changes, return the rebuilt system prompt so the
+  // correction applies to the current turn instead of the next one.
+  pi.on("before_agent_start", () => {
+    const changed = applyActiveTools(pi, "before_agent_start");
+    return changed ? { systemPrompt: pi.getSystemPrompt() } : undefined;
   });
 }

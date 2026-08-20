@@ -161,7 +161,12 @@ export function renderArchitectureDiagram(
   const ungrouped = input.nodes.filter((node) => !groupedIds.has(node.id));
   const horizontalWithGroups =
     direction === "horizontal" && groups.length > 0 && ungrouped.length > 0;
-  const groupOriginX = horizontalWithGroups ? 280 : 24;
+  // Leave a real routing lane between external nodes and grouped content.
+  // Edge labels are rendered inside this lane, so a narrow gap makes their
+  // background collide with both node borders (and becomes especially noisy
+  // after the SVG is scaled to a wide viewport).
+  const externalLaneWidth = 96;
+  const groupOriginX = horizontalWithGroups ? 24 + 220 + externalLaneWidth : 24;
   const groupBoxes = positionInGrid(
     groups,
     direction === "vertical" ? 1 : Math.min(2, Math.max(1, groups.length)),
@@ -184,13 +189,17 @@ export function renderArchitectureDiagram(
       members,
       1,
       244,
-      42,
+      48,
       0,
-      12,
+      28,
       box.x + 28,
       box.y + 46,
     );
-    const groupHeight = Math.max(box.height, 58 + memberPositions.length * 54);
+    const lastMember = memberPositions.at(-1)?.box;
+    const groupHeight = Math.max(
+      box.height,
+      lastMember ? lastMember.y + lastMember.height - box.y + 28 : 0,
+    );
     const groupBox = { ...box, height: groupHeight };
     maxGroupBottom = Math.max(maxGroupBottom, groupBox.y + groupBox.height);
     maxGroupRight = Math.max(maxGroupRight, groupBox.x + groupBox.width);
@@ -223,14 +232,14 @@ export function renderArchitectureDiagram(
       for (const [index, node] of nodes.entries()) {
         nodeBoxes.set(node.id, {
           x,
-          y: 96 + index * 86,
+          y: 104 + index * 96,
           width: 220,
-          height: 58,
+          height: 64,
         });
       }
     };
     placeExternal(leftNodes, 24);
-    placeExternal(rightNodes, maxGroupRight + 70);
+    placeExternal(rightNodes, maxGroupRight + externalLaneWidth);
   } else {
     const ungroupedPositions = positionInGrid(
       ungrouped,
@@ -280,16 +289,16 @@ export function renderArchitectureDiagram(
       box,
       `${architectureNodeStyle(node.kind)} ${node.focal ? `stroke="${COLORS.accent}" stroke-width="2"` : ""}`,
     );
-    body += text(box.x + 14, box.y + 24, node.label);
-    if (node.sublabel)
-      body += text(box.x + 14, box.y + 43, node.sublabel, "sub");
     body += text(
       box.x + box.width - 12,
-      box.y + 18,
+      box.y + 16,
       (node.kind ?? "component").toUpperCase(),
       "eyebrow",
       "end",
     );
+    body += text(box.x + 14, box.y + (node.sublabel ? 28 : 35), node.label);
+    if (node.sublabel)
+      body += text(box.x + 14, box.y + 44, node.sublabel, "sub");
   }
   return {
     ok: true,

@@ -31,4 +31,20 @@ describe("SvgViewport diagram mount", () => {
       'setAttribute("preserveAspectRatio", FIT_PRESERVE_ASPECT_RATIO)',
     );
   });
+
+  it("reserves space so floating controls do not cover diagram content", async () => {
+    // Shell patch protection: SvgViewport.svelte is intentionally not
+    // mounted in tests (vitest's svelte-stub plugin returns {} for .svelte),
+    // so DOM behavior cannot be asserted directly here. The pure fit/geometry
+    // contract lives in svg-viewport.ts and is covered by svg-viewport.test.ts
+    // (fitBoundsToContainer and friends). These source assertions only guard
+    // the shell's two DOM decisions against accidental regression:
+    // 1) measure the fit against the SVG mount rather than the outer card,
+    //    because the mount reserves the toolbar-safe gutter (pr-14);
+    // 2) keep that gutter on the mount wrapper.
+    const source = await readFile(componentPath, "utf8");
+
+    expect(source).toContain('class="h-full w-full box-border pr-14"');
+    expect(source).toContain("const rect = svgEl.getBoundingClientRect()");
+  });
 });

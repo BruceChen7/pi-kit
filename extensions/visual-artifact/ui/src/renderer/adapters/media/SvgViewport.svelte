@@ -116,7 +116,10 @@ function fitToCurrentViewport(): void {
   const svgEl = svgContentEl?.querySelector("svg");
   if (!(svgEl instanceof SVGSVGElement)) return;
 
-  const rect = el.getBoundingClientRect();
+  // Fit against the actual SVG mount rather than the outer card. The mount
+  // reserves a toolbar-safe gutter, preventing the right-most diagram node
+  // from sitting underneath the floating controls.
+  const rect = svgEl.getBoundingClientRect();
   const fitted = fitBoundsToContainer(naturalBounds, rect.width, rect.height);
   baseViewBox = fitted;
   panOffset = { x: 0, y: 0 };
@@ -628,7 +631,7 @@ function handleClick(event: MouseEvent): void {
       contain SVG icons, so querying the whole viewport would select an icon
       and resize it to the diagram's dimensions.
     -->
-    <div bind:this={svgContentEl} class="h-full w-full">
+    <div bind:this={svgContentEl} class="h-full w-full box-border pr-14">
       {@html normalizedSvg}
     </div>
   </div>

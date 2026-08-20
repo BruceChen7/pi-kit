@@ -304,19 +304,24 @@ function applyInterceptedPath(reason: string): void {
   });
 }
 
-function applyActiveTools(pi: ExtensionAPI, reason: string): boolean {
-  const current = pi.getActiveTools();
+export type ToolCorrection = {
+  next: string[];
+  changed: boolean;
+};
+
+/**
+ * Pure decision: given the currently active tools, compute the corrected
+ * tool set (grep/find removed, rg/fd added) and whether anything changes.
+ * No side effects; the shell applies the result via pi.setActiveTools.
+ */
+export function computeToolCorrection(current: string[]): ToolCorrection {
   const hasGrep = current.includes("grep");
   const hasFind = current.includes("find");
   const hasRg = current.includes("rg");
   const hasFd = current.includes("fd");
 
   if (!hasGrep && !hasFind && hasRg && hasFd) {
-    log?.debug("Active tools already correct, skipping", {
-      reason,
-      current,
-    });
-    return false;
+    return { next: [...current], changed: false };
   }
 
   const active = new Set(current);
@@ -325,11 +330,25 @@ function applyActiveTools(pi: ExtensionAPI, reason: string): boolean {
   active.add("rg");
   active.add("fd");
 
-  pi.setActiveTools(Array.from(active));
+  return { next: Array.from(active), changed: true };
+}
+
+function applyActiveTools(pi: ExtensionAPI, reason: string): boolean {
+  const { next, changed } = computeToolCorrection(pi.getActiveTools());
+
+  if (!changed) {
+    log?.debug("Active tools already correct, skipping", {
+      reason,
+      current: next,
+    });
+    return false;
+  }
+
+  pi.setActiveTools(next);
 
   log?.info("Updated active tools", {
     reason,
-    activeTools: Array.from(active),
+    activeTools: next,
   });
   return true;
 }
@@ -892,10 +911,25 @@ export default function (pi: ExtensionAPI) {
   // session_start is only emitted at startup/reload, so long-running instances
   // that (re)loaded the extension after their session began would otherwise keep
   // the built-in grep/find tools active forever (TUI still shows "grep").
-  // When the tool set actually changes, return the rebuilt system prompt so the
-  // correction applies to the current turn instead of the next one.
-  pi.on("before_agent_start", () => {
+  // When the tool set actually changes, return a system prompt that keeps the
+  // chained prompt intact (other extensions' before_agent_start injections are
+  // accumulated in event.systemPrompt) and appends the correction notice. We
+  // must NOT return a session-level snapshot here: that would clobber earlier
+  // handlers' injections in this chain. Note that ctx.getSystemPrompt() inside
+  // before_agent_start reflects the chained prompt as of this handler, so it is
+  // only used as a defensive fallback when event.systemPrompt is unavailable.
+  pi.on("before_agent_start", (event, ctx) => {
     const changed = applyActiveTools(pi, "before_agent_start");
-    return changed ? { systemPrompt: pi.getSystemPrompt() } : undefined;
+    if (!changed) {
+      return undefined;
+    }
+    const basePrompt =
+      typeof event.systemPrompt === "string"
+        ? event.systemPrompt
+        : ctx.getSystemPrompt();
+    const toolNotice =
+      "\n\ngrep/find tools are disabled for this turn. Use the rg and fd " +
+      "tools instead (they are now active).";
+    return { systemPrompt: basePrompt + toolNotice };
   });
 }

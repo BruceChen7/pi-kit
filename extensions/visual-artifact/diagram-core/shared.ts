@@ -272,17 +272,20 @@ export function edgeLabelPoint(
   if (isBelow || isAbove) {
     return {
       x: (from.x + from.width / 2 + to.x + to.width / 2) / 2,
-      y: (isBelow ? fromBottom + to.y : toBottom + from.y) / 2 - 3,
+      y: (isBelow ? fromBottom + to.y : toBottom + from.y) / 2,
     };
   }
   if (isRight || isLeft) {
     return {
       x: (isRight ? fromRight + to.x : toRight + from.x) / 2,
-      y: Math.min(from.y, to.y) - 6,
+      // Put the label on the routed horizontal lane instead of above the
+      // nodes. edgeMarkup paints a paper-colored backing, so the connector
+      // remains legible without the label drifting into group headings.
+      y: (from.y + from.height / 2 + to.y + to.height / 2) / 2 + 3,
     };
   }
   return direction === "vertical"
-    ? { x: (from.x + to.x) / 2, y: (fromBottom + to.y) / 2 - 3 }
+    ? { x: (from.x + to.x) / 2, y: (fromBottom + to.y) / 2 }
     : { x: (fromRight + to.x) / 2, y: Math.min(from.y, to.y) - 6 };
 }
 

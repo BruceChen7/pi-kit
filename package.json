@@ -29,7 +29,6 @@
       "./extensions/file-watcher",
       "./extensions/review-feedback",
       "./extensions/scheduled-tasks",
-      "./extensions/brainstorm-events",
       "./extensions/cache-graph",
       "./extensions/visual-artifact",
       "./extensions/librarian",

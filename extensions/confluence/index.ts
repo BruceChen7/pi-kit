@@ -13,7 +13,11 @@ const pageContext = Type.Object({
 });
 
 export interface ConfluencePageReader {
-  read(url: string, pageId?: string): Promise<PageContext>;
+  read(
+    url: string,
+    pageId?: string,
+    display?: import("./context").DisplayReference,
+  ): Promise<PageContext>;
 }
 
 export interface ConfluenceExtensionOptions {
@@ -49,7 +53,11 @@ function registerPageTool(
         url: reference,
         pageId: input.pageId,
       });
-      const page = await reader.read(resolved.url, resolved.pageId);
+      const page = await reader.read(
+        resolved.url,
+        resolved.pageId,
+        resolved.display,
+      );
       return {
         content: [
           { type: "text" as const, text: renderConfluencePageMarkdown(page) },

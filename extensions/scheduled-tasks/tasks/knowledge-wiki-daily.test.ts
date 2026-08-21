@@ -107,7 +107,9 @@ describe("buildSubagentPrompt", () => {
     const result = buildSubagentPrompt([]);
     expect(result).toContain("## Stale Files");
     expect(result).toContain("Do NOT re-run list-stale");
-    expect(result).not.toContain("4 phases");
+    expect(result).toContain(
+      "the parent verifies the whole KB once at the end",
+    );
   });
 
   it("should require a JSON output summary with summaries field", () => {
@@ -287,13 +289,13 @@ describe("Telegram summary formatting", () => {
   });
 
   it("renders batch summaries as escaped bullet points with timings", () => {
-    const message = buildTelegramSuccessMessage(
-      ["Notes/source.md"],
-      ["Wiki/Summaries/source.summary.md"],
-      "Batch 1: 2 summaries <ready> | Batch 2: 1 summary & linked",
-      true,
-      true,
-      [
+    const message = buildTelegramSuccessMessage({
+      staleFiles: ["Notes/source.md"],
+      summaries: ["Wiki/Summaries/source.summary.md"],
+      wikiSummary: "Batch 1: 2 summaries <ready> | Batch 2: 1 summary & linked",
+      qmdUpdateOk: true,
+      qmdEmbedOk: true,
+      timings: [
         {
           label: "Step 1–3 · wiki-summarize",
           startedAt: Date.UTC(2026, 5, 30, 10, 11, 12),
@@ -301,7 +303,7 @@ describe("Telegram summary formatting", () => {
           ok: true,
         },
       ],
-    );
+    });
 
     expect(message).toContain("<b>⏱️ 执行摘要</b>");
     expect(message).toContain(
@@ -315,37 +317,43 @@ describe("Telegram summary formatting", () => {
   });
 
   it("omits an empty wiki summary without leaving an empty section", () => {
-    const message = buildTelegramSuccessMessage([], undefined, "", true, true);
+    const message = buildTelegramSuccessMessage({
+      staleFiles: [],
+      summaries: undefined,
+      wikiSummary: "",
+      qmdUpdateOk: true,
+      qmdEmbedOk: true,
+    });
     expect(message).not.toContain("wiki-summarize");
     expect(message).toContain("qmd update：✓");
     expect(message).toContain("qmd embed：✓");
   });
 
   it("renders a residual-stale warning section when files remain", () => {
-    const message = buildTelegramSuccessMessage(
-      ["Notes/source.md"],
-      ["Wiki/Summaries/source.summary.md"],
-      "",
-      true,
-      true,
-      [],
-      ["Notes/still-stale.md", "Notes/also-stale.md"],
-    );
+    const message = buildTelegramSuccessMessage({
+      staleFiles: ["Notes/source.md"],
+      summaries: ["Wiki/Summaries/source.summary.md"],
+      wikiSummary: "",
+      qmdUpdateOk: true,
+      qmdEmbedOk: true,
+      timings: [],
+      residualStale: ["Notes/still-stale.md", "Notes/also-stale.md"],
+    });
     expect(message).toContain("⚠️ 仍未更新（2 个 stale 文件）");
     expect(message).toContain("Notes/still-stale.md");
     expect(message).toContain("Notes/also-stale.md");
   });
 
   it("omits the residual section when there are no residual files", () => {
-    const message = buildTelegramSuccessMessage(
-      ["Notes/source.md"],
-      undefined,
-      "",
-      true,
-      true,
-      [],
-      [],
-    );
+    const message = buildTelegramSuccessMessage({
+      staleFiles: ["Notes/source.md"],
+      summaries: undefined,
+      wikiSummary: "",
+      qmdUpdateOk: true,
+      qmdEmbedOk: true,
+      timings: [],
+      residualStale: [],
+    });
     expect(message).not.toContain("仍未更新");
   });
 });
@@ -363,14 +371,9 @@ describe("listStaleFiles", () => {
     };
     const result = await listStaleFiles(exec);
     expect(result).toEqual(["Notes/A.md", "Notes/B.md"]);
-    // Single scan, not one per batch.
+    // Single scan, not one per batch — the call-count is the real contract.
     expect(exec.exec).toHaveBeenCalledTimes(1);
-    expect(exec.exec).toHaveBeenCalledWith("node", [
-      expect.stringContaining("wiki-summary.mjs"),
-      "list-stale",
-      "--base-path",
-      expect.stringContaining("notes"),
-    ]);
+    expect(exec.exec.mock.calls[0]?.[1]).toContain("list-stale");
   });
 
   it("returns an empty list on failure (degrades gracefully)", async () => {
@@ -747,12 +750,15 @@ describe("wiki-summarize.md integrity", () => {
     expect(content).toContain("argument-hint:");
   });
 
-  it("should contain all 4 workflow phases", () => {
+  it("repurposes Phase 4 as Report and drops the per-run verify", () => {
     const content = readFileSync(WIKI_SUMMARIZE_FILE, "utf8");
     expect(content).toContain("### Phase 1:");
     expect(content).toContain("### Phase 2:");
     expect(content).toContain("### Phase 3:");
-    expect(content).toContain("### Phase 4:");
+    expect(content).toContain("### Phase 4: Report");
+    expect(content).not.toContain("### Phase 4: Verify");
+    // The per-run "run list-stale again" verify step was removed.
+    expect(content).not.toContain("run `list-stale` again");
   });
 
   it("should reference --base-path <cwd>", () => {

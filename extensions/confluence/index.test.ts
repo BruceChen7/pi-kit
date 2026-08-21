@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { buildDisplaySearchEndpoint, extractPageIdFromSearch } from "./browser";
 import {
   buildPageContext,
   decodeRestPage,
@@ -69,6 +70,10 @@ describe("internal Confluence context", () => {
     expect(reference.url).toBe(
       "https://confluence.example.test/display/SPPT/My+Page+Title",
     );
+    expect(reference.display).toEqual({
+      spaceKey: "SPPT",
+      title: "My Page Title",
+    });
   });
 
   it("rejects URLs outside the configured Confluence origin", () => {
@@ -106,6 +111,33 @@ describe("internal Confluence context", () => {
   });
 });
 
+describe("display URL → page id resolution (pure helpers)", () => {
+  it("builds a spaceKey/title search endpoint", () => {
+    expect(
+      buildDisplaySearchEndpoint({ spaceKey: "SPPT", title: "My Page Title" }),
+    ).toBe("/rest/api/content?spaceKey=SPPT&title=My%20Page%20Title");
+  });
+
+  it("URL-encodes plus signs and special characters in the title", () => {
+    expect(
+      buildDisplaySearchEndpoint({ spaceKey: "SPPT", title: "A+B & C" }),
+    ).toBe("/rest/api/content?spaceKey=SPPT&title=A%2BB%20%26%20C");
+  });
+
+  it("extracts the first page id from a search response", () => {
+    expect(
+      extractPageIdFromSearch({ results: [{ id: "42" }, { id: "99" }] }),
+    ).toBe("42");
+  });
+
+  it("returns null when no result carries an id", () => {
+    expect(extractPageIdFromSearch({ results: [] })).toBeNull();
+    expect(extractPageIdFromSearch({ results: [{}] })).toBeNull();
+    expect(extractPageIdFromSearch({})).toBeNull();
+    expect(extractPageIdFromSearch(null)).toBeNull();
+  });
+});
+
 describe("Confluence page tool", () => {
   it("returns page context through the public tool interface", async () => {
     const reader: ConfluencePageReader = {
@@ -126,10 +158,12 @@ describe("Confluence page tool", () => {
     const result = await pi.tools
       .get("confluence_page")
       .execute("call-1", { pageId: "123" });
-    expect(reader.read).toHaveBeenCalledWith(
+    expect(reader.read).toHaveBeenCalled();
+    const numericCall = (reader.read as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(numericCall?.[0]).toBe(
       "https://confluence.example.test/pages/viewpage.action?pageId=123",
-      "123",
     );
+    expect(numericCall?.[1]).toBe("123");
     expect((result as { details: unknown }).details).toMatchObject({
       id: "123",
       title: "Guide",
@@ -171,9 +205,9 @@ describe("Confluence page tool", () => {
     const result = await pi.tools.get("confluence_page").execute("call-2", {
       url: "https://confluence.example.test/display/SPPT/Guide",
     });
-    expect(reader.read).toHaveBeenCalledWith(
+    expect(reader.read).toHaveBeenCalled();
+    expect((reader.read as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
       "https://confluence.example.test/display/SPPT/Guide",
-      undefined,
     );
     expect((result as { details: unknown }).details).toMatchObject({
       id: "987",

@@ -280,18 +280,21 @@ export function parseResultJson(
 
 // ── Stale file listing ────────────────────────────────────────────────────
 
+/** Adapter seam for running external CLI processes (node/qmd scripts). */
+export interface ProcessExecutor {
+  exec: (
+    cmd: string,
+    args?: string[],
+  ) => Promise<{ code: number; stdout: string; stderr: string }>;
+}
+
 /**
  * Run `wiki-summary.mjs list-stale` to get the list of stale source files.
  *
  * Returns an array of relative paths (e.g. `["Notes/Foo.md", "Notes/Bar.md"]`).
  * On failure, returns an empty array and logs the error.
  */
-export async function listStaleFiles(exec: {
-  exec: (
-    cmd: string,
-    args?: string[],
-  ) => Promise<{ code: number; stdout: string; stderr: string }>;
-}): Promise<string[]> {
+export async function listStaleFiles(exec: ProcessExecutor): Promise<string[]> {
   try {
     const result = await exec.exec("node", [
       SUMMARY_SCRIPT,
@@ -342,15 +345,32 @@ export async function listStaleFiles(exec: {
  * @param qmdUpdateOk - Whether qmd update succeeded.
  * @param qmdEmbedOk - Whether qmd embed succeeded.
  */
+/** Inputs for the final knowledge-wiki-daily success notification. */
+export interface TelegramSuccessInput {
+  /** Stale source files discovered before the run (supplementary context). */
+  staleFiles: string[];
+  /** Summary files actually created/updated (authoritative when present). */
+  summaries: string[] | undefined;
+  wikiSummary: string;
+  qmdUpdateOk: boolean;
+  qmdEmbedOk: boolean;
+  timings?: StageTiming[];
+  /** Residual stale files reported by the single parent-level verify. */
+  residualStale?: string[];
+}
+
 export function buildTelegramSuccessMessage(
-  staleFiles: string[],
-  summaries: string[] | undefined,
-  wikiSummary: string,
-  qmdUpdateOk: boolean,
-  qmdEmbedOk: boolean,
-  timings: StageTiming[] = [],
-  residualStale?: string[],
+  input: TelegramSuccessInput,
 ): string {
+  const {
+    staleFiles,
+    summaries,
+    wikiSummary,
+    qmdUpdateOk,
+    qmdEmbedOk,
+    timings = [],
+    residualStale,
+  } = input;
   const lines: string[] = ["✅ 知识库维护完成", ""];
   const maxFiles = 10;
 
@@ -683,12 +703,7 @@ async function processBatch(
  */
 /** @internal Exported for testing only. */
 export async function runQmdStep(
-  exec: {
-    exec: (
-      cmd: string,
-      args?: string[],
-    ) => Promise<{ code: number; stdout: string; stderr: string }>;
-  },
+  exec: ProcessExecutor,
   stepNumber: string,
   label: string,
   args: string[],
@@ -758,12 +773,7 @@ export async function runQmdStep(
  * migration must not block the daily run.
  */
 /** @internal Exported for testing only. */
-export async function runShardMigration(exec: {
-  exec: (
-    cmd: string,
-    args?: string[],
-  ) => Promise<{ code: number; stdout: string; stderr: string }>;
-}): Promise<void> {
+export async function runShardMigration(exec: ProcessExecutor): Promise<void> {
   log.info("Step 0: split-daily-shards migration");
   try {
     const result = await exec.exec("node", [
@@ -950,15 +960,15 @@ export default defineTask({
     if (!qmdEmbedOk) return;
 
     // ── Success notification ──
-    const successMsg = buildTelegramSuccessMessage(
+    const successMsg = buildTelegramSuccessMessage({
       staleFiles,
-      createdSummaries,
-      wikiSummaryDone,
+      summaries: createdSummaries,
+      wikiSummary: wikiSummaryDone,
       qmdUpdateOk,
       qmdEmbedOk,
       timings,
       residualStale,
-    );
+    });
     log.info("knowledge-wiki-daily task completed successfully");
     await sendTelegramNotification(successMsg, undefined, true).catch((e) =>
       log.warn("telegram notify failed", { error: String(e) }),

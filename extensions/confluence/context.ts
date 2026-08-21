@@ -29,6 +29,8 @@ export interface ConfluencePageDto {
 export interface PageReference {
   pageId?: string;
   url: string;
+  /** Parsed /display/<space>/<title> reference when the URL is a display URL. */
+  display?: DisplayReference;
 }
 
 export interface DisplayReference {
@@ -90,7 +92,8 @@ export function resolvePageReference(
     }
     const pageId = parseConfluencePageId(reference);
     if (pageId) return { pageId, url: reference };
-    if (parseDisplayReference(reference)) return { url: reference };
+    const display = parseDisplayReference(reference);
+    if (display) return { url: reference, display };
     throw new Error(
       "Confluence URL does not contain a page ID or a resolvable /display/<space>/<title> path.",
     );

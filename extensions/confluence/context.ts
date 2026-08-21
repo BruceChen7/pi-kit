@@ -27,8 +27,13 @@ export interface ConfluencePageDto {
 }
 
 export interface PageReference {
-  pageId: string;
+  pageId?: string;
   url: string;
+}
+
+export interface DisplayReference {
+  spaceKey: string;
+  title: string;
 }
 
 export function parseConfluencePageId(value?: string): string | null {
@@ -51,6 +56,23 @@ export function parseConfluencePageId(value?: string): string | null {
   return null;
 }
 
+export function parseDisplayReference(value?: string): DisplayReference | null {
+  if (!value) return null;
+  let pathname: string;
+  try {
+    pathname = new URL(value).pathname;
+  } catch {
+    return null;
+  }
+  const match = pathname.match(/^\/display\/([^/]+)\/(.+)$/i);
+  if (!match?.[1] || !match[2]) return null;
+  const spaceKey = decodeURIComponent(match[1]);
+  const title = decodeURIComponent(match[2])
+    .replace(/\+/g, " ")
+    .replace(/\/+$/, "");
+  return { spaceKey, title };
+}
+
 export function resolvePageReference(
   baseUrl: string,
   input: { url?: string; pageId?: string },
@@ -67,8 +89,11 @@ export function resolvePageReference(
       );
     }
     const pageId = parseConfluencePageId(reference);
-    if (!pageId) throw new Error("Confluence URL does not contain a page ID.");
-    return { pageId, url: reference };
+    if (pageId) return { pageId, url: reference };
+    if (parseDisplayReference(reference)) return { url: reference };
+    throw new Error(
+      "Confluence URL does not contain a page ID or a resolvable /display/<space>/<title> path.",
+    );
   }
 
   if (!/^\d+$/.test(reference))

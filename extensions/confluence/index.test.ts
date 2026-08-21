@@ -3,6 +3,7 @@ import {
   buildPageContext,
   decodeRestPage,
   parseConfluencePageId,
+  parseDisplayReference,
   renderConfluencePageMarkdown,
   resolvePageReference,
 } from "./context";
@@ -42,6 +43,32 @@ describe("internal Confluence context", () => {
       ),
     ).toBe("123456789");
     expect(parseConfluencePageId("123456789")).toBe("123456789");
+  });
+
+  it("parses display URLs into space key and title", () => {
+    expect(
+      parseDisplayReference(
+        "https://confluence.example.test/display/SPPT/%5BExternal%5D+Voucher+Core+Seller+Voucher+API+Migration+Guide",
+      ),
+    ).toEqual({
+      spaceKey: "SPPT",
+      title: "[External] Voucher Core Seller Voucher API Migration Guide",
+    });
+    expect(
+      parseDisplayReference(
+        "https://confluence.example.test/pages/viewpage.action?pageId=123",
+      ),
+    ).toBeNull();
+  });
+
+  it("resolves display URLs without a page ID", () => {
+    const reference = resolvePageReference("https://confluence.example.test", {
+      url: "https://confluence.example.test/display/SPPT/My+Page+Title",
+    });
+    expect(reference.pageId).toBeUndefined();
+    expect(reference.url).toBe(
+      "https://confluence.example.test/display/SPPT/My+Page+Title",
+    );
   });
 
   it("rejects URLs outside the configured Confluence origin", () => {
@@ -123,5 +150,34 @@ describe("Confluence page tool", () => {
     expect(buildConfluencePagePrompt("123")).toBe(
       'Use confluence_page to fetch Confluence page with pageId: "123"',
     );
+  });
+
+  it("routes a display URL through the reader without a page ID", async () => {
+    const reader: ConfluencePageReader = {
+      read: vi.fn(async (_url, _pageId) => ({
+        id: "987",
+        title: "Guide",
+        url: "https://confluence.example.test/display/SPPT/Guide",
+        markdown: "# Guide",
+        headings: ["Guide"],
+        links: { urls: [], figmaUrls: [], jiraKeys: [] },
+      })),
+    };
+    const pi = fakePi();
+    createConfluenceExtension({
+      readBaseUrl: () => "https://confluence.example.test",
+      reader,
+    })(pi as never);
+    const result = await pi.tools.get("confluence_page").execute("call-2", {
+      url: "https://confluence.example.test/display/SPPT/Guide",
+    });
+    expect(reader.read).toHaveBeenCalledWith(
+      "https://confluence.example.test/display/SPPT/Guide",
+      undefined,
+    );
+    expect((result as { details: unknown }).details).toMatchObject({
+      id: "987",
+      title: "Guide",
+    });
   });
 });

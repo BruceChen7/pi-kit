@@ -28,6 +28,20 @@ It accepts a page ID or a page URL and calls the internal Server/Data Center RES
 GET /rest/api/content/{pageId}?expand=body.storage,version,space
 ```
 
+Supported URL forms:
+
+- Numeric page ID, e.g. `123456789`
+- Page URL with a numeric ID, e.g. `/pages/viewpage.action?pageId=123456789`, `/pages/123456789`, `/spaces/SPACE/pages/123456789`
+- Display URL with space key and title, e.g. `/display/SPACE/My+Page+Title`
+
+Display URLs do not embed a page ID. The tool first resolves the space key and title to a page ID through the REST API:
+
+```text
+GET /rest/api/content?spaceKey=SPACE&title=My Page Title
+```
+
+then fetches the page content with the resolved ID.
+
 The result includes Markdown content, headings, page metadata, Jira keys, and Figma links.
 
 ## Commands

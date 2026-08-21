@@ -2,21 +2,16 @@ import { readdirSync, statSync } from "node:fs";
 import os from "node:os";
 import { extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  DynamicBorder,
-  type ExtensionAPI,
-  type ExtensionContext,
+import type {
+  ExtensionAPI,
+  ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import {
-  Container,
-  type SelectItem,
-  SelectList,
-  Text,
-} from "@earendil-works/pi-tui";
+import type { SelectItem } from "@earendil-works/pi-tui";
 import { createQueue, type Queue } from "../shared/deferred-queue/index.ts";
 import { log } from "../shared/deferred-queue/logger.ts";
 import type { TaskDefinition } from "../shared/deferred-queue/types.ts";
 import { isTelegramConfigured } from "../shared/telegram.ts";
+import { pickTask } from "./tasks/tasks-picker.ts";
 
 const WIDGET_KEY = "deferred-queue";
 const PERSIST_FILE = join(os.homedir(), ".pi", "agent", "deferred-queue.json");
@@ -221,54 +216,7 @@ export default async function (pi: ExtensionAPI) {
       };
     });
 
-    const selectedId = await ctx.ui.custom<string | null>(
-      (tui, theme, _kb, done) => {
-        const container = new Container();
-
-        container.addChild(
-          new DynamicBorder((s: string) => theme.fg("accent", s)),
-        );
-        container.addChild(
-          new Text(
-            theme.fg("accent", theme.bold("Select a task to run manually")),
-            1,
-            0,
-          ),
-        );
-
-        const selectList = new SelectList(items, Math.min(items.length, 10), {
-          selectedPrefix: (t) => theme.fg("accent", t),
-          selectedText: (t) => theme.fg("accent", t),
-          description: (t) => theme.fg("muted", t),
-          scrollInfo: (t) => theme.fg("dim", t),
-          noMatch: (t) => theme.fg("warning", t),
-        });
-
-        selectList.onSelect = (item) => done(item.value);
-        selectList.onCancel = () => done(null);
-        container.addChild(selectList);
-
-        container.addChild(
-          new Text(
-            theme.fg("dim", "↑↓ navigate • enter to trigger • esc cancel"),
-            1,
-            0,
-          ),
-        );
-        container.addChild(
-          new DynamicBorder((s: string) => theme.fg("accent", s)),
-        );
-
-        return {
-          render: (w) => container.render(w),
-          invalidate: () => container.invalidate(),
-          handleInput: (data) => {
-            selectList.handleInput(data);
-            tui.requestRender();
-          },
-        };
-      },
-    );
+    const selectedId = await pickTask(ctx.ui, items);
 
     if (!selectedId) {
       ctx.ui.notify("Cancelled", "info");

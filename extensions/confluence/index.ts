@@ -13,7 +13,7 @@ const pageContext = Type.Object({
 });
 
 export interface ConfluencePageReader {
-  read(url: string, pageId: string): Promise<PageContext>;
+  read(url: string, pageId?: string): Promise<PageContext>;
 }
 
 export interface ConfluenceExtensionOptions {

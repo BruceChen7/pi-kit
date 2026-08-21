@@ -28,15 +28,23 @@ The placeholders `<path-to-wiki-summary.mjs>`, `<path-to-wiki-concept.mjs>`, `<p
 
 ## Workflow
 
-### Phase 1: Discover stale files
+### Phase 1: Process the injected stale files
+
+The scheduler has already discovered the stale files and injected them into the
+runtime `## Task Configuration` → `## Stale Files` section below. **Use that list
+as the authoritative source** — process exactly those files. Do NOT re-run
+`list-stale` to rediscover files: under concurrent batch runs the global stale
+set shrinks as sibling batches finish, so a fresh `list-stale` can return a
+different set and cause you to skip or mishandle files.
+
+If the `## Stale Files` section is empty or absent (e.g. this prompt is run
+standalone without scheduler injection), discover them yourself:
 
 ```bash
 node <path-to-wiki-summary.mjs> list-stale --base-path <cwd>
 ```
 
-If the output JSON shows `"sources": []`, report "全部摘要已是最新 ✅" and stop.
-
-Otherwise, list the stale files and proceed.
+If it reports `"sources": []`, report "全部摘要已是最新 ✅" and stop.
 
 ### Phase 2: Process each stale file
 
@@ -114,15 +122,11 @@ For each relevant concept:
      --base-path <cwd>
    ```
 
-### Phase 4: Verify
+### Phase 4: Report
 
-After processing all files, run `list-stale` again:
-
-```bash
-node <path-to-wiki-summary.mjs> list-stale --base-path <cwd>
-```
-
-Confirm the output is `"sources": []`.
+End your response with the JSON summary described below. Do NOT re-run
+`list-stale` as a verify step — the scheduler performs a single global
+verification after all batches complete, so a per-run rescan here is redundant.
 
 ### Final output format
 
@@ -131,7 +135,7 @@ End your response with a single JSON object on its own line. Use this exact sche
 ```json
 {
   "ok": true,
-  "done": "Phase 1: N stale files. Phase 2: N summaries created. Phase 3: N concepts linked.",
+  "done": "Phase 1: N files processed. Phase 2: N summaries created. Phase 3: N concepts linked.",
   "summaries": [
     "Wiki/Summaries/Calendar/DailyNotes/2026/2026-07-06.summary.md",
     "Wiki/Summaries/Calendar/DailyNotes/2026/2026-07-08.summary.md"

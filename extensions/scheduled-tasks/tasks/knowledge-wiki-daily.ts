@@ -200,7 +200,8 @@ export function buildSubagentPrompt(staleFiles: string[]): string {
     "",
     ...fileList,
     "",
-    "Proceed through all 4 phases (list-stale → generate summaries → link concepts → verify).",
+    "Proceed through the summarize and concept-linking phases using the injected Stale Files list above.",
+    "Do NOT re-run list-stale to rediscover files (the parent already discovered them), and do NOT run a per-batch verify (the parent verifies the whole KB once at the end).",
     "",
     "When complete, output a JSON summary line matching this format:",
     `{"ok": true, "done": "Phase 1: N stale files. Phase 2: N summaries created. Phase 3: N concepts linked.", "summaries": ["Wiki/Summaries/.../file.summary.md", "..."]}`,
@@ -285,7 +286,7 @@ export function parseResultJson(
  * Returns an array of relative paths (e.g. `["Notes/Foo.md", "Notes/Bar.md"]`).
  * On failure, returns an empty array and logs the error.
  */
-async function listStaleFiles(exec: {
+export async function listStaleFiles(exec: {
   exec: (
     cmd: string,
     args?: string[],
@@ -348,6 +349,7 @@ export function buildTelegramSuccessMessage(
   qmdUpdateOk: boolean,
   qmdEmbedOk: boolean,
   timings: StageTiming[] = [],
+  residualStale?: string[],
 ): string {
   const lines: string[] = ["✅ 知识库维护完成", ""];
   const maxFiles = 10;
@@ -389,6 +391,23 @@ export function buildTelegramSuccessMessage(
     }
     if (staleFiles.length > maxFiles) {
       lines.push(`  <code>... 还有 ${staleFiles.length - maxFiles} 个</code>`);
+    }
+    lines.push("");
+  }
+
+  // ── Section: residual stale files after the single parent verify ─────
+  // Non-empty only when a batch partially failed; surfaces what the
+  // post-run `list-stale` still considers stale so nothing silently rots.
+  if (residualStale && residualStale.length > 0) {
+    lines.push(`<b>⚠️ 仍未更新（${residualStale.length} 个 stale 文件）</b>`);
+    const displayed = residualStale.slice(0, maxFiles);
+    for (const f of displayed) {
+      lines.push(`  <code>${escapeHtml(f)}</code>`);
+    }
+    if (residualStale.length > maxFiles) {
+      lines.push(
+        `  <code>... 还有 ${residualStale.length - maxFiles} 个</code>`,
+      );
     }
     lines.push("");
   }
@@ -896,6 +915,22 @@ export default defineTask({
     timings.push(summarizeResult.timing);
     const { createdSummaries, wikiSummaryDone } = summarizeResult.value;
 
+    // ── Step 3b: single parent-level verify (replaces per-batch Phase 4) ──
+    // One global list-stale after all batches sees the true final KB state
+    // and reports any residual stale files; per-batch rescans are gone.
+    const verifyResult = await runTimedStage("Step 3b · verify", () =>
+      listStaleFiles(exec),
+    );
+    timings.push(verifyResult.timing);
+    const residualStale = verifyResult.value;
+    if (residualStale.length > 0) {
+      log.warn("wiki-summarize verify found residual stale files", {
+        count: residualStale.length,
+      });
+    } else {
+      log.info("wiki-summarize verify clean — no residual stale files");
+    }
+
     // ── Step 4: qmd update ──
     const qmdUpdateResult = await runTimedStage("Step 4 · qmd update", () =>
       runQmdStep(exec, "4", "qmd update", ["update"]),
@@ -922,6 +957,7 @@ export default defineTask({
       qmdUpdateOk,
       qmdEmbedOk,
       timings,
+      residualStale,
     );
     log.info("knowledge-wiki-daily task completed successfully");
     await sendTelegramNotification(successMsg, undefined, true).catch((e) =>

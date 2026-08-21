@@ -9,6 +9,7 @@ import {
   formatDuration,
   formatStageStartTime,
   interpretBatchResult,
+  listStaleFiles,
   parseResultJson,
   runQmdStep,
   runShardMigration,
@@ -102,11 +103,11 @@ describe("buildSubagentPrompt", () => {
     expect(result).toContain("wiki-index.mjs path");
   });
 
-  it("should mention the 4-phase workflow", () => {
+  it("should instruct the subagent to use the injected stale list without re-listing", () => {
     const result = buildSubagentPrompt([]);
-    expect(result).toContain("4 phases");
-    expect(result).toContain("list-stale");
-    expect(result).toContain("verify");
+    expect(result).toContain("## Stale Files");
+    expect(result).toContain("Do NOT re-run list-stale");
+    expect(result).not.toContain("4 phases");
   });
 
   it("should require a JSON output summary with summaries field", () => {
@@ -318,6 +319,66 @@ describe("Telegram summary formatting", () => {
     expect(message).not.toContain("wiki-summarize");
     expect(message).toContain("qmd update：✓");
     expect(message).toContain("qmd embed：✓");
+  });
+
+  it("renders a residual-stale warning section when files remain", () => {
+    const message = buildTelegramSuccessMessage(
+      ["Notes/source.md"],
+      ["Wiki/Summaries/source.summary.md"],
+      "",
+      true,
+      true,
+      [],
+      ["Notes/still-stale.md", "Notes/also-stale.md"],
+    );
+    expect(message).toContain("⚠️ 仍未更新（2 个 stale 文件）");
+    expect(message).toContain("Notes/still-stale.md");
+    expect(message).toContain("Notes/also-stale.md");
+  });
+
+  it("omits the residual section when there are no residual files", () => {
+    const message = buildTelegramSuccessMessage(
+      ["Notes/source.md"],
+      undefined,
+      "",
+      true,
+      true,
+      [],
+      [],
+    );
+    expect(message).not.toContain("仍未更新");
+  });
+});
+
+// ── listStaleFiles ───────────────────────────────────
+
+describe("listStaleFiles", () => {
+  it("returns the residual stale list from a single list-stale scan", async () => {
+    const exec = {
+      exec: vi.fn().mockResolvedValue({
+        code: 0,
+        stdout: JSON.stringify({ sources: ["Notes/A.md", "Notes/B.md"] }),
+        stderr: "",
+      }),
+    };
+    const result = await listStaleFiles(exec);
+    expect(result).toEqual(["Notes/A.md", "Notes/B.md"]);
+    // Single scan, not one per batch.
+    expect(exec.exec).toHaveBeenCalledTimes(1);
+    expect(exec.exec).toHaveBeenCalledWith("node", [
+      expect.stringContaining("wiki-summary.mjs"),
+      "list-stale",
+      "--base-path",
+      expect.stringContaining("notes"),
+    ]);
+  });
+
+  it("returns an empty list on failure (degrades gracefully)", async () => {
+    const exec = {
+      exec: vi.fn().mockResolvedValue({ code: 1, stdout: "", stderr: "boom" }),
+    };
+    const result = await listStaleFiles(exec);
+    expect(result).toEqual([]);
   });
 });
 

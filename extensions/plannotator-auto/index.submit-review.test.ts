@@ -132,6 +132,21 @@ afterEach(() => {
 });
 
 describe("submit review tool", () => {
+  it("exposes a prompt snippet so the submit tool appears in top-level available tools", async () => {
+    vi.resetModules();
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const registeredTool = api.registerTool.mock.calls
+      .map(([tool]) => tool as { name: string; promptSnippet?: string })
+      .find((tool) => tool.name === "plannotator_auto_submit_review");
+
+    expect(registeredTool?.promptSnippet).toBe(
+      "plannotator_auto_submit_review: submit a pending plan/spec/extra review target, or a pending HTML artifact, to Plannotator and wait for approval or feedback.",
+    );
+  });
+
   it("submits a pending plan draft through the Plannotator CLI", async () => {
     vi.resetModules();
     const spawn = mockSpawn({

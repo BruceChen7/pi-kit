@@ -693,6 +693,8 @@ export const registerPlanReviewSubmitTool = (
     label: "Submit Plannotator Auto Review",
     description:
       "Submit a pending plan/spec/extra review target, or a pending HTML artifact, to Plannotator and wait for approval or feedback.",
+    promptSnippet:
+      "plannotator_auto_submit_review: submit a pending plan/spec/extra review target, or a pending HTML artifact, to Plannotator and wait for approval or feedback.",
     parameters: planReviewSubmitToolParameters,
     async execute(_toolCallId, rawParams, signal, _onUpdate, ctx) {
       const params = rawParams as PlanReviewSubmitToolParams;

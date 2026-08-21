@@ -70,7 +70,20 @@ export const IMPLEMENTATION_CALL_TREE_GUIDANCE = [
   "              : removePluginSymlink()              ← 副作用: 删 symlink",
   "- Mermaid 留给 Current Flow / Desired Flow / Boundaries 的架构层交互；",
   "  ASCII tree 用于 Implementation 的函数级调用链和条件分支。",
+  "- 调用树中每层标注归属 Functional Core 还是 Imperative Shell，副作用分支明确标为 Shell，纯计算分支标为 Core。",
 ];
+
+export const FC_IS_GUIDANCE = [
+  "- 实现代码必须按 Functional Core, Imperative Shell（FC/IS）拆分：",
+  "  Core 是纯函数 value in / value out（无 IO、无副作用、可表测）；Shell 只做 IO/编排/副作用（读文件、网络、DB、时钟、env）。",
+  "  Boundaries 用 plain DTO/接口定义 Core↔Shell 边界，不传 live service 对象。",
+  "  Implementation 调用树中标注每层归属 Core 还是 Shell，并标出 side effect / 纯计算分支。",
+  "  Testing 围绕 Core 的 value in / value out 写表测，Shell 尽量薄、只测边界行为，不测编排 mock choreography。",
+  "  违反信号：业务判断与 IO/DB/网络/时钟/全局变量缠绕、或测试断言 mock choreography 即为未按 FC/IS 拆分。",
+];
+
+export const FC_IS_CHECKLIST_ENTRY =
+  "- ## Implementation / ## Boundaries / ## Testing 体现 FC/IS 拆分：包含 Functional Core / Imperative Shell / FC/IS / value in / value out / 纯函数 等关键词之一，且 Implementation 调用树标注 Core vs Shell 与副作用。";
 
 const stripGuidanceBullet = (line: string): string => line.replace(/^-\s*/, "");
 
@@ -129,6 +142,7 @@ export const PLAN_SUBMIT_CHECKLIST = [
     ({ section, form }) =>
       `  - ## ${section} 包含${PLAN_CONTENT_FORM_HINTS[form]}。`,
   ),
+  `  ${FC_IS_CHECKLIST_ENTRY}`,
   "- Mermaid 使用 ```mermaid 围栏，不要使用 ~~~mermaid；每个代码块都要闭合。",
   "- 首次提交和被拒绝后的重提都复用同一个 plan 文件，并保持第一个 # 标题不变。",
 ];

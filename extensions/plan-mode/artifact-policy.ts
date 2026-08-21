@@ -20,7 +20,8 @@ export type ArtifactPolicyIssueCode =
   | "section_order"
   | "extra_section"
   | "empty_section"
-  | "missing_content_form";
+  | "missing_content_form"
+  | "missing_fc_is";
 
 export type ArtifactPolicyIssue = {
   code: ArtifactPolicyIssueCode;
@@ -136,6 +137,47 @@ const hasMermaidBlock = (content: string): boolean =>
 
 const hasAsciiCallTree = (content: string): boolean =>
   /[\u251c\u2514]/.test(content);
+
+// FC/IS marker: plan must declare Functional Core / Imperative Shell split
+// in Implementation, Boundaries, Testing. Lightweight keyword check so the
+// policy can never drift from guidance (FC_IS_GUIDANCE / FC_IS_CHECKLIST_ENTRY).
+const FC_IS_MARKER_RE =
+  /Functional Core|Imperative Shell|FC\/IS|value in|value out|纯函数/i;
+
+const hasFcIsMarker = (content: string): boolean =>
+  FC_IS_MARKER_RE.test(content);
+
+const FC_IS_SECTIONS: readonly string[] = [
+  "Boundaries",
+  "Implementation",
+  "Testing",
+];
+
+const FC_IS_SUGGESTION =
+  "Add Functional Core / Imperative Shell split: Core = pure value in/value out, Shell = thin IO wrapper. " +
+  "In Boundaries define plain DTO boundaries; in Implementation mark Core vs Shell + side effects in the ASCII tree; " +
+  "in Testing list Core value-in/value-out cases and keep Shell thin (no mock choreography). Keywords: Functional Core, Imperative Shell, FC/IS, value in / value out, 纯函数.";
+
+const validateFcIs = (
+  sectionByName: Map<string, MarkdownSection>,
+): ArtifactPolicyIssue[] => {
+  const issues: ArtifactPolicyIssue[] = [];
+  for (const sectionName of FC_IS_SECTIONS) {
+    const section = sectionByName.get(sectionName);
+    if (!section || section.content.length === 0) {
+      continue;
+    }
+    if (!hasFcIsMarker(section.content)) {
+      issues.push({
+        code: "missing_fc_is",
+        section: sectionName,
+        message: `## ${sectionName} section must describe the Functional Core / Imperative Shell split.`,
+        suggestion: FC_IS_SUGGESTION,
+      });
+    }
+  }
+  return issues;
+};
 
 type ContentFormCheck = {
   section: string;
@@ -274,6 +316,7 @@ const validateStandardPlan = (
 
   if (config.requireReviewDetails) {
     issues.push(...validateContentForms(sectionByName));
+    issues.push(...validateFcIs(sectionByName));
   }
 
   return issues;
@@ -307,6 +350,8 @@ const FIX_SNIPPETS: Partial<Record<ArtifactPolicyIssueCode, string>> = {
     "## Goal\n\n## Current Flow\n\n## Desired Flow\n\n" +
     "## Boundaries\n\n## Implementation\n\n## Testing\n\n" +
     "## Decisions\n\n## Non-goals",
+  missing_fc_is:
+    "## Implementation\ndecide(input): Output  ← Functional Core, pure value in/value out\nshell():\n  ├─ load() ← Imperative Shell / IO\n  └─ decide(data) ← Core (pure)\n\n## Boundaries\nCore ↔ Shell DTO: { input, output } plain data\n\n## Testing\n- Core: value in / value out table tests\n- Shell: thin wiring, no mock choreography",
 };
 
 const CONTENT_FORM_SNIPPETS: Record<string, string> = {

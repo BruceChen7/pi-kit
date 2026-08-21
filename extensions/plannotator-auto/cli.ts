@@ -119,15 +119,66 @@ const runCli = async <T>(
   command: string,
   args: string[],
   options: RunCliOptions<T>,
-): Promise<RunCliResult<T>> =>
-  new Promise((resolve) => {
+): Promise<RunCliResult<T>> => {
+  // Functional Core decision: should we use terminal-browser?
+  // Sync fast-path: in tests or non-Herdr, avoid async import entirely (keeps mocks hermetic)
+  let useTerminalBrowser = false;
+  let readyFile: string | null = null;
+  let effectiveEnv: NodeJS.ProcessEnv | undefined = options.env;
+  const isTestEnv = !!process.env.VITEST || process.env.NODE_ENV === "test";
+  const isHerdrEnv =
+    process.env.HERDR_ENV === "1" && !!process.env.HERDR_PANE_ID;
+  if (!isTestEnv && isHerdrEnv) {
+    try {
+      const { shouldUseTerminalBrowser, createTempReadyFile } = await import(
+        "./terminal-browser.ts"
+      );
+      useTerminalBrowser = await shouldUseTerminalBrowser(ctx);
+      if (useTerminalBrowser) {
+        try {
+          readyFile = await createTempReadyFile();
+          effectiveEnv = {
+            ...process.env,
+            ...options.env,
+            PLANNOTATOR_CWD: ctx.cwd,
+            PLANNOTATOR_READY_FILE: readyFile,
+            PLANNOTATOR_SKIP_BROWSER_OPEN: "1",
+          };
+        } catch {
+          readyFile = null;
+          effectiveEnv = options.env;
+        }
+      }
+    } catch {
+      useTerminalBrowser = false;
+    }
+  }
+
+  return new Promise<RunCliResult<T>>((resolve) => {
     const detached = options.detached === true;
     const child = spawn(command, args, {
       cwd: ctx.cwd,
-      env: options.env ?? { ...process.env, PLANNOTATOR_CWD: ctx.cwd },
+      env: effectiveEnv ?? { ...process.env, PLANNOTATOR_CWD: ctx.cwd },
       stdio: ["pipe", "pipe", "pipe"],
       ...(detached ? { detached: true } : {}),
     });
+
+    // Shell: parallel open of terminal-browser via READY_FILE (fire-and-forget)
+    if (useTerminalBrowser && readyFile) {
+      const capturedReadyFile = readyFile;
+      const capturedSignal = options.signal;
+      import("./terminal-browser.ts")
+        .then(({ waitForReadyFile, openUrlInHerdrTerminalBrowser }) =>
+          waitForReadyFile(capturedReadyFile, capturedSignal, 8000).then(
+            (url) => {
+              if (url) {
+                return openUrlInHerdrTerminalBrowser(url, ctx).catch(() => {});
+              }
+            },
+          ),
+        )
+        .catch(() => {});
+    }
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -198,7 +249,18 @@ const runCli = async <T>(
     trackChild(sessionKey, child, detached);
 
     child.stdin.end(options.input ?? "");
+
+    // Shell: cleanup READY_FILE on close (best-effort, no await)
+    if (readyFile) {
+      const fileToClean = readyFile;
+      child.on("close", () => {
+        import("./terminal-browser.ts")
+          .then(({ removeTempReadyFile }) => removeTempReadyFile(fileToClean))
+          .catch(() => {});
+      });
+    }
   });
+};
 
 const parseCliReviewResult = (stdout: string): CliReviewDecision => {
   const trimmed = stdout.trim();

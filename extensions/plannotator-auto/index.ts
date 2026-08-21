@@ -29,6 +29,10 @@ import {
   getSessionState,
   setSessionContext,
 } from "./session.ts";
+import {
+  clearLastOpened,
+  clearTerminalBrowserCache,
+} from "./terminal-browser.ts";
 
 const isReviewTrackedToolName = (toolName: string): boolean =>
   toolName === "write" || toolName === "edit" || toolName === "bash";
@@ -82,6 +86,9 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
         count,
       });
     }
+
+    clearTerminalBrowserCache(sessionKey);
+    clearLastOpened(sessionKey);
 
     clearReviewWidget(ctx);
     clearSessionContext(sessionKey);

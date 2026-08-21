@@ -43,16 +43,17 @@ sequenceDiagram
 sequenceDiagram
   L1->>L2: call  ← ownership
 \`\`\`
+- Functional Core / Imperative Shell 边界 DTO：Core 纯函数 ↔ Shell 薄包装（IO）。
 
 ## Implementation
 
-parentFn()
-  ├─ childA()  ← 条件分支
-  └─ childB()  ← 副作用
+parentFn()  ← Functional Core / Imperative Shell 拆分示例
+  ├─ childA()  ← Functional Core 纯函数 value in / value out
+  └─ childB()  ← Imperative Shell 副作用
 
 ## Testing
 
-核心 value in / value out 测试场景。
+核心 Functional Core value in / value out 表测；Imperative Shell 薄包装只测边界。
 
 ## Decisions
 
@@ -293,16 +294,17 @@ sequenceDiagram
 sequenceDiagram
   L1->>L2: call
 \`\`\`
+- Functional Core / Imperative Shell 边界 DTO。
 
 ## Implementation
 
-parentFn()
-  ├─ childA()
-  └─ childB()
+parentFn()  ← Functional Core / Imperative Shell 拆分
+  ├─ childA()  ← Functional Core 纯函数 value in / value out
+  └─ childB()  ← Imperative Shell 副作用
 
 ## Testing
 
-核心 value in / value out。
+核心 Functional Core value in / value out 表测；Imperative Shell 边界。
 
 ## Decisions
 

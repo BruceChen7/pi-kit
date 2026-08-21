@@ -30,6 +30,10 @@ import {
 import { isHtmlPath, resolveReviewTargetMatch } from "./paths.ts";
 import type { PendingPlanReview } from "./plan-review/types.ts";
 import { getSessionState, type SessionRuntimeState } from "./session.ts";
+import {
+  shouldAutoClose,
+  tryCloseTerminalBrowserTab,
+} from "./terminal-browser.ts";
 
 const KEEP_PLAN_HEADING_GUIDANCE =
   "Keep the first # heading unchanged unless the reviewer explicitly asks you " +
@@ -442,11 +446,23 @@ const clearPendingPlanReviewTarget = (
   state.pendingPlanReviewTargetsByCwd.delete(cwd);
 };
 
+const triggerApprovedTerminalBrowserClose = (
+  decision: PlanReviewDecisionLike,
+  ctx?: Parameters<typeof tryCloseTerminalBrowserTab>[0],
+): void => {
+  if (!shouldAutoClose(decision)) return;
+  void tryCloseTerminalBrowserTab(ctx).catch(() => {});
+};
+
 const approvePendingPlanReview = (
   state: SessionRuntimeState,
   cwd: string,
   pendingPlanReviews: Map<string, PendingPlanReview>,
   pendingPlanReview: PendingPlanReview,
+  ctx?: {
+    cwd: string;
+    sessionManager: { getSessionFile: () => string | null | undefined };
+  },
 ) => {
   state.settledPlanReviewPaths.add(pendingPlanReview.resolvedPlanPath);
   clearPendingPlanReviewTarget(
@@ -458,6 +474,8 @@ const approvePendingPlanReview = (
   markPendingPlanReviewEventsHandled(state, cwd, [
     pendingPlanReview.resolvedPlanPath,
   ]);
+  // Shell: approved → auto-close the Herdr pane/tab that was opened for this review (Q11=B)
+  triggerApprovedTerminalBrowserClose({ approved: true }, ctx);
 
   return {
     content: [
@@ -531,6 +549,7 @@ const completePendingPlanReview = (
       ctx.cwd,
       pendingPlanReviews,
       pendingPlanReview,
+      ctx,
     );
   }
 
@@ -635,6 +654,7 @@ const runPlannotatorHtmlReviewFlow = async (
       ctx.cwd,
       pendingPlanReviews,
       pendingPlanReview,
+      ctx,
     );
   }
   if (decision.dismissed) {

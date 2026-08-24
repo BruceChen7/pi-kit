@@ -1,16 +1,12 @@
 ---
-description: Explain the current topic visually with concise diagrams, code-shape sketches, and focused HTML artifacts
+description: Explain the current topic visually with concise diagrams and code-shape sketches
 argument-hint: "[topic]"
 ---
-> **参考 / Reference**: 本 prompt 改编自 HumanLayer 的 `show-me` skill — https://github.com/humanlayer/skills (`plugins/show-me/skills/show-me/SKILL.md`)。内容形状(pseudocode、call tree、component tree、file tree、Mermaid、diff)与上游保持一致;本仓库的差异化修改为:必须写入 HTML 文件(见下)与 `.pi/html/pi-kit/` 路径约定。
+> **参考 / Reference**: 本 prompt 改编自 HumanLayer 的 `show-me` skill — https://github.com/humanlayer/skills (`plugins/show-me/skills/show-me/SKILL.md`)。内容形状(pseudocode、call tree、component tree、file tree、Mermaid、diff)与上游保持一致。
 
 Explain ${@:-the current topic of conversation} visually. Skip the preamble and keep prose brief. Pick the smallest view that makes the key point clear.
 
-**必须写入 HTML 文件(mandatory)**: The visual explanation must always be written into one self-contained HTML file — a diagram, an infographic, or a short slide deck, whichever fits the point. Inline code blocks or Mermaid in chat are not the deliverable; the HTML file is. Follow this repo's HTML artifact convention: write the file under `.pi/html/pi-kit/` with the filename `YYYY-MM-DD-show-me-{description}.html` (use today's date; derive `{description}` from the topic when one was given). Match the product's colors, type, spacing, and components; use real labels and data; support desktop and mobile.
-
-Do not run `open` and do not auto-open the file — just report the written path in chat.
-
-The shapes below are content to render inside the HTML file, each placed next to the short text it supports:
+The shapes below are content to render in chat, each placed next to the short text it supports:
 
 - Show logic or an algorithm as pseudocode:
 
@@ -120,8 +116,6 @@ function expandSkill(command: string): string {
   return `use the ${skillName} skill`
 }
 ```
-
-- For a visual UI, layout, state comparison, or concept too dense for Mermaid, render it inside the HTML file (see the mandatory rule above) — a diagram, an infographic, or a short slide deck, whichever fits the point.
 
 - Keep only the calls, files, props, states, and boundaries needed to answer the user's current question.
 

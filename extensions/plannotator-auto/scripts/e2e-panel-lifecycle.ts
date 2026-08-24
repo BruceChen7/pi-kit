@@ -27,10 +27,12 @@ const panes = (): string[] => {
     (p: { pane_id: string }) => p.pane_id,
   );
 };
-const edgeRight = (): boolean => {
-  // Probe the LAUNCHER pane explicitly (HERDR_PANE_ID), mirroring the fixed
-  // hasHerdrRightPane: an unnamed probe follows focus, which moves to the
-  // new pane after --split right and would measure the wrong pane.
+const launcherPaneIsRightmost = (): boolean => {
+  // Probe the LAUNCHER pane explicitly (HERDR_PANE_ID), mirroring
+  // hasHerdrRightPane. edges.right === true means the probed pane is
+  // rightmost (no right neighbor); === false means a pane exists to its
+  // right. An unnamed probe follows focus, which moves to the new pane after
+  // --split right and would measure the wrong pane.
   const pane = process.env.HERDR_PANE_ID;
   const out = execSync(`herdr pane edges${pane ? ` --pane ${pane}` : ""}`, {
     encoding: "utf8",
@@ -56,7 +58,10 @@ try {
   clearLastOpened();
   const before = panes().sort();
 
-  check("edge right before open (no right pane)", edgeRight() === true);
+  check(
+    "launcher pane is rightmost before open (no right pane yet)",
+    launcherPaneIsRightmost() === true,
+  );
 
   const strategy = await resolveHerdrPanelStrategy();
   check(
@@ -80,7 +85,10 @@ try {
       created.length >= 1,
       `new: ${created.join(",") ?? "none"}`,
     );
-    check("current pane now has a right neighbor", edgeRight() === false);
+    check(
+      "launcher pane has a right neighbor after split",
+      launcherPaneIsRightmost() === false,
+    );
 
     if (created.length >= 1) {
       await tryCloseTerminalBrowserTab(ctx);
@@ -93,7 +101,10 @@ try {
         leftover.length === 0,
         `leftover: ${leftover.join(",") || "none"}`,
       );
-      check("edge right restored after close", edgeRight() === true);
+      check(
+        "launcher pane is rightmost again after close",
+        launcherPaneIsRightmost() === true,
+      );
     } else {
       console.log("WARN: no pane created — skipping close phase");
       failures += 1;

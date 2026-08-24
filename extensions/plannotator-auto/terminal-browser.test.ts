@@ -4,7 +4,7 @@ import {
   hasRightNeighborFromEdgesOutput,
   isHerdrEnvironment,
   parseReadyFileLine,
-  selectPanelStrategy,
+  pickCloseTarget,
   shouldCloseReviewPanel,
 } from "./terminal-browser.ts";
 
@@ -49,13 +49,6 @@ describe("terminal-browser Functional Core", () => {
     expect(extractFirstUrlFromReadyContent("")).toBe(null);
   });
 
-  it("selectPanelStrategy keys off right-pane existence", () => {
-    // No right pane → split right to create the review panel.
-    expect(selectPanelStrategy({ hasHerdrRightPane: false })).toBe("split");
-    // Right pane already exists → reuse it via new-tab, never over-split.
-    expect(selectPanelStrategy({ hasHerdrRightPane: true })).toBe("new-tab");
-  });
-
   it("hasRightNeighborFromEdgesOutput parses herdr pane edges", () => {
     // right === false → a pane exists to the right of the probed pane.
     expect(
@@ -70,13 +63,31 @@ describe("terminal-browser Functional Core", () => {
   });
 
   it("shouldCloseReviewPanel closes on any terminal verdict", () => {
-    // 红灯预期:当前实现只在 approved 时关闭;denied(带 comment)与
-    // dismissed 也是评审终结判定,必须同样关闭面板。
+    // denied（带 feedback）与 dismissed 同样是终局判定，必须关闭面板；
+    // 错误/中断不是终局（面板留给重试），不会进入该判定。
     expect(shouldCloseReviewPanel({ approved: true })).toBe(true);
     expect(shouldCloseReviewPanel({ approved: false, feedback: "x" })).toBe(
       true,
     );
     expect(shouldCloseReviewPanel({ dismissed: true })).toBe(true);
     expect(shouldCloseReviewPanel({})).toBe(false);
+  });
+
+  it("pickCloseTarget picks pane / active-tab / nothing", () => {
+    // Nothing tracked → do nothing (never close other sessions' panes).
+    expect(pickCloseTarget(undefined)).toBe(null);
+    // Split with a tracked pane id → precise pane close.
+    expect(pickCloseTarget({ strategy: "split", paneId: "w1:p2" })).toEqual({
+      kind: "pane",
+      paneId: "w1:p2",
+    });
+    // Split but pane id unknown → fall back to closing the active tab.
+    expect(pickCloseTarget({ strategy: "split" })).toEqual({
+      kind: "active-tab",
+    });
+    // New-tab open → close the active tab.
+    expect(pickCloseTarget({ strategy: "new-tab" })).toEqual({
+      kind: "active-tab",
+    });
   });
 });

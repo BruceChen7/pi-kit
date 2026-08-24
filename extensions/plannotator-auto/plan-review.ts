@@ -30,7 +30,6 @@ import {
 import { isHtmlPath, resolveReviewTargetMatch } from "./paths.ts";
 import type { PendingPlanReview } from "./plan-review/types.ts";
 import { getSessionState, type SessionRuntimeState } from "./session.ts";
-import { closeReviewPanelOnTerminalDecision } from "./terminal-browser.ts";
 
 const KEEP_PLAN_HEADING_GUIDANCE =
   "Keep the first # heading unchanged unless the reviewer explicitly asks you " +
@@ -526,12 +525,6 @@ const completePendingPlanReview = (
   result: PlanReviewDecisionLike,
 ) => {
   setReviewWidget(ctx);
-  // Shell: any terminal verdict (approved / denied / dismissed) closes the
-  // Herdr review panel opened for this review — after feedback the
-  // conversation pane returns to full width while the agent revises. HTML
-  // artifacts never open a panel (useTerminalBrowser: false), and this
-  // chokepoint is markdown-only, so nothing is closed for them.
-  closeReviewPanelOnTerminalDecision(result, ctx);
   if (result.approved) {
     return approvePendingPlanReview(
       state,

@@ -17,7 +17,6 @@ import {
   preprocessPlanMarkdown,
   runPlannotatorHtmlReviewOnce,
 } from "./plan-review.ts";
-import { closeReviewPanelOnTerminalDecision } from "./terminal-browser.ts";
 
 const SYNC_REVIEW_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const MAX_PLAN_FILES = 50;
@@ -166,10 +165,6 @@ const handleCliResult = async (
     ctx.ui.notify("Review interrupted.", "info");
     return;
   }
-
-  // Shell: terminal verdict (approved/denied/dismissed) → close the Herdr
-  // review panel this CLI opened; errors/aborts keep it for a retry.
-  closeReviewPanelOnTerminalDecision(response.result, ctx);
 
   const message = formatMessage(response.result);
   if (message) {

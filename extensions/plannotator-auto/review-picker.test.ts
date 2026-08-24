@@ -218,13 +218,6 @@ describe("showPlanFilePicker (plan review path)", () => {
       getGitCommonDir: vi.fn(() => path.join(repoRoot, ".git")),
     }));
 
-    const closeOnDecision = vi.fn();
-    vi.doMock("./terminal-browser.ts", async (importOriginal) => {
-      const actual =
-        await importOriginal<typeof import("./terminal-browser.ts")>();
-      return { ...actual, closeReviewPanelOnTerminalDecision: closeOnDecision };
-    });
-
     const spawn = mockPlannotatorSpawn({
       status: 0,
       stdout: JSON.stringify({ decision: "approved" }),
@@ -250,8 +243,6 @@ describe("showPlanFilePicker (plan review path)", () => {
       expect.stringContaining("Review approved"),
       { deliverAs: "followUp" },
     );
-    // Terminal verdict → the Herdr review panel opened for this review closes.
-    expect(closeOnDecision).toHaveBeenCalledTimes(1);
   });
 
   it("notifies on plan review CLI error", async () => {

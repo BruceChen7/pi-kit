@@ -120,7 +120,7 @@ type RunCliResult<T> =
   | { status: "error"; error: string }
   | { status: "aborted" };
 
-const runCli = async <T>(
+const runCli = async <T extends CliReviewDecision>(
   ctx: CliCtx,
   command: string,
   args: string[],
@@ -130,6 +130,12 @@ const runCli = async <T>(
   // Sync fast-path: in tests or non-Herdr, avoid async import entirely (keeps mocks hermetic).
   // HTML artifact reviews opt out at the call site (useTerminalBrowser: false).
   let useTerminalBrowser = false;
+  // Lazily resolved ONCE per run: every terminal-browser touchpoint below
+  // (panel open, panel close, ready-file cleanup) shares this single module
+  // instance. Callers never wire close themselves — runCli owns the whole
+  // panel lifecycle.
+  let tb: typeof import("./terminal-browser.ts") | null = null;
+  let openedHerdrPanel = false;
   let readyFile: string | null = null;
   let effectiveEnv: NodeJS.ProcessEnv | undefined = options.env;
   const isTestEnv = !!process.env.VITEST || process.env.NODE_ENV === "test";
@@ -137,13 +143,11 @@ const runCli = async <T>(
     process.env.HERDR_ENV === "1" && !!process.env.HERDR_PANE_ID;
   if (!isTestEnv && isHerdrEnv && options.useTerminalBrowser !== false) {
     try {
-      const { shouldUseTerminalBrowser, createTempReadyFile } = await import(
-        "./terminal-browser.ts"
-      );
-      useTerminalBrowser = await shouldUseTerminalBrowser(ctx);
+      tb = await import("./terminal-browser.ts");
+      useTerminalBrowser = await tb.shouldUseTerminalBrowser(ctx);
       if (useTerminalBrowser) {
         try {
-          readyFile = await createTempReadyFile();
+          readyFile = await tb.createTempReadyFile();
           effectiveEnv = {
             ...process.env,
             ...options.env,
@@ -171,19 +175,20 @@ const runCli = async <T>(
     });
 
     // Shell: parallel open of terminal-browser via READY_FILE (fire-and-forget)
-    if (useTerminalBrowser && readyFile) {
+    if (tb && useTerminalBrowser && readyFile) {
+      openedHerdrPanel = true;
       const capturedReadyFile = readyFile;
       const capturedSignal = options.signal;
-      import("./terminal-browser.ts")
-        .then(({ waitForReadyFile, openUrlInHerdrTerminalBrowser }) =>
-          waitForReadyFile(capturedReadyFile, capturedSignal, 8000).then(
-            (url) => {
-              if (url) {
-                return openUrlInHerdrTerminalBrowser(url, ctx).catch(() => {});
-              }
-            },
-          ),
-        )
+      const tbMod = tb;
+      tbMod
+        .waitForReadyFile(capturedReadyFile, capturedSignal, 8000)
+        .then((url) => {
+          if (url) {
+            return tbMod
+              .openUrlInHerdrTerminalBrowser(url, ctx)
+              .catch(() => {});
+          }
+        })
         .catch(() => {});
     }
     let stdout = "";
@@ -237,9 +242,18 @@ const runCli = async <T>(
         });
         return;
       }
+      const result = options.parseStdout(stdout);
+      // Shell: terminal verdict on a run that armed the panel flow → close
+      // the Herdr review panel this run opened (fire-and-forget, mirrors the
+      // fire-and-forget open). Errors/aborts return above and keep the panel
+      // for a retry; HTML flows never arm the panel (useTerminalBrowser:
+      // false), so nothing is closed for them.
+      if (tb && openedHerdrPanel) {
+        tb.closeReviewPanelOnTerminalDecision(result, ctx);
+      }
       finish({
         status: "handled",
-        result: options.parseStdout(stdout),
+        result,
       });
     });
 
@@ -258,12 +272,13 @@ const runCli = async <T>(
     child.stdin.end(options.input ?? "");
 
     // Shell: cleanup READY_FILE on close (best-effort, no await)
-    if (readyFile) {
+    if (readyFile && tb) {
       const fileToClean = readyFile;
+      const tbMod = tb;
       child.on("close", () => {
-        import("./terminal-browser.ts")
-          .then(({ removeTempReadyFile }) => removeTempReadyFile(fileToClean))
-          .catch(() => {});
+        try {
+          tbMod.removeTempReadyFile(fileToClean);
+        } catch {}
       });
     }
   });

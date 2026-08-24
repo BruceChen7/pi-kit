@@ -63,15 +63,6 @@ export const hasRightNeighborFromEdgesOutput = (
   }
 };
 
-/** Pure: decide panel strategy from current pane layout. */
-export const selectPanelStrategy = (options: {
-  hasHerdrRightPane: boolean;
-}): "split" | "new-tab" => {
-  // Herdr panel concept: split right only when the current pane has no right
-  // neighbor yet; once a right pane exists, reuse it via new-tab.
-  return options.hasHerdrRightPane ? "new-tab" : "split";
-};
-
 /** Decision shape produced by the review CLIs (approved/denied/dismissed). */
 export type ReviewDecisionLike = {
   approved?: boolean;
@@ -84,12 +75,29 @@ export type ReviewDecisionLike = {
  * dismissed) → close the Herdr review panel. Errors and aborts are not
  * terminal and keep the panel for a retry.
  */
-export const shouldCloseReviewPanel = (
-  decision: ReviewDecisionLike,
-): boolean =>
+export const shouldCloseReviewPanel = (decision: ReviewDecisionLike): boolean =>
   decision.approved === true ||
   decision.approved === false ||
   decision.dismissed === true;
+
+/** Tracked info about the Herdr panel this session last opened. */
+export type LastOpened = { strategy: "split" | "new-tab"; paneId?: string };
+
+/**
+ * Pure: how should the shell close the panel tracked for this session?
+ * Returns null when nothing is tracked (this session never opened a panel)
+ * — the shell must then do nothing, never touching panes/tabs opened by
+ * someone else.
+ */
+export const pickCloseTarget = (
+  last: LastOpened | undefined,
+): { kind: "pane"; paneId: string } | { kind: "active-tab" } | null => {
+  if (!last) return null;
+  if (last.strategy === "split" && last.paneId) {
+    return { kind: "pane", paneId: last.paneId };
+  }
+  return { kind: "active-tab" };
+};
 
 // ---------------------------------------------------------------------------
 // Imperative Shell — thin wrappers around IO
@@ -292,12 +300,12 @@ export const resolveHerdrPanelStrategy = async (): Promise<
   "split" | "new-tab"
 > => {
   const hasRightPane = await hasHerdrRightPane();
-  return selectPanelStrategy({ hasHerdrRightPane: hasRightPane });
+  // Split right only when the launcher pane has no right neighbor yet; once a
+  // right pane exists, reuse it via new-tab instead of over-splitting.
+  return hasRightPane ? "new-tab" : "split";
 };
 
-// --- Track last opened pane/tab per sessionKey for precise close on approved ---
-
-type LastOpened = { strategy: "split" | "new-tab"; paneId?: string };
+// --- Track last opened pane/tab per sessionKey for precise close on terminal verdict ---
 
 const lastOpenedByKey = new Map<string, LastOpened>();
 
@@ -336,7 +344,7 @@ export const openUrlInHerdrTerminalBrowser = async (
   log.debug("opening url in terminal-browser", { url, strategy, sessionKey });
 
   if (strategy === "split") {
-    // Herdr panel concept: --split right creates a new Herdr pane; track it for close on approved
+    // Herdr panel concept: --split right creates a new Herdr pane; track it for close on the terminal verdict
     const beforeIds = await getHerdrPaneIds();
     const result = await runCommand(
       "terminal-browser",
@@ -423,6 +431,13 @@ export const closeReviewPanelOnTerminalDecision = (
   void tryCloseTerminalBrowserTab(ctx).catch(() => {});
 };
 
+/**
+ * Shell: close the Herdr panel this session opened (tracked in
+ * lastOpenedByKey). Strictly per-session: with nothing tracked for this
+ * session it does nothing — never closing another session's pane or an
+ * unrelated active tab. Errors and aborts never reach here (runCli only
+ * calls this on a handled terminal verdict).
+ */
 export const tryCloseTerminalBrowserTab = async (ctx?: {
   cwd: string;
   sessionManager: { getSessionFile: () => string | null | undefined };
@@ -431,29 +446,29 @@ export const tryCloseTerminalBrowserTab = async (ctx?: {
     return;
   }
   const sessionKey = ctx ? getSessionKey(ctx) : "global";
-  const last = lastOpenedByKey.get(sessionKey) ?? lastOpenedByKey.get("global");
-  // Functional Core already decided shouldCloseReviewPanel; here we only execute the shell
-  if (last?.strategy === "split" && last.paneId) {
+  // Functional Core already picked the target; here we only execute the shell.
+  const target = pickCloseTarget(lastOpenedByKey.get(sessionKey));
+  if (!target) return;
+  if (target.kind === "pane") {
     // Precise close: the pane that --split right created for this review
     const result = await runCommand(
       "herdr",
-      ["pane", "close", last.paneId],
+      ["pane", "close", target.paneId],
       3000,
     );
     if (result.code === 0) {
-      log.info("closed herdr pane for approved review", {
-        paneId: last.paneId,
+      log.info("closed herdr pane for terminal review verdict", {
+        paneId: target.paneId,
       });
       lastOpenedByKey.delete(sessionKey);
-      lastOpenedByKey.delete("global");
       return;
     }
-    log.warn("herdr pane close failed, fallback to generic", {
-      paneId: last.paneId,
+    log.warn("herdr pane close failed, fallback to active tab", {
+      paneId: target.paneId,
       stderr: result.stderr.slice(0, 200),
     });
   }
-  // Fallback / new-tab case: close active browser tab
+  // new-tab case / pane close failed: close the active browser tab
   try {
     const result = await runCommand(
       "terminal-browser",
@@ -461,28 +476,22 @@ export const tryCloseTerminalBrowserTab = async (ctx?: {
       2000,
     );
     if (result.code !== 0) {
-      // Last resort: try herdr pane close on current pane's right neighbor? noop
       log.debug("terminal-browser action close failed", {
         stderr: result.stderr.slice(0, 200),
       });
     } else {
-      log.info("closed terminal-browser tab for approved review");
+      log.info("closed terminal-browser tab for terminal review verdict");
     }
   } catch {
     // ignore
   } finally {
     lastOpenedByKey.delete(sessionKey);
-    lastOpenedByKey.delete("global");
   }
 };
 
 export const clearLastOpened = (sessionKey?: string): void => {
   if (sessionKey) {
     lastOpenedByKey.delete(sessionKey);
-    // "global" is used as fallback key in tryClose; clean it when clearing a real session
-    if (sessionKey !== "global") {
-      lastOpenedByKey.delete("global");
-    }
   } else {
     lastOpenedByKey.clear();
   }

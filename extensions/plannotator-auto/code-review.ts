@@ -15,7 +15,6 @@ import {
 import { runPlannotatorHtmlReviewOnce } from "./plan-review.ts";
 import type { SessionReviewDocument, SessionRuntimeState } from "./session.ts";
 import { getSessionState } from "./session.ts";
-import { closeReviewPanelOnTerminalDecision } from "./terminal-browser.ts";
 
 const SYNC_ANNOTATE_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const ANNOTATE_LATEST_DOCUMENT_SHORTCUT = "ctrl+alt+l";
@@ -201,9 +200,6 @@ const annotateLatestReviewDocument = async (
     );
 
     if (response.status === "handled") {
-      // Shell: terminal verdict → close the Herdr review panel this CLI
-      // opened (markdown annotate flow; the HTML branch never opens one).
-      closeReviewPanelOnTerminalDecision(response.result, ctx);
       const message = formatAnnotationMessage({
         filePath: latestDocument.repoRelativePath,
         feedback: response.result.feedback ?? "",

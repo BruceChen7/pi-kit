@@ -166,7 +166,7 @@ describe("code review trigger (removed)", () => {
     expect(child?.kill).toHaveBeenCalled();
   });
 
-  it("closes the Herdr review panel after annotate feedback (Ctrl+Alt+L on markdown)", async () => {
+  it("delivers annotate feedback as follow-up (Ctrl+Alt+L on markdown)", async () => {
     vi.resetModules();
     const spawn = mockSpawn({
       status: 0,
@@ -174,12 +174,6 @@ describe("code review trigger (removed)", () => {
       stderr: "",
     });
     mockCodeReviewApi();
-    const closeOnDecision = vi.fn();
-    vi.doMock("./terminal-browser.ts", async (importOriginal) => {
-      const actual =
-        await importOriginal<typeof import("./terminal-browser.ts")>();
-      return { ...actual, closeReviewPanelOnTerminalDecision: closeOnDecision };
-    });
 
     const plannotatorAuto = await importPlannotatorAuto();
     const { api, emit, runShortcut } = createFakePi();
@@ -213,8 +207,6 @@ describe("code review trigger (removed)", () => {
         expect.stringContaining("Add tests."),
         { deliverAs: "followUp" },
       );
-      // Terminal verdict → the markdown annotate review panel closes.
-      expect(closeOnDecision).toHaveBeenCalledTimes(1);
     } finally {
       await emit("session_shutdown", {}, ctx);
       await removeTempRepo(repoRoot);

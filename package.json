@@ -39,7 +39,8 @@
       "./extensions/cc-switch",
       "./extensions/fork-panel",
       "./extensions/impeccable",
-      "./extensions/confluence"
+      "./extensions/confluence",
+      "./extensions/prompt-clarify"
     ]
   },
   "scripts": {

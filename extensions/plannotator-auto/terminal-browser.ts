@@ -43,25 +43,53 @@ export const extractFirstUrlFromReadyContent = (
   return null;
 };
 
-/** Pure: decide panel strategy from existing state. */
-export const selectPanelStrategy = (options: {
-  hasHerdrRightPane: boolean;
-  hasExistingTerminalBrowser: boolean;
-}): "split" | "new-tab" => {
-  // Herdr panel concept: if right pane already exists, reuse via new-tab;
-  // otherwise split a new pane.
-  if (options.hasExistingTerminalBrowser && options.hasHerdrRightPane) {
-    return "new-tab";
+/**
+ * Pure: parse `herdr pane edges` stdout → does the probed pane have a right
+ * neighbor? edges.right === false means a pane exists to the right;
+ * edges.right === true means the pane is rightmost. Returns null when the
+ * output cannot be parsed (shell treats null as "split").
+ */
+export const hasRightNeighborFromEdgesOutput = (
+  stdout: string,
+): boolean | null => {
+  try {
+    const parsed = JSON.parse(stdout) as {
+      result?: { edges?: { right?: boolean } };
+    };
+    const right = parsed.result?.edges?.right;
+    return typeof right === "boolean" ? right === false : null;
+  } catch {
+    return null;
   }
-  if (options.hasExistingTerminalBrowser) {
-    return "new-tab";
-  }
-  return "split";
 };
 
-/** Pure: should close terminal-browser tab on decision. */
-export const shouldAutoClose = (decision: { approved?: boolean }): boolean =>
-  decision.approved === true;
+/** Pure: decide panel strategy from current pane layout. */
+export const selectPanelStrategy = (options: {
+  hasHerdrRightPane: boolean;
+}): "split" | "new-tab" => {
+  // Herdr panel concept: split right only when the current pane has no right
+  // neighbor yet; once a right pane exists, reuse it via new-tab.
+  return options.hasHerdrRightPane ? "new-tab" : "split";
+};
+
+/** Decision shape produced by the review CLIs (approved/denied/dismissed). */
+export type ReviewDecisionLike = {
+  approved?: boolean;
+  dismissed?: boolean;
+  feedback?: string;
+};
+
+/**
+ * Pure: the review ended with a terminal verdict (approved / denied /
+ * dismissed) → close the Herdr review panel. Errors and aborts are not
+ * terminal and keep the panel for a retry.
+ */
+export const shouldCloseReviewPanel = (
+  decision: ReviewDecisionLike,
+): boolean =>
+  decision.approved === true ||
+  decision.approved === false ||
+  decision.dismissed === true;
 
 // ---------------------------------------------------------------------------
 // Imperative Shell — thin wrappers around IO
@@ -243,44 +271,18 @@ const runCommand = (
     }, timeoutMs);
   });
 
-const hasExistingTerminalBrowser = async (): Promise<boolean> => {
-  try {
-    const result = await runCommand("terminal-browser", ["ls", "--json"], 2000);
-    if (result.code !== 0) return false;
-    const data = JSON.parse(result.stdout) as {
-      browsers?: unknown[];
-      tabs?: unknown[];
-    };
-    // terminal-browser ls --json shape varies; treat any non-empty browsers/tabs as existing
-    const browsers = (data as { browsers?: unknown[] }).browsers;
-    const tabs = (data as { tabs?: unknown[] }).tabs;
-    if (Array.isArray(browsers) && browsers.length > 0) return true;
-    if (Array.isArray(tabs) && tabs.length > 0) return true;
-    // Fallback: raw stdout contains "browser" or "tab"
-    return result.stdout.includes("browser") || result.stdout.includes("tab");
-  } catch {
-    return false;
-  }
-};
-
 const hasHerdrRightPane = async (): Promise<boolean> => {
-  // Lightweight probe: if herdr CLI is available and pane list succeeds,
-  // assume we can inspect layout. Failure → false (fall back to split).
+  // Probe the edges of the pane that launched this extension (HERDR_PANE_ID),
+  // NOT the focused pane: opening a review panel moves focus to the new pane,
+  // so an unnamed probe would measure the new pane's own edges (always
+  // rightmost) and wrongly decide to split again.
+  const args = process.env.HERDR_PANE_ID
+    ? ["pane", "edges", "--pane", process.env.HERDR_PANE_ID]
+    : ["pane", "edges"];
   try {
-    const paneResult = await runCommand(
-      "herdr",
-      ["pane", "list", "--json"],
-      2000,
-    );
-    if (paneResult.code !== 0) return false;
-    // If pane list is non-empty, there is at least one pane; we conservatively
-    // claim "right pane exists" when ≥2 panes to avoid over-splitting.
-    const parsed = JSON.parse(paneResult.stdout) as {
-      panes?: unknown[];
-      result?: { panes?: unknown[] };
-    };
-    const panes = parsed.panes ?? parsed.result?.panes ?? [];
-    return Array.isArray(panes) && panes.length >= 2;
+    const result = await runCommand("herdr", args, 2000);
+    if (result.code !== 0) return false;
+    return hasRightNeighborFromEdgesOutput(result.stdout) === true;
   } catch {
     return false;
   }
@@ -289,14 +291,8 @@ const hasHerdrRightPane = async (): Promise<boolean> => {
 export const resolveHerdrPanelStrategy = async (): Promise<
   "split" | "new-tab"
 > => {
-  const [hasBrowser, hasRightPane] = await Promise.all([
-    hasExistingTerminalBrowser(),
-    hasHerdrRightPane(),
-  ]);
-  return selectPanelStrategy({
-    hasExistingTerminalBrowser: hasBrowser,
-    hasHerdrRightPane: hasRightPane,
-  });
+  const hasRightPane = await hasHerdrRightPane();
+  return selectPanelStrategy({ hasHerdrRightPane: hasRightPane });
 };
 
 // --- Track last opened pane/tab per sessionKey for precise close on approved ---
@@ -412,6 +408,21 @@ export const openUrlInHerdrTerminalBrowser = async (
   }
 };
 
+/**
+ * Shell: terminal verdict → close the panel this review opened
+ * (fire-and-forget, mirrors the fire-and-forget open).
+ */
+export const closeReviewPanelOnTerminalDecision = (
+  decision: ReviewDecisionLike,
+  ctx?: {
+    cwd: string;
+    sessionManager: { getSessionFile: () => string | null | undefined };
+  },
+): void => {
+  if (!shouldCloseReviewPanel(decision)) return;
+  void tryCloseTerminalBrowserTab(ctx).catch(() => {});
+};
+
 export const tryCloseTerminalBrowserTab = async (ctx?: {
   cwd: string;
   sessionManager: { getSessionFile: () => string | null | undefined };
@@ -421,7 +432,7 @@ export const tryCloseTerminalBrowserTab = async (ctx?: {
   }
   const sessionKey = ctx ? getSessionKey(ctx) : "global";
   const last = lastOpenedByKey.get(sessionKey) ?? lastOpenedByKey.get("global");
-  // Functional Core already decided shouldAutoClose; here we only execute the shell
+  // Functional Core already decided shouldCloseReviewPanel; here we only execute the shell
   if (last?.strategy === "split" && last.paneId) {
     // Precise close: the pane that --split right created for this review
     const result = await runCommand(

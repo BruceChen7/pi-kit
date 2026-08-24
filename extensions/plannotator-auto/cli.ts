@@ -107,6 +107,12 @@ type RunCliOptions<T> = {
   timeoutMs: number;
   detached?: boolean;
   env?: NodeJS.ProcessEnv;
+  /**
+   * Caller-level policy: allow the Herdr terminal-browser panel flow for this
+   * review. HTML artifacts opt out (useTerminalBrowser: false) — their
+   * review opens in the regular browser instead of splitting a Herdr pane.
+   */
+  useTerminalBrowser?: boolean;
 };
 
 type RunCliResult<T> =
@@ -121,14 +127,15 @@ const runCli = async <T>(
   options: RunCliOptions<T>,
 ): Promise<RunCliResult<T>> => {
   // Functional Core decision: should we use terminal-browser?
-  // Sync fast-path: in tests or non-Herdr, avoid async import entirely (keeps mocks hermetic)
+  // Sync fast-path: in tests or non-Herdr, avoid async import entirely (keeps mocks hermetic).
+  // HTML artifact reviews opt out at the call site (useTerminalBrowser: false).
   let useTerminalBrowser = false;
   let readyFile: string | null = null;
   let effectiveEnv: NodeJS.ProcessEnv | undefined = options.env;
   const isTestEnv = !!process.env.VITEST || process.env.NODE_ENV === "test";
   const isHerdrEnv =
     process.env.HERDR_ENV === "1" && !!process.env.HERDR_PANE_ID;
-  if (!isTestEnv && isHerdrEnv) {
+  if (!isTestEnv && isHerdrEnv && options.useTerminalBrowser !== false) {
     try {
       const { shouldUseTerminalBrowser, createTempReadyFile } = await import(
         "./terminal-browser.ts"
@@ -350,7 +357,13 @@ export const runPlannotatorPlanReviewCli = async (
 export const runPlannotatorAnnotateCli = async (
   ctx: CliCtx,
   filePath: string,
-  options: { gate?: boolean; signal?: AbortSignal; timeoutMs: number },
+  options: {
+    gate?: boolean;
+    signal?: AbortSignal;
+    timeoutMs: number;
+    /** HTML artifacts never open the Herdr terminal-browser panel. */
+    useTerminalBrowser?: boolean;
+  },
 ): Promise<CliReviewResult> => {
   const args = ["annotate", filePath];
   if (options.gate) {
@@ -362,5 +375,6 @@ export const runPlannotatorAnnotateCli = async (
     parseStdout: parseCliReviewResult,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
+    useTerminalBrowser: options.useTerminalBrowser,
   });
 };

@@ -1138,3 +1138,148 @@ describe("Plannotator HTML artifact review", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Herdr panel lifecycle: the terminal-browser review panel must close once
+// the review ends with a terminal verdict (approved / denied / dismissed).
+// Markdown flows: close. HTML flows: never opened a panel → never close.
+// ---------------------------------------------------------------------------
+
+const mockTerminalBrowserPanel = (): {
+  closeReviewPanelOnTerminalDecision: ReturnType<typeof vi.fn>;
+} => {
+  const closeReviewPanelOnTerminalDecision = vi.fn();
+  const tryCloseTerminalBrowserTab = vi.fn(async () => {});
+  vi.doMock("./terminal-browser.ts", async (importOriginal) => {
+    const actual =
+      await importOriginal<typeof import("./terminal-browser.ts")>();
+    return {
+      ...actual,
+      closeReviewPanelOnTerminalDecision,
+      tryCloseTerminalBrowserTab,
+    };
+  });
+  return { closeReviewPanelOnTerminalDecision };
+};
+
+describe("terminal-browser panel close on terminal verdicts", () => {
+  const cliHookDeniedStdout = (message: string) =>
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: { behavior: "deny", message },
+      },
+    });
+  const cliHookDismissedStdout = JSON.stringify({ decision: "dismissed" });
+
+  const runSubmit = async (
+    repoRoot: string,
+    planFileRelative: string,
+  ): Promise<{ details?: { status?: string } }> => {
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+    const ctx = createTestContext(repoRoot);
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: planFileRelative },
+        ctx,
+      )) as { details?: { status?: string } };
+      return result;
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+    }
+  };
+
+  it("closes the panel when a markdown plan review returns feedback (denied)", async () => {
+    vi.resetModules();
+    mockSpawn({ status: 0, stdout: cliHookDeniedStdout("Please revise.") });
+    const { closeReviewPanelOnTerminalDecision: closeOnDecision } =
+      mockTerminalBrowserPanel();
+
+    const repoRoot = await createTempRepo("plannotator-panel-close-denied-");
+    try {
+      const planFileRelative = getPlanFileRelative(repoRoot);
+      await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
+      const result = await runSubmit(repoRoot, planFileRelative);
+      expect(result.details?.status).toBe("denied");
+      // 红灯:当前代码 denied 时从不触发关闭(只有 approved 分支有关闭)。
+      expect(closeOnDecision).toHaveBeenCalledTimes(1);
+    } finally {
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("closes the panel when a markdown plan review is dismissed", async () => {
+    vi.resetModules();
+    mockSpawn({ status: 0, stdout: cliHookDismissedStdout });
+    const { closeReviewPanelOnTerminalDecision: closeOnDecision } =
+      mockTerminalBrowserPanel();
+
+    const repoRoot = await createTempRepo("plannotator-panel-close-dismiss-");
+    try {
+      const planFileRelative = getPlanFileRelative(repoRoot);
+      await writeTestFile(repoRoot, planFileRelative, PLAN_DRAFT_CONTENT);
+      const result = await runSubmit(repoRoot, planFileRelative);
+      expect(result.details?.status).toBe("dismissed");
+      expect(closeOnDecision).toHaveBeenCalledTimes(1);
+    } finally {
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("never closes a panel for HTML artifact feedback (no tb flow)", async () => {
+    vi.resetModules();
+    mockSpawn({
+      status: 0,
+      stdout: JSON.stringify({ decision: "annotated", feedback: "Adjust." }),
+    });
+    const { closeReviewPanelOnTerminalDecision: closeOnDecision } =
+      mockTerminalBrowserPanel();
+
+    const repoRoot = await createTempRepo("plannotator-panel-close-html-");
+    try {
+      const repoName = repoRoot.split("/").pop() ?? "repo";
+      const htmlRelative = `.pi/html/${repoName}/2026-04-16-proto.html`;
+      await writeTestFile(
+        repoRoot,
+        htmlRelative,
+        "<html><body>Proto</body></html>",
+      );
+      const result = await runSubmit(repoRoot, htmlRelative);
+      expect(result.details?.status).toBe("denied");
+      expect(closeOnDecision).not.toHaveBeenCalled();
+    } finally {
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("never closes a panel for HTML artifact approval (no tb flow)", async () => {
+    vi.resetModules();
+    mockSpawn({
+      status: 0,
+      stdout: JSON.stringify({ decision: "approved" }),
+    });
+    const { closeReviewPanelOnTerminalDecision: closeOnDecision } =
+      mockTerminalBrowserPanel();
+
+    const repoRoot = await createTempRepo("plannotator-panel-close-html-a-");
+    try {
+      const repoName = repoRoot.split("/").pop() ?? "repo";
+      const htmlRelative = `.pi/html/${repoName}/2026-04-16-proto.html`;
+      await writeTestFile(
+        repoRoot,
+        htmlRelative,
+        "<html><body>Proto</body></html>",
+      );
+      const result = await runSubmit(repoRoot, htmlRelative);
+      expect(result.details?.status).toBe("approved");
+      expect(closeOnDecision).not.toHaveBeenCalled();
+    } finally {
+      await removeTempRepo(repoRoot);
+    }
+  });
+});

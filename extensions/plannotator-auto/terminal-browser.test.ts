@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   extractFirstUrlFromReadyContent,
+  hasRightNeighborFromEdgesOutput,
   isHerdrEnvironment,
   parseReadyFileLine,
   selectPanelStrategy,
-  shouldAutoClose,
+  shouldCloseReviewPanel,
 } from "./terminal-browser.ts";
 
 describe("terminal-browser Functional Core", () => {
@@ -48,36 +49,34 @@ describe("terminal-browser Functional Core", () => {
     expect(extractFirstUrlFromReadyContent("")).toBe(null);
   });
 
-  it("selectPanelStrategy uses Herdr panel concept", () => {
-    expect(
-      selectPanelStrategy({
-        hasHerdrRightPane: false,
-        hasExistingTerminalBrowser: false,
-      }),
-    ).toBe("split");
-    expect(
-      selectPanelStrategy({
-        hasHerdrRightPane: true,
-        hasExistingTerminalBrowser: false,
-      }),
-    ).toBe("split");
-    expect(
-      selectPanelStrategy({
-        hasHerdrRightPane: false,
-        hasExistingTerminalBrowser: true,
-      }),
-    ).toBe("new-tab");
-    expect(
-      selectPanelStrategy({
-        hasHerdrRightPane: true,
-        hasExistingTerminalBrowser: true,
-      }),
-    ).toBe("new-tab");
+  it("selectPanelStrategy keys off right-pane existence", () => {
+    // No right pane → split right to create the review panel.
+    expect(selectPanelStrategy({ hasHerdrRightPane: false })).toBe("split");
+    // Right pane already exists → reuse it via new-tab, never over-split.
+    expect(selectPanelStrategy({ hasHerdrRightPane: true })).toBe("new-tab");
   });
 
-  it("shouldAutoClose only on approved", () => {
-    expect(shouldAutoClose({ approved: true })).toBe(true);
-    expect(shouldAutoClose({ approved: false })).toBe(false);
-    expect(shouldAutoClose({})).toBe(false);
+  it("hasRightNeighborFromEdgesOutput parses herdr pane edges", () => {
+    // right === false → a pane exists to the right of the probed pane.
+    expect(
+      hasRightNeighborFromEdgesOutput('{"result":{"edges":{"right":false}}}'),
+    ).toBe(true);
+    // right === true → probed pane is rightmost (no right neighbor).
+    expect(
+      hasRightNeighborFromEdgesOutput('{"result":{"edges":{"right":true}}}'),
+    ).toBe(false);
+    expect(hasRightNeighborFromEdgesOutput("not json")).toBe(null);
+    expect(hasRightNeighborFromEdgesOutput('{"result":{}}')).toBe(null);
+  });
+
+  it("shouldCloseReviewPanel closes on any terminal verdict", () => {
+    // 红灯预期:当前实现只在 approved 时关闭;denied(带 comment)与
+    // dismissed 也是评审终结判定,必须同样关闭面板。
+    expect(shouldCloseReviewPanel({ approved: true })).toBe(true);
+    expect(shouldCloseReviewPanel({ approved: false, feedback: "x" })).toBe(
+      true,
+    );
+    expect(shouldCloseReviewPanel({ dismissed: true })).toBe(true);
+    expect(shouldCloseReviewPanel({})).toBe(false);
   });
 });

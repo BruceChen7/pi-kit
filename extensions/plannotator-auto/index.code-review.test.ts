@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createFakePi,
+  createTempRepo,
   createTestContext,
   flushMicrotasks,
   mockHangingPlannotatorSpawn,
   mockPlannotatorSpawn,
+  removeTempRepo,
+  writeTestFile,
 } from "./test-helpers.js";
 
 const mockSpawn = mockPlannotatorSpawn;
@@ -161,5 +164,60 @@ describe("code review trigger (removed)", () => {
     await emit("session_shutdown", {}, ctx);
 
     expect(child?.kill).toHaveBeenCalled();
+  });
+
+  it("closes the Herdr review panel after annotate feedback (Ctrl+Alt+L on markdown)", async () => {
+    vi.resetModules();
+    const spawn = mockSpawn({
+      status: 0,
+      stdout: JSON.stringify({ decision: "annotated", feedback: "Add tests." }),
+      stderr: "",
+    });
+    mockCodeReviewApi();
+    const closeOnDecision = vi.fn();
+    vi.doMock("./terminal-browser.ts", async (importOriginal) => {
+      const actual =
+        await importOriginal<typeof import("./terminal-browser.ts")>();
+      return { ...actual, closeReviewPanelOnTerminalDecision: closeOnDecision };
+    });
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { api, emit, runShortcut } = createFakePi();
+    plannotatorAuto(api as never);
+    const repoRoot = await createTempRepo("plannotator-ctrl-alt-l-close-");
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+      await writeTestFile(repoRoot, "notes.md", "# Notes\n");
+      await emit(
+        "tool_execution_start",
+        { toolName: "write", toolCallId: "call-1", args: { path: "notes.md" } },
+        ctx,
+      );
+      await emit(
+        "tool_execution_end",
+        { toolName: "write", toolCallId: "call-1", isError: false },
+        ctx,
+      );
+
+      await runShortcut("ctrl+alt+l", ctx);
+      await flushMicrotasks();
+
+      expect(spawn).toHaveBeenCalledWith(
+        "plannotator",
+        expect.arrayContaining(["annotate"]),
+        expect.objectContaining({ cwd: repoRoot }),
+      );
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Add tests."),
+        { deliverAs: "followUp" },
+      );
+      // Terminal verdict → the markdown annotate review panel closes.
+      expect(closeOnDecision).toHaveBeenCalledTimes(1);
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
   });
 });

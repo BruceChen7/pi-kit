@@ -30,10 +30,7 @@ import {
 import { isHtmlPath, resolveReviewTargetMatch } from "./paths.ts";
 import type { PendingPlanReview } from "./plan-review/types.ts";
 import { getSessionState, type SessionRuntimeState } from "./session.ts";
-import {
-  shouldAutoClose,
-  tryCloseTerminalBrowserTab,
-} from "./terminal-browser.ts";
+import { closeReviewPanelOnTerminalDecision } from "./terminal-browser.ts";
 
 const KEEP_PLAN_HEADING_GUIDANCE =
   "Keep the first # heading unchanged unless the reviewer explicitly asks you " +
@@ -446,23 +443,11 @@ const clearPendingPlanReviewTarget = (
   state.pendingPlanReviewTargetsByCwd.delete(cwd);
 };
 
-const triggerApprovedTerminalBrowserClose = (
-  decision: PlanReviewDecisionLike,
-  ctx?: Parameters<typeof tryCloseTerminalBrowserTab>[0],
-): void => {
-  if (!shouldAutoClose(decision)) return;
-  void tryCloseTerminalBrowserTab(ctx).catch(() => {});
-};
-
 const approvePendingPlanReview = (
   state: SessionRuntimeState,
   cwd: string,
   pendingPlanReviews: Map<string, PendingPlanReview>,
   pendingPlanReview: PendingPlanReview,
-  ctx?: {
-    cwd: string;
-    sessionManager: { getSessionFile: () => string | null | undefined };
-  },
 ) => {
   state.settledPlanReviewPaths.add(pendingPlanReview.resolvedPlanPath);
   clearPendingPlanReviewTarget(
@@ -474,8 +459,6 @@ const approvePendingPlanReview = (
   markPendingPlanReviewEventsHandled(state, cwd, [
     pendingPlanReview.resolvedPlanPath,
   ]);
-  // Shell: approved → auto-close the Herdr pane/tab that was opened for this review (Q11=B)
-  triggerApprovedTerminalBrowserClose({ approved: true }, ctx);
 
   return {
     content: [
@@ -543,13 +526,18 @@ const completePendingPlanReview = (
   result: PlanReviewDecisionLike,
 ) => {
   setReviewWidget(ctx);
+  // Shell: any terminal verdict (approved / denied / dismissed) closes the
+  // Herdr review panel opened for this review — after feedback the
+  // conversation pane returns to full width while the agent revises. HTML
+  // artifacts never open a panel (useTerminalBrowser: false), and this
+  // chokepoint is markdown-only, so nothing is closed for them.
+  closeReviewPanelOnTerminalDecision(result, ctx);
   if (result.approved) {
     return approvePendingPlanReview(
       state,
       ctx.cwd,
       pendingPlanReviews,
       pendingPlanReview,
-      ctx,
     );
   }
 
@@ -632,6 +620,9 @@ const runPlannotatorHtmlReviewFlow = async (
       gate: true,
       signal,
       timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+      // HTML artifacts never open the Herdr terminal-browser panel: the
+      // review opens in the regular browser instead.
+      useTerminalBrowser: false,
     },
   );
   if (cliResult.status === "error") {
@@ -654,7 +645,6 @@ const runPlannotatorHtmlReviewFlow = async (
       ctx.cwd,
       pendingPlanReviews,
       pendingPlanReview,
-      ctx,
     );
   }
   if (decision.dismissed) {
@@ -681,6 +671,9 @@ export const runPlannotatorHtmlReviewOnce = async (
   const response = await runPlannotatorAnnotateCli(ctx, filePath, {
     signal: ctx.signal,
     timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+    // Manual HTML review (picker / Ctrl+Alt+L) also bypasses the Herdr
+    // terminal-browser panel flow.
+    useTerminalBrowser: false,
   });
   if (response.status === "error") {
     ctx.ui.notify(response.error, "warning");

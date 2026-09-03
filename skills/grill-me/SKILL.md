@@ -3,9 +3,9 @@ name: grill-me
 description: >-
   Use when the user wants to be grilled on a plan, design, feature idea, implementation
   approach, or trade-off; when they say "grill me", "stress-test this", "challenge this
-  plan", or ask for relentless one-question-at-a-time interrogation. In this repo, match
-  the Pi planning flow: inspect code/docs before asking, keep pure grilling lightweight,
-  and use .pi/plans/pi-kit spec/plan review gates before file edits or implementation.
+  plan", or ask for relentless one-question-at-a-time interrogation. Match the Pi planning
+  flow: inspect code/docs before asking, keep pure grilling lightweight, and use
+  .pi/plans/<repo> spec/plan review gates before file edits or implementation.
 ---
 
 # Grill Me
@@ -36,7 +36,7 @@ user explicitly asks for another language.
 
 ## Pi Repo Flow
 
-Use this flow in `pi-kit`:
+Use this flow in every repo:
 
 1. **Pure grilling**
    - Inspect relevant files when they can answer a question.
@@ -45,12 +45,12 @@ Use this flow in `pi-kit`:
 
 2. **Design handoff**
    - When the grilling session resolves into a design, write the spec to:
-     `.pi/plans/pi-kit/specs/YYYY-MM-DD-<topic>-design.md`
+     `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md`
    - Use the repo's required plan/spec conventions and wait for review before relying on it.
 
 3. **Implementation handoff**
    - Before implementation or process-changing edits, write/update:
-     `.pi/plans/pi-kit/plan/YYYY-MM-DD-<slug>.md`
+     `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md`
    - Include `## Context`, `## Steps`, `## Verification`, and `## Review`.
    - Use Chinese checkbox steps.
    - If logic, state, data model, control flow, or process flow changes, include before/after

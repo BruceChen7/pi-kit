@@ -9,6 +9,12 @@ A discipline for hard bugs. Skip phases only when explicitly justified.
 
 Default to Chinese unless the user explicitly asks for another language.
 
+## Redact
+
+This skill has you show commands, outputs and captured artifacts. **Redact every secret first**: write `<REDACTED>` in its place. Build loops against env vars, so the credential stays in the environment rather than in what you show. Captured artifacts carry auth headers: quote only the lines that carry the signal.
+
+If the redacted output is not enough to diagnose the bug, say so and ask the user.
+
 ## The Iron Law
 
 ```
@@ -91,7 +97,7 @@ The goal is not a clean repro but a **higher reproduction rate**. Loop the trigg
 
 ### Completion criterion — a tight loop that goes red
 
-Phase 1 is done when the loop is **tight** and **red-capable**: you can name **one command** — a script path, a test invocation, a curl — that you have **already run at least once** (paste the invocation and its output), and that is:
+Phase 1 is done when the loop is **tight** and **red-capable**: you can name **one command** — a script path, a test invocation, a curl — that you have **already run at least once** (show the invocation and its output, redacted), and that is:
 
 - [ ] **Red-capable** — it drives the actual bug code path and asserts the **user's exact symptom**, so it can go red on this bug and green once fixed. Not "runs without erroring" — it must be able to *catch this specific bug*.
 - [ ] **Deterministic** — same verdict every run (flaky bugs: a pinned, high reproduction rate, per above).
@@ -105,7 +111,7 @@ If you catch yourself reading code to build a theory before this command exists,
 Stop and say so explicitly. List what you tried. Ask the user for:
 
 (a) Access to whatever environment reproduces it.
-(b) A captured artifact — HAR file, log dump, core dump, screen recording with timestamps.
+(b) A redacted captured artifact — HAR file, log dump, core dump, screen recording with timestamps.
 (c) Permission to add temporary production instrumentation.
 
 Do **not** proceed to Phase 2 until you have a loop you believe in.
@@ -271,4 +277,4 @@ This skill's directory includes:
 
 ## Attribution
 
-Adapted from the `diagnosing-bugs` skill in https://github.com/mattpocock/skills (v1.0.0+) under the MIT License.
+Adapted from the `diagnosing-bugs` skill in https://github.com/mattpocock/skills (v1.2.3+) under the MIT License.

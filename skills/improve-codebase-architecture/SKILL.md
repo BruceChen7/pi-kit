@@ -111,7 +111,7 @@ would you like to explore?”
 
 ### 3. Grilling loop
 
-Once the user picks a candidate, run the `/grill-with-docs` discipline (which uses `/grilling` for the core interview loop and `/domain-modeling` for glossary/ADR updates).
+Once the user picks a candidate, run the `/grill-with-docs` discipline (which uses `/grill-me` for the core interview loop and `/domain-modeling` for glossary/ADR updates).
 
 Side effects happen inline as decisions crystallise — update `.pi/contexts/**/CONTEXT.md` via `/domain-modeling` when domain terms sharpen, and offer ADRs only for hard-to-reverse, surprising, trade-off decisions.
 

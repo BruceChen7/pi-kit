@@ -133,7 +133,7 @@ HITL tickets can only be resolved through live conversation; an agent can never 
   Link the prototype as an attachment.
   Use when "what does it look like" or "how should it behave" is the key question.
 
-- **Grilling (HITL)**: Conversation through the `/grilling` and `/domain-modeling` skills, in frontier rounds.
+- **Grilling (HITL)**: Conversation through the `/grill-me` and `/domain-modeling` skills, in frontier rounds.
   Default type.
 
 - **Task (HITL or AFK)**: Physical work that must be done before making a **decision** —
@@ -188,7 +188,7 @@ Two modes. In both, **resolve at most one ticket per session** — except resear
 The user invokes with a vague idea.
 
 1. **Name the destination.**
-   Run a `/grilling` and `/domain-modeling` session to clarify what this map is finding — a spec, a decision, or a change.
+   Run a `/grill-me` and `/domain-modeling` session to clarify what this map is finding — a spec, a decision, or a change.
    The destination fixes scope, so nail it first.
 
 2. **Draw the frontier.**
@@ -228,7 +228,7 @@ The user invokes with a map path. Tickets are **optional** — when no ticket is
 
 3. **Resolve it.**
    **Zoom in on demand**: read the full body of related or closed tickets as needed; invoke skills named in `## Notes`.
-   When uncertain, use `/grilling` and `/domain-modeling`.
+   When uncertain, use `/grill-me` and `/domain-modeling`.
 
 4. **Record the resolution.**
    Update the ticket file:
@@ -265,7 +265,7 @@ Users may run unblocked tickets in parallel, so expect other sessions to be edit
 
 This skill depends on the following locally available skills:
 
-- `/grilling` — core interview loop
+- `/grill-me` — core interview loop
 - `/domain-modeling` — domain terminology and ADR maintenance
 - `/prototype` — needed for prototype tickets
 - `herdr-squad` or independent sub-agents — available for research tickets

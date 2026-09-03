@@ -39,7 +39,6 @@ domain-modeling|local|skills/domain-modeling
 # https://github.com/mattpocock/skills (v1.0.1+)
 teach|local|skills/teach
 # https://github.com/mattpocock/skills (v1.2.0+)
-grilling|local|skills/grilling
 prototype|local|skills/prototype
 grill-with-docs|local|skills/grill-with-docs
 grill-me|local|skills/grill-me

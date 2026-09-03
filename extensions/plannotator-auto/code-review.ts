@@ -196,6 +196,8 @@ const annotateLatestReviewDocument = async (
       {
         signal: ctx.signal,
         timeoutMs: SYNC_ANNOTATE_TIMEOUT_MS,
+        // Markdown annotation hosting follows the session toggle.
+        hostMode: getSessionState(ctx).reviewHostMode,
       },
     );
 

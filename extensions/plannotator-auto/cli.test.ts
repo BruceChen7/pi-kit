@@ -48,13 +48,13 @@ const ctxFor = (repoRoot: string) => ({
 
 const runAnnotate = async (
   repoRoot: string,
-  options?: { signal?: AbortSignal; useTerminalBrowser?: boolean },
+  options?: { signal?: AbortSignal; hostMode?: "browser" | "herdr-panel" },
 ) => {
   const cli = await import("./cli.ts");
   return cli.runPlannotatorAnnotateCli(ctxFor(repoRoot), `${repoRoot}/n.md`, {
     signal: options?.signal,
     timeoutMs: 1000,
-    useTerminalBrowser: options?.useTerminalBrowser,
+    hostMode: options?.hostMode,
   });
 };
 
@@ -89,7 +89,8 @@ describe("runCli Herdr panel lifecycle", () => {
     const repoRoot = await createTempRepo("cli-panel-close-denied-");
 
     try {
-      const result = await runAnnotate(repoRoot);
+      // hostMode "herdr-panel" opts the Markdown review into the panel flow.
+      const result = await runAnnotate(repoRoot, { hostMode: "herdr-panel" });
 
       // Denied (feedback) is a terminal verdict: panel flow armed → closed.
       expect(result.status).toBe("handled");
@@ -105,7 +106,7 @@ describe("runCli Herdr panel lifecycle", () => {
     }
   });
 
-  it("never arms or closes a panel when useTerminalBrowser:false (HTML flows)", async () => {
+  it("never arms or closes a panel with the default browser host (HTML flows)", async () => {
     vi.resetModules();
     armHerdrEnv();
     mockPlannotatorSpawn({
@@ -116,10 +117,11 @@ describe("runCli Herdr panel lifecycle", () => {
     const repoRoot = await createTempRepo("cli-panel-html-");
 
     try {
-      const result = await runAnnotate(repoRoot, { useTerminalBrowser: false });
+      const result = await runAnnotate(repoRoot, { hostMode: "browser" });
 
       expect(result.status).toBe("handled");
-      // Caller-level opt-out: no panel flow at all — never probe, never close.
+      // Caller-level host opt-out (and the new default): no panel flow at
+      // all — never probe, never close.
       await flushMicrotasks();
       expect(shouldUseTerminalBrowser).not.toHaveBeenCalled();
       expect(closeSpy).not.toHaveBeenCalled();
@@ -141,7 +143,10 @@ describe("runCli Herdr panel lifecycle", () => {
     try {
       const controller = new AbortController();
       controller.abort();
-      const result = await runAnnotate(repoRoot, { signal: controller.signal });
+      const result = await runAnnotate(repoRoot, {
+        signal: controller.signal,
+        hostMode: "herdr-panel",
+      });
 
       // Aborted reviews are retried: the panel stays open.
       expect(result.status).toBe("aborted");

@@ -32,6 +32,8 @@ import {
 import {
   clearLastOpened,
   clearTerminalBrowserCache,
+  isTerminalBrowserAvailable,
+  nextHostMode,
 } from "./terminal-browser.ts";
 
 const isReviewTrackedToolName = (toolName: string): boolean =>
@@ -55,6 +57,33 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
 
   registerPlanReviewSubmitTool(pi, planReviewSubmitToolParameters);
   registerReviewHandlers(pi);
+
+  pi.registerCommand("plannotator-review-host", {
+    description: "切换 Markdown 评审托管: 浏览器(默认) ⇄ herdr 面板(临时)",
+    handler: async (_args, ctx) => {
+      const state = getSessionState(ctx);
+      const available = await isTerminalBrowserAvailable(getSessionKey(ctx));
+      const { next, ok } = nextHostMode(
+        state.reviewHostMode,
+        process.env,
+        available,
+      );
+      if (!ok) {
+        ctx.ui.notify(
+          "无法切换到 herdr 面板: 需要 Herdr 环境(HERDR_ENV=1 + HERDR_PANE_ID)且已安装 terminal-browser。当前保持 浏览器(默认)。",
+          "warning",
+        );
+        return;
+      }
+      state.reviewHostMode = next;
+      ctx.ui.notify(
+        `MD 评审托管已切换: ${
+          next === "herdr-panel" ? "herdr 面板" : "浏览器(默认)"
+        }`,
+        "info",
+      );
+    },
+  });
 
   pi.on("session_start", (_event, ctx) => {
     const sessionKey = getSessionKey(ctx);

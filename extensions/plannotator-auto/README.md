@@ -33,8 +33,17 @@ All review locations are convention-based and NOT configurable: any directory na
 
 ### Backends by file type
 
-- **Markdown** (plan/spec/issue) → plan-review hook mode so version history and plan diffs are available (`plannotator` CLI with a PermissionRequest hook payload).
-- **HTML** (plan `.html` and `.pi/html/` artifacts) → one-shot annotate review (`plannotator annotate <file> --gate --json`). The CLI blocks until the reviewer decides in the browser, then emits a decision JSON: `approved` clears the pending target and settles the path, `annotated` keeps it pending (denied semantics — revise and resubmit), `dismissed` releases the gate without settling (the next write re-queues). Re-submissions automatically show a version diff vs the previous submission (the CLI keeps per-file annotate history), replacing the old `--agent-reply` round-trip. Interrupted submits keep no session state — a retry simply re-runs the annotate command.
+- **Markdown** (plan/spec/issue) → plan-review hook mode so version history and plan diffs are available (`plannotator` CLI with a PermissionRequest hook payload). Hosted in the **regular browser by default**; use `/plannotator-review-host` to temporarily switch a session to the Herdr terminal-browser panel.
+- **HTML** (plan `.html` and `.pi/html/` artifacts) → one-shot annotate review (`plannotator annotate <file> --gate --json`). Always hosted in the regular browser (never the Herdr panel). The CLI blocks until the reviewer decides in the browser, then emits a decision JSON: `approved` clears the pending target and settles the path, `annotated` keeps it pending (denied semantics — revise and resubmit), `dismissed` releases the gate without settling (the next write re-queues). Re-submissions automatically show a version diff vs the previous submission (the CLI keeps per-file annotate history), replacing the old `--agent-reply` round-trip. Interrupted submits keep no session state — a retry simply re-runs the annotate command.
+
+### Review hosting toggle
+
+`/plannotator-review-host` flips how **Markdown** reviews are hosted for the current session (no arguments, toggle both ways):
+
+- `browser` (default): the plannotator CLI opens the review in your regular browser.
+- `herdr-panel` (temporary): the review opens in a `terminal-browser` panel split to the right of the current Herdr pane — or a new tab when a right pane already exists — and is auto-closed on a terminal verdict.
+
+HTML artifacts always use the regular browser, regardless of the toggle. The toggle is session-scoped: a new session resets to `browser`. Switching to `herdr-panel` when the runtime cannot support it (not a Herdr environment, or `terminal-browser` not on `PATH`) is rejected with a warning and the mode stays `browser`.
 
 ## Configuration
 

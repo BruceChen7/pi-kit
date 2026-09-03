@@ -16,6 +16,43 @@ export const isHerdrEnvironment = (
   env: NodeJS.ProcessEnv = process.env,
 ): boolean => env.HERDR_ENV === "1" && !!env.HERDR_PANE_ID;
 
+/** How a Markdown review is hosted: regular browser (default) or the Herdr terminal-browser panel. */
+export type ReviewHostMode = "browser" | "herdr-panel";
+
+/**
+ * Pure: should this review use the Herdr terminal-browser panel? Only when
+ * the caller opted into herdr-panel AND the runtime supports it (Herdr
+ * environment + a usable terminal-browser). value in / value out.
+ */
+export const resolveReviewHost = (opts: {
+  mode: ReviewHostMode;
+  isHerdrEnv: boolean;
+  terminalBrowserAvailable: boolean;
+}): boolean =>
+  opts.mode === "herdr-panel" &&
+  opts.isHerdrEnv &&
+  opts.terminalBrowserAvailable;
+
+/**
+ * Pure: next host mode after a `/plannotator-review-host` toggle.
+ * Going back to browser is always allowed; switching to herdr-panel requires
+ * a Herdr environment with a usable terminal-browser, otherwise the mode
+ * stays browser and ok=false (the caller notifies, never silently flips).
+ */
+export const nextHostMode = (
+  current: ReviewHostMode,
+  env: NodeJS.ProcessEnv,
+  terminalBrowserAvailable: boolean,
+): { next: ReviewHostMode; ok: boolean } => {
+  if (current === "herdr-panel") {
+    return { next: "browser", ok: true };
+  }
+  if (isHerdrEnvironment(env) && terminalBrowserAvailable) {
+    return { next: "herdr-panel", ok: true };
+  }
+  return { next: "browser", ok: false };
+};
+
 /** Pure: parse one READY_FILE JSONL line → url | null. */
 export const parseReadyFileLine = (line: string): string | null => {
   const trimmed = line.trim();
@@ -169,21 +206,25 @@ export const clearTerminalBrowserCache = (sessionKey?: string): void => {
   }
 };
 
-export const shouldUseTerminalBrowser = async (ctx: {
-  cwd: string;
-  sessionManager: { getSessionFile: () => string | null | undefined };
-}): Promise<boolean> => {
+export const shouldUseTerminalBrowser = async (
+  ctx: {
+    cwd: string;
+    sessionManager: { getSessionFile: () => string | null | undefined };
+  },
+  hostMode: ReviewHostMode = "browser",
+): Promise<boolean> => {
   // Functional Core short-circuit: never use terminal-browser in test runs
   // (keeps unit tests hermetic; manual Herdr verification still works).
   if (process.env.VITEST || process.env.NODE_ENV === "test") {
     return false;
   }
-  if (!isHerdrEnvironment(process.env)) {
-    return false;
-  }
   const key = getSessionKey(ctx);
   const available = await isTerminalBrowserAvailable(key);
-  return available;
+  return resolveReviewHost({
+    mode: hostMode,
+    isHerdrEnv: isHerdrEnvironment(process.env),
+    terminalBrowserAvailable: available,
+  });
 };
 
 // ---------------------------------------------------------------------------

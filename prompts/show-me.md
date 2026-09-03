@@ -58,6 +58,25 @@ sequenceDiagram
     Daemon-->>UI: stream result
 ```
 
+Compose Mermaid so it renders as terminal art inside the chat pane. The diagram must fit the terminal width — wider diagrams silently fall back to the raw code block:
+
+- Prefer `flowchart TB` over `flowchart LR`. A long chain of nodes in `LR` explodes horizontally: 8 chained nodes can reach ~285 columns, far beyond a typical fullscreen terminal (~180–240 columns).
+- Keep node labels short. Wrap long text with `<br/>` instead of one long line, and keep branch labels terse.
+- Keep the whole diagram under ~100 columns wide. If a graph needs more than ~8 nodes, split it into two or three smaller diagrams.
+- Use `sequenceDiagram` for linear request/response flows, and `flowchart TB` for pipelines and data flow.
+- Show only the nodes and edges needed for the point — omit ownership details, file paths, and code snippets inside node labels.
+
+For a pipeline, prefer this shape:
+
+```mermaid
+flowchart TB
+    K[msg] --> S{skip?}
+    S -->|old| X[skip]
+    S -->|pass| A[accumulate]
+    A --> B[flush]
+    B --> R[redis]
+```
+
 - Use `diff` when the point is what changes and the surrounding shape already exists. Match the diff shape to the topic.
 
 For a component change:

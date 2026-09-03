@@ -3,8 +3,10 @@ import {
   extractFirstUrlFromReadyContent,
   hasRightNeighborFromEdgesOutput,
   isHerdrEnvironment,
+  nextHostMode,
   parseReadyFileLine,
   pickCloseTarget,
+  resolveReviewHost,
   shouldCloseReviewPanel,
 } from "./terminal-browser.ts";
 
@@ -88,6 +90,65 @@ describe("terminal-browser Functional Core", () => {
     // New-tab open → close the active tab.
     expect(pickCloseTarget({ strategy: "new-tab" })).toEqual({
       kind: "active-tab",
+    });
+  });
+
+  it("resolveReviewHost only arms the panel for herdr-panel in a supported runtime", () => {
+    // Default browser host: never the panel, regardless of env/availability.
+    expect(
+      resolveReviewHost({
+        mode: "browser",
+        isHerdrEnv: true,
+        terminalBrowserAvailable: true,
+      }),
+    ).toBe(false);
+    // Opted into herdr-panel with a real Herdr env + terminal-browser → panel.
+    expect(
+      resolveReviewHost({
+        mode: "herdr-panel",
+        isHerdrEnv: true,
+        terminalBrowserAvailable: true,
+      }),
+    ).toBe(true);
+    // herdr-panel requested but not a Herdr environment → browser.
+    expect(
+      resolveReviewHost({
+        mode: "herdr-panel",
+        isHerdrEnv: false,
+        terminalBrowserAvailable: true,
+      }),
+    ).toBe(false);
+    // herdr-panel requested but terminal-browser unavailable → browser.
+    expect(
+      resolveReviewHost({
+        mode: "herdr-panel",
+        isHerdrEnv: true,
+        terminalBrowserAvailable: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("nextHostMode toggles to herdr only when the runtime supports it", () => {
+    const herdrEnv = { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" };
+    // browser → herdr-panel when Herdr env + terminal-browser available.
+    expect(nextHostMode("browser", herdrEnv, true)).toEqual({
+      next: "herdr-panel",
+      ok: true,
+    });
+    // browser → herdr-panel requested but no Herdr env → stay browser.
+    expect(nextHostMode("browser", {}, true)).toEqual({
+      next: "browser",
+      ok: false,
+    });
+    // browser → herdr-panel requested but no terminal-browser → stay browser.
+    expect(nextHostMode("browser", herdrEnv, false)).toEqual({
+      next: "browser",
+      ok: false,
+    });
+    // herdr-panel → browser is always allowed, even if the runtime degraded.
+    expect(nextHostMode("herdr-panel", {}, false)).toEqual({
+      next: "browser",
+      ok: true,
     });
   });
 });

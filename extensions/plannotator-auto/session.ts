@@ -3,6 +3,7 @@ import type {
   PendingPlanReview,
   SessionKeyContext,
 } from "./plan-review/types.ts";
+import type { ReviewHostMode } from "./terminal-browser.ts";
 
 type PendingPlanReviewEventHandle = {
   markHandled: () => void;
@@ -25,6 +26,8 @@ export type SessionRuntimeState = {
   pendingPlanReviewTargetsByCwd: Map<string, Map<string, PendingPlanReview>>;
   toolArgsByCallId: Map<string, unknown>;
   reviewDocumentsByCwd: Map<string, Map<string, SessionReviewDocument>>;
+  /** Markdown review hosting: regular browser (default) or Herdr panel (temporary toggle). */
+  reviewHostMode: ReviewHostMode;
 };
 
 const sessionRuntimeState = new Map<string, SessionRuntimeState>();
@@ -38,6 +41,7 @@ const createSessionRuntimeState = (): SessionRuntimeState => ({
   reviewDocumentsByCwd: new Map(),
   activePlanReviewByCwd: new Map(),
   settledPlanReviewPaths: new Set(),
+  reviewHostMode: "browser",
 });
 
 export const getSessionKey = (ctx: {

@@ -132,7 +132,9 @@ const getReviewWidgetMessage = (
 
   return isHtmlPath(planReviewActive.resolvedPlanPath)
     ? "HTML review is active"
-    : "Plan/Spec review is active";
+    : `Plan/Spec review is active · host: ${
+        state.reviewHostMode === "herdr-panel" ? "herdr-panel" : "browser"
+      }`;
 };
 
 export const setReviewWidget = (ctx: ExtensionContext): void => {
@@ -613,9 +615,9 @@ const runPlannotatorHtmlReviewFlow = async (
       gate: true,
       signal,
       timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
-      // HTML artifacts never open the Herdr terminal-browser panel: the
-      // review opens in the regular browser instead.
-      useTerminalBrowser: false,
+      // HTML artifacts always host in the regular browser: the review opens
+      // in the browser instead of splitting a Herdr pane.
+      hostMode: "browser",
     },
   );
   if (cliResult.status === "error") {
@@ -664,9 +666,9 @@ export const runPlannotatorHtmlReviewOnce = async (
   const response = await runPlannotatorAnnotateCli(ctx, filePath, {
     signal: ctx.signal,
     timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
-    // Manual HTML review (picker / Ctrl+Alt+L) also bypasses the Herdr
-    // terminal-browser panel flow.
-    useTerminalBrowser: false,
+    // Manual HTML review (picker / Ctrl+Alt+L) also always hosts in the
+    // regular browser — never the Herdr terminal-browser panel.
+    hostMode: "browser",
   });
   if (response.status === "error") {
     ctx.ui.notify(response.error, "warning");
@@ -851,6 +853,9 @@ export const registerPlanReviewSubmitTool = (
         const cliResult = await runPlannotatorPlanReviewCli(ctx, preprocessed, {
           signal,
           timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
+          // Markdown hosting follows the session toggle: browser (default)
+          // or herdr-panel when the user switched with /plannotator-review-host.
+          hostMode: state.reviewHostMode,
         });
 
         if (cliResult.status === "error") {

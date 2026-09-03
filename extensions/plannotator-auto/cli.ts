@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import type { ReviewHostMode } from "./terminal-browser.ts";
 
 export type CliReviewDecision = {
   approved: boolean;
@@ -108,11 +109,13 @@ type RunCliOptions<T> = {
   detached?: boolean;
   env?: NodeJS.ProcessEnv;
   /**
-   * Caller-level policy: allow the Herdr terminal-browser panel flow for this
-   * review. HTML artifacts opt out (useTerminalBrowser: false) — their
-   * review opens in the regular browser instead of splitting a Herdr pane.
+   * Caller-level policy: how should a Markdown review be hosted?
+   * `"browser"` (default) lets the plannotator CLI open the regular browser;
+   * `"herdr-panel"` arms the Herdr terminal-browser panel flow. HTML
+   * artifact call sites always pass `"browser"` — their review opens in the
+   * regular browser instead of splitting a Herdr pane.
    */
-  useTerminalBrowser?: boolean;
+  hostMode?: ReviewHostMode;
 };
 
 type RunCliResult<T> =
@@ -128,7 +131,8 @@ const runCli = async <T extends CliReviewDecision>(
 ): Promise<RunCliResult<T>> => {
   // Functional Core decision: should we use terminal-browser?
   // Sync fast-path: in tests or non-Herdr, avoid async import entirely (keeps mocks hermetic).
-  // HTML artifact reviews opt out at the call site (useTerminalBrowser: false).
+  // Markdown reviews opt in via hostMode "herdr-panel"; HTML artifact call
+  // sites always pass hostMode "browser" (the default), so nothing arms.
   let useTerminalBrowser = false;
   // Lazily resolved ONCE per run: every terminal-browser touchpoint below
   // (panel open, panel close, ready-file cleanup) shares this single module
@@ -141,10 +145,13 @@ const runCli = async <T extends CliReviewDecision>(
   const isTestEnv = !!process.env.VITEST || process.env.NODE_ENV === "test";
   const isHerdrEnv =
     process.env.HERDR_ENV === "1" && !!process.env.HERDR_PANE_ID;
-  if (!isTestEnv && isHerdrEnv && options.useTerminalBrowser !== false) {
+  const hostMode = options.hostMode ?? "browser";
+  // Probe the panel path only when the caller opted into herdr-panel AND the
+  // runtime looks like Herdr — browser mode never spawns terminal-browser.
+  if (!isTestEnv && hostMode === "herdr-panel" && isHerdrEnv) {
     try {
       tb = await import("./terminal-browser.ts");
-      useTerminalBrowser = await tb.shouldUseTerminalBrowser(ctx);
+      useTerminalBrowser = await tb.shouldUseTerminalBrowser(ctx, hostMode);
       if (useTerminalBrowser) {
         try {
           readyFile = await tb.createTempReadyFile();
@@ -246,8 +253,8 @@ const runCli = async <T extends CliReviewDecision>(
       // Shell: terminal verdict on a run that armed the panel flow → close
       // the Herdr review panel this run opened (fire-and-forget, mirrors the
       // fire-and-forget open). Errors/aborts return above and keep the panel
-      // for a retry; HTML flows never arm the panel (useTerminalBrowser:
-      // false), so nothing is closed for them.
+      // for a retry; browser-hosted flows (hostMode "browser") never arm the
+      // panel, so nothing is closed for them.
       if (tb && openedHerdrPanel) {
         tb.closeReviewPanelOnTerminalDecision(result, ctx);
       }
@@ -353,7 +360,12 @@ const parseCliPlanReviewResult = (stdout: string): CliReviewDecision => {
 export const runPlannotatorPlanReviewCli = async (
   ctx: CliCtx,
   planContent: string,
-  options: { signal?: AbortSignal; timeoutMs: number },
+  options: {
+    signal?: AbortSignal;
+    timeoutMs: number;
+    /** How to host the review UI: "browser" (default) or "herdr-panel". */
+    hostMode?: ReviewHostMode;
+  },
 ): Promise<CliReviewResult> => {
   const hookEvent = {
     hook_event_name: "PermissionRequest",
@@ -366,6 +378,7 @@ export const runPlannotatorPlanReviewCli = async (
     parseStdout: parseCliPlanReviewResult,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
+    hostMode: options.hostMode,
   });
 };
 
@@ -376,8 +389,8 @@ export const runPlannotatorAnnotateCli = async (
     gate?: boolean;
     signal?: AbortSignal;
     timeoutMs: number;
-    /** HTML artifacts never open the Herdr terminal-browser panel. */
-    useTerminalBrowser?: boolean;
+    /** HTML artifacts always host in the regular browser. */
+    hostMode?: ReviewHostMode;
   },
 ): Promise<CliReviewResult> => {
   const args = ["annotate", filePath];
@@ -390,6 +403,6 @@ export const runPlannotatorAnnotateCli = async (
     parseStdout: parseCliReviewResult,
     signal: options.signal,
     timeoutMs: options.timeoutMs,
-    useTerminalBrowser: options.useTerminalBrowser,
+    hostMode: options.hostMode,
   });
 };

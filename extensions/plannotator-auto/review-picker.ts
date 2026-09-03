@@ -17,6 +17,7 @@ import {
   preprocessPlanMarkdown,
   runPlannotatorHtmlReviewOnce,
 } from "./plan-review.ts";
+import { getSessionState } from "./session.ts";
 
 const SYNC_REVIEW_TIMEOUT_MS = 4 * 60 * 60 * 1_000;
 const MAX_PLAN_FILES = 50;
@@ -217,6 +218,8 @@ const runPlanReview = async (
     const response = await runPlannotatorPlanReviewCli(ctx, normalized, {
       signal: ctx.signal,
       timeoutMs: SYNC_REVIEW_TIMEOUT_MS,
+      // Markdown picker review follows the session toggle (browser default).
+      hostMode: getSessionState(ctx).reviewHostMode,
     });
     await handleCliResult(pi, ctx, response, (result) => {
       if (result.approved) {

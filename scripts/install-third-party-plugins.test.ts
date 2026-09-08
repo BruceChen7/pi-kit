@@ -61,35 +61,6 @@ const writeExecutable = (filePath: string, content: string): void => {
 const createFakeInstallTools = (binDir: string): void => {
   fs.mkdirSync(binDir, { recursive: true });
 
-  const curlScript = `#!/bin/sh
-set -eu
-payload='fake plannotator binary
-'
-
-if [ "\${1:-}" = "-fsSL" ] && [ "\${2:-}" = "-o" ]; then
-  printf "%s" "$payload" > "$3"
-  exit 0
-fi
-
-url=""
-for arg in "$@"; do
-  url="$arg"
-done
-
-case "$url" in
-  *api.github.com*/releases/latest)
-    echo '{"tag_name":"v9.8.7"}'
-    ;;
-  *.sha256)
-    printf "%s" "$payload" | shasum -a 256 | awk '{ print $1 "  plannotator" }'
-    ;;
-  *)
-    echo "unexpected curl url: $url" >&2
-    exit 1
-    ;;
-esac
-`;
-
   const npmScript = `#!/bin/sh
 set -eu
 if [ "\${1:-}" = "install" ]; then
@@ -122,7 +93,6 @@ echo '{"pi":{"extensions":["./extensions"]}}' > "$target/package.json"
 echo 'export default function() {}' > "$target/extensions/$name/index.ts"
 `;
 
-  writeExecutable(path.join(binDir, "curl"), curlScript);
   writeExecutable(path.join(binDir, "npm"), npmScript);
   writeExecutable(path.join(binDir, "git"), gitScript);
 };
@@ -242,7 +212,6 @@ describe("install-third-party-plugins.sh", () => {
     const project = createTempDir();
     const binDir = path.join(createTempDir(), "bin");
     const logPath = path.join(createTempDir(), "pi.log");
-    const cliInstallDir = path.join(home, ".local", "bin");
     createFakeInstallTools(binDir);
 
     execFileSync("bash", [installerPath], {
@@ -251,7 +220,6 @@ describe("install-third-party-plugins.sh", () => {
         ...process.env,
         HOME: home,
         PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
-        PLANNOTATOR_CLI_INSTALL_DIR: cliInstallDir,
       },
       encoding: "utf8",
     });
@@ -280,9 +248,6 @@ describe("install-third-party-plugins.sh", () => {
     expect(autoresearchPackageJson.pi.extensions).toEqual([
       "extensions/pi-autoresearch",
     ]);
-    expect(
-      fs.readFileSync(path.join(cliInstallDir, "plannotator"), "utf8"),
-    ).toBe("fake plannotator binary\n");
     expect(fs.existsSync(logPath)).toBe(false);
   });
 
@@ -298,7 +263,6 @@ describe("install-third-party-plugins.sh", () => {
         ...process.env,
         HOME: home,
         PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
-        PLANNOTATOR_CLI_INSTALL_DIR: path.join(home, ".local", "bin"),
       },
       encoding: "utf8",
     });

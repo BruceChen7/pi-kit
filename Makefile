@@ -1,5 +1,6 @@
 .PHONY: help install install-all install-plugins install-skills install-third-party \
-	install-clis install-opencli-adapters update-peer-deps update-skills test lint
+	install-clis install-opencli-adapters update-peer-deps update-skills test lint \
+	package-settings
 
 PLUGIN_SCOPE ?= --library
 THIRD_PARTY_MODE ?= --install-only
@@ -15,6 +16,7 @@ help:
 	@echo "  make install-clis            Install external CLIs required by extensions/ (codex, qmd, plannotator, gh, ...)"
 	@echo "  make install-opencli-adapters Install opencli adapters under opencli/clis/"
 	@echo "  make update-peer-deps        Sync pi peerDependencies to local pi --version"
+	@echo "  make package-settings       Package extension settings + plugin data into a zip with manifest + restore guide (repo root)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make install"
@@ -42,6 +44,9 @@ install-opencli-adapters:
 
 update-peer-deps:
 	npm run update:pi-agent
+
+package-settings:
+	node scripts/package-settings.mjs
 
 update-skills:
 	./skills/migrate.sh update

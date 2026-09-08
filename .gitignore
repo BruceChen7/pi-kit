@@ -11,6 +11,7 @@ extensions/kanban-worktree/ui-dist/
 extensions/cache-graph/ui-dist/
 extensions/visual-artifact/ui-dist/
 .pi-memory/
+*.zip
 package-lock.json
 pnpm-lock.yaml
 skills/render-markdown/bun.lock

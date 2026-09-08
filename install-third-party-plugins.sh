@@ -26,7 +26,6 @@ NC='\033[0m'
 MODE="install-only"
 LIBRARY_DIR="${PI_PLUGIN_LIBRARY_DIR:-$HOME/.agents/pi-plugins}"
 MANIFEST_FILE="$LIBRARY_DIR/.manifest.json"
-source "$(dirname "$0")/scripts/install-plannotator-cli.sh"
 
 DEFAULT_PLUGINS=(
   "npm:pi-context"
@@ -229,8 +228,6 @@ echo "=========================================="
 echo "Library: $LIBRARY_DIR"
 echo "Mode: $MODE"
 echo ""
-
-install_plannotator_cli
 
 for source in "${DEFAULT_PLUGINS[@]}"; do
   kind="$(plugin_kind "$source")"

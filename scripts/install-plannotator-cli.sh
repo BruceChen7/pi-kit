@@ -2,8 +2,8 @@
 
 # Install the plannotator CLI from GitHub releases.
 #
-# Sourced by install-third-party-plugins.sh and install-extension-clis.sh, and
-# runnable standalone. Exposes:
+# Sourced by install-extension-clis.sh (make install-clis) and runnable
+# standalone. Exposes:
 #   PLANNOTATOR_CLI_INSTALL_DIR   install dir (default ~/.local/bin)
 #   PLANNOTATOR_REPO              GitHub repo (default backnotprop/plannotator)
 #   plannotator_platform()        print "os-arch" or fail for unsupported systems

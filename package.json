@@ -6,9 +6,9 @@
     "pi-package"
   ],
   "peerDependencies": {
-    "@earendil-works/pi-ai": "^0.84.4",
-    "@earendil-works/pi-coding-agent": "^0.84.4",
-    "@earendil-works/pi-tui": "^0.84.4"
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/pi-tui": "^0.85.1"
   },
   "pi": {
     "extensions": [
@@ -40,7 +40,8 @@
       "./extensions/fork-panel",
       "./extensions/impeccable",
       "./extensions/confluence",
-      "./extensions/prompt-clarify"
+      "./extensions/prompt-clarify",
+      "./extensions/query-notes-log"
     ]
   },
   "scripts": {

@@ -14,7 +14,6 @@ extensions/visual-artifact/ui-dist/
 *.zip
 package-lock.json
 pnpm-lock.yaml
-skills/render-markdown/bun.lock
 skills/*/reports/
 /.pi
 .config/wt.toml

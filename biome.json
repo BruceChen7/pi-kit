@@ -7,12 +7,7 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": [
-      "**",
-      "!extensions/cache-graph/ui-dist",
-      "!skills/render-markdown/scripts",
-      "!skills"
-    ]
+    "includes": ["**", "!extensions/cache-graph/ui-dist", "!skills"]
   },
   "overrides": [
     {

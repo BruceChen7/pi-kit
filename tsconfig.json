@@ -17,12 +17,5 @@
     "types": ["node", "vitest/globals"]
   },
   "include": ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.d.ts"],
-  "exclude": [
-    "node_modules",
-    ".git",
-    ".pi",
-    "dist",
-    "skills/render-markdown/scripts",
-    "skills"
-  ]
+  "exclude": ["node_modules", ".git", ".pi", "dist", "skills"]
 }

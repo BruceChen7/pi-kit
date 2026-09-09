@@ -16,7 +16,7 @@ help:
 	@echo "  make install-clis            Install external CLIs required by extensions/ (codex, qmd, plannotator, gh, ...)"
 	@echo "  make install-opencli-adapters Install opencli adapters under opencli/clis/"
 	@echo "  make update-peer-deps        Sync pi peerDependencies to local pi --version"
-	@echo "  make package-settings       Package extension settings + plugin data into a zip with manifest + restore guide (repo root)"
+	@echo "  make package-settings       Package extension settings + plugin data + ~/work/*/.pi/teach learn data into a zip with manifest + restore guide (repo root)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make install"

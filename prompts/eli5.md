@@ -1,10 +1,12 @@
 ---
-description: Explain a technical spec or proposed change in plain language — problem, solution, and every schema change
+description: Explain a technical spec or proposed change in plain language — problem, solution, and every schema change. Output defaults to Simplified Chinese
 argument-hint: "[spec/PR/branch/commit]"
 ---
 Explain the referenced spec or change in plain language, for a technical reader who did not live the work:
 they have read none of the code, none of the diff, and none of the session's messages. Simplify the
 telling, never the claims. Pseudocode and precise claims land fine; invented labels do not.
+
+thanks to  https://github.com/dzhng/skills/blob/main/skills/engineering/eli5/SKILL.md
 
 ## Scope detection — determine what to explain based on `$1`:
 
@@ -19,6 +21,7 @@ If the spec alone cannot establish behavior, read the current code owners before
 
 ## Writing rules
 
+- **默认使用中文回复**：除非用户明确要求其他语言，或所引用的内容本身是其他语言（此时术语可保留原文），否则用简体中文撰写解释；代码标识符、命令和 schema 字段名保持原文。
 - **Walk one concrete scenario end to end** — the triggering event, what happens today, what the
   change (or the unbuilt alternative) would do — instead of describing properties in the abstract.
 - **Define every term of art at first use**; never lean on labels the spec, code, or session invented.

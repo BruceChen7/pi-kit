@@ -9,11 +9,14 @@
  *   PI_AGENT_DIR       agent settings dir (default ~/.pi/agent)
  *   OUT                output zip path (default pi-kit-settings-<ts>.zip in repo root)
  *   EXTRA_PLUGIN_DATA  space-separated "agent:<rel>" entries appended to the registry
+ *   TEACH_ROOT         work root scanned for <project>/.pi/teach learn data
+ *                      (default ~/work; empty string disables the teach backup)
  *
  * Layout in the zip (prefix `pi-kit-settings/`):
  *   agent/third_extension_settings.json
  *   agent/query-notes-log/...
  *   agent/<extra>/...
+ *   teach/<project>/...            (each ~/work/<project>/.pi/teach with files)
  *   MANIFEST.txt
  *   INSTALL.md
  *
@@ -56,13 +59,16 @@ export const renderManifest = (specs) => {
   return `${lines.join("\n")}\n`;
 };
 
-export const renderInstallDoc = ({ hasGlobal }) => {
+export const teachZipRel = (project, zipRel) => `teach/${project}/${zipRel}`;
+
+export const renderInstallDoc = ({ hasGlobal, teachProjects = [] }) => {
   const lines = [
     "# pi-kit 扩展配置与插件数据还原说明 (INSTALL)",
     "",
     "本 zip 由 `make package-settings` 生成，包含：",
     "- `agent/third_extension_settings.json`：全局扩展配置",
     "- `agent/query-notes-log/...`：query_my_notes 插件数据（查询历史）",
+    "- `teach/<project>/...`：各项目 .pi/teach 学习数据（课程/学习记录/测验）",
     "- `MANIFEST.txt`：完整文件清单（zip 内路径 | 源路径 | 大小）",
     "",
     "## 还原步骤",
@@ -80,6 +86,23 @@ export const renderInstallDoc = ({ hasGlobal }) => {
   if (!hasGlobal) {
     lines.splice(3, 1, "- （全局扩展配置在本 zip 中不存在，仅含插件数据）");
   }
+  if (teachProjects.length > 0) {
+    const block = [
+      "",
+      "## teach 学习数据还原",
+      "zip 内 teach/<project>/… 为各项目 .pi/teach 学习数据。解压后在 zip 目录执行：",
+      "  cd pi-kit-settings",
+      "  for d in teach/*; do",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal shell snippet, ${...} is a shell variable, not a JS placeholder
+      '    proj="${d#teach/}"',
+      '    mkdir -p "$HOME/work/$proj/.pi"',
+      '    cp -R "$d" "$HOME/work/$proj/.pi/teach"',
+      "  done",
+      "（或按 MANIFEST.txt 逐项目对照还原；还原后可在该项目内用 teach skill 继续学习。）",
+      "",
+    ];
+    lines.push(...block);
+  }
   return lines.join("\n");
 };
 
@@ -88,12 +111,38 @@ const walkFiles = (dir, relPrefix) => {
   const out = [];
   for (const name of fs.readdirSync(dir)) {
     const full = path.join(dir, name);
-    const rel = `${relPrefix}/${name}`;
+    const rel = relPrefix === "" ? name : `${relPrefix}/${name}`;
     const stats = fs.statSync(full);
     if (stats.isDirectory()) {
       out.push(...walkFiles(full, rel));
     } else if (stats.isFile()) {
       out.push({ srcPath: full, zipRel: rel, size: stats.size });
+    }
+  }
+  return out;
+};
+
+// Scan one level under workRoot for <project>/.pi/teach dirs that contain at
+// least one file (no recursion into nested subprojects like work/xxx/yyy).
+const findTeachDirs = (workRoot) => {
+  let entries;
+  try {
+    entries = fs.readdirSync(workRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const teachDir = path.join(workRoot, entry.name, ".pi", "teach");
+    if (!fs.existsSync(teachDir)) {
+      continue;
+    }
+    const files = walkFiles(teachDir, "");
+    if (files.length > 0) {
+      out.push({ project: entry.name, files });
     }
   }
   return out;
@@ -153,12 +202,23 @@ const main = () => {
   const outPath = path.resolve(
     process.env.OUT ?? `pi-kit-settings-${formatTimestamp()}.zip`,
   );
+  const teachRoot = process.env.TEACH_ROOT ?? path.join(os.homedir(), "work");
   const registry = [
     ...DEFAULT_REGISTRY,
     ...parseExtraPluginData(process.env.EXTRA_PLUGIN_DATA),
   ];
 
   const specs = buildSpecs(agentDir, repoRoot, registry);
+  const teachDirs = teachRoot ? findTeachDirs(teachRoot) : [];
+  for (const { project, files } of teachDirs) {
+    for (const file of files) {
+      specs.push({
+        zipPath: `pi-kit-settings/${teachZipRel(project, file.zipRel)}`,
+        srcPath: file.srcPath,
+        size: file.size,
+      });
+    }
+  }
   if (specs.length === 0) {
     console.error("Nothing to package: no registry entry exists.");
     process.exit(1);
@@ -168,7 +228,10 @@ const main = () => {
     s.zipPath.includes("third_extension_settings.json"),
   );
   const manifest = renderManifest(specs);
-  const installDoc = renderInstallDoc({ hasGlobal });
+  const installDoc = renderInstallDoc({
+    hasGlobal,
+    teachProjects: teachDirs.map(({ project }) => project),
+  });
 
   const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-kit-settings-"));
   try {
@@ -194,6 +257,11 @@ const main = () => {
 
   console.log(`\n==> packaged: ${outPath}`);
   console.log(`\n${manifest}`);
+  if (teachDirs.length > 0) {
+    console.log(
+      `==> teach backup: ${teachDirs.length} project(s) under ${teachRoot} → zip prefix teach/<project>/`,
+    );
+  }
   if (hasGlobal) {
     console.log(
       "⚠  agent/third_extension_settings.json may contain sensitive data " +

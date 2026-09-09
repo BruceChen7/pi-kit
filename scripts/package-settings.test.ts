@@ -7,6 +7,7 @@ import {
   parseExtraPluginData,
   renderInstallDoc,
   renderManifest,
+  teachZipRel,
 } from "./package-settings.mjs";
 
 const repoRoot = path.resolve(__dirname, "..");
@@ -41,6 +42,37 @@ function createAgentFixture(agentDir: string): void {
   );
 }
 
+// projA: .pi/teach with files → packaged; projB: empty .pi/teach → skipped;
+// projC: no .pi/teach → skipped.
+function createTeachFixture(workRoot: string): void {
+  fs.mkdirSync(
+    path.join(workRoot, "projA", ".pi", "teach", "topic", "lessons"),
+    { recursive: true },
+  );
+  fs.writeFileSync(
+    path.join(workRoot, "projA", ".pi", "teach", "topic", "NOTES.md"),
+    "# notes\n",
+    "utf-8",
+  );
+  fs.writeFileSync(
+    path.join(
+      workRoot,
+      "projA",
+      ".pi",
+      "teach",
+      "topic",
+      "lessons",
+      "0001.html",
+    ),
+    "<h1>hi</h1>\n",
+    "utf-8",
+  );
+  fs.mkdirSync(path.join(workRoot, "projB", ".pi", "teach", "empty"), {
+    recursive: true,
+  });
+  fs.mkdirSync(path.join(workRoot, "projC"), { recursive: true });
+}
+
 function runPackage(
   agentDir: string,
   outZip: string,
@@ -53,6 +85,7 @@ function runPackage(
       PI_AGENT_DIR: agentDir,
       OUT: outZip,
       EXTRA_PLUGIN_DATA: "",
+      TEACH_ROOT: "",
       ...extraEnv,
     },
     encoding: "utf8",
@@ -115,6 +148,31 @@ describe("renderInstallDoc", () => {
   it("notes the missing global settings when absent", () => {
     const text = renderInstallDoc({ hasGlobal: false });
     expect(text).toContain("仅含插件数据");
+  });
+
+  it("adds a copyable teach restore section when teach projects exist", () => {
+    const text = renderInstallDoc({
+      hasGlobal: true,
+      teachProjects: ["sqlite_reading", "celld"],
+    });
+
+    expect(text).toContain("## teach 学习数据还原");
+    expect(text).toContain("for d in teach/*; do");
+    expect(text).toContain('"$HOME/work/$proj/.pi"');
+    expect(text).toContain('cp -R "$d" "$HOME/work/$proj/.pi/teach"');
+  });
+
+  it("omits the teach restore section when no teach projects exist", () => {
+    const text = renderInstallDoc({ hasGlobal: true, teachProjects: [] });
+    expect(text).not.toContain("teach 学习数据还原");
+  });
+});
+
+describe("teachZipRel", () => {
+  it("joins project and zipRel under the teach prefix", () => {
+    expect(teachZipRel("sqlite_reading", "sqlite-internals/NOTES.md")).toBe(
+      "teach/sqlite_reading/sqlite-internals/NOTES.md",
+    );
   });
 });
 
@@ -234,6 +292,56 @@ describe("package-settings.mjs (shell)", () => {
     expect(listing).toContain("pi-kit-settings/agent/foo-data/state.json");
     expect(zipEntry(outZip, "pi-kit-settings/MANIFEST.txt")).toContain(
       "foo-data/state.json",
+    );
+  });
+
+  it("packages non-empty .pi/teach dirs from TEACH_ROOT and skips empty/missing ones", () => {
+    const dir = createTempDir();
+    const agentDir = path.join(dir, "agent");
+    const outZip = path.join(dir, "out.zip");
+    const workRoot = path.join(dir, "work");
+    createAgentFixture(agentDir);
+    createTeachFixture(workRoot);
+
+    runPackage(agentDir, outZip, { TEACH_ROOT: workRoot });
+
+    const listing = zipListing(outZip);
+    expect(listing).toContain("pi-kit-settings/teach/projA/topic/NOTES.md");
+    expect(listing).toContain(
+      "pi-kit-settings/teach/projA/topic/lessons/0001.html",
+    );
+    expect(listing).not.toContain("teach/projB");
+    expect(listing).not.toContain("teach/projC");
+    expect(listing).toContain(
+      "pi-kit-settings/agent/third_extension_settings.json",
+    );
+
+    const manifest = zipEntry(outZip, "pi-kit-settings/MANIFEST.txt");
+    expect(manifest).toContain("teach/projA/topic/NOTES.md");
+    expect(manifest).not.toContain("teach/projB");
+
+    const installDoc = zipEntry(outZip, "pi-kit-settings/INSTALL.md");
+    expect(installDoc).toContain("teach 学习数据还原");
+    expect(installDoc).toContain("for d in teach/*; do");
+  });
+
+  it("keeps working when TEACH_ROOT does not exist (teach backup skipped)", () => {
+    const dir = createTempDir();
+    const agentDir = path.join(dir, "agent");
+    const outZip = path.join(dir, "out.zip");
+    createAgentFixture(agentDir);
+
+    runPackage(agentDir, outZip, {
+      TEACH_ROOT: path.join(dir, "missing-root"),
+    });
+
+    const listing = zipListing(outZip);
+    expect(listing).toContain(
+      "pi-kit-settings/agent/third_extension_settings.json",
+    );
+    expect(listing).not.toContain("teach/");
+    expect(zipEntry(outZip, "pi-kit-settings/INSTALL.md")).not.toContain(
+      "teach 学习数据还原",
     );
   });
 });

@@ -37,26 +37,24 @@ async function writeSession(options: SessionWriteOptions): Promise<string> {
   const repoDir = path.join(options.sessionsRoot, options.repoSlug);
   const sessionPath = path.join(repoDir, options.fileName);
   await mkdir(repoDir, { recursive: true });
-  await writeFile(
-    sessionPath,
-    [
-      JSON.stringify({
-        type: "session",
-        version: 3,
-        id: `${options.repoSlug}-session`,
+  const sessionContent = `${[
+    JSON.stringify({
+      type: "session",
+      version: 3,
+      id: `${options.repoSlug}-session`,
+      timestamp: options.timestamp,
+      cwd: `/work/${options.repoSlug}`,
+    }),
+    JSON.stringify(
+      assistantMessage({
+        id: options.assistantId ?? `${options.repoSlug}-assistant`,
         timestamp: options.timestamp,
-        cwd: `/work/${options.repoSlug}`,
+        input: options.input,
+        cacheRead: options.cacheRead,
       }),
-      JSON.stringify(
-        assistantMessage({
-          id: options.assistantId ?? `${options.repoSlug}-assistant`,
-          timestamp: options.timestamp,
-          input: options.input,
-          cacheRead: options.cacheRead,
-        }),
-      ),
-    ].join("\n"),
-  );
+    ),
+  ].join("\n")}\n`;
+  await writeFile(sessionPath, sessionContent);
   return sessionPath;
 }
 
@@ -199,11 +197,12 @@ async function appendEntries(
   sessionPath: string,
   entries: unknown[],
 ): Promise<void> {
-  await appendFile(sessionPath, `\n${jsonl(entries)}`, "utf8");
+  // Real pi sessions append each entry as its own newline-terminated line.
+  await appendFile(sessionPath, jsonl(entries), "utf8");
 }
 
 function jsonl(entries: unknown[]): string {
-  return entries.map((entry) => JSON.stringify(entry)).join("\n");
+  return `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
 }
 
 function expectedDiagnostics(

@@ -895,7 +895,7 @@ export async function runSummarizePipeline(
 
 export default defineTask({
   id: "knowledge-wiki-daily",
-  every: "2h",
+  every: "8h",
   description:
     "每日知识库维护：过期摘要重新生成、概念自动链接、qmd 索引和向量嵌入更新",
 

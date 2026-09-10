@@ -1,6 +1,6 @@
 .PHONY: help install install-all install-plugins install-skills install-third-party \
 	install-clis install-opencli-adapters update-peer-deps update-skills test lint \
-	package-settings
+	package-settings restore-settings
 
 PLUGIN_SCOPE ?= --library
 THIRD_PARTY_MODE ?= --install-only
@@ -17,6 +17,8 @@ help:
 	@echo "  make install-opencli-adapters Install opencli adapters under opencli/clis/"
 	@echo "  make update-peer-deps        Sync pi peerDependencies to local pi --version"
 	@echo "  make package-settings       Package extension settings + plugin data + ~/work/*/.pi/teach learn data into a zip with manifest + restore guide (repo root)"
+	@echo "  make restore-settings       Restore extension settings + plugin data + teach data from a package-settings zip"
+	@echo "                              (ZIP=<zip-or-dir> | DRY_RUN=1 preview | NO_BACKUP=1 skip .bak backups)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make install"
@@ -47,6 +49,9 @@ update-peer-deps:
 
 package-settings:
 	node scripts/package-settings.mjs
+
+restore-settings:
+	node scripts/restore-settings.mjs
 
 update-skills:
 	./skills/migrate.sh update

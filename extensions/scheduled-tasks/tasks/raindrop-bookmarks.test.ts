@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type BookmarkItem,
   buildArchiveEntry,
+  formatIncrement,
   renderArchiveEntry,
   selectNewArchiveItems,
 } from "./raindrop-bookmarks.ts";
@@ -261,5 +262,96 @@ describe("renderArchiveEntry", () => {
     expect(withoutTitle).not.toContain("# Raindrop 书签档案");
     expect(withoutTitle).toContain("## 2026-07-31");
     expect(withoutTitle).toContain("1. **First**");
+  });
+});
+
+// ── 回归：块之间必须有空行（CommonMark 段落吞列表项）──────
+//
+// GitHub 用 CommonMark 渲染：`💬 摘录` 行后若直接跟 `N. **标题**`（或下一次
+// append 的 `## 日期`），没有空行的话列表项会被当作段落文字原样吞进段落里
+// （`N. **标题**`、🔗、📍 全部挤成一团文字）。这里断言结构行前面必有空行。
+
+/** 结构性行（`N. **标题**` 或 `## 日期`）前必须是空行，否则会被吞进段落。 */
+function expectStructuralLinesSeparated(md: string): void {
+  const lines = md.split("\n");
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^(## |\d+\. \*\*)/.test(line)) {
+      expect(
+        lines[i - 1],
+        `第 ${i + 1} 行前必须是空行，否则会被吞进段落: ${line}`,
+      ).toBe("");
+    }
+  }
+}
+
+describe("renderArchiveEntry — 块间空行（回归）", () => {
+  it("摘录与下一条目之间保留空行", () => {
+    const out = renderArchiveEntry(
+      "2026-09-03",
+      [
+        sampleItem({
+          title: "A",
+          link: "https://a.example.com",
+          excerpt: "excerpt A",
+        }),
+        sampleItem({ title: "B", link: "https://b.example.com" }),
+      ],
+      false,
+    );
+
+    expect(out).toContain("💬 excerpt A\n\n2. **B**");
+  });
+
+  it("摘录与下一次 append 的日期标题之间保留空行", () => {
+    const first = renderArchiveEntry(
+      "2026-09-03",
+      [sampleItem({ title: "A", excerpt: "excerpt A" })],
+      false,
+    );
+    const second = renderArchiveEntry(
+      "2026-09-04",
+      [sampleItem({ title: "B", link: "https://b.example.com" })],
+      false,
+    );
+
+    expect(first + second).toContain("💬 excerpt A\n\n## 2026-09-04");
+  });
+
+  it("所有条目行与日期标题前都有空行（结构不变量）", () => {
+    const out = renderArchiveEntry(
+      "2026-09-03",
+      [
+        sampleItem({
+          title: "A",
+          link: "https://a.example.com",
+          excerpt: "excerpt A",
+        }),
+        sampleItem({
+          title: "B",
+          link: "https://b.example.com",
+          excerpt: "excerpt B",
+        }),
+      ],
+      true,
+    );
+
+    expectStructuralLinesSeparated(out);
+  });
+});
+
+describe("formatIncrement — 块间空行（回归）", () => {
+  it("摘录与下一条目之间保留空行", () => {
+    const out = formatIncrement([
+      sampleItem({
+        title: "A",
+        link: "https://a.example.com",
+        excerpt: "excerpt A",
+      }),
+      sampleItem({ title: "B", link: "https://b.example.com" }),
+    ]);
+
+    expect(out).toContain("💬 excerpt A\n\n## 2. **B**");
+    expectStructuralLinesSeparated(out);
   });
 });

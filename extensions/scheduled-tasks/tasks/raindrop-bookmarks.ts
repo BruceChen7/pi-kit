@@ -70,7 +70,7 @@ function normalizeSingleLine(text: string): string {
 /** 条目体公共部分：excerpt 截断 + tags 后缀（Telegram 与档案共用）。 */
 function renderItemBody(item: BookmarkItem): { excerpt: string; tags: string } {
   const excerpt = item.excerpt
-    ? `\n💬 ${normalizeSingleLine(item.excerpt).slice(0, 200)}`
+    ? `💬 ${normalizeSingleLine(item.excerpt).slice(0, 200)}`
     : "";
   const tags = item.tags.length > 0 ? ` 🏷️ ${item.tags.join(", ")}` : "";
   return { excerpt, tags };
@@ -78,6 +78,9 @@ function renderItemBody(item: BookmarkItem): { excerpt: string; tags: string } {
 
 /**
  * Convert a list of bookmark items into reading-friendly Markdown.
+ *
+ * 块与块之间用空行分隔：若摘录行后直接跟下一条目的 `## N.` 行，GitHub /
+ * CommonMark 会把列表条目当作段落文字吞掉（`N. **标题**` 原样显示在段落里）。
  */
 export function formatIncrement(
   items: BookmarkItem[],
@@ -89,17 +92,21 @@ export function formatIncrement(
     parts.push(`> ⚠️ ${warning}\n`);
   }
 
+  const blocks: string[] = [];
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     const { excerpt, tags } = renderItemBody(item);
 
-    parts.push(
+    const lines = [
       `## ${i + 1}. **${item.title}**`,
       `🔗 ${item.link}`,
       `📍 ${item.domain}${tags}`,
-      excerpt,
-    );
+    ];
+    if (excerpt) lines.push(excerpt);
+
+    blocks.push(lines.join("\n"));
   }
+  parts.push(blocks.join("\n\n"));
 
   return parts.join("\n");
 }
@@ -149,6 +156,10 @@ export function selectNewArchiveItems(
 /**
  * 纯渲染：把新条目渲染为追加文本。
  *
+ * 块与块之间用空行分隔，条目以空行结尾——摘录行后如果不留空行，
+ * GitHub/CommonMark 会把下一条目的 `N. **标题**`（或下一次 append 的
+ * `## 日期`）当作段落文字吞进同一段。
+ *
  * @param includeFileTitle - 首次建文件时写 `# ...` 标题（由编排方决定）。
  */
 export function renderArchiveEntry(
@@ -156,26 +167,29 @@ export function renderArchiveEntry(
   newItems: BookmarkItem[],
   includeFileTitle: boolean,
 ): string {
-  const parts: string[] = [];
+  const blocks: string[] = [];
   if (includeFileTitle) {
-    parts.push(`# Raindrop 书签档案（${date.slice(0, 4)}）`, "");
+    blocks.push(`# Raindrop 书签档案（${date.slice(0, 4)}）`);
   }
-  parts.push(`## ${date}`, "");
+  blocks.push(`## ${date}`);
 
   for (let i = 0; i < newItems.length; i++) {
     const item = newItems[i];
     const key = archiveKey(item);
     const { excerpt, tags } = renderItemBody(item);
 
-    parts.push(
+    const lines = [
       `${i + 1}. **${item.title}**`,
       `🔗 ${key}`,
       `📍 ${item.domain}${tags}`,
-      excerpt,
-    );
+    ];
+    if (excerpt) lines.push(excerpt);
+
+    blocks.push(lines.join("\n"));
   }
 
-  return `${parts.join("\n")}\n`;
+  // 末尾留一个空行：多次 append 之间（末尾条目带摘录时）同样需要空行分隔。
+  return `${blocks.join("\n\n")}\n\n`;
 }
 
 /**

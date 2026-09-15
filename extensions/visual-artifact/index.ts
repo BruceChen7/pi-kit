@@ -4,7 +4,6 @@ import { createLogger } from "../shared/logger.ts";
 import { materializeArtifact } from "./artifact-pipeline.ts";
 import type { VisualArtifactSpec } from "./artifact-schema.ts";
 import { listArtifacts, readArtifact } from "./artifact-store.ts";
-import { registerCalldiffTool } from "./calldiff-tool.ts";
 import { openVisualArtifactWindow } from "./glimpse-host.ts";
 import { deriveProjectName, getDefaultProjectRoot } from "./paths.ts";
 import { errorResult, normalizeSlug, result } from "./tool-helpers.ts";
@@ -70,8 +69,6 @@ function tryParseJson(raw: string): unknown {
 /* ------------------------------------------------------------------ */
 
 export default function visualArtifactExtension(pi: ExtensionAPI): void {
-  registerCalldiffTool(pi);
-
   /* ---- Tool: create_visual_artifact ---- */
   pi.registerTool({
     name: "create_visual_artifact",
@@ -83,11 +80,10 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
     async execute(
       _toolCallId: string,
       params: Record<string, unknown>,
-      signal: AbortSignal | undefined,
+      _signal: AbortSignal | undefined,
       _onUpdate: unknown,
-      ctx: unknown,
+      _ctx: unknown,
     ) {
-      const cwd = (ctx as { cwd?: string }).cwd;
       const slug = normalizeSlug(String(params.slug ?? ""));
       if (!slug) {
         return errorResult("slug is required and must be a non-empty string.");
@@ -125,8 +121,6 @@ export default function visualArtifactExtension(pi: ExtensionAPI): void {
       };
 
       const outcome = await materializeArtifact(spec, {
-        cwd,
-        signal,
         baseText: `Visual artifact "${title}" created. Slug: ${slug}`,
         log: {
           warn: (message: string) => log.warn(message),

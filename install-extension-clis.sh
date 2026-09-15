@@ -9,7 +9,6 @@
 # Covered CLIs (and the extensions that use them):
 #   codex       extensions/codex-web-search, codex-plan-limits, cc-switch
 #   qmd         extensions/qmd-search
-#   calldiff    extensions/plannotator-auto (callflowContext; has npx fallback)
 #   plannotator extensions/plannotator-auto
 #   cs          extensions/cs-search
 #   gh          extensions/librarian, extensions/review
@@ -114,7 +113,6 @@ echo ""
 echo "npm-installed CLIs:"
 npm_cli codex @openai/codex
 npm_cli qmd @tobilu/qmd
-npm_cli calldiff calldiff
 echo ""
 
 echo "plannotator (GitHub release):"

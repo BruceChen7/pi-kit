@@ -44,10 +44,6 @@ export type PlanRun = {
   approvedAt?: string;
   completedAt?: string;
   archivedAt?: string;
-  /** Git HEAD ref captured when the plan was approved (for calldiff summaries). */
-  approvedHeadRef?: string;
-  /** True once the post-execution callflow summary was sent for this run (persisted to avoid double-sends across restarts). */
-  callflowSummarySent?: boolean;
   /** ISO timestamp of the last todo-state change (widget "updated X ago"). */
   lastTodoUpdateAt?: string;
 };
@@ -86,6 +82,4 @@ export type PlanModeConfig = {
     readBeforeWrite: boolean;
   };
   artifactPolicy: ArtifactPolicyConfig;
-  /** Send a calldiff call-flow summary after an approved plan's execution turn. */
-  callflowSummary: boolean;
 };

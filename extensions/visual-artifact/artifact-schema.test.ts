@@ -454,45 +454,8 @@ describe("validate", () => {
     }
   });
 
-  it("accepts a calldiff-callflow node with no props (all optional)", () => {
-    const result = validate({
-      ...minimalValidSpec,
-      nodes: [{ type: "calldiff-callflow", props: {} }],
-    });
-    expect(result.ok).toBe(true);
-  });
-
-  it("accepts calldiff-callflow nested inside containers", () => {
-    const result = validate({
-      ...minimalValidSpec,
-      nodes: [
-        {
-          type: "accordion",
-          props: {
-            items: [
-              {
-                title: "Call flow",
-                nodes: [
-                  {
-                    type: "calldiff-callflow",
-                    props: { mode: "diff", from: "main", to: "HEAD" },
-                  },
-                ],
-              },
-            ],
-          },
-        },
-      ],
-    });
-    expect(result.ok).toBe(true);
-  });
-
-  it("registers calldiff-callflow in the agent-facing catalog with guidelines", () => {
+  it("does not register the removed calldiff-callflow node type", () => {
     const entry = NODE_TYPE_CATALOG.find((e) => e.type === "calldiff-callflow");
-    expect(entry).toBeDefined();
-    expect(entry?.props).toHaveProperty("mode");
-    expect(entry?.props).toHaveProperty("entry");
-    expect(entry?.props).toHaveProperty("target");
-    expect(entry?.guidelines?.length).toBeGreaterThan(0);
+    expect(entry).toBeUndefined();
   });
 });

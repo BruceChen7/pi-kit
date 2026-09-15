@@ -17,7 +17,7 @@ describe("typeKey", () => {
   });
 
   it("falls back to text for unknown types", () => {
-    expect(typeKey("calldiff-callflow")).toBe("text");
+    expect(typeKey("bogus-type")).toBe("text");
     expect(typeKey("")).toBe("text");
   });
 });

@@ -1,17 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { vi } from "vitest";
-import type {
-  CalldiffRunErrorCode,
-  CalldiffRunOutcome,
-} from "../shared/calldiff-runner.ts";
-import type { CalldiffResult } from "./calldiff-bridge.ts";
 
 /**
  * Shared fixtures + fake-pi harness for the visual-artifact tool tests.
  *
- * Module mocks (calldiff-runner / artifact-store / glimpse-host / paths)
- * stay in each test file — `vi.mock` is per-module — but every other piece
- * of scaffolding is shared here so the two tool suites can't drift apart.
+ * Module mocks (artifact-store / glimpse-host / paths) stay in each test
+ * file — `vi.mock` is per-module — but every other piece of scaffolding is
+ * shared here so the tool suites can't drift apart.
  */
 
 export type ToolExecute = (
@@ -58,38 +53,3 @@ export const createToolHarness = (): ToolHarness => {
 
   return { pi, tools, callTool };
 };
-
-export const makeNode = (
-  key: string,
-  label: string,
-  status: "same" | "added" | "removed" = "same",
-) => ({
-  key,
-  label,
-  status,
-  children: [],
-});
-
-export const diffResult: CalldiffResult = {
-  mode: "diff",
-  from: "abc123",
-  to: "WORKTREE",
-  trees: [
-    {
-      entry: "boot",
-      ascii: "  boot()\n+ ├─ register()",
-      tree: makeNode("boot", "boot()"),
-    },
-  ],
-  ascii: "  1 entrypoint",
-};
-
-export const okOutcome = (result: CalldiffResult): CalldiffRunOutcome => ({
-  status: "ok",
-  stdout: JSON.stringify(result),
-});
-
-export const errOutcome = (
-  code: CalldiffRunErrorCode,
-  message: string,
-): CalldiffRunOutcome => ({ status: "error", code, message });

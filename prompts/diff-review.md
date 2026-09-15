@@ -42,7 +42,6 @@ Sections 1-3 are the visual anchor — use one concise `text` node with `size: "
 | 1 | **Executive summary** | `heading` (h1) + `text` (xl) + `badge` | Lead with intuition, then scope. Use text xl for the lead paragraph. |
 | 2 | **KPI dashboard** | `kpi-grid` | Use 4-6 high-signal metrics only, with at most 3 columns. Omit redundant zero-value metrics. Put CHANGELOG/docs status in badges, not KPI cards. |
 | 3 | **Module architecture** | `mermaid` | Include one compact dependency graph only when it clarifies a non-obvious relationship. Do not wrap Mermaid in another card. |
-| — | **Calldiff call-flow** (必选) | `calldiff-callflow` | Declare a `calldiff-callflow` node; the extension expands it into summary heading + per-entry table + colored mermaid call trees + ASCII diff. Degrades to a "Call-flow unavailable" callout when calldiff/git is missing. See Calldiff call-flow rendering. |
 | 4 | **Major feature comparisons** | `side-by-side` | Use at most two focused comparisons for genuinely different before/after behavior. Set `leftLabel`/`rightLabel` for headers. |
 | 5 | **Flow diagrams** | `mermaid` | Include at most one additional flow/sequence diagram and only when it adds information not already shown by the architecture graph. |
 | 6 | **File map** | `file-tree` | Full tree with `status: "added"\|"modified"\|"deleted"` on items. Wrap in `accordion` (collapsed by default) to save top-level slots. |
@@ -59,7 +58,7 @@ Keep the original mapping above Mermaid-first. Add a separate direct top-level s
 - **Entity/data-model section**: `heading` + `text` + `er-diagram` for entities, fields, keys, and verified relationships.
 - **Layer section**: `heading` + `text` + `layer-diagram` for ordered application, data, security, or governance layers.
 
-These native sections complement the original Mermaid architecture/flow diagrams; they do not replace them. The mandatory `calldiff-callflow` section remains separate and required.
+These native sections complement the original Mermaid architecture/flow diagrams; they do not replace them.
 
 
 The `create_visual_artifact` tool has a 30 top-level node limit. Sections 6-10 should be wrapped in `accordion` nodes (each accordion counts as 1 top-level node) to stay well under the limit while keeping all content accessible.
@@ -122,11 +121,6 @@ Use the following structure to minimize top-level node count for the in-memory `
       ],
       "edges": [{ "from": "policy", "to": "Store", "label": "persists" }]
     } },
-
-    // Calldiff call-flow (required) — declare a calldiff-callflow node;
-    // the extension runs calldiff and expands it into the summary heading,
-    // per-entrypoint table, mermaid call trees, and ASCII code-blocks:
-    { "type": "calldiff-callflow", "props": { "from": "<from>", "to": "<to>", "pin": ["<KeyProductionSymbol.Entry>"] } },
 
     // Sections 6-10: accordion-wrapped
     { "type": "accordion", "props": { "items": [
@@ -194,25 +188,8 @@ Keep Mermaid as the default for the existing architecture and flow sections. Add
 - `architecture-diagram`: components, groups, trust boundaries, stores, and verified dependency edges. Use `focal: true` sparingly for the one or two changed/high-signal nodes.
 - `er-diagram`: entities, fields, keys, and relationships changed by a schema or data-model diff. Every `relationships[].from` and `relationships[].to` must reference a declared entity.
 - `layer-diagram`: ordered application, data, security, or governance layers. Use stable item IDs for `edges` and do not imply a layer relationship that the diff does not support.
-- `calldiff-callflow` remains required in every diff review. Native architecture, ER, and layer diagrams complement the call-flow analysis; they do not replace it.
 
 A native diagram is still a direct top-level visual section when it is part of Sections 3-5; keep its surrounding prose concise and put detailed evidence in the reference accordion. Do not put a diagram inside `side-by-side` merely to save a top-level slot unless the comparison itself is the point.
-
-
-**Required in every diff review.** Declare a `calldiff-callflow` node inside the spec (see the example spec above) — **never hand-drawn mermaid call graphs**. While processing the spec, the extension runs `calldiff <mode> --format json` (AST-based, 22 languages) against the session git repo and expands the node into the call-flow section: a summary heading, a per-entrypoint change table, colored mermaid call trees, and condensed ASCII code-blocks. Place it as a direct top-level section.
-
-- All props are optional: `from` (before-ref, default HEAD), `to` (after-ref, default worktree), `entry`, `target`, `paths`, `maxDepth`, `title`, `pin`, and `mode` (`diff`/`tree`/`reach`, default `diff`). Align `from`/`to` with the refs you already diffed.
-- When nothing changed, the node expands to a "No call-flow changes" callout — include that outcome and say so in prose.
-- If calldiff is unavailable or the session is outside a git work tree, the node **degrades to a "Call-flow unavailable" callout** and the rest of the review still renders — note the degradation and continue; do not abandon the artifact.
-- Truncation (detailed entry sections, mermaid nodes per tree, ASCII lines per code-block) is applied automatically by the host, budget-aware; you do not need to track caps.
-- **必须声明 `pin`**(diff review 必填):把关键入口写成 `pin: ["Symbol.Entry", ...]` — 即新增/核心链路的生产符号,排除测试与 mock;它们按声明顺序置顶并带 ★ 标记。只靠影响度排序效果很差:测试改动计数通常不小,会挤占名额、把核心链路埋掉。`entry`(过滤)仅用于确实很小、只想展示特定入口的 diff。
-
-The generated layout — for reference only (you do not build it by hand):
-
-- `heading` h1: `Call-flow diff: <from> → <to>`
-- `text`: one-line summary — entrypoint count plus added/removed/unchanged totals
-- `table`: one row per changed entrypoint, headers `Entry | Added | Removed | Unchanged`
-- Per entrypoint, a `section` node (`title` = entrypoint name) containing `mermaid` `flowchart TD` call trees with `classDef` status colors — `added` (green), `removed` (red), `same` (gray), `branch` (amber) — plus a `code-block` (`language: "text"`) with the condensed ASCII diff
 
 After assembling the full `spec` object, call `create_visual_artifact` with `slug`, `title`, `artifactType`, and `description` from `spec`, plus `nodes: JSON.stringify(spec.nodes)` and `data: JSON.stringify(spec.data)` when `spec.data` exists.
 

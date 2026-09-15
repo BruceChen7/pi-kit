@@ -589,39 +589,6 @@ export const NODE_TYPE_CATALOG: NodeTypeEntry[] = [
       },
     },
   },
-  {
-    type: "calldiff-callflow",
-    label: "Calldiff Call Flow",
-    description:
-      "Host-resolved macro node: declares a calldiff call-flow diff/tree/reach analysis embedded in this artifact. The extension runs `calldiff <mode> --format json` against the session git repo while processing the spec and expands this node into a KPI overview, per-entrypoint table, collapsible call trees, and a Raw view tab. All props are optional.",
-    props: {
-      mode: '"diff" | "tree" | "reach" (optional, default diff)',
-      from: "string (optional) — diff: before-ref (default HEAD); tree/reach: the tree ref (default worktree)",
-      to: "string (optional) — diff: after-ref (default worktree); unused by tree/reach",
-      entry: "string | string[] (optional) — required for tree/reach",
-      target: "string (optional) — reach target symbol; required for reach",
-      paths: "string[] (optional) — limit analysis to path prefixes",
-      maxDepth: "number (optional)",
-      file: "string (optional) — diff mode only: keep only complete entry trees containing a changed node in this file (Lens-style filter; matched trees are never pruned)",
-      pin: "string[] (diff review: required) — entry names ranked first, in declared order (unmatched names are ignored; the rest follow the impact ranking). Declare the key production entrypoints so the capped entry list keeps focus; without it, tests/mocks can crowd out the core flows.",
-      title: "string (optional) — section title override",
-      maxEntries: "number (optional, default 8)",
-      maxNodesPerTree: "number (optional, default 80)",
-      maxMermaidNodes:
-        "number (optional, default 25) — larger call trees render ASCII only",
-      maxAsciiLines: "number (optional, default 60; 0 = omit code-block)",
-    },
-    guidelines: [
-      "Host-resolved: you declare parameters only — the extension runs the calldiff CLI and replaces this node with rendered KPI/table/tabs/accordion/code-block nodes. Nothing to hand-draw.",
-      "Requires a git work tree; requires the calldiff binary on PATH (npx fallback, best-effort).",
-      "When calldiff is unavailable or the session is not in a git repo, this node degrades to a 'Call-flow unavailable' callout — the rest of the artifact renders normally.",
-      "When nothing changed, it expands to a 'No call-flow changes' callout instead of entry sections.",
-      "tree/reach modes require entry; reach additionally requires target.",
-      "file filters diff results to entry trees touching that file; in tree/reach modes it degrades to a callout.",
-      "pin ranks listed entry names first (declared order) — declare it in diff reviews: it is how the capped entry list keeps the key production flows visible instead of tests/mocks. Without pin, entries rank by change impact.",
-      "Expansion is budget-aware: the host caps maxEntries so the expanded artifact stays within the node limits; extra entrypoints are summarized with an '… N more' note.",
-    ],
-  },
 ];
 
 const SUPPORTED_NODE_TYPES = new Set(
@@ -673,8 +640,7 @@ function estimateJsonBytes(value: unknown): number {
 /**
  * Node-group keys that hold arrays of nodes directly (one nesting level:
  * `props.nodes`, `props.left`, `props.right`). Single source of truth for
- * the schema's nesting rules — shared with the calldiff-callflow resolver
- * (resolve-calldiff-node.ts) and the validator.
+ * the schema's nesting rules — shared with the validator.
  */
 export const NESTED_GROUP_KEYS = ["nodes", "left", "right"] as const;
 

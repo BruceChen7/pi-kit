@@ -116,16 +116,46 @@ read it as signal, and do not count it against them.
 
 **Bind before teaching.** Call `bind_notes({ topic })` once at the start — it resolves
 `<vaultRoot>/<topDir>/<topic>/<topic>.md`, creates it, and mirrors the session into it.
-Then read that file first: earlier sessions recorded their edge, their questions and the
-quiz outcomes, which is exactly what phase 1 needs. Do not create notes anywhere else, and
-never edit or reorder what is already there — the mirror only appends.
+The call also returns the topic's state: every chapter with its quiz tallies
+(`ok / wrong / gaps / unanswered`) and a `resume` pointing at where to continue. Read that
+first — earlier sessions recorded their edge, their questions and the quiz outcomes, which
+is exactly what phase 1 needs. Do not create notes anywhere else, and never edit or reorder
+what is already there — the mirror only appends.
+
+**Names never contain spaces.** A topic becomes a directory and a chapter becomes a file, so
+both must be space-free: `Docker实现`, `进程与命名空间`, `chroot与挂载时机`. Write them in
+Chinese where that reads naturally instead of inserting spaces around latin terms
+(`procfs与cgroup`, not `procfs 与 cgroup`). The tools reject names with whitespace and return a
+space-free suggestion you can retry with directly.
+
+**A topic is an index page plus one file per chapter.** `bind_notes({ topic, section })`
+switches the mirror to `<topic>/<section>.md` and appends the chapter to the index. Two
+rules follow:
+
+1. **Resume before teaching anything new.** If `resume` points at a chapter, start there:
+   an `unanswered-question` means a question was asked and never answered — re-ask it (or
+   resolve it) before moving on; `cancelled` means the last question was dismissed;
+   `recent` just means that was the last chapter touched.
+2. **Bind a chapter BEFORE teaching it.** Questions and answers land in whatever file is
+   bound at the moment they are asked, so switching chapters mid-explanation splits a
+   question from its own prose.
+3. **Close each chapter in the index.** At the end of a chapter, add its conclusions to the
+   index page under `## 已知边界` (what they now hold) and `## 未解决` (open questions).
+   That is what the next session's probe reads — keep it short and concrete.
+
+**An old single-file topic gets split first.** If `bind_notes` reports no chapters while the
+note is large, call `split_topic({ topic })` for the block catalog, decide the chapter
+boundaries yourself (you know the teaching structure), show them to the learner, then
+`split_topic({ topic, sections, apply: true })`. It archives the original under `_archive/`
+first and moves blocks verbatim — never retype note content yourself.
 
 The note is the lesson: prose, mermaid fences and every quiz question/answer land in it
 automatically. Write the lesson *once*, in chat, at full quality — do not write a chat
 version and a file version.
 
-`/md-topic <topic>` does the same binding by hand; `/md-log <path>` links an existing file
-without creating one; `/md-unlog` stops mirroring.
+`/md-topic` with no argument opens a picker (existing topics + "新建主题…");
+`/md-topic <topic> <section>` binds a chapter by hand; `/md-log <path>` links an existing
+file without creating one; `/md-unlog` stops mirroring.
 
 ## Diagrams
 

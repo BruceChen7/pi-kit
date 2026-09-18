@@ -32,6 +32,7 @@ describe("tutor extension wiring", () => {
       "quiz",
       "ask_user_question",
       "bind_notes",
+      "split_topic",
       "validate_mermaid",
       "render_mermaid",
     ]);

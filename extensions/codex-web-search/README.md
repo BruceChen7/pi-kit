@@ -34,6 +34,9 @@ The extension then:
 - keeps a running search counter in the tool UI
 - shows clearer in-flight status when fast mode nears its budget or auto-escalates
 - uses persisted defaults for mode, freshness, and per-mode source caps unless the tool call overrides them
+- pins a search-capable Codex model by default (`DEFAULT_CODEX_WEB_SEARCH_MODEL`) and lets `codex-model` override it, because Codex silently performs no search when the active model cannot use the hosted `web_search` tool
+- retries once without the pinned model when Codex does not know it, so a machine-specific default cannot break search outright
+- detects runs that finished without performing any web search and reports that instead of presenting an unsourced answer as a success
 - records when a default fast search had to be retried as deep/live
 - uses Defuddle for direct URL-only requests and supports optional URL fallback when Codex cannot produce a usable result
 - returns a concise summary plus numbered sources with URLs and snippets
@@ -135,6 +138,7 @@ Use the slash command below to persist defaults across sessions:
 The interactive dialog is grouped into:
 
 - Search defaults
+- Codex runtime
 - Defuddle behavior
 - Timeouts
 - Query budgets
@@ -149,6 +153,8 @@ You can also use direct subcommands:
 /web-search-settings fast-max-sources 5
 /web-search-settings deep-max-sources 5
 /web-search-settings default-max-sources 5
+/web-search-settings codex-model llm-gateway--gpt-5.5
+/web-search-settings codex-model inherit
 /web-search-settings defuddle-mode direct
 /web-search-settings fast-timeout-ms 90000
 /web-search-settings deep-timeout-ms 240000
@@ -161,6 +167,12 @@ You can also use direct subcommands:
 Notes:
 
 - `default-max-sources` is kept as a compatibility alias and updates both `fast-max-sources` and `deep-max-sources`.
+- `codex-model` is passed to `codex exec -m <model>`. It defaults to
+  `DEFAULT_CODEX_WEB_SEARCH_MODEL` in `constants.ts`; set it to `inherit` to follow
+  `~/.codex/config.toml` instead.
+- When Codex does not know the configured model (for example on a machine
+  without the matching model catalog), the run is retried once without `-m` and
+  the result is marked with a `model fallback` note instead of failing.
 - The settings file is stored under your Pi agent directory and is reused by future sessions.
 - Defaults include `defuddle-mode = direct` for URL-only extraction without surprising non-URL search behavior.
 - Timeouts and search-query budgets are configurable for both fast and deep modes.
@@ -206,6 +218,39 @@ Local equivalents:
 pnpm run release
 pnpm run release:first
 ```
+
+## Troubleshooting
+
+### The search always times out or returns an answer with no sources
+
+Codex accepts `-c web_search="cached"` even when the active model or provider
+cannot use the hosted `web_search` tool. In that case Codex performs **no search
+at all**: the model either answers from memory or wanders through local
+commands until the run times out. This is common with custom
+`model_providers` (local proxies, gateways, or self-hosted models) that only
+forward some models' hosted search support.
+
+Diagnose it directly:
+
+```bash
+# 1. Which model and provider does Codex use?
+rg -n "model|model_provider|model_providers" -A 6 ~/.codex/config.toml
+
+# 2. Does that model actually emit web search items?
+codex exec --json -c 'web_search="cached"' --skip-git-repo-check \
+  --sandbox read-only "Search the web for today's date." 2>&1 | grep -c web_search
+```
+
+If the count is `0`, pin a model known to work:
+
+```text
+/web-search-settings codex-model <model>
+```
+
+The extension also detects this shape after the fact: a run that finishes with
+no search activity and no sources is reported as `search_unavailable` instead of
+a successful answer, and a fast-mode timeout with zero searches is not escalated
+to a slow deep/live retry.
 
 ## Notes
 

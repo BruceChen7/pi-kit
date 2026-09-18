@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import {
   DEEP_SEARCH_QUERY_BUDGET,
   DEEP_SEARCH_TIMEOUT_MS,
+  DEFAULT_CODEX_WEB_SEARCH_MODEL,
   DEFAULT_DEEP_MAX_SOURCES,
   DEFAULT_FAST_MAX_SOURCES,
   DEFUDDLE_TIMEOUT_MS,
@@ -28,6 +29,7 @@ export const DEFAULT_WEB_SEARCH_SETTINGS: WebSearchSettings = {
   deepFreshness: "live",
   fastMaxSources: DEFAULT_FAST_MAX_SOURCES,
   deepMaxSources: DEFAULT_DEEP_MAX_SOURCES,
+  codexModel: DEFAULT_CODEX_WEB_SEARCH_MODEL,
   defuddleMode: "direct",
   fastTimeoutMs: FAST_SEARCH_TIMEOUT_MS,
   deepTimeoutMs: DEEP_SEARCH_TIMEOUT_MS,
@@ -80,6 +82,9 @@ export function formatSettings(settings: WebSearchSettings): string {
     `  Fast max sources: ${settings.fastMaxSources}`,
     `  Deep max sources: ${settings.deepMaxSources}`,
     "",
+    "Codex runtime:",
+    `  Model: ${formatCodexModel(settings.codexModel)}`,
+    "",
     "Defuddle behavior:",
     `  Mode: ${settings.defuddleMode}`,
     "",
@@ -94,6 +99,10 @@ export function formatSettings(settings: WebSearchSettings): string {
   ].join("\n");
 }
 
+export function formatCodexModel(model: string): string {
+  return model.trim() ? model.trim() : "inherit from Codex config";
+}
+
 export function normalizeSettings(value: unknown): WebSearchSettings {
   const candidate = value && typeof value === "object" ? value : {};
   const typedCandidate = candidate as {
@@ -103,6 +112,7 @@ export function normalizeSettings(value: unknown): WebSearchSettings {
     fastMaxSources?: unknown;
     deepMaxSources?: unknown;
     defaultMaxSources?: unknown;
+    codexModel?: unknown;
     defuddleMode?: unknown;
     fastTimeoutMs?: unknown;
     deepTimeoutMs?: unknown;
@@ -141,6 +151,7 @@ export function normalizeSettings(value: unknown): WebSearchSettings {
       MAX_ALLOWED_SOURCES,
       legacyMaxSources ?? DEFAULT_WEB_SEARCH_SETTINGS.deepMaxSources,
     ),
+    codexModel: asModel(typedCandidate.codexModel),
     defuddleMode: asDefuddleMode(
       typedCandidate.defuddleMode,
       DEFAULT_WEB_SEARCH_SETTINGS.defuddleMode,
@@ -194,6 +205,27 @@ function asFreshness(
   fallback: SearchFreshness,
 ): SearchFreshness {
   return value === "cached" || value === "live" ? value : fallback;
+}
+
+const CODEX_MODEL_INHERIT_VALUES = new Set([
+  "",
+  "inherit",
+  "default",
+  "none",
+  "off",
+]);
+
+/**
+ * Normalizes a Codex model override. Empty or inherit-style values mean
+ * "use whatever model the user's Codex config selects".
+ */
+export function asModel(value: unknown): string {
+  if (typeof value !== "string") {
+    return DEFAULT_WEB_SEARCH_SETTINGS.codexModel;
+  }
+
+  const trimmed = value.trim();
+  return CODEX_MODEL_INHERIT_VALUES.has(trimmed.toLowerCase()) ? "" : trimmed;
 }
 
 function asDefuddleMode(value: unknown, fallback: DefuddleMode): DefuddleMode {

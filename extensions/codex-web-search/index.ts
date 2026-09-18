@@ -17,7 +17,9 @@ import {
   TOOL_NAME,
 } from "./constants.js";
 import {
+  asModel,
   DEFAULT_WEB_SEARCH_SETTINGS,
+  formatCodexModel,
   formatSettings,
   loadSettings,
   saveSettings,
@@ -47,6 +49,7 @@ const SETTINGS_ARGUMENT_OPTIONS = [
   "fast-max-sources 5",
   "deep-max-sources 5",
   "default-max-sources 5",
+  "codex-model inherit",
   "defuddle-mode off",
   "defuddle-mode direct",
   "defuddle-mode fallback",
@@ -170,6 +173,10 @@ export default function codexWebSearchExtension(pi: ExtensionAPI) {
         text += theme.fg("warning", " (auto-escalated)");
       }
 
+      if (details.modelFallback) {
+        text += theme.fg("warning", " (model fallback)");
+      }
+
       if (details.defuddle) {
         text += theme.fg("warning", " (defuddle)");
       }
@@ -193,6 +200,10 @@ export default function codexWebSearchExtension(pi: ExtensionAPI) {
       if (details.retry) {
         text += `\n${theme.fg("warning", formatRetrySummary(details.retry))}`;
         text += `\n${theme.fg("dim", details.retry.fallbackReason)}`;
+      }
+      if (details.modelFallback) {
+        text += `\n${theme.fg("warning", `Ignored pinned model ${details.modelFallback.from}`)}`;
+        text += `\n${theme.fg("dim", details.modelFallback.reason)}`;
       }
       if (details.failure) {
         text += `\n${theme.fg("warning", `Failure kind: ${details.failure.kind}`)}`;
@@ -348,6 +359,18 @@ async function handleSettingsCommand(
         return;
       }
 
+      case "codex-model": {
+        const codexModel = asModel(value);
+        const saved = await saveSettings({ ...settings, codexModel });
+        notify(
+          ctx,
+          saved.codexModel
+            ? `Web search will run Codex with model ${saved.codexModel}.`
+            : "Web search model reset to the Codex config default.",
+        );
+        return;
+      }
+
       case "defuddle-mode": {
         const defuddleMode = parseDefuddleMode(value);
         const saved = await saveSettings({ ...settings, defuddleMode });
@@ -413,6 +436,7 @@ async function openSettingsDialog(ctx: ExtensionCommandContext): Promise<void> {
       [
         "Show current settings",
         `Search defaults → mode ${settings.defaultMode}, fast ${settings.fastFreshness}/${settings.fastMaxSources}, deep ${settings.deepFreshness}/${settings.deepMaxSources}`,
+        `Codex runtime → model ${formatCodexModel(settings.codexModel)}`,
         `Defuddle behavior → ${settings.defuddleMode}`,
         `Timeouts → fast ${settings.fastTimeoutMs} ms, deep ${settings.deepTimeoutMs} ms, Defuddle ${settings.defuddleTimeoutMs} ms`,
         `Query budgets → fast ${settings.fastQueryBudget}, deep ${settings.deepQueryBudget}`,
@@ -429,6 +453,16 @@ async function openSettingsDialog(ctx: ExtensionCommandContext): Promise<void> {
 
     if (choice.startsWith("Search defaults")) {
       await openSearchDefaultsDialog(ctx);
+      continue;
+    }
+
+    if (choice.startsWith("Codex runtime")) {
+      const value = await ctx.ui.input(
+        "Codex search model\nPassed to `codex exec -m`. Use `inherit` to follow ~/.codex/config.toml. Models that cannot use the hosted web_search tool perform no search at all.",
+        settings.codexModel || "inherit",
+      );
+      if (!value) continue;
+      await handleSettingsCommand(`codex-model ${value}`, ctx);
       continue;
     }
 
@@ -668,6 +702,9 @@ function buildSettingsHelp(settings: WebSearchSettings): string {
     `/${SETTINGS_COMMAND} deep-max-sources <1-${MAX_ALLOWED_SOURCES}>`,
     `/${SETTINGS_COMMAND} default-max-sources <1-${MAX_ALLOWED_SOURCES}>  (legacy alias: sets both)`,
     "",
+    "Codex runtime:",
+    `/${SETTINGS_COMMAND} codex-model <model|inherit>`,
+    "",
     "Defuddle behavior:",
     `/${SETTINGS_COMMAND} defuddle-mode <off|direct|fallback|both>`,
     "",
@@ -872,6 +909,8 @@ function formatFailureLabel(failure: CodexFailureDetails): string {
     case "schema":
     case "empty_result":
       return "Web search returned no usable result";
+    case "search_unavailable":
+      return "Web search ran without searching";
     case "auth":
       return "Web search authentication issue";
     default:

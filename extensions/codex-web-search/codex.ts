@@ -25,6 +25,7 @@ import type {
   CodexWebSearchOutput,
   DefuddleParseResult,
   ExecuteCodexWebSearchOptions,
+  ModelFallbackProvenance,
   RetryProvenance,
   RunCodexCommand,
   RunCodexCommandOptions,
@@ -49,6 +50,15 @@ const SEARCH_OPERATOR_PATTERN =
 const TARGETED_DOC_QUERY_PATTERN =
   /\b(?:docs?|documentation|reference|manual|api|sdk|wiki|guide|config|settings?|flags?|options?|systemd|manpage|release notes|changelog)\b/iu;
 const MAX_RECORDED_PAGE_ACTIONS = 20;
+
+// Failure kinds where "no search ever ran" is a plausible root cause worth
+// explaining, rather than a symptom of a specific transport/auth problem.
+const NO_SEARCH_HINT_KINDS: ReadonlySet<CodexFailureKind> = new Set([
+  "timeout",
+  "empty_result",
+  "schema",
+  "unknown",
+]);
 
 interface ResolvedWebSearchInput {
   query: string;
@@ -303,12 +313,18 @@ function isLikelyDocumentationQuery(query: string): boolean {
 export function buildCodexExecArgs(
   paths: { schemaPath: string; outputPath: string },
   freshness: SearchFreshness,
+  model?: string,
 ): string[] {
-  return [
-    "exec",
-    "--json",
-    "-c",
-    `web_search="${freshness}"`,
+  const args = ["exec", "--json", "-c", `web_search="${freshness}"`];
+
+  // Codex silently ignores `web_search` when the active model cannot use the
+  // hosted search tool, so allow pinning a model that supports it.
+  const trimmedModel = model?.trim();
+  if (trimmedModel) {
+    args.push("-m", trimmedModel);
+  }
+
+  args.push(
     "--skip-git-repo-check",
     "--sandbox",
     "read-only",
@@ -320,7 +336,9 @@ export function buildCodexExecArgs(
     "--output-last-message",
     paths.outputPath,
     "-",
-  ];
+  );
+
+  return args;
 }
 
 export function parseCodexWebSearchOutput(
@@ -450,13 +468,25 @@ export async function executeCodexWebSearch(
   } catch (error) {
     const failure = getCodexFailure(error);
     const progress = getFailureProgress(error, resolvedInput);
+    const diagnosedFailure = diagnoseNoSearchActivity(
+      failure,
+      progress,
+      settings,
+    );
 
-    if (shouldRetryWithDeepLiveSearch(input, resolvedInput, failure)) {
+    if (
+      shouldRetryWithDeepLiveSearch(
+        input,
+        resolvedInput,
+        failure,
+        progress.searchCount,
+      )
+    ) {
       const retry: RetryProvenance = {
         retriedFromFast: true,
         originalMode: "fast",
         originalFreshness: resolvedInput.freshness,
-        fallbackReason: failure.message,
+        fallbackReason: diagnosedFailure.message,
       };
 
       try {
@@ -520,8 +550,8 @@ export async function executeCodexWebSearch(
       }
     }
 
-    if (shouldThrowCodexFailure(failure)) {
-      throw asError(failure, progress);
+    if (shouldThrowCodexFailure(diagnosedFailure)) {
+      throw asError(diagnosedFailure, progress);
     }
 
     const defuddleFallback = await maybeRunDefuddleSearch(
@@ -530,7 +560,7 @@ export async function executeCodexWebSearch(
       settings,
       {
         directUrlQuery: false,
-        reason: failure.message,
+        reason: diagnosedFailure.message,
         progress,
       },
     );
@@ -539,7 +569,7 @@ export async function executeCodexWebSearch(
       return defuddleFallback;
     }
 
-    return buildSoftFailureResult(resolvedInput, progress, failure);
+    return buildSoftFailureResult(resolvedInput, progress, diagnosedFailure);
   }
 }
 
@@ -592,10 +622,14 @@ async function runResolvedCodexWebSearch(
   const signal = mergeAbortSignals(options.signal, abortController);
 
   try {
-    const runnerOptions: RunCodexCommandOptions = {
+    const modelOverride = settings.codexModel.trim();
+    const buildRunnerOptions = (
+      model: string | undefined,
+    ): RunCodexCommandOptions => ({
       args: buildCodexExecArgs(
         { schemaPath: SEARCH_OUTPUT_SCHEMA_PATH, outputPath },
         freshness,
+        model,
       ),
       cwd: options.cwd,
       stdin: buildCodexPrompt(
@@ -666,12 +700,22 @@ async function runResolvedCodexWebSearch(
           );
         }
       },
-    };
+    });
 
     let runResult: RunCodexCommandResult;
 
     try {
-      runResult = await runner(runnerOptions);
+      runResult = await runCodexWithModelFallback({
+        runner,
+        primary: buildRunnerOptions(modelOverride || undefined),
+        fallback: modelOverride
+          ? () => buildRunnerOptions(undefined)
+          : undefined,
+        onFallback: (provenance, status) => {
+          progress.modelFallback = provenance;
+          emitProgressUpdate(options, progress, status);
+        },
+      });
     } catch (error) {
       const failure = getCodexFailure(error);
       if (
@@ -726,7 +770,18 @@ async function runResolvedCodexWebSearch(
       throw asError(failure, progress);
     }
 
-    const formattedResult = formatWebSearchResult(parsed);
+    const noSearchFailure =
+      progress.searchCount === 0 && parsed.sources.length === 0
+        ? createCodexFailure(
+            "search_unavailable",
+            buildModelSupportHint(mode, freshness, settings),
+            true,
+          )
+        : undefined;
+
+    const formattedResult = noSearchFailure
+      ? `${formatNoSearchActivityWarning(noSearchFailure)}\n\n${formatWebSearchResult(parsed)}`
+      : formatWebSearchResult(parsed);
     const renderedResult = await renderToolResult(formattedResult);
 
     const details: CodexWebSearchDetails = {
@@ -737,6 +792,9 @@ async function runResolvedCodexWebSearch(
       searchQueries: [...progress.searchQueries],
       pageActions: [...(progress.pageActions ?? [])],
       statusEvents: [...progress.statusEvents],
+      ...(progress.modelFallback
+        ? { modelFallback: progress.modelFallback }
+        : {}),
       sourceCount: parsed.sources.length,
       summary: parsed.summary,
       sources: parsed.sources,
@@ -745,6 +803,10 @@ async function runResolvedCodexWebSearch(
 
     if (retry) {
       details.retry = retry;
+    }
+
+    if (noSearchFailure) {
+      details.failure = noSearchFailure;
     }
 
     if (progress.latestQuery) {
@@ -786,6 +848,9 @@ async function buildSoftFailureResult(
     searchQueries: [...progress.searchQueries],
     pageActions: [...(progress.pageActions ?? [])],
     statusEvents: [...progress.statusEvents],
+    ...(progress.modelFallback
+      ? { modelFallback: progress.modelFallback }
+      : {}),
     sourceCount: 0,
     summary,
     sources: [],
@@ -961,6 +1026,9 @@ async function maybeRunDefuddleSearch(
     searchQueries: [...progress.searchQueries],
     pageActions: [...(progress.pageActions ?? [])],
     statusEvents: [...progress.statusEvents],
+    ...(progress.modelFallback
+      ? { modelFallback: progress.modelFallback }
+      : {}),
     sourceCount: sources.length,
     summary,
     sources,
@@ -1194,6 +1262,7 @@ function shouldRetryWithDeepLiveSearch(
   originalInput: WebSearchInput,
   resolvedInput: ResolvedWebSearchInput,
   failure: CodexFailureDetails,
+  searchCount: number,
 ): boolean {
   if (resolvedInput.mode !== "fast") {
     return false;
@@ -1206,7 +1275,68 @@ function shouldRetryWithDeepLiveSearch(
     return false;
   }
 
+  // Escalating depth cannot help when the model never even attempted a search.
+  if (failure.kind === "timeout" && searchCount === 0) {
+    return false;
+  }
+
   return failure.recoverable;
+}
+
+/**
+ * Codex accepts `-c web_search="..."` even when the active model or provider
+ * cannot use the hosted search tool, and then silently performs no search at
+ * all. Detect that shape so the run reports the real problem instead of
+ * blaming the network or burning time on deeper retries.
+ */
+function diagnoseNoSearchActivity(
+  failure: CodexFailureDetails,
+  progress: WebSearchProgressDetails,
+  settings: WebSearchSettings,
+): CodexFailureDetails {
+  if (progress.searchCount > 0 || !NO_SEARCH_HINT_KINDS.has(failure.kind)) {
+    return failure;
+  }
+
+  if (failure.kind === "timeout") {
+    return createCodexFailure(
+      "search_unavailable",
+      `${failure.message} ${buildModelSupportHint(progress.mode, progress.freshness, settings)}`,
+      true,
+    );
+  }
+
+  return createCodexFailure(
+    failure.kind,
+    `${failure.message} ${buildModelSupportHint(progress.mode, progress.freshness, settings)}`,
+    failure.recoverable,
+  );
+}
+
+function buildModelSupportHint(
+  mode: SearchMode,
+  freshness: SearchFreshness,
+  settings: WebSearchSettings,
+): string {
+  const pinnedModel = settings.codexModel.trim();
+
+  return [
+    `No web search activity was observed during the ${mode}/${freshness} run.`,
+    "Codex accepts the web_search setting even when the active model or provider cannot use the hosted search tool, so a run can finish without searching.",
+    pinnedModel
+      ? `Configured web search model: ${pinnedModel} (runs fall back to the Codex config model when Codex does not know it).`
+      : "Web search inherits the model from the Codex config (~/.codex/config.toml).",
+    "Pin a model that supports hosted web search with `/web-search-settings codex-model <model>`.",
+  ].join(" ");
+}
+
+function formatNoSearchActivityWarning(failure: CodexFailureDetails): string {
+  return [
+    `Warning: ${failure.message}`,
+    "",
+    "The summary below was produced without retrieving any sources.",
+    "",
+  ].join("\n");
 }
 
 function createCodexFailure(
@@ -1258,15 +1388,7 @@ function shouldThrowCodexFailure(failure: CodexFailureDetails): boolean {
 }
 
 function buildCodexFailure(result: RunCodexCommandResult): CodexFailureDetails {
-  const stdoutSummary = summarizeCodexStdout(result.stdout);
-  const details = [
-    stdoutSummary.turnFailedMessage,
-    stdoutSummary.errorMessages.at(-1),
-    result.stderr.trim(),
-    tailLines(result.stdout, 12),
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+  const details = runResultFailureText(result);
   const message = details
     ? `codex exec failed with exit code ${result.code}.\n\n${details}`
     : `codex exec failed with exit code ${result.code}.`;
@@ -1281,6 +1403,71 @@ function buildCodexFailure(result: RunCodexCommandResult): CodexFailureDetails {
   }
 
   return createCodexFailure(classified.kind, message, classified.recoverable);
+}
+
+function runResultFailureText(result: RunCodexCommandResult): string {
+  const stdoutSummary = summarizeCodexStdout(result.stdout);
+  return [
+    stdoutSummary.turnFailedMessage,
+    stdoutSummary.errorMessages.at(-1),
+    result.stderr.trim(),
+    tailLines(result.stdout, 12),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+const UNKNOWN_MODEL_FAILURE_PATTERNS = [
+  /model metadata for [`'"]?[^`'"\s]+[`'"]? not found/i,
+  /model [`'"]?[^`'"\s]+[`'"]? is not supported/i,
+  /unknown model|model_not_found|model not found|unsupported model|invalid model/i,
+];
+
+/**
+ * Detects Codex rejecting the model name itself, which happens when the pinned
+ * model is not part of the local Codex model catalog.
+ */
+export function isUnknownModelFailure(text: string): boolean {
+  return UNKNOWN_MODEL_FAILURE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+/**
+ * Runs Codex with the pinned model and retries once without it when Codex does
+ * not know that model, so a machine-specific default cannot break web search
+ * outright.
+ */
+async function runCodexWithModelFallback(options: {
+  runner: RunCodexCommand;
+  primary: RunCodexCommandOptions;
+  fallback?: () => RunCodexCommandOptions;
+  onFallback: (provenance: ModelFallbackProvenance, status: string) => void;
+}): Promise<RunCodexCommandResult> {
+  const result = await options.runner(options.primary);
+
+  if (result.code === 0 || !options.fallback) {
+    return result;
+  }
+
+  if (!isUnknownModelFailure(runResultFailureText(result))) {
+    return result;
+  }
+
+  const status =
+    "Codex does not know the pinned web search model; retrying with the model from the Codex config.";
+  options.onFallback(
+    {
+      from: modelFromArgs(options.primary.args) ?? "pinned model",
+      reason: status,
+    },
+    status,
+  );
+
+  return options.runner(options.fallback());
+}
+
+function modelFromArgs(args: string[]): string | undefined {
+  const index = args.indexOf("-m");
+  return index === -1 ? undefined : args[index + 1];
 }
 
 function classifyFailureText(message: string): CodexFailureDetails {
@@ -1415,6 +1602,9 @@ function cloneProgress(
     statusEvents: [...progress.statusEvents],
     ...(progress.latestQuery ? { latestQuery: progress.latestQuery } : {}),
     ...(progress.statusText ? { statusText: progress.statusText } : {}),
+    ...(progress.modelFallback
+      ? { modelFallback: progress.modelFallback }
+      : {}),
   };
 }
 

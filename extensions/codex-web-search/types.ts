@@ -11,6 +11,7 @@ export type CodexFailureKind =
   | "budget"
   | "schema"
   | "empty_result"
+  | "search_unavailable"
   | "cancelled"
   | "missing_cli"
   | "local_config"
@@ -50,6 +51,7 @@ export interface WebSearchProgressDetails {
   latestQuery?: string;
   statusText?: string;
   statusEvents: string[];
+  modelFallback?: ModelFallbackProvenance;
 }
 
 export interface RetryProvenance {
@@ -57,6 +59,11 @@ export interface RetryProvenance {
   originalMode: "fast";
   originalFreshness: SearchFreshness;
   fallbackReason: string;
+}
+
+export interface ModelFallbackProvenance {
+  from: string;
+  reason: string;
 }
 
 export interface DefuddleProvenance {
@@ -82,6 +89,11 @@ export interface WebSearchSettings {
   deepFreshness: SearchFreshness;
   fastMaxSources: number;
   deepMaxSources: number;
+  /**
+   * Codex model used for web search. Empty string inherits the model from the
+   * user's Codex config, which may not support the hosted web search tool.
+   */
+  codexModel: string;
   defuddleMode: DefuddleMode;
   fastTimeoutMs: number;
   deepTimeoutMs: number;

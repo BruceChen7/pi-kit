@@ -68,3 +68,5 @@ knowledge-wiki-state|local|skills/knowledge-wiki/state
 knowledge-wiki-enrich|local|skills/knowledge-wiki/enrich
 # https://github.com/jillesme/pi-herdr-squad (v0.1.3)
 herdr-squad|local|skills/herdr-squad
+# learn 教学系统（probe→plan→teach + quiz/笔记/图表）
+tutor|local|skills/tutor

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { nextTodoToPromoteIndex, PlanModeState } from "./state.js";
+import {
+  nextTodoToPromoteIndex,
+  PlanModeState,
+  todoListSignature,
+} from "./state.js";
 import {
   ACT_MODE_TODO_TOOL,
   plainWidgetText,
@@ -68,6 +72,50 @@ describe("todo state: normalization", () => {
     expect(state.activeRun?.lastTodoUpdateAt).toBeDefined();
     state.removeTodo(3);
     expect(state.activeRun?.lastTodoUpdateAt).toBeDefined();
+  });
+});
+
+// ── pure decision: todoListSignature ──────────────────────────
+
+describe("todo state: todoListSignature", () => {
+  const item = (
+    id: number,
+    text: string,
+    status: TodoStatus = "todo",
+    notes?: string,
+  ) => ({ id, text, status, ...(notes ? { notes } : {}) });
+
+  it("ignores status and notes changes", () => {
+    const before = [item(1, "第一步", "todo"), item(2, "第二步", "todo")];
+    const after = [
+      item(1, "第一步", "in_progress", "正在做"),
+      item(2, "第二步", "blocked"),
+    ];
+    expect(todoListSignature(after)).toBe(todoListSignature(before));
+  });
+
+  it("changes when items are replaced (reconcile to a new plan)", () => {
+    const before = [item(1, "写移植 spec")];
+    const after = [item(1, "移植 picker 纯核"), item(2, "移植 quiz")];
+    expect(todoListSignature(after)).not.toBe(todoListSignature(before));
+  });
+
+  it("changes when item text or id changes", () => {
+    const base = [item(1, "第一步")];
+    expect(todoListSignature([item(1, "改写后的第一步")])).not.toBe(
+      todoListSignature(base),
+    );
+    expect(todoListSignature([item(2, "第一步")])).not.toBe(
+      todoListSignature(base),
+    );
+  });
+
+  it("is order sensitive and stable for repeated calls", () => {
+    const first = [item(1, "a"), item(2, "b")];
+    const swapped = [item(2, "b"), item(1, "a")];
+    expect(todoListSignature(swapped)).not.toBe(todoListSignature(first));
+    expect(todoListSignature(first)).toBe(todoListSignature(first));
+    expect(todoListSignature([])).toBe("[]");
   });
 });
 

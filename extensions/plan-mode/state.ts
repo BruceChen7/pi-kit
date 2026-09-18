@@ -103,6 +103,19 @@ export const hasCompletedAllTodos = (todos: TodoItem[]): boolean =>
   todos.length > 0 && todos.every((todo) => todo.status === TODO_STATUS_DONE);
 
 /**
+ * Identity signature of a TODO list: ids plus texts, in order.
+ *
+ * Status and notes are deliberately excluded. The signature answers one
+ * question — "is this still the same list?" — for the deferred
+ * todo-reconcile reminder: a list that was rewritten after approval is a
+ * list the agent created for the approved plan, while flipping a stale
+ * item to in_progress is *starting execution* on the old list and must
+ * keep the reminder eligible.
+ */
+export const todoListSignature = (todos: readonly TodoItem[]): string =>
+  JSON.stringify(todos.map((todo) => [todo.id, todo.text]));
+
+/**
  * Pure decision for the one-at-a-time discipline normalization: the
  * index of the first todo item that should become in_progress, or -1 when
  * nothing should be promoted (an item is already in_progress, any item is

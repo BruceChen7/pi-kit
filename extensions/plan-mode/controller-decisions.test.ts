@@ -3,6 +3,7 @@ import {
   decideAgentStartPostActions,
   decideAgentStartPreActions,
   decidePlanReviewObligation,
+  decideTodoReconcileDelivery,
   getApprovedReviewPathToQueue,
   shouldRemindTodoReconciliation,
 } from "./controller-decisions.js";
@@ -189,5 +190,87 @@ describe("plan-mode controller decisions", () => {
     },
   ])("$name", ({ input, expected }) => {
     expect(shouldRemindTodoReconciliation(input)).toBe(expected);
+  });
+
+  it.each([
+    {
+      name: "delivers the queued reminder while the list is unchanged",
+      input: {
+        pending: {
+          planPath: reviewArtifactPath,
+          todoSignature: '[[1,"a"]]',
+        },
+        currentTodoSignature: '[[1,"a"]]',
+        approvedPlanStillApproved: true,
+        hasUnfinishedTodos: true,
+      },
+      expected: true,
+    },
+    {
+      name: "delivers after a status-only update (same list identity)",
+      input: {
+        pending: {
+          planPath: reviewArtifactPath,
+          todoSignature: '[[1,"a"]]',
+        },
+        // Statuses are not part of the signature: starting to execute the
+        // stale list must still be gated by the reminder.
+        currentTodoSignature: '[[1,"a"]]',
+        approvedPlanStillApproved: true,
+        hasUnfinishedTodos: true,
+      },
+      expected: true,
+    },
+    {
+      name: "drops when the list was rewritten after approval",
+      input: {
+        pending: {
+          planPath: reviewArtifactPath,
+          todoSignature: '[[1,"a"]]',
+        },
+        currentTodoSignature: '[[1,"plan step 1"],[2,"plan step 2"]]',
+        approvedPlanStillApproved: true,
+        hasUnfinishedTodos: true,
+      },
+      expected: false,
+    },
+    {
+      name: "drops when the run finished before delivery",
+      input: {
+        pending: {
+          planPath: reviewArtifactPath,
+          todoSignature: '[[1,"a"]]',
+        },
+        currentTodoSignature: '[[1,"a"]]',
+        approvedPlanStillApproved: true,
+        hasUnfinishedTodos: false,
+      },
+      expected: false,
+    },
+    {
+      name: "drops when the approval was withdrawn before delivery",
+      input: {
+        pending: {
+          planPath: reviewArtifactPath,
+          todoSignature: '[[1,"a"]]',
+        },
+        currentTodoSignature: '[[1,"a"]]',
+        approvedPlanStillApproved: false,
+        hasUnfinishedTodos: true,
+      },
+      expected: false,
+    },
+    {
+      name: "delivers nothing when no reminder was queued",
+      input: {
+        pending: null,
+        currentTodoSignature: '[[1,"a"]]',
+        approvedPlanStillApproved: true,
+        hasUnfinishedTodos: true,
+      },
+      expected: false,
+    },
+  ])("$name", ({ input, expected }) => {
+    expect(decideTodoReconcileDelivery(input)).toBe(expected);
   });
 });

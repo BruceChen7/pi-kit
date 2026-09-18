@@ -50,7 +50,9 @@ import {
   decideAgentStartPostActions,
   decideAgentStartPreActions,
   decidePlanReviewObligation,
+  decideTodoReconcileDelivery,
   getApprovedReviewPathToQueue,
+  type PendingTodoReconcileReminder,
   shouldRemindTodoReconciliation,
 } from "./controller-decisions.ts";
 import { decideToolBlock, type GuardPolicyTarget } from "./guard-policy.ts";
@@ -73,6 +75,7 @@ import {
   loadPlanModeConfig,
   PlanModeState,
   stringProperty,
+  todoListSignature,
 } from "./state.ts";
 import type {
   InputSource,
@@ -100,8 +103,11 @@ const APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE =
 // Todo-reconciliation reminder. Decided at approval time (run not bound to
 // the approved plan, todos unfinished), but delivered only at the next
 // agent_end — the followUp queue drains at turn boundaries, so an
-// immediate send would surface minutes later with stale state. Latest
-// approval wins, so a spec→plan approval pair collapses into one reminder.
+// immediate send would surface minutes later with stale state. Delivery
+// re-checks the premise and drops the reminder when it no longer holds
+// (run completed, approval withdrawn, or the list was rewritten after
+// approval — see decideTodoReconcileDelivery). Latest approval wins, so a
+// spec→plan approval pair collapses into one reminder.
 const TODO_RECONCILE_AFTER_APPROVAL_MESSAGE =
   "Plan approved. Reconcile the act_mode_todo list with the approved plan: ";
 // APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE removed - no longer used.
@@ -157,7 +163,8 @@ export class PlanModeController {
   private policyReminderSentFor: string | null = null;
   // Set at approval time when the active run is not yet bound to the
   // approved plan; delivered (or dropped) at the next agent_end.
-  private todoReconcileReminderPending: string | null = null;
+  private todoReconcileReminderPending: PendingTodoReconcileReminder | null =
+    null;
   // Session-scoped values, resolved in restore() (no IO at construction).
   private htmlArtifactDirs: string[] = [];
   constructor(private readonly pi: ExtensionAPI) {}
@@ -782,32 +789,46 @@ export class PlanModeController {
     if (remindTodoReconciliation) {
       // Defer delivery to the next agent_end: sendUserMessage(followUp)
       // only surfaces at the next turn boundary anyway, and by then the
-      // run may have completed or the list been reconciled. Latest
-      // approval wins, so a spec→plan approval pair yields one reminder.
-      this.todoReconcileReminderPending = pathToQueue;
+      // run may have completed or the list been reconciled. Record the
+      // list's identity signature now so delivery can tell whether the
+      // agent already rewrote it. Latest approval wins, so a spec→plan
+      // approval pair yields one reminder.
+      this.todoReconcileReminderPending = {
+        planPath: pathToQueue,
+        todoSignature: todoListSignature(this.state.todos),
+      };
     }
     this.applyMode(ctx);
     this.persist();
   }
 
   private deliverPendingTodoReconcileReminder(): void {
-    const pendingPath = this.todoReconcileReminderPending;
+    const pending = this.todoReconcileReminderPending;
     this.todoReconcileReminderPending = null;
+    if (pending === null) {
+      return;
+    }
+    // Dropped when the run completed (or cleared its todos) before the
+    // reminder could be delivered — "reconcile before starting
+    // execution" is noise after the work is done — when the approval was
+    // cleared (e.g. ESC abort), because the message claims the plan is
+    // approved — or when the list was rewritten after approval, because
+    // then it *was* created for this plan.
     if (
-      pendingPath === null ||
-      !this.state.hasUnfinishedTodos() ||
-      !this.state.isApprovedReviewArtifactPath(pendingPath)
+      !decideTodoReconcileDelivery({
+        pending,
+        currentTodoSignature: todoListSignature(this.state.todos),
+        approvedPlanStillApproved: this.state.isApprovedReviewArtifactPath(
+          pending.planPath,
+        ),
+        hasUnfinishedTodos: this.state.hasUnfinishedTodos(),
+      })
     ) {
-      // Dropped: the run completed (or cleared its todos) before the
-      // reminder could be delivered — "reconcile before starting
-      // execution" is noise after the work is done — or the approval
-      // was cleared (e.g. ESC abort) — the message claims the plan is
-      // approved, so it must not fire for a no-longer-approved plan.
       return;
     }
     this.pi.sendUserMessage(
       TODO_RECONCILE_AFTER_APPROVAL_MESSAGE +
-        pendingPath +
+        pending.planPath +
         " — the current list was not created for this plan. " +
         "Use act_mode_todo list to compare, then set to align before " +
         "starting execution. This is an automated approval notice and " +

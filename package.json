@@ -12,6 +12,7 @@
   },
   "pi": {
     "extensions": [
+      "./extensions/tutor",
       "./extensions/copyx",
       "./extensions/multi-edit",
       "./extensions/skill-toggle",

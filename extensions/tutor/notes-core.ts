@@ -684,14 +684,44 @@ export const formatAskAnswerBlock = (details: AskDetails): string => {
   return callout("example", "Answer", body);
 };
 
-export const isQuizDetails = (
-  details: QuizDetails | AskDetails,
-): details is QuizDetails => "correctValues" in details;
+export const isQuizDetails = (details: unknown): details is QuizDetails =>
+  typeof details === "object" &&
+  details !== null &&
+  Array.isArray((details as QuizDetails).options) &&
+  "correctValues" in details;
 
-export const formatAnswerBlock = (details: QuizDetails | AskDetails): string =>
-  isQuizDetails(details)
-    ? formatQuizAnswerBlock(details)
-    : formatAskAnswerBlock(details);
+/**
+ * `details` 是从工具结果拿来的、**没有类型保证的 JSON**，所以先认形状再排版：
+ * - quiz 的校验错误会带回 `details: {}`（pi 把工具自填的 isError 归一成 false，
+ *   所以 isError 靠不住），历史会话里也可能冻着旧形状；
+ * - `pending` 归问题块管，答案块只处理 answered / cancelled / unavailable。
+ */
+const answerDetailsOf = (
+  value: unknown,
+): QuizDetails | AskDetails | undefined => {
+  if (typeof value !== "object" || value === null) return undefined;
+  const status = (value as { status?: unknown }).status;
+  if (
+    status !== "answered" &&
+    status !== "cancelled" &&
+    status !== "unavailable"
+  ) {
+    return undefined;
+  }
+  if (isQuizDetails(value)) return value;
+  return Array.isArray((value as AskDetails).selections)
+    ? (value as AskDetails)
+    : undefined;
+};
+
+/** 返回 undefined = 这条工具结果没有可写的答案；调用方跳过即可，不要写空块。 */
+export const formatAnswerBlock = (details: unknown): string | undefined => {
+  const answer = answerDetailsOf(details);
+  if (!answer) return undefined;
+  return isQuizDetails(answer)
+    ? formatQuizAnswerBlock(answer)
+    : formatAskAnswerBlock(answer);
+};
 
 // ── 从会话消息里抽取可读文本 ──────────────────────────────────────────────
 

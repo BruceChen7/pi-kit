@@ -31,7 +31,6 @@ import {
 } from "../shared/picker-core.ts";
 import { renderPickerLines } from "../shared/picker-view.ts";
 import { loadSettings } from "../shared/settings.ts";
-import type { AskDetails } from "./ask-core.ts";
 import {
   ASK_USER_QUESTION_TOOL_NAME,
   BIND_NOTES_TOOL_NAME,
@@ -833,9 +832,8 @@ export const registerNotes = (pi: ExtensionAPI): void => {
 
   pi.on("tool_result", async (event, _ctx) => {
     if (!noteFile || !QA_TOOLS.has(event.toolName)) return;
-    const details = (event as { details?: QuizDetails | AskDetails }).details;
-    if (!details || details.status === "pending") return;
-    await appendBlock(formatAnswerBlock(details));
+    const block = formatAnswerBlock((event as { details?: unknown }).details);
+    if (block) await appendBlock(block);
   });
 
   // ── 绑定：工具（agent 可调） + 命令（人可敲） ─────────────────────────────
@@ -1641,12 +1639,10 @@ export const registerNotes = (pi: ExtensionAPI): void => {
       const toolName = (entry as { message?: { toolName?: string } }).message
         ?.toolName;
       if (message.role === "toolResult" && toolName && QA_TOOLS.has(toolName)) {
-        const details = (
-          entry as { message?: { details?: QuizDetails | AskDetails } }
-        ).message?.details;
-        if (details && details.status !== "pending") {
-          blocks.push(formatAnswerBlock(details));
-        }
+        const block = formatAnswerBlock(
+          (entry as { message?: { details?: unknown } }).message?.details,
+        );
+        if (block) blocks.push(block);
       }
     }
     if (blocks.length === 0) return 0;

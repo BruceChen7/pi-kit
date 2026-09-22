@@ -9,6 +9,7 @@ import {
   chapterNotePath,
   countVerdicts,
   expandHome,
+  formatAnswerBlock,
   formatAskAnswerBlock,
   formatNumberingConflict,
   formatQuestionBlock,
@@ -209,6 +210,40 @@ describe("notes-core / question and answer blocks", () => {
       otherText: "先讲幂等性",
     });
     expect(withText).toContain("Other: 先讲幂等性");
+  });
+
+  it("writes nothing for tool results that carry no answer", () => {
+    // 真实崩过的形状：quiz 校验失败时工具返回 `details: {}`。
+    expect(formatAnswerBlock({})).toBeUndefined();
+    expect(formatAnswerBlock(undefined)).toBeUndefined();
+    expect(formatAnswerBlock(null)).toBeUndefined();
+    expect(formatAnswerBlock("answered")).toBeUndefined();
+    // pending 归问题块管；status 对但形状错的情况也不猜。
+    expect(
+      formatAnswerBlock({ status: "pending", selections: [] }),
+    ).toBeUndefined();
+    expect(
+      formatAnswerBlock({ status: "answered", correctValues: [] }),
+    ).toBeUndefined();
+    expect(
+      formatAnswerBlock({ status: "answered", selections: "2. 实践" }),
+    ).toBeUndefined();
+  });
+
+  it("dispatches recognized answers to the quiz or ask block", () => {
+    expect(formatAnswerBlock(quizDetails)).toContain(
+      "> [!success] Quiz — correct ✓",
+    );
+    expect(
+      formatAnswerBlock({
+        status: "answered",
+        question: "先学哪块？",
+        mode: "single-select",
+        options: [],
+        selections: [{ index: 2, label: "实践", value: "实践" }],
+        message: "ok",
+      }),
+    ).toContain("2. 实践");
   });
 });
 

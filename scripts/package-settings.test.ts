@@ -7,6 +7,7 @@ import {
   parseExtraPluginData,
   renderInstallDoc,
   renderManifest,
+  resolveBaseDir,
   teachZipRel,
 } from "./package-settings.mjs";
 
@@ -73,6 +74,8 @@ function createTeachFixture(workRoot: string): void {
   fs.mkdirSync(path.join(workRoot, "projC"), { recursive: true });
 }
 
+// package-settings reads ~/.config for the qmd registry entry, so tests point
+// XDG_CONFIG_HOME at a sibling path that does not exist unless a test opts in.
 function runPackage(
   agentDir: string,
   outZip: string,
@@ -83,6 +86,7 @@ function runPackage(
     env: {
       ...process.env,
       PI_AGENT_DIR: agentDir,
+      XDG_CONFIG_HOME: path.join(path.dirname(agentDir), "no-config-home"),
       OUT: outZip,
       EXTRA_PLUGIN_DATA: "",
       TEACH_ROOT: "",
@@ -90,6 +94,15 @@ function runPackage(
     },
     encoding: "utf8",
   });
+}
+
+function createQmdConfigFixture(configHome: string): void {
+  fs.mkdirSync(path.join(configHome, "qmd"), { recursive: true });
+  fs.writeFileSync(
+    path.join(configHome, "qmd", "index.yml"),
+    "collections:\n  notes:\n    path: /tmp/notes\n",
+    "utf-8",
+  );
 }
 
 function zipListing(outZip: string): string {
@@ -101,6 +114,24 @@ function zipEntry(outZip: string, entry: string): string {
 }
 
 // ── Core: value in / value out ──────────────────────────────────────────────
+describe("resolveBaseDir", () => {
+  const dirs = {
+    agentDir: "/home/u/.pi/agent",
+    configHome: "/home/u/.config",
+    repoRoot: "/repo",
+  };
+
+  it("maps each registry base to its root dir", () => {
+    expect(resolveBaseDir("agent", dirs)).toBe("/home/u/.pi/agent");
+    expect(resolveBaseDir("config", dirs)).toBe("/home/u/.config");
+    expect(resolveBaseDir("project", dirs)).toBe("/repo");
+  });
+
+  it("returns undefined for an unknown base", () => {
+    expect(resolveBaseDir("teach", dirs)).toBeUndefined();
+  });
+});
+
 describe("renderManifest", () => {
   it("renders one line per spec with zip path, source path, and size", () => {
     const text = renderManifest([
@@ -150,6 +181,17 @@ describe("renderInstallDoc", () => {
     expect(text).toContain("仅含插件数据");
   });
 
+  it("documents the qmd config restore only when it is in the zip", () => {
+    const withQmd = renderInstallDoc({ hasGlobal: true, hasQmdConfig: true });
+    expect(withQmd).toContain("`config/qmd/index.yml`");
+    expect(withQmd).toContain(
+      "cp pi-kit-settings/config/qmd/index.yml ~/.config/qmd/index.yml",
+    );
+
+    const withoutQmd = renderInstallDoc({ hasGlobal: true });
+    expect(withoutQmd).not.toContain("config/qmd");
+  });
+
   it("adds a copyable teach restore section when teach projects exist", () => {
     const text = renderInstallDoc({
       hasGlobal: true,
@@ -192,6 +234,12 @@ describe("parseExtraPluginData", () => {
   it("supports project: entries", () => {
     expect(parseExtraPluginData("project:baz")).toEqual([
       { base: "project", rel: "baz" },
+    ]);
+  });
+
+  it("supports config: entries", () => {
+    expect(parseExtraPluginData("config:qmd/index.yml")).toEqual([
+      { base: "config", rel: "qmd/index.yml" },
     ]);
   });
 
@@ -292,6 +340,46 @@ describe("package-settings.mjs (shell)", () => {
     expect(listing).toContain("pi-kit-settings/agent/foo-data/state.json");
     expect(zipEntry(outZip, "pi-kit-settings/MANIFEST.txt")).toContain(
       "foo-data/state.json",
+    );
+  });
+
+  it("packages the qmd index config from XDG_CONFIG_HOME", () => {
+    const dir = createTempDir();
+    const agentDir = path.join(dir, "agent");
+    const configHome = path.join(dir, "config-home");
+    const outZip = path.join(dir, "out.zip");
+    createAgentFixture(agentDir);
+    createQmdConfigFixture(configHome);
+
+    runPackage(agentDir, outZip, { XDG_CONFIG_HOME: configHome });
+
+    const listing = zipListing(outZip);
+    expect(listing).toContain("pi-kit-settings/config/qmd/index.yml");
+    expect(zipEntry(outZip, "pi-kit-settings/MANIFEST.txt")).toContain(
+      "config/qmd/index.yml",
+    );
+    expect(zipEntry(outZip, "pi-kit-settings/config/qmd/index.yml")).toContain(
+      "notes",
+    );
+    expect(zipEntry(outZip, "pi-kit-settings/INSTALL.md")).toContain(
+      "config/qmd/index.yml",
+    );
+  });
+
+  it("skips the qmd config when XDG_CONFIG_HOME has no qmd/index.yml", () => {
+    const dir = createTempDir();
+    const agentDir = path.join(dir, "agent");
+    const outZip = path.join(dir, "out.zip");
+    createAgentFixture(agentDir);
+
+    runPackage(agentDir, outZip, {
+      XDG_CONFIG_HOME: path.join(dir, "config-home"),
+    });
+
+    const listing = zipListing(outZip);
+    expect(listing).not.toContain("config/qmd");
+    expect(zipEntry(outZip, "pi-kit-settings/INSTALL.md")).not.toContain(
+      "config/qmd",
     );
   });
 

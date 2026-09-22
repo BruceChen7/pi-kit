@@ -74,12 +74,18 @@ function createTeachFixture(workRoot: string): void {
 }
 
 // Build a real package-settings zip from fixtures (uses the sibling script).
-function buildZip(agentDir: string, outZip: string, workRoot?: string): void {
+function buildZip(
+  agentDir: string,
+  outZip: string,
+  workRoot?: string,
+  configHome = path.join(path.dirname(agentDir), "no-config-home"),
+): void {
   execFileSync("node", [packageScriptPath], {
     cwd: repoRoot,
     env: {
       ...process.env,
       PI_AGENT_DIR: agentDir,
+      XDG_CONFIG_HOME: configHome,
       OUT: outZip,
       EXTRA_PLUGIN_DATA: "",
       TEACH_ROOT: workRoot ?? "",
@@ -119,6 +125,11 @@ describe("classifyEntry", () => {
         rel: "topic/NOTES.md",
       },
     );
+    expect(classifyEntry("pi-kit-settings/config/qmd/index.yml")).toEqual({
+      status: "ok",
+      kind: "config",
+      rel: "qmd/index.yml",
+    });
   });
 
   it("skips meta files, unknown prefixes, and unsafe paths", () => {
@@ -187,6 +198,51 @@ describe("planRestore", () => {
     expect(skipped.map((s) => s.zipPath)).toEqual([
       "pi-kit-settings/MANIFEST.txt",
       "pi-kit-settings/INSTALL.md",
+    ]);
+  });
+
+  it("maps config/ entries under configHome", () => {
+    const { plans, skipped } = planRestore({
+      entries: [
+        "pi-kit-settings/config/qmd/index.yml",
+        "pi-kit-settings/agent/ok.json",
+      ],
+      agentDir: "/tmp/agent",
+      repoRoot: "/tmp/repo",
+      configHome: "/tmp/config",
+      teachRoot: "/tmp/work",
+    });
+
+    expect(plans).toEqual([
+      {
+        zipPath: "pi-kit-settings/config/qmd/index.yml",
+        destPath: "/tmp/config/qmd/index.yml",
+        kind: "config",
+      },
+      {
+        zipPath: "pi-kit-settings/agent/ok.json",
+        destPath: "/tmp/agent/ok.json",
+        kind: "agent",
+      },
+    ]);
+    expect(skipped).toEqual([]);
+  });
+
+  it("skips config entries when configHome is empty", () => {
+    const { plans, skipped } = planRestore({
+      entries: ["pi-kit-settings/config/qmd/index.yml"],
+      agentDir: "/tmp/agent",
+      repoRoot: "/tmp/repo",
+      configHome: "",
+      teachRoot: "/tmp/work",
+    });
+
+    expect(plans).toEqual([]);
+    expect(skipped).toEqual([
+      {
+        zipPath: "pi-kit-settings/config/qmd/index.yml",
+        reason: "config restore disabled (XDG_CONFIG_HOME empty)",
+      },
     ]);
   });
 
@@ -307,6 +363,35 @@ describe("restore-settings.mjs (shell)", () => {
         path.join(dstWork, "projA", ".pi", "teach", "MANIFEST.txt"),
       ),
     ).toBe(false);
+  });
+
+  it("round-trips the qmd index config through package-settings", () => {
+    const dir = createTempDir();
+    const srcAgent = path.join(dir, "src-agent");
+    const srcConfig = path.join(dir, "src-config");
+    const dstAgent = path.join(dir, "dst-agent");
+    const dstConfig = path.join(dir, "dst-config");
+    const outZip = path.join(dir, "out.zip");
+    const indexBody = "collections:\n  notes:\n    path: /tmp/notes\n";
+    createAgentFixture(srcAgent);
+    fs.mkdirSync(path.join(srcConfig, "qmd"), { recursive: true });
+    fs.writeFileSync(
+      path.join(srcConfig, "qmd", "index.yml"),
+      indexBody,
+      "utf-8",
+    );
+
+    buildZip(srcAgent, outZip, undefined, srcConfig);
+    runRestore({
+      ZIP: outZip,
+      PI_AGENT_DIR: dstAgent,
+      XDG_CONFIG_HOME: dstConfig,
+      TEACH_ROOT: "",
+    });
+
+    expect(
+      fs.readFileSync(path.join(dstConfig, "qmd", "index.yml"), "utf-8"),
+    ).toBe(indexBody);
   });
 
   it("backs up existing destination files before overwriting", () => {

@@ -154,6 +154,8 @@ describe("tutor extension wiring", () => {
       "bind_notes",
       "number_chapters",
       "split_topic",
+      "note_concept",
+      "check_concepts",
       "validate_mermaid",
       "render_mermaid",
     ]);
@@ -161,6 +163,7 @@ describe("tutor extension wiring", () => {
       "md-topic",
       "md-log",
       "md-unlog",
+      "concepts",
       "tutor-mode",
     ]);
     expect(seen.events).toEqual(
@@ -267,6 +270,6 @@ describe("tutor extension wiring", () => {
     const notify = (
       ctx as unknown as { ui: { notify: ReturnType<typeof vi.fn> } }
     ).ui.notify;
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("0/5"));
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("0/7"));
   });
 });

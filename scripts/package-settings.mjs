@@ -7,8 +7,11 @@
  *
  * Env overrides:
  *   PI_AGENT_DIR       agent settings dir (default ~/.pi/agent)
+ *   XDG_CONFIG_HOME    config home for registry entries with base "config"
+ *                      (default ~/.config)
  *   OUT                output zip path (default pi-kit-settings-<ts>.zip in repo root)
- *   EXTRA_PLUGIN_DATA  space-separated "agent:<rel>" entries appended to the registry
+ *   EXTRA_PLUGIN_DATA  space-separated "<base>:<rel>" entries appended to the
+ *                      registry (base: agent | config | project, default agent)
  *   TEACH_ROOT         work root scanned for <project>/.pi/teach learn data
  *                      (default ~/work; empty string disables the teach backup)
  *
@@ -16,12 +19,14 @@
  *   agent/third_extension_settings.json
  *   agent/query-notes-log/...
  *   agent/<extra>/...
+ *   config/qmd/index.yml
  *   teach/<project>/...            (each ~/work/<project>/.pi/teach with files)
  *   MANIFEST.txt
  *   INSTALL.md
  *
- * Functional Core / Imperative Shell: renderManifest / renderInstallDoc are pure
- * (value in / value out, exported for tests); main() is the thin IO shell.
+ * Functional Core / Imperative Shell: resolveBaseDir / renderManifest /
+ * renderInstallDoc are pure (value in / value out, exported for tests);
+ * main() is the thin IO shell.
  */
 
 import { execFileSync } from "node:child_process";
@@ -34,7 +39,10 @@ import { pathToFileURL } from "node:url";
 const DEFAULT_REGISTRY = [
   { base: "agent", rel: "third_extension_settings.json" },
   { base: "agent", rel: "query-notes-log" },
+  { base: "config", rel: "qmd/index.yml" },
 ];
+
+const KNOWN_BASES = new Set(["agent", "config", "project"]);
 
 export const parseExtraPluginData = (raw = "") =>
   raw
@@ -47,10 +55,25 @@ export const parseExtraPluginData = (raw = "") =>
       }
       const base = entry.slice(0, idx);
       const rel = entry.slice(idx + 1);
-      return { base: base === "agent" ? "agent" : "project", rel };
+      return { base: KNOWN_BASES.has(base) ? base : "project", rel };
     });
 
 // ── Functional Core (pure, value in / value out) ────────────────────────────
+// Registry bases map to the root dir they are packaged from; an unknown base
+// resolves to undefined so callers skip it instead of guessing a root.
+export const resolveBaseDir = (base, { agentDir, configHome, repoRoot }) => {
+  switch (base) {
+    case "agent":
+      return agentDir;
+    case "config":
+      return configHome;
+    case "project":
+      return repoRoot;
+    default:
+      return undefined;
+  }
+};
+
 export const renderManifest = (specs) => {
   const lines = ["zip内路径 | 源路径 | 大小(bytes)", "---"];
   for (const spec of specs) {
@@ -61,15 +84,29 @@ export const renderManifest = (specs) => {
 
 export const teachZipRel = (project, zipRel) => `teach/${project}/${zipRel}`;
 
-export const renderInstallDoc = ({ hasGlobal, teachProjects = [] }) => {
-  const lines = [
-    "# pi-kit 扩展配置与插件数据还原说明 (INSTALL)",
-    "",
-    "本 zip 由 `make package-settings` 生成，包含：",
+export const renderInstallDoc = ({
+  hasGlobal,
+  hasQmdConfig = false,
+  teachProjects = [],
+}) => {
+  const contents = [
     "- `agent/third_extension_settings.json`：全局扩展配置",
     "- `agent/query-notes-log/...`：query_my_notes 插件数据（查询历史）",
     "- `teach/<project>/...`：各项目 .pi/teach 学习数据（课程/学习记录/测验）",
     "- `MANIFEST.txt`：完整文件清单（zip 内路径 | 源路径 | 大小）",
+  ];
+  if (hasQmdConfig) {
+    contents.splice(
+      2,
+      0,
+      "- `config/qmd/index.yml`：qmd 索引配置（collections / models）",
+    );
+  }
+  const lines = [
+    "# pi-kit 扩展配置与插件数据还原说明 (INSTALL)",
+    "",
+    "本 zip 由 `make package-settings` 生成，包含：",
+    ...contents,
     "",
     "## 还原步骤",
     "1. 备份现有文件：",
@@ -77,17 +114,28 @@ export const renderInstallDoc = ({ hasGlobal, teachProjects = [] }) => {
     "2. 解压后按 MANIFEST.txt 对照还原（zip 内前缀为 `pi-kit-settings/`）：",
     "   cp pi-kit-settings/agent/third_extension_settings.json ~/.pi/agent/third_extension_settings.json",
     "   cp -R pi-kit-settings/agent/query-notes-log ~/.pi/agent/",
-    "3. 使配置生效：在 pi 内执行 /reload，或重启 pi 会话。",
+  ];
+  if (hasQmdConfig) {
+    lines.push(
+      "   mkdir -p ~/.config/qmd && cp pi-kit-settings/config/qmd/index.yml ~/.config/qmd/index.yml",
+    );
+  }
+  lines.push(
+    "3. 使配置生效：在 pi 内执行 /reload，或重启 pi 会话（qmd 配置在下次 qmd 调用时生效）。",
     "",
     "## 注意事项",
     "- 配置文件可能包含敏感信息（如 remoteApproval.botToken / chatId），请妥善保管本 zip。",
-    "",
-  ];
+  );
+  if (hasQmdConfig) {
+    lines.push(
+      "- qmd 配置中的 collection path 是按机器写入的绝对路径，换机器还原时请按实际路径调整。",
+    );
+  }
   if (!hasGlobal) {
     lines.splice(3, 1, "- （全局扩展配置在本 zip 中不存在，仅含插件数据）");
   }
   if (teachProjects.length > 0) {
-    const block = [
+    lines.push(
       "",
       "## teach 学习数据还原",
       "zip 内 teach/<project>/… 为各项目 .pi/teach 学习数据。解压后在 zip 目录执行：",
@@ -99,10 +147,9 @@ export const renderInstallDoc = ({ hasGlobal, teachProjects = [] }) => {
       '    cp -R "$d" "$HOME/work/$proj/.pi/teach"',
       "  done",
       "（或按 MANIFEST.txt 逐项目对照还原；还原后可在该项目内用 teach skill 继续学习。）",
-      "",
-    ];
-    lines.push(...block);
+    );
   }
+  lines.push("");
   return lines.join("\n");
 };
 
@@ -148,13 +195,14 @@ const findTeachDirs = (workRoot) => {
   return out;
 };
 
-const buildSpecs = (agentDir, repoRoot, registry) => {
+const buildSpecs = (dirs, registry) => {
   const specs = [];
   for (const entry of registry) {
-    const srcPath =
-      entry.base === "agent"
-        ? path.join(agentDir, entry.rel)
-        : path.join(repoRoot, entry.rel);
+    const root = resolveBaseDir(entry.base, dirs);
+    if (!root) {
+      continue;
+    }
+    const srcPath = path.join(root, entry.rel);
     if (!fs.existsSync(srcPath)) {
       continue;
     }
@@ -198,6 +246,9 @@ const main = () => {
   const agentDir = path.resolve(
     process.env.PI_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent"),
   );
+  const configHome = path.resolve(
+    process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config"),
+  );
   const repoRoot = process.cwd();
   const outPath = path.resolve(
     process.env.OUT ?? `pi-kit-settings-${formatTimestamp()}.zip`,
@@ -208,7 +259,7 @@ const main = () => {
     ...parseExtraPluginData(process.env.EXTRA_PLUGIN_DATA),
   ];
 
-  const specs = buildSpecs(agentDir, repoRoot, registry);
+  const specs = buildSpecs({ agentDir, configHome, repoRoot }, registry);
   const teachDirs = teachRoot ? findTeachDirs(teachRoot) : [];
   for (const { project, files } of teachDirs) {
     for (const file of files) {
@@ -227,9 +278,13 @@ const main = () => {
   const hasGlobal = specs.some((s) =>
     s.zipPath.includes("third_extension_settings.json"),
   );
+  const hasQmdConfig = specs.some((s) =>
+    s.zipPath.endsWith("config/qmd/index.yml"),
+  );
   const manifest = renderManifest(specs);
   const installDoc = renderInstallDoc({
     hasGlobal,
+    hasQmdConfig,
     teachProjects: teachDirs.map(({ project }) => project),
   });
 
@@ -262,6 +317,11 @@ const main = () => {
       `==> teach backup: ${teachDirs.length} project(s) under ${teachRoot} → zip prefix teach/<project>/`,
     );
   }
+  console.log(
+    hasQmdConfig
+      ? `==> qmd config: ${path.join(configHome, "qmd", "index.yml")} → zip prefix config/qmd/`
+      : `==> qmd config: not found under ${configHome} (skipped)`,
+  );
   if (hasGlobal) {
     console.log(
       "⚠  agent/third_extension_settings.json may contain sensitive data " +

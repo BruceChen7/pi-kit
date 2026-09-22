@@ -10,6 +10,7 @@
  *                     already contains pi-kit-settings/ (default: newest
  *                     pi-kit-settings-*.zip in the repo root)
  *   PI_AGENT_DIR      agent settings dir (default ~/.pi/agent)
+ *   XDG_CONFIG_HOME   config home for `config/` entries (default ~/.config)
  *   TEACH_ROOT        work root for teach data (default ~/work; empty string
  *                     disables teach restore)
  *   DRY_RUN=1         print the restore plan only, write nothing
@@ -18,6 +19,7 @@
  * Restore mapping (by zip prefix, independent of MANIFEST source paths):
  *   pi-kit-settings/agent/<rel>          → <PI_AGENT_DIR>/<rel>
  *   pi-kit-settings/project/<rel>        → <repoRoot>/<rel>
+ *   pi-kit-settings/config/<rel>         → <XDG_CONFIG_HOME|~/.config>/<rel>
  *   pi-kit-settings/teach/<project>/<rel>→ <TEACH_ROOT>/<project>/.pi/teach/<rel>
  *   MANIFEST.txt / INSTALL.md            → skipped (reference only)
  *
@@ -61,6 +63,8 @@ export const classifyEntry = (zipPath) => {
       return { status: "ok", kind: "agent", rel: relParts.join("/") };
     case "project":
       return { status: "ok", kind: "project", rel: relParts.join("/") };
+    case "config":
+      return { status: "ok", kind: "config", rel: relParts.join("/") };
     case "teach":
       return {
         status: "ok",
@@ -73,7 +77,13 @@ export const classifyEntry = (zipPath) => {
   }
 };
 
-export const planRestore = ({ entries, agentDir, repoRoot, teachRoot }) => {
+export const planRestore = ({
+  entries,
+  agentDir,
+  repoRoot,
+  configHome,
+  teachRoot,
+}) => {
   const plans = [];
   const skipped = [];
   for (const zipPath of entries) {
@@ -89,6 +99,13 @@ export const planRestore = ({ entries, agentDir, repoRoot, teachRoot }) => {
       });
       continue;
     }
+    if (entry.kind === "config" && !configHome) {
+      skipped.push({
+        zipPath,
+        reason: "config restore disabled (XDG_CONFIG_HOME empty)",
+      });
+      continue;
+    }
     let destPath;
     switch (entry.kind) {
       case "agent":
@@ -96,6 +113,9 @@ export const planRestore = ({ entries, agentDir, repoRoot, teachRoot }) => {
         break;
       case "project":
         destPath = path.join(repoRoot, entry.rel);
+        break;
+      case "config":
+        destPath = path.join(configHome, entry.rel);
         break;
       case "teach":
         destPath = path.join(
@@ -215,6 +235,12 @@ const main = () => {
   const agentDir = path.resolve(
     process.env.PI_AGENT_DIR ?? path.join(os.homedir(), ".pi", "agent"),
   );
+  const configHome =
+    process.env.XDG_CONFIG_HOME === undefined
+      ? path.join(os.homedir(), ".config")
+      : process.env.XDG_CONFIG_HOME === ""
+        ? ""
+        : path.resolve(process.env.XDG_CONFIG_HOME);
   const teachRoot =
     process.env.TEACH_ROOT === undefined
       ? path.join(os.homedir(), "work")
@@ -241,6 +267,7 @@ const main = () => {
     entries,
     agentDir,
     repoRoot,
+    configHome,
     teachRoot,
   });
   console.log(renderRestorePlan({ plans, skipped }));

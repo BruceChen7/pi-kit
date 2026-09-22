@@ -192,16 +192,16 @@ describe("mode-core / formatTutorModeStatus", () => {
     const all = [...TUTOR_SESSION_TOOL_NAMES];
     const onAll = formatTutorModeStatus("on", ["read", ...all]);
     expect(onAll).toContain("tutor 会话：on");
-    expect(onAll).toContain("5/5");
+    expect(onAll).toContain(`${all.length}/${all.length}`);
     expect(onAll).not.toContain("缺：");
 
     const onPartial = formatTutorModeStatus("on", ["read", "quiz"]);
-    expect(onPartial).toContain("1/5");
+    expect(onPartial).toContain(`1/${all.length}`);
     expect(onPartial).toContain("缺：ask_user_question、bind_notes");
 
     const off = formatTutorModeStatus("off", ["read", "rg"]);
     expect(off).toContain("tutor 会话：off");
-    expect(off).toContain("0/5");
+    expect(off).toContain(`0/${all.length}`);
     expect(off).toContain("/tutor-mode");
   });
 });

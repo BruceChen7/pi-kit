@@ -32,6 +32,12 @@ import {
 import { renderPickerLines } from "../shared/picker-view.ts";
 import { loadSettings } from "../shared/settings.ts";
 import {
+  isConceptTableName,
+  renderTopicConceptLine,
+  topicConceptState,
+} from "./concepts-core.ts";
+import { loadRegistries } from "./concepts-store.ts";
+import {
   ASK_USER_QUESTION_TOOL_NAME,
   BIND_NOTES_TOOL_NAME,
   NUMBER_CHAPTERS_TOOL_NAME,
@@ -172,7 +178,7 @@ export type ScannedChapter = {
   touchedAt: string;
 };
 
-/** 扫一个主题目录里的章节文件：文件名就是编号的权威来源。 */
+/** 扫一个主题目录里的章节文件：文件名就是编号的权威来源（索引页与概念表都不算）。 */
 export const scanChapters = (dir: string, topic: string): ScannedChapter[] => {
   if (!fs.existsSync(dir)) return [];
   return fs
@@ -181,7 +187,8 @@ export const scanChapters = (dir: string, topic: string): ScannedChapter[] => {
       (entry) =>
         entry.isFile() &&
         entry.name.endsWith(".md") &&
-        entry.name !== `${topic}.md`,
+        entry.name !== `${topic}.md` &&
+        !isConceptTableName(entry.name),
     )
     .map((entry) => {
       const file = path.join(dir, entry.name);
@@ -900,6 +907,14 @@ export const registerNotes = (pi: ExtensionAPI): void => {
           result.unnumbered && result.unnumbered.length > 0
             ? `\nStill unnumbered in this topic: ${result.unnumbered.join(", ")} — call number_chapters to number them.`
             : "";
+        // 概念表：下一课先补哪些（缺口 / 待验证 / 前置未确立）——跟着主题走，不跟着会话走。
+        // 判定用所有主题表的并集：家在别的主题的概念也算数（跨主题复用）。
+        const registries = loadRegistries(settings);
+        const conceptState = topicConceptState(
+          registries.homes.map((home) => home.concept),
+          params.topic.trim(),
+        );
+        const conceptLine = `\n${renderTopicConceptLine(conceptState)}`;
         const chapterLine = result.chapter
           ? ` (chapter: ${chapterLabel(result.number, result.chapter)})`
           : "";
@@ -907,7 +922,7 @@ export const registerNotes = (pi: ExtensionAPI): void => {
           content: [
             {
               type: "text" as const,
-              text: `Bound session notes to ${result.file}${chapterLine}${healedLine}${resumeLine}${chaptersLine}${unnumberedLine}\nEvery reply, question and answer is appended to this file (append-only).`,
+              text: `Bound session notes to ${result.file}${chapterLine}${healedLine}${resumeLine}${chaptersLine}${unnumberedLine}${conceptLine}\nEvery reply, question and answer is appended to this file (append-only).`,
             },
           ],
           details: {
@@ -921,6 +936,7 @@ export const registerNotes = (pi: ExtensionAPI): void => {
             topDir: settings.topDir,
             chapters: state.chapters,
             resume: state.resume ?? null,
+            concepts: conceptState,
             warnings: settings.warnings,
           },
           isError: false,
@@ -1418,7 +1434,12 @@ export const registerNotes = (pi: ExtensionAPI): void => {
         const dir = path.join(root, entry.name);
         const files = fs
           .readdirSync(dir, { withFileTypes: true })
-          .filter((item) => item.isFile() && item.name.endsWith(".md"));
+          .filter(
+            (item) =>
+              item.isFile() &&
+              item.name.endsWith(".md") &&
+              !isConceptTableName(item.name),
+          );
         const newest = files.reduce((acc, item) => {
           const mtime = fs.statSync(path.join(dir, item.name)).mtimeMs;
           return mtime > acc ? mtime : acc;

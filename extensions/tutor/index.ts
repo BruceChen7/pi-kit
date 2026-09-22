@@ -28,6 +28,7 @@ import {
   normalizeAskOptions,
 } from "./ask-core.ts";
 import { runAsk } from "./ask-ui.ts";
+import { registerConcepts } from "./concepts-store.ts";
 import {
   detectRenderCapability,
   renderArgs,
@@ -533,6 +534,7 @@ export default function tutorExtension(pi: ExtensionAPI): void {
   registerQuiz(pi);
   registerAsk(pi);
   registerNotes(pi);
+  registerConcepts(pi);
   registerDiagram(pi);
   registerTutorMode(pi);
 }

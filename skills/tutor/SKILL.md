@@ -117,10 +117,11 @@ read it as signal, and do not count it against them.
 **Bind before teaching.** Call `bind_notes({ topic })` once at the start — it resolves
 `<vaultRoot>/<topDir>/<topic>/<topic>.md`, creates it, and mirrors the session into it.
 The call also returns the topic's state: every chapter with its quiz tallies
-(`ok / wrong / gaps / unanswered`) and a `resume` pointing at where to continue. Read that
-first — earlier sessions recorded their edge, their questions and the quiz outcomes, which
-is exactly what phase 1 needs. Do not create notes anywhere else, and never edit or reorder
-what is already there — the mirror only appends.
+(`ok / wrong / gaps / unanswered`), a `resume` pointing at where to continue, and a
+`概念缺口` line (gaps / unverified concepts / unmet prerequisites). Read that first — earlier
+sessions recorded their edge, their questions, the quiz outcomes and the concepts they left
+loose, which is exactly what phase 1 needs. Do not create notes anywhere else, and never edit
+or reorder what is already there — the mirror only appends.
 
 **Names never contain spaces.** A topic becomes a directory and a chapter becomes a file, so
 both must be space-free: `Docker实现`, `进程与命名空间`, `chroot与挂载时机`. Write them in
@@ -151,6 +152,7 @@ index's `## 章节` block. Four rules follow:
    index page under `## 已知边界` (what they now hold) and `## 未解决` (open questions).
    That is what the next session's probe reads — keep it short and concrete. Leave the
    `## 章节` block and its `<!-- tutor:chapters -->` markers alone; the tools rewrite it.
+   Terms themselves do not belong here: they live in the concept table (below).
 
 **An old single-file topic gets split first.** If `bind_notes` reports no chapters while the
 note is large, call `split_topic({ topic })` for the block catalog, decide the chapter
@@ -185,6 +187,42 @@ that is the only copy it has.
 name all work; `/md-log <path>` links an existing file without creating one; `/md-unlog`
 stops mirroring.
 
+## Concepts
+
+Every topic owns its own concept table: `<vaultRoot>/<topDir>/<topic>/概念.md` — the newcomer's
+lookup surface, sitting next to the chapters it belongs to. The chapter has the prose that motivates
+a term; the table is where its one-line definition, its prerequisites and the learner's status live.
+A term is not "covered" until it has an entry, and a node is not a root until its concepts are
+established (not `缺口`).
+
+**One concept, one home.** The home is the topic that first registered it. When another topic needs
+it, `note_concept` writes the status back to the home table (it answers `家在《X》`) — do **not**
+re-register a second copy, just reference it as `[[<home>/概念#名字|名字]]`. Look-ups are global:
+`check_concepts` and the `概念缺口` line read every topic's table, so a concept established in
+another topic still counts as `已确立`.
+
+Three points in a session, one loop:
+
+1. **Plan (phase 2).** Before committing to a node, `check_concepts({ terms: [...] })` on the
+   concepts it rests on. `缺口` / `未登记` are not roots — teach them first or move them out of
+   the plan; `已确立` means the learner already holds it (from this or another topic — reference it
+   instead of re-teaching it).
+2. **Teach (phase 3).** First use of a term: `note_concept({ name, definition, why, requires,
+   source, topic, chapter })` — one Chinese sentence per field, status defaults to `待验证`.
+   When the quiz confirms it: `note_concept({ name, topic, status: "已确立", evidence: "quiz
+   第N题答对" })`. On a miss or "I don't know": `status: "缺口"` with the evidence — that is
+   what the next session opens with. Omit `definition` to only move the status.
+3. **Close the chapter.** `check_concepts({ topic, chapter })` sweeps the note for jargon that
+   was never registered (marked terms like `` `mtr` ``, `**Read View**`, 「快照读」). Every
+   candidate gets either a `note_concept` call or a conscious skip — implementation trivia
+   (`row_upd_step`, `row0upd.cc:2988`) is a skip; anything a newcomer would trip on is not.
+   Then update the index's `## 已知边界` / `## 未解决` as usual.
+
+Backfilling an old topic is the same sweep without `chapter` (`check_concepts({ topic })`),
+followed by one `note_concept` per real concept. Keep entries to one sentence: the table is a
+dictionary, not a second copy of the lesson. The table is not indexed into any search collection
+(qmd excludes `**/概念.md`) — to look something up, read the topic's table or ask `/concepts <术语>`.
+
 ## Diagrams
 
 A picture earns its place only when words cannot carry it: structure, relationship,
@@ -207,8 +245,10 @@ them are noise. When in doubt, do not.
   `web_search` (and `qmd_search` over the notes vault) inline. For a genuinely large
   multi-source dig, the read-only herdr squad is available.
 - **Do not touch `.pi/teach/**`** — that is the separate course-workspace skill's data.
-  This system's only output is the note under the vault's `Learn/` directory.
-- **Do not feed spaced repetition or any card store.** Quiz outcomes belong in the note.
+  This system's outputs are the notes under the vault's `Learn/` directory and each topic's
+  `概念.md` (written only through `note_concept`).
+- **Do not feed spaced repetition or any card store.** Quiz outcomes belong in the note;
+  a concept's status belongs in the concept table — not in a review scheduler.
 - **Accuracy is non-negotiable.** The moment you are even slightly unsure of a fact, name,
   date, formula or definition, stop and verify it. Pausing is always acceptable; accuracy
   beats flow. If a check corrects what you were about to teach, say so plainly.

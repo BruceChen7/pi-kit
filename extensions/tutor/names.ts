@@ -16,6 +16,8 @@ export const ASK_USER_QUESTION_TOOL_NAME = "ask_user_question";
 export const BIND_NOTES_TOOL_NAME = "bind_notes";
 export const NUMBER_CHAPTERS_TOOL_NAME = "number_chapters";
 export const SPLIT_TOPIC_TOOL_NAME = "split_topic";
+export const NOTE_CONCEPT_TOOL_NAME = "note_concept";
+export const CHECK_CONCEPTS_TOOL_NAME = "check_concepts";
 
 /** 只在 tutor 会话里可见的工具（顺序即加回 active 时的顺序）。 */
 export const TUTOR_SESSION_TOOL_NAMES = [
@@ -24,4 +26,6 @@ export const TUTOR_SESSION_TOOL_NAMES = [
   BIND_NOTES_TOOL_NAME,
   NUMBER_CHAPTERS_TOOL_NAME,
   SPLIT_TOPIC_TOOL_NAME,
+  NOTE_CONCEPT_TOOL_NAME,
+  CHECK_CONCEPTS_TOOL_NAME,
 ] as const;

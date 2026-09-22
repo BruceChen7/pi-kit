@@ -33,6 +33,21 @@ import {
   renderArgs,
   validateMermaidInput,
 } from "./diagram-core.ts";
+import {
+  detectTutorCommand,
+  detectTutorSkill,
+  formatTutorModeStatus,
+  parseTutorModeCommand,
+  planToolSync,
+  restoreTutorMode,
+  TUTOR_MODE_ENTRY_TYPE,
+  type TutorMode,
+} from "./mode-core.ts";
+import {
+  ASK_USER_QUESTION_TOOL_NAME,
+  QUIZ_TOOL_NAME,
+  TUTOR_MODE_COMMAND_NAME,
+} from "./names.ts";
 import { registerNotes } from "./notes-store.ts";
 import {
   buildOutcome,
@@ -112,7 +127,7 @@ const quizResult = (details: QuizDetails) => ({
 
 const registerQuiz = (pi: ExtensionAPI): void => {
   pi.registerTool({
-    name: "quiz",
+    name: QUIZ_TOOL_NAME,
     label: "Quiz",
     description:
       "Ask ONE graded multiple-choice question and reveal the answer afterwards. " +
@@ -237,7 +252,7 @@ const registerAsk = (pi: ExtensionAPI): void => {
   });
 
   pi.registerTool({
-    name: "ask_user_question",
+    name: ASK_USER_QUESTION_TOOL_NAME,
     label: "Ask User Question",
     description:
       "Ask ONE question with no right answer (goal, direction, preference) and let the user pick an option or answer in their own words. For graded questions use `quiz`.",
@@ -453,9 +468,71 @@ const registerDiagram = (pi: ExtensionAPI): void => {
   });
 };
 
+/**
+ * tutor-mode — 让 tutor 专属工具只在 tutor 会话里对模型可见。
+ *
+ * 扩展加载时注册的工具会被 pi 默认全部放进 active tools，于是普通 dev 会话里
+ * 模型也会看到 ask_user_question 并拿它当通用提问工具。这里用 `setActiveTools`
+ * 把它们从"喂给 provider 的工具定义"里摘掉，判定全在 mode-core（纯函数）。
+ *
+ * 四个入口：before_agent_start（正常一轮，同轮生效）、input（流式 steer 不经过
+ * before_agent_start）、session_start（resume / reload 恢复）、/tutor-mode（人敲）。
+ */
+const registerTutorMode = (pi: ExtensionAPI): void => {
+  let mode: TutorMode = "off";
+
+  const sync = (): void => {
+    const plan = planToolSync(pi.getActiveTools(), mode);
+    if (plan.changed) pi.setActiveTools(plan.tools);
+  };
+
+  /** 状态只在翻转时落条目 + sync（人敲命令也算翻转）。 */
+  const setMode = (next: TutorMode, persist: boolean): void => {
+    if (mode === next) return;
+    mode = next;
+    if (persist) {
+      pi.appendEntry(TUTOR_MODE_ENTRY_TYPE, { active: next === "on" });
+    }
+    sync();
+  };
+
+  pi.on("session_start", async (_event, ctx) => {
+    mode = restoreTutorMode(ctx.sessionManager.getEntries());
+    sync();
+  });
+
+  pi.on("before_agent_start", async (event) => {
+    if (detectTutorSkill(event.prompt)) setMode("on", true);
+    sync();
+  });
+
+  // 流式中途的 /skill:tutor（steer / followUp）不触发 before_agent_start，
+  // 只有 input 事件看得到那段还没展开的原始命令。普通输入交给上面那条更权威的路径。
+  pi.on("input", async (event) => {
+    if (!event.streamingBehavior) return;
+    if (detectTutorCommand(event.text)) setMode("on", true);
+  });
+
+  pi.registerCommand(TUTOR_MODE_COMMAND_NAME, {
+    description:
+      "Tutor 会话开关：on | off | status（tutor 专属工具是否对模型可见）",
+    handler: async (args, ctx) => {
+      const decision = parseTutorModeCommand(args);
+      if (decision.kind === "invalid") {
+        ctx.ui.notify(`未知参数：${decision.value}`, "warning");
+        return;
+      }
+      if (decision.kind !== "status") setMode(decision.kind, true);
+      sync();
+      ctx.ui.notify(formatTutorModeStatus(mode, pi.getActiveTools()));
+    },
+  });
+};
+
 export default function tutorExtension(pi: ExtensionAPI): void {
   registerQuiz(pi);
   registerAsk(pi);
   registerNotes(pi);
   registerDiagram(pi);
+  registerTutorMode(pi);
 }

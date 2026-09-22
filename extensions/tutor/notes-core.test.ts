@@ -2,29 +2,43 @@ import { describe, expect, it } from "vitest";
 import type { AskDetails } from "./ask-core.ts";
 import {
   buildTopicState,
+  CHAPTERS_END,
   catalogBlocks,
+  chapterFileName,
+  chapterLabel,
   chapterNotePath,
   countVerdicts,
   expandHome,
   formatAskAnswerBlock,
+  formatNumberingConflict,
   formatQuestionBlock,
   formatQuizAnswerBlock,
   formatSectionHeader,
   formatTopicHeader,
   hasIndexEntry,
   indexEntryLine,
-  isValidSection,
+  isValidChapter,
   isValidTopic,
   messageText,
+  nextChapterNumber,
+  parseChapterFileName,
+  parseChapterRef,
+  parseIndexEntries,
   parseNoteBlocks,
   pickResume,
+  planNumbering,
   planSplit,
+  proposeChapterOrder,
   provenanceBlock,
+  relinkIndex,
+  resolveChapterNumber,
   resolveTutorSettings,
+  rewriteChapterHeading,
   sanitizeName,
   stripSkillBlocks,
   TOPIC_REJECTION_REASONS,
   topicNotePath,
+  upsertChapterToc,
 } from "./notes-core.ts";
 import type { QuizDetails } from "./quiz-core.ts";
 
@@ -42,7 +56,7 @@ describe("notes-core / topic validation", () => {
       ok: false,
       reason: "space",
     });
-    expect(isValidSection("进程与 namespace")).toEqual({
+    expect(isValidChapter("进程与 namespace")).toEqual({
       ok: false,
       reason: "space",
     });
@@ -222,55 +236,453 @@ describe("notes-core / session text helpers", () => {
 
 // ── 章节 / 续做 / 存量拆分 ────────────────────────────────────────────────
 
-describe("notes-core / sections", () => {
-  it("builds chapter paths and keeps the index path when no section is given", () => {
+describe("notes-core / chapters", () => {
+  it("builds chapter paths from the number and keeps the index path when no chapter is given", () => {
     expect(
       chapterNotePath({
         vaultRoot: "/v",
         topDir: "Learn",
-        topic: "Docker 实现",
+        topic: "Docker实现",
       }),
-    ).toBe("/v/Learn/Docker 实现/Docker 实现.md");
+    ).toBe("/v/Learn/Docker实现/Docker实现.md");
     expect(
       chapterNotePath({
         vaultRoot: "/v/",
         topDir: "/Learn/",
-        topic: "Docker 实现",
-        section: "  进程与隔离  ",
+        topic: "Docker实现",
+        chapter: "  进程与隔离  ",
+        number: 3,
       }),
-    ).toBe("/v/Learn/Docker 实现/进程与隔离.md");
+    ).toBe("/v/Learn/Docker实现/03-进程与隔离.md");
+    expect(
+      chapterNotePath({
+        vaultRoot: "/v",
+        topDir: "Learn",
+        topic: "Docker实现",
+        chapter: "进程与隔离",
+      }),
+    ).toBe("/v/Learn/Docker实现/进程与隔离.md");
   });
 
-  it("validates section names with the topic rules plus a length cap", () => {
-    expect(isValidSection("进程与隔离").ok).toBe(true);
-    expect(isValidSection("  ")).toEqual({ ok: false, reason: "empty" });
-    expect(isValidSection("a/b")).toEqual({ ok: false, reason: "separator" });
-    expect(isValidSection("..")).toEqual({ ok: false, reason: "parent" });
-    expect(isValidSection("a\0b")).toEqual({ ok: false, reason: "nul" });
-    expect(isValidSection("x".repeat(60)).ok).toBe(true);
-    expect(isValidSection("x".repeat(61))).toEqual({
+  it("validates chapter names with the topic rules plus a length cap", () => {
+    expect(isValidChapter("进程与隔离").ok).toBe(true);
+    expect(isValidChapter("  ")).toEqual({ ok: false, reason: "empty" });
+    expect(isValidChapter("a/b")).toEqual({ ok: false, reason: "separator" });
+    expect(isValidChapter("..")).toEqual({ ok: false, reason: "parent" });
+    expect(isValidChapter("a\0b")).toEqual({ ok: false, reason: "nul" });
+    expect(isValidChapter("x".repeat(60)).ok).toBe(true);
+    expect(isValidChapter("x".repeat(61))).toEqual({
       ok: false,
       reason: "too-long",
     });
   });
 
-  it("writes a section header naming its topic", () => {
-    expect(formatSectionHeader("Docker 实现", "进程与隔离")).toContain(
-      "# 进程与隔离",
+  it("writes a chapter header that names its topic and number", () => {
+    expect(formatSectionHeader("Docker实现", "进程与隔离", 3)).toContain(
+      "# 第3章 · 进程与隔离",
     );
-    expect(formatSectionHeader("Docker 实现", "进程与隔离")).toContain(
-      "《Docker 实现》",
+    expect(formatSectionHeader("Docker实现", "进程与隔离", 3)).toContain(
+      "《Docker实现》第 3 章",
+    );
+    // 无编号时退回旧文案（迁移前的章节）
+    expect(formatSectionHeader("Docker实现", "进程与隔离")).toContain(
+      "《Docker实现》的一章",
     );
   });
 
   it("builds index lines and detects existing ones without prefix confusion", () => {
-    expect(indexEntryLine({ section: "进程与隔离", date: "2026-09-18" })).toBe(
+    expect(indexEntryLine({ name: "进程与隔离", date: "2026-09-18" })).toBe(
       "- [[进程与隔离]] · 2026-09-18",
     );
-    const index = "- [[进程与隔离]] · 2026-09-18";
+    expect(
+      indexEntryLine({ name: "进程与隔离", number: 3, date: "2026-09-18" }),
+    ).toBe("- 第3章 · [[03-进程与隔离|进程与隔离]] · 2026-09-18");
+    const index = "- 第3章 · [[03-进程与隔离|进程与隔离]] · 2026-09-18";
     expect(hasIndexEntry(index, "进程与隔离")).toBe(true);
     expect(hasIndexEntry(index, "进程")).toBe(false);
     expect(hasIndexEntry("- [[进程与隔离2]] · x", "进程与隔离")).toBe(false);
+    // 旧格式与 provenance 的 `> - ` 行
+    expect(hasIndexEntry("- [[进程与隔离]] · 2026-09-18", "进程与隔离")).toBe(
+      true,
+    );
+    expect(hasIndexEntry("> - [[进程与隔离]] · 2026-09-18", "进程与隔离")).toBe(
+      true,
+    );
+  });
+
+  it("parses index entries with their numbers, names and dates", () => {
+    const index = [
+      "> [!note] 2026-09-18 已拆分为 [[01-a]] [[02-b]]",
+      ">",
+      "> - 第1章 · [[01-a|a]] · 2026-09-18",
+      "> - [[b]] · 2026-09-19",
+      "正文里的 [[c]] 不是章节行",
+    ].join("\n");
+    expect(parseIndexEntries(index)).toEqual([
+      {
+        number: 1,
+        name: "a",
+        fileName: "01-a",
+        date: "2026-09-18",
+        line: "> - 第1章 · [[01-a|a]] · 2026-09-18",
+      },
+      {
+        number: undefined,
+        name: "b",
+        fileName: "b",
+        date: "2026-09-19",
+        line: "> - [[b]] · 2026-09-19",
+      },
+    ]);
+  });
+});
+
+describe("notes-core / chapter ordinals", () => {
+  it("derives labels and file names from the number", () => {
+    expect(chapterLabel(3, "调度与唤醒")).toBe("第3章 · 调度与唤醒");
+    expect(chapterLabel(undefined, "调度与唤醒")).toBe("调度与唤醒");
+    expect(chapterFileName(3, "调度与唤醒")).toBe("03-调度与唤醒");
+    expect(chapterFileName(10, "x")).toBe("10-x");
+    expect(chapterFileName(100, "x")).toBe("100-x");
+    expect(chapterFileName(undefined, "调度与唤醒")).toBe("调度与唤醒");
+  });
+
+  it("round-trips file names and keeps non-numeric prefixes as names", () => {
+    expect(parseChapterFileName("03-调度与唤醒")).toEqual({
+      number: 3,
+      name: "调度与唤醒",
+    });
+    expect(parseChapterFileName("调度与唤醒")).toEqual({
+      name: "调度与唤醒",
+    });
+    // 不是编号前缀：4 位年号、以数字开头的章名
+    expect(parseChapterFileName("2026-09-18-x")).toEqual({
+      name: "2026-09-18-x",
+    });
+    expect(parseChapterFileName("1号进程与生命周期")).toEqual({
+      name: "1号进程与生命周期",
+    });
+  });
+
+  it("parses the chapter refs a human or agent might type", () => {
+    expect(parseChapterRef("第3章")).toEqual({ number: 3 });
+    expect(parseChapterRef("第三章")).toEqual({ number: 3 });
+    expect(parseChapterRef("第二十三章")).toEqual({ number: 23 });
+    expect(parseChapterRef("第3章 · 调度与唤醒")).toEqual({
+      number: 3,
+      name: "调度与唤醒",
+    });
+    expect(parseChapterRef("第 3 章：调度与唤醒")).toEqual({
+      number: 3,
+      name: "调度与唤醒",
+    });
+    expect(parseChapterRef("03-调度与唤醒")).toEqual({
+      number: 3,
+      name: "调度与唤醒",
+    });
+    expect(parseChapterRef("3")).toEqual({ number: 3 });
+    expect(parseChapterRef("调度与唤醒")).toEqual({ name: "调度与唤醒" });
+  });
+
+  it("resolves numbers: reuse existing, honour a free request, otherwise max + 1", () => {
+    const chapters = [
+      { number: 1, name: "一" },
+      { number: 2, name: "二" },
+      { number: 4, name: "四" },
+      { name: "未编号" },
+    ];
+    // 该章已有编号（第4章的"四"）：沿用它
+    expect(
+      resolveChapterNumber({ existing: 4, requested: 4, chapters }),
+    ).toEqual({ ok: true, number: 4 });
+    expect(resolveChapterNumber({ existing: 4, chapters })).toEqual({
+      ok: true,
+      number: 4,
+    });
+    // 显式要求一个空闲编号（补讲空洞）→ 允许
+    expect(resolveChapterNumber({ requested: 3, chapters })).toEqual({
+      ok: true,
+      number: 3,
+    });
+    // 未指定 → max + 1，空洞不自动填
+    expect(resolveChapterNumber({ chapters })).toEqual({ ok: true, number: 5 });
+    expect(nextChapterNumber([])).toBe(1);
+    expect(nextChapterNumber([1, 2, 4])).toBe(5);
+  });
+
+  it("fails a taken number with the occupant, taken numbers, gaps and the auto number", () => {
+    const chapters = [
+      { number: 1, name: "锁模式与位掩码" },
+      { number: 3, name: "调度与唤醒" },
+    ];
+    const decision = resolveChapterNumber({ requested: 3, chapters });
+    expect(decision.ok).toBe(false);
+    if (decision.ok === true) return;
+    expect(decision.conflict).toMatchObject({
+      requested: 3,
+      occupant: "第3章 · 调度与唤醒",
+      taken: [1, 3],
+      gaps: [2],
+      auto: 4,
+    });
+    expect(decision.hint).toBe(
+      formatNumberingConflict({
+        requested: 3,
+        occupant: "第3章 · 调度与唤醒",
+        taken: [1, 3],
+        gaps: [2],
+        auto: 4,
+      }),
+    );
+    expect(decision.hint).toContain("已被「第3章 · 调度与唤醒」占用");
+    expect(decision.hint).toContain("空闲 2");
+    expect(decision.hint).toContain("自动取 4");
+  });
+
+  it("refuses to renumber an already numbered chapter and rejects bad requests", () => {
+    const chapters = [{ number: 3, name: "调度与唤醒" }];
+    const renumber = resolveChapterNumber({
+      existing: 3,
+      requested: 5,
+      chapters,
+    });
+    expect(renumber.ok).toBe(false);
+    if (renumber.ok === false) {
+      expect(renumber.conflict).toBe(null);
+      expect(renumber.hint).toContain("不重排已编号章节");
+    }
+    const bad = resolveChapterNumber({ requested: 0, chapters });
+    expect(bad.ok).toBe(false);
+    if (bad.ok === false) expect(bad.hint).toContain("positive integer");
+  });
+
+  it("rewrites the heading only when it is the plain name", () => {
+    expect(rewriteChapterHeading("# 调度与唤醒\n\n正文", "调度与唤醒", 3)).toBe(
+      "# 第3章 · 调度与唤醒\n\n正文",
+    );
+    expect(
+      rewriteChapterHeading("# 我改过的标题\n\n正文", "调度与唤醒", 3),
+    ).toBe("# 我改过的标题\n\n正文");
+    // 旧笔记的标题带空格（名字后来去了空格）：只差空白就算同一个标题
+    expect(
+      rewriteChapterHeading(
+        "# chroot 与挂载时机\n\n正文",
+        "chroot与挂载时机",
+        4,
+      ),
+    ).toBe("# 第4章 · chroot与挂载时机\n\n正文");
+    // 没有标题行 / 标题行多了别的话 → 一个字都不动
+    expect(rewriteChapterHeading("正文没有标题\n", "调度与唤醒", 3)).toBe(
+      "正文没有标题\n",
+    );
+    expect(
+      rewriteChapterHeading("# 调度与唤醒（改过）\n", "调度与唤醒", 3),
+    ).toBe("# 调度与唤醒（改过）\n");
+  });
+
+  it("relinks every form of link to the numbered target and leaves prose alone", () => {
+    const index = [
+      "> [!note] 2026-09-18 已拆分为 [[调度与唤醒]] [[别的]]",
+      "- [[调度与唤醒]] · 2026-09-18",
+      "> - [[调度与唤醒|唤醒]] · 2026-09-19",
+      "- 第 3 章还是别扭",
+    ].join("\n");
+    const relinked = relinkIndex(index, {
+      name: "调度与唤醒",
+      number: 3,
+      fileName: "03-调度与唤醒",
+    });
+    expect(relinked).toContain("[[03-调度与唤醒|调度与唤醒]] [[别的]]");
+    expect(relinked).toContain(
+      "- 第3章 · [[03-调度与唤醒|调度与唤醒]] · 2026-09-18",
+    );
+    expect(relinked).toContain(
+      "> - 第3章 · [[03-调度与唤醒|唤醒]] · 2026-09-19",
+    );
+    expect(relinked).toContain("- 第 3 章还是别扭");
+    // 索引列表行补上「第N章 ·」前缀（provenance 的 `> - ` 行也算），已有编号的不重复加
+    expect(relinked).toContain(
+      "- 第3章 · [[03-调度与唤醒|调度与唤醒]] · 2026-09-18",
+    );
+    expect(relinked).toContain(
+      "> - 第3章 · [[03-调度与唤醒|唤醒]] · 2026-09-19",
+    );
+    // 幂等：再跑一次不变
+    expect(
+      relinkIndex(relinked, {
+        name: "调度与唤醒",
+        number: 3,
+        fileName: "03-调度与唤醒",
+      }),
+    ).toBe(relinked);
+  });
+
+  it("inserts the TOC before the first callout, not between a callout and its body", () => {
+    const index = [
+      "# Docker实现",
+      "",
+      "> 由 tutor 维持：每次教学按时间顺序追加，只增不改。",
+      "",
+      "> [!abstract] PI",
+      "",
+      "先确认方向。",
+      "",
+    ].join("\n");
+    const withToc = upsertChapterToc(index, [
+      { number: 1, name: "重建地基：对象视角", date: "2026-09-18" },
+    ]);
+    expect(withToc.indexOf("## 章节")).toBeLessThan(
+      withToc.indexOf("> [!abstract] PI"),
+    );
+    expect(withToc.indexOf("> 由 tutor 维持")).toBeLessThan(
+      withToc.indexOf("## 章节"),
+    );
+    // 有 provenance / 正文 callout 的索引也插在第一个 callout 之前
+    const withProvenance = upsertChapterToc(
+      [
+        "# Docker实现",
+        "",
+        "> 由 tutor 维持：…",
+        "",
+        "> [!note] 2026-09-18 已拆分为 [[01-a]]",
+        ">",
+        "> - [[01-a]] · 2026-09-18",
+        "",
+        "正文。",
+      ].join("\n"),
+      [{ number: 1, name: "a", date: "2026-09-18" }],
+    );
+    expect(withProvenance.indexOf("## 章节")).toBeLessThan(
+      withProvenance.indexOf("> [!note]"),
+    );
+  });
+
+  it("inserts the chapter TOC after the topic header, then rebuilds it in place", () => {
+    const header =
+      "# MySQL锁原理与实现\n\n> 由 tutor 维持：每次教学按时间顺序追加，只增不改。\n";
+    const chapters = [
+      { number: 1, name: "锁模式与位掩码", date: "2026-09-21" },
+      { number: 2, name: "加锁过程与等待队列" },
+    ];
+    const withToc = upsertChapterToc(header, chapters);
+    expect(withToc.startsWith("# MySQL锁原理与实现")).toBe(true);
+    expect(withToc.indexOf("## 章节")).toBeGreaterThan(
+      withToc.indexOf("> 由 tutor 维持"),
+    );
+    expect(withToc).toContain(
+      "- 第1章 · [[01-锁模式与位掩码|锁模式与位掩码]] · 2026-09-21",
+    );
+    expect(withToc).toContain(
+      "- 第2章 · [[02-加锁过程与等待队列|加锁过程与等待队列]]",
+    );
+    expect(withToc).toContain(CHAPTERS_END);
+    // 原地重建：加一章后块被重写，块外一字不动
+    const rebuilt = upsertChapterToc(withToc, [
+      ...chapters,
+      { number: 3, name: "调度与唤醒", date: "2026-09-21" },
+    ]);
+    expect(rebuilt).toContain(
+      "- 第3章 · [[03-调度与唤醒|调度与唤醒]] · 2026-09-21",
+    );
+    expect(rebuilt.match(/## 章节/g)).toHaveLength(1);
+    expect(rebuilt).toContain("> 由 tutor 维持");
+    // 空列表不动索引；没有定界符的老索引不会被凭空改
+    expect(upsertChapterToc(header, [])).toBe(header);
+  });
+
+  it("plans a numbering migration in the given order", () => {
+    const existing = [
+      { name: "锁模式与位掩码" },
+      { name: "加锁过程与等待队列" },
+      { name: "调度与唤醒" },
+      { number: 4, name: "超时与死锁检测" },
+    ];
+    const plan = planNumbering({
+      chapters: ["锁模式与位掩码", "加锁过程与等待队列", "调度与唤醒"],
+      existing,
+    });
+    expect(plan.ok).toBe(true);
+    if (plan.ok === false) return;
+    expect(plan.assignments).toEqual([
+      {
+        name: "锁模式与位掩码",
+        number: 1,
+        from: "锁模式与位掩码",
+        to: "01-锁模式与位掩码",
+        unchanged: false,
+      },
+      {
+        name: "加锁过程与等待队列",
+        number: 2,
+        from: "加锁过程与等待队列",
+        to: "02-加锁过程与等待队列",
+        unchanged: false,
+      },
+      {
+        name: "调度与唤醒",
+        number: 3,
+        from: "调度与唤醒",
+        to: "03-调度与唤醒",
+        unchanged: false,
+      },
+    ]);
+    // 已编号且和计划一致 → 计划里保留但标记跳过；没进顺序的未编号章节列入 unassigned
+    const keep = planNumbering({
+      chapters: ["超时与死锁检测", "排查对应表"],
+      existing: [...existing, { name: "排查对应表" }],
+      startAt: 4,
+    });
+    expect(keep.ok).toBe(true);
+    if (keep.ok === true) {
+      expect(keep.assignments.map((item) => item.unchanged)).toEqual([
+        true,
+        false,
+      ]);
+      expect(keep.unassigned.map((item) => item.name)).toEqual([
+        "锁模式与位掩码",
+        "加锁过程与等待队列",
+        "调度与唤醒",
+      ]);
+    }
+  });
+
+  it("refuses a migration that would renumber, misspell or duplicate a chapter", () => {
+    const existing = [
+      { number: 3, name: "调度与唤醒" },
+      { name: "排查对应表" },
+    ];
+    const renumber = planNumbering({
+      chapters: ["排查对应表", "调度与唤醒"],
+      existing,
+    });
+    expect(renumber.ok).toBe(false);
+    if (renumber.ok === false) {
+      expect(renumber.conflicts[0].name).toBe("调度与唤醒");
+      expect(renumber.conflicts[0].hint).toContain("不重排已编号章节");
+    }
+    const typo = planNumbering({ chapters: ["调度与唤配"], existing });
+    expect(typo.ok).toBe(false);
+    if (typo.ok === false)
+      expect(typo.conflicts[0].hint).toContain("目录里没有章节");
+    const dup = planNumbering({
+      chapters: ["排查对应表", "排查对应表"],
+      existing,
+    });
+    expect(dup.ok).toBe(false);
+    if (dup.ok === false) expect(dup.conflicts[0].hint).toContain("出现了两次");
+  });
+
+  it("suggests an order: index order first, then most recently touched", () => {
+    expect(
+      proposeChapterOrder({
+        chapters: [
+          { name: "c", touchedAt: "2026-09-01T00:00:00.000Z" },
+          { name: "a", touchedAt: "2026-09-03T00:00:00.000Z" },
+          { name: "b", touchedAt: "2026-09-02T00:00:00.000Z" },
+        ],
+        indexOrder: ["a", "b", "不在目录里的"],
+      }),
+    ).toEqual(["a", "b", "c"]);
   });
 });
 
@@ -425,12 +837,14 @@ describe("notes-core / split", () => {
   it("plans a split that keeps unassigned blocks in the index", () => {
     const plan = planSplit({
       markdown: chapterNote,
-      sections: [{ name: "进程与隔离", blockIndexes: [2, 3] }],
+      chapters: [{ name: "进程与隔离", blockIndexes: [2, 3] }],
     });
     expect(plan.ok).toBe(true);
     if (plan.ok === false) return;
-    expect(plan.sections[0].markdown).toContain("> [!question] Quiz");
-    expect(plan.sections[0].markdown).toContain(
+    expect(plan.chapters[0].number).toBe(1);
+    expect(plan.chapters[0].fileName).toBe("01-进程与隔离");
+    expect(plan.chapters[0].markdown).toContain("> [!question] Quiz");
+    expect(plan.chapters[0].markdown).toContain(
       "> [!success] Quiz — correct ✓",
     );
     expect(plan.index).toContain("# Docker 实现");
@@ -441,7 +855,7 @@ describe("notes-core / split", () => {
   it("conserves every block exactly once", () => {
     const plan = planSplit({
       markdown: chapterNote,
-      sections: [
+      chapters: [
         { name: "A", blockIndexes: [2, 3] },
         { name: "B", blockIndexes: [4] },
       ],
@@ -451,8 +865,8 @@ describe("notes-core / split", () => {
     const original = parseNoteBlocks(chapterNote).map((block) => block.text);
     const after = [
       ...parseNoteBlocks(plan.index).map((block) => block.text),
-      ...plan.sections.flatMap((section) =>
-        parseNoteBlocks(section.markdown).map((block) => block.text),
+      ...plan.chapters.flatMap((chapter) =>
+        parseNoteBlocks(chapter.markdown).map((block) => block.text),
       ),
     ];
     expect(after.slice().sort()).toEqual(original.slice().sort());
@@ -460,19 +874,19 @@ describe("notes-core / split", () => {
 
   it("rejects bad assignments", () => {
     const cases = [
-      { sections: [{ name: "A", blockIndexes: [99] }], error: "out of range" },
+      { chapters: [{ name: "A", blockIndexes: [99] }], error: "out of range" },
       {
-        sections: [{ name: "A", blockIndexes: [1, 1] }],
+        chapters: [{ name: "A", blockIndexes: [1, 1] }],
         error: "assigned twice",
       },
-      { sections: [{ name: "A", blockIndexes: [] }], error: "has no blocks" },
-      { sections: [{ name: "a/b", blockIndexes: [1] }], error: "is invalid" },
-      { sections: [], error: "no block was assigned" },
+      { chapters: [{ name: "A", blockIndexes: [] }], error: "has no blocks" },
+      { chapters: [{ name: "a/b", blockIndexes: [1] }], error: "is invalid" },
+      { chapters: [], error: "no block was assigned" },
     ];
     for (const item of cases) {
       const plan = planSplit({
         markdown: chapterNote,
-        sections: item.sections,
+        chapters: item.chapters,
       });
       expect(plan.ok).toBe(false);
       if (plan.ok === false) expect(plan.error).toContain(item.error);
@@ -480,7 +894,7 @@ describe("notes-core / split", () => {
     expect(
       planSplit({
         markdown: "# empty",
-        sections: [{ name: "A", blockIndexes: [1] }],
+        chapters: [{ name: "A", blockIndexes: [1] }],
       }),
     ).toMatchObject({
       ok: false,
@@ -490,11 +904,59 @@ describe("notes-core / split", () => {
   it("writes a provenance block that points at the archive and lists the chapters", () => {
     const block = provenanceBlock({
       date: "2026-09-18",
-      sections: ["进程与隔离", "namespace"],
-      archiveName: "Docker 实现.2026-09-18.md",
+      chapters: [
+        { number: 1, name: "进程与隔离" },
+        { number: 2, name: "namespace" },
+      ],
+      archiveName: "Docker实现.2026-09-18.md",
     });
-    expect(block).toContain("[[进程与隔离]] [[namespace]]");
-    expect(block).toContain("_archive/Docker 实现.2026-09-18.md");
-    expect(block).toContain("> - [[进程与隔离]] · 2026-09-18");
+    expect(block).toContain("[[01-进程与隔离]] [[02-namespace]]");
+    expect(block).toContain("_archive/Docker实现.2026-09-18.md");
+    expect(block).toContain(
+      "> - 第1章 · [[01-进程与隔离|进程与隔离]] · 2026-09-18",
+    );
+  });
+});
+
+describe("notes-core / numbering order with explicit numbers", () => {
+  it("honours a number written into the order list, leaving the gap open", () => {
+    const existing = [
+      { name: "锁模式与位掩码" },
+      { name: "加锁过程与等待队列" },
+      { name: "加锁规则地图" },
+      { name: "排查对应表" },
+    ];
+    const plan = planNumbering({
+      chapters: [
+        "第1章 · 锁模式与位掩码",
+        "第2章 · 加锁过程与等待队列",
+        "第6章 · 加锁规则地图",
+        "第7章 · 排查对应表",
+      ],
+      existing,
+    });
+    expect(plan.ok).toBe(true);
+    if (plan.ok === false) return;
+    expect(plan.assignments.map((item) => [item.name, item.number])).toEqual([
+      ["锁模式与位掩码", 1],
+      ["加锁过程与等待队列", 2],
+      ["加锁规则地图", 6],
+      ["排查对应表", 7],
+    ]);
+    expect(plan.assignments.map((item) => item.to)).toEqual([
+      "01-锁模式与位掩码",
+      "02-加锁过程与等待队列",
+      "06-加锁规则地图",
+      "07-排查对应表",
+    ]);
+  });
+
+  it("rejects the same number twice in one order", () => {
+    const plan = planNumbering({
+      chapters: ["第2章 · 甲", "第2章 · 乙"],
+      existing: [{ name: "甲" }, { name: "乙" }],
+    });
+    expect(plan.ok).toBe(false);
+    if (plan.ok === false) expect(plan.conflicts[0].hint).toContain("同时给了");
   });
 });

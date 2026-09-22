@@ -128,9 +128,10 @@ Chinese where that reads naturally instead of inserting spaces around latin term
 (`procfs与cgroup`, not `procfs 与 cgroup`). The tools reject names with whitespace and return a
 space-free suggestion you can retry with directly.
 
-**A topic is an index page plus one file per chapter.** `bind_notes({ topic, section })`
-switches the mirror to `<topic>/<section>.md` and appends the chapter to the index. Two
-rules follow:
+**A topic is an index page plus one file per chapter, and every chapter has a number.**
+`bind_notes({ topic, chapter })` switches the mirror to `<topic>/<NN-章节>.md`, writes
+`# 第N章 · 章节` as its first line, appends the chapter line to the index and refreshes the
+index's `## 章节` block. Four rules follow:
 
 1. **Resume before teaching anything new.** If `resume` points at a chapter, start there:
    an `unanswered-question` means a question was asked and never answered — re-ask it (or
@@ -139,23 +140,42 @@ rules follow:
 2. **Bind a chapter BEFORE teaching it.** Questions and answers land in whatever file is
    bound at the moment they are asked, so switching chapters mid-explanation splits a
    question from its own prose.
-3. **Close each chapter in the index.** At the end of a chapter, add its conclusions to the
+3. **The tool owns the number, you own the name.** Before teaching a chapter, bind it; then
+   call it `第N章 · 名字`, exactly as `bind_notes` reported it (or ask `number_chapters`
+   without `chapters` to list them). Never invent a number, never renumber: numbers only move
+   forward and skipped chapters leave their gap open. When your plan already numbers its
+   chapters, pass `chapterNumber` at bind time so chat and notes agree; if the number is
+   taken the tool returns the occupant, the taken numbers, the free gaps and the auto number —
+   fix the plan out loud in chat rather than silently shifting a chapter.
+4. **Close each chapter in the index.** At the end of a chapter, add its conclusions to the
    index page under `## 已知边界` (what they now hold) and `## 未解决` (open questions).
-   That is what the next session's probe reads — keep it short and concrete.
+   That is what the next session's probe reads — keep it short and concrete. Leave the
+   `## 章节` block and its `<!-- tutor:chapters -->` markers alone; the tools rewrite it.
 
 **An old single-file topic gets split first.** If `bind_notes` reports no chapters while the
 note is large, call `split_topic({ topic })` for the block catalog, decide the chapter
-boundaries yourself (you know the teaching structure), show them to the learner, then
-`split_topic({ topic, sections, apply: true })`. It archives the original under `_archive/`
-first and moves blocks verbatim — never retype note content yourself.
+boundaries yourself (you know the teaching structure) in teaching order, show them to the
+learner, then `split_topic({ topic, chapters, apply: true })`. It archives the original under
+`_archive/` first and moves blocks verbatim — never retype note content yourself.
+
+**A topic that predates numbering gets numbered.** If `bind_notes` says chapters are still
+unnumbered, call `number_chapters({ topic })` to see the current state and a suggested order,
+agree that order with the learner (you know the teaching order; ask when two chapters could
+go either way), then number the chapters in that order — write the number into the order
+itself (`第6章 · 加锁规则地图`) wherever the plan you taught from already numbered them, so
+the gaps the learner heard about stay where they are. Preview with `apply: false`, then
+`apply: true`: it renames `<名字>.md` →
+`<NN-名字>.md`, rewrites the plain headings, relinks the index and archives the pre-numbering
+index under `_archive/`. Binding an unnumbered chapter also numbers it on the spot.
 
 The note is the lesson: prose, mermaid fences and every quiz question/answer land in it
 automatically. Write the lesson *once*, in chat, at full quality — do not write a chat
 version and a file version.
 
 `/md-topic` with no argument opens a picker (existing topics + "新建主题…");
-`/md-topic <topic> <section>` binds a chapter by hand; `/md-log <path>` links an existing
-file without creating one; `/md-unlog` stops mirroring.
+`/md-topic <topic> <章节>` binds a chapter by hand — `第3章`, `03-调度与唤醒` and the plain
+name all work; `/md-log <path>` links an existing file without creating one; `/md-unlog`
+stops mirroring.
 
 ## Diagrams
 

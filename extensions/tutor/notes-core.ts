@@ -30,7 +30,7 @@ export const TOPIC_REJECTION_REASONS: TopicRejection[] = [
 ];
 
 /** 章节名长度上限：够长到能表达主题，又不至于变成一句话。 */
-export const SECTION_MAX_LENGTH = 60;
+export const CHAPTER_MAX_LENGTH = 60;
 
 export type TopicCheck =
   | { ok: true; topic: string }
@@ -140,42 +140,435 @@ export const formatTopicHeader = (topic: string): string =>
 export const sanitizeName = (name: string): string =>
   name.trim().replace(/\s+/g, "");
 
-export const isValidSection = (section: string): TopicCheck => {
-  const check = isValidTopic(section);
+export const isValidChapter = (chapter: string): TopicCheck => {
+  const check = isValidTopic(chapter);
   if (check.ok === false) return check;
-  if (check.topic.length > SECTION_MAX_LENGTH) {
+  if (check.topic.length > CHAPTER_MAX_LENGTH) {
     return { ok: false, reason: "too-long" };
   }
   return check;
 };
 
-/** 省略 section 时是索引页 `<topic>/<topic>.md`；给出时是章节页 `<topic>/<section>.md`。 */
+// ── 章节序号 ────────────────────────────────────────────────────────────
+//
+// 编号的**唯一权威是文件名**（`03-调度与唤醒.md`），H1、索引行、`## 章节` 块都是它的视图：
+// 同一次改动里由 Core 从文件名重算，不可能各自为政。编号只增不改：不重排、不复用，
+// 没讲的章留空洞（第5章没开讲，第6章就仍是 06）。
+
+export type ChapterFile = {
+  /** 文件名前缀里的编号；旧格式（`名字.md`）没有。 */
+  number?: number;
+  name: string;
+  /** 索引行里的日期（有就沿用，不重算）。 */
+  date?: string;
+};
+
+/** `第3章 · 调度与唤醒`；没编号时退回裸名字。 */
+export const chapterLabel = (
+  number: number | undefined,
+  name: string,
+): string => (number === undefined ? name : `第${number}章 · ${name}`);
+
+/** `03-调度与唤醒`；没编号时退回裸名字。`01`…`99`，三位数自然变三位。 */
+export const chapterFileName = (
+  number: number | undefined,
+  name: string,
+): string =>
+  number === undefined ? name : `${String(number).padStart(2, "0")}-${name}`;
+
+// 只认 1–3 位的纯数字前缀：`1号进程与生命周期`、`2026-09-18-xxx` 都不算编号。
+const CHAPTER_FILE_PREFIX_RE = /^(\d{1,3})-(.+)$/;
+
+/** 文件名（不含 `.md`）→ 编号 + 名字；没有前缀就是旧格式章节。 */
+export const parseChapterFileName = (
+  base: string,
+): { number?: number; name: string } => {
+  const match = CHAPTER_FILE_PREFIX_RE.exec(base);
+  if (!match) return { name: base };
+  return { number: Number(match[1]), name: match[2] };
+};
+
+const CHINESE_DIGITS: Record<string, number> = {
+  一: 1,
+  二: 2,
+  两: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+};
+
+/** `十` / `十二` / `二十` / `二十三`：够用到教学场景，不做百位以上。 */
+const chineseNumber = (text: string): number | undefined => {
+  if (text === "十") return 10;
+  const tens = /^([一二三四五六七八九])?十([一二三四五六七八九])?$/.exec(text);
+  if (tens) {
+    const high = tens[1] ? CHINESE_DIGITS[tens[1]] : 1;
+    const low = tens[2] ? CHINESE_DIGITS[tens[2]] : 0;
+    return high * 10 + low;
+  }
+  return CHINESE_DIGITS[text];
+};
+
+const NUMERAL = "([0-9]{1,3}|[一二两三四五六七八九十]{1,3})";
+const CHAPTER_REF_RE = new RegExp(
+  `^第\\s*${NUMERAL}\\s*章\\s*[·:：\\-—]?\\s*(.*)$`,
+);
+const FILE_REF_RE = /^(\d{1,3})-(.+)$/;
+const BARE_NUMBER_RE = /^\d{1,3}$/;
+
+const numberFrom = (text: string): number | undefined =>
+  /^\d+$/.test(text) ? Number(text) : chineseNumber(text);
+
+/**
+ * 人/agent 随手写的章节引用：`第3章`、`第三章`、`第3章 · 调度与唤醒`、`03-调度与唤醒`、`调度与唤醒`。
+ * 解析不出来就把整串当名字（名字校验在调用侧，保持这个函数不做拒绝）。
+ */
+export const parseChapterRef = (
+  text: string,
+): { number?: number; name?: string } => {
+  const trimmed = text.trim();
+  const chapter = CHAPTER_REF_RE.exec(trimmed);
+  if (chapter) {
+    const rest = chapter[2].trim();
+    return rest.length > 0
+      ? { number: numberFrom(chapter[1]), name: rest }
+      : { number: numberFrom(chapter[1]) };
+  }
+  const file = FILE_REF_RE.exec(trimmed);
+  if (file) return { number: Number(file[1]), name: file[2] };
+  if (BARE_NUMBER_RE.test(trimmed)) return { number: Number(trimmed) };
+  return { name: trimmed };
+};
+
+/** 省略编号的章节页：`<topic>/<topic>.md`；给出时：`<topic>/<NN-名字>.md`。 */
 export const chapterNotePath = (input: {
   vaultRoot: string;
   topDir: string;
   topic: string;
-  section?: string;
-}): string =>
-  joinPath(
+  chapter?: string;
+  number?: number;
+}): string => {
+  const chapter = input.chapter?.trim();
+  return joinPath(
     input.vaultRoot,
     input.topDir,
     input.topic,
-    `${input.section?.trim() || input.topic}.md`,
+    chapter
+      ? `${chapterFileName(input.number, chapter)}.md`
+      : `${input.topic}.md`,
   );
+};
 
-/** 新章节文件的开头：标明它属于哪个主题。 */
-export const formatSectionHeader = (topic: string, section: string): string =>
-  `# ${section}\n\n> 《${topic}》的一章 · 由 tutor 维持：按时间顺序追加，只增不改。\n`;
+/** 新章节文件的开头：标明它属于哪个主题、是第几章。 */
+export const formatSectionHeader = (
+  topic: string,
+  chapter: string,
+  number?: number,
+): string =>
+  `# ${chapterLabel(number, chapter)}\n\n> 《${topic}》${
+    number === undefined ? "的一章" : `第 ${number} 章`
+  } · 由 tutor 维持：按时间顺序追加，只增不改。\n`;
 
-/** 索引页里的章节行（只在首次绑定该章时追加）。 */
+/** 迁移旧章节时改首行：只有它整行就是章节名（允许空白差异）才改，用户自己改过就不碰。 */
+export const rewriteChapterHeading = (
+  markdown: string,
+  name: string,
+  number: number,
+): string => {
+  const lines = markdown.split("\n");
+  const current = /^#\s+(.*)$/.exec((lines[0] ?? "").trim())?.[1]?.trim();
+  if (current === undefined) return markdown;
+  // 旧笔记里标题带空格（`# chroot 与挂载时机`），名字后来去了空格：同名字才认。
+  if (current.replace(/\s+/g, "") !== name.replace(/\s+/g, "")) return markdown;
+  lines[0] = `# ${chapterLabel(number, name)}`;
+  return lines.join("\n");
+};
+
+export const nextChapterNumber = (taken: number[]): number =>
+  taken.length === 0 ? 1 : Math.max(...taken) + 1;
+
+export type NumberingConflict = {
+  /** 被顶掉的编号。 */
+  requested: number;
+  /** 占用者的标签：`第3章 · 调度与唤醒`。 */
+  occupant: string;
+  /** 已用编号（升序）。 */
+  taken: number[];
+  /** 已用编号之间的空洞（升序）：可以显式指定这些号来补讲漏掉的章。 */
+  gaps: number[];
+  /** 省略 `chapterNumber` 会自动取到的号。 */
+  auto: number;
+};
+
+/** 冲突文案：把"下一步怎么改"一次给全，agent 一轮就能自纠。 */
+export const formatNumberingConflict = (conflict: NumberingConflict): string =>
+  [
+    `chapterNumber ${conflict.requested} 已被「${conflict.occupant}」占用`,
+    `已用编号 ${conflict.taken.join(",")}`,
+    `空闲 ${conflict.gaps.length > 0 ? conflict.gaps.join(",") : "(无)"}`,
+    `省略 chapterNumber 会自动取 ${conflict.auto}`,
+  ].join("；");
+
+export type NumberingDecision =
+  | { ok: true; number: number }
+  | { ok: false; hint: string; conflict: NumberingConflict | null };
+
+const positiveInt = (value: number | undefined): boolean =>
+  value === undefined || (Number.isInteger(value) && value >= 1);
+
+const conflictOf = (input: {
+  requested: number;
+  chapters: ChapterFile[];
+}): NumberingConflict => {
+  const numbers = input.chapters
+    .flatMap((chapter) =>
+      chapter.number === undefined ? [] : [chapter.number],
+    )
+    .sort((a, b) => a - b);
+  const taken = [...new Set(numbers)];
+  const occupant = input.chapters.find(
+    (chapter) => chapter.number === input.requested,
+  );
+  const gaps: number[] = [];
+  const max = taken.length > 0 ? taken[taken.length - 1] : 0;
+  for (let n = 1; n <= max; n++) if (!taken.includes(n)) gaps.push(n);
+  return {
+    requested: input.requested,
+    occupant: occupant ? chapterLabel(occupant.number, occupant.name) : "?",
+    taken,
+    gaps,
+    auto: nextChapterNumber(taken),
+  };
+};
+
+/**
+ * 定号：该章已有编号就沿用它（显式要求不同则冲突）；否则显式值空闲则采用，
+ * 未指定则取"未占用的下一个号"——空洞不会被自动填。
+ */
+export const resolveChapterNumber = (input: {
+  existing?: number;
+  requested?: number;
+  chapters: ChapterFile[];
+}): NumberingDecision => {
+  if (!positiveInt(input.requested)) {
+    return {
+      ok: false,
+      hint: `chapterNumber must be a positive integer, got ${input.requested}`,
+      conflict: null,
+    };
+  }
+  const taken = input.chapters.flatMap((chapter) =>
+    chapter.number === undefined || chapter.number === input.existing
+      ? []
+      : [chapter.number],
+  );
+  if (input.existing !== undefined) {
+    if (input.requested !== undefined && input.requested !== input.existing) {
+      return {
+        ok: false,
+        hint: `这一章已经编号为 第${input.existing}章；本工具不重排已编号章节，要改编号请手工处理`,
+        conflict: null,
+      };
+    }
+    return { ok: true, number: input.existing };
+  }
+  if (input.requested === undefined) {
+    return { ok: true, number: nextChapterNumber(taken) };
+  }
+  if (taken.includes(input.requested)) {
+    const conflict = conflictOf({
+      requested: input.requested,
+      chapters: input.chapters,
+    });
+    return { ok: false, hint: formatNumberingConflict(conflict), conflict };
+  }
+  return { ok: true, number: input.requested };
+};
+
+/** 索引页里的章节行（只在首次绑定该章时追加）。编号缺省时保留旧格式。 */
 export const indexEntryLine = (input: {
-  section: string;
+  name: string;
   date: string;
-}): string => `- [[${input.section}]] · ${input.date}`;
+  number?: number;
+}): string =>
+  input.number === undefined
+    ? `- [[${input.name}]] · ${input.date}`
+    : `- 第${input.number}章 · [[${chapterFileName(input.number, input.name)}|${input.name}]] · ${input.date}`;
 
-/** 用完整的 `[[name]]` 匹配，避免 `[[X2]]` 被误判成含 `[[X]]`。 */
-export const hasIndexEntry = (index: string, section: string): boolean =>
-  index.includes(`[[${section}]]`);
+export type IndexEntry = {
+  number?: number;
+  /** 章节名（别名优先，否则取 wikilink 目标去掉编号前缀）。 */
+  name: string;
+  /** wikilink 目标（文件名，不含 `.md`）。 */
+  fileName: string;
+  date?: string;
+  line: string;
+};
+
+const INDEX_LINE_RE =
+  /^>?\s*-\s*第(\d+)章\s*·\s*\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/;
+const LEGACY_INDEX_LINE_RE = /^>?\s*-\s*\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/;
+const INDEX_DATE_RE = /·\s*(\d{4}-\d{2}-\d{2})\s*$/;
+
+/** 解析索引页里的章节行（含旧格式 `- [[名字]] · 日期` 与 provenance 的 `> - ` 形式）。 */
+export const parseIndexEntries = (index: string): IndexEntry[] => {
+  const entries: IndexEntry[] = [];
+  for (const line of index.split("\n")) {
+    const trimmed = line.trim();
+    const numbered = INDEX_LINE_RE.exec(trimmed);
+    // 两个正则的分组编号不同：带编号的 1=编号 2=目标 3=别名；旧的 1=目标 2=别名。
+    const legacy = numbered ? null : LEGACY_INDEX_LINE_RE.exec(trimmed);
+    const target = numbered ? numbered[2] : legacy?.[1];
+    if (target === undefined) continue;
+    const alias = numbered ? numbered[3] : legacy?.[2];
+    const parsed = parseChapterFileName(target);
+    entries.push({
+      number: numbered ? Number(numbered[1]) : parsed.number,
+      name: alias ?? parsed.name,
+      fileName: target,
+      date: INDEX_DATE_RE.exec(trimmed)?.[1],
+      line,
+    });
+  }
+  return entries;
+};
+
+/** 用解析后的条目按名字匹配，避免 `[[X2]]` 被误判成含 `[[X]]`。 */
+export const hasIndexEntry = (index: string, name: string): boolean =>
+  parseIndexEntries(index).some((entry) => entry.name === name);
+
+const escapeRegExp = (text: string): string =>
+  text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** 列表行补上「第N章 ·」前缀：只改带本章链接的列表行（正文引用不动）。 */
+const addChapterNumberToLine = (
+  line: string,
+  number: number,
+  fileName: string,
+): string => {
+  if (/^\s*>?\s*-\s+第\d+章\s*·/.test(line)) return line;
+  if (!/^\s*>?\s*-\s+\[\[/.test(line)) return line;
+  if (!line.includes(`[[${fileName}`)) return line;
+  return line.replace(/^(\s*>?\s*-\s+)/, `$1第${number}章 · `);
+};
+
+/**
+ * 把索引里指向该章的 wikilink 全部改写成带编号的形式（列表行、provenance 行、行内提及都算），
+ * 列表行同时补上 `第N章 ·` 前缀；已带正确编号的不重复改写，正文里的裸文字引用不动。
+ */
+export const relinkIndex = (
+  index: string,
+  input: { name: string; number?: number; fileName: string },
+): string => {
+  if (input.number === undefined) return index;
+  const targets = new Set([input.name, input.fileName]);
+  let result = index;
+  for (const target of targets) {
+    const pattern = new RegExp(
+      `\\[\\[${escapeRegExp(target)}(\\|[^\\]]*)?\\]\\]`,
+      "g",
+    );
+    result = result.replace(
+      pattern,
+      (_match, alias: string | undefined) =>
+        `[[${input.fileName}${alias ?? `|${input.name}`}]]`,
+    );
+  }
+  return result
+    .split("\n")
+    .map((line) =>
+      addChapterNumberToLine(line, input.number as number, input.fileName),
+    )
+    .join("\n");
+};
+
+/** `## 章节` 机器块的定界符：块内章节行由工具重写，块外一字不动。 */
+export const CHAPTERS_BEGIN =
+  "<!-- tutor:chapters 由工具维护：本行与结束行为定界符，块内章节行由 bind_notes / number_chapters 重写 -->";
+export const CHAPTERS_END = "<!-- /tutor:chapters -->";
+
+/** 章节行：编号标签里嵌 wikilink（`第3章 · [[03-调度与唤醒|调度与唤醒]]`）。 */
+export const chapterTocLine = (chapter: ChapterFile): string => {
+  const link = `[[${chapterFileName(chapter.number, chapter.name)}|${chapter.name}]]`;
+  const label = chapterLabel(chapter.number, chapter.name).replace(
+    chapter.name,
+    () => link,
+  );
+  return chapter.date ? `- ${label} · ${chapter.date}` : `- ${label}`;
+};
+
+export const chapterTocBlock = (chapters: ChapterFile[]): string =>
+  [
+    "## 章节",
+    "",
+    CHAPTERS_BEGIN,
+    ...chapters.map(chapterTocLine),
+    CHAPTERS_END,
+  ].join("\n");
+
+/**
+ * 标题区（`# 主题` + 紧随的引用说明行）之后的位置：新块插在这里。
+ * 遇到 callout（`> [!…]`）就停——那是正文的第一块，不是标题的一部分。
+ */
+const headerEnd = (lines: string[]): number => {
+  let i = 0;
+  const skipBlank = (): void => {
+    while (i < lines.length && lines[i].trim().length === 0) i++;
+  };
+  skipBlank();
+  if (i < lines.length && lines[i].startsWith("# ")) {
+    i++;
+    skipBlank();
+    while (
+      i < lines.length &&
+      lines[i].startsWith(">") &&
+      !/^>\s*\[!/.test(lines[i])
+    ) {
+      i++;
+      skipBlank();
+    }
+  }
+  return i;
+};
+
+/**
+ * 重建 `## 章节` 块：有定界符就原地重写，没有就插到标题区之后；空列表不改动索引
+ * （新主题第一次绑定章节时才长出来）。用户删掉定界符后，工具不再碰该块。
+ */
+export const upsertChapterToc = (
+  index: string,
+  chapters: ChapterFile[],
+): string => {
+  if (chapters.length === 0) return index;
+  const block = chapterTocBlock(chapters);
+  const begin = index.indexOf(CHAPTERS_BEGIN);
+  const end = index.indexOf(CHAPTERS_END);
+  if (begin >= 0 && end > begin) {
+    // 定界符之间的旧章节行（含 `## 章节` 标题本身所在的那一段）整段换成新块。
+    const before = index.slice(0, begin);
+    const head = before.replace(/##\s*章节\s*\n+\s*$/, "");
+    const after = index.slice(end + CHAPTERS_END.length).replace(/^\n+/, "");
+    return joinParts([head, block, after]);
+  }
+  const lines = index.split("\n");
+  const at = headerEnd(lines);
+  return joinParts([
+    lines.slice(0, at).join("\n"),
+    block,
+    lines.slice(at).join("\n"),
+  ]);
+};
+
+const joinParts = (parts: string[]): string =>
+  parts
+    .map((part) => part.replace(/^\n+/, "").replace(/\n+$/, ""))
+    .filter((part) => part.length > 0)
+    .join("\n\n")
+    .concat("\n");
 
 // ── 会话镜像的块格式（Obsidian callout） ──────────────────────────────────
 
@@ -424,6 +817,8 @@ export const countVerdicts = (blocks: NoteBlock[]): VerdictCounts => {
 };
 
 export type ChapterState = {
+  /** 文件名前缀里的编号；未编号的旧章节没有。 */
+  number?: number;
   name: string;
   path: string;
   touchedAt?: string;
@@ -435,6 +830,7 @@ export type ChapterState = {
 };
 
 export const summarizeChapter = (input: {
+  number?: number;
   name: string;
   path: string;
   markdown: string;
@@ -442,6 +838,7 @@ export const summarizeChapter = (input: {
 }): ChapterState => {
   const blocks = parseNoteBlocks(input.markdown);
   return {
+    number: input.number,
     name: input.name,
     path: input.path,
     touchedAt: input.touchedAt,
@@ -504,6 +901,153 @@ export const buildTopicState = (input: {
   resume: pickResume(input.chapters),
 });
 
+// ── 存量编号迁移（纯）：顺序 → 编号计划 ──────────────────────────────────
+
+export type NumberingAssignment = {
+  name: string;
+  number: number;
+  /** 当前文件名（不含 `.md`）。 */
+  from: string;
+  /** 目标文件名（不含 `.md`）。 */
+  to: string;
+  /** 已经有这个编号：计划里保留，落盘时跳过。 */
+  unchanged: boolean;
+};
+
+export type NumberingPlanConflict = { name: string; hint: string };
+
+export type NumberingPlan =
+  | {
+      ok: true;
+      assignments: NumberingAssignment[];
+      /** 既没编号也没进本次顺序的章节：报告用，不落盘。 */
+      unassigned: ChapterFile[];
+    }
+  | { ok: false; conflicts: NumberingPlanConflict[] };
+
+/**
+ * 迁移计划：把"按讲解顺序排好的章节名"映射成编号。
+ * 已编号的章节必须与计划一致（本工具不重排已编号章节），不会自动填空洞。
+ */
+export const planNumbering = (input: {
+  chapters: string[];
+  existing: ChapterFile[];
+  startAt?: number;
+}): NumberingPlan => {
+  const conflicts: NumberingPlanConflict[] = [];
+  const known = parseChapterRefInput(input.chapters, input.existing, conflicts);
+  const startAt = input.startAt ?? 1;
+  const assignments: NumberingAssignment[] = [];
+  const inList = new Set(known.map((entry) => entry.chapter.name));
+  const takenNumbers = new Map<number, string>();
+
+  known.forEach((entry, position) => {
+    // 顺序里的名字可以自带编号（`第6章 · 加锁规则地图`）：没讲的那章就留出空洞。
+    const number = entry.number ?? startAt + position;
+    const { chapter } = entry;
+    const claimant = takenNumbers.get(number);
+    if (claimant !== undefined) {
+      conflicts.push({
+        name: chapter.name,
+        hint: `编号 ${number} 在顺序里同时给了「${claimant}」和「${chapter.name}」`,
+      });
+      return;
+    }
+    takenNumbers.set(number, chapter.name);
+    if (chapter.number !== undefined && chapter.number !== number) {
+      conflicts.push({
+        name: chapter.name,
+        hint: `「${chapterLabel(chapter.number, chapter.name)}」已经编号为 ${chapter.number}，计划要改成 ${number}；本工具不重排已编号章节，请把顺序改成与现有编号一致`,
+      });
+      return;
+    }
+    if (chapter.number === undefined) {
+      const occupant = input.existing.find(
+        (other) => other.number === number && !inList.has(other.name),
+      );
+      if (occupant) {
+        conflicts.push({
+          name: chapter.name,
+          hint: `编号 ${number} 已被「${chapterLabel(occupant.number, occupant.name)}」占用；把这一章排到另一个位置`,
+        });
+        return;
+      }
+    }
+    assignments.push({
+      name: chapter.name,
+      number,
+      from: chapterFileName(chapter.number, chapter.name),
+      to: chapterFileName(number, chapter.name),
+      unchanged: chapter.number === number,
+    });
+  });
+
+  if (conflicts.length > 0) return { ok: false, conflicts };
+  return {
+    ok: true,
+    assignments,
+    unassigned: input.existing.filter(
+      (chapter) => chapter.number === undefined && !inList.has(chapter.name),
+    ),
+  };
+};
+
+/** 名字解析成目录里的章节：找不到 / 重复都在这里变成冲突。 */
+const parseChapterRefInput = (
+  names: string[],
+  existing: ChapterFile[],
+  conflicts: NumberingPlanConflict[],
+): { chapter: ChapterFile; number?: number }[] => {
+  const seen = new Set<string>();
+  const result: { chapter: ChapterFile; number?: number }[] = [];
+  for (const raw of names) {
+    const ref = parseChapterRef(raw);
+    const name = ref.name ?? ref.number?.toString() ?? raw;
+    const matches = existing.filter((entry) => entry.name === name);
+    if (matches.length === 0) {
+      conflicts.push({ name, hint: `目录里没有章节「${name}」` });
+      continue;
+    }
+    if (matches.length > 1) {
+      conflicts.push({
+        name,
+        hint: `目录里有两份「${name}」：${matches
+          .map((entry) => `${chapterFileName(entry.number, entry.name)}.md`)
+          .join(" 与 ")} —— 先手工删掉多余的那份再编号`,
+      });
+      continue;
+    }
+    if (seen.has(name)) {
+      conflicts.push({ name, hint: `「${name}」在顺序里出现了两次` });
+      continue;
+    }
+    seen.add(name);
+    result.push({ chapter: matches[0], number: ref.number });
+  }
+  return result;
+};
+
+/** 建议顺序：先按索引行顺序，再把没进索引的章节按最近改动排在后。 */
+export const proposeChapterOrder = (input: {
+  chapters: (ChapterFile & { touchedAt?: string })[];
+  indexOrder: string[];
+}): string[] => {
+  const ranked: string[] = [];
+  for (const name of input.indexOrder) {
+    if (
+      input.chapters.some((chapter) => chapter.name === name) &&
+      !ranked.includes(name)
+    ) {
+      ranked.push(name);
+    }
+  }
+  const rest = input.chapters
+    .filter((chapter) => !ranked.includes(chapter.name))
+    .sort((a, b) => (a.touchedAt ?? "").localeCompare(b.touchedAt ?? ""))
+    .map((chapter) => chapter.name);
+  return [...ranked, ...rest];
+};
+
 // ── 存量拆分（纯）：块目录 + 计划 + provenance ────────────────────────────
 
 export type BlockCatalogEntry = {
@@ -531,7 +1075,15 @@ export const catalogBlocks = (markdown: string): BlockCatalogEntry[] =>
     preview: previewOf(block),
   }));
 
-export type SectionAssignment = { name: string; blockIndexes: number[] };
+export type ChapterAssignment = { name: string; blockIndexes: number[] };
+
+export type SplitChapter = {
+  number: number;
+  name: string;
+  fileName: string;
+  markdown: string;
+  blockIndexes: number[];
+};
 
 export type SplitPlan =
   | {
@@ -542,17 +1094,19 @@ export type SplitPlan =
       remaining: string[];
       /** 预览用：标题区 + 未归属块。 */
       index: string;
-      sections: { name: string; markdown: string; blockIndexes: number[] }[];
+      chapters: SplitChapter[];
     }
   | { ok: false; error: string };
 
 /**
  * 归属校验 + 计划生成：越界 / 重复 / 空章节 / 非法章节名一律拒绝；
  * 块守恒由构造保证——每个块要么留在索引，要么进且仅进一个章节。
+ * 章节编号按数组顺序从 `startAt`（默认 1）递增：拆分时数组顺序就是讲解顺序。
  */
 export const planSplit = (input: {
   markdown: string;
-  sections: SectionAssignment[];
+  chapters: ChapterAssignment[];
+  startAt?: number;
 }): SplitPlan => {
   const blocks = parseNoteBlocks(input.markdown);
   const lines = input.markdown.split("\n");
@@ -563,18 +1117,18 @@ export const planSplit = (input: {
   const prefix = lines.slice(0, prefixEnd).join("\n").replace(/\n+$/, "");
 
   const assigned = new Map<number, string>();
-  for (const section of input.sections) {
-    const check = isValidSection(section.name);
+  for (const chapter of input.chapters) {
+    const check = isValidChapter(chapter.name);
     if (check.ok === false) {
       return {
         ok: false,
-        error: `section "${section.name}" is invalid (${check.reason})`,
+        error: `chapter "${chapter.name}" is invalid (${check.reason})`,
       };
     }
-    if (section.blockIndexes.length === 0) {
-      return { ok: false, error: `section "${section.name}" has no blocks` };
+    if (chapter.blockIndexes.length === 0) {
+      return { ok: false, error: `chapter "${chapter.name}" has no blocks` };
     }
-    for (const index of section.blockIndexes) {
+    for (const index of chapter.blockIndexes) {
       if (!Number.isInteger(index) || index < 1 || index > blocks.length) {
         return {
           ok: false,
@@ -584,45 +1138,55 @@ export const planSplit = (input: {
       if (assigned.has(index)) {
         return { ok: false, error: `block index ${index} is assigned twice` };
       }
-      assigned.set(index, section.name);
+      assigned.set(index, chapter.name);
     }
   }
   if (assigned.size === 0)
-    return { ok: false, error: "no block was assigned to any section" };
+    return { ok: false, error: "no block was assigned to any chapter" };
 
   const remaining: string[] = [];
   blocks.forEach((block, position) => {
     if (!assigned.has(position + 1)) remaining.push(block.text);
   });
   const indexParts = [prefix, ...remaining];
+  const startAt = input.startAt ?? 1;
 
   return {
     ok: true,
     prefix,
     remaining,
     index: `${indexParts.filter((part) => part.trim().length > 0).join("\n\n")}\n`,
-    sections: input.sections.map((section) => ({
-      name: section.name,
-      blockIndexes: [...section.blockIndexes],
-      markdown: `${section.blockIndexes
-        .map((index) => blocks[index - 1].text)
-        .join("\n\n")}\n`,
-    })),
+    chapters: input.chapters.map((chapter, position) => {
+      const number = startAt + position;
+      return {
+        number,
+        name: chapter.name,
+        fileName: chapterFileName(number, chapter.name),
+        blockIndexes: [...chapter.blockIndexes],
+        markdown: `${chapter.blockIndexes
+          .map((index) => blocks[index - 1].text)
+          .join("\n\n")}\n`,
+      };
+    }),
   };
 };
 
 /** 拆分后写在索引顶部的 provenance 块：章节行放在 callout 内部，读起来是一整块。 */
 export const provenanceBlock = (input: {
   date: string;
-  sections: string[];
+  chapters: ChapterFile[];
   archiveName: string;
 }): string => {
-  const body = input.sections.map((section) =>
-    indexEntryLine({ section, date: input.date }),
+  const body = input.chapters.map((chapter) =>
+    indexEntryLine({
+      name: chapter.name,
+      number: chapter.number,
+      date: input.date,
+    }),
   );
   return [
-    `> [!note] ${input.date} 已拆分为 ${input.sections
-      .map((section) => `[[${section}]]`)
+    `> [!note] ${input.date} 已拆分为 ${input.chapters
+      .map((chapter) => `[[${chapterFileName(chapter.number, chapter.name)}]]`)
       .join(" ")} · 原文见 _archive/${input.archiveName}`,
     ">",
     ...body.map((line) => `> ${line}`),

@@ -6,6 +6,7 @@
  */
 
 import type { AskDetails } from "./ask-core.ts";
+import { ASK_USER_QUESTION_TOOL_NAME, QUIZ_TOOL_NAME } from "./names.ts";
 import type { QuizDetails } from "./quiz-core.ts";
 
 export const TUTOR_SETTINGS_KEY = "tutor";
@@ -572,6 +573,9 @@ const joinParts = (parts: string[]): string =>
 
 // ── 会话镜像的块格式（Obsidian callout） ──────────────────────────────────
 
+/** callout 头（`> [!type] title`）：写与读共用同一份契约。 */
+const CALLOUT_RE = /^>\s*\[!(\w+)\]\s*(.*)$/;
+
 const callout = (type: string, title: string, bodyLines: string[]): string => {
   const lines = [`> [!${type}] ${title}`];
   for (const line of bodyLines) {
@@ -618,6 +622,90 @@ export const formatQuestionBlock = (input: QuestionBlockInput): string => {
     );
   }
   return callout("question", input.kind, body);
+};
+
+/**
+ * 从一条 assistant 消息的内容里抽出 `quiz` / `ask_user_question` 已经问过的题面。
+ * 用来判断"这条消息的题面由工具负责写"。
+ */
+export const toolCallQuestions = (content: unknown): string[] => {
+  if (!Array.isArray(content)) return [];
+  const questions: string[] = [];
+  for (const part of content) {
+    if (typeof part !== "object" || part === null) continue;
+    const block = part as {
+      type?: unknown;
+      name?: unknown;
+      arguments?: unknown;
+    };
+    if (block.type !== "toolCall") continue;
+    if (
+      block.name !== QUIZ_TOOL_NAME &&
+      block.name !== ASK_USER_QUESTION_TOOL_NAME
+    ) {
+      continue;
+    }
+    const args = block.arguments as { question?: unknown } | undefined;
+    const question = args?.question;
+    if (typeof question === "string" && question.trim())
+      questions.push(question);
+  }
+  return questions;
+};
+
+/** 丢掉正文里手写的题面块（它们跟工具写的题面重复）。代码围栏里的样例不动。 */
+export const stripQuestionCallouts = (text: string): string => {
+  const lines = text.split("\n");
+  const kept: string[] = [];
+  let removed = false;
+  let inFence = false;
+  for (let i = 0; i < lines.length; ) {
+    const line = lines[i];
+    const fence = /^\s*(```|~~~)/.test(line);
+    if (inFence || fence) {
+      // 围栏里的 `> [!question]` 是字面内容（模型有时贴笔记格式的样例）。
+      if (fence) inFence = !inFence;
+      kept.push(line);
+      i += 1;
+      continue;
+    }
+    const header = CALLOUT_RE.exec(line);
+    if (header?.[1].toLowerCase() !== "question") {
+      kept.push(line);
+      i += 1;
+      continue;
+    }
+    // 题面块 = 头 + 其后的连续 `>` 行。
+    i += 1;
+    while (i < lines.length && lines[i].startsWith(">")) i += 1;
+    removed = true;
+    while (kept.length > 0 && kept[kept.length - 1].trim().length === 0) {
+      kept.pop();
+    }
+  }
+  const stripped = kept.join("\n");
+  return (removed ? stripped.replace(/\n{3,}/g, "\n\n") : stripped)
+    .replace(/^\n+/, "")
+    .replace(/\s+$/, "");
+};
+
+/**
+ * 会话镜像用：一条 assistant 消息最终写进笔记的正文。
+ *
+ * 笔记里的题面只有一个权威写者：`quiz` / `ask_user_question` 的 pending 块——
+ * 顺序是学习者实际看到的，判定块的序号也按它算。模型常照笔记格式在正文里再写
+ * 一遍，那份是作者顺序的旧副本：同一道题出现两次，序号还跟判定块对不上。
+ *
+ * 判重不能靠文本相似度——模型会改写措辞（"下面这段" vs 把 SQL 抄进题面）、调换
+ * 选项顺序、加减行内代码，比对认不出来。所以规则取在更上游：**只要这条消息里有
+ * 工具在提问，正文里的 `> [!question]` 块就一律不写进笔记**。没有工具提问的正文
+ * （纯对话里问的问题）原样保留——那是它唯一的一份。
+ */
+export const mirrorAssistantText = (content: unknown): string => {
+  const text = messageText(content as MessageContent);
+  return toolCallQuestions(content).length > 0
+    ? stripQuestionCallouts(text)
+    : text;
 };
 
 const correctAnswerLines = (details: QuizDetails): string[] =>
@@ -763,8 +851,6 @@ export type NoteBlock = {
   /** 段文本（末尾空行已规整）。 */
   text: string;
 };
-
-const CALLOUT_RE = /^>\s*\[!(\w+)\]\s*(.*)$/;
 
 const blockKind = (type: string, title: string): BlockKind => {
   const lower = type.toLowerCase();

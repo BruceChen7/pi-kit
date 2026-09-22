@@ -58,6 +58,7 @@ import {
   isValidChapter,
   isValidTopic,
   messageText,
+  mirrorAssistantText,
   type NumberingAssignment,
   parseChapterFileName,
   parseChapterRef,
@@ -219,36 +220,32 @@ const indexDates = (index: string): Map<string, string> => {
 };
 
 /**
- * 索引页的维护：章节行缺失则补一行，旧格式链接改写成带编号的，最后重建 `## 章节` 块。
- * 内容没变就不写盘（索引跟着章节走，章节正文永远不动）。
+ * 索引页的维护：章节行只由 `## 章节` 块写（块外不再补行——补的那行会和块里的
+ * 章节行重复），旧格式链接改写成带编号的，最后重建块。内容没变就不写盘。
  */
 export const writeChapterIndex = (input: {
   indexPath: string;
   chapter: ChapterFile;
   scanned: ChapterFile[];
   date?: string;
-  appendLine?: boolean;
 }): void => {
   ensureTopicNote(input.indexPath);
   const before = fs.readFileSync(input.indexPath, "utf-8");
-  let index = before;
-  if (input.appendLine !== false && !hasIndexEntry(index, input.chapter.name)) {
-    index = `${index.replace(/\n+$/, "\n")}\n${indexEntryLine({
-      name: input.chapter.name,
-      number: input.chapter.number,
-      date: input.date ?? new Date().toISOString().slice(0, 10),
-    })}\n`;
-  }
-  index = relinkIndex(index, {
+  let index = relinkIndex(before, {
     name: input.chapter.name,
     number: input.chapter.number,
     fileName: chapterFileName(input.chapter.number, input.chapter.name),
   });
-  const dates = indexDates(index);
+  const dates = indexDates(before);
+  // 新绑的章节在索引里还没有日期：直接用这次绑定的日期。以前是往页尾补一行来
+  // 携带日期，那行会留在正文里，和块里的章节行一模一样。
+  const boundDate = input.date ?? new Date().toISOString().slice(0, 10);
   const entries: ChapterFile[] = [...input.scanned]
     .map((chapter) => ({
       ...chapter,
-      date: dates.get(chapter.name),
+      date:
+        dates.get(chapter.name) ??
+        (chapter.name === input.chapter.name ? boundDate : undefined),
     }))
     .sort(
       (a, b) =>
@@ -348,7 +345,6 @@ export const applyTopicSplit = (input: {
       name: chapter.name,
     })),
     date: input.date,
-    appendLine: false,
   });
   return { ok: true, archivePath, chapters };
 };
@@ -786,7 +782,8 @@ export const registerNotes = (pi: ExtensionAPI): void => {
       return;
     }
     if (message?.role === "assistant") {
-      const text = messageText(message.content as never);
+      // 正文块：题面由 quiz / ask 的 pending 块写，正文里重复的那份不带进笔记。
+      const text = mirrorAssistantText(message.content);
       if (text) await appendBlock(formatAssistantBlock(text));
     }
   });
@@ -1632,7 +1629,7 @@ export const registerNotes = (pi: ExtensionAPI): void => {
         continue;
       }
       if (message.role === "assistant") {
-        const text = messageText(message.content as never);
+        const text = mirrorAssistantText(message.content);
         if (text) blocks.push(formatAssistantBlock(text));
         continue;
       }

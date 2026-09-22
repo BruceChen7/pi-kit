@@ -172,6 +172,14 @@ The note is the lesson: prose, mermaid fences and every quiz question/answer lan
 automatically. Write the lesson *once*, in chat, at full quality — do not write a chat
 version and a file version.
 
+**Never restate a question in your reply.** `quiz` / `ask_user_question` own the question
+text: the tool renders it, and the mirror writes that copy into the note — the one whose
+option order is what the learner actually saw (the verdict block's numbers refer to it).
+A `> [!question]` callout you write yourself is a second, stale copy (author order, no
+longer the displayed one), so the mirror drops it. Prose goes *around* the question; the
+question itself is the tool call. A question asked in prose with no tool call is kept —
+that is the only copy it has.
+
 `/md-topic` with no argument opens a picker (existing topics + "新建主题…");
 `/md-topic <topic> <章节>` binds a chapter by hand — `第3章`, `03-调度与唤醒` and the plain
 name all work; `/md-log <path>` links an existing file without creating one; `/md-unlog`

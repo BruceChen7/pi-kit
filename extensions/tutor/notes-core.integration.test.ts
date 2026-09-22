@@ -9,8 +9,10 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   chapterNotePath,
+  formatAssistantBlock,
   formatQuestionBlock,
   formatQuizAnswerBlock,
+  mirrorAssistantText,
   parseNoteBlocks,
   planNumbering,
   planSplit,
@@ -111,6 +113,47 @@ describe("notes IO", () => {
     // 问题块先出现，答案块在其后；答案块才有解释。
     const [, afterQuestion] = text.split("> [!question] Quiz");
     expect(afterQuestion).toContain("金星大气最厚。");
+  });
+
+  it("writes one question block when the reply restates the stem the tool asks", () => {
+    ensureTopicNote(note);
+    const question = "既然账本里记着全部动作，为什么它不能当判据？";
+    // 模型照笔记格式在正文里又写了一份题面（作者顺序、带行内代码），
+    // 同一条消息里还调了 quiz —— 这就是笔记里重复题的成因。
+    const content = [
+      { type: "text", text: "先看账本怎么记事。" },
+      {
+        type: "text",
+        text: [
+          "> [!question] Quiz",
+          "> 既然`账本`里记着全部动作，为什么它不能当判据？",
+          ">",
+          "> 1. 因为账本在 Post-DDL 阶段才写",
+          "> 2. 因为账本记录本身属于这笔事务",
+        ].join("\n"),
+      },
+      { type: "toolCall", name: "quiz", arguments: { question } },
+    ];
+
+    appendToNote(note, formatAssistantBlock(mirrorAssistantText(content)));
+    appendToNote(
+      note,
+      formatQuestionBlock({
+        kind: "Quiz",
+        question,
+        options: [
+          { index: 1, label: "因为账本记录本身属于这笔事务" },
+          { index: 2, label: "因为账本在 Post-DDL 阶段才写" },
+        ],
+      }),
+    );
+
+    const text = fs.readFileSync(note, "utf-8");
+    expect(text.match(/> \[!question\] Quiz/g)).toHaveLength(1);
+    expect(text).toContain("先看账本怎么记事。");
+    expect(text.indexOf("先看账本怎么记事。")).toBeLessThan(
+      text.indexOf("> [!question] Quiz"),
+    );
   });
 
   it("refuses a /md-log style path that does not exist and never creates it", () => {
@@ -254,6 +297,31 @@ describe("chapters IO", () => {
       date: "2026-09-21",
     });
     expect(fs.readFileSync(index, "utf-8")).toBe(once);
+  });
+
+  it("writes the chapter line once, inside the TOC block, and keeps the bind date", () => {
+    fs.mkdirSync(topicDir(), { recursive: true });
+    const index = topicNotePath({
+      vaultRoot: vault,
+      topDir: "Learn",
+      topic: "Docker实现",
+    });
+    ensureTopicNote(index);
+    appendToNote(index, "> [!abstract] PI\n\n先看内核视角。");
+
+    writeChapterIndex({
+      indexPath: index,
+      chapter: { name: "换根实战", number: 4 },
+      scanned: [{ number: 4, name: "换根实战" }],
+      date: "2026-09-21",
+    });
+
+    const after = fs.readFileSync(index, "utf-8");
+    // 章节行只出现在 `## 章节` 块里：以前会在页尾再补一行，两处重复。
+    expect(after.split("\n").filter((line) => line.startsWith("- 第"))).toEqual(
+      ["- 第4章 · [[04-换根实战|换根实战]] · 2026-09-21"],
+    );
+    expect(after.trimEnd().endsWith("先看内核视角。")).toBe(true);
   });
 });
 
@@ -631,6 +699,13 @@ describe("prepareChapterBinding", () => {
     expect(index).toContain("- 第1章 · [[01-锁模式与位掩码|锁模式与位掩码]]");
     expect(index).toContain("## 章节");
     expect(index).toContain("> 由 tutor 维持");
+    // 章节行只写进块里（以前块内一份、页尾一份），日期跟着走。
+    expect(index).toMatch(
+      /^- 第1章 · \[\[01-锁模式与位掩码\|锁模式与位掩码\]\] · \d{4}-\d{2}-\d{2}$/m,
+    );
+    expect(
+      index.split("\n").filter((line) => line.startsWith("- 第1章 ·")),
+    ).toHaveLength(1);
   });
 
   it("numbers the next chapter as max + 1 and keeps a gap open when asked", () => {

@@ -21,6 +21,7 @@ import {
   isValidChapter,
   isValidTopic,
   messageText,
+  mirrorAssistantText,
   nextChapterNumber,
   parseChapterFileName,
   parseChapterRef,
@@ -36,8 +37,10 @@ import {
   resolveTutorSettings,
   rewriteChapterHeading,
   sanitizeName,
+  stripQuestionCallouts,
   stripSkillBlocks,
   TOPIC_REJECTION_REASONS,
+  toolCallQuestions,
   topicNotePath,
   upsertChapterToc,
 } from "./notes-core.ts";
@@ -266,6 +269,121 @@ describe("notes-core / session text helpers", () => {
       ]),
     ).toBe("a\n\nb");
     expect(messageText(undefined)).toBe("");
+  });
+});
+
+describe("notes-core / duplicate question callouts", () => {
+  it("collects the stems a message asks through quiz / ask_user_question", () => {
+    expect(
+      toolCallQuestions([
+        { type: "thinking", text: "先别问" },
+        {
+          type: "toolCall",
+          name: "quiz",
+          arguments: { question: "哪个行星最热？" },
+        },
+        {
+          type: "toolCall",
+          name: "ask_user_question",
+          arguments: { question: "接下来讲哪章？" },
+        },
+        { type: "toolCall", name: "read", arguments: { path: "x.md" } },
+        // 校验失败的调用没有 question：不算"工具在提问"。
+        { type: "toolCall", name: "quiz", arguments: { correctAnswer: "a" } },
+        "nope",
+      ]),
+    ).toEqual(["哪个行星最热？", "接下来讲哪章？"]);
+    expect(toolCallQuestions(undefined)).toEqual([]);
+    expect(toolCallQuestions({ type: "toolCall" })).toEqual([]);
+  });
+
+  it("drops the hand-written callout, however the model reworded it", () => {
+    // 真实形状：正文里的题面把 SQL 抄成了代码块，工具里的题面把 SQL 写在题干里。
+    const content = [
+      { type: "text", text: "先看这段会被隐式提交的代码。" },
+      {
+        type: "text",
+        text: [
+          "> [!question] Quiz",
+          "> 在 MySQL 8.0 上执行下面这段，最后 `t` 表是什么状态？",
+          ">",
+          "> ```sql",
+          "> BEGIN;",
+          "> ALTER TABLE t ADD COLUMN c INT;",
+          "> ROLLBACK;",
+          "> ```",
+        ].join("\n"),
+      },
+      {
+        type: "toolCall",
+        name: "quiz",
+        arguments: {
+          question:
+            "在 MySQL 8.0 上执行 BEGIN; ALTER TABLE t ADD COLUMN c INT; ROLLBACK; ，最后 t 表是什么状态？",
+        },
+      },
+    ];
+    expect(mirrorAssistantText(content)).toBe("先看这段会被隐式提交的代码。");
+  });
+
+  it("keeps a question callout no tool backs, and leaves other callouts alone", () => {
+    const text = [
+      "> [!question] Quiz",
+      "> 表 t 的主键是 id，锁落在哪？",
+      ">",
+      "> 1. 索引记录",
+      "> 2. 行本身",
+    ].join("\n");
+    expect(mirrorAssistantText([{ type: "text", text }])).toBe(text);
+    expect(stripQuestionCallouts(text)).toBe("");
+  });
+
+  it("removes a mid-text duplicate and keeps the prose tidy", () => {
+    const text = [
+      "第一段。",
+      "",
+      "> [!question] Quiz",
+      "> 哪个行星最热？",
+      ">",
+      "> 1. Mercury",
+      "",
+      "第二段。",
+      "",
+      "> [!abstract] PI",
+      "> 收尾。",
+    ].join("\n");
+    expect(stripQuestionCallouts(text)).toBe(
+      "第一段。\n\n第二段。\n\n> [!abstract] PI\n> 收尾。",
+    );
+  });
+
+  it("never touches a fenced example of the note format", () => {
+    const text = [
+      "题面块的格式长这样：",
+      "",
+      "```markdown",
+      "> [!question] Quiz",
+      "> 题干",
+      ">",
+      "> 1. 选项",
+      "```",
+    ].join("\n");
+    expect(stripQuestionCallouts(text)).toBe(text);
+  });
+
+  it("treats ask callouts like quiz callouts and never touches verdict blocks", () => {
+    const text = [
+      "> [!Question] Question",
+      "> 接下来讲哪章？",
+      ">",
+      "> 1. 加锁规则地图",
+      "",
+      "> [!info] Quiz — I don't know",
+      "> Your answer: I don't know",
+    ].join("\n");
+    expect(stripQuestionCallouts(text)).toBe(
+      "> [!info] Quiz — I don't know\n> Your answer: I don't know",
+    );
   });
 });
 

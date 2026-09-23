@@ -6,13 +6,18 @@
 
 import { describe, expect, it, vi } from "vitest";
 import tutorExtension from "./index.ts";
-import { TUTOR_SESSION_TOOL_NAMES } from "./names.ts";
+import {
+  ASK_USER_QUESTION_TOOL_NAME,
+  QUIZ_TOOL_NAME,
+  TUTOR_SESSION_TOOL_NAMES,
+} from "./names.ts";
 
 type EventHandler = (event: never, ctx: never) => unknown;
 type CommandHandler = (args: string, ctx: never) => unknown;
 
 type Registered = {
   tools: string[];
+  toolDefs: Map<string, { name: string; executionMode?: string }>;
   commands: string[];
   events: string[];
   handlers: Map<string, EventHandler[]>;
@@ -37,6 +42,7 @@ const OTHER_TOOLS = [
 const fakePi = (): { api: never; seen: Registered } => {
   const seen: Registered = {
     tools: [],
+    toolDefs: new Map(),
     commands: [],
     events: [],
     handlers: new Map(),
@@ -46,7 +52,10 @@ const fakePi = (): { api: never; seen: Registered } => {
     entries: [],
   };
   const api = {
-    registerTool: vi.fn((tool: { name: string }) => seen.tools.push(tool.name)),
+    registerTool: vi.fn((tool: { name: string; executionMode?: string }) => {
+      seen.tools.push(tool.name);
+      seen.toolDefs.set(tool.name, tool);
+    }),
     registerCommand: vi.fn(
       (name: string, options: { handler: CommandHandler }) => {
         seen.commands.push(name);
@@ -179,6 +188,23 @@ describe("tutor extension wiring", () => {
     );
     // 按名字摘工具：任何一个改名都会让 gating 静默失效。
     for (const name of TUTOR_TOOLS) expect(seen.tools).toContain(name);
+  });
+
+  it("marks the two terminal-owning tools sequential", () => {
+    // 独占终端 UI 的工具不能和别的 tool call 并行跑：pi 只要看到批内有一个
+    // sequential 就会把整批串行执行，否则后上屏的组件会把先上屏的摘掉（见 ui-concurrency.test.ts）。
+    const { api, seen } = fakePi();
+    tutorExtension(api);
+
+    for (const name of [QUIZ_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME]) {
+      expect(seen.toolDefs.get(name)?.executionMode, name).toBe("sequential");
+    }
+    // 其余工具不带这个字段，免得整批被无谓地串行化。
+    for (const name of seen.tools) {
+      if ([QUIZ_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME].includes(name))
+        continue;
+      expect(seen.toolDefs.get(name)?.executionMode, name).toBeUndefined();
+    }
   });
 
   it("hides the tutor tools in a session that never ran the skill", async () => {

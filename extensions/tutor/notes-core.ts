@@ -6,7 +6,11 @@
  */
 
 import type { AskDetails } from "./ask-core.ts";
-import { ASK_USER_QUESTION_TOOL_NAME, QUIZ_TOOL_NAME } from "./names.ts";
+import {
+  ASK_USER_QUESTION_TOOL_NAME,
+  BIND_NOTES_TOOL_NAME,
+  QUIZ_TOOL_NAME,
+} from "./names.ts";
 import type { QuizDetails } from "./quiz-core.ts";
 
 export const TUTOR_SETTINGS_KEY = "tutor";
@@ -706,6 +710,92 @@ export const mirrorAssistantText = (content: unknown): string => {
   return toolCallQuestions(content).length > 0
     ? stripQuestionCallouts(text)
     : text;
+};
+
+// ── 镜像闸门：同轮 bind 的块归属（纯） ────────────────────────────────────
+//
+// pi 的事件顺序是「消息定稿（message_end）→ 工具执行」，所以一条消息里同时有
+// 「本章正文 + `bind_notes` 调用」时，正文会在 bind 生效**之前**被镜像出去 ——
+// 也就是写进上一章的文件（实录：本主题连错三章）。
+//
+// 闸门把这条消息产出的块先扣住，等 bind 的 tool_result 回来（此刻镜像目标已经
+// 切到新章节）再按原顺序放行。代价：模型在同一轮里先收尾上一章、再写新章开场
+// 时，那句收尾也会跟着进新章文件；但「整章开场落进上一章文件」不会再发生。
+
+/** 一条 assistant 消息里会切换镜像目标的 tool call id（顺序即消息顺序）。 */
+export const bindToolCallIds = (content: unknown): string[] => {
+  if (!Array.isArray(content)) return [];
+  const ids: string[] = [];
+  for (const part of content) {
+    if (typeof part !== "object" || part === null) continue;
+    const block = part as { type?: unknown; name?: unknown; id?: unknown };
+    if (block.type !== "toolCall") continue;
+    if (block.name !== BIND_NOTES_TOOL_NAME) continue;
+    if (typeof block.id === "string" && block.id.length > 0) ids.push(block.id);
+  }
+  return ids;
+};
+
+export type MirrorPending = {
+  /** 还没回结果的 bind 调用 id：全部回来才开闸。 */
+  binds: string[];
+  /** 关闸期间排队的块，按产出顺序。 */
+  blocks: string[];
+};
+
+export type MirrorEvent =
+  | { kind: "assistant"; block: string; binds: string[] }
+  | { kind: "block"; block: string }
+  | { kind: "bindResult"; toolCallId: string }
+  | { kind: "flush" };
+
+export type MirrorStep = { pending: MirrorPending | null; append: string[] };
+
+/** 空块一律丢掉：既不占位，也不进 pending（笔记里不该出现空块）。 */
+const nonEmpty = (...blocks: string[]): string[] =>
+  blocks.filter((block) => block.length > 0);
+
+/**
+ * 闸门状态机（value in / value out）：给一个事件，返回「新的 pending + 现在该落盘的块」。
+ *
+ * - `assistant` 带 bind：关闸持有；旧 pending 若还扣着东西（上一个 bind 没回结果），先放行再持有。
+ * - `assistant` 不带 bind：开闸放行（pending 里扣着的先出，保持顺序）。
+ * - `block`：关闸期间排队，否则立即放行。
+ * - `bindResult`：认领自己那批 id；全部回来才放行。
+ * - `flush`：兜底放行 —— 工具失败/中断时宁可落在旧文件，绝不丢字。
+ */
+export const mirrorStep = (
+  pending: MirrorPending | null,
+  event: MirrorEvent,
+): MirrorStep => {
+  const held = pending ? nonEmpty(...pending.blocks) : [];
+  switch (event.kind) {
+    case "assistant":
+      return event.binds.length > 0
+        ? {
+            pending: { binds: [...event.binds], blocks: nonEmpty(event.block) },
+            append: held,
+          }
+        : { pending: null, append: nonEmpty(...held, event.block) };
+    case "block":
+      if (event.block.length === 0) return { pending, append: [] };
+      return pending
+        ? {
+            pending: { ...pending, blocks: [...pending.blocks, event.block] },
+            append: [],
+          }
+        : { pending: null, append: [event.block] };
+    case "bindResult": {
+      if (!pending) return { pending: null, append: [] };
+      const binds = pending.binds.filter((id) => id !== event.toolCallId);
+      if (binds.length === pending.binds.length) return { pending, append: [] };
+      return binds.length > 0
+        ? { pending: { binds, blocks: pending.blocks }, append: [] }
+        : { pending: null, append: held };
+    }
+    case "flush":
+      return { pending: null, append: held };
+  }
 };
 
 const correctAnswerLines = (details: QuizDetails): string[] =>

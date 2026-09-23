@@ -61,6 +61,11 @@ Two unknowns, two different tools:
   and which one it is changes everything you teach. This has no right answer, so it is never
   a `quiz`.
 
+**One interactive tool per turn.** `quiz` and `ask_user_question` each own the terminal while
+they are up, so never put them in the same assistant message (nor two `quiz`es). Ask the level
+probe, read the answer, then ask the goal: a question queued behind another one arrives late and
+out of order, and the probe then reads wrong.
+
 ### 2. Plan (think hardest here)
 
 Fire a `web_search` first if anything about the topic is even slightly uncertain — do not
@@ -138,9 +143,13 @@ index's `## 章节` block. Four rules follow:
    an `unanswered-question` means a question was asked and never answered — re-ask it (or
    resolve it) before moving on; `cancelled` means the last question was dismissed;
    `recent` just means that was the last chapter touched.
-2. **Bind a chapter BEFORE teaching it.** Questions and answers land in whatever file is
-   bound at the moment they are asked, so switching chapters mid-explanation splits a
-   question from its own prose.
+2. **Bind a chapter BEFORE teaching it — in a message of its own.** Questions and answers land
+   in whatever file is bound at the moment they are asked, so switching chapters mid-explanation
+   splits a question from its own prose. The mirror also writes a message's prose when that
+   message ends, i.e. **before** its tool calls run: chapter prose written in the same message
+   as the `bind_notes` call lands in the *previous* chapter's file. So the bind is its own
+   message — call `bind_notes` with no prose around it, then teach the chapter in the next
+   message. Close the previous chapter (rule 4) before that bind, in the turn before it.
 3. **The tool owns the number, you own the name.** Before teaching a chapter, bind it; then
    call it `第N章 · 名字`, exactly as `bind_notes` reported it (or ask `number_chapters`
    without `chapters` to list them). Never invent a number, never renumber: numbers only move

@@ -135,6 +135,9 @@ const registerQuiz = (pi: ExtensionAPI): void => {
       "Options only (no free text). Use it to find the edge of the learner's knowledge " +
       "and to confirm a single teaching node actually landed. Never render the correct " +
       "answer or the explanation in the question itself.",
+    // 本工具独占终端 UI：任一批里有 sequential，pi 就把整批串行执行
+    // （pi-agent-core executeToolCalls），并行发两个提问会把先上屏的组件摘掉。
+    executionMode: "sequential",
     parameters: QuizParams,
     async execute(
       _toolCallId,
@@ -257,6 +260,8 @@ const registerAsk = (pi: ExtensionAPI): void => {
     label: "Ask User Question",
     description:
       "Ask ONE question with no right answer (goal, direction, preference) and let the user pick an option or answer in their own words. For graded questions use `quiz`.",
+    // 同 quiz：独占终端 UI，不能和别的 tool call 并行上屏。
+    executionMode: "sequential",
     parameters: AskParams,
     async execute(
       _toolCallId,

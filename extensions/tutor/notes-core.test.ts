@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AskDetails } from "./ask-core.ts";
 import {
+  bindToolCallIds,
   buildTopicState,
   CHAPTERS_END,
   catalogBlocks,
@@ -22,6 +23,7 @@ import {
   isValidTopic,
   messageText,
   mirrorAssistantText,
+  mirrorStep,
   nextChapterNumber,
   parseChapterFileName,
   parseChapterRef,
@@ -1111,5 +1113,144 @@ describe("notes-core / numbering order with explicit numbers", () => {
     });
     expect(plan.ok).toBe(false);
     if (plan.ok === false) expect(plan.conflicts[0].hint).toContain("同时给了");
+  });
+});
+
+describe("notes-core / 镜像闸门", () => {
+  const bind = (id: string) => ({ type: "toolCall", id, name: "bind_notes" });
+
+  it("挑出 bind_notes 的 tool call id，忽略其他工具", () => {
+    expect(
+      bindToolCallIds([
+        { type: "text", text: "先收尾，再开新章" },
+        { type: "toolCall", id: "q1", name: "quiz" },
+        bind("b1"),
+        { type: "toolCall", id: "a1", name: "ask_user_question" },
+      ]),
+    ).toEqual(["b1"]);
+  });
+
+  it("认不出形状时返回空数组，绝不抛", () => {
+    expect(bindToolCallIds(undefined)).toEqual([]);
+    expect(bindToolCallIds("字符串")).toEqual([]);
+    expect(bindToolCallIds([{ type: "toolCall", name: "bind_notes" }])).toEqual(
+      [],
+    );
+  });
+
+  it("不带 bind 的消息立即放行（既有行为不变）", () => {
+    expect(
+      mirrorStep(null, { kind: "assistant", block: "正文", binds: [] }),
+    ).toEqual({ pending: null, append: ["正文"] });
+  });
+
+  it("同轮 bind：正文先扣住，等 bindResult 才放行", () => {
+    const held = mirrorStep(null, {
+      kind: "assistant",
+      block: "第2章正文",
+      binds: ["b1"],
+    });
+    expect(held).toEqual({
+      pending: { binds: ["b1"], blocks: ["第2章正文"] },
+      append: [],
+    });
+    expect(
+      mirrorStep(held.pending, { kind: "bindResult", toolCallId: "b1" }),
+    ).toEqual({ pending: null, append: ["第2章正文"] });
+  });
+
+  it("别人家的 bindResult 不认领，闸门继续关着", () => {
+    const held = {
+      pending: { binds: ["b1"], blocks: ["第2章正文"] },
+      append: [],
+    };
+    expect(
+      mirrorStep(held.pending, { kind: "bindResult", toolCallId: "other" }),
+    ).toEqual({ pending: held.pending, append: [] });
+  });
+
+  it("同轮两个 bind：全部回来才开闸", () => {
+    const first = mirrorStep(null, {
+      kind: "assistant",
+      block: "正文",
+      binds: ["b1", "b2"],
+    });
+    const second = mirrorStep(first.pending, {
+      kind: "bindResult",
+      toolCallId: "b1",
+    });
+    expect(second).toEqual({
+      pending: { binds: ["b2"], blocks: ["正文"] },
+      append: [],
+    });
+    expect(
+      mirrorStep(second.pending, { kind: "bindResult", toolCallId: "b2" }),
+    ).toEqual({ pending: null, append: ["正文"] });
+  });
+
+  it("关闸期间的块排队，开闸后按产出顺序放行", () => {
+    const held = mirrorStep(null, {
+      kind: "assistant",
+      block: "正文",
+      binds: ["b1"],
+    });
+    const queued = mirrorStep(held.pending, { kind: "block", block: "题面" });
+    expect(queued).toEqual({
+      pending: { binds: ["b1"], blocks: ["正文", "题面"] },
+      append: [],
+    });
+    expect(
+      mirrorStep(queued.pending, { kind: "bindResult", toolCallId: "b1" }),
+    ).toEqual({ pending: null, append: ["正文", "题面"] });
+  });
+
+  it("flush 兜底：bind 没回结果也要放行，绝不丢字", () => {
+    const held = mirrorStep(null, {
+      kind: "assistant",
+      block: "正文",
+      binds: ["b1"],
+    });
+    expect(mirrorStep(held.pending, { kind: "flush" })).toEqual({
+      pending: null,
+      append: ["正文"],
+    });
+  });
+
+  it("空块不占位：正文为空但带 bind 时，闸门照样关上", () => {
+    const held = mirrorStep(null, {
+      kind: "assistant",
+      block: "",
+      binds: ["b1"],
+    });
+    expect(held).toEqual({
+      pending: { binds: ["b1"], blocks: [] },
+      append: [],
+    });
+    const queued = mirrorStep(held.pending, { kind: "block", block: "题面" });
+    expect(queued.pending?.blocks).toEqual(["题面"]);
+  });
+
+  it("空块被丢弃：空正文/空题面都不会写进笔记", () => {
+    expect(
+      mirrorStep(null, { kind: "assistant", block: "", binds: [] }).append,
+    ).toEqual([]);
+    expect(mirrorStep(null, { kind: "block", block: "" }).append).toEqual([]);
+  });
+
+  it("上一个 bind 没回结果时又来一条带 bind 的消息：先放行旧的，再扣新的", () => {
+    const stale = { binds: ["old"], blocks: ["旧正文"] };
+    expect(
+      mirrorStep(stale, { kind: "assistant", block: "新正文", binds: ["new"] }),
+    ).toEqual({
+      pending: { binds: ["new"], blocks: ["新正文"] },
+      append: ["旧正文"],
+    });
+  });
+
+  it("不带 bind 的消息也能放行扣住的块（顺序：先旧后新）", () => {
+    const stale = { binds: ["old"], blocks: ["旧正文"] };
+    expect(
+      mirrorStep(stale, { kind: "assistant", block: "新正文", binds: [] }),
+    ).toEqual({ pending: null, append: ["旧正文", "新正文"] });
   });
 });

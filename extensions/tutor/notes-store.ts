@@ -45,6 +45,7 @@ import {
   SPLIT_TOPIC_TOOL_NAME,
 } from "./names.ts";
 import {
+  bindToolCallIds,
   buildTopicState,
   type ChapterFile,
   type ChapterState,
@@ -63,8 +64,11 @@ import {
   indexEntryLine,
   isValidChapter,
   isValidTopic,
+  type MirrorEvent,
+  type MirrorPending,
   messageText,
   mirrorAssistantText,
+  mirrorStep,
   type NumberingAssignment,
   parseChapterFileName,
   parseChapterRef,
@@ -565,6 +569,8 @@ export const prepareChapterBinding = (input: {
 
 export const registerNotes = (pi: ExtensionAPI): void => {
   let noteFile: string | null = null;
+  /** 镜像闸门：关闸期间扣住还没归属的块（见 notes-core 的 mirrorStep）。 */
+  let mirror: MirrorPending | null = null;
   let writeLock: Promise<void> = Promise.resolve();
   const loggedQuestions = new Set<string>();
 
@@ -588,6 +594,16 @@ export const registerNotes = (pi: ExtensionAPI): void => {
         // 外部删掉/改权限：静默忽略，绝不因为镜像失败打断教学。
       }
     });
+  };
+
+  /**
+   * 镜像编排（Shell）：闸门规则全在 Core 的 `mirrorStep` 里，这里只负责
+   * 「更新 pending + 把该放行的块写出去」。落盘仍只走 `appendBlock`。
+   */
+  const runMirror = async (event: MirrorEvent): Promise<void> => {
+    const step = mirrorStep(mirror, event);
+    mirror = step.pending;
+    for (const block of step.append) await appendBlock(block);
   };
 
   const setStatus = (ctx: ExtensionContext): void => {
@@ -773,6 +789,7 @@ export const registerNotes = (pi: ExtensionAPI): void => {
     }
     if (last?.file) {
       noteFile = last.file;
+      mirror = null;
       setStatus(ctx);
     }
   });
@@ -785,13 +802,22 @@ export const registerNotes = (pi: ExtensionAPI): void => {
       const text = stripSkillBlocks(
         messageText(message.content as never).trim(),
       );
-      if (text) await appendBlock(formatUserBlock(text));
+      if (text)
+        await runMirror({ kind: "block", block: formatUserBlock(text) });
       return;
     }
     if (message?.role === "assistant") {
       // 正文块：题面由 quiz / ask 的 pending 块写，正文里重复的那份不带进笔记。
       const text = mirrorAssistantText(message.content);
-      if (text) await appendBlock(formatAssistantBlock(text));
+      const binds = bindToolCallIds(message.content);
+      // 正文为空也要发：这条消息里的 bind 必须关上闸门，否则同轮的题面块会跟着漏到旧文件。
+      if (text || binds.length > 0) {
+        await runMirror({
+          kind: "assistant",
+          block: text ? formatAssistantBlock(text) : "",
+          binds,
+        });
+      }
     }
   });
 
@@ -803,14 +829,15 @@ export const registerNotes = (pi: ExtensionAPI): void => {
     const details = event.partialResult?.details as QuizDetails | undefined;
     if (details?.status !== "pending" || details.options.length === 0) return;
     loggedQuestions.add(event.toolCallId);
-    await appendBlock(
-      formatQuestionBlock({
+    await runMirror({
+      kind: "block",
+      block: formatQuestionBlock({
         kind: "Quiz",
         question: details.question,
         context: details.context,
         options: details.options,
       }),
-    );
+    });
   });
 
   // ask 不洗牌：tool_call 的参数就是展示顺序，可以在用户作答前先写问题块。
@@ -824,20 +851,33 @@ export const registerNotes = (pi: ExtensionAPI): void => {
             : [],
         )
       : [];
-    await appendBlock(
-      formatQuestionBlock({
+    await runMirror({
+      kind: "block",
+      block: formatQuestionBlock({
         kind: "Question",
         question: String(input.question ?? ""),
         context: typeof input.details === "string" ? input.details : undefined,
         options,
       }),
-    );
+    });
   });
 
   pi.on("tool_result", async (event, _ctx) => {
-    if (!noteFile || !QA_TOOLS.has(event.toolName)) return;
+    if (!noteFile) return;
+    // bind 的结果 = 镜像目标已经切到新章节，开闸放行这一轮扣住的块。
+    if (event.toolName === BIND_NOTES_TOOL_NAME) {
+      await runMirror({ kind: "bindResult", toolCallId: event.toolCallId });
+      return;
+    }
+    if (!QA_TOOLS.has(event.toolName)) return;
     const block = formatAnswerBlock((event as { details?: unknown }).details);
-    if (block) await appendBlock(block);
+    if (block) await runMirror({ kind: "block", block });
+  });
+
+  // 兜底：bind 的工具结果没回来（失败 / 中断）也要把扣住的块写出去——
+  // 宁可落在旧文件，绝不丢字。turn_end 一定晚于同批工具的结果。
+  pi.on("turn_end", async () => {
+    await runMirror({ kind: "flush" });
   });
 
   // ── 绑定：工具（agent 可调） + 命令（人可敲） ─────────────────────────────
@@ -849,7 +889,7 @@ export const registerNotes = (pi: ExtensionAPI): void => {
     chapter: Type.Optional(
       Type.String({
         description:
-          "Chapter name (no number — the tool owns numbering). When given, the mirror switches to <topic>/<NN-章节>.md and returns the chapter's label `第N章 · 名字`. Bind the chapter BEFORE teaching it, otherwise that chapter's questions land in the previous file.",
+          "Chapter name (no number — the tool owns numbering). When given, the mirror switches to <topic>/<NN-章节>.md and returns the chapter's label `第N章 · 名字`. Call this in a message of its own, with no prose in it: the mirror writes a message's prose when the message ends, before tool calls run, so chapter prose written alongside this call lands in the previous chapter's file. Bind the chapter BEFORE teaching it, then teach in the next message.",
       }),
     ),
     chapterNumber: Type.Optional(
@@ -867,6 +907,7 @@ export const registerNotes = (pi: ExtensionAPI): void => {
       "Bind this session's note mirror to the topic's markdown file in the notes vault, creating the directory and file when missing. " +
       "Call it once at the start of a teaching session, then every reply and quiz answer is appended to that same note. " +
       "Pass `chapter` before teaching a chapter: it assigns the chapter number, writes `<NN-章节>.md` with `# 第N章 · 名字` as its first line, adds the index line and refreshes the index's `## 章节` block. The returned `第N章 · 名字` label is the only authoritative way to refer to that chapter afterwards. " +
+      "Send this call as a message of its own, with no prose around it — the mirror writes a message's prose when the message ends, before tool calls run, so chapter prose sent alongside the bind lands in the previous chapter's file. Bind first, teach in the next message. " +
       "It also returns a resume summary: the topic's chapters with their quiz tallies, and which chapter to continue from.",
     parameters: BindNotesParams,
     async execute(
@@ -1627,6 +1668,7 @@ export const registerNotes = (pi: ExtensionAPI): void => {
         return;
       }
       noteFile = null;
+      mirror = null;
       pi.appendEntry(ENTRY_TYPE, { file: null });
       setStatus(ctx);
       ctx.ui.notify("Unlinked session mirror.", "info");

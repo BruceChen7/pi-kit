@@ -21,6 +21,7 @@ import {
   toggleSelection,
 } from "../shared/picker-core.ts";
 import { renderPickerLines } from "../shared/picker-view.ts";
+import { sharedUiGate } from "../shared/ui-gate.ts";
 import {
   buildRows,
   DONT_KNOW_VALUE,
@@ -67,11 +68,21 @@ export const runQuiz = async (
   if (!ctx.hasUI) return { kind: "unavailable" };
 
   const rows = buildFocusRows(input.options, input.mode);
+
+  // 上屏即独占终端：同批并行的另一个提问要等这个出闸后才上屏（见 shared/ui-gate）。
+  return sharedUiGate.run(() => showQuizPicker(ctx, input, rows));
+};
+
+const showQuizPicker = (
+  ctx: ExtensionContext,
+  input: QuizRunInput,
+  rows: PickerOption[],
+): Promise<QuizRunResult> => {
+  const multi = input.mode === "multi-select";
   input.onDisplay?.(input.options);
 
   return ctx.ui.custom<QuizRunResult>((tui, _theme, _kb, done) => {
     let state: PickerState = createPickerState();
-    const multi = input.mode === "multi-select";
     const isSubmitRow = (index: number): boolean =>
       rows[index]?.id === SUBMIT_ID;
 

@@ -64,13 +64,38 @@ describe("mode-core / restoreTutorMode", () => {
     message: { role: "user", content: [{ type: "text", text }] },
   });
 
-  it("defaults to off without any signal", () => {
-    expect(restoreTutorMode([])).toBe("off");
+  it("treats a vault-internal note binding as a teaching session", () => {
+    // /md-topic 只绑笔记、不敲 /skill:tutor：绑定本身就是教学意图，工具必须可见。
+    const bound = (file: string | null) => ({
+      type: "custom",
+      customType: "tutor-notes",
+      data: { file },
+    });
+    const vaultDir = "/vault/Learn";
+
+    expect(restoreTutorMode([], { vaultDir })).toBe("off");
     expect(
-      restoreTutorMode([
-        { type: "custom", customType: "tutor-notes", data: { file: "/x.md" } },
-        userMessage("帮我改一下这个扩展"),
-      ]),
+      restoreTutorMode([bound(`${vaultDir}/Docker实现/01-x.md`)], { vaultDir }),
+    ).toBe("on");
+    // 绑在教学内容区之外（/md-log 到别处的文件）不算。
+    expect(restoreTutorMode([bound("/tmp/notes.md")], { vaultDir })).toBe(
+      "off",
+    );
+    // 省略 vaultDir 时不做路径判定：任何绑定都算。
+    expect(restoreTutorMode([bound("/tmp/notes.md")])).toBe("on");
+    // 解绑（file: null）且没有别的信号 ⇒ 回到 off。
+    expect(
+      restoreTutorMode(
+        [
+          bound(`${vaultDir}/Docker实现/01-x.md`),
+          { type: "custom", customType: "tutor-notes", data: { file: null } },
+        ],
+        { vaultDir },
+      ),
+    ).toBe("off");
+    // 普通会话：既没绑定也没 skill 块。
+    expect(
+      restoreTutorMode([userMessage("帮我改一下这个扩展")], { vaultDir }),
     ).toBe("off");
   });
 

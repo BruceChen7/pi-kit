@@ -1,4 +1,4 @@
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 import {
   createPickerState,
@@ -80,5 +80,22 @@ describe("picker-view", () => {
     expect(
       render({ footer: "space toggle  enter submit" }).join("\n"),
     ).toContain("space toggle  enter submit");
+  });
+
+  it("焦点态在搜索框发 CURSOR_MARKER（IME 靠它聚焦），失焦时不发", () => {
+    const focused = render({ focused: true }).join("\n");
+    expect(focused).toContain(CURSOR_MARKER);
+    expect(focused).not.toContain("type to filter...");
+    const blurred = render({ focused: false }).join("\n");
+    expect(blurred).not.toContain(CURSOR_MARKER);
+    expect(blurred).toContain("type to filter...");
+  });
+
+  it("带光标标记的搜索行不改变可见宽度", () => {
+    for (const width of [20, 40]) {
+      for (const line of render({ focused: true, width })) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 });

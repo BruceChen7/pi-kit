@@ -5,6 +5,7 @@
  * （Obsidian callout）。所有 IO 都在 notes-store；这里 value in / value out。
  */
 
+import type { PickerOption } from "../shared/picker-core.ts";
 import type { AskDetails } from "./ask-core.ts";
 import {
   ASK_USER_QUESTION_TOOL_NAME,
@@ -139,6 +140,13 @@ export const topicDirOf = (notePath: string): string =>
 /** 新笔记的开头：说明这份文件是谁维护的、怎么追加。 */
 export const formatTopicHeader = (topic: string): string =>
   `# ${topic}\n\n> 由 tutor 维持：每次教学按时间顺序追加，只增不改。\n`;
+
+/** `<vaultRoot>/<topDir>/<主题>`（vaultRoot 需已展开 `~`；主题名去空白）。 */
+export const topicDirPath = (input: {
+  vaultRoot: string;
+  topDir: string;
+  topic: string;
+}): string => joinPath(input.vaultRoot, input.topDir, input.topic.trim());
 
 /** 章节与主题共用同一套安全校验，外加长度上限。 */
 /** 把名字里的空白去掉，作为给调用方的"建议名"（错误提示里附上，省一轮往返）。 */
@@ -1107,6 +1115,49 @@ export const buildTopicState = (input: {
   resume: pickResume(input.chapters),
 });
 
+// ── 章节 picker 的行（纯） ──────────────────────────────────────────────
+
+export const CHAPTER_PICKER_NEW_ID = "__new_chapter__";
+export const CHAPTER_PICKER_INDEX_ID = "__topic_index__";
+
+/**
+ * 章节 picker 的行：已有章节（按传入顺序，调用方已排序）+「＋新建章节…」+「主题索引页」。
+ * resume 那章标 `· 续做`，并作为初始光标（没有 resume 就 0）。
+ */
+export const chapterPickerOptions = (input: {
+  chapters: ChapterState[];
+  resume?: Resume;
+}): { rows: PickerOption[]; cursor: number } => ({
+  rows: [
+    ...input.chapters.map((chapter) => ({
+      id: `chapter:${chapter.name}`,
+      label: `${chapterLabel(chapter.number, chapter.name)}${
+        input.resume?.chapter === chapter.name ? " · 续做" : ""
+      }`,
+      value: chapter.name,
+      kind: "option" as const,
+    })),
+    {
+      id: CHAPTER_PICKER_NEW_ID,
+      label: "＋ 新建章节…",
+      value: CHAPTER_PICKER_NEW_ID,
+      kind: "other" as const,
+    },
+    {
+      id: CHAPTER_PICKER_INDEX_ID,
+      label: "主题索引页（不绑定章节）",
+      value: CHAPTER_PICKER_INDEX_ID,
+      kind: "option" as const,
+    },
+  ],
+  cursor: Math.max(
+    0,
+    input.chapters.findIndex(
+      (chapter) => chapter.name === input.resume?.chapter,
+    ),
+  ),
+});
+
 // ── 存量编号迁移（纯）：顺序 → 编号计划 ──────────────────────────────────
 
 export type NumberingAssignment = {
@@ -1398,3 +1449,195 @@ export const provenanceBlock = (input: {
     ...body.map((line) => `> ${line}`),
   ].join("\n");
 };
+
+// ── 会话绑定与主题简报（纯） ─────────────────────────────────────────────
+//
+// 这一节回答两件事，而且只回答这两件：
+//   1. 本会话绑到了哪篇笔记？（`readBoundNote` / `isVaultNotePath` / `topicOfNotePath`）
+//   2. 这个主题现在是什么状态？（`formatTopicBrief` / `formatTopicCatalog`）
+// **不回答「该绑哪儿」**——落点由学习者在 picker 里选，判定只有一条字符串比较
+// （`needsPlacementGate`），没有任何同名/近似/最近改动的推断。
+
+export const TUTOR_NOTES_ENTRY_TYPE = "tutor-notes";
+
+/** 会话条目的结构镜像：只取判定需要的字段，不依赖 pi 的类型。 */
+export type SessionEntryLike = {
+  type?: string;
+  customType?: string;
+  data?: unknown;
+  message?: { role?: string; content?: MessageContent };
+};
+
+/** 本条分支上最后一次 `tutor-notes` 绑定；没有绑定条目则 null。 */
+export const readBoundNote = (
+  entries: readonly SessionEntryLike[],
+): string | null => {
+  let file: string | null = null;
+  for (const entry of entries) {
+    if (entry?.type !== "custom") continue;
+    if (entry.customType !== TUTOR_NOTES_ENTRY_TYPE) continue;
+    const value = (entry.data as { file?: unknown } | undefined)?.file;
+    if (typeof value === "string") file = value;
+    else if (value === null) file = null;
+  }
+  return file;
+};
+
+/** `<vaultRoot>/<topDir>`（vaultRoot 需已展开 `~`）。 */
+export const vaultDirOf = (vault: {
+  vaultRoot: string;
+  topDir: string;
+}): string => joinPath(vault.vaultRoot, vault.topDir);
+
+/** 绑定是否落在教学内容区（`<vaultRoot>/<topDir>/` 下）——决定要不要开 tutor 闸门。 */
+export const isVaultNotePath = (file: string, vaultDir: string): boolean =>
+  file.startsWith(`${vaultDir.replace(/\/+$/, "")}/`);
+
+/** `<topic>/<topic>.md` 或 `<topic>/<NN-章节>.md` → 主题名；路径里没有目录则 null。 */
+export const topicOfNotePath = (file: string): string | null => {
+  const dir = topicDirOf(file);
+  const base = dir.slice(dir.lastIndexOf("/") + 1);
+  return base.length > 0 ? base : null;
+};
+
+/**
+ * 落点是否需要问人：请求主题不是本会话已绑定的主题（含尚未绑定）⇒ 问。
+ * 只比字符串——不做同名命中、近似匹配、最近改动这类推断。
+ */
+export const needsPlacementGate = (input: {
+  requestedTopic: string;
+  boundTopic: string | null;
+}): boolean =>
+  input.boundTopic === null || input.requestedTopic !== input.boundTopic;
+
+/** 章节一行：`第3章 · 调度与唤醒（ok 4 / wrong 1 / gaps 0）`。 */
+export const formatChapterTally = (chapter: ChapterState): string => {
+  const parts = [
+    `ok ${chapter.ok}`,
+    `wrong ${chapter.wrong}`,
+    `gaps ${chapter.gaps}`,
+  ];
+  if (chapter.unanswered > 0) parts.push(`unanswered ${chapter.unanswered}`);
+  return `${chapterLabel(chapter.number, chapter.name)}（${parts.join(" / ")}）`;
+};
+
+/**
+ * 主题简报：`bind_notes` 的结果、`topic_status`、会话首轮注入共用同一份文本，
+ * 保证「屏幕 / 工具 / 模型」看到的是同一个说法。
+ */
+export const formatTopicBrief = (input: {
+  topic: string;
+  indexPath: string;
+  chapters: ChapterState[];
+  resume?: Resume;
+  chapter?: { name: string; number?: number };
+  /** 本会话绑定的文件；省略时以索引页为准（主题级查询）。 */
+  notePath?: string;
+  /** 概念缺口行（由 concepts-core 渲染，Core 不反向依赖它）。 */
+  conceptLine: string;
+  unnumbered?: string[];
+}): string => {
+  const lines: string[] = [`笔记：${input.notePath ?? input.indexPath}`];
+  if (input.notePath) {
+    lines.push(`索引：${input.indexPath}（先读 ## 已知边界 / ## 未解决）`);
+  }
+  if (input.chapter) {
+    lines.push(
+      `当前章节：${chapterLabel(input.chapter.number, input.chapter.name)}`,
+    );
+  }
+  lines.push(
+    input.chapters.length === 0
+      ? `章节：《${input.topic}》还没有章节`
+      : `章节：${input.chapters.map(formatChapterTally).join("；")}`,
+  );
+  const resumeChapter = input.resume
+    ? input.chapters.find((chapter) => chapter.name === input.resume?.chapter)
+    : undefined;
+  lines.push(
+    input.resume
+      ? `续做：${chapterLabel(resumeChapter?.number, input.resume.chapter)}（${input.resume.reason}）`
+      : `续做：无（这一主题还没有讲过的章节）`,
+  );
+  lines.push(input.conceptLine);
+  if (input.unnumbered && input.unnumbered.length > 0) {
+    lines.push(
+      `待编号：${input.unnumbered.join("、")} —— 调 number_chapters 补编号`,
+    );
+  }
+  lines.push(
+    `新增章节：bind_notes({topic:"${input.topic}", chapter:"<名字>"})（同一主题内直接生效；换主题或开新主题会弹 picker，由学习者选落点）`,
+  );
+  return lines.join("\n");
+};
+
+/** ISO 时间戳 → `YYYY-MM-DD HH:mm`：只用于展示，排序永远用 ISO 原值。 */
+export const formatTouchedAt = (iso: string): string =>
+  iso.length >= 16 ? `${iso.slice(0, 10)} ${iso.slice(11, 16)}` : iso;
+
+/** vault 主题概览一行所需的字段（boundary DTO：排序键是 ISO，展示交给 formatTouchedAt）。 */
+export type TopicSummary = {
+  topic: string;
+  chapters: number;
+  /** 最近改动时间（ISO 8601）；索引页与章节文件都不存在时为 null。 */
+  lastTouchedAt: string | null;
+};
+
+/** `vault 主题：redis高可用（2章，最近 2026-09-24 10:11）、Docker实现（1章）`。 */
+export const formatTopicList = (topics: TopicSummary[]): string =>
+  topics.length === 0
+    ? "vault 主题：（还没有任何主题）"
+    : `vault 主题：${topics
+        .map(
+          (entry) =>
+            `${entry.topic}（${entry.chapters}章${
+              entry.lastTouchedAt
+                ? `，最近 ${formatTouchedAt(entry.lastTouchedAt)}`
+                : ""
+            }）`,
+        )
+        .join("、")}`;
+
+/** 未绑定时的 vault 目录：主题清单 + 最近改动的主题，并写明落点规则。 */
+export const formatTopicCatalog = (input: {
+  topics: TopicSummary[];
+  recent?: { topic: string; chapters: ChapterFile[] };
+}): string => {
+  const lines: string[] = ["本会话还没有绑定笔记。"];
+  lines.push(formatTopicList(input.topics));
+  if (input.recent) {
+    lines.push(
+      `最近改动：${input.recent.topic} —— ${
+        input.recent.chapters.length === 0
+          ? "（还没有章节）"
+          : input.recent.chapters
+              .map((chapter) => chapterLabel(chapter.number, chapter.name))
+              .join("；")
+      }`,
+    );
+  }
+  lines.push(
+    "落点规则：不要用参数去猜主题名；调 bind_notes 时插件会弹 picker，由学习者选「放到哪个主题 / 哪个章节（已有章节或 ＋新建章节…）」。",
+  );
+  return lines.join("\n");
+};
+
+/** 学习者在 picker 里取消落点选择：没写盘，也不该重试。 */
+export const formatBindCancelled = (): string =>
+  [
+    "落点未确认：学习者取消了选择，没有写盘（主题目录与章节文件都没变）。",
+    "下一步：先问学习者这次教学放到哪个主题/章节（可以用 ask_user_question 给出候选），不要原样重试这次 bind_notes。",
+  ].join("\n");
+
+/** 会话里弹不出 picker（print / json 模式）：只能把选择交回给对话。 */
+export const formatPlacementRequired = (input: {
+  requestedTopic: string;
+  boundTopic: string | null;
+}): string =>
+  [
+    `${input.requestedTopic} 还不能直接绑定：这个会话没有可用的选择 UI，而没有学习者的确认就不能决定落点。`,
+    input.boundTopic === null
+      ? "本会话还没有绑定主题。"
+      : `本会话已绑定的主题是《${input.boundTopic}》。`,
+    "下一步：用 ask_user_question 让学习者选（放到哪个主题 / 哪个章节：已有章节还是新建），确定后再 bind_notes；或让他自己敲 `/md-topic` 选。",
+  ].join("\n");

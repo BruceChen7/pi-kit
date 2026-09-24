@@ -7,17 +7,21 @@
  * - 绑定路径由 notes-core 的纯函数算出，这里只做 mkdir/读现有的内容。
  *
  * 命令与工具：
- * - `/md-topic [主题] [章节]`：无参弹 picker（列出 `Learn/` 下已有主题 + 「新建主题…」）；
- *   给主题时按设置拼出 `<vaultRoot>/<topDir>/<主题>/<主题>.md`（给章节则是 `<章节>.md`）。
+ * - `/md-topic [主题] [章节]`：无参弹主题 picker（列出 `Learn/` 下已有主题 + 「新建主题…」）；
+ *   给主题（或选完主题）后弹章节 picker（已有章节 / ＋新建章节… / 主题索引页）；
+ *   `/md-topic <主题> <章节>` 绕过 picker，直接绑 `<vaultRoot>/<topDir>/<主题>/<NN-章节>.md`。
  * - `/md-log <路径>`：只链接**已存在**的文件（保留 learn 的安全语义，不因笔误造文件）。
  * - `/md-unlog`：解绑。
- * - `bind_notes` 工具：agent 可调用（`/命令` 只能由人敲，skill 需要自主开篇），
- *   并回报「恢复摘要」（章节统计 + resume），让新会话能接着上次没做完的地方继续。
+ * - `bind_notes` 工具：agent 可调用。**落点 gate**：请求的主题不是本会话已绑定的主题时就
+ *   弹 picker（与 `/md-topic` 同一套组件），学习者的选择才算数；Esc ⇒ 不写盘。
+ *   因此 agent 没有「自己造主题」的接口——新建主题只能由人在 picker 里选「＋新建主题…」。
+ *   绑定结果回报主题简报（章节统计 + resume + 概念缺口，见 notes-core 的 `formatTopicBrief`）。
  * - `split_topic` 工具：存量单文件笔记 → 索引 + 章节（默认只出计划，apply 才落盘）。
+ *
+ * 读侧（主题清单 / 主题状态）在 topic-store，`topic_status` 工具在 topic-status。
  */
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type {
   ExtensionAPI,
@@ -26,17 +30,16 @@ import type {
 import { Type } from "@sinclair/typebox";
 import {
   createPickerState,
-  moveCursor,
+  filterOptions,
   type PickerOption,
 } from "../shared/picker-core.ts";
-import { renderPickerLines } from "../shared/picker-view.ts";
-import { loadSettings } from "../shared/settings.ts";
+import { applyPickerKey } from "../shared/picker-input.ts";
 import {
-  isConceptTableName,
-  renderTopicConceptLine,
-  topicConceptState,
-} from "./concepts-core.ts";
-import { loadRegistries } from "./concepts-store.ts";
+  type PickerComponent,
+  renderPickerLines,
+} from "../shared/picker-view.ts";
+import { sharedUiGate } from "../shared/ui-gate.ts";
+import { conceptLineFor, topicConceptStateFor } from "./concepts-store.ts";
 import {
   ASK_USER_QUESTION_TOOL_NAME,
   BIND_NOTES_TOOL_NAME,
@@ -46,52 +49,67 @@ import {
 } from "./names.ts";
 import {
   bindToolCallIds,
-  buildTopicState,
+  CHAPTER_PICKER_INDEX_ID,
+  CHAPTER_PICKER_NEW_ID,
   type ChapterFile,
-  type ChapterState,
   catalogBlocks,
   chapterFileName,
   chapterLabel,
   chapterNotePath,
-  expandHome,
+  chapterPickerOptions,
   formatAnswerBlock,
   formatAssistantBlock,
+  formatBindCancelled,
+  formatPlacementRequired,
   formatQuestionBlock,
   formatSectionHeader,
+  formatTopicBrief,
   formatTopicHeader,
+  formatTouchedAt,
   formatUserBlock,
   hasIndexEntry,
   indexEntryLine,
   isValidChapter,
   isValidTopic,
+  isVaultNotePath,
   type MirrorEvent,
   type MirrorPending,
   messageText,
   mirrorAssistantText,
   mirrorStep,
   type NumberingAssignment,
-  parseChapterFileName,
+  needsPlacementGate,
   parseChapterRef,
   parseIndexEntries,
   planNumbering,
   planSplit,
   proposeChapterOrder,
   provenanceBlock,
+  readBoundNote,
   relinkIndex,
   resolveChapterNumber,
-  resolveTutorSettings,
   rewriteChapterHeading,
   sanitizeName,
   stripSkillBlocks,
-  summarizeChapter,
   type TopicRejection,
+  TUTOR_NOTES_ENTRY_TYPE,
+  type TutorSettings,
   topicDirOf,
   topicNotePath,
+  topicOfNotePath,
   upsertChapterToc,
+  vaultDirOf,
 } from "./notes-core.ts";
 import type { QuizDetails } from "./quiz-core.ts";
+import { resolveSettings } from "./settings-store.ts";
+import {
+  listTopics,
+  readTopicState,
+  type ScannedChapter,
+  scanChapters,
+} from "./topic-store.ts";
 
-const ENTRY_TYPE = "tutor-notes";
+const ENTRY_TYPE = TUTOR_NOTES_ENTRY_TYPE;
 const STATUS_KEY = "tutor-notes";
 const QA_TOOLS = new Set([QUIZ_TOOL_NAME, ASK_USER_QUESTION_TOOL_NAME]);
 
@@ -116,19 +134,6 @@ const rejectionHint = (reason: TopicRejection): string => {
     default:
       return "topic must not contain NUL";
   }
-};
-
-type NotesDeps = {
-  cwd: string;
-  home: string;
-};
-
-const resolveSettings = (deps: NotesDeps) => {
-  const settings = resolveTutorSettings(loadSettings(deps.cwd).merged);
-  return {
-    ...settings,
-    vaultRoot: expandHome(settings.vaultRoot, deps.home),
-  };
 };
 
 /** IO 薄边界（导出以便集成测试直接打到真实文件系统）。 */
@@ -174,38 +179,6 @@ export const checkExistingFile = (
   fs.existsSync(file) && fs.statSync(file).isFile()
     ? { ok: true }
     : { ok: false, error: `file does not exist: ${file}` };
-
-export type ScannedChapter = {
-  chapter: ChapterFile;
-  file: string;
-  markdown: string;
-  touchedAt: string;
-};
-
-/** 扫一个主题目录里的章节文件：文件名就是编号的权威来源（索引页与概念表都不算）。 */
-export const scanChapters = (dir: string, topic: string): ScannedChapter[] => {
-  if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isFile() &&
-        entry.name.endsWith(".md") &&
-        entry.name !== `${topic}.md` &&
-        !isConceptTableName(entry.name),
-    )
-    .map((entry) => {
-      const file = path.join(dir, entry.name);
-      const base = entry.name.replace(/\.md$/, "");
-      const { number, name } = parseChapterFileName(base);
-      return {
-        chapter: { number, name },
-        file,
-        markdown: fs.readFileSync(file, "utf-8"),
-        touchedAt: new Date(fs.statSync(file).mtimeMs).toISOString(),
-      };
-    });
-};
 
 /** 索引页只追加一章一行（已存在则不动）；编号缺省写入旧格式。 */
 export const appendIndexEntryOnce = (
@@ -567,12 +540,25 @@ export const prepareChapterBinding = (input: {
   };
 };
 
-export const registerNotes = (pi: ExtensionAPI): void => {
+export type NotesDeps = {
+  /**
+   * 绑定状态变化：绑定 / 换绑（file 为路径）与解绑（file 为 null）。
+   * 只报告事实，不下指令：闸门开合由 mode 控制器按会话条目重新推导（见 index.ts），
+   * 所以解绑不需要在这里传「关闸」。
+   */
+  onBindingChange?: (event: { file: string | null; inVault: boolean }) => void;
+};
+
+export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
   let noteFile: string | null = null;
   /** 镜像闸门：关闸期间扣住还没归属的块（见 notes-core 的 mirrorStep）。 */
   let mirror: MirrorPending | null = null;
   let writeLock: Promise<void> = Promise.resolve();
   const loggedQuestions = new Set<string>();
+
+  /** settings → vault 路径：读侧派生只此一处（settings-store），避免各条路径各读一遍。 */
+  const settingsFor = (ctx: ExtensionContext): TutorSettings =>
+    resolveSettings({ cwd: ctx.cwd });
 
   const withLock = <T>(fn: () => T | Promise<T>): Promise<T> => {
     const previous = writeLock;
@@ -639,6 +625,13 @@ export const registerNotes = (pi: ExtensionAPI): void => {
     noteFile = file;
     pi.appendEntry(ENTRY_TYPE, { file, chapter: options.chapter ?? null });
     setStatus(ctx);
+    // ① 绑定教学内容 = 教学会话：把事实交给 mode 控制器（index.ts 据此开 tutor 闸门）；
+    // ② 会话名（仅在还没名字时）——`/resume` 列表里能直接认出主题。
+    const vaultDir = vaultDirOf(settingsFor(ctx));
+    const inVault = isVaultNotePath(file, vaultDir);
+    deps.onBindingChange?.({ file, inVault });
+    const topic = inVault ? topicOfNotePath(file) : null;
+    if (topic && !pi.getSessionName()) pi.setSessionName(`tutor:${topic}`);
     return { ok: true, created };
   };
 
@@ -687,7 +680,7 @@ export const registerNotes = (pi: ExtensionAPI): void => {
       }
       cleanChapter = chapterCheck.topic;
     }
-    const settings = resolveSettings({ cwd: ctx.cwd, home: os.homedir() });
+    const settings = settingsFor(ctx);
     const indexPath = topicNotePath({
       vaultRoot: settings.vaultRoot,
       topDir: settings.topDir,
@@ -738,46 +731,9 @@ export const registerNotes = (pi: ExtensionAPI): void => {
     };
   };
 
-  /** 从 vault 推导主题状态：编号优先，未编号的按索引顺序、再按 mtime 补在后。 */
-  const topicStateFor = (
-    indexPath: string,
-    topic: string,
-  ): ReturnType<typeof buildTopicState> => {
-    const index = fs.existsSync(indexPath)
-      ? fs.readFileSync(indexPath, "utf-8")
-      : "";
-    const dir = topicDirOf(indexPath);
-    const scanned = scanChapters(dir, topic);
-    const chapters: ChapterState[] = scanned.map((item) =>
-      summarizeChapter({
-        number: item.chapter.number,
-        name: item.chapter.name,
-        path: item.file,
-        markdown: item.markdown,
-        touchedAt: item.touchedAt,
-      }),
-    );
-    const indexed = parseIndexEntries(index).map((entry) => entry.name);
-    const order = proposeChapterOrder({
-      chapters: scanned.map((item) => ({
-        ...item.chapter,
-        touchedAt: item.touchedAt,
-      })),
-      indexOrder: indexed,
-    });
-    const rank = new Map(order.map((name, position) => [name, position]));
-    const ordered = [...chapters].sort((a, b) => {
-      if (a.number !== undefined && b.number !== undefined)
-        return a.number - b.number;
-      if (a.number !== undefined) return -1;
-      if (b.number !== undefined) return 1;
-      return (
-        (rank.get(a.name) ?? 0) - (rank.get(b.name) ?? 0) ||
-        (a.touchedAt ?? "").localeCompare(b.touchedAt ?? "")
-      );
-    });
-    return buildTopicState({ topic, index, chapters: ordered });
-  };
+  /** 主题状态：读侧统一走 topic-store（与 picker / topic_status 同一份扫描）。 */
+  const topicStateFor = (settings: TutorSettings, topic: string) =>
+    readTopicState(settings, topic);
 
   // ── 会话恢复 ──────────────────────────────────────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
@@ -900,6 +856,57 @@ export const registerNotes = (pi: ExtensionAPI): void => {
     ),
   });
 
+  /**
+   * 落点 gate：请求的主题不是本会话已绑定的主题时，**绝不替学习者决定**。
+   * 弹主题 picker → 章节 picker，由人选；Esc 取消则不写盘。
+   * 只有交互式 TUI 能弹自定义组件（RPC / json / print 都不行）——那些模式下也不猜，
+   * 把选择交回对话（`formatPlacementRequired`）。
+   */
+  const resolvePlacement = async (
+    ctx: ExtensionContext,
+    input: { topic: string; chapter?: string; chapterNumber?: number },
+  ): Promise<
+    | {
+        ok: true;
+        topic: string;
+        chapter?: string;
+        chapterNumber?: number;
+      }
+    | { ok: false; cancelled?: boolean; message: string }
+  > => {
+    const requestedTopic = input.topic.trim();
+    const bound = readBoundNote(ctx.sessionManager.getEntries());
+    const boundTopic = bound ? topicOfNotePath(bound) : null;
+    if (!needsPlacementGate({ requestedTopic, boundTopic })) {
+      return { ok: true, ...input, topic: requestedTopic };
+    }
+    if (ctx.mode !== "tui" || ctx.hasUI !== true) {
+      return {
+        ok: false,
+        message: formatPlacementRequired({ requestedTopic, boundTopic }),
+      };
+    }
+    const topic = await pickTopic(ctx, { suggested: requestedTopic });
+    if (!topic) {
+      return { ok: false, cancelled: true, message: formatBindCancelled() };
+    }
+    const choice = await pickChapter(ctx, topic, {
+      suggested: input.chapter,
+    });
+    if (!choice) {
+      return { ok: false, cancelled: true, message: formatBindCancelled() };
+    }
+    if (choice.kind === "index") {
+      return { ok: true, topic, chapterNumber: input.chapterNumber };
+    }
+    return {
+      ok: true,
+      topic,
+      chapter: choice.name,
+      chapterNumber: input.chapterNumber,
+    };
+  };
+
   pi.registerTool({
     name: BIND_NOTES_TOOL_NAME,
     label: "Bind Topic Notes",
@@ -908,8 +915,12 @@ export const registerNotes = (pi: ExtensionAPI): void => {
       "Call it once at the start of a teaching session, then every reply and quiz answer is appended to that same note. " +
       "Pass `chapter` before teaching a chapter: it assigns the chapter number, writes `<NN-章节>.md` with `# 第N章 · 名字` as its first line, adds the index line and refreshes the index's `## 章节` block. The returned `第N章 · 名字` label is the only authoritative way to refer to that chapter afterwards. " +
       "Send this call as a message of its own, with no prose around it — the mirror writes a message's prose when the message ends, before tool calls run, so chapter prose sent alongside the bind lands in the previous chapter's file. Bind first, teach in the next message. " +
-      "It also returns a resume summary: the topic's chapters with their quiz tallies, and which chapter to continue from.",
+      "It also returns a resume summary: the topic's chapters with their quiz tallies, and which chapter to continue from. " +
+      "When the topic is not the one this session is already bound to, the tool opens a picker and the learner chooses the topic and chapter — do not guess a topic name (a chapter name is not a topic name), and do not retry a cancelled bind: ask the learner where the lesson should go instead.",
     parameters: BindNotesParams,
+    // 落点 gate 会独占终端 UI（主题 / 章节 picker），与 quiz / ask_user_question 同理：
+    // 并行发两个 tool call 会把先上屏的组件摘掉。
+    executionMode: "sequential",
     async execute(
       _toolCallId,
       params,
@@ -917,58 +928,64 @@ export const registerNotes = (pi: ExtensionAPI): void => {
       _onUpdate,
       ctx: ExtensionContext,
     ) {
-      const settings = resolveSettings({ cwd: ctx.cwd, home: os.homedir() });
+      const settings = settingsFor(ctx);
+      const placement = await resolvePlacement(ctx, {
+        topic: params.topic,
+        chapter: params.chapter,
+        chapterNumber: params.chapterNumber,
+      });
+      if (placement.ok === false) {
+        return {
+          content: [{ type: "text" as const, text: placement.message }],
+          details: {
+            cancelled: placement.cancelled === true,
+            requestedTopic: params.topic.trim(),
+          },
+          isError: placement.cancelled !== true,
+        };
+      }
+      const topic = placement.topic.trim();
       const result = bindFromSettings(
         ctx,
-        params.topic,
-        params.chapter,
-        params.chapterNumber,
+        topic,
+        placement.chapter,
+        placement.chapterNumber,
       );
       if (result.ok === true) {
-        const state = topicStateFor(result.indexPath, params.topic.trim());
-        const resumeChapter =
-          state.resume &&
-          state.chapters.find((item) => item.name === state.resume?.chapter);
-        const resumeLine = state.resume
-          ? `\nResume from chapter "${chapterLabel(resumeChapter?.number, state.resume.chapter)}" (${state.resume.reason}).`
-          : "\nThis topic has no chapters yet.";
-        const chaptersLine =
-          state.chapters.length > 0
-            ? `\nChapters: ${state.chapters
-                .map(
-                  (chapter) =>
-                    `${chapterLabel(chapter.number, chapter.name)} (ok ${chapter.ok} / wrong ${chapter.wrong} / gaps ${chapter.gaps}${chapter.unanswered > 0 ? ` / unanswered ${chapter.unanswered}` : ""})`,
-                )
-                .join("; ")}`
-            : "";
+        const state = topicStateFor(settings, topic);
+        const conceptLine = conceptLineFor(settings, topic);
         const healedLine = result.healedFrom
-          ? `\nHealed legacy chapter file ${path.basename(result.healedFrom)} → ${path.basename(result.file)}.`
+          ? `\n已给旧章节补编号：${path.basename(result.healedFrom)} → ${path.basename(result.file)}`
           : "";
-        const unnumberedLine =
-          result.unnumbered && result.unnumbered.length > 0
-            ? `\nStill unnumbered in this topic: ${result.unnumbered.join(", ")} — call number_chapters to number them.`
-            : "";
-        // 概念表：下一课先补哪些（缺口 / 待验证 / 前置未确立）——跟着主题走，不跟着会话走。
-        // 判定用所有主题表的并集：家在别的主题的概念也算数（跨主题复用）。
-        const registries = loadRegistries(settings);
-        const conceptState = topicConceptState(
-          registries.homes.map((home) => home.concept),
-          params.topic.trim(),
-        );
-        const conceptLine = `\n${renderTopicConceptLine(conceptState)}`;
         const chapterLine = result.chapter
-          ? ` (chapter: ${chapterLabel(result.number, result.chapter)})`
-          : "";
+          ? `（章节：${chapterLabel(result.number, result.chapter)}）`
+          : "（主题索引页）";
         return {
           content: [
             {
               type: "text" as const,
-              text: `Bound session notes to ${result.file}${chapterLine}${healedLine}${resumeLine}${chaptersLine}${unnumberedLine}${conceptLine}\nEvery reply, question and answer is appended to this file (append-only).`,
+              text: [
+                `已绑定本会话笔记：${result.file}${chapterLine}${healedLine}`,
+                formatTopicBrief({
+                  topic,
+                  indexPath: result.indexPath,
+                  chapters: state.chapters,
+                  resume: state.resume,
+                  chapter: result.chapter
+                    ? { name: result.chapter, number: result.number }
+                    : undefined,
+                  notePath: result.file,
+                  conceptLine,
+                  unnumbered: result.unnumbered,
+                }),
+                "之后每一轮回复、提问与作答都会追加到这篇笔记（只追加）。",
+              ].join("\n"),
             },
           ],
           details: {
             path: result.file,
             index: result.indexPath,
+            topic,
             chapter: result.chapter ?? null,
             chapterNumber: result.number ?? null,
             healedFrom: result.healedFrom ?? null,
@@ -977,16 +994,16 @@ export const registerNotes = (pi: ExtensionAPI): void => {
             topDir: settings.topDir,
             chapters: state.chapters,
             resume: state.resume ?? null,
-            concepts: conceptState,
+            concepts: topicConceptStateFor(settings, topic),
             warnings: settings.warnings,
           },
           isError: false,
         };
       }
       // 名字不合法时附上"去掉空白"的建议名，省一轮往返
-      const suggestion = sanitizeName(params.chapter ?? params.topic);
+      const suggestion = sanitizeName(placement.chapter ?? topic);
       const hint =
-        suggestion && suggestion !== (params.chapter ?? params.topic)
+        suggestion && suggestion !== (placement.chapter ?? topic)
           ? ` — try "${suggestion}"`
           : "";
       return {
@@ -999,7 +1016,7 @@ export const registerNotes = (pi: ExtensionAPI): void => {
         details: {
           error: result.error,
           conflict: result.conflict ?? null,
-          suggestedTopic: sanitizeName(params.topic) || null,
+          suggestedTopic: sanitizeName(topic) || null,
         },
         isError: true,
       };
@@ -1041,7 +1058,7 @@ export const registerNotes = (pi: ExtensionAPI): void => {
       _onUpdate,
       ctx: ExtensionContext,
     ) {
-      const settings = resolveSettings({ cwd: ctx.cwd, home: os.homedir() });
+      const settings = settingsFor(ctx);
       const topicCheck = isValidTopic(params.topic);
       if (topicCheck.ok === false) {
         return errorResult(
@@ -1281,7 +1298,7 @@ export const registerNotes = (pi: ExtensionAPI): void => {
       _onUpdate,
       ctx: ExtensionContext,
     ) {
-      const settings = resolveSettings({ cwd: ctx.cwd, home: os.homedir() });
+      const settings = settingsFor(ctx);
       const topicCheck = isValidTopic(params.topic);
       if (topicCheck.ok === false) {
         const hint = rejectionHint(topicCheck.reason);
@@ -1456,123 +1473,150 @@ export const registerNotes = (pi: ExtensionAPI): void => {
     },
   });
 
-  /** `Learn/` 下已有主题概览（供 picker 用）。 */
-  const listTopics = (): {
-    topic: string;
-    chapters: number;
-    lastTouched: string | null;
-  }[] => {
-    const settings = resolveSettings({
-      cwd: process.cwd(),
-      home: os.homedir(),
-    });
-    const root = path.join(settings.vaultRoot, settings.topDir);
-    if (!fs.existsSync(root)) return [];
-    return fs
-      .readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name !== "_archive")
-      .map((entry) => {
-        const dir = path.join(root, entry.name);
-        const files = fs
-          .readdirSync(dir, { withFileTypes: true })
-          .filter(
-            (item) =>
-              item.isFile() &&
-              item.name.endsWith(".md") &&
-              !isConceptTableName(item.name),
-          );
-        const newest = files.reduce((acc, item) => {
-          const mtime = fs.statSync(path.join(dir, item.name)).mtimeMs;
-          return mtime > acc ? mtime : acc;
-        }, 0);
-        return {
-          topic: entry.name,
-          chapters: files.filter((item) => item.name !== `${entry.name}.md`)
-            .length,
-          lastTouched:
-            newest > 0
-              ? new Date(newest).toISOString().slice(0, 16).replace("T", " ")
-              : null,
-        };
-      })
-      .sort((a, b) => (b.lastTouched ?? "").localeCompare(a.lastTouched ?? ""));
-  };
-
   const NEW_TOPIC_ID = "__new_topic__";
 
-  /** 无参 `/md-topic`：用 picker 选已有主题（或新建），复用 shared/picker-*。 */
-  const pickTopic = async (
-    ctx: ExtensionContext,
-  ): Promise<string | undefined> => {
-    const topics = listTopics();
-    const rows: PickerOption[] = [
-      ...topics.map((entry) => ({
-        id: entry.topic,
-        label: `${entry.topic}${entry.chapters > 0 ? ` · ${entry.chapters} 章` : ""}${entry.lastTouched ? ` · ${entry.lastTouched}` : ""}`,
-        value: entry.topic,
-        kind: "option" as const,
-      })),
-      {
-        id: NEW_TOPIC_ID,
-        label: "＋ 新建主题…",
-        value: NEW_TOPIC_ID,
-        kind: "other" as const,
+  /**
+   * 两个 picker 的壳完全一样：Core（applyPickerKey）决定动作，这里只做渲染、
+   * 焦点态与结算。`focused` 让搜索框发出 CURSOR_MARKER —— pi 靠它把硬件光标
+   * （以及 IME 候选窗）移进框里，否则光标停在编辑器位置，输入法没法落到搜索框。
+   * 组件契约复用 shared/picker-view 的 `PickerComponent`（ask / quiz 用的是同一份）。
+   */
+  const showPicker = (args: {
+    tui: { requestRender: () => void };
+    done: (value: string | undefined) => void;
+    title: string;
+    rows: PickerOption[];
+    emptyText: string;
+    /** 初始光标（如章节 picker 的 resume 行）。 */
+    cursor?: number;
+  }): PickerComponent => {
+    let state = { ...createPickerState(), cursor: args.cursor ?? 0 };
+    const visible = (): PickerOption[] => filterOptions(args.rows, state.query);
+    const component: PickerComponent = {
+      focused: true,
+      render: (width: number) =>
+        renderPickerLines({
+          title: args.title,
+          options: visible(),
+          state,
+          width,
+          multiSelect: false,
+          focused: component.focused,
+          footer: "↑/↓ 选择  type 过滤  enter 确认  esc 取消",
+          emptyText: args.emptyText,
+        }),
+      invalidate: () => {},
+      handleInput: (data: string) => {
+        const action = applyPickerKey(data, state, visible().length);
+        if (action.kind === "cancel") {
+          args.done(undefined);
+          return;
+        }
+        if (action.kind === "submit") {
+          args.done(visible()[action.index]?.value);
+          return;
+        }
+        if (action.kind === "update") {
+          state = action.state;
+          args.tui.requestRender();
+        }
       },
-    ];
-    const picked = await ctx.ui.custom<string | undefined>(
-      (tui, _theme, _kb, done) => {
-        let state = createPickerState();
-        const answer = (index: number): void => {
-          done(rows[index]?.value);
-        };
-        return {
-          render: (width: number) =>
-            renderPickerLines({
-              title: "选择主题",
-              options: rows,
-              state,
-              width,
-              multiSelect: false,
-              footer: "↑/↓ 选择  enter 确认  esc 取消",
-              emptyText: "还没有主题，选「新建主题…」",
-            }),
-          invalidate: () => {},
-          handleInput: (data: string) => {
-            if (data === "\u001b") {
-              done(undefined);
-              return;
-            }
-            if (data === "\r" || data === "\n") {
-              answer(state.cursor);
-              return;
-            }
-            if (data === "\u001b[A" || data === "k") {
-              state = moveCursor(state, -1, rows.length);
-              tui.requestRender();
-              return;
-            }
-            if (data === "\u001b[B" || data === "j") {
-              state = moveCursor(state, 1, rows.length);
-              tui.requestRender();
-            }
-          },
-        };
-      },
-    );
-    if (picked === undefined) return undefined;
-    if (picked !== NEW_TOPIC_ID) return picked;
-    const created = await ctx.ui.input("新主题名");
-    return created?.trim() || undefined;
+    };
+    return component;
   };
+
+  /**
+   * 无参 `/md-topic`：用 picker 选已有主题（或新建），复用 shared/picker-*。
+   * 整段交互（picker + 「新建主题…」的名字输入）都占着终端，所以走 sharedUiGate：
+   * 终端只有一块编辑器槽位，别的模态要等这次交互出闸（见 ui-gate）。
+   */
+  const pickTopic = (
+    ctx: ExtensionContext,
+    options: { suggested?: string } = {},
+  ): Promise<string | undefined> =>
+    sharedUiGate.run(async () => {
+      const topics = listTopics(settingsFor(ctx));
+      const rows: PickerOption[] = [
+        ...topics.map((entry) => ({
+          id: entry.topic,
+          label: `${entry.topic}${entry.chapters > 0 ? ` · ${entry.chapters} 章` : ""}${entry.lastTouchedAt ? ` · ${formatTouchedAt(entry.lastTouchedAt)}` : ""}`,
+          value: entry.topic,
+          kind: "option" as const,
+        })),
+        {
+          id: NEW_TOPIC_ID,
+          label: "＋ 新建主题…",
+          value: NEW_TOPIC_ID,
+          kind: "other" as const,
+        },
+      ];
+      const picked = await ctx.ui.custom<string | undefined>(
+        (tui, _theme, _kb, done) =>
+          showPicker({
+            tui,
+            done,
+            title: "选择主题",
+            rows,
+            emptyText: "没有匹配的主题，清空搜索可选「新建主题…」",
+          }),
+      );
+      if (picked === undefined) return undefined;
+      if (picked !== NEW_TOPIC_ID) return picked;
+      // agent 提议的名字只做 placeholder：人能看到、能改、能放弃。
+      const created = await ctx.ui.input("新主题名", options.suggested);
+      return created?.trim() || undefined;
+    });
+
+  type ChapterChoice = { kind: "chapter"; name: string } | { kind: "index" };
+
+  /**
+   * 章节 picker：已有章节（resume 那章带 `· 续做` 尾标并作为初始光标）+
+   * 「＋新建章节…」+「主题索引页」。返回 undefined 表示取消（esc / 空输入）。
+   * 与 pickTopic 一样独占终端，走 sharedUiGate。
+   */
+  const pickChapter = (
+    ctx: ExtensionContext,
+    topic: string,
+    options: { suggested?: string } = {},
+  ): Promise<ChapterChoice | undefined> =>
+    sharedUiGate.run(async () => {
+      const settings = settingsFor(ctx);
+      const state = topicStateFor(settings, topic);
+      const { rows, cursor } = chapterPickerOptions({
+        chapters: state.chapters,
+        resume: state.resume,
+      });
+      const picked = await ctx.ui.custom<string | undefined>(
+        (tui, _theme, _kb, done) =>
+          showPicker({
+            tui,
+            done,
+            title: `选择章节 · ${topic}`,
+            rows,
+            emptyText: "没有匹配的章节",
+            cursor,
+          }),
+      );
+      if (picked === undefined) return undefined;
+      if (picked === CHAPTER_PICKER_INDEX_ID) return { kind: "index" };
+      if (picked === CHAPTER_PICKER_NEW_ID) {
+        const name = (
+          await ctx.ui.input("新章节名", options.suggested)
+        )?.trim();
+        return name ? { kind: "chapter", name } : undefined;
+      }
+      return { kind: "chapter", name: picked };
+    });
 
   pi.registerCommand("md-topic", {
     description:
-      "Bind the session mirror to <vault>/<topDir>/<主题>/<主题>.md（无参时弹 picker 选主题；`/md-topic <主题> <章节>` 可切到某章，章节可写 `第3章` 或 `调度与唤醒`）",
+      "Bind the session mirror to <vault>/<topDir>/<主题>/<主题>.md（无参时先弹主题 picker；给主题时弹章节 picker：已有章节 / ＋新建章节… / 主题索引页；`/md-topic <主题> <章节>` 绕过 picker 直接切到该章，章节可写 `第3章` 或 `调度与唤醒`）",
     handler: async (args, ctx) => {
       const trimmedArgs = args.trim();
       let topic = trimmedArgs;
       let chapter: string | undefined;
       let chapterNumber: number | undefined;
+      let explicitChapter = false;
       if (!topic) {
         const picked = await pickTopic(ctx);
         if (!picked) {
@@ -1584,12 +1628,10 @@ export const registerNotes = (pi: ExtensionAPI): void => {
         const [first, ...rest] = trimmedArgs.split(/\s+/);
         topic = first;
         if (rest.length > 0) {
+          explicitChapter = true;
           // `/md-topic <主题> 第3章` 也能绑：先按引用解析，再按名字匹配目录里的章节。
           const ref = parseChapterRef(rest.join(" "));
-          const settings = resolveSettings({
-            cwd: ctx.cwd,
-            home: os.homedir(),
-          });
+          const settings = settingsFor(ctx);
           const dir = topicDirOf(
             topicNotePath({
               vaultRoot: settings.vaultRoot,
@@ -1607,13 +1649,27 @@ export const registerNotes = (pi: ExtensionAPI): void => {
           chapterNumber = ref.number;
         }
       }
+      if (!explicitChapter) {
+        const choice = await pickChapter(ctx, topic);
+        if (!choice) {
+          ctx.ui.notify("未选择章节。", "warning");
+          return;
+        }
+        if (choice.kind === "chapter") chapter = choice.name;
+      }
       const result = bindFromSettings(ctx, topic, chapter, chapterNumber);
       if (result.ok === false) {
-        ctx.ui.notify(`Cannot bind topic note: ${result.error}`, "error");
+        const hint = result.suggestedChapter
+          ? ` — try "${result.suggestedChapter}"`
+          : "";
+        ctx.ui.notify(
+          `Cannot bind topic note: ${result.error}${hint}`,
+          "error",
+        );
         return;
       }
       const backfilled = await backfill(ctx);
-      const state = topicStateFor(result.indexPath, topic.trim());
+      const state = topicStateFor(settingsFor(ctx), topic.trim());
       const resumeChapter =
         state.resume &&
         state.chapters.find((item) => item.name === state.resume?.chapter);
@@ -1670,6 +1726,8 @@ export const registerNotes = (pi: ExtensionAPI): void => {
       noteFile = null;
       mirror = null;
       pi.appendEntry(ENTRY_TYPE, { file: null });
+      // 解绑也是「绑定状态变化」：mode 控制器按会话条目重新推导（下一轮关闸）。
+      deps.onBindingChange?.({ file: null, inVault: false });
       setStatus(ctx);
       ctx.ui.notify("Unlinked session mirror.", "info");
     },

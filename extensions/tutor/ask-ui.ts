@@ -13,11 +13,16 @@ import {
 } from "@earendil-works/pi-tui";
 import {
   createPickerState,
-  moveCursor,
+  filterOptions,
+  type PickerOption,
   type PickerState,
   toggleSelection,
 } from "../shared/picker-core.ts";
-import { renderPickerLines } from "../shared/picker-view.ts";
+import { applyPickerNav } from "../shared/picker-input.ts";
+import {
+  type PickerComponent,
+  renderPickerLines,
+} from "../shared/picker-view.ts";
 import { sharedUiGate } from "../shared/ui-gate.ts";
 import {
   ASK_SUBMIT_ID,
@@ -80,9 +85,10 @@ const showAskPicker = async (
   const outcome = await ctx.ui.custom<AskRunResult>(
     (tui, _theme, _kb, done) => {
       let state: PickerState = createPickerState();
+      const visible = (): PickerOption[] => filterOptions(rows, state.query);
 
       const answerWithRow = (index: number): void => {
-        const row = rows[index];
+        const row = visible()[index];
         if (!row) return;
         if (row.id === OTHER_ID) {
           done({ kind: "other", text: "" });
@@ -101,20 +107,10 @@ const showAskPicker = async (
       };
 
       const handleInput = (data: string): void => {
-        if (matchesKey(data, "escape")) {
-          done({ kind: "cancelled" });
-          return;
-        }
-        if (matchesKey(data, "up")) {
-          state = moveCursor(state, -1, rows.length);
-          return;
-        }
-        if (matchesKey(data, "down")) {
-          state = moveCursor(state, 1, rows.length);
-          return;
-        }
-        if (matchesKey(data, "space") && multi) {
-          const row = rows[state.cursor];
+        // 提问特有语义先拦：space 勾选（多选）、enter 作答。
+        // space 只在搜索框为空时是动作键（同 quiz-ui）：打字时它是文本。
+        if (matchesKey(data, "space") && multi && state.query.length === 0) {
+          const row = visible()[state.cursor];
           if (!row || row.id === ASK_SUBMIT_ID) return;
           if (row.id === OTHER_ID) {
             answerWithRow(state.cursor);
@@ -125,7 +121,15 @@ const showAskPicker = async (
         }
         if (matchesKey(data, "return") || matchesKey(data, "enter")) {
           answerWithRow(state.cursor);
+          return;
         }
+        // 其余（esc / ↑↓ / 退格 / 文本过滤）走共享翻译，不再各写一份键盘解码。
+        const action = applyPickerNav(data, state, visible().length);
+        if (action.kind === "cancel") {
+          done({ kind: "cancelled" });
+          return;
+        }
+        if (action.kind === "update") state = action.state;
       };
 
       const render = (width: number): string[] => {
@@ -148,17 +152,19 @@ const showAskPicker = async (
         lines.push(
           ...renderPickerLines({
             title: multi ? "Question (multi-select)" : "Question",
-            options: rows,
+            options: visible(),
             state,
             width,
             multiSelect: multi,
+            focused: component.focused,
             footer: multi ? FOOTER_MULTI : FOOTER_SINGLE,
           }),
         );
         return lines;
       };
 
-      return {
+      const component: PickerComponent = {
+        focused: true,
         render,
         invalidate: () => {},
         handleInput: (data: string) => {
@@ -166,6 +172,7 @@ const showAskPicker = async (
           tui.requestRender();
         },
       };
+      return component;
     },
   );
 

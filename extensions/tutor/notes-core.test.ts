@@ -3,27 +3,39 @@ import type { AskDetails } from "./ask-core.ts";
 import {
   bindToolCallIds,
   buildTopicState,
+  CHAPTER_PICKER_INDEX_ID,
+  CHAPTER_PICKER_NEW_ID,
   CHAPTERS_END,
   catalogBlocks,
   chapterFileName,
   chapterLabel,
   chapterNotePath,
+  chapterPickerOptions,
   countVerdicts,
   expandHome,
   formatAnswerBlock,
   formatAskAnswerBlock,
+  formatBindCancelled,
+  formatChapterTally,
   formatNumberingConflict,
+  formatPlacementRequired,
   formatQuestionBlock,
   formatQuizAnswerBlock,
   formatSectionHeader,
+  formatTopicBrief,
+  formatTopicCatalog,
   formatTopicHeader,
+  formatTopicList,
+  formatTouchedAt,
   hasIndexEntry,
   indexEntryLine,
   isValidChapter,
   isValidTopic,
+  isVaultNotePath,
   messageText,
   mirrorAssistantText,
   mirrorStep,
+  needsPlacementGate,
   nextChapterNumber,
   parseChapterFileName,
   parseChapterRef,
@@ -34,6 +46,7 @@ import {
   planSplit,
   proposeChapterOrder,
   provenanceBlock,
+  readBoundNote,
   relinkIndex,
   resolveChapterNumber,
   resolveTutorSettings,
@@ -44,7 +57,9 @@ import {
   TOPIC_REJECTION_REASONS,
   toolCallQuestions,
   topicNotePath,
+  topicOfNotePath,
   upsertChapterToc,
+  vaultDirOf,
 } from "./notes-core.ts";
 import type { QuizDetails } from "./quiz-core.ts";
 
@@ -980,6 +995,76 @@ describe("notes-core / resume", () => {
   });
 });
 
+describe("notes-core / 章节 picker 行", () => {
+  const numbered = {
+    number: 2,
+    name: "sds字符串",
+    path: "/v/02-sds字符串.md",
+    ok: 3,
+    wrong: 0,
+    gaps: 0,
+    unanswered: 0,
+    lastBlock: "verdict" as const,
+    touchedAt: "2026-09-18T10:00:00.000Z",
+  };
+  const legacy = {
+    name: "对象层robj",
+    path: "/v/对象层robj.md",
+    ok: 1,
+    wrong: 0,
+    gaps: 0,
+    unanswered: 1,
+    lastBlock: "quiz" as const,
+    touchedAt: "2026-09-18T12:00:00.000Z",
+  };
+
+  it("renders chapter rows in the given order, then the two sentinel rows", () => {
+    const { rows, cursor } = chapterPickerOptions({
+      chapters: [numbered, legacy],
+    });
+    expect(rows.map((row) => row.label)).toEqual([
+      "第2章 · sds字符串",
+      "对象层robj",
+      "＋ 新建章节…",
+      "主题索引页（不绑定章节）",
+    ]);
+    expect(rows.map((row) => row.value)).toEqual([
+      "sds字符串",
+      "对象层robj",
+      CHAPTER_PICKER_NEW_ID,
+      CHAPTER_PICKER_INDEX_ID,
+    ]);
+    expect(cursor).toBe(0);
+  });
+
+  it("marks the resume chapter and puts the initial cursor on it", () => {
+    const { rows, cursor } = chapterPickerOptions({
+      chapters: [numbered, legacy],
+      resume: { chapter: "对象层robj", reason: "unanswered-question" },
+    });
+    expect(rows[0].label).toBe("第2章 · sds字符串");
+    expect(rows[1].label).toBe("对象层robj · 续做");
+    expect(cursor).toBe(1);
+  });
+
+  it("falls back to the first row when the resume chapter is not listed", () => {
+    const { cursor } = chapterPickerOptions({
+      chapters: [numbered],
+      resume: { chapter: "不存在", reason: "recent" },
+    });
+    expect(cursor).toBe(0);
+  });
+
+  it("keeps both sentinel rows for an empty topic", () => {
+    const { rows, cursor } = chapterPickerOptions({ chapters: [] });
+    expect(rows.map((row) => row.id)).toEqual([
+      CHAPTER_PICKER_NEW_ID,
+      CHAPTER_PICKER_INDEX_ID,
+    ]);
+    expect(cursor).toBe(0);
+  });
+});
+
 describe("notes-core / split", () => {
   it("catalogs blocks with 1-based indexes and short previews", () => {
     const catalog = catalogBlocks(chapterNote);
@@ -1252,5 +1337,200 @@ describe("notes-core / 镜像闸门", () => {
     expect(
       mirrorStep(stale, { kind: "assistant", block: "新正文", binds: [] }),
     ).toEqual({ pending: null, append: ["旧正文", "新正文"] });
+  });
+});
+
+describe("notes-core / 会话绑定与主题简报", () => {
+  const boundEntry = (file: unknown) => ({
+    type: "custom",
+    customType: "tutor-notes",
+    data: { file },
+  });
+
+  const numbered = {
+    number: 2,
+    name: "sds字符串",
+    path: "/v/02-sds字符串.md",
+    ok: 3,
+    wrong: 1,
+    gaps: 0,
+    unanswered: 0,
+    lastBlock: "verdict" as const,
+    touchedAt: "2026-09-18T10:00:00.000Z",
+  };
+  const legacy = {
+    name: "对象层robj",
+    path: "/v/对象层robj.md",
+    ok: 1,
+    wrong: 0,
+    gaps: 2,
+    unanswered: 1,
+    lastBlock: "question" as const,
+    touchedAt: "2026-09-17T10:00:00.000Z",
+  };
+
+  it("readBoundNote：最后一条绑定说了算，file: null 表示解绑", () => {
+    expect(readBoundNote([])).toBeNull();
+    expect(readBoundNote([boundEntry("/v/a.md")])).toBe("/v/a.md");
+    expect(readBoundNote([boundEntry("/v/a.md"), boundEntry("/v/b.md")])).toBe(
+      "/v/b.md",
+    );
+    expect(readBoundNote([boundEntry("/v/a.md"), boundEntry(null)])).toBeNull();
+    // 别的条目类型不参与
+    expect(
+      readBoundNote([{ type: "custom", customType: "tutor-mode", data: {} }]),
+    ).toBeNull();
+  });
+
+  it("vaultDirOf / isVaultNotePath / topicOfNotePath", () => {
+    expect(vaultDirOf({ vaultRoot: "/v/", topDir: "Learn" })).toBe("/v/Learn");
+    expect(isVaultNotePath("/v/Learn/Docker/x.md", "/v/Learn")).toBe(true);
+    // 教学内容区之外（/md-log 到别处）不算
+    expect(isVaultNotePath("/tmp/x.md", "/v/Learn")).toBe(false);
+    expect(isVaultNotePath("/v/LearnOther/x.md", "/v/Learn")).toBe(false);
+    expect(topicOfNotePath("/v/Learn/Docker/01-a.md")).toBe("Docker");
+    expect(topicOfNotePath("/v/Learn/Docker/Docker.md")).toBe("Docker");
+    expect(topicOfNotePath("Docker.md")).toBeNull();
+  });
+
+  it("needsPlacementGate：只有「请求主题 == 已绑定主题」才不惊动人", () => {
+    const cases: Array<[string, string, string | null, boolean]> = [
+      ["同主题内换章", "Docker实现", "Docker实现", false],
+      ["未绑定", "Docker实现", null, true],
+      ["换主题", "redis高可用", "Docker实现", true],
+      [
+        "章节名当主题名（bad case）",
+        "redis集群方案和实现",
+        "redis高可用",
+        true,
+      ],
+    ];
+    for (const [label, requestedTopic, boundTopic, expected] of cases) {
+      expect(needsPlacementGate({ requestedTopic, boundTopic }), label).toBe(
+        expected,
+      );
+    }
+  });
+
+  it("formatChapterTally：unanswered 只在大于 0 时出现", () => {
+    expect(formatChapterTally(numbered)).toBe(
+      "第2章 · sds字符串（ok 3 / wrong 1 / gaps 0）",
+    );
+    expect(formatChapterTally(legacy)).toBe(
+      "对象层robj（ok 1 / wrong 0 / gaps 2 / unanswered 1）",
+    );
+  });
+
+  it("formatTopicBrief：逐行给出状态与下一步", () => {
+    expect(
+      formatTopicBrief({
+        topic: "Docker实现",
+        indexPath: "/v/Docker实现/Docker实现.md",
+        notePath: "/v/Docker实现/02-sds字符串.md",
+        chapter: { name: "sds字符串", number: 2 },
+        chapters: [numbered, legacy],
+        resume: { chapter: "sds字符串", reason: "recent" },
+        conceptLine: "概念缺口：无（已确立 0 / 0）",
+      }),
+    ).toBe(
+      [
+        "笔记：/v/Docker实现/02-sds字符串.md",
+        "索引：/v/Docker实现/Docker实现.md（先读 ## 已知边界 / ## 未解决）",
+        "当前章节：第2章 · sds字符串",
+        "章节：第2章 · sds字符串（ok 3 / wrong 1 / gaps 0）；对象层robj（ok 1 / wrong 0 / gaps 2 / unanswered 1）",
+        "续做：第2章 · sds字符串（recent）",
+        "概念缺口：无（已确立 0 / 0）",
+        '新增章节：bind_notes({topic:"Docker实现", chapter:"<名字>"})（同一主题内直接生效；换主题或开新主题会弹 picker，由学习者选落点）',
+      ].join("\n"),
+    );
+  });
+
+  it("formatTopicBrief：空主题 / 未编号 / 无绑定文件 的降级", () => {
+    expect(
+      formatTopicBrief({
+        topic: "分布式共识",
+        indexPath: "/v/分布式共识/分布式共识.md",
+        chapters: [],
+        conceptLine: "概念缺口：无",
+        unnumbered: ["旧章"],
+      }),
+    ).toBe(
+      [
+        "笔记：/v/分布式共识/分布式共识.md",
+        "章节：《分布式共识》还没有章节",
+        "续做：无（这一主题还没有讲过的章节）",
+        "概念缺口：无",
+        "待编号：旧章 —— 调 number_chapters 补编号",
+        '新增章节：bind_notes({topic:"分布式共识", chapter:"<名字>"})（同一主题内直接生效；换主题或开新主题会弹 picker，由学习者选落点）',
+      ].join("\n"),
+    );
+  });
+
+  it("formatTouchedAt：ISO → 展示用 `YYYY-MM-DD HH:mm`（排序仍用 ISO）", () => {
+    expect(formatTouchedAt("2026-09-24T10:11:32.123Z")).toBe(
+      "2026-09-24 10:11",
+    );
+    // 短得不像时间戳就原样返回，不伪造展示值
+    expect(formatTouchedAt("n/a")).toBe("n/a");
+  });
+
+  it("formatTopicList：空清单也有话说；有 lastTouchedAt 才写「最近」", () => {
+    expect(formatTopicList([])).toBe("vault 主题：（还没有任何主题）");
+    expect(
+      formatTopicList([
+        {
+          topic: "redis高可用",
+          chapters: 7,
+          lastTouchedAt: "2026-09-24T10:11:32.123Z",
+        },
+        { topic: "Docker实现", chapters: 9, lastTouchedAt: null },
+      ]),
+    ).toBe(
+      "vault 主题：redis高可用（7章，最近 2026-09-24 10:11）、Docker实现（9章）",
+    );
+  });
+
+  it("formatTopicCatalog：主题清单 + 最近改动 + 落点规则", () => {
+    const text = formatTopicCatalog({
+      topics: [
+        {
+          topic: "redis高可用",
+          chapters: 7,
+          lastTouchedAt: "2026-09-24T10:11:00.000Z",
+        },
+        { topic: "Docker实现", chapters: 9, lastTouchedAt: null },
+      ],
+      recent: {
+        topic: "redis高可用",
+        chapters: [{ number: 7, name: "redis集群方案和实现" }],
+      },
+    });
+    expect(text.split("\n")).toEqual([
+      "本会话还没有绑定笔记。",
+      "vault 主题：redis高可用（7章，最近 2026-09-24 10:11）、Docker实现（9章）",
+      "最近改动：redis高可用 —— 第7章 · redis集群方案和实现",
+      "落点规则：不要用参数去猜主题名；调 bind_notes 时插件会弹 picker，由学习者选「放到哪个主题 / 哪个章节（已有章节或 ＋新建章节…）」。",
+    ]);
+    expect(formatTopicCatalog({ topics: [] }).split("\n")[1]).toBe(
+      "vault 主题：（还没有任何主题）",
+    );
+  });
+
+  it("formatBindCancelled / formatPlacementRequired：都要求先问人，不许重试", () => {
+    expect(formatBindCancelled()).toContain("没有写盘");
+    expect(formatBindCancelled()).toContain("不要原样重试");
+
+    const unbound = formatPlacementRequired({
+      requestedTopic: "redis集群方案和实现",
+      boundTopic: null,
+    });
+    expect(unbound).toContain("本会话还没有绑定主题");
+    expect(unbound).toContain("ask_user_question");
+
+    const bound = formatPlacementRequired({
+      requestedTopic: "redis集群方案和实现",
+      boundTopic: "redis高可用",
+    });
+    expect(bound).toContain("《redis高可用》");
   });
 });

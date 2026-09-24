@@ -6,12 +6,19 @@
  * ask_user_question 当成通用提问工具用。这里只做判定，不看 pi、不碰磁盘：
  *
  * - 这一轮是不是 `/skill:tutor`？（展开后的 skill 块 / 流式 steer 的原始命令）
- * - 本会话的开关是什么？（显式 `tutor-mode` 条目优先，其次看转录里的 skill 块）
+ * - 本会话的开关是什么？（显式 `tutor-mode` 条目 > vault 内的 `tutor-notes` 绑定 > skill 块）
  * - 目标工具集该长什么样？（active × mode，纯字符串数组）
  */
 
 import { TUTOR_MODE_COMMAND_NAME, TUTOR_SESSION_TOOL_NAMES } from "./names.ts";
-import { type MessageContent, messageText } from "./notes-core.ts";
+import {
+  isVaultNotePath,
+  messageText,
+  readBoundNote,
+  type SessionEntryLike,
+} from "./notes-core.ts";
+
+export type { SessionEntryLike };
 
 export type TutorMode = "on" | "off";
 
@@ -19,14 +26,6 @@ export const TUTOR_SKILL_NAME = "tutor";
 /** 会话条目类型（notes-store 用的是 `tutor-notes`，互不干扰）。 */
 export const TUTOR_MODE_ENTRY_TYPE = "tutor-mode";
 export const TUTOR_MODE_STATUS_COMMAND = `/${TUTOR_MODE_COMMAND_NAME} on | off | status`;
-
-/** 会话条目的结构镜像：只取判定需要的字段，不依赖 pi 的类型。 */
-export type SessionEntryLike = {
-  type?: string;
-  customType?: string;
-  data?: unknown;
-  message?: { role?: string; content?: MessageContent };
-};
 
 /** 技能展开把 SKILL.md 包成这个块；带引号，`tutor-lite` 不会误命中。 */
 const TUTOR_SKILL_HEAD = `<skill name="${TUTOR_SKILL_NAME}"`;
@@ -52,11 +51,21 @@ const entryMode = (entry: SessionEntryLike): TutorMode | undefined => {
 };
 
 /**
- * 显式 `tutor-mode` 条目的最后一条说了算；一条都没有时看转录
- * （用户消息里有 tutor skill 块 = 这个会话开过 tutor）。
+ * 开关判定，优先级从高到低：
+ * 1. 显式 `tutor-mode` 条目的最后一条（人敲的 `/tutor-mode on|off`，或绑定时的自动开启）
+ * 2. 本条分支上最后一次 `tutor-notes` 绑定，且文件落在教学内容区内
+ *    （`vaultDir` 省略时不做路径判定）——「会记录教学笔记的会话」就是教学会话，
+ *    所以 `/md-topic` 之后即使没敲过 `/skill:tutor`，工具也该可见
+ * 3. 转录里的 tutor skill 块
  */
+export type RestoreDeps = {
+  /** `<vaultRoot>/<topDir>`，已展开 `~`；省略则任何绑定都算数。 */
+  vaultDir?: string;
+};
+
 export const restoreTutorMode = (
   entries: readonly SessionEntryLike[],
+  deps: RestoreDeps = {},
 ): TutorMode => {
   let explicit: TutorMode | undefined;
   let hasSkillBlock = false;
@@ -76,7 +85,13 @@ export const restoreTutorMode = (
       hasSkillBlock = true;
     }
   }
-  return explicit ?? (hasSkillBlock ? "on" : "off");
+  if (explicit !== undefined) return explicit;
+  const bound = readBoundNote(entries);
+  const boundInVault =
+    bound !== null &&
+    (deps.vaultDir === undefined || isVaultNotePath(bound, deps.vaultDir));
+  if (boundInVault) return "on";
+  return hasSkillBlock ? "on" : "off";
 };
 
 const isTutorSessionTool = (name: string): boolean =>

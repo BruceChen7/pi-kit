@@ -12,19 +12,17 @@
  *   （收章或回填时问「这章有漏网的吗」）。
  * - `/concepts [术语]`：人查概念表（概况 / 单条）。
  *
- * 依赖方向：notes-store → concepts-store → { concepts-core, notes-core }（无环；
- * 扫章节目录在这里自己做，不回依赖 notes-store）。
+ * 依赖方向：notes-store / topic-status → concepts-store → { concepts-core, notes-core,
+ * settings-store, topic-store }（无环；章节清单走 topic-store 的唯一规则，不回依赖 notes-store）。
  */
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { loadSettings } from "../shared/settings.ts";
 import {
   auditConcepts,
   buildCheckReport,
@@ -38,7 +36,6 @@ import {
   formatLocalDate,
   homeTopicIndex,
   isConceptStatus,
-  isConceptTableName,
   isReservedTopicName,
   isValidConceptName,
   matchChapter,
@@ -48,50 +45,46 @@ import {
   renderCheckReport,
   renderConceptResult,
   renderRegistrySkeleton,
+  renderTopicConceptLine,
   summarizeRegistry,
+  type TopicConceptState,
   topicConceptPath,
+  topicConceptState,
   upsertConceptEntry,
   upsertConceptIndex,
 } from "./concepts-core.ts";
 import { CHECK_CONCEPTS_TOOL_NAME, NOTE_CONCEPT_TOOL_NAME } from "./names.ts";
 import {
-  expandHome,
-  parseChapterFileName,
   parseChapterRef,
-  resolveTutorSettings,
+  type TutorSettings,
+  topicDirPath,
 } from "./notes-core.ts";
-
-export type ConceptSettings = {
-  vaultRoot: string;
-  topDir: string;
-  warnings: string[];
-};
-
-/** 与 notes-store 同源：同一份 settings + `~` 展开，保证两处指向同一个 vault。 */
-export const resolveConceptSettings = (
-  cwd: string,
-  home: string = os.homedir(),
-): ConceptSettings => {
-  const settings = resolveTutorSettings(loadSettings(cwd).merged);
-  return {
-    ...settings,
-    vaultRoot: expandHome(settings.vaultRoot, home),
-  };
-};
+import { resolveSettings } from "./settings-store.ts";
+import { scanChapters } from "./topic-store.ts";
 
 /** `<vault>/<topDir>/<主题>/概念.md`：一个主题一份。 */
-export const registryPath = (
-  settings: ConceptSettings,
-  topic: string,
-): string =>
+export const registryPath = (settings: TutorSettings, topic: string): string =>
   topicConceptPath({
     vaultRoot: settings.vaultRoot,
     topDir: settings.topDir,
     topic,
   });
 
-export const topicDir = (settings: ConceptSettings, topic: string): string =>
-  path.join(settings.vaultRoot, settings.topDir, topic.trim());
+/** 主题的概念缺口（跨主题取并集判定，家在别的主题的也算）。 */
+export const topicConceptStateFor = (
+  settings: TutorSettings,
+  topic: string,
+): TopicConceptState =>
+  topicConceptState(
+    loadRegistries(settings).homes.map((home) => home.concept),
+    topic.trim(),
+  );
+
+/** 同一份状态渲染成一行（简报用；「主题的概念缺口」只此一处定义）。 */
+export const conceptLineFor = (
+  settings: TutorSettings,
+  topic: string,
+): string => renderTopicConceptLine(topicConceptStateFor(settings, topic));
 
 export type ConceptRegistry = {
   topic: string;
@@ -103,7 +96,7 @@ export type ConceptRegistry = {
 
 /** 读一个主题的概念表；文件不存在时回报骨架（不落盘——只有写操作才造文件）。 */
 export const loadRegistry = (
-  settings: ConceptSettings,
+  settings: TutorSettings,
   topic: string,
 ): ConceptRegistry => {
   const name = topic.trim();
@@ -135,9 +128,7 @@ export type ConceptRegistries = {
 };
 
 /** 扫 `<topDir>` 下每个主题的 `概念.md`：概念表是全局判定口径（跨主题复用就靠它）。 */
-export const loadRegistries = (
-  settings: ConceptSettings,
-): ConceptRegistries => {
+export const loadRegistries = (settings: TutorSettings): ConceptRegistries => {
   const root = path.join(settings.vaultRoot, settings.topDir);
   const byTopic = new Map<string, ConceptRegistry>();
   const homes: ConceptHome[] = [];
@@ -171,35 +162,26 @@ export type ScannedChapter = {
   markdown: string;
 };
 
-/** 扫主题目录里的章节文件：与 notes-store 的扫描同一形状（索引页与概念表都不算章节）。 */
+/**
+ * 扫主题目录里的章节文件（编号 + 名字排序）。
+ * 「什么算章节」不在这里重写：走 topic-store 的 `scanChapters`（索引页与概念表都不算）。
+ */
 export const scanTopicChapters = (
-  settings: ConceptSettings,
+  settings: TutorSettings,
   topic: string,
-): ScannedChapter[] => {
-  const dir = topicDir(settings, topic);
-  if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isFile() &&
-        entry.name.endsWith(".md") &&
-        entry.name !== `${topic.trim()}.md` &&
-        !isConceptTableName(entry.name),
-    )
-    .map((entry) => {
-      const file = path.join(dir, entry.name);
-      const { number, name } = parseChapterFileName(
-        entry.name.replace(/\.md$/, ""),
-      );
-      return { number, name, file, markdown: fs.readFileSync(file, "utf-8") };
-    })
+): ScannedChapter[] =>
+  scanChapters(topicDirPath({ ...settings, topic }), topic.trim())
+    .map((item) => ({
+      number: item.chapter.number,
+      name: item.chapter.name,
+      file: item.file,
+      markdown: item.markdown,
+    }))
     .sort(
       (a, b) =>
         (a.number ?? Number.MAX_SAFE_INTEGER) -
           (b.number ?? Number.MAX_SAFE_INTEGER) || a.name.localeCompare(b.name),
     );
-};
 
 export type ConceptToolResult = {
   content: { type: "text"; text: string }[];
@@ -239,7 +221,7 @@ export type NoteConceptParams = {
 };
 
 export const noteConcept = (
-  settings: ConceptSettings,
+  settings: TutorSettings,
   params: NoteConceptParams,
   date: string,
 ): ConceptToolResult => {
@@ -346,7 +328,7 @@ export type CheckConceptsParams = {
 };
 
 export const checkConcepts = (
-  settings: ConceptSettings,
+  settings: TutorSettings,
   params: CheckConceptsParams,
 ): ConceptToolResult => {
   const hasTerms = Array.isArray(params.terms) && params.terms.length > 0;
@@ -389,7 +371,7 @@ export const checkConcepts = (
   const chapters = scanTopicChapters(settings, topic);
   if (chapters.length === 0) {
     return fail(
-      `topic "${topic}" has no chapter files at ${topicDir(settings, topic)} — check the topic name`,
+      `topic "${topic}" has no chapter files at ${topicDirPath({ ...settings, topic })} — check the topic name`,
     );
   }
   let selected = chapters;
@@ -434,7 +416,7 @@ export const checkConcepts = (
 // ── /concepts：人查概念表（概况 / 单条） ────────────────────────────────
 
 export const describeConcepts = (
-  settings: ConceptSettings,
+  settings: TutorSettings,
   arg: string,
 ): { text: string; level: "info" | "warning" } => {
   const registries = loadRegistries(settings);
@@ -594,7 +576,7 @@ export const registerConcepts = (pi: ExtensionAPI): void => {
       _onUpdate,
       ctx: ExtensionContext,
     ) {
-      const settings = resolveConceptSettings(ctx.cwd);
+      const settings = resolveSettings({ cwd: ctx.cwd });
       return noteConcept(settings, params, formatLocalDate(new Date()));
     },
   });
@@ -614,7 +596,7 @@ export const registerConcepts = (pi: ExtensionAPI): void => {
       _onUpdate,
       ctx: ExtensionContext,
     ) {
-      return checkConcepts(resolveConceptSettings(ctx.cwd), params);
+      return checkConcepts(resolveSettings({ cwd: ctx.cwd }), params);
     },
   });
 
@@ -623,7 +605,7 @@ export const registerConcepts = (pi: ExtensionAPI): void => {
       "概念表：无参给概况（总数 / 缺口 / 路径），`/concepts <术语>` 查一条（含别名）",
     handler: async (args, ctx) => {
       const { text, level } = describeConcepts(
-        resolveConceptSettings(ctx.cwd),
+        resolveSettings({ cwd: ctx.cwd }),
         args,
       );
       ctx.ui.notify(text, level);

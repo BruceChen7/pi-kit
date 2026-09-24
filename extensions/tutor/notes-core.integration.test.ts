@@ -27,9 +27,9 @@ import {
   ensureChapterNote,
   ensureTopicNote,
   prepareChapterBinding,
-  scanChapters,
   writeChapterIndex,
 } from "./notes-store.ts";
+import { scanChapters } from "./topic-store.ts";
 
 let vault: string;
 let note: string;

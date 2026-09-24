@@ -7,8 +7,10 @@ disable-model-invocation: true
 # Tutor
 
 Teach one topic, in this session, into a note the learner keeps. Invoke explicitly with
-`/skill:tutor <topic>` — this skill is deliberately hidden from automatic invocation so it
-never hijacks an unrelated explanation.
+`/skill:tutor <名字>` — this skill is deliberately hidden from automatic invocation so it
+never hijacks an unrelated explanation. The argument is often a *chapter* to continue with
+rather than a topic: the session's `[tutor]` status line says where you are, and the picker
+behind `bind_notes` is where the learner settles the placement.
 
 Everything the learner reads (notes, lesson prose, quiz options, explanations) is written
 **in Chinese**. This file and your reasoning stay in English. Math is always LaTeX:
@@ -119,14 +121,37 @@ read it as signal, and do not count it against them.
 
 ## Notes
 
-**Bind before teaching.** Call `bind_notes({ topic })` once at the start — it resolves
-`<vaultRoot>/<topDir>/<topic>/<topic>.md`, creates it, and mirrors the session into it.
-The call also returns the topic's state: every chapter with its quiz tallies
-(`ok / wrong / gaps / unanswered`), a `resume` pointing at where to continue, and a
-`概念缺口` line (gaps / unverified concepts / unmet prerequisites). Read that first — earlier
-sessions recorded their edge, their questions, the quiz outcomes and the concepts they left
-loose, which is exactly what phase 1 needs. Do not create notes anywhere else, and never edit
-or reorder what is already there — the mirror only appends.
+**Where the lesson goes is the learner's call, not yours.** A session usually opens already
+bound: `/md-topic` (or an earlier `bind_notes`) put it on a topic, and every tutor turn carries
+a `[tutor]` status line with the bound note, the chapters and their tallies, the resume point,
+the index path and the concept gaps — read it before anything else. When you are unsure what a
+topic looks like right now, call `topic_status` (read-only; `topic_status({ topic })` for one
+topic, `{ topic, chapter }` for one chapter) instead of exploring the vault with `ls`/`cat`.
+
+**Never guess a topic from a name.** `/skill:tutor <名字>` often carries a *chapter* name, and
+the vault may have a chapter with that exact name in some topic. Do not turn it into a new
+topic and do not pick the topic yourself: call `bind_notes({ topic, chapter })` and the plugin
+opens a picker — the learner chooses the topic and then the chapter (an existing one, or
+「＋ 新建章节…」). A few consequences:
+
+- `bind_notes` returning a cancelled message means the learner closed the picker: nothing was
+  written. Ask them where the lesson should go (or let them run `/md-topic`); never retry the
+  same call.
+- New topics only get created by a human picking 「＋ 新建主题…」. There is no tool argument for
+  it — so if the topic does not exist yet, say so and let the learner create it.
+- Binding is what opens the tutor gate: once a vault note is bound, `quiz`,
+  `ask_user_question`, `bind_notes`, `topic_status`, `note_concept` and `check_concepts` are
+  visible even without `/skill:tutor`.
+
+**Bind before teaching.** Once the placement is confirmed, `bind_notes({ topic })` binds
+`<vaultRoot>/<topDir>/<topic>/<topic>.md` (creating it when the learner's choice was
+「＋ 新建主题…」) and mirrors the session into it. The call returns the topic's state — every
+chapter with its quiz tallies (`ok / wrong / gaps / unanswered`), a `resume` pointing at where
+to continue, and a `概念缺口` line (gaps / unverified concepts / unmet prerequisites) — the same
+state the `[tutor]` line carries. Read that first: earlier sessions recorded their edge, their
+questions, the quiz outcomes and the concepts they left loose, which is exactly what phase 1
+needs. Do not create notes anywhere else, and never edit or reorder what is already there —
+the mirror only appends.
 
 **Names never contain spaces.** A topic becomes a directory and a chapter becomes a file, so
 both must be space-free: `Docker实现`, `进程与命名空间`, `chroot与挂载时机`. Write them in
@@ -142,7 +167,9 @@ index's `## 章节` block. Four rules follow:
 1. **Resume before teaching anything new.** If `resume` points at a chapter, start there:
    an `unanswered-question` means a question was asked and never answered — re-ask it (or
    resolve it) before moving on; `cancelled` means the last question was dismissed;
-   `recent` just means that was the last chapter touched.
+   `recent` just means that was the last chapter touched. If the chapter that matches what the
+   learner just asked for is still empty (`ok 0 / wrong 0 / gaps 0` and no prose), ask them
+   whether to teach into it or to open the next chapter — do not silently pick one.
 2. **Bind a chapter BEFORE teaching it — in a message of its own.** Questions and answers land
    in whatever file is bound at the moment they are asked, so switching chapters mid-explanation
    splits a question from its own prose. The mirror also writes a message's prose when that
@@ -150,9 +177,11 @@ index's `## 章节` block. Four rules follow:
    as the `bind_notes` call lands in the *previous* chapter's file. So the bind is its own
    message — call `bind_notes` with no prose around it, then teach the chapter in the next
    message. Close the previous chapter (rule 4) before that bind, in the turn before it.
-3. **The tool owns the number, you own the name.** Before teaching a chapter, bind it; then
-   call it `第N章 · 名字`, exactly as `bind_notes` reported it (or ask `number_chapters`
-   without `chapters` to list them). Never invent a number, never renumber: numbers only move
+3. **The tool owns the number and the placement, you own the name.** Before teaching a chapter,
+   bind it — the learner confirms topic/chapter in the picker if the topic is not the one this
+   session is already on. Then call the chapter `第N章 · 名字`, exactly as `bind_notes`
+   reported it (or ask `number_chapters` without `chapters` to list them). Never invent a number,
+   never renumber: numbers only move
    forward and skipped chapters leave their gap open. When your plan already numbers its
    chapters, pass `chapterNumber` at bind time so chat and notes agree; if the number is
    taken the tool returns the occupant, the taken numbers, the free gaps and the auto number —
@@ -191,10 +220,15 @@ longer the displayed one), so the mirror drops it. Prose goes *around* the quest
 question itself is the tool call. A question asked in prose with no tool call is kept —
 that is the only copy it has.
 
-`/md-topic` with no argument opens a picker (existing topics + "新建主题…");
-`/md-topic <topic> <章节>` binds a chapter by hand — `第3章`, `03-调度与唤醒` and the plain
-name all work; `/md-log <path>` links an existing file without creating one; `/md-unlog`
-stops mirroring.
+`/md-topic` with no argument opens a topic picker (existing topics + "新建主题…") and then a
+chapter picker; `/md-topic <topic>` opens the chapter picker directly — pick an existing
+chapter, "＋新建章节…", or the topic index page. `/md-topic <topic> <章节>` binds a chapter by
+hand without the picker — `第3章`, `03-调度与唤醒` and the plain name all work;
+`/md-log <path>` links an existing file without creating one; `/md-unlog` stops mirroring.
+These pickers are the same ones `bind_notes` opens when the topic is not the one this session
+is already on — so when you are unsure where a lesson belongs, just call `bind_notes` and let
+the learner choose; when you are sure it is the *same* topic, the call goes through without
+asking.
 
 ## Concepts
 

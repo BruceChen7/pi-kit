@@ -10,8 +10,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CONCEPTS_FILE_NAME } from "./concepts-core.ts";
 import {
-  type ConceptSettings,
   checkConcepts,
+  conceptLineFor,
   describeConcepts,
   loadRegistries,
   loadRegistry,
@@ -19,13 +19,16 @@ import {
   noteConcept,
   registryPath,
   scanTopicChapters,
-  topicDir,
 } from "./concepts-store.ts";
-import { parseChapterFileName } from "./notes-core.ts";
-import { scanChapters } from "./notes-store.ts";
+import {
+  parseChapterFileName,
+  type TutorSettings,
+  topicDirPath,
+} from "./notes-core.ts";
+import { listTopics, scanChapters } from "./topic-store.ts";
 
 let vault: string;
-let settings: ConceptSettings;
+let settings: TutorSettings;
 
 const TOPIC = "MySQL的ACID实现";
 const OTHER = "Docker实现";
@@ -40,7 +43,7 @@ afterEach(() => {
 });
 
 const chapter = (name: string, markdown: string, topic = TOPIC): void => {
-  const dir = topicDir(settings, topic);
+  const dir = topicDirPath({ ...settings, topic });
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, name), markdown, "utf-8");
 };
@@ -328,7 +331,9 @@ describe("concepts / 不变量", () => {
 
     const registry = table(TOPIC);
     expect(path.basename(registry)).toBe(CONCEPTS_FILE_NAME);
-    expect(path.dirname(registry)).toBe(topicDir(settings, TOPIC));
+    expect(path.dirname(registry)).toBe(
+      topicDirPath({ ...settings, topic: TOPIC }),
+    );
     expect(fs.statSync(registry).isFile()).toBe(true);
 
     // 三处扫描都要跳过它：章节清单、编号、主题 picker 的「N 章」计数。
@@ -337,7 +342,9 @@ describe("concepts / 不变量", () => {
       "实现地图",
       "原子性与undo",
     ]);
-    expect(scanChapters(topicDir(settings, TOPIC), TOPIC)).toHaveLength(2);
+    expect(
+      scanChapters(topicDirPath({ ...settings, topic: TOPIC }), TOPIC),
+    ).toHaveLength(2);
     expect(chapters.map((item) => item.number)).toEqual([1, 2]);
     expect(
       chapters.map(
@@ -345,17 +352,10 @@ describe("concepts / 不变量", () => {
       ),
     ).toEqual([1, 2]);
 
-    // picker 的计数口径 = 目录里除索引页与概念表之外的 .md。
-    const counted = fs
-      .readdirSync(topicDir(settings, TOPIC), { withFileTypes: true })
-      .filter(
-        (entry) =>
-          entry.isFile() &&
-          entry.name.endsWith(".md") &&
-          entry.name !== `${TOPIC}.md` &&
-          entry.name !== CONCEPTS_FILE_NAME,
-      );
-    expect(counted).toHaveLength(2);
+    // picker / topic_status 的计数口径走 listTopics（= listChapterFiles 同一条规则）。
+    expect(
+      listTopics(settings).find((entry) => entry.topic === TOPIC),
+    ).toMatchObject({ chapters: 2 });
   });
 
   it("answers /concepts per topic and looks terms up across tables", () => {
@@ -389,5 +389,28 @@ describe("concepts / 不变量", () => {
     const missing = describeConcepts(settings, "purge");
     expect(missing.level).toBe("warning");
     expect(missing.text).toContain("未登记");
+  });
+});
+
+describe("concepts / 主题的概念缺口行（conceptLineFor）", () => {
+  it("跟着主题走；没有表时说明「讲到即登记」", () => {
+    chapter("01-四个动作.md", "# 第1章 · 四个动作\n");
+
+    expect(conceptLineFor(settings, TOPIC)).toContain(
+      "概念表里还没有本主题的术语",
+    );
+
+    register({ name: "quorum", status: "缺口", definition: "少数服从多数" });
+
+    const line = conceptLineFor(settings, TOPIC);
+    expect(line).toContain("缺口 quorum");
+    expect(line).toContain("已确立 0 / 1");
+  });
+
+  it("跨主题取并集判定：前置住在别的主题表里（缺口）也算本主题的前置未确立", () => {
+    registerIn(OTHER, { name: "mtr", status: "缺口", definition: "写入单位" });
+    register({ name: "undo", definition: "回滚", requires: ["mtr"] });
+
+    expect(conceptLineFor(settings, TOPIC)).toContain("前置未确立 mtr");
   });
 });

@@ -15,12 +15,15 @@ import {
   createPickerState,
   filterOptions,
   isSubmittable,
-  moveCursor,
   type PickerOption,
   type PickerState,
   toggleSelection,
 } from "../shared/picker-core.ts";
-import { renderPickerLines } from "../shared/picker-view.ts";
+import { applyPickerNav } from "../shared/picker-input.ts";
+import {
+  type PickerComponent,
+  renderPickerLines,
+} from "../shared/picker-view.ts";
 import { sharedUiGate } from "../shared/ui-gate.ts";
 import {
   buildRows,
@@ -83,11 +86,12 @@ const showQuizPicker = (
 
   return ctx.ui.custom<QuizRunResult>((tui, _theme, _kb, done) => {
     let state: PickerState = createPickerState();
+    const visible = (): PickerOption[] => filterOptions(rows, state.query);
     const isSubmitRow = (index: number): boolean =>
-      rows[index]?.id === SUBMIT_ID;
+      visible()[index]?.id === SUBMIT_ID;
 
     const select = (index: number): void => {
-      const row = rows[index];
+      const row = visible()[index];
       if (!row) return;
       if (row.id === SUBMIT_ID) {
         if (!isSubmittable(state)) return;
@@ -107,20 +111,11 @@ const showQuizPicker = (
     };
 
     const handleInput = (data: string): void => {
-      if (matchesKey(data, "escape")) {
-        done({ kind: "cancelled" });
-        return;
-      }
-      if (matchesKey(data, "up")) {
-        state = moveCursor(state, -1, rows.length);
-        return;
-      }
-      if (matchesKey(data, "down")) {
-        state = moveCursor(state, 1, rows.length);
-        return;
-      }
-      if (matchesKey(data, "space")) {
-        const row = rows[state.cursor];
+      // 测验特有语义先拦：space 作答/勾选、enter 作答/提交。
+      // space 只在搜索框为空时是动作键：一旦在打字，它就是普通文本（否则
+      // 多词标签永远搜不了）——搜索框必须是真搜索框，见 picker-input 的契约。
+      if (matchesKey(data, "space") && state.query.length === 0) {
+        const row = visible()[state.cursor];
         if (!row || row.id === SUBMIT_ID) return;
         if (row.id === DONT_KNOW_VALUE) {
           done({ kind: "answered", selectedValues: [], dontKnow: true });
@@ -139,7 +134,7 @@ const showQuizPicker = (
           return;
         }
         if (multi) {
-          const row = rows[state.cursor];
+          const row = visible()[state.cursor];
           if (!row || row.id === DONT_KNOW_VALUE) {
             select(state.cursor);
             return;
@@ -148,7 +143,15 @@ const showQuizPicker = (
           return;
         }
         select(state.cursor);
+        return;
       }
+      // 其余（esc / ↑↓ / 退格 / 文本过滤）走共享翻译，不再各写一份键盘解码。
+      const action = applyPickerNav(data, state, visible().length);
+      if (action.kind === "cancel") {
+        done({ kind: "cancelled" });
+        return;
+      }
+      if (action.kind === "update") state = action.state;
     };
 
     const render = (width: number): string[] => {
@@ -168,21 +171,22 @@ const showQuizPicker = (
         }
       }
       lines.push("");
-      const visible = filterOptions(rows, "");
       lines.push(
         ...renderPickerLines({
           title: multi ? "Quiz (multi-select)" : "Quiz",
-          options: visible,
+          options: visible(),
           state,
           width,
           multiSelect: multi,
+          focused: component.focused,
           footer: multi ? FOOTER_MULTI : FOOTER_SINGLE,
         }),
       );
       return lines;
     };
 
-    return {
+    const component: PickerComponent = {
+      focused: true,
       render,
       invalidate: () => {},
       handleInput: (data: string) => {
@@ -190,5 +194,6 @@ const showQuizPicker = (
         tui.requestRender();
       },
     };
+    return component;
   });
 };

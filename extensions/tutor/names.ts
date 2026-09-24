@@ -14,6 +14,7 @@ export const TUTOR_MODE_COMMAND_NAME = "tutor-mode";
 export const QUIZ_TOOL_NAME = "quiz";
 export const ASK_USER_QUESTION_TOOL_NAME = "ask_user_question";
 export const BIND_NOTES_TOOL_NAME = "bind_notes";
+export const TOPIC_STATUS_TOOL_NAME = "topic_status";
 export const NUMBER_CHAPTERS_TOOL_NAME = "number_chapters";
 export const SPLIT_TOPIC_TOOL_NAME = "split_topic";
 export const NOTE_CONCEPT_TOOL_NAME = "note_concept";
@@ -24,6 +25,7 @@ export const TUTOR_SESSION_TOOL_NAMES = [
   QUIZ_TOOL_NAME,
   ASK_USER_QUESTION_TOOL_NAME,
   BIND_NOTES_TOOL_NAME,
+  TOPIC_STATUS_TOOL_NAME,
   NUMBER_CHAPTERS_TOOL_NAME,
   SPLIT_TOPIC_TOOL_NAME,
   NOTE_CONCEPT_TOOL_NAME,

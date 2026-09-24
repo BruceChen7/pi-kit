@@ -56,12 +56,25 @@ const setup = (topic: string): Harness => {
       handlers.set(event, [...(handlers.get(event) ?? []), handler]);
     },
     appendEntry: () => {},
+    getSessionName: () => "已有名字",
+    setSessionName: () => {},
   } as never);
 
   const ctx = {
     cwd,
+    hasUI: true,
     ui: { setStatus: vi.fn(), notify: vi.fn() },
-    sessionManager: { getEntries: () => [] },
+    // 会话已经绑定到这个主题的索引页（等价于学习者先跑过 /md-topic 选完主题）：
+    // 同一主题内换章/建章不需要落点 gate，镜像测试要验的就是这一段。
+    sessionManager: {
+      getEntries: () => [
+        {
+          type: "custom",
+          customType: "tutor-notes",
+          data: { file: path.join(vault, "Learn", topic, `${topic}.md`) },
+        },
+      ],
+    },
   };
 
   const fire = async (event: string, payload: unknown): Promise<void> => {
@@ -210,5 +223,26 @@ describe("镜像接线 / 同轮 bind 的块归属", () => {
 
     await h.fire("message_end", assistantMessage("第一章的正文。"));
     expect(h.readChapter("01-")).toContain("第一章的正文。");
+  });
+});
+
+describe("镜像接线 / 首轮注入不落笔记", () => {
+  it("tutor-brief 是角色 custom 的注入消息：不进笔记（也不清空已绑定的文件）", async () => {
+    const h = setup("镜像注入");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+
+    await h.fire("message_end", {
+      type: "message_end",
+      message: {
+        role: "custom",
+        customType: "tutor-brief",
+        content: [{ type: "text", text: "[tutor] 本会话已绑定《镜像注入》" }],
+      },
+    });
+
+    const chapter = h.readChapter("01-");
+    expect(chapter).not.toContain("[tutor]");
+    expect(chapter).not.toContain("本会话已绑定");
   });
 });

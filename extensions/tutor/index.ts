@@ -2,11 +2,12 @@
  * tutor — 教学系统扩展（单目录 = 一个开关）。
  *
  * 本文件只做接线（Imperative Shell）：注册工具与命令，把参数交给纯核，
- * 把结果包成 pi 的工具返回值。判定、格式化、路径拼装都在 *-core.ts。
+ * 把结果包成 pi 的工具返回值。判定、格式化、路径拼装都在 *-core.ts 与 topic-store。
  *
- * 当前已接线：quiz
- * 后续步骤：ask_user_question、bind_notes + /md-log|/md-topic|/md-unlog、
- *          validate_mermaid + render_mermaid
+ * 接线顺序有意：tutor-mode 控制器先跑（`registerNotes` 要用它交出的 `enable`，
+ * 绑定教学内容后打开闸门）。各模块职责：
+ *   quiz / ask（* -core + *-ui）、notes-store（镜像 + 落点 gate）、
+ *   concepts-store（概念表）、topic-store（vault 只读）、topic-status（状态查询 + 首轮注入）。
  */
 
 import { execFile } from "node:child_process";
@@ -49,6 +50,7 @@ import {
   QUIZ_TOOL_NAME,
   TUTOR_MODE_COMMAND_NAME,
 } from "./names.ts";
+import { vaultDirOf } from "./notes-core.ts";
 import { registerNotes } from "./notes-store.ts";
 import {
   buildOutcome,
@@ -60,6 +62,8 @@ import {
   shuffle,
 } from "./quiz-core.ts";
 import { runQuiz } from "./quiz-ui.ts";
+import { resolveSettings } from "./settings-store.ts";
+import { registerTopicStatus } from "./topic-status.ts";
 
 const OptionSchema = Type.Object({
   label: Type.String({ description: "Display label for the answer option." }),
@@ -481,10 +485,16 @@ const registerDiagram = (pi: ExtensionAPI): void => {
  * 模型也会看到 ask_user_question 并拿它当通用提问工具。这里用 `setActiveTools`
  * 把它们从"喂给 provider 的工具定义"里摘掉，判定全在 mode-core（纯函数）。
  *
- * 四个入口：before_agent_start（正常一轮，同轮生效）、input（流式 steer 不经过
- * before_agent_start）、session_start（resume / reload 恢复）、/tutor-mode（人敲）。
+ * 五个入口：before_agent_start（正常一轮，同轮生效）、input（流式 steer 不经过
+ * before_agent_start）、session_start（resume / reload 恢复）、/tutor-mode（人敲）、
+ * 以及 notes-store 的绑定回调（绑了 vault 内的笔记 = 教学会话）。
  */
-const registerTutorMode = (pi: ExtensionAPI): void => {
+const registerTutorMode = (
+  pi: ExtensionAPI,
+): {
+  /** 绑定教学内容后开闸门（notes-store 的 onBindingChange 调它）。 */
+  enable: () => void;
+} => {
   let mode: TutorMode = "off";
 
   const sync = (): void => {
@@ -502,13 +512,30 @@ const registerTutorMode = (pi: ExtensionAPI): void => {
     sync();
   };
 
+  /** 教学内容区（`<vaultRoot>/<topDir>`）：只有落在这里的绑定才算教学会话。 */
+  const vaultDir = (cwd: string | undefined): string | undefined =>
+    cwd === undefined ? undefined : vaultDirOf(resolveSettings({ cwd }));
+
   pi.on("session_start", async (_event, ctx) => {
-    mode = restoreTutorMode(ctx.sessionManager.getEntries());
+    mode = restoreTutorMode(ctx.sessionManager.getEntries(), {
+      vaultDir: vaultDir(ctx.cwd),
+    });
     sync();
   });
 
-  pi.on("before_agent_start", async (event) => {
-    if (detectTutorSkill(event.prompt)) setMode("on", true);
+  pi.on("before_agent_start", async (event, ctx) => {
+    const skill = detectTutorSkill(event.prompt);
+    if (skill) setMode("on", true);
+    else {
+      // 每轮按会话事实重新推导：绑定 / 解绑都落在 `tutor-notes` 条目里，
+      // 所以 /md-unlog 不需要额外的「关闸」指令，下一轮就按事实回到 off。
+      setMode(
+        restoreTutorMode(ctx.sessionManager.getEntries(), {
+          vaultDir: vaultDir(ctx.cwd),
+        }),
+        false,
+      );
+    }
     sync();
   });
 
@@ -533,13 +560,23 @@ const registerTutorMode = (pi: ExtensionAPI): void => {
       ctx.ui.notify(formatTutorModeStatus(mode, pi.getActiveTools()));
     },
   });
+
+  // 绑定的会话事实本身就是持久信号（`tutor-notes` 条目），不再另写一条 tutor-mode：
+  // 否则解绑后会被那条显式条目钉在 on，而显式条目的优先级高于绑定。
+  return { enable: () => setMode("on", false) };
 };
 
 export default function tutorExtension(pi: ExtensionAPI): void {
+  // 顺序有意：mode 控制器要先跑并交出 enable（notes-store 绑定后要用它开闸门）。
+  const tutorMode = registerTutorMode(pi);
   registerQuiz(pi);
   registerAsk(pi);
-  registerNotes(pi);
+  registerNotes(pi, {
+    onBindingChange: ({ inVault }) => {
+      if (inVault) tutorMode.enable();
+    },
+  });
   registerConcepts(pi);
+  registerTopicStatus(pi);
   registerDiagram(pi);
-  registerTutorMode(pi);
 }

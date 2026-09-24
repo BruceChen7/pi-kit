@@ -19,7 +19,6 @@
       "./extensions/plugin-toggle",
       "./extensions/bash-hook",
       "./extensions/env-guard",
-      "./extensions/rtk-rewrite",
       "./extensions/plannotator-auto",
       "./extensions/plan-mode",
       "./extensions/codex-plan-limits",

@@ -389,7 +389,7 @@ describe("tutor extension wiring", () => {
         ctx: never,
       ) => Promise<{ isError: boolean }>;
     };
-    // 会话已绑到《Docker实现》索引页 ⇒ 同一主题内换章/建章，直接生效（不需要 picker）。
+    // 会话已绑到《Docker实现》索引页，这次只要索引页（不涉及章节）⇒ 不需要 picker。
     const ctx = ctxWith([
       {
         type: "custom",
@@ -401,7 +401,7 @@ describe("tutor extension wiring", () => {
     ]);
     const result = await bind.execute(
       "call-1",
-      { topic: "Docker实现", chapter: "网络：veth与bridge" },
+      { topic: "Docker实现" },
       undefined,
       undefined,
       ctx,

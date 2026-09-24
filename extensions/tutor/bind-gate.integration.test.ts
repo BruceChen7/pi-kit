@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CHAPTER_PICKER_NEW_ID } from "./notes-core.ts";
 import { registerNotes } from "./notes-store.ts";
 
 type ToolExecute = (
@@ -207,18 +208,73 @@ describe("bind_notes 落点 gate", () => {
     ).toBe(false);
   });
 
-  it("同一主题内换章 / 新建章：不惊动学习者，直接绑", async () => {
+  it("同一主题内 agent 想新建/换章：也要让学习者选（01a0d1a7 的 bug：静默建了 08-gossip）", async () => {
+    seedTopic("redis高可用", ["四个动作", "redis集群方案和实现"]);
+    const h = setup({
+      entries: [boundEntry("redis高可用")],
+      picks: ["redis集群方案和实现"],
+    });
+
+    const result = await h.bind({ topic: "redis高可用", chapter: "gossip" });
+
+    // 学习者选了已有章节 ⇒ 就绑到它，不另建新章
+    expect(result.isError).toBe(false);
+    expect(h.custom).toHaveBeenCalledTimes(1);
+    expect(result.details?.path).toBe(
+      path.join(topicDir("redis高可用"), "02-redis集群方案和实现.md"),
+    );
+    expect(fs.readdirSync(topicDir("redis高可用")).sort()).toEqual([
+      "01-四个动作.md",
+      "02-redis集群方案和实现.md",
+      "redis高可用.md",
+    ]);
+  });
+
+  it("同一主题内 agent 想新建/换章：学习者选「＋新建章节…」才建新章", async () => {
+    seedTopic("redis高可用", ["四个动作", "redis集群方案和实现"]);
+    const h = setup({
+      entries: [boundEntry("redis高可用")],
+      picks: [CHAPTER_PICKER_NEW_ID],
+      inputs: ["gossip"],
+    });
+
+    const result = await h.bind({ topic: "redis高可用", chapter: "gossip" });
+
+    expect(result.isError).toBe(false);
+    expect(result.details?.path).toBe(
+      path.join(topicDir("redis高可用"), "03-gossip.md"),
+    );
+    expect(result.details?.chapterNumber).toBe(3);
+  });
+
+  it("同一主题、绑的就是索引页、只要索引页：不问（只有落点真变了才拦）", async () => {
     seedTopic("redis高可用", ["四个动作"]);
     const h = setup({ entries: [boundEntry("redis高可用")] });
 
-    const result = await h.bind({
-      topic: "redis高可用",
-      chapter: "redis集群方案和实现",
-    });
+    const result = await h.bind({ topic: "redis高可用" });
 
     expect(result.isError).toBe(false);
     expect(h.custom).not.toHaveBeenCalled();
-    expect(result.details?.chapterNumber).toBe(2);
+  });
+
+  it("当前在某一章里、这次要退回索引页：也要问（别把课文写进索引页）", async () => {
+    seedTopic("redis高可用", ["四个动作"]);
+    const chapter = path.join(topicDir("redis高可用"), "01-四个动作.md");
+    const h = setup({
+      entries: [
+        {
+          type: "custom",
+          customType: "tutor-notes",
+          data: { file: chapter, chapter: "四个动作" },
+        },
+      ],
+      picks: ["四个动作"],
+    });
+
+    const result = await h.bind({ topic: "redis高可用" });
+
+    expect(h.custom).toHaveBeenCalledTimes(1);
+    expect(result.details?.path).toBe(chapter);
   });
 
   it("md-log 绑到 vault 外的文件：镜像可用，但不开 tutor 闸门（inVault=false）", async () => {
@@ -236,7 +292,11 @@ describe("bind_notes 落点 gate", () => {
 
   it("解绑（/md-unlog）：回报 file=null 的事实，不再宣称任何绑定", async () => {
     seedTopic("redis高可用", ["四个动作"]);
-    const h = setup({ entries: [boundEntry("redis高可用")] });
+    const h = setup({
+      entries: [boundEntry("redis高可用")],
+      picks: [CHAPTER_PICKER_NEW_ID],
+      inputs: ["四个动作"],
+    });
     await h.bind({ topic: "redis高可用", chapter: "四个动作" });
     h.onBindingChange.mockClear();
 

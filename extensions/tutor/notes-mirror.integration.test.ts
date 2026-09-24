@@ -12,6 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CHAPTER_PICKER_NEW_ID } from "./notes-core.ts";
 import { registerNotes } from "./notes-store.ts";
 
 type EventHandler = (event: never, ctx: never) => unknown;
@@ -39,6 +40,7 @@ afterEach(() => {
 type Harness = {
   fire: (event: string, payload: unknown) => Promise<void>;
   bind: (toolCallId: string, chapter: string) => Promise<void>;
+  bindCancelled: (toolCallId: string, chapter: string) => Promise<void>;
   topicDir: string;
   readChapter: (prefix: string) => string;
   ctx: never;
@@ -60,12 +62,21 @@ const setup = (topic: string): Harness => {
     setSessionName: () => {},
   } as never);
 
+  /** 落点 gate 会弹章节 picker：默认模拟学习者接受 agent 的提议（新建章节）。 */
+  let proposedChapter: string | undefined;
+  let nextPick: string | undefined = CHAPTER_PICKER_NEW_ID;
   const ctx = {
     cwd,
+    mode: "tui",
     hasUI: true,
-    ui: { setStatus: vi.fn(), notify: vi.fn() },
+    ui: {
+      setStatus: vi.fn(),
+      notify: vi.fn(),
+      custom: async () => nextPick,
+      input: async () => proposedChapter,
+    },
     // 会话已经绑定到这个主题的索引页（等价于学习者先跑过 /md-topic 选完主题）：
-    // 同一主题内换章/建章不需要落点 gate，镜像测试要验的就是这一段。
+    // 镜像测试要验的是「绑定切换时块落在哪」，不是 picker 本身。
     sessionManager: {
       getEntries: () => [
         {
@@ -88,6 +99,7 @@ const setup = (topic: string): Harness => {
   /** 按 pi 的真实顺序跑一次 bind：tool_call → execute → tool_result。 */
   const bind = async (toolCallId: string, chapter: string): Promise<void> => {
     const params = { topic, chapter };
+    proposedChapter = chapter;
     await fire("tool_call", {
       type: "tool_call",
       toolName: "bind_notes",
@@ -120,7 +132,22 @@ const setup = (topic: string): Harness => {
     return fs.readFileSync(path.join(topicDir, file), "utf-8");
   };
 
-  return { fire, bind, topicDir, readChapter, ctx: ctx as never };
+  return {
+    fire,
+    bind,
+    /** 学习者 Esc 的 bind：同一个流程，但 picker 返回取消。 */
+    bindCancelled: async (toolCallId: string, chapter: string) => {
+      nextPick = undefined;
+      try {
+        await bind(toolCallId, chapter);
+      } finally {
+        nextPick = CHAPTER_PICKER_NEW_ID;
+      }
+    },
+    topicDir,
+    readChapter,
+    ctx: ctx as never,
+  };
 };
 
 /** 一条 assistant 消息：正文 + 可选的工具调用块。 */
@@ -244,5 +271,31 @@ describe("镜像接线 / 首轮注入不落笔记", () => {
     const chapter = h.readChapter("01-");
     expect(chapter).not.toContain("[tutor]");
     expect(chapter).not.toContain("本会话已绑定");
+  });
+});
+
+describe("镜像接线 / 落点被取消", () => {
+  it("学习者 Esc：不新建章节，扣住的正文落在原来那章（绝不丢字）", async () => {
+    const h = setup("镜像取消");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+
+    await h.fire(
+      "message_end",
+      assistantMessage("第二章的正文。", {
+        id: "b2",
+        name: "bind_notes",
+        arguments: { topic: "镜像取消", chapter: "第二章" },
+      }),
+    );
+    await h.bindCancelled("b2", "第二章");
+
+    // 没有 02-第二章.md：落点没被确认
+    expect(fs.readdirSync(h.topicDir).sort()).toEqual([
+      "01-第一章.md",
+      "镜像取消.md",
+    ]);
+    // 正文没丢，落在原来那章
+    expect(h.readChapter("01-")).toContain("第二章的正文。");
   });
 });

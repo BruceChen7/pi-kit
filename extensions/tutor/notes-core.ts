@@ -1501,14 +1501,33 @@ export const topicOfNotePath = (file: string): string | null => {
 };
 
 /**
- * 落点是否需要问人：请求主题不是本会话已绑定的主题（含尚未绑定）⇒ 问。
- * 只比字符串——不做同名命中、近似匹配、最近改动这类推断。
+ * 落点 gate：这次 bind 要不要问人，以及问哪几步。
+ *
+ * - `askTopic`：请求主题不是本会话已绑定的主题（含尚未绑定）⇒ 问。
+ * - `askChapter`：选了主题必然接着选章节；agent 明确要一章（`requestedChapter`）也要问
+ *   ——「放到新章节，还是加到已有章节里」是学习者的事，agent 说了不算；
+ *   另外当前正绑在某一章、这次却要退回索引页（`boundIsChapter`）也要问，
+ *   否则一次误调就把课文写进索引页。
+ *
+ * 只比字符串与一个布尔——不做同名命中、近似匹配、最近改动这类推断。
  */
-export const needsPlacementGate = (input: {
+export type PlacementGate = { askTopic: boolean; askChapter: boolean };
+
+export const planPlacementGate = (input: {
   requestedTopic: string;
+  requestedChapter?: string;
   boundTopic: string | null;
-}): boolean =>
-  input.boundTopic === null || input.requestedTopic !== input.boundTopic;
+  /** 本会话当前绑的是不是章节文件（`<topic>/<topic>.md` 之外都算章节）。 */
+  boundIsChapter: boolean;
+}): PlacementGate => {
+  const askTopic =
+    input.boundTopic === null || input.requestedTopic !== input.boundTopic;
+  const wantsChapter = (input.requestedChapter ?? "").trim().length > 0;
+  return {
+    askTopic,
+    askChapter: askTopic || wantsChapter || input.boundIsChapter,
+  };
+};
 
 /** 章节一行：`第3章 · 调度与唤醒（ok 4 / wrong 1 / gaps 0）`。 */
 export const formatChapterTally = (chapter: ChapterState): string => {

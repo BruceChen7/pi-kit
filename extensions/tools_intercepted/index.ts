@@ -6,12 +6,22 @@
  * - poetry: Blocked with uv equivalents (uv init, uv add, uv sync, uv run)
  * - python/python3: Redirected to `uv run python`, with special handling to
  *   block `python -m pip` and `python -m venv`
- * - grep: Transparent proxy to `rg`, translating common grep CLI flags to
- *   ripgrep equivalents (handles conflicting flags: -r, -E, -d, -L, -s, etc.)
- *   Falls back to system grep for patterns rg cannot handle (e.g., \\K).
- * - find: Transparent proxy to `fd`, translating common find flags to fd
- *   equivalents (handles conflicting flags: -d, -H, -i, -l, -x, -o, -s, etc.)
- *   Falls back to system find for complex expressions (-o, -perm, -prune, etc.)
+ *
+ * These shims keep their contract because they **block or redirect**: callers
+ * expect the command to be swapped ("don't use pip, use uv").
+ *
+ * There is deliberately NO grep->rg or find->fd shim. A command that keeps its
+ * name but changes its semantics is not a proxy: grep's default is BRE (bare
+ * `( ) {} + ? |` are literal) while rg's default is ERE, and rg honours
+ * .gitignore while grep does not. A flag-only translation therefore failed two
+ * ways on every bash `grep`:
+ *   - `rg: regex parse error` + exit 2 on BRE patterns like `it("` or `(script`;
+ *   - silent false negatives on `\|` alternation (rg reads a literal pipe) and
+ *     on .gitignore'd paths.
+ * Across session logs that was 178 failing `grep` invocations, 138 of them
+ * reaching the model as non-error output (exit code swallowed by a pipe).
+ * bash `grep`/`find` are left to the system implementations; ripgrep stays
+ * available through the `rg` tool below (or an explicit `rg` command).
  *
  * Built-in grep/find tools are disabled and replaced with:
  * - rg: structured ripgrep output (same format as built-in grep)
@@ -23,7 +33,7 @@
  *
  * Notes:
  * - No auto-download for rg/fd. Missing binaries return install hints + error.
- * - --hidden and .gitignore behavior is preserved.
+ * - The rg tool keeps rg's own --hidden / .gitignore behavior.
  */
 
 import { spawn, spawnSync } from "node:child_process";

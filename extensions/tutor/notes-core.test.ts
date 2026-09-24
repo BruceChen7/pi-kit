@@ -35,7 +35,6 @@ import {
   messageText,
   mirrorAssistantText,
   mirrorStep,
-  needsPlacementGate,
   nextChapterNumber,
   parseChapterFileName,
   parseChapterRef,
@@ -43,6 +42,7 @@ import {
   parseNoteBlocks,
   pickResume,
   planNumbering,
+  planPlacementGate,
   planSplit,
   proposeChapterOrder,
   provenanceBlock,
@@ -1393,22 +1393,78 @@ describe("notes-core / 会话绑定与主题简报", () => {
     expect(topicOfNotePath("Docker.md")).toBeNull();
   });
 
-  it("needsPlacementGate：只有「请求主题 == 已绑定主题」才不惊动人", () => {
-    const cases: Array<[string, string, string | null, boolean]> = [
-      ["同主题内换章", "Docker实现", "Docker实现", false],
-      ["未绑定", "Docker实现", null, true],
-      ["换主题", "redis高可用", "Docker实现", true],
+  it("planPlacementGate：主题变了要问；agent 指定章节要问；在章节里退回索引页也要问", () => {
+    const cases: Array<
       [
-        "章节名当主题名（bad case）",
-        "redis集群方案和实现",
-        "redis高可用",
-        true,
+        string,
+        {
+          requestedTopic: string;
+          requestedChapter?: string;
+          boundTopic: string | null;
+          boundIsChapter: boolean;
+        },
+        { askTopic: boolean; askChapter: boolean },
+      ]
+    > = [
+      [
+        "同一主题、绑的就是索引页、不指定章节 ⇒ 不问",
+        {
+          requestedTopic: "Docker实现",
+          boundTopic: "Docker实现",
+          boundIsChapter: false,
+        },
+        { askTopic: false, askChapter: false },
+      ],
+      [
+        "同一主题、agent 指定一章 ⇒ 只问章节（新章还是加进旧章）",
+        {
+          requestedTopic: "redis高可用",
+          requestedChapter: "gossip",
+          boundTopic: "redis高可用",
+          boundIsChapter: true,
+        },
+        { askTopic: false, askChapter: true },
+      ],
+      [
+        "未绑定 ⇒ 主题和章节都要问",
+        {
+          requestedTopic: "Docker实现",
+          requestedChapter: "网络",
+          boundTopic: null,
+          boundIsChapter: false,
+        },
+        { askTopic: true, askChapter: true },
+      ],
+      [
+        "换主题 ⇒ 主题和章节都要问",
+        {
+          requestedTopic: "redis高可用",
+          boundTopic: "Docker实现",
+          boundIsChapter: false,
+        },
+        { askTopic: true, askChapter: true },
+      ],
+      [
+        "章节名当主题名（bad case） ⇒ 主题和章节都要问",
+        {
+          requestedTopic: "redis集群方案和实现",
+          boundTopic: "redis高可用",
+          boundIsChapter: true,
+        },
+        { askTopic: true, askChapter: true },
+      ],
+      [
+        "当前在章节里、这次只要索引页 ⇒ 也要问（别把课文写进索引页）",
+        {
+          requestedTopic: "redis高可用",
+          boundTopic: "redis高可用",
+          boundIsChapter: true,
+        },
+        { askTopic: false, askChapter: true },
       ],
     ];
-    for (const [label, requestedTopic, boundTopic, expected] of cases) {
-      expect(needsPlacementGate({ requestedTopic, boundTopic }), label).toBe(
-        expected,
-      );
+    for (const [label, input, expected] of cases) {
+      expect(planPlacementGate(input), label).toEqual(expected);
     }
   });
 

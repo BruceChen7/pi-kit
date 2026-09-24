@@ -1,3 +1,5 @@
+import { readdirSync } from "node:fs";
+import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
 import extension, { computeToolCorrection } from "./index.js";
@@ -241,5 +243,45 @@ describe("tools_intercepted extension", () => {
       "fd",
     ]);
     expect(result).toBeUndefined();
+  });
+});
+
+/**
+ * Regression guard for the removed grep->rg / find->fd PATH shims.
+ *
+ * A shim that keeps a command's name but changes its semantics silently broke
+ * bash usage: BRE patterns (`it("`, `\|` alternation) failed or matched
+ * nothing under rg, and rg also skipped .gitignore'd paths that grep finds.
+ * 178 logged `grep` invocations failed that way, 138 of them reaching the
+ * model as non-error output. bash grep/find must resolve to the system
+ * implementations; ripgrep stays available as the `rg` tool.
+ */
+describe("intercepted-commands PATH shims", () => {
+  /** Pure: directory entry names -> the disguised same-name commands. */
+  const disguisedShims = (entries: string[]): string[] =>
+    entries.filter((name) => name === "grep" || name === "find");
+
+  it("ships no grep/find shim (they are not proxies, they are impostors)", () => {
+    const entries = readdirSync(
+      path.resolve(
+        process.cwd(),
+        "extensions/tools_intercepted/intercepted-commands",
+      ),
+    );
+
+    expect(disguisedShims(entries)).toEqual([]);
+  });
+
+  it("still ships the python-family shims (block/redirect contract)", () => {
+    const entries = readdirSync(
+      path.resolve(
+        process.cwd(),
+        "extensions/tools_intercepted/intercepted-commands",
+      ),
+    );
+
+    for (const name of ["pip", "pip3", "poetry", "python", "python3"]) {
+      expect(entries).toContain(name);
+    }
   });
 });

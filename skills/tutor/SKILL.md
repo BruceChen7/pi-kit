@@ -134,6 +134,12 @@ topic and do not pick the topic yourself: call `bind_notes({ topic, chapter })` 
 opens a picker — the learner chooses the topic and then the chapter (an existing one, or
 「＋ 新建章节…」). A few consequences:
 
+- **A chapter is never placed silently.** Passing `chapter` always opens the chapter picker,
+  even inside the topic this session is already bound to: 「把这一节加进已有章节」vs「新开一章」
+  is the learner's decision, not yours — do not announce a new chapter before the picker
+  returns, and do not assume your proposed name became a file. The picker's rows are the
+  existing chapters (with the resume one marked `· 续做`), 「＋ 新建章节…」 and 「主题索引页」;
+  your proposed name is only the placeholder text in the new-chapter input.
 - `bind_notes` returning a cancelled message means the learner closed the picker: nothing was
   written. Ask them where the lesson should go (or let them run `/md-topic`); never retry the
   same call.
@@ -178,8 +184,9 @@ index's `## 章节` block. Four rules follow:
    message — call `bind_notes` with no prose around it, then teach the chapter in the next
    message. Close the previous chapter (rule 4) before that bind, in the turn before it.
 3. **The tool owns the number and the placement, you own the name.** Before teaching a chapter,
-   bind it — the learner confirms topic/chapter in the picker if the topic is not the one this
-   session is already on. Then call the chapter `第N章 · 名字`, exactly as `bind_notes`
+   bind it — whenever a chapter is involved the learner confirms it in the picker (which existing
+   chapter, or 「＋ 新建章节…」), whether or not the topic changed. Then call the chapter
+   `第N章 · 名字`, exactly as `bind_notes`
    reported it (or ask `number_chapters` without `chapters` to list them). Never invent a number,
    never renumber: numbers only move
    forward and skipped chapters leave their gap open. When your plan already numbers its
@@ -225,10 +232,10 @@ chapter picker; `/md-topic <topic>` opens the chapter picker directly — pick a
 chapter, "＋新建章节…", or the topic index page. `/md-topic <topic> <章节>` binds a chapter by
 hand without the picker — `第3章`, `03-调度与唤醒` and the plain name all work;
 `/md-log <path>` links an existing file without creating one; `/md-unlog` stops mirroring.
-These pickers are the same ones `bind_notes` opens when the topic is not the one this session
-is already on — so when you are unsure where a lesson belongs, just call `bind_notes` and let
-the learner choose; when you are sure it is the *same* topic, the call goes through without
-asking.
+These pickers are the same ones `bind_notes` opens — for a new topic, and for every chapter
+placement (which existing chapter, or 「＋ 新建章节…」). So just call `bind_notes` and let the
+learner choose; the only calls that go through without asking are ones that change nothing about
+the placement (re-binding the topic index page of the topic the session is already on).
 
 ## Concepts
 

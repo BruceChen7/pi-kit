@@ -78,10 +78,10 @@ import {
   mirrorAssistantText,
   mirrorStep,
   type NumberingAssignment,
-  needsPlacementGate,
   parseChapterRef,
   parseIndexEntries,
   planNumbering,
+  planPlacementGate,
   planSplit,
   proposeChapterOrder,
   provenanceBlock,
@@ -857,10 +857,13 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
   });
 
   /**
-   * 落点 gate：请求的主题不是本会话已绑定的主题时，**绝不替学习者决定**。
-   * 弹主题 picker → 章节 picker，由人选；Esc 取消则不写盘。
-   * 只有交互式 TUI 能弹自定义组件（RPC / json / print 都不行）——那些模式下也不猜，
-   * 把选择交回对话（`formatPlacementRequired`）。
+   * 落点 gate：**绝不替学习者决定课文落到哪**——落点变化都要问。
+   *
+   * - 主题不是本会话已绑定的 ⇒ 弹主题 picker；
+   * - agent 指定了一章（新建或加内容）、或当前在某一章里却要退回索引页 ⇒ 弹章节 picker
+   *   （已有章节 / ＋新建章节… / 主题索引页）——「加到旧章还是开新章」由人选；
+   * - Esc / 取消 ⇒ 不写盘；只有交互式 TUI 能弹组件，其他模式把选择交回对话
+   *   （`formatPlacementRequired`）。
    */
   const resolvePlacement = async (
     ctx: ExtensionContext,
@@ -877,7 +880,18 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
     const requestedTopic = input.topic.trim();
     const bound = readBoundNote(ctx.sessionManager.getEntries());
     const boundTopic = bound ? topicOfNotePath(bound) : null;
-    if (!needsPlacementGate({ requestedTopic, boundTopic })) {
+    // 「绑的是不是章节文件」看路径本身：`<topic>/<topic>.md` = 索引页。
+    const boundIsChapter =
+      bound !== null &&
+      boundTopic !== null &&
+      path.basename(bound, ".md") !== boundTopic;
+    const gate = planPlacementGate({
+      requestedTopic,
+      requestedChapter: input.chapter,
+      boundTopic,
+      boundIsChapter,
+    });
+    if (!gate.askTopic && !gate.askChapter) {
       return { ok: true, ...input, topic: requestedTopic };
     }
     if (ctx.mode !== "tui" || ctx.hasUI !== true) {
@@ -886,7 +900,9 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
         message: formatPlacementRequired({ requestedTopic, boundTopic }),
       };
     }
-    const topic = await pickTopic(ctx, { suggested: requestedTopic });
+    const topic = gate.askTopic
+      ? await pickTopic(ctx, { suggested: requestedTopic })
+      : requestedTopic;
     if (!topic) {
       return { ok: false, cancelled: true, message: formatBindCancelled() };
     }
@@ -916,7 +932,7 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
       "Pass `chapter` before teaching a chapter: it assigns the chapter number, writes `<NN-章节>.md` with `# 第N章 · 名字` as its first line, adds the index line and refreshes the index's `## 章节` block. The returned `第N章 · 名字` label is the only authoritative way to refer to that chapter afterwards. " +
       "Send this call as a message of its own, with no prose around it — the mirror writes a message's prose when the message ends, before tool calls run, so chapter prose sent alongside the bind lands in the previous chapter's file. Bind first, teach in the next message. " +
       "It also returns a resume summary: the topic's chapters with their quiz tallies, and which chapter to continue from. " +
-      "When the topic is not the one this session is already bound to, the tool opens a picker and the learner chooses the topic and chapter — do not guess a topic name (a chapter name is not a topic name), and do not retry a cancelled bind: ask the learner where the lesson should go instead.",
+      "The learner always confirms the placement: when the topic is not the one this session is already bound to the tool opens the topic picker, and whenever a chapter is involved (you pass `chapter`, or the session is leaving a chapter for the index page) it opens the chapter picker so the learner decides between an existing chapter and 「＋ 新建章节…」. Do not guess a topic name (a chapter name is not a topic name), never retry a cancelled bind, and never state that a chapter was placed before the tool returned — ask the learner where the lesson should go instead.",
     parameters: BindNotesParams,
     // 落点 gate 会独占终端 UI（主题 / 章节 picker），与 quiz / ask_user_question 同理：
     // 并行发两个 tool call 会把先上屏的组件摘掉。
@@ -1591,7 +1607,9 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
           showPicker({
             tui,
             done,
-            title: `选择章节 · ${topic}`,
+            title: options.suggested
+              ? `选择章节 · ${topic}（agent 提议：${options.suggested}）`
+              : `选择章节 · ${topic}`,
             rows,
             emptyText: "没有匹配的章节",
             cursor,

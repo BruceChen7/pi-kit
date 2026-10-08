@@ -3,7 +3,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import {
-  asTextResult,
+  codeSearchOutputSchema,
+  commitListOutputSchema,
+  fileContentOutputSchema,
+  gitlabDiffOutputSchema,
+  pathListOutputSchema,
+  projectListOutputSchema,
+} from "./output-schemas.js";
+import {
+  asStructuredResult,
   formatDirectoryEntries,
   formatNumberedFileContent,
   globMatches,
@@ -226,6 +234,8 @@ export function registerGitlabTools(pi: ExtensionAPI) {
         Type.String({ description: "Optional branch/tag/commit ref" }),
       ),
     }),
+    outputSchema: fileContentOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -242,7 +252,7 @@ export function registerGitlabTools(pi: ExtensionAPI) {
           params.read_range as number[] | undefined,
         );
 
-        return asTextResult({
+        return asStructuredResult({
           absolutePath: normalizedPath,
           content: numbered,
         });
@@ -272,6 +282,8 @@ export function registerGitlabTools(pi: ExtensionAPI) {
         }),
       ),
     }),
+    outputSchema: pathListOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -293,7 +305,7 @@ export function registerGitlabTools(pi: ExtensionAPI) {
           params.limit ?? 100,
         );
 
-        return asTextResult(entries);
+        return asStructuredResult(entries);
       } catch (error) {
         return toolErrorResult("list_directory_gitlab", error);
       }
@@ -323,6 +335,8 @@ export function registerGitlabTools(pi: ExtensionAPI) {
         Type.Number({ minimum: 0, description: "Pagination offset" }),
       ),
     }),
+    outputSchema: pathListOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -348,7 +362,7 @@ export function registerGitlabTools(pi: ExtensionAPI) {
 
         const offset = params.offset ?? 0;
         const limit = params.limit ?? 100;
-        return asTextResult(all.slice(offset, offset + limit));
+        return asStructuredResult(all.slice(offset, offset + limit));
       } catch (error) {
         return toolErrorResult("glob_gitlab", error);
       }
@@ -372,6 +386,8 @@ export function registerGitlabTools(pi: ExtensionAPI) {
         Type.Number({ minimum: 0, description: "Pagination offset" }),
       ),
     }),
+    outputSchema: codeSearchOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -409,7 +425,7 @@ export function registerGitlabTools(pi: ExtensionAPI) {
             chunks: [String(item.data ?? item.basename ?? "").slice(0, 2048)],
           }));
 
-        return asTextResult({
+        return asStructuredResult({
           results,
           totalCount: results.length,
         });
@@ -448,6 +464,8 @@ export function registerGitlabTools(pi: ExtensionAPI) {
         Type.Number({ minimum: 0, description: "Pagination offset" }),
       ),
     }),
+    outputSchema: commitListOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -488,7 +506,7 @@ export function registerGitlabTools(pi: ExtensionAPI) {
           });
         }
 
-        return asTextResult({
+        return asStructuredResult({
           commits: commits.map((c: any) => ({
             sha: String(c?.id ?? c?.short_id ?? ""),
             message: String(c?.message ?? c?.title ?? "").trim(),
@@ -521,6 +539,8 @@ export function registerGitlabTools(pi: ExtensionAPI) {
         }),
       ),
     }),
+    outputSchema: gitlabDiffOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -535,7 +555,7 @@ export function registerGitlabTools(pi: ExtensionAPI) {
         });
 
         const diffs = Array.isArray(data?.diffs) ? data.diffs : [];
-        return asTextResult({
+        return asStructuredResult({
           files: diffs.map((f: any) => ({
             filename: f.new_path ?? f.old_path,
             status: mapGitLabDiffStatus(f),
@@ -585,6 +605,8 @@ export function registerGitlabTools(pi: ExtensionAPI) {
         Type.Number({ minimum: 0, description: "Pagination offset" }),
       ),
     }),
+    outputSchema: projectListOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -635,7 +657,7 @@ export function registerGitlabTools(pi: ExtensionAPI) {
           );
         }
 
-        return asTextResult({
+        return asStructuredResult({
           projects: projects.slice(0, limit).map((p: any) => ({
             name: p.path_with_namespace ?? p.name_with_namespace ?? p.name,
             description: p.description,

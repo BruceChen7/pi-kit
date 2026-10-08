@@ -16,7 +16,7 @@ describe("tools_intercepted package manifest", () => {
     expect(packageJson.dependencies?.["@sinclair/typebox"]).toBeTruthy();
   });
 
-  it("declares tools_intercepted as a Pi extension so rg/fd are available", () => {
+  it("declares tools_intercepted as a Pi extension so the PATH shims load", () => {
     const packageJsonPath = path.resolve(process.cwd(), "package.json");
     const packageJson = JSON.parse(
       fs.readFileSync(packageJsonPath, "utf8"),

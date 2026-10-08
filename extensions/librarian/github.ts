@@ -3,7 +3,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import {
-  asTextResult,
+  codeSearchOutputSchema,
+  commitListOutputSchema,
+  fileContentOutputSchema,
+  githubDiffOutputSchema,
+  pathListOutputSchema,
+  repositoryListOutputSchema,
+} from "./output-schemas.js";
+import {
+  asStructuredResult,
   decodeBase64Utf8,
   formatDirectoryEntries,
   formatNumberedFileContent,
@@ -316,6 +324,8 @@ export function registerGithubTools(pi: ExtensionAPI) {
         Type.String({ description: "Optional branch/tag/commit ref" }),
       ),
     }),
+    outputSchema: fileContentOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -341,7 +351,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
           params.read_range as number[] | undefined,
         );
 
-        return asTextResult({
+        return asStructuredResult({
           absolutePath: normalizedPath,
           content: numbered,
         });
@@ -372,6 +382,8 @@ export function registerGithubTools(pi: ExtensionAPI) {
         }),
       ),
     }),
+    outputSchema: pathListOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -398,7 +410,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
           params.limit ?? 100,
         );
 
-        return asTextResult(entries);
+        return asStructuredResult(entries);
       } catch (error) {
         return toolErrorResult("list_directory_github", error);
       }
@@ -428,6 +440,8 @@ export function registerGithubTools(pi: ExtensionAPI) {
         Type.Number({ minimum: 0, description: "Pagination offset" }),
       ),
     }),
+    outputSchema: pathListOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -462,7 +476,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
 
         const offset = params.offset ?? 0;
         const limit = params.limit ?? 100;
-        return asTextResult(all.slice(offset, offset + limit));
+        return asStructuredResult(all.slice(offset, offset + limit));
       } catch (error) {
         return toolErrorResult("glob_github", error);
       }
@@ -490,6 +504,8 @@ export function registerGithubTools(pi: ExtensionAPI) {
         Type.Number({ minimum: 0, description: "Pagination offset" }),
       ),
     }),
+    outputSchema: codeSearchOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -541,7 +557,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
           }
         }
 
-        return asTextResult({
+        return asStructuredResult({
           results: Array.from(grouped.entries()).map(([file, chunks]) => ({
             file,
             chunks,
@@ -583,6 +599,8 @@ export function registerGithubTools(pi: ExtensionAPI) {
         Type.Number({ minimum: 0, description: "Pagination offset" }),
       ),
     }),
+    outputSchema: commitListOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -669,7 +687,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
           };
         });
 
-        return asTextResult({ commits: mapped, totalCount });
+        return asStructuredResult({ commits: mapped, totalCount });
       } catch (error) {
         return toolErrorResult("commit_search", error);
       }
@@ -692,6 +710,8 @@ export function registerGithubTools(pi: ExtensionAPI) {
         }),
       ),
     }),
+    outputSchema: githubDiffOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -727,7 +747,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
         const headCommit =
           commits.length > 0 ? commits[commits.length - 1] : undefined;
 
-        return asTextResult({
+        return asStructuredResult({
           files,
           base_commit: {
             sha: data?.base_commit?.sha ?? params.base,
@@ -773,6 +793,8 @@ export function registerGithubTools(pi: ExtensionAPI) {
         Type.Number({ minimum: 0, description: "Pagination offset" }),
       ),
     }),
+    outputSchema: repositoryListOutputSchema,
+    exposure: "codemode",
 
     async execute(_id, params, signal) {
       try {
@@ -903,7 +925,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
           }
         }
 
-        return asTextResult({
+        return asStructuredResult({
           repositories: merged.slice(0, limit).map((r: any) => ({
             name: r.full_name,
             description: r.description,

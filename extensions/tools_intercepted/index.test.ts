@@ -2,7 +2,7 @@ import { readdirSync } from "node:fs";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
-import extension, { computeToolCorrection } from "./index.js";
+import extension from "./index.js";
 
 const originalPath = process.env.PATH;
 
@@ -12,15 +12,10 @@ afterEach(() => {
 
 type EventHandlers = Record<string, Array<(...args: unknown[]) => unknown>>;
 
-type FakeCtx = { getSystemPrompt: () => string };
-
-function createFakeApi(initialTools: string[]): {
+function createFakeApi(): {
   api: ExtensionAPI;
   handlers: EventHandlers;
-  activeTools: () => string[];
-  ctx: FakeCtx;
 } {
-  let tools = [...initialTools];
   const handlers: EventHandlers = {};
 
   const api = {
@@ -32,80 +27,67 @@ function createFakeApi(initialTools: string[]): {
     registerTool() {
       // no-op
     },
-    getActiveTools: () => [...tools],
-    setActiveTools: (next: string[]) => {
-      tools = [...next];
-    },
   } as unknown as ExtensionAPI;
 
-  return {
-    api,
-    handlers,
-    activeTools: () => [...tools],
-    // getSystemPrompt lives on ExtensionContext (the ctx handler arg), not on
-    // the ExtensionAPI (pi) object.
-    ctx: { getSystemPrompt: () => `tools:${tools.join(",")}` },
-  };
+  return { api, handlers };
 }
 
-function trigger(
-  handlers: EventHandlers,
-  event: string,
-  eventPayload: object,
-  ctx: FakeCtx = { getSystemPrompt: () => "" },
-): unknown {
+function trigger(handlers: EventHandlers, event: string, payload: object) {
   const callbacks = handlers[event];
   if (!callbacks || callbacks.length === 0) {
     throw new Error(`No handler registered for ${event}`);
   }
-  return (
-    callbacks[callbacks.length - 1] as (e: object, c: FakeCtx) => unknown
-  )(eventPayload, ctx);
+  return (callbacks[callbacks.length - 1] as (e: object) => unknown)(payload);
 }
 
-describe("computeToolCorrection", () => {
-  it.each([
-    {
-      name: "adds rg/fd and removes grep/find when both pairs are present",
-      current: ["read", "bash", "write", "grep", "find", "ls"],
-      expectedNext: ["read", "bash", "write", "ls", "rg", "fd"],
-      expectedChanged: true,
-    },
-    {
-      name: "adds rg/fd when only grep is present",
-      current: ["read", "grep", "ls"],
-      expectedNext: ["read", "ls", "rg", "fd"],
-      expectedChanged: true,
-    },
-    {
-      name: "keeps unrelated active tools untouched",
-      current: ["cs_search", "qmd_query", "grep", "find"],
-      expectedNext: ["cs_search", "qmd_query", "rg", "fd"],
-      expectedChanged: true,
-    },
-    {
-      name: "is a no-op when the tool set is already correct",
-      current: ["read", "bash", "ls", "rg", "fd"],
-      expectedNext: ["read", "bash", "ls", "rg", "fd"],
-      expectedChanged: false,
-    },
-    {
-      name: "is a no-op when rg/fd are present and grep/find absent",
-      current: ["rg", "fd", "bash"],
-      expectedNext: ["rg", "fd", "bash"],
-      expectedChanged: false,
-    },
-  ])("$name", ({ current, expectedNext, expectedChanged }) => {
-    const { next, changed } = computeToolCorrection(current);
-    expect(next).toEqual(expectedNext);
-    expect(changed).toBe(expectedChanged);
-  });
-});
+function shimDir(): string {
+  return path.resolve(
+    process.cwd(),
+    "extensions/tools_intercepted/intercepted-commands",
+  );
+}
 
 describe("tools_intercepted extension", () => {
-  it("registers session_start and before_agent_start lifecycle hooks", () => {
-    const events: string[] = [];
+  it("prepends the intercepted-commands directory to PATH on load", () => {
+    process.env.PATH = "/usr/bin:/bin";
+    const { api } = createFakeApi();
 
+    extension(api);
+
+    expect(process.env.PATH?.split(path.delimiter)[0]).toBe(shimDir());
+    expect(process.env.PATH).toContain("/usr/bin:/bin");
+  });
+
+  it("re-applies the shim path on session_start without duplicating it", () => {
+    process.env.PATH = "/usr/bin:/bin";
+    const { api, handlers } = createFakeApi();
+
+    extension(api);
+    trigger(handlers, "session_start", {
+      type: "session_start",
+      reason: "reload",
+    });
+
+    const entries = (process.env.PATH ?? "").split(path.delimiter);
+    expect(entries.filter((entry) => entry === shimDir())).toHaveLength(1);
+  });
+
+  it("registers no tools: search comes from the built-in grep/find", () => {
+    const registered: string[] = [];
+    extension({
+      on() {
+        // no-op
+      },
+      registerTool(tool: { name: string }) {
+        registered.push(tool.name);
+      },
+    } as unknown as ExtensionAPI);
+
+    expect(registered).toEqual([]);
+  });
+
+  it("registers only the session_start lifecycle hook", () => {
+    const events: string[] = [];
     extension({
       on(event: string) {
         events.push(event);
@@ -115,134 +97,7 @@ describe("tools_intercepted extension", () => {
       },
     } as unknown as ExtensionAPI);
 
-    expect(events).toEqual(["session_start", "before_agent_start"]);
-  });
-
-  it("removes grep/find and adds rg/fd on session_start", () => {
-    const { api, handlers, activeTools } = createFakeApi([
-      "read",
-      "bash",
-      "edit",
-      "write",
-      "grep",
-      "find",
-      "ls",
-    ]);
-
-    extension(api);
-    trigger(handlers, "session_start", {
-      type: "session_start",
-      reason: "startup",
-    });
-
-    expect(activeTools()).toContain("rg");
-    expect(activeTools()).toContain("fd");
-    expect(activeTools()).not.toContain("grep");
-    expect(activeTools()).not.toContain("find");
-  });
-
-  it("re-enforces the tool set on before_agent_start for stale sessions", () => {
-    // Simulate a long-running instance whose active tools were computed before
-    // the extension loaded: grep/find are still present, rg/fd are missing.
-    const { api, handlers, activeTools } = createFakeApi([
-      "read",
-      "bash",
-      "edit",
-      "write",
-      "grep",
-      "find",
-      "ls",
-      "cs_search",
-    ]);
-
-    extension(api);
-
-    // The chained system prompt accumulates earlier before_agent_start
-    // handlers' injections. Contract: our correction appends to it instead
-    // of replacing the chain with a session-level snapshot.
-    const chainedPrompt =
-      "## Plan Mode Extension\n...injections from earlier handlers...";
-    const result = trigger(handlers, "before_agent_start", {
-      type: "before_agent_start",
-      prompt: "search the repo",
-      systemPrompt: chainedPrompt,
-      systemPromptOptions: {},
-    });
-
-    expect(activeTools()).toContain("rg");
-    expect(activeTools()).toContain("fd");
-    expect(activeTools()).not.toContain("grep");
-    expect(activeTools()).not.toContain("find");
-
-    // The returned system prompt preserves the chain (earlier injections
-    // stay intact) and appends the rg/fd correction notice.
-    const resultObj = result as { systemPrompt?: string } | undefined;
-    expect(resultObj?.systemPrompt).toContain(chainedPrompt);
-    expect(resultObj?.systemPrompt).toContain("rg");
-    expect(resultObj?.systemPrompt).toContain("fd");
-    expect(resultObj?.systemPrompt).toContain("grep/find tools are disabled");
-  });
-
-  it("returns the session prompt when the chain is unavailable", () => {
-    const { api, handlers, ctx } = createFakeApi([
-      "read",
-      "write",
-      "grep",
-      "find",
-      "ls",
-    ]);
-
-    extension(api);
-
-    // Defensive path: the event contract guarantees systemPrompt, but handle
-    // a missing field by falling back to ctx.getSystemPrompt().
-    const result = trigger(
-      handlers,
-      "before_agent_start",
-      {
-        type: "before_agent_start",
-        prompt: "hi",
-        systemPromptOptions: {},
-      } as object,
-      ctx,
-    );
-
-    const resultObj = result as { systemPrompt?: string } | undefined;
-    expect(resultObj?.systemPrompt).toBeDefined();
-    expect(resultObj?.systemPrompt).toContain("rg");
-    expect(resultObj?.systemPrompt).toContain("grep/find tools are disabled");
-  });
-
-  it("is a no-op on before_agent_start once tools are already correct", () => {
-    const { api, handlers, activeTools } = createFakeApi([
-      "read",
-      "bash",
-      "edit",
-      "write",
-      "ls",
-      "rg",
-      "fd",
-    ]);
-
-    extension(api);
-
-    const result = trigger(handlers, "before_agent_start", {
-      type: "before_agent_start",
-      prompt: "hi",
-      systemPrompt: "new",
-      systemPromptOptions: {},
-    });
-
-    expect(activeTools()).toEqual([
-      "read",
-      "bash",
-      "edit",
-      "write",
-      "ls",
-      "rg",
-      "fd",
-    ]);
-    expect(result).toBeUndefined();
+    expect(events).toEqual(["session_start"]);
   });
 });
 
@@ -254,7 +109,7 @@ describe("tools_intercepted extension", () => {
  * nothing under rg, and rg also skipped .gitignore'd paths that grep finds.
  * 178 logged `grep` invocations failed that way, 138 of them reaching the
  * model as non-error output. bash grep/find must resolve to the system
- * implementations; ripgrep stays available as the `rg` tool.
+ * implementations.
  */
 describe("intercepted-commands PATH shims", () => {
   /** Pure: directory entry names -> the disguised same-name commands. */
@@ -262,23 +117,13 @@ describe("intercepted-commands PATH shims", () => {
     entries.filter((name) => name === "grep" || name === "find");
 
   it("ships no grep/find shim (they are not proxies, they are impostors)", () => {
-    const entries = readdirSync(
-      path.resolve(
-        process.cwd(),
-        "extensions/tools_intercepted/intercepted-commands",
-      ),
-    );
+    const entries = readdirSync(shimDir());
 
     expect(disguisedShims(entries)).toEqual([]);
   });
 
   it("still ships the python-family shims (block/redirect contract)", () => {
-    const entries = readdirSync(
-      path.resolve(
-        process.cwd(),
-        "extensions/tools_intercepted/intercepted-commands",
-      ),
-    );
+    const entries = readdirSync(shimDir());
 
     for (const name of ["pip", "pip3", "poetry", "python", "python3"]) {
       expect(entries).toContain(name);

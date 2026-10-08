@@ -72,8 +72,8 @@ const OTHER_TOOLS = [
   "bash",
   "edit",
   "write",
-  "rg",
-  "fd",
+  "grep",
+  "find",
   "validate_mermaid",
   "render_mermaid",
 ];

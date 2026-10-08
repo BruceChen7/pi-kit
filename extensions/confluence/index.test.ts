@@ -1,3 +1,4 @@
+import { Value } from "typebox/value";
 import { describe, expect, it, vi } from "vitest";
 import { buildDisplaySearchEndpoint, extractPageIdFromSearch } from "./browser";
 import {
@@ -11,6 +12,7 @@ import {
 import {
   buildConfluencePagePrompt,
   type ConfluencePageReader,
+  confluencePageOutputSchema,
   createConfluenceExtension,
 } from "./index";
 
@@ -171,6 +173,12 @@ describe("Confluence page tool", () => {
     expect(
       (result as { content: Array<{ text: string }> }).content[0].text,
     ).toContain("# Guide");
+
+    // The codemode-facing contract: the same page object, valid per outputSchema.
+    const structured = (result as { structuredContent: unknown })
+      .structuredContent;
+    expect(structured).toBe((result as { details: unknown }).details);
+    expect(Value.Check(confluencePageOutputSchema, structured)).toBe(true);
   });
 
   it("does not register tools or commands without a base URL", () => {

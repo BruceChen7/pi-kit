@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { structuredResult } from "../shared/structured-result.js";
 import { fetchConfluencePage } from "./browser";
 import {
   type PageContext,
@@ -10,6 +11,28 @@ import {
 const pageContext = Type.Object({
   url: Type.Optional(Type.String()),
   pageId: Type.Optional(Type.String()),
+});
+
+/**
+ * Output contract of `confluence_page`: the page context the markdown text is
+ * rendered from (`PageContext` in `./context`). Declared as `outputSchema` so
+ * codemode scripts resolve to the structured page instead of the markdown, and
+ * read the optional fields as optional.
+ */
+export const confluencePageOutputSchema = Type.Object({
+  id: Type.String(),
+  title: Type.String(),
+  url: Type.String(),
+  spaceId: Type.Optional(Type.String()),
+  version: Type.Optional(Type.Number()),
+  updatedAt: Type.Optional(Type.String()),
+  markdown: Type.String(),
+  headings: Type.Array(Type.String()),
+  links: Type.Object({
+    urls: Type.Array(Type.String()),
+    figmaUrls: Type.Array(Type.String()),
+    jiraKeys: Type.Array(Type.String()),
+  }),
 });
 
 export interface ConfluencePageReader {
@@ -46,6 +69,7 @@ function registerPageTool(
     promptSnippet:
       "confluence_page: read an internal SSO Confluence page and extract its content, headings, Jira keys, and Figma links.",
     parameters: pageContext,
+    outputSchema: confluencePageOutputSchema,
     async execute(_id, params) {
       const input = params as { url?: string; pageId?: string };
       const reference = input.url?.trim() || input.pageId?.trim();
@@ -58,12 +82,7 @@ function registerPageTool(
         resolved.pageId,
         resolved.display,
       );
-      return {
-        content: [
-          { type: "text" as const, text: renderConfluencePageMarkdown(page) },
-        ],
-        details: page,
-      };
+      return structuredResult(renderConfluencePageMarkdown(page), page);
     },
   });
 }

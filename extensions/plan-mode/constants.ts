@@ -135,7 +135,7 @@ export const PLAN_MODE_TOOL_NAMES = new Set([
   ACT_TODO_TOOL_NAME,
 ]);
 export const WRITE_TOOL_NAMES = new Set(["edit", "write"]);
-export const READ_ONLY_PATH_TOOL_NAMES = ["read", "ls", "rg", "fd"];
+export const READ_ONLY_PATH_TOOL_NAMES = ["read", "ls", "grep", "find"];
 export const PATH_GUARDED_TOOL_NAMES = new Set([
   ...READ_ONLY_PATH_TOOL_NAMES,
   ...WRITE_TOOL_NAMES,

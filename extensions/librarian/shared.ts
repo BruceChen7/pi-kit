@@ -1,6 +1,10 @@
 /* biome-ignore-all lint/suspicious/noControlCharactersInRegex: sanitizer intentionally detects control characters. */
 /* biome-ignore-all lint/suspicious/noExplicitAny: GitHub API and pi JSON event payloads are intentionally dynamic at this adapter boundary. */
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
+import {
+  jsonStructuredResult,
+  type StructuredPayload,
+} from "../shared/structured-result.js";
 
 export const MAX_FILE_BYTES = 128 * 1024;
 export const MAX_PATCH_CHARS = 4096;
@@ -244,11 +248,19 @@ export function validateSearchPattern(pattern: string) {
   }
 }
 
-export function asTextResult(data: unknown): AgentToolResult<unknown> {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-    details: data,
-  };
+/**
+ * Text, `details` and `structuredContent` of a librarian tool result: one JSON
+ * payload.
+ *
+ * The model still reads the pretty-printed JSON it always read; codemode scripts
+ * read the object itself, as declared by each tool's `outputSchema`. Every
+ * librarian tool that declares a schema must build its success result here, so
+ * no call site can forget `structuredContent`.
+ */
+export function asStructuredResult<T extends StructuredPayload>(
+  data: T,
+): AgentToolResult<T> {
+  return jsonStructuredResult(data);
 }
 
 export function toolErrorResult(

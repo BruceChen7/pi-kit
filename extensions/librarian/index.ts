@@ -9,7 +9,7 @@ import { registerLibrarianGitlab } from "./librarian-gitlab.js";
 export { parseRepository, summarizeGithubToolCall } from "./github.js";
 export { parseGitLabProject, summarizeGitlabToolCall } from "./gitlab.js";
 export {
-  asTextResult,
+  asStructuredResult,
   formatDuration,
   formatNumberedFileContent,
   globMatches,

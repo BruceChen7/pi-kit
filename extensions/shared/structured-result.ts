@@ -28,3 +28,17 @@ export function structuredResult<T extends StructuredPayload>(
     structuredContent: structured,
   };
 }
+
+/**
+ * Pure: {@link structuredResult} for tools whose model-facing text is just the
+ * pretty-printed payload.
+ *
+ * The text stays byte-identical to the `JSON.stringify(data, null, 2)` rendering
+ * such tools already produced, so declaring an `outputSchema` does not change
+ * what the model reads while scripts start receiving the payload itself.
+ */
+export function jsonStructuredResult<T extends StructuredPayload>(
+  structured: T,
+): AgentToolResult<T> {
+  return structuredResult(JSON.stringify(structured, null, 2), structured);
+}

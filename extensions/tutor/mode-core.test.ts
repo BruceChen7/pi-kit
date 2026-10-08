@@ -163,32 +163,32 @@ describe("mode-core / planToolSync", () => {
 
   it("removes every tutor-session tool when off and keeps the rest in order", () => {
     expect(
-      planToolSync(["read", "quiz", "rg", "ask_user_question"], "off"),
+      planToolSync(["read", "quiz", "grep", "ask_user_question"], "off"),
     ).toEqual({
-      tools: ["read", "rg"],
+      tools: ["read", "grep"],
       changed: true,
     });
-    expect(planToolSync(["read", "rg", "bash"], "off")).toEqual({
-      tools: ["read", "rg", "bash"],
+    expect(planToolSync(["read", "grep", "bash"], "off")).toEqual({
+      tools: ["read", "grep", "bash"],
       changed: false,
     });
   });
 
   it("adds the tutor-session tools when on", () => {
-    expect(planToolSync(["read", "rg"], "on")).toEqual({
-      tools: ["read", "rg", ...all],
+    expect(planToolSync(["read", "grep"], "on")).toEqual({
+      tools: ["read", "grep", ...all],
       changed: true,
     });
-    expect(planToolSync(["read", "rg", ...all], "on")).toEqual({
-      tools: ["read", "rg", ...all],
+    expect(planToolSync(["read", "grep", ...all], "on")).toEqual({
+      tools: ["read", "grep", ...all],
       changed: false,
     });
   });
 
   it("re-appends gated tools that sat in the middle", () => {
-    expect(planToolSync(["read", "quiz", "rg"], "on").tools).toEqual([
+    expect(planToolSync(["read", "quiz", "grep"], "on").tools).toEqual([
       "read",
-      "rg",
+      "grep",
       ...all,
     ]);
   });
@@ -224,7 +224,7 @@ describe("mode-core / formatTutorModeStatus", () => {
     expect(onPartial).toContain(`1/${all.length}`);
     expect(onPartial).toContain("缺：ask_user_question、bind_notes");
 
-    const off = formatTutorModeStatus("off", ["read", "rg"]);
+    const off = formatTutorModeStatus("off", ["read", "grep"]);
     expect(off).toContain("tutor 会话：off");
     expect(off).toContain(`0/${all.length}`);
     expect(off).toContain("/tutor-mode");

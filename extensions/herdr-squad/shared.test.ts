@@ -834,7 +834,7 @@ describe("buildAgentCommand", () => {
     expect(cmd).toContain("claude-sonnet-4");
     expect(cmd).toContain("Squad Agent A");
     expect(cmd).toContain("/tmp/prompt.md");
-    expect(cmd).toContain("read,rg,fd,ls,herdr_squad_report");
+    expect(cmd).toContain("read,grep,find,ls,herdr_squad_report");
     // Derived read-only investigators must not inherit the user's MCP servers.
     expect(cmd).toContain("--no-mcp");
   });

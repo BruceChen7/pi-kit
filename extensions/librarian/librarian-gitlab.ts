@@ -3,6 +3,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { summarizeGitlabToolCall } from "./gitlab.js";
 import { runLibrarianSubagent } from "./librarian-runner.js";
+import {
+  librarianSubagentOutputSchema,
+  librarianSubagentResult,
+} from "./output-schemas.js";
 
 // ExtensionContext does not expose extensionPath, so we compute it from the module URL.
 const EXTENSION_DIR = fileURLToPath(new URL(".", import.meta.url));
@@ -55,6 +59,7 @@ export function registerLibrarianGitlab(pi: ExtensionAPI) {
         }),
       ),
     }),
+    outputSchema: librarianSubagentOutputSchema,
 
     async execute(_id, params, signal, onUpdate, ctx) {
       try {
@@ -96,12 +101,7 @@ export function registerLibrarianGitlab(pi: ExtensionAPI) {
           extensionPath: EXTENSION_DIR,
         });
 
-        return {
-          content: [{ type: "text", text: finalText }],
-          details: {
-            subagentTools: GITLAB_TOOLS,
-          },
-        };
+        return librarianSubagentResult(finalText, GITLAB_TOOLS);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {

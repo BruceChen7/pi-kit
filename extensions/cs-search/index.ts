@@ -398,7 +398,7 @@ function formatResults(
     return [
       "No ranked results found.",
       `query: ${params.query}`,
-      "Try a shorter query, an English keyword, or use rg for exact text.",
+      "Try a shorter query, an English keyword, or use grep for exact text.",
     ].join("\n");
   }
 
@@ -496,7 +496,7 @@ export function buildSearchResponse(
         : "cs execution failed";
 
     return structuredResult<CsSearchStructured>(
-      `cs_search failed: ${errorLabel}.\nquery: ${outcome.params.query}\nTry a shorter query, a different path filter, or use rg for exact text.`,
+      `cs_search failed: ${errorLabel}.\nquery: ${outcome.params.query}\nTry a shorter query, a different path filter, or use grep for exact text.`,
       {
         available: true,
         query: outcome.params.query,
@@ -625,7 +625,7 @@ export default function csSearchExtension(pi: ExtensionAPI) {
         "For unique identifiers like feature names, extension names, or command names, the first cs_search should usually omit path.",
         "Use path or language to narrow large repos only as a second-pass refinement, and ask for max_results 3 to 5 when you want candidates to compare before calling read.",
         "Recommended flow: call cs_search first, then read the top result or the best 2 to 3 candidates for full context.",
-        "Use rg instead when you need exact text, regex matches, exhaustive results, or a precise error string.",
+        "Use grep instead when you need exact text, regex matches, exhaustive results, or a precise error string.",
       ],
       parameters: toolParameters,
       outputSchema: csSearchOutputSchema,

@@ -3,6 +3,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { summarizeGithubToolCall } from "./github.js";
 import { runLibrarianSubagent } from "./librarian-runner.js";
+import {
+  librarianSubagentOutputSchema,
+  librarianSubagentResult,
+} from "./output-schemas.js";
 
 // ExtensionContext does not expose extensionPath, so we compute it from the module URL.
 const EXTENSION_DIR = fileURLToPath(new URL(".", import.meta.url));
@@ -74,6 +78,7 @@ export function registerLibrarianGithub(pi: ExtensionAPI) {
         }),
       ),
     }),
+    outputSchema: librarianSubagentOutputSchema,
 
     async execute(_id, params, signal, onUpdate, ctx) {
       try {
@@ -112,12 +117,7 @@ export function registerLibrarianGithub(pi: ExtensionAPI) {
           extensionPath: EXTENSION_DIR,
         });
 
-        return {
-          content: [{ type: "text", text: finalText }],
-          details: {
-            subagentTools: GITHUB_TOOLS,
-          },
-        };
+        return librarianSubagentResult(finalText, GITHUB_TOOLS);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {

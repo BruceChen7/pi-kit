@@ -56,9 +56,9 @@ describe("shared module exports", () => {
     expect(typeof mod.sanitizeDisplayText).toBe("function");
   });
 
-  it("exports asTextResult", async () => {
+  it("exports asStructuredResult", async () => {
     const mod = await import("./shared.js");
-    expect(typeof mod.asTextResult).toBe("function");
+    expect(typeof mod.asStructuredResult).toBe("function");
   });
 
   it("exports toolErrorResult", async () => {

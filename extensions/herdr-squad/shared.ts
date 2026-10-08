@@ -492,7 +492,7 @@ export function buildAgentCommand(
   if (model) args.push("--model", model);
   args.push(
     "--tools",
-    "read,rg,fd,ls,herdr_squad_report",
+    "read,grep,find,ls,herdr_squad_report",
     "--no-skills",
     "--no-prompt-templates",
     "--no-mcp",

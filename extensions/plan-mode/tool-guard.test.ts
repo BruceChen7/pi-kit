@@ -110,7 +110,7 @@ describe("plan-mode extension: tool guards", () => {
     const { harness, ctx } = await startPlanModeSession("act");
     const outsidePath = "/tmp/outside-cwd.txt";
 
-    for (const toolName of ["read", "grep", "find", "ls", "rg", "fd"]) {
+    for (const toolName of ["read", "grep", "find", "ls"]) {
       await expectToolAllowed(harness, ctx, toolName, { path: outsidePath });
     }
 

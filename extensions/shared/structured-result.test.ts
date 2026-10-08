@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { structuredResult } from "./structured-result.ts";
+import { jsonStructuredResult, structuredResult } from "./structured-result.ts";
 
 describe("structuredResult", () => {
   it("keeps the text model-facing and shares one payload object", () => {
@@ -29,5 +29,28 @@ describe("structuredResult", () => {
     const result = structuredResult("ok", { path: null, total: 0 });
 
     expect(result.structuredContent).toEqual({ path: null, total: 0 });
+  });
+});
+
+describe("jsonStructuredResult", () => {
+  it("renders the payload as the model-facing text", () => {
+    const payload = { absolutePath: "src/a.ts", content: "1: a" };
+
+    const result = jsonStructuredResult(payload);
+
+    expect(result.content).toEqual([
+      { type: "text", text: JSON.stringify(payload, null, 2) },
+    ]);
+    expect(result.details).toBe(payload);
+    expect(result.structuredContent).toBe(payload);
+  });
+
+  it("renders arrays as JSON, not as a list of entries", () => {
+    const result = jsonStructuredResult(["src/a.ts", "src/b.ts"]);
+
+    expect(result.content).toEqual([
+      { type: "text", text: '[\n  "src/a.ts",\n  "src/b.ts"\n]' },
+    ]);
+    expect(result.structuredContent).toEqual(["src/a.ts", "src/b.ts"]);
   });
 });

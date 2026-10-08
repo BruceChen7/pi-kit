@@ -228,7 +228,7 @@ describe("cs-search extension", () => {
           "Recommended flow: call cs_search first, then read the top result",
         ),
         expect.stringContaining(
-          "Use rg instead when you need exact text, regex matches",
+          "Use grep instead when you need exact text, regex matches",
         ),
       ]),
     );

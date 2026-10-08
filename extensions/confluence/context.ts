@@ -1,10 +1,10 @@
-export interface ExtractedLinks {
+export type ExtractedLinks = {
   urls: string[];
   figmaUrls: string[];
   jiraKeys: string[];
-}
+};
 
-export interface PageContext {
+export type PageContext = {
   id: string;
   title: string;
   url: string;
@@ -14,7 +14,7 @@ export interface PageContext {
   markdown: string;
   headings: string[];
   links: ExtractedLinks;
-}
+};
 
 export interface ConfluencePageDto {
   id: string;

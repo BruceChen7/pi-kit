@@ -152,14 +152,21 @@ export function renderProgress(state: LibrarianProgressState): string {
 /**
  * Pure: pi CLI args for the librarian subagent process.
  *
- * `--no-extensions` already keeps built-in extensions (mcp / codemode) out, but
- * MCP isolation is stated explicitly so it cannot silently regress if the flag
- * semantics or the loaded extension set change.
+ * `--no-extensions` keeps built-in extensions (mcp / codemode) out, so the
+ * subagent has no codemode tool: the librarian tools it needs are registered
+ * with `exposure: "codemode"` and activated here by name, otherwise the
+ * subagent would have no repository tools at all. `+name` entries add to the
+ * child's resolved default tools — the plain allowlist form cannot activate a
+ * `codemode`-exposure tool.
+ *
+ * `--no-mcp` is stated explicitly so MCP isolation cannot silently regress if
+ * the flag semantics or the loaded extension set change.
  */
 export function buildLibrarianSubagentArgs(input: {
   extensionPath: string;
   promptPath: string;
   query: string;
+  subagentTools: readonly string[];
 }): string[] {
   return [
     "--mode",
@@ -171,6 +178,8 @@ export function buildLibrarianSubagentArgs(input: {
     "--no-prompt-templates",
     "--no-themes",
     "--no-mcp",
+    "--tools",
+    input.subagentTools.map((name) => `+${name}`).join(","),
     "-e",
     input.extensionPath,
     "--append-system-prompt",
@@ -244,6 +253,7 @@ export async function runLibrarianSubagent(
       extensionPath: options.extensionPath,
       promptPath,
       query,
+      subagentTools: options.subagentTools,
     });
 
     const exitCode = await new Promise<number>((resolve) => {

@@ -28,8 +28,9 @@ LIBRARY_DIR="${PI_PLUGIN_LIBRARY_DIR:-$HOME/.agents/pi-plugins}"
 MANIFEST_FILE="$LIBRARY_DIR/.manifest.json"
 
 DEFAULT_PLUGINS=(
-  "npm:pi-context"
+  # "npm:pi-context"
   "https://github.com/davebcn87/pi-autoresearch"
+  "npm:pi-context-view"
   # "https://github.com/monotykamary/pi-opencode-go-provider"
 )
 

@@ -6,12 +6,17 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createLogger } from "../shared/logger.ts";
 import { resolveHtmlReviewDirs } from "../shared/review-targets.ts";
+import { findToolAnnotations, isMcpToolName } from "../shared/tool-policy.ts";
 import { countTrackedChildren, killTrackedChildren } from "./cli.ts";
 import {
   recordSessionReviewDocumentWrites,
   registerReviewHandlers,
 } from "./code-review.ts";
-import { isRecord, summarizeToolArgs } from "./helpers.ts";
+import {
+  isRecord,
+  isReviewTrackedToolCall,
+  summarizeToolArgs,
+} from "./helpers.ts";
 import {
   clearReviewWidget,
   createPendingReviewGateMessage,
@@ -36,8 +41,26 @@ import {
   nextHostMode,
 } from "./terminal-browser.ts";
 
-const isReviewTrackedToolName = (toolName: string): boolean =>
-  toolName === "write" || toolName === "edit" || toolName === "bash";
+const REVIEW_TRACKED_BUILTIN_TOOL_NAMES = new Set(["write", "edit", "bash"]);
+
+/**
+ * Calls whose arguments the end handler may need: pi's write/edit/bash plus
+ * every MCP tool (the annotation check needs the arguments, which the end
+ * event does not carry).
+ */
+const isReviewCandidateToolCall = (toolName: string): boolean =>
+  REVIEW_TRACKED_BUILTIN_TOOL_NAMES.has(toolName) || isMcpToolName(toolName);
+
+const isTrackedToolCall = (
+  api: ExtensionAPI,
+  toolName: string,
+  args: unknown,
+): boolean =>
+  isReviewTrackedToolCall(
+    toolName,
+    args,
+    findToolAnnotations(api.getAllTools?.(), toolName),
+  );
 
 const planReviewSubmitToolParameters = Type.Object({
   path: Type.String({ description: "Pending review target path" }),
@@ -136,7 +159,7 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
   pi.on("tool_execution_start", (event, ctx) => {
     setSessionContext(getSessionKey(ctx), ctx);
 
-    if (!isReviewTrackedToolName(event.toolName)) {
+    if (!isReviewCandidateToolCall(event.toolName)) {
       return;
     }
 
@@ -153,14 +176,14 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
   pi.on("tool_execution_end", async (event, ctx) => {
     setSessionContext(getSessionKey(ctx), ctx);
 
-    if (!isReviewTrackedToolName(event.toolName)) {
+    if (!isReviewCandidateToolCall(event.toolName)) {
       return;
     }
 
     const state = getSessionState(ctx);
     const args = state.toolArgsByCallId.get(event.toolCallId);
     state.toolArgsByCallId.delete(event.toolCallId);
-    if (!args) {
+    if (args === undefined) {
       log.debug(
         "plannotator-auto missing stored tool args on tool_execution_end",
         {
@@ -170,6 +193,10 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
           sessionKey: getSessionKey(ctx),
         },
       );
+      return;
+    }
+
+    if (!isTrackedToolCall(pi, event.toolName, args)) {
       return;
     }
 

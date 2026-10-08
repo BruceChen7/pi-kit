@@ -495,6 +495,7 @@ export function buildAgentCommand(
     "read,rg,fd,ls,herdr_squad_report",
     "--no-skills",
     "--no-prompt-templates",
+    "--no-mcp",
     `@${promptPath}`,
   );
   return args.map(shellQuote).join(" ");

@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { TSchema } from "typebox";
+import { Value } from "typebox/value";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ── Mocks ──────────────────────────────────────────────────────────────
@@ -55,6 +57,11 @@ import extension, {
   buildSearchArgs,
   computeNeedsUpdate,
   formatToolResult,
+  qmdGetOutputSchema,
+  qmdMultiGetOutputSchema,
+  qmdQueryOutputSchema,
+  qmdSearchOutputSchema,
+  qmdStatusOutputSchema,
   safeJson,
 } from "./index.js";
 
@@ -73,6 +80,7 @@ type ToolExecute = (...args: unknown[]) => Promise<unknown>;
 type ToolResult = {
   content: Array<{ type: string; text: string }>;
   details: Record<string, unknown>;
+  structuredContent?: unknown;
 };
 
 type RegisteredTool = Record<string, unknown> & {
@@ -87,6 +95,16 @@ type RegisteredExtension = {
 
 function asToolResult(result: unknown): ToolResult {
   return result as ToolResult;
+}
+
+/**
+ * Asserts the codemode-facing contract: `structuredContent` is the same object
+ * as `details` and satisfies the tool's declared outputSchema.
+ */
+function expectStructuredContract(result: ToolResult, schema: TSchema): void {
+  expect(result.structuredContent).toBeDefined();
+  expect(result.structuredContent).toBe(result.details);
+  expect(Value.Check(schema, result.structuredContent)).toBe(true);
 }
 
 async function callTool(
@@ -478,6 +496,13 @@ describe("binary detection", () => {
       ]),
     );
     expect(ext.tools).toHaveLength(5);
+    expect(ext.tools.map((tool) => tool.outputSchema)).toEqual([
+      qmdQueryOutputSchema,
+      qmdGetOutputSchema,
+      qmdMultiGetOutputSchema,
+      qmdSearchOutputSchema,
+      qmdStatusOutputSchema,
+    ]);
   });
 });
 
@@ -573,6 +598,8 @@ describe("tool execution", () => {
     expect((result.details.results as Array<{ file: string }>)[0].file).toBe(
       "docs/api.md",
     );
+
+    expectStructuredContract(result, qmdQueryOutputSchema);
   });
 
   it("executes qmd get and returns document in details", async () => {
@@ -598,6 +625,8 @@ describe("tool execution", () => {
 
     expect(result.details.file).toBe("docs/api.md");
     expect(result.content[0].text).toContain("API Reference");
+
+    expectStructuredContract(result, qmdGetOutputSchema);
   });
 
   it("executes qmd multi_get and returns batch results", async () => {
@@ -624,6 +653,8 @@ describe("tool execution", () => {
     expect(docs).toHaveLength(2);
     expect(docs[0].file).toBe("docs/api.md");
     expect(docs[1].file).toBe("docs/auth.md");
+
+    expectStructuredContract(result, qmdMultiGetOutputSchema);
   });
 
   it("executes qmd search and returns results in details", async () => {
@@ -650,6 +681,8 @@ describe("tool execution", () => {
     expect((result.details.results as Array<{ file: string }>)[0].file).toBe(
       "docs/ipc.md",
     );
+
+    expectStructuredContract(result, qmdSearchOutputSchema);
   });
 
   it("returns error details when qmd search returns non-JSON output", async () => {
@@ -671,6 +704,8 @@ describe("tool execution", () => {
     expect(result.content[0].text.length).toBeGreaterThan(0);
     // Raw CLI output should appear in the error message
     expect(result.content[0].text).toContain("Not JSON output");
+
+    expectStructuredContract(result, qmdSearchOutputSchema);
   });
 
   it("handles qmd search failure gracefully", async () => {
@@ -688,6 +723,8 @@ describe("tool execution", () => {
     });
 
     expect(result.details.error).toContain("search failed");
+
+    expectStructuredContract(result, qmdSearchOutputSchema);
   });
 
   it("executes qmd status and includes knowledge base info", async () => {
@@ -725,6 +762,8 @@ describe("tool execution", () => {
     expect(kbs).toHaveLength(1);
     expect(kbs[0].name).toBe("wiki");
     expect(kbs[0].path).toBe("/kb/wiki");
+
+    expectStructuredContract(result, qmdStatusOutputSchema);
   });
 
   it("handles qmd query failure gracefully", async () => {
@@ -740,6 +779,8 @@ describe("tool execution", () => {
     const result = await callTool(tool, "call-fail", { query: "broken" });
 
     expect(result.details.error).toContain("qmd query error");
+
+    expectStructuredContract(result, qmdQueryOutputSchema);
   });
 
   it("handles qmd get failure gracefully", async () => {
@@ -757,6 +798,61 @@ describe("tool execution", () => {
     });
 
     expect(result.details.error).toContain("document not found");
+
+    expectStructuredContract(result, qmdGetOutputSchema);
+  });
+
+  it("exposes a structured contract for the qmd query non-JSON branch", async () => {
+    const tool = await getToolAfterStart("qmd_query", [
+      ...qmdAvailableMatchers(),
+      {
+        cmd: "qmd",
+        subcommand: "query",
+        handle: (cb) => cb(null, "not json at all", ""),
+      },
+    ]);
+
+    const result = await callTool(tool, "call-query-nonjson", {
+      query: "broken",
+    });
+
+    expect(result.details.raw).toContain("not json at all");
+    expectStructuredContract(result, qmdQueryOutputSchema);
+  });
+
+  it("exposes a structured contract for the qmd multi_get non-JSON branch", async () => {
+    const tool = await getToolAfterStart("qmd_multi_get", [
+      ...qmdAvailableMatchers(),
+      {
+        cmd: "qmd",
+        subcommand: "multi-get",
+        handle: (cb) => cb(null, "not json at all", ""),
+      },
+    ]);
+
+    const result = await callTool(tool, "call-multi-nonjson", {
+      pattern: "docs/*.md",
+    });
+
+    expect(result.details.pattern).toBe("docs/*.md");
+    expect(result.details.result).toBeUndefined();
+    expectStructuredContract(result, qmdMultiGetOutputSchema);
+  });
+
+  it("exposes a structured contract when qmd status fails", async () => {
+    const tool = await getToolAfterStart("qmd_status", [
+      ...qmdAvailableMatchers(),
+      {
+        cmd: "qmd",
+        subcommand: "status",
+        handle: (cb) => cb(new Error("status exploded"), "", ""),
+      },
+    ]);
+
+    const result = await callTool(tool, "call-status-fail", {});
+
+    expect(result.details.error).toContain("status exploded");
+    expectStructuredContract(result, qmdStatusOutputSchema);
   });
 });
 

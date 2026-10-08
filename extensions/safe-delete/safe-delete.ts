@@ -23,13 +23,23 @@ import * as child_process from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import {
   type PiKitSafeDeleteApprovalEvent,
   SAFE_DELETE_APPROVAL_CHANNEL,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
+import {
+  classifyToolCall,
+  findToolAnnotations,
+  formatMcpCallSummary,
+  mcpServerName,
+  type ToolAnnotationHints,
+} from "../shared/tool-policy.ts";
 
 // --- Configuration ---
 
@@ -697,78 +707,172 @@ async function waitForApprovalDecision({
 
 // --- Extension ---
 
+type ApprovalRequest = {
+  title: string;
+  body: string;
+  /** Legacy field name of the approval event; a one-line handle for the request. */
+  command: string;
+};
+
+/**
+ * Imperative shell for one approval: the local dialog plus the remote-approval
+ * event other pi-kit surfaces can answer. The bash analyzer and the MCP gate
+ * share it so both report the same shape.
+ */
+async function requestApproval(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  request: ApprovalRequest,
+): Promise<boolean> {
+  const localAbortController = new AbortController();
+  const localDecision = ctx.ui.confirm(request.title, request.body, {
+    signal: localAbortController.signal,
+  });
+  const remoteDecisions: Array<Promise<boolean>> = [];
+  pi.events.emit(SAFE_DELETE_APPROVAL_CHANNEL, {
+    type: "safe-delete.approval",
+    requestId: `safe_delete_${Date.now()}`,
+    createdAt: Date.now(),
+    command: request.command,
+    title: request.title,
+    body: request.body,
+    contextPreview: [],
+    fullContextLines: [],
+    localDecision,
+    attachRemoteDecision: (decision: Promise<boolean>) => {
+      remoteDecisions.push(decision);
+    },
+    ctx,
+  } satisfies PiKitSafeDeleteApprovalEvent);
+
+  return await waitForApprovalDecision({
+    localDecision,
+    remoteDecisions,
+    localAbortController,
+  });
+}
+
+async function confirmDestructiveBashCommand(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  event: { input: { command: string } },
+): Promise<{ block: true; reason: string } | undefined> {
+  const command = event.input.command;
+  const threats = analyzeCommand({ command, cwd: ctx.cwd });
+
+  if (threats.length === 0) return;
+
+  const hasCritical = threats.some((t) => t.severity === "critical");
+  log?.info("destructive command detected", {
+    command,
+    threatCount: threats.length,
+    hasCritical,
+  });
+  const title = hasCritical
+    ? "CRITICAL: Destructive command detected"
+    : "Destructive command detected";
+
+  const body = `${formatThreats({ threats })}\n\nCommand:\n  ${command}\n\nAllow this command to run?`;
+
+  log?.info("prompting for destructive command confirmation", {
+    command,
+    threatCount: threats.length,
+  });
+  const isConfirmed = await requestApproval(pi, ctx, {
+    title,
+    body,
+    command,
+  });
+
+  if (!isConfirmed) {
+    log?.warn("destructive command blocked", {
+      command,
+      threatCount: threats.length,
+    });
+    return {
+      block: true,
+      reason: `User blocked destructive command.\n${formatThreats({ threats })}`,
+    };
+  }
+
+  log?.info("destructive command allowed", {
+    command,
+    threatCount: threats.length,
+  });
+  return undefined;
+}
+
+/**
+ * MCP calls cannot be analyzed like shell commands, so the gate follows the
+ * annotations the server declares: anything not proven read-only is confirmed
+ * (`docs/extensions.md#tool-exposure`). Without a UI the call passes through,
+ * matching the bash branch.
+ */
+async function confirmMcpToolCall(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  event: { toolName: string; input: unknown },
+  annotations: ToolAnnotationHints | undefined,
+): Promise<{ block: true; reason: string } | undefined> {
+  const title =
+    annotations?.destructiveHint === false
+      ? "MCP tool call needs confirmation"
+      : "MCP tool call may modify data";
+  const body = `${formatMcpCallSummary({
+    toolName: event.toolName,
+    args: event.input,
+    annotations,
+  })}\n\nAllow this MCP tool call to run?`;
+
+  log?.info("prompting for MCP tool call confirmation", {
+    toolName: event.toolName,
+    server: mcpServerName(event.toolName),
+  });
+
+  const isConfirmed = await requestApproval(pi, ctx, {
+    title,
+    body,
+    command: event.toolName,
+  });
+
+  if (!isConfirmed) {
+    log?.warn("MCP tool call blocked", { toolName: event.toolName });
+    return {
+      block: true,
+      reason: `${event.toolName} was not approved`,
+    };
+  }
+
+  log?.info("MCP tool call allowed", { toolName: event.toolName });
+  return undefined;
+}
+
 export default function (pi: ExtensionAPI) {
   log = createLogger("safe-delete", { stderr: null });
   log?.debug("extension initialized", { pid: process.pid });
 
   pi.on("tool_call", async (event, ctx) => {
-    if (!isToolCallEventType("bash", event)) return;
-    if (!ctx.hasUI) return;
-
-    const threats = analyzeCommand({
-      command: event.input.command,
-      cwd: ctx.cwd,
-    });
-
-    if (threats.length === 0) return;
-
-    const hasCritical = threats.some((t) => t.severity === "critical");
-    log?.info("destructive command detected", {
-      command: event.input.command,
-      threatCount: threats.length,
-      hasCritical,
-    });
-    const title = hasCritical
-      ? "CRITICAL: Destructive command detected"
-      : "Destructive command detected";
-
-    const body = `${formatThreats({ threats })}\n\nCommand:\n  ${event.input.command}\n\nAllow this command to run?`;
-
-    log?.info("prompting for destructive command confirmation", {
-      command: event.input.command,
-      threatCount: threats.length,
-    });
-    const localAbortController = new AbortController();
-    const localDecision = ctx.ui.confirm(title, body, {
-      signal: localAbortController.signal,
-    });
-    const remoteDecisions: Array<Promise<boolean>> = [];
-    pi.events.emit(SAFE_DELETE_APPROVAL_CHANNEL, {
-      type: "safe-delete.approval",
-      requestId: `safe_delete_${Date.now()}`,
-      createdAt: Date.now(),
-      command: event.input.command,
-      title,
-      body,
-      contextPreview: [],
-      fullContextLines: [],
-      localDecision,
-      attachRemoteDecision: (decision: Promise<boolean>) => {
-        remoteDecisions.push(decision);
-      },
-      ctx,
-    } satisfies PiKitSafeDeleteApprovalEvent);
-
-    const isConfirmed = await waitForApprovalDecision({
-      localDecision,
-      remoteDecisions,
-      localAbortController,
-    });
-
-    if (!isConfirmed) {
-      log?.warn("destructive command blocked", {
-        command: event.input.command,
-        threatCount: threats.length,
-      });
-      return {
-        block: true,
-        reason: `User blocked destructive command.\n${formatThreats({ threats })}`,
-      };
+    if (isToolCallEventType("bash", event)) {
+      if (!ctx.hasUI) return;
+      return await confirmDestructiveBashCommand(pi, ctx, event);
     }
 
-    log?.info("destructive command allowed", {
-      command: event.input.command,
-      threatCount: threats.length,
+    const annotations = findToolAnnotations(pi.getAllTools?.(), event.toolName);
+    const policy = classifyToolCall({
+      toolName: event.toolName,
+      args: event.input,
+      annotations,
     });
+
+    if (!policy.isMcp || !policy.requiresApproval) return;
+
+    if (!ctx.hasUI) {
+      log?.debug("skipping MCP tool confirmation without UI", {
+        toolName: event.toolName,
+      });
+      return;
+    }
+
+    return await confirmMcpToolCall(pi, ctx, event, annotations);
   });
 }

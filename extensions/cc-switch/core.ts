@@ -9,6 +9,15 @@
 
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
+// pi's public entry exports only the `ProviderModelConfig` union. The catalog
+// conversion always produces *chat* models (it sets `reasoning`, `contextWindow`
+// and `maxTokens`), so narrow the union to that arm here: chat-only fields
+// such as `thinkingLevelMap` are then type-visible to callers and tests.
+export type PiChatModelConfig = Extract<
+  ProviderModelConfig,
+  { reasoning: boolean }
+>;
+
 // ── pi thinking levels ──────────────────────────────────────────────────────
 // pi treats `xhigh` and `max` as opt-in: they only appear in pi's UI when
 // the model's thinkingLevelMap has a non-null entry for them. Levels whose
@@ -62,8 +71,8 @@ export interface CodexModelCatalog {
  */
 export function catalogModelsToPiModels(
   models: CodexModel[],
-): ProviderModelConfig[] {
-  const result: ProviderModelConfig[] = [];
+): PiChatModelConfig[] {
+  const result: PiChatModelConfig[] = [];
   for (const entry of models) {
     const model = toPiModel(entry);
     if (model) result.push(model);
@@ -71,7 +80,10 @@ export function catalogModelsToPiModels(
   return result;
 }
 
-function toPiModel(entry: unknown): ProviderModelConfig | null {
+// Every catalog model becomes a pi *chat* model: the conversion always sets
+// `reasoning`, `contextWindow` and `maxTokens`, so the return type is the
+// chat arm of the ProviderModelConfig union rather than the union itself.
+function toPiModel(entry: unknown): PiChatModelConfig | null {
   if (!entry || typeof entry !== "object") return null;
   const m = entry as Partial<CodexModel>;
 

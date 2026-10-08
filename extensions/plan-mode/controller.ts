@@ -17,7 +17,12 @@ interface ToolResultEventResult {
   isError?: boolean;
 }
 
-import { pathsFromWriteToolInput } from "../shared/tool-targets.ts";
+import {
+  classifyToolCall,
+  findToolAnnotations,
+  type ToolCallPolicy,
+} from "../shared/tool-policy.ts";
+import { pathsFromToolArgs } from "../shared/tool-targets.ts";
 import {
   formatApprovedArtifactPolicyFailure,
   formatArtifactPolicyFailure,
@@ -33,7 +38,6 @@ import {
   EXECUTION_TODO_DISCIPLINE_GUIDANCE,
   MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION,
   MODE_WIDGET_KEY,
-  PATH_GUARDED_TOOL_NAMES,
   PLAN_INSPECTION_TOOL_SLASH_LIST,
   PLAN_MODE_TOOL_NAMES,
   PLAN_REVIEW_ARTIFACT_GUIDANCE,
@@ -44,7 +48,6 @@ import {
   STATUS_KEY,
   TODO_TOOL_NAME,
   TODO_WIDGET_KEY,
-  WRITE_TOOL_NAMES,
 } from "./constants.ts";
 import {
   decideAgentStartPostActions,
@@ -60,7 +63,10 @@ import {
   formatReviewWaitReason,
   getApprovedReviewPath,
   isAutoReviewTargetPath,
+  isPathGuardedToolCall,
+  isReadToolCall,
   isReviewArtifactPath,
+  isWriteToolCall,
   normalizeToolPath,
   pathFromToolCall,
   pathsFromToolCall,
@@ -486,6 +492,19 @@ export class PlanModeController {
       : formatArtifactPolicyFailure(policyPath, result.issues);
   }
 
+  /**
+   * Annotation-based policy for one call. Only MCP tools (`mcp__*`) get a kind
+   * other than `"unknown"`; pi-kit's own tools keep the name-based handling in
+   * `WRITE_TOOL_NAMES` / `PATH_GUARDED_TOOL_NAMES`.
+   */
+  private toolCallPolicy(toolName: string, args: unknown): ToolCallPolicy {
+    return classifyToolCall({
+      toolName,
+      args,
+      annotations: findToolAnnotations(this.pi.getAllTools?.(), toolName),
+    });
+  }
+
   maybeBlockTool(
     event: ToolCallEvent,
     ctx: ExtensionContext,
@@ -507,6 +526,7 @@ export class PlanModeController {
       }
     }
 
+    const toolPolicy = this.toolCallPolicy(event.toolName, event.input);
     const targetResult = pathsFromToolCall(event);
     const targets: GuardPolicyTarget[] =
       targetResult.kind === "paths"
@@ -538,8 +558,8 @@ export class PlanModeController {
       readBeforeWrite: this.config.guards.readBeforeWrite,
       toolName: event.toolName,
       todoToolName: this.getTodoToolNameForCurrentMode(),
-      isWriteTool: WRITE_TOOL_NAMES.has(event.toolName),
-      isPathGuardedTool: PATH_GUARDED_TOOL_NAMES.has(event.toolName),
+      isWriteTool: isWriteToolCall(event.toolName, toolPolicy),
+      isPathGuardedTool: isPathGuardedToolCall(event.toolName, toolPolicy),
       targetResult,
       targets,
     });
@@ -689,18 +709,23 @@ export class PlanModeController {
     event: ToolResultEvent,
     ctx: ExtensionContext,
   ): ToolResultEventResult | undefined {
-    if (event.toolName === "read" && !event.isError) {
-      const rawPath = stringProperty(event.input, "path");
-      if (rawPath) {
+    const toolPolicy = this.toolCallPolicy(event.toolName, event.input);
+
+    if (isReadToolCall(event.toolName, toolPolicy) && !event.isError) {
+      let readTrackedPath = false;
+      for (const { rawPath } of pathsFromToolArgs(event.input)) {
         this.state.markFileRead(normalizeToolPath(ctx.cwd, rawPath));
+        readTrackedPath = true;
+      }
+      if (readTrackedPath) {
         this.persist();
       }
       return;
     }
 
-    if (WRITE_TOOL_NAMES.has(event.toolName) && !event.isError) {
+    if (isWriteToolCall(event.toolName, toolPolicy) && !event.isError) {
       let wroteTrackedPath = false;
-      for (const { rawPath } of pathsFromWriteToolInput(event.input)) {
+      for (const { rawPath } of pathsFromToolArgs(event.input)) {
         const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
         this.state.markFileFreshlyWritten(absolutePath);
         wroteTrackedPath = true;

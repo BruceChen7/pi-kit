@@ -8,11 +8,12 @@ import {
   defaultAutoReviewTargetKindFromAbsolutePath,
   defaultReviewTargetKindFromAbsolutePath,
 } from "../shared/review-targets.ts";
+import type { ToolCallPolicy } from "../shared/tool-policy.ts";
 import {
-  pathsFromWriteToolInput,
+  pathsFromToolArgs,
   type ToolTargetPath,
 } from "../shared/tool-targets.ts";
-import { WRITE_TOOL_NAMES } from "./constants.ts";
+import { PATH_GUARDED_TOOL_NAMES, WRITE_TOOL_NAMES } from "./constants.ts";
 import { isHtmlArtifactPathIn } from "./html-dirs.ts";
 import type { PlanModeState } from "./state.ts";
 import { isRecord, stringProperty } from "./state.ts";
@@ -45,8 +46,36 @@ const targetPathResult = (
 export const pathsFromToolCall = (
   event: ToolCallEvent,
 ): ToolTargetPathResult => {
-  return targetPathResult(event.toolName, pathsFromWriteToolInput(event.input));
+  return targetPathResult(event.toolName, pathsFromToolArgs(event.input));
 };
+
+/**
+ * A call that may write: pi's own `write`/`edit`, or an MCP tool that does not
+ * declare `readOnlyHint` (the MCP default is "not read-only").
+ */
+export const isWriteToolCall = (
+  toolName: string,
+  policy: ToolCallPolicy,
+): boolean =>
+  WRITE_TOOL_NAMES.has(toolName) || (policy.isMcp && policy.kind === "write");
+
+/** A call that only reads: pi's own `read`, or an MCP tool that declares `readOnlyHint`. */
+export const isReadToolCall = (
+  toolName: string,
+  policy: ToolCallPolicy,
+): boolean => toolName === "read" || (policy.isMcp && policy.kind === "read");
+
+/**
+ * A call whose target paths can be checked. MCP tools only qualify when the
+ * call actually names file paths — a path-less MCP write (an issue tracker
+ * call, for example) must not be held to read-before-write.
+ */
+export const isPathGuardedToolCall = (
+  toolName: string,
+  policy: ToolCallPolicy,
+): boolean =>
+  PATH_GUARDED_TOOL_NAMES.has(toolName) ||
+  (policy.isMcp && policy.paths.length > 0);
 
 export const normalizeToolPath = (cwd: string, rawPath: string): string => {
   const withoutAt = rawPath.startsWith("@") ? rawPath.slice(1) : rawPath;

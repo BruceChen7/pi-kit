@@ -17,7 +17,7 @@ import {
   PLANNOTATOR_PENDING_REVIEW_CHANNEL,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
-import { pathsFromWriteToolInput } from "../shared/tool-targets.ts";
+import { pathsFromToolArgs } from "../shared/tool-targets.ts";
 import {
   runPlannotatorAnnotateCli,
   runPlannotatorPlanReviewCli,
@@ -419,7 +419,7 @@ export const handlePlanFileWrite = (
   queuePlanReviewsForToolPaths(
     ctx,
     htmlDirs,
-    pathsFromWriteToolInput(args).map(({ rawPath }) => rawPath),
+    pathsFromToolArgs(args).map(({ rawPath }) => rawPath),
   );
 
 export const handleBashPlanFileWrites = (

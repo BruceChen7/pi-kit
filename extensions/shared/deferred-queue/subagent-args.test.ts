@@ -12,6 +12,7 @@ describe("buildSubagentArgs", () => {
       "--no-session",
       "--no-extensions",
       "--no-themes",
+      "--no-mcp",
     ]);
   });
 
@@ -23,6 +24,7 @@ describe("buildSubagentArgs", () => {
       "--no-session",
       "--no-extensions",
       "--no-themes",
+      "--no-mcp",
     ]);
   });
 
@@ -40,6 +42,7 @@ describe("buildSubagentArgs", () => {
       "--no-session",
       "--no-extensions",
       "--no-themes",
+      "--no-mcp",
       "--models",
       "opencode-go/deepseek-v4-flash",
       "-e",

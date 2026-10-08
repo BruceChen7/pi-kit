@@ -5,8 +5,9 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
 import { createLogger } from "../shared/logger.ts";
+import { structuredResult } from "../shared/structured-result.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -116,21 +117,21 @@ type SearchOutcome = {
   finalFailure?: SearchFailure;
 };
 
+const csSearchKindSchema = Type.Union([
+  Type.Literal("implementation"),
+  Type.Literal("declaration"),
+  Type.Literal("usage"),
+  Type.Literal("comment"),
+  Type.Literal("string"),
+  Type.Literal("auto"),
+]);
+
 const toolParameters = Type.Object({
   query: Type.String({
     minLength: 1,
     description: "Search query for ranked structural code search.",
   }),
-  kind: Type.Optional(
-    Type.Union([
-      Type.Literal("implementation"),
-      Type.Literal("declaration"),
-      Type.Literal("usage"),
-      Type.Literal("comment"),
-      Type.Literal("string"),
-      Type.Literal("auto"),
-    ]),
-  ),
+  kind: Type.Optional(csSearchKindSchema),
   path: Type.Optional(
     Type.String({
       minLength: 1,
@@ -161,15 +162,70 @@ const toolParameters = Type.Object({
   ),
 });
 
-function textResult(
-  text: string,
-  details: Record<string, unknown> = {},
-): AgentToolResult<Record<string, unknown>> {
-  return {
-    content: [{ type: "text", text }],
-    details,
-  };
-}
+const csSearchLineSchema = Type.Object({
+  line: Type.Union([Type.Number(), Type.Null()]),
+  content: Type.String(),
+});
+
+const csSearchResultSchema = Type.Object({
+  path: Type.String(),
+  line: Type.Union([Type.Number(), Type.Null()]),
+  score: Type.Union([Type.Number(), Type.Null()]),
+  snippet: Type.String(),
+  lines: Type.Array(csSearchLineSchema),
+});
+
+const csSearchAttemptStats = {
+  fallback_applied: Type.Boolean(),
+  initial_effective_query: Type.Union([Type.String(), Type.Null()]),
+  initial_total_results: Type.Union([Type.Number(), Type.Null()]),
+  fallback_effective_query: Type.Union([Type.String(), Type.Null()]),
+  fallback_total_results: Type.Union([Type.Number(), Type.Null()]),
+};
+
+/**
+ * Output contract of `cs_search`: one variant per result shape the tool can
+ * return. Declared as `outputSchema` so codemode scripts resolve to this
+ * structured payload instead of the formatted text.
+ */
+export const csSearchOutputSchema = Type.Union([
+  Type.Object({
+    available: Type.Literal(false),
+    query: Type.String(),
+    outcome: Type.Literal("unavailable"),
+  }),
+  Type.Object({
+    available: Type.Literal(true),
+    query: Type.String(),
+    outcome: Type.Union([
+      Type.Literal("exec_failed"),
+      Type.Literal("invalid_output"),
+    ]),
+    error: Type.String(),
+    kind: csSearchKindSchema,
+    path: Type.Union([Type.String(), Type.Null()]),
+    language: Type.Union([Type.String(), Type.Null()]),
+    max_results: Type.Number(),
+    ...csSearchAttemptStats,
+    results: Type.Array(csSearchResultSchema),
+  }),
+  Type.Object({
+    available: Type.Literal(true),
+    query: Type.String(),
+    outcome: Type.Literal("ok"),
+    effective_query: Type.Union([Type.String(), Type.Null()]),
+    applied_flags: Type.Array(Type.String()),
+    kind: csSearchKindSchema,
+    path: Type.Union([Type.String(), Type.Null()]),
+    language: Type.Union([Type.String(), Type.Null()]),
+    max_results: Type.Number(),
+    total_results: Type.Number(),
+    ...csSearchAttemptStats,
+    results: Type.Array(csSearchResultSchema),
+  }),
+]);
+
+export type CsSearchStructured = Static<typeof csSearchOutputSchema>;
 
 async function findCsBinary(): Promise<string | null> {
   for (const [command, args] of CS_BINARY_DETECTION_COMMANDS) {
@@ -355,8 +411,8 @@ function formatResults(
 
 function buildUnavailableResponse(
   params: CsSearchParams,
-): AgentToolResult<Record<string, unknown>> {
-  return textResult(
+): AgentToolResult<CsSearchStructured> {
+  return structuredResult<CsSearchStructured>(
     "cs_search is unavailable because the cs binary is not installed. Install it with: go install github.com/boyter/cs/v3@latest",
     {
       available: false,
@@ -428,7 +484,7 @@ export function chooseSearchOutcome(
 
 export function buildSearchResponse(
   outcome: SearchOutcome,
-): AgentToolResult<Record<string, unknown>> {
+): AgentToolResult<CsSearchStructured> {
   if (outcome.availability === "unavailable") {
     return buildUnavailableResponse(outcome.params);
   }
@@ -439,7 +495,7 @@ export function buildSearchResponse(
         ? "invalid cs JSON output"
         : "cs execution failed";
 
-    return textResult(
+    return structuredResult<CsSearchStructured>(
       `cs_search failed: ${errorLabel}.\nquery: ${outcome.params.query}\nTry a shorter query, a different path filter, or use rg for exact text.`,
       {
         available: true,
@@ -483,7 +539,7 @@ export function buildSearchResponse(
   const fallbackExecution =
     fallbackAttempt?.status === "ok" ? fallbackAttempt.execution : null;
 
-  return textResult(
+  return structuredResult<CsSearchStructured>(
     formatResults(
       outcome.params,
       finalExecution?.parsedResults.slice(0, outcome.plan?.maxResults) ?? [],
@@ -514,7 +570,7 @@ export function buildSearchResponse(
 async function executeSearch(
   ctx: ExtensionContext,
   params: CsSearchParams,
-): Promise<AgentToolResult<Record<string, unknown>>> {
+): Promise<AgentToolResult<CsSearchStructured>> {
   const csPath = await findCsBinary();
 
   if (!csPath) {
@@ -572,6 +628,7 @@ export default function csSearchExtension(pi: ExtensionAPI) {
         "Use rg instead when you need exact text, regex matches, exhaustive results, or a precise error string.",
       ],
       parameters: toolParameters,
+      outputSchema: csSearchOutputSchema,
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
         return executeSearch(ctx, params as CsSearchParams);
       },

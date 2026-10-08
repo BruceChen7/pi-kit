@@ -57,6 +57,16 @@ export type ShortcutRegistration = {
   description?: string;
   handler: (ctx: TestCtx) => Promise<void> | void;
 };
+/** Tool metadata the harness reports through `pi.getAllTools()`. */
+export type TestToolInfo = {
+  name: string;
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
+};
 export type CustomEntry = {
   type: "custom";
   customType: string;
@@ -91,6 +101,7 @@ export const buildHarness = () => {
   const shortcuts = new Map<string, ShortcutRegistration>();
   const tools = new Map<string, ToolRegistration>();
   let activeTools = ["read", "grep", "find", "ls", "bash", "edit", "write"];
+  let toolInfos: TestToolInfo[] = [];
 
   const api = {
     on: vi.fn((event: string, handler: Handler) => {
@@ -117,6 +128,7 @@ export const buildHarness = () => {
       activeTools = names;
     }),
     getActiveTools: vi.fn(() => activeTools),
+    getAllTools: vi.fn(() => toolInfos),
     registerFlag: vi.fn(),
     getFlag: vi.fn(() => false),
   };
@@ -163,6 +175,10 @@ export const buildHarness = () => {
     ctx: TestCtx,
   ) => emit("tool_call", { toolName, input }, ctx);
 
+  const setToolInfos = (next: TestToolInfo[]) => {
+    toolInfos = next;
+  };
+
   return {
     api,
     emit,
@@ -170,6 +186,7 @@ export const buildHarness = () => {
     runShortcut,
     runTool,
     runToolCall,
+    setToolInfos,
   };
 };
 

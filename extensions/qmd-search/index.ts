@@ -22,9 +22,10 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
+import { structuredResult } from "../shared/structured-result.ts";
 import { runWithWorkingLoader } from "../shared/ui-working.ts";
 
 const execFileAsync = promisify(execFile);
@@ -223,12 +224,113 @@ async function stalenessCheck(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function textResult(
-  text: string,
-  details: Record<string, unknown> = {},
-): AgentToolResult<Record<string, unknown>> {
-  return { content: [{ type: "text", text }], details };
-}
+/**
+ * Opaque CLI JSON. qmd owns the shape of its `results` / `result` payloads, so
+ * the schema says "any JSON" instead of faking a structure we do not control.
+ */
+const qmdOpaqueJsonSchema = Type.Any();
+
+/** Payload shared by the qmd_query / qmd_search formatter. */
+type QmdSearchDetails<S extends string> = {
+  tool: `qmd_${S}`;
+  query: string;
+  resultCount: number;
+  results: Static<typeof qmdOpaqueJsonSchema>;
+};
+
+/**
+ * Output contracts of the five qmd tools: one variant per result shape the tool
+ * can return. Declared as `outputSchema` so codemode scripts resolve to these
+ * structured payloads instead of the formatted text.
+ */
+export const qmdQueryOutputSchema = Type.Union([
+  Type.Object({
+    tool: Type.Literal("qmd_query"),
+    query: Type.String(),
+    resultCount: Type.Integer(),
+    results: qmdOpaqueJsonSchema,
+  }),
+  Type.Object({
+    tool: Type.Literal("qmd_query"),
+    query: Type.String(),
+    raw: Type.String(),
+  }),
+  Type.Object({
+    tool: Type.Literal("qmd_query"),
+    query: Type.String(),
+    error: Type.String(),
+  }),
+]);
+
+export const qmdGetOutputSchema = Type.Union([
+  Type.Object({ tool: Type.Literal("qmd_get"), file: Type.String() }),
+  Type.Object({
+    tool: Type.Literal("qmd_get"),
+    file: Type.String(),
+    error: Type.String(),
+  }),
+]);
+
+export const qmdMultiGetOutputSchema = Type.Union([
+  Type.Object({
+    tool: Type.Literal("qmd_multi_get"),
+    pattern: Type.String(),
+  }),
+  Type.Object({
+    tool: Type.Literal("qmd_multi_get"),
+    pattern: Type.String(),
+    result: qmdOpaqueJsonSchema,
+  }),
+  Type.Object({
+    tool: Type.Literal("qmd_multi_get"),
+    pattern: Type.String(),
+    error: Type.String(),
+  }),
+]);
+
+export const qmdSearchOutputSchema = Type.Union([
+  Type.Object({
+    tool: Type.Literal("qmd_search"),
+    query: Type.String(),
+    resultCount: Type.Integer(),
+    results: qmdOpaqueJsonSchema,
+  }),
+  Type.Object({
+    tool: Type.Literal("qmd_search"),
+    query: Type.String(),
+    raw: Type.String(),
+  }),
+  Type.Object({
+    tool: Type.Literal("qmd_search"),
+    query: Type.String(),
+    error: Type.String(),
+  }),
+]);
+
+const qmdKnowledgeBaseSchema = Type.Object({
+  name: Type.String(),
+  path: Type.String(),
+  pattern: Type.String(),
+  collections: Type.Array(Type.String()),
+});
+
+export const qmdStatusOutputSchema = Type.Union([
+  Type.Object({
+    tool: Type.Literal("qmd_status"),
+    knowledgeBases: Type.Array(qmdKnowledgeBaseSchema),
+  }),
+  Type.Object({
+    tool: Type.Literal("qmd_status"),
+    knowledgeBases: Type.Array(qmdKnowledgeBaseSchema),
+    error: Type.String(),
+  }),
+]);
+
+export type QmdQueryStructured = Static<typeof qmdQueryOutputSchema>;
+export type QmdGetStructured = Static<typeof qmdGetOutputSchema>;
+export type QmdMultiGetStructured = Static<typeof qmdMultiGetOutputSchema>;
+export type QmdSearchStructured = Static<typeof qmdSearchOutputSchema>;
+export type QmdStatusStructured = Static<typeof qmdStatusOutputSchema>;
 
 async function runQmd(
   args: string[],
@@ -272,11 +374,11 @@ function toolLabel(suffix: string): string {
  * the formatted text and details map.  Used by execQuery, execSearch,
  * etc. to avoid duplicating the markdown formatting logic.
  */
-export function formatToolResult(
-  toolSuffix: string,
+export function formatToolResult<S extends string>(
+  toolSuffix: S,
   query: string,
   data: unknown,
-): { text: string; details: Record<string, unknown> } {
+): { text: string; details: QmdSearchDetails<S> } {
   const count = Array.isArray(data) ? data.length : 1;
   return {
     text: [
@@ -461,7 +563,7 @@ type QueryOpts = {
 async function execQuery(
   ctx: ExtensionContext,
   opts: QueryOpts,
-): Promise<AgentToolResult<Record<string, unknown>>> {
+): Promise<AgentToolResult<QmdQueryStructured>> {
   const args = buildQueryArgs(opts);
 
   try {
@@ -470,16 +572,16 @@ async function execQuery(
 
     if (data && typeof data === "object" && "parseError" in data) {
       const errorData = data as { parseError: string; preview: string };
-      return textResult(
+      return structuredResult<QmdQueryStructured>(
         `qmd query returned non-JSON output.\n${errorData.preview}`,
         { tool: "qmd_query", query: opts.query, raw: stdout.slice(0, 1000) },
       );
     }
 
     const { text, details } = formatToolResult("query", opts.query, data);
-    return textResult(text, details);
+    return structuredResult(text, details);
   } catch (err) {
-    return textResult(
+    return structuredResult<QmdQueryStructured>(
       `qmd query failed: ${err instanceof Error ? err.message : String(err)}`,
       { tool: "qmd_query", query: opts.query, error: String(err) },
     );
@@ -518,14 +620,17 @@ type GetOpts = {
 async function execGet(
   ctx: ExtensionContext,
   opts: GetOpts,
-): Promise<AgentToolResult<Record<string, unknown>>> {
+): Promise<AgentToolResult<QmdGetStructured>> {
   const args = buildGetArgs(opts);
 
   try {
     const stdout = await runQmd(args, ctx.cwd, ctx.signal);
-    return textResult(stdout, { tool: "qmd_get", file: opts.file });
+    return structuredResult<QmdGetStructured>(stdout, {
+      tool: "qmd_get",
+      file: opts.file,
+    });
   } catch (err) {
-    return textResult(
+    return structuredResult<QmdGetStructured>(
       `qmd get failed: ${err instanceof Error ? err.message : String(err)}`,
       { tool: "qmd_get", file: opts.file, error: String(err) },
     );
@@ -563,25 +668,28 @@ type MultiGetOpts = {
 async function execMultiGet(
   ctx: ExtensionContext,
   opts: MultiGetOpts,
-): Promise<AgentToolResult<Record<string, unknown>>> {
+): Promise<AgentToolResult<QmdMultiGetStructured>> {
   const args = buildMultiGetArgs(opts);
 
   try {
     const stdout = await runQmd(args, ctx.cwd, ctx.signal);
     const data = safeJson<unknown>(stdout);
     if (typeof data === "object" && data !== null && "parseError" in data) {
-      return textResult(stdout, {
+      return structuredResult<QmdMultiGetStructured>(stdout, {
         tool: "qmd_multi_get",
         pattern: opts.pattern,
       });
     }
-    return textResult(`\`\`\`json\n${JSON.stringify(data)}\n\`\`\``, {
-      tool: "qmd_multi_get",
-      pattern: opts.pattern,
-      result: data,
-    });
+    return structuredResult<QmdMultiGetStructured>(
+      `\`\`\`json\n${JSON.stringify(data)}\n\`\`\``,
+      {
+        tool: "qmd_multi_get",
+        pattern: opts.pattern,
+        result: data,
+      },
+    );
   } catch (err) {
-    return textResult(
+    return structuredResult<QmdMultiGetStructured>(
       `qmd multi_get failed: ${err instanceof Error ? err.message : String(err)}`,
       { tool: "qmd_multi_get", pattern: opts.pattern, error: String(err) },
     );
@@ -618,7 +726,7 @@ type SearchOpts = {
 async function execSearch(
   ctx: ExtensionContext,
   opts: SearchOpts,
-): Promise<AgentToolResult<Record<string, unknown>>> {
+): Promise<AgentToolResult<QmdSearchStructured>> {
   const args = buildSearchArgs(opts);
 
   try {
@@ -627,16 +735,16 @@ async function execSearch(
 
     if (data && typeof data === "object" && "parseError" in data) {
       const errorData = data as { parseError: string; preview: string };
-      return textResult(
+      return structuredResult<QmdSearchStructured>(
         `qmd search returned non-JSON output.\n${errorData.preview}`,
         { tool: "qmd_search", query: opts.query, raw: stdout.slice(0, 1000) },
       );
     }
 
     const { text, details } = formatToolResult("search", opts.query, data);
-    return textResult(text, details);
+    return structuredResult(text, details);
   } catch (err) {
-    return textResult(
+    return structuredResult<QmdSearchStructured>(
       `qmd search failed: ${err instanceof Error ? err.message : String(err)}`,
       { tool: "qmd_search", query: opts.query, error: String(err) },
     );
@@ -649,7 +757,7 @@ const StatusSchema = Type.Object({});
 
 async function execStatus(
   ctx: ExtensionContext,
-): Promise<AgentToolResult<Record<string, unknown>>> {
+): Promise<AgentToolResult<QmdStatusStructured>> {
   const knowledgeBases = loadKnowledgeBases(ctx.cwd);
   const kbs = Object.entries(knowledgeBases).map(([name, kb]) => ({
     name,
@@ -674,12 +782,12 @@ async function execStatus(
       "```",
     ];
 
-    return textResult(lines.join("\n"), {
+    return structuredResult<QmdStatusStructured>(lines.join("\n"), {
       tool: "qmd_status",
       knowledgeBases: kbs,
     });
   } catch (err) {
-    return textResult(
+    return structuredResult<QmdStatusStructured>(
       [
         "## QMD Status",
         "",
@@ -755,6 +863,7 @@ export default function qmdSearchExtension(pi: ExtensionAPI): void {
         "When you find relevant documents, use qmd_get to read the full content.",
       ],
       parameters: QuerySchema,
+      outputSchema: qmdQueryOutputSchema,
       execute(_id, params, _signal, _onUpdate, ctx) {
         return execQuery(ctx, params as QueryOpts);
       },
@@ -773,6 +882,7 @@ export default function qmdSearchExtension(pi: ExtensionAPI): void {
         "Use fromLine and maxLines to read a specific line range.",
       ],
       parameters: GetSchema,
+      outputSchema: qmdGetOutputSchema,
       execute(_id, params, _signal, _onUpdate, ctx) {
         return execGet(ctx, params as GetOpts);
       },
@@ -791,6 +901,7 @@ export default function qmdSearchExtension(pi: ExtensionAPI): void {
         "Use maxBytes to skip files larger than a threshold (default 10KB).",
       ],
       parameters: MultiGetSchema,
+      outputSchema: qmdMultiGetOutputSchema,
       execute(_id, params, _signal, _onUpdate, ctx) {
         return execMultiGet(ctx, params as MultiGetOpts);
       },
@@ -810,6 +921,7 @@ export default function qmdSearchExtension(pi: ExtensionAPI): void {
         "When you find relevant documents, use qmd_get to read the full content.",
       ],
       parameters: SearchSchema,
+      outputSchema: qmdSearchOutputSchema,
       execute(_id, params, _signal, _onUpdate, ctx) {
         return execSearch(ctx, params as SearchOpts);
       },
@@ -826,6 +938,7 @@ export default function qmdSearchExtension(pi: ExtensionAPI): void {
         "Run this first to verify qmd is properly set up.",
       ],
       parameters: StatusSchema,
+      outputSchema: qmdStatusOutputSchema,
       execute(_id, _params, _signal, _onUpdate, ctx) {
         return execStatus(ctx);
       },

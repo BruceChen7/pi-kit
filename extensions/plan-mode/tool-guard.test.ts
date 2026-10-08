@@ -304,3 +304,91 @@ describe("plan-mode extension: tool guards", () => {
     });
   });
 });
+
+describe("plan-mode extension: MCP tool guards", () => {
+  const mcpWrite = "mcp__fs__write_file";
+  const mcpRead = "mcp__fs__read_file";
+
+  it("blocks MCP writes in plan phase and allows declared read-only calls", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+    harness.setToolInfos([
+      { name: mcpWrite },
+      { name: mcpRead, annotations: { readOnlyHint: true } },
+      { name: "mcp__fs__delete_file", annotations: { destructiveHint: true } },
+    ]);
+
+    await expectToolBlocked(harness, ctx, mcpWrite, {
+      path: "src/a.ts",
+      content: "x",
+    });
+    await expectToolBlocked(harness, ctx, "mcp__fs__delete_file", {
+      path: "src/a.ts",
+    });
+    await expectToolAllowed(harness, ctx, mcpRead, { path: "src/a.ts" });
+  });
+
+  it("blocks path-less MCP calls in plan phase when no readOnly hint is declared", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+    harness.setToolInfos([{ name: "mcp__linear__create_issue" }]);
+
+    await expectToolBlocked(harness, ctx, "mcp__linear__create_issue", {
+      title: "issue title",
+    });
+  });
+
+  it("allows MCP writes that only touch review artifacts in plan phase", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await expectToolAllowed(harness, ctx, mcpWrite, {
+      path: ".pi/plans/pi-kit/plan/2026-10-08-demo.md",
+      content: "plan",
+    });
+  });
+
+  it("requires MCP writes in act phase to be read first", async () => {
+    await withTempCtx(async (ctx) => {
+      const targetPath = "src/mcp-target.ts";
+      writeSourceFile(ctx, targetPath, "export const value = 1;\n");
+
+      const { harness } = await startPlanModeSession("act", ctx);
+      harness.setToolInfos([
+        { name: mcpWrite },
+        { name: mcpRead, annotations: { readOnlyHint: true } },
+      ]);
+
+      await expectToolBlocked(harness, ctx, mcpWrite, {
+        path: targetPath,
+        content: "export const value = 2;\n",
+      });
+
+      await harness.emit(
+        "tool_result",
+        { toolName: mcpRead, input: { path: targetPath }, isError: false },
+        ctx,
+      );
+
+      await expectToolAllowed(harness, ctx, mcpWrite, {
+        path: targetPath,
+        content: "export const value = 2;\n",
+      });
+    });
+  });
+
+  it("leaves path-less MCP writes alone in act phase", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+    harness.setToolInfos([{ name: "mcp__linear__create_issue" }]);
+
+    await expectToolAllowed(harness, ctx, "mcp__linear__create_issue", {
+      title: "issue title",
+    });
+  });
+
+  it("keeps pi-kit extension tools on their name-based handling", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+    harness.setToolInfos([
+      { name: "qmd_query", annotations: { destructiveHint: true } },
+    ]);
+
+    await expectToolAllowed(harness, ctx, "qmd_query", { query: "guards" });
+  });
+});

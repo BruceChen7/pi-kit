@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { vi } from "vitest";
+import type { ToolInfoLike } from "../shared/tool-policy.ts";
 
 type MockPlannotatorCliResult = {
   status: number;
@@ -291,6 +292,7 @@ export function createFakePi() {
   const shortcuts = new Map<string, ShortcutRegistration>();
   const commands = new Map<string, CommandRegistration>();
   const tools = new Map<string, ToolRegistration>();
+  let toolInfos: ToolInfoLike[] = [];
 
   return {
     api: {
@@ -315,6 +317,7 @@ export function createFakePi() {
       events,
       sendUserMessage: vi.fn(),
       getCommands: () => [],
+      getAllTools: () => toolInfos,
     },
     events,
     emit: async (
@@ -348,6 +351,9 @@ export function createFakePi() {
     ): Promise<unknown> => {
       const tool = getRegistered(tools, "Tool", name);
       return tool.execute("tool-call-1", params, signal, async () => {}, ctx);
+    },
+    setToolInfos: (next: ToolInfoLike[]) => {
+      toolInfos = next;
     },
   };
 }

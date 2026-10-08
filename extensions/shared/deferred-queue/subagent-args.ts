@@ -26,6 +26,10 @@ export function buildSubagentArgs(options: SubagentArgsOptions): string[] {
     "--no-session",
     "--no-extensions",
     "--no-themes",
+    // Derived subagents must not connect the user's MCP servers: --tools keeps
+    // MCP tools, and a connected codemode-exposure server also activates
+    // codemode, which would bypass the caller's tool whitelist.
+    "--no-mcp",
   ];
 
   if (options.model) {

@@ -3,6 +3,7 @@ import type {
   BashToolDetails,
   BashToolInput,
   ExtensionContext,
+  ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 import {
   createBashToolDefinition,
@@ -216,7 +217,7 @@ export const createBashHookTool = (cwd: string) => {
       onUpdate:
         | AgentToolUpdateCallback<BashToolDetails | undefined>
         | undefined,
-      ctx: ExtensionContext,
+      ctx: ExtensionToolContext,
     ) {
       const resolved = await runBashHooks({
         command: params.command,

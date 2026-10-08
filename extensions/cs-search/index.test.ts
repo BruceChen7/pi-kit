@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { expectDefined } from "../shared/test-kit.js";
 
@@ -32,6 +33,8 @@ vi.mock("node:child_process", () => {
 import extension, {
   buildSearchArgs,
   buildSearchQuery,
+  buildSearchResponse,
+  csSearchOutputSchema,
   decideSearchPlan,
 } from "./index.js";
 
@@ -46,6 +49,7 @@ type SessionStartHandler = (...args: unknown[]) => unknown;
 type ToolResult = {
   content: Array<{ type: string; text: string }>;
   details?: Record<string, unknown>;
+  structuredContent?: unknown;
 };
 type ToolExecute = (...args: unknown[]) => Promise<ToolResult>;
 
@@ -103,6 +107,15 @@ function mockExecFileResult(
     implementation(cmd, args, options, callback);
     return {} as never;
   }) as unknown as typeof execFile);
+}
+
+/** Asserts the codemode-facing contract: same object as `details`, valid per outputSchema. */
+function expectCsStructuredResult(result: ToolResult): void {
+  expect(result.structuredContent).toBeDefined();
+  expect(result.structuredContent).toBe(result.details);
+  expect(Value.Check(csSearchOutputSchema, result.structuredContent)).toBe(
+    true,
+  );
 }
 
 function registerExtension(): RegisteredExtension {
@@ -163,6 +176,18 @@ describe("cs-search core decisions", () => {
       ],
     });
   });
+
+  it("declares an output schema matching the unavailable response", () => {
+    const response = buildSearchResponse({
+      availability: "unavailable",
+      params: { query: "create worktree" },
+    }) as unknown as ToolResult;
+
+    expect(response.content[0].text).toContain(
+      "cs_search is unavailable because the cs binary is not installed",
+    );
+    expectCsStructuredResult(response);
+  });
 });
 
 describe("cs-search extension", () => {
@@ -188,6 +213,7 @@ describe("cs-search extension", () => {
     expect(tool).toBeDefined();
     expectPrimaryBinaryDetectionCall();
     expect(tool.name).toBe("cs_search");
+    expect(tool.outputSchema).toBe(csSearchOutputSchema);
     expect(tool.description).toContain("ranked structural code search");
     expect(tool.promptGuidelines).toEqual(
       expect.arrayContaining([
@@ -302,6 +328,8 @@ describe("cs-search extension", () => {
         ],
       }),
     );
+
+    expectCsStructuredResult(result);
   });
 
   it("exposes bounded line details from cs CLI JSON output", async () => {
@@ -605,6 +633,8 @@ describe("cs-search extension", () => {
         results: [],
       }),
     );
+
+    expectCsStructuredResult(result);
   });
 
   it("returns a structured exec_failed outcome when cs execution fails", async () => {
@@ -641,6 +671,8 @@ describe("cs-search extension", () => {
         results: [],
       }),
     );
+
+    expectCsStructuredResult(result);
   });
 
   it("retries once without path when a path-constrained search returns no results", async () => {

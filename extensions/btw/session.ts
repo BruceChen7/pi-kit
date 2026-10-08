@@ -33,6 +33,38 @@ export const BTW_SYSTEM_PROMPT = [
 export const BTW_TOOLS = ["read", "grep", "find", "ls"] as const;
 
 /**
+ * Pure: resource-loader options for the btw sub-session.
+ *
+ * `noExtensions: true` already drops built-in extensions, but MCP / codemode
+ * isolation is stated explicitly so the read-only `BTW_TOOLS` whitelist stays a
+ * hard boundary: a connected codemode-exposure server would otherwise activate
+ * `codemode`, and `exposure: "codemode"` tools are callable whenever registered.
+ *
+ * The option type is derived from the loader constructor because pi does not
+ * export `DefaultResourceLoaderOptions` from its package root.
+ */
+export function btwResourceLoaderOptions(input: {
+  cwd: string;
+  agentDir: string;
+  customPrompt?: string;
+  appendSystemPrompt?: string;
+}): ConstructorParameters<typeof DefaultResourceLoader>[0] {
+  return {
+    cwd: input.cwd,
+    agentDir: input.agentDir,
+    noExtensions: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    disabledBuiltinExtensions: ["mcp", "codemode"],
+    systemPrompt: input.customPrompt,
+    appendSystemPrompt: [
+      ...(input.appendSystemPrompt ? [input.appendSystemPrompt] : []),
+      BTW_SYSTEM_PROMPT,
+    ],
+  };
+}
+
+/**
  * 组装子会话的资源加载器：继承主会话的 customPrompt 与 appendSystemPrompt，
  * 并追加 btw role 提示。context 文件 / skills 由 loader 从当前 cwd 磁盘按需加载。
  */
@@ -40,20 +72,14 @@ export async function createBtwResourceLoader(
   ctx: ExtensionCommandContext,
 ): Promise<ResourceLoader> {
   const promptOptions = ctx.getSystemPromptOptions();
-  const loader = new DefaultResourceLoader({
-    cwd: ctx.cwd,
-    agentDir: getAgentDir(),
-    noExtensions: true,
-    noPromptTemplates: true,
-    noThemes: true,
-    systemPrompt: promptOptions.customPrompt,
-    appendSystemPrompt: [
-      ...(promptOptions.appendSystemPrompt
-        ? [promptOptions.appendSystemPrompt]
-        : []),
-      BTW_SYSTEM_PROMPT,
-    ],
-  });
+  const loader = new DefaultResourceLoader(
+    btwResourceLoaderOptions({
+      cwd: ctx.cwd,
+      agentDir: getAgentDir(),
+      customPrompt: promptOptions.customPrompt,
+      appendSystemPrompt: promptOptions.appendSystemPrompt,
+    }),
+  );
   await loader.reload();
   return loader;
 }

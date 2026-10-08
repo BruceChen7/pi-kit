@@ -149,6 +149,36 @@ export function renderProgress(state: LibrarianProgressState): string {
   return lines.join("\n");
 }
 
+/**
+ * Pure: pi CLI args for the librarian subagent process.
+ *
+ * `--no-extensions` already keeps built-in extensions (mcp / codemode) out, but
+ * MCP isolation is stated explicitly so it cannot silently regress if the flag
+ * semantics or the loaded extension set change.
+ */
+export function buildLibrarianSubagentArgs(input: {
+  extensionPath: string;
+  promptPath: string;
+  query: string;
+}): string[] {
+  return [
+    "--mode",
+    "json",
+    "-p",
+    "--no-session",
+    "--no-extensions",
+    "--no-skills",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-mcp",
+    "-e",
+    input.extensionPath,
+    "--append-system-prompt",
+    input.promptPath,
+    input.query,
+  ];
+}
+
 export async function runLibrarianSubagent(
   cwd: string,
   prompt: string,
@@ -210,21 +240,11 @@ export async function runLibrarianSubagent(
   };
 
   try {
-    const args = [
-      "--mode",
-      "json",
-      "-p",
-      "--no-session",
-      "--no-extensions",
-      "--no-skills",
-      "--no-prompt-templates",
-      "--no-themes",
-      "-e",
-      options.extensionPath,
-      "--append-system-prompt",
+    const args = buildLibrarianSubagentArgs({
+      extensionPath: options.extensionPath,
       promptPath,
       query,
-    ];
+    });
 
     const exitCode = await new Promise<number>((resolve) => {
       const proc = spawn("pi", args, {

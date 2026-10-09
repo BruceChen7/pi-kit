@@ -10,7 +10,6 @@
 #   codex       extensions/codex-web-search, codex-plan-limits, cc-switch
 #   qmd         extensions/qmd-search
 #   plannotator extensions/plannotator-auto
-#   cs          extensions/cs-search
 #   gh          extensions/librarian, extensions/review
 #   glab        extensions/librarian
 #   tmux        extensions/cr-diffview, extensions/notify
@@ -34,7 +33,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --help|-h)
-      sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -89,22 +88,6 @@ install_plannotator() {
   install_plannotator_cli
 }
 
-install_cs() {
-  if already_installed cs; then
-    echo -e "  ${GREEN}✓${NC} cs already installed: $(command -v cs)"
-    return
-  fi
-  if command -v go >/dev/null 2>&1; then
-    echo -e "${BLUE}Installing:${NC} cs (go install)"
-    go install github.com/boyter/cs/v3@latest
-  elif command -v brew >/dev/null 2>&1; then
-    echo -e "${BLUE}Installing:${NC} cs (brew)"
-    brew install boyter/cs/cs
-  else
-    echo -e "${YELLOW}Install cs manually:${NC} go install github.com/boyter/cs/v3@latest"
-  fi
-}
-
 echo "=========================================="
 echo "  Pi Extension CLI Installer"
 echo "=========================================="
@@ -117,10 +100,6 @@ echo ""
 
 echo "plannotator (GitHub release):"
 install_plannotator
-echo ""
-
-echo "cs (code search):"
-install_cs
 echo ""
 
 echo "system CLIs:"

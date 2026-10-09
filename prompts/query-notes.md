@@ -4,7 +4,7 @@ argument-hint: "<查询内容>"
 ---
 # 查询 my_notes
 
-当用户提出关于笔记的任何问题时，**必须直接使用 qmd 工具**，不能先尝试其他方法（如 grep/find/cs_search/rg）再 fallback 到 qmd。
+当用户提出关于笔记的任何问题时，**必须直接使用 qmd 工具**，不能先尝试其他方法（如 grep/find/rg）再 fallback 到 qmd。
 
 ## 工具选择指南
 
@@ -58,7 +58,7 @@ qmd_status()
 - ✅ `qmd_query` 适合自然语言语义搜索，是首选入口
 - ✅ `qmd_search` 适合精确关键词匹配
 - ✅ `qmd_get` 参数用 `file` 字段，值为 `qmd://my_notes/...` 格式
-- ❌ 不要先试 grep/find/rg/cs_search 再 fallback 到 qmd——直接上 qmd
+- ❌ 不要先试 grep/find/rg 再 fallback 到 qmd——直接上 qmd
 - ❌ 不要用复杂 shell 命令操作笔记文件，qmd 工具链已经覆盖
 
 ## 常用 qmd 命令参考

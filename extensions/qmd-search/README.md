@@ -190,14 +190,14 @@ All 8 `knowledge-wiki-*` skills (registered in `skills/skills.txt`) use `--base-
 | `knowledge-wiki-enrich` | Finds thin concept articles (<150 words, ≤2 sources) and expands them via web search. Integrates authoritative external information into existing prose while flagging contradictions. |
 | `knowledge-wiki-state` | Utility skill: manages `Wiki/.state.json` (unprocessed-summary tracking, last-run timestamps, pair dismissal/pruning) and `Wiki/index.md` (upsert/delete/sort/find gaps). Used by all other knowledge-wiki skills.
 
-## What makes qmd-search different from cs_search
+## What makes qmd-search different from code search
 
-| | `cs_search` | `qmd_query` |
+| | `grep` / `find` | `qmd_query` |
 |---|---|---|
 | What it searches | Source code in the repo | Markdown knowledge base files |
-| Search backend | Boyter/cs (code search) | qmd (BM25 + vector + reranking) |
+| Search backend | Exact text / filename matching | qmd (BM25 + vector + reranking) |
 | Scope | Current repo | Any qmd collection (any directory) |
-| Best for | Finding implementations, declarations | Semantic search across docs, notes, wiki |
+| Best for | Finding exact identifiers and files | Semantic search across docs, notes, wiki |
 
 ## Tips
 

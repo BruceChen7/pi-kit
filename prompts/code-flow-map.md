@@ -24,7 +24,7 @@ Help me rebuild a working mental model of one code path:
 
 ## Investigation phase
 
-Use source evidence first. Prefer `cs_search` to locate likely implementations, then `read` the best
+Use source evidence first. Prefer `grep`/`find` to locate likely implementations, then `read` the best
 files in full context. Use `rg` for exact identifiers, callers, tests, config keys, and error strings.
 
 Gather these facts before generating the artifact:

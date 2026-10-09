@@ -230,15 +230,15 @@ describe("install-third-party-plugins.sh", () => {
     );
     expect(Object.keys(manifest.plugins).sort()).toEqual([
       "pi-autoresearch",
-      "pi-context",
+      "pi-context-view",
     ]);
     expect(manifest.plugins["pi-autoresearch"]).toMatchObject({
       kind: "github",
       source: "https://github.com/davebcn87/pi-autoresearch",
     });
-    expect(fs.existsSync(path.join(library, "pi-context", "index.ts"))).toBe(
-      true,
-    );
+    expect(
+      fs.existsSync(path.join(library, "pi-context-view", "index.ts")),
+    ).toBe(true);
     const autoresearchPackageJson = JSON.parse(
       fs.readFileSync(
         path.join(library, "pi-autoresearch", "package.json"),
@@ -267,10 +267,12 @@ describe("install-third-party-plugins.sh", () => {
       encoding: "utf8",
     });
 
-    const target = path.join(project, ".pi", "extensions", "pi-context");
+    const target = path.join(project, ".pi", "extensions", "pi-context-view");
     expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(target)).toBe(
-      fs.realpathSync(path.join(home, ".agents", "pi-plugins", "pi-context")),
+      fs.realpathSync(
+        path.join(home, ".agents", "pi-plugins", "pi-context-view"),
+      ),
     );
   });
 });

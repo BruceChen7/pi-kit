@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import { parseRepository, summarizeGithubToolCall } from "./github.js";
 import { parseGitLabProject } from "./gitlab.js";
 import registerLibrarianTools from "./index.js";
-import { globMatches, normalizePath, validateSearchPattern } from "./shared.js";
+import {
+  extractGitLabHost,
+  globMatches,
+  normalizePath,
+  validateSearchPattern,
+} from "./shared.js";
 
 // ---- Module structure tests (TDD-driven refactoring) ----
 
@@ -293,6 +298,64 @@ describe("librarian search validation", () => {
     expect(() =>
       validateSearchPattern("a AND b OR c AND d OR e AND f OR g"),
     ).toThrow(/max 5 boolean operators/);
+  });
+});
+
+describe("extractGitLabHost", () => {
+  it("extracts host from self-managed GitLab URL", () => {
+    expect(extractGitLabHost("https://gitlab.example.com/group/project")).toBe(
+      "gitlab.example.com",
+    );
+  });
+
+  it("extracts host from gitlab.com URL", () => {
+    expect(extractGitLabHost("https://gitlab.com/user/repo")).toBe(
+      "gitlab.com",
+    );
+  });
+
+  it("extracts host from URL with .git suffix", () => {
+    expect(
+      extractGitLabHost("https://gitlab.example.com/acme/project.git"),
+    ).toBe("gitlab.example.com");
+  });
+
+  it("extracts host from URL with port", () => {
+    expect(extractGitLabHost("https://gitlab.local:8443/group/project")).toBe(
+      "gitlab.local",
+    );
+  });
+
+  it("extracts host from URL embedded in text", () => {
+    expect(
+      extractGitLabHost("See https://gitlab.example.com/a/b for details"),
+    ).toBe("gitlab.example.com");
+  });
+
+  it("returns undefined for text without URL", () => {
+    expect(extractGitLabHost("no url here")).toBeUndefined();
+  });
+
+  it("returns undefined for undefined input", () => {
+    expect(extractGitLabHost(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined for empty string", () => {
+    expect(extractGitLabHost("")).toBeUndefined();
+  });
+
+  it("lowercases the extracted host", () => {
+    expect(extractGitLabHost("https://GIT.EXAMPLE.COM/path")).toBe(
+      "git.example.com",
+    );
+  });
+
+  it("extracts first URL when multiple are present", () => {
+    expect(
+      extractGitLabHost(
+        "Compare https://gitlab.com/a/b with https://gitlab.example.com/c/d",
+      ),
+    ).toBe("gitlab.com");
   });
 });
 

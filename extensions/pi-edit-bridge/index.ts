@@ -41,6 +41,10 @@ let sessionCwd: string | undefined;
 // ─────────────────────────────────────────────────────────────────────
 
 function captureProvider(ctx: ExtensionContext): void {
+  // Guard: addAutocompleteProvider requires TUI mode
+  if (!ctx.hasUI || typeof ctx.ui.addAutocompleteProvider !== "function") {
+    return;
+  }
   ctx.ui.addAutocompleteProvider((current) => {
     liveProvider = current;
     return current; // pass-through — zero behaviour change

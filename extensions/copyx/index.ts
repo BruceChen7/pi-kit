@@ -347,6 +347,15 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      // Guard: custom() requires TUI mode
+      if (!ctx.hasUI || typeof ctx.ui.custom !== "function") {
+        ctx.ui.notify(
+          "Multi-message selection requires interactive mode. Use with a single message or pipe output.",
+          "warning",
+        );
+        return;
+      }
+
       // Match answer.ts pattern: use custom interactive TUI and return a result directly.
       const selectedItems = await ctx.ui.custom<MessageItem[] | null>(
         (tui, _theme, _kb, done) => {

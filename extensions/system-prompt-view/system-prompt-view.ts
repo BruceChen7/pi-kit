@@ -51,6 +51,15 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      // Guard: custom() requires TUI mode
+      if (!ctx.hasUI || typeof ctx.ui.custom !== "function") {
+        ctx.ui.notify(
+          "System prompt view requires interactive mode",
+          "warning",
+        );
+        return;
+      }
+
       await ctx.ui.custom<void>((tui, theme, _kb, done) => {
         const view = new SystemPromptView(theme, systemPrompt, () => {
           done();

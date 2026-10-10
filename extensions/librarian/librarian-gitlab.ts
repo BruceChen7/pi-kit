@@ -7,6 +7,7 @@ import {
   librarianSubagentOutputSchema,
   librarianSubagentResult,
 } from "./output-schemas.js";
+import { extractGitLabHost } from "./shared.js";
 
 // ExtensionContext does not expose extensionPath, so we compute it from the module URL.
 const EXTENSION_DIR = fileURLToPath(new URL(".", import.meta.url));
@@ -58,21 +59,34 @@ export function registerLibrarianGitlab(pi: ExtensionAPI) {
           description: "Optional context on what you're trying to achieve",
         }),
       ),
+      host: Type.Optional(
+        Type.String({
+          description:
+            "GitLab host (e.g., git.garena.com). Defaults to gitlab.com if not specified and no URL found in query/context",
+        }),
+      ),
     }),
     outputSchema: librarianSubagentOutputSchema,
 
     async execute(_id, params, signal, onUpdate, ctx) {
       try {
+        // Determine target host: explicit param > URL in query/context > default
+        const host =
+          params.host?.trim() ||
+          extractGitLabHost(params.query) ||
+          extractGitLabHost(params.context) ||
+          "gitlab.com";
+
         // Auth check
         const authStatus = await pi.exec(
           "glab",
-          ["auth", "status", "--hostname", "gitlab.com"],
+          ["auth", "status", "--hostname", host],
           { signal, timeout: 15_000 },
         );
 
         if (authStatus.code !== 0) {
           throw new Error(
-            `GitLab authentication required. Run: glab auth login\nDetails: ${(authStatus.stderr || authStatus.stdout).trim()}`,
+            `GitLab authentication required for ${host}. Run: glab auth login --hostname ${host}\nDetails: ${(authStatus.stderr || authStatus.stdout).trim()}`,
           );
         }
 

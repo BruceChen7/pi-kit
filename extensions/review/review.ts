@@ -2087,6 +2087,11 @@ Instructions:
     action: EndReviewAction,
     options: EndReviewActionOptions = {},
   ): Promise<EndReviewActionResult> {
+    // Guard: editor operations require TUI mode
+    if (!ctx.hasUI) {
+      return "error";
+    }
+
     const originId = getActiveReviewOrigin(ctx);
     if (!originId) {
       if (!getReviewState(ctx)?.active) {

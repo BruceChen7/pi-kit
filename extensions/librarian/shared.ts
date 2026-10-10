@@ -249,6 +249,20 @@ export function validateSearchPattern(pattern: string) {
 }
 
 /**
+ * Extract GitLab host from text that may contain a URL.
+ * Returns the lowercase hostname (without port) if a URL is found, otherwise undefined.
+ *
+ * Pure function: value in / value out, no side effects.
+ */
+export function extractGitLabHost(
+  text: string | undefined,
+): string | undefined {
+  if (!text) return undefined;
+  const match = text.match(/https?:\/\/([^/\s:]+)/);
+  return match?.[1]?.toLowerCase();
+}
+
+/**
  * Text, `details` and `structuredContent` of a librarian tool result: one JSON
  * payload.
  *

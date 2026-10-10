@@ -72,6 +72,44 @@ describe("runWithWorkingLoader", () => {
     expect(mocks.BorderedLoader).not.toHaveBeenCalled();
   });
 
+  it("runs the workflow directly when the host only answers undefined", async () => {
+    // The RPC transport: custom() resolves to undefined without ever running
+    // the factory, which is what used to crash the caller on `"dismissed" in r`.
+    const workflow = vi.fn(async () => "done");
+    const custom = vi.fn(async () => undefined);
+    const ctx = {
+      hasUI: true,
+      mode: "rpc",
+      ui: {
+        custom,
+      },
+    } as unknown as ExtensionCommandContext;
+
+    await expect(runWithWorkingLoader(ctx, workflow)).resolves.toBe("done");
+
+    expect(workflow).toHaveBeenCalledTimes(1);
+    // The gate keeps custom() off the wire entirely on this transport.
+    expect(custom).not.toHaveBeenCalled();
+    expect(mocks.BorderedLoader).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a headless run when a rich host answers undefined", async () => {
+    const workflow = vi.fn(async () => "done");
+    const custom = vi.fn(async () => undefined);
+    const ctx = {
+      hasUI: true,
+      mode: "tui",
+      ui: {
+        custom,
+      },
+    } as unknown as ExtensionCommandContext;
+
+    await expect(runWithWorkingLoader(ctx, workflow)).resolves.toBe("done");
+
+    expect(custom).toHaveBeenCalledTimes(1);
+    expect(workflow).toHaveBeenCalledTimes(1);
+  });
+
   it("creates the default working loader and returns the workflow result in UI mode", async () => {
     const workflow = vi.fn(async () => "done");
     const { custom } = createUiCustomStub();

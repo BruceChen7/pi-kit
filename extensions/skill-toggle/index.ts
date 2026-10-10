@@ -18,6 +18,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { getGitCommonDir, getRepoRoot } from "../shared/git.ts";
 import { createLogger } from "../shared/logger.ts";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import {
   getSettingsPaths,
   loadSettings,
@@ -1204,8 +1205,8 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
   pi.registerCommand("toggle-skill", {
     description: "Toggle symlinked skills by adding/removing skill links",
     handler: async (_args: string, ctx: ExtensionContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("toggle-skill requires interactive mode", "warning");
+      if (!hasRichUi(ctx)) {
+        ctx.ui.notify("toggle-skill requires interactive TUI mode", "warning");
         return;
       }
 

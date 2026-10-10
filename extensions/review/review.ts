@@ -40,6 +40,7 @@ import {
   SelectList,
   Text,
 } from "@earendil-works/pi-tui";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import {
   extractModelOverride,
   getReviewModel,
@@ -91,21 +92,17 @@ function setReviewWidget(ctx: ExtensionContext, active: boolean) {
     return;
   }
 
-  ctx.ui.setWidget("review", (_tui, theme) => {
-    const message = reviewLoopInProgress
-      ? "Review session active (loop fixing running)"
-      : reviewLoopFixingEnabled
-        ? "Review session active (loop fixing enabled), return with /end-review"
-        : "Review session active, return with /end-review";
-    const text = new Text(theme.fg("warning", message), 0, 0);
-    return {
-      render(width: number) {
-        return text.render(width);
-      },
-      invalidate() {
-        text.invalidate();
-      },
-    };
+  const message = reviewLoopInProgress
+    ? "Review session active (loop fixing running)"
+    : reviewLoopFixingEnabled
+      ? "Review session active (loop fixing enabled), return with /end-review"
+      : "Review session active, return with /end-review";
+  // One status line, kept as a string array on purpose: hosts that cannot
+  // render component factories (Pi's RPC transport, which native clients
+  // speak) drop those silently, and this line is the only signal that a
+  // review branch is active.
+  ctx.ui.setWidget("review", [ctx.ui.theme.fg("warning", message)], {
+    placement: "aboveEditor",
   });
 }
 
@@ -996,11 +993,101 @@ export default function reviewExtension(pi: ExtensionAPI) {
   }
 
   /**
+   * Resolve a preset into a review target. Both selector paths dispatch
+   * through here so the rich list and the fallback cannot drift apart.
+   */
+  async function resolveReviewPreset(
+    ctx: ExtensionContext,
+    preset: Exclude<ReviewPresetValue, typeof TOGGLE_LOOP_FIXING_VALUE>,
+  ): Promise<ReviewTarget | null> {
+    switch (preset) {
+      case "uncommitted":
+        return { type: "uncommitted" };
+      case "baseBranch":
+        return showBranchSelector(ctx);
+      case "commit":
+        return showCommitSelector(ctx);
+      case "custom":
+        return showCustomInput(ctx);
+      case "folder":
+        return showFolderInput(ctx);
+      case "pullRequest":
+        return showPrInput(ctx);
+    }
+  }
+
+  /** Row label for hosts whose selector has no description column. */
+  function presetOptionLabel(preset: (typeof REVIEW_PRESETS)[number]): string {
+    return preset.description
+      ? `${preset.label} ${preset.description}`
+      : preset.label;
+  }
+
+  function loopToggleLabel(): string {
+    return reviewLoopFixingEnabled
+      ? "Disable Loop Fixing (currently on)"
+      : "Enable Loop Fixing (currently off)";
+  }
+
+  function toggleLoopFixing(ctx: ExtensionContext): void {
+    const nextEnabled = !reviewLoopFixingEnabled;
+    setReviewLoopFixingEnabled(nextEnabled);
+    ctx.ui.notify(
+      nextEnabled ? "Loop fixing enabled" : "Loop fixing disabled",
+      "info",
+    );
+  }
+
+  /**
+   * Preset selector for hosts without `custom()`: Pi's RPC transport, which
+   * native clients such as Waku speak, resolves `custom()` to undefined
+   * without asking the host but does implement `select()`.
+   */
+  async function showReviewSelectorFallback(
+    ctx: ExtensionContext,
+  ): Promise<ReviewTarget | null> {
+    while (true) {
+      const options = [
+        ...REVIEW_PRESETS.map((preset) => ({
+          label: presetOptionLabel(preset),
+          value: preset.value as ReviewPresetValue,
+        })),
+        { label: loopToggleLabel(), value: TOGGLE_LOOP_FIXING_VALUE },
+      ];
+
+      const chosen = await ctx.ui.select(
+        "Select a review preset",
+        options.map((option) => option.label),
+      );
+      if (chosen === undefined) return null;
+      const picked = options.find((option) => option.label === chosen);
+      if (!picked) return null;
+
+      if (picked.value === TOGGLE_LOOP_FIXING_VALUE) {
+        toggleLoopFixing(ctx);
+        continue;
+      }
+
+      if (picked.value === "commit" && reviewLoopFixingEnabled) {
+        ctx.ui.notify("Loop mode does not work with commit review.", "error");
+        continue;
+      }
+
+      const target = await resolveReviewPreset(ctx, picked.value);
+      if (target) return target;
+    }
+  }
+
+  /**
    * Show the review preset selector
    */
   async function showReviewSelector(
     ctx: ExtensionContext,
   ): Promise<ReviewTarget | null> {
+    if (!hasRichUi(ctx)) {
+      return showReviewSelectorFallback(ctx);
+    }
+
     // Determine smart default (but keep the list order stable)
     const smartDefault = await getSmartDefault();
     const presetItems: SelectItem[] = REVIEW_PRESETS.map((preset) => ({
@@ -1080,60 +1167,17 @@ export default function reviewExtension(pi: ExtensionAPI) {
       if (!result) return null;
 
       if (result === TOGGLE_LOOP_FIXING_VALUE) {
-        const nextEnabled = !reviewLoopFixingEnabled;
-        setReviewLoopFixingEnabled(nextEnabled);
-        ctx.ui.notify(
-          nextEnabled ? "Loop fixing enabled" : "Loop fixing disabled",
-          "info",
-        );
+        toggleLoopFixing(ctx);
         continue;
       }
 
-      // Handle each preset type
-      switch (result) {
-        case "uncommitted":
-          return { type: "uncommitted" };
-
-        case "baseBranch": {
-          const target = await showBranchSelector(ctx);
-          if (target) return target;
-          break;
-        }
-
-        case "commit": {
-          if (reviewLoopFixingEnabled) {
-            ctx.ui.notify(
-              "Loop mode does not work with commit review.",
-              "error",
-            );
-            break;
-          }
-          const target = await showCommitSelector(ctx);
-          if (target) return target;
-          break;
-        }
-
-        case "custom": {
-          const target = await showCustomInput(ctx);
-          if (target) return target;
-          break;
-        }
-
-        case "folder": {
-          const target = await showFolderInput(ctx);
-          if (target) return target;
-          break;
-        }
-
-        case "pullRequest": {
-          const target = await showPrInput(ctx);
-          if (target) return target;
-          break;
-        }
-
-        default:
-          return null;
+      if (result === "commit" && reviewLoopFixingEnabled) {
+        ctx.ui.notify("Loop mode does not work with commit review.", "error");
+        continue;
       }
+
+      const target = await resolveReviewPreset(ctx, result);
+      if (target) return target;
     }
   }
 
@@ -1168,6 +1212,16 @@ export default function reviewExtension(pi: ExtensionAPI) {
       if (b === defaultBranch) return 1;
       return a.localeCompare(b);
     });
+
+    if (!hasRichUi(ctx)) {
+      const labels = sortedBranches.map((branch) =>
+        branch === defaultBranch ? `${branch} (default)` : branch,
+      );
+      const chosen = await ctx.ui.select("Select base branch", labels);
+      if (chosen === undefined) return null;
+      const branch = chosen.replace(/ \(default\)$/, "");
+      return { type: "baseBranch", branch };
+    }
 
     const items: SelectItem[] = sortedBranches.map((branch) => ({
       value: branch,
@@ -1226,6 +1280,18 @@ export default function reviewExtension(pi: ExtensionAPI) {
     if (commits.length === 0) {
       ctx.ui.notify("No commits found", "error");
       return null;
+    }
+
+    if (!hasRichUi(ctx)) {
+      const labels = commits.map(
+        (commit) => `${commit.sha.slice(0, 7)} ${commit.title}`,
+      );
+      const chosen = await ctx.ui.select("Select commit to review", labels);
+      if (chosen === undefined) return null;
+      const index = labels.indexOf(chosen);
+      const commit = commits[index];
+      if (!commit) return null;
+      return { type: "commit", sha: commit.sha, title: commit.title };
     }
 
     const items: SelectItem[] = commits.map((commit) => ({
@@ -2039,7 +2105,9 @@ Instructions:
     originId: string,
     showLoader: boolean,
   ): Promise<{ cancelled: boolean; error?: string } | null> {
-    if (showLoader && ctx.hasUI) {
+    // On a host without component UI the loader would answer `undefined`,
+    // which the caller cannot tell from a real result — summarize without it.
+    if (showLoader && hasRichUi(ctx)) {
       return ctx.ui.custom<{ cancelled: boolean; error?: string } | null>(
         (tui, theme, _kb, done) => {
           const loader = new BorderedLoader(

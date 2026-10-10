@@ -40,6 +40,7 @@ import {
   type ExtensionCommandContext,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import {
   type BtwActive,
   type BtwExchange,
@@ -400,7 +401,7 @@ export default function btw(pi: ExtensionAPI) {
     description:
       "Ask a quick side question in a top-center overlay without interrupting the main conversation",
     handler: async (args, ctx) => {
-      if (ctx.mode !== "tui") {
+      if (!hasRichUi(ctx)) {
         ctx.ui.notify("/btw requires interactive TUI mode", "error");
         return;
       }

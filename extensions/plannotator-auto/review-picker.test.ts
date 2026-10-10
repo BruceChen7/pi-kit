@@ -117,7 +117,7 @@ describe("showPlanFilePicker (no UI)", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows warning when UI mode is unavailable", async () => {
+  it("shows warning when the host cannot draw the picker", async () => {
     const { showPlanFilePicker } = await import("./review-picker.js");
     const { api } = createFakePi();
     const ctx = createTestContext("/repo", { hasUI: false });
@@ -125,7 +125,21 @@ describe("showPlanFilePicker (no UI)", () => {
     await showPlanFilePicker(api as never, ctx as never);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      "Review picker requires UI mode.",
+      "Review picker requires an interactive TUI host.",
+      "warning",
+    );
+  });
+
+  it("shows the same warning on the RPC transport, which reports hasUI", async () => {
+    const { showPlanFilePicker } = await import("./review-picker.js");
+    const { api } = createFakePi();
+    // The transport native hosts speak: hasUI is true, custom() is dead.
+    const ctx = { ...createTestContext("/repo", { hasUI: true }), mode: "rpc" };
+
+    await showPlanFilePicker(api as never, ctx as never);
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Review picker requires an interactive TUI host.",
       "warning",
     );
   });

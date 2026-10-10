@@ -17,6 +17,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import { hasClarifyMarker, stripClarifyMarker } from "./marker.ts";
 import { SYSTEM_PROMPT } from "./prompt.ts";
 
@@ -120,8 +121,9 @@ async function rewritePrompt(
   const model = resolveRewriteModel(ctx);
   if (!model) return null;
 
-  // Interactive TUI can show a loader. Other hosts fall through to a plain call.
-  if (ctx.mode === "tui" && ctx.hasUI) {
+  // A host that owns the editor can show a loader. Other hosts (native RPC
+  // clients included) fall through to a plain call.
+  if (hasRichUi(ctx)) {
     const loaded = await ctx.ui.custom<string | null>(
       (tui, theme, _kb, done) => {
         const loader = new BorderedLoader(

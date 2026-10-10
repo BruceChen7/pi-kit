@@ -8,6 +8,7 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
+import { hasRichUi } from "../shared/rich-ui.ts";
 
 /**
  * Extension that seeds the prompt editor history with recent prompts from the
@@ -288,7 +289,9 @@ function setEditorHistory(
 }
 
 function applyEditorWithHistory(pi: ExtensionAPI, ctx: ExtensionContext) {
-  if (!ctx.hasUI) return;
+  // The editor component and its history only exist where the host owns the
+  // input widget; a native RPC client has its own.
+  if (!hasRichUi(ctx)) return;
 
   const sessionFile = ctx.sessionManager.getSessionFile();
   const initialPrompts = collectUserPromptsFromEntries(

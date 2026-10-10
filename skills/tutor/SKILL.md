@@ -92,7 +92,8 @@ discovery path from those to their goal? Socratic or expository for each stretch
 Present the plan in chat — always — as two parts: prose (what we cover, in what order, and
 why *this* way given their edge and their goal), and the plan's backbone as a small
 ```mermaid``` dependency graph (unconditional truths at the roots, their goal at the sink;
-few nodes, short labels). Stress-test each root: is it genuinely unconditional for *them*,
+few nodes, short labels). **这个 mermaid 图也必须先 `validate_mermaid` 验证通过后再展示。**
+Stress-test each root: is it genuinely unconditional for *them*,
 or a disguised theorem? Then **stop and wait for their go-ahead**. This plan is their
 checkpoint — a wrong root is cheap to fix now and expensive mid-lesson.
 
@@ -106,7 +107,8 @@ section follows the same structure:**
    会发生什么坏事」。
 2. **解决方式（Solution）** — 机制是什么？用 mermaid 图 + 代码/伪代码解释。从问题自然
    推出解决方案，让学习者觉得「哦，这样就解决了」。**每节至少一张 mermaid 图**（结构图/
-   流程图/状态机/依赖图），用来解释逻辑、概念或流程。
+   流程图/状态机/依赖图），用来解释逻辑、概念或流程。**⚠️ 每张 mermaid 图在写入笔记前，
+   必须调用 `validate_mermaid` 工具验证语法通过——没有例外。**
 3. **Quiz（验证）** — 用 `quiz` 确认落地。答错就停在这节，换角度重讲；答对再往下。
 
 **每节开头标注它在备课图中的位置**（如「本节对应备课图节点 ③」），让学习者知道
@@ -304,8 +306,10 @@ dictionary, not a second copy of the lesson. The table is not indexed into any s
   keep the diagram narrow (prefer `flowchart TB` over `flowchart LR`; a long chain explodes
   horizontally).
 - Mermaid fences in the note — Obsidian renders them natively.
-- Run `validate_mermaid` before you ship a fence. A diagram that fails to parse is a hole in
-  the lesson.
+- **⚠️ 强制验证（MANDATORY VALIDATION）**：每一个 mermaid 图在放入笔记之前，**必须**调用
+  `validate_mermaid` 工具验证语法。验证不通过 = 学习笔记里有一个洞，这是不可接受的。
+  流程：先写 mermaid → 立即调用 `validate_mermaid(source)` → 修复所有错误 → 再次验证 →
+  直到通过才允许写入笔记。没有例外，没有"先写上去以后再修"。
 - `render_mermaid` renders a PNG so you can *look* at the diagram. It is optional: when
   `mmdc` is missing the call degrades to a skip notice — carry on with the validated fence.
   If you do look, fix real problems (wrong arrow direction, unreadable layout) before moving on.

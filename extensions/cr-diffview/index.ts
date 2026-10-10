@@ -23,6 +23,7 @@ import {
   type PiKitFileWatcherControlEvent,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import { isStaleSessionContextError } from "../shared/stale-context.ts";
 import {
   annotationsFromFinishPayload,
@@ -589,7 +590,7 @@ const createTuiSuspender = (tui: TUI): TerminalSuspender => ({
 const captureTuiSuspender = async (
   ctx: ExtensionContext,
 ): Promise<TerminalSuspender | null> => {
-  if (!ctx.hasUI || typeof ctx.ui.custom !== "function") return null;
+  if (!hasRichUi(ctx)) return null;
   let captured: TUI | null = null;
   await ctx.ui.custom<void>((tui, _theme, _keybindings, done) => {
     captured = tui;
@@ -723,7 +724,7 @@ const resolveScope = async (
   rawArgs: string,
   ctx: ExtensionContext,
 ): Promise<CrDiffScope | null> => {
-  const targetDecision = decideScopeResolution(rawArgs, ctx.hasUI);
+  const targetDecision = decideScopeResolution(rawArgs, hasRichUi(ctx));
   if (targetDecision.kind === "scope") return targetDecision.scope;
   if (targetDecision.kind === "requiresInteractiveMode") {
     ctx.ui.notify(

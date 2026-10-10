@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { hasRichUi } from "../shared/rich-ui.ts";
 
 export const PLACEHOLDER = "[Review feedback]";
 export const CUSTOM_PENDING = "review-feedback-pending";
@@ -34,6 +35,8 @@ type TUI = {
 
 type ReviewContext = {
   hasUI: boolean;
+  /** Host mode; `hasRichUi` needs it to tell the RPC transport from the terminal. */
+  mode: string;
   ui: {
     custom<T>(
       factory: (
@@ -527,7 +530,15 @@ export default function reviewFeedbackExtension(pi: ExtensionAPI) {
     ctx: ReviewContext,
     markdown: string,
   ): Promise<void> {
-    if (!ctx.hasUI) {
+    // The external editor is a TUI component: on the RPC transport `custom()`
+    // answers `undefined` and the result would be read as a real one.
+    if (!hasRichUi(ctx)) {
+      if (ctx.hasUI) {
+        ctx.ui.notify(
+          "Review feedback requires interactive TUI mode",
+          "warning",
+        );
+      }
       return;
     }
 

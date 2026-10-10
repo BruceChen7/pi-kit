@@ -24,6 +24,7 @@ import {
   type PickerComponent,
   renderPickerLines,
 } from "../shared/picker-view.ts";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import { sharedUiGate } from "../shared/ui-gate.ts";
 import {
   buildRows,
@@ -68,7 +69,8 @@ export const runQuiz = async (
   ctx: ExtensionContext,
   input: QuizRunInput,
 ): Promise<QuizRunResult> => {
-  if (!ctx.hasUI) return { kind: "unavailable" };
+  // Same gate as ask-ui: the RPC transport answers `undefined` to custom().
+  if (!hasRichUi(ctx)) return { kind: "unavailable" };
 
   const rows = buildFocusRows(input.options, input.mode);
 

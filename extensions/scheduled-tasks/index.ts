@@ -10,6 +10,7 @@ import type { SelectItem } from "@earendil-works/pi-tui";
 import { createQueue, type Queue } from "../shared/deferred-queue/index.ts";
 import { log } from "../shared/deferred-queue/logger.ts";
 import type { TaskDefinition } from "../shared/deferred-queue/types.ts";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import { isTelegramConfigured } from "../shared/telegram.ts";
 import { pickTask } from "./tasks/tasks-picker.ts";
 
@@ -189,7 +190,7 @@ export default async function (pi: ExtensionAPI) {
     }
 
     // ── Non-TUI fallback: plain text list ──────────────────
-    if (!ctx.hasUI || ctx.mode !== "tui") {
+    if (!hasRichUi(ctx)) {
       const lines = taskMetas.map((t) => {
         const status =
           t.lastResult === "ok" ? "✓" : t.lastResult === "error" ? "✗" : "·";

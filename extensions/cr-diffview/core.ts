@@ -131,13 +131,17 @@ export const branchScope = (target: string): CrDiffScope => ({
   diffArgs: [`${target}...HEAD`],
 });
 
+/**
+ * `richUi` — 不是 `ctx.hasUI`：预设选择器靠 `ctx.ui.custom()` 上屏，而 RPC 宿主的
+ * `hasUI` 为真、`custom()` 却只回 `undefined`（见 shared/rich-ui）。
+ */
 export const decideScopeResolution = (
   rawArgs: string,
-  hasUI: boolean,
+  richUi: boolean,
 ): ScopeResolutionDecision => {
   const target = rawArgs.trim();
   if (target) return { kind: "scope", scope: branchScope(target) };
-  return hasUI
+  return richUi
     ? { kind: "needsInteractivePreset" }
     : { kind: "requiresInteractiveMode" };
 };

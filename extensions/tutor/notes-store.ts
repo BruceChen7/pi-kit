@@ -38,6 +38,7 @@ import {
   type PickerComponent,
   renderPickerLines,
 } from "../shared/picker-view.ts";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import { sharedUiGate } from "../shared/ui-gate.ts";
 import { conceptLineFor, topicConceptStateFor } from "./concepts-store.ts";
 import {
@@ -894,7 +895,7 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
     if (!gate.askTopic && !gate.askChapter) {
       return { ok: true, ...input, topic: requestedTopic };
     }
-    if (ctx.mode !== "tui" || ctx.hasUI !== true) {
+    if (!hasRichUi(ctx)) {
       return {
         ok: false,
         message: formatPlacementRequired({ requestedTopic, boundTopic }),

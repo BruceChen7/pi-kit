@@ -23,6 +23,7 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import type { MessageItem } from "./types.js";
 import { DEFAULT_MAX_MESSAGES, truncatePreview } from "./types.js";
 
@@ -347,8 +348,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // Guard: custom() requires TUI mode
-      if (!ctx.hasUI || typeof ctx.ui.custom !== "function") {
+      // Guard: custom() needs a host that can actually draw it
+      if (!hasRichUi(ctx)) {
         ctx.ui.notify(
           "Multi-message selection requires interactive mode. Use with a single message or pipe output.",
           "warning",

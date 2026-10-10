@@ -8,6 +8,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import { bootstrapDefaultManagedPlugins } from "./bootstrap.ts";
 import {
   DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE,
@@ -112,8 +113,8 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
   pi.registerCommand("toggle-plugin", {
     description: "Toggle project-local plugins from ~/.agents/pi-plugins",
     handler: async (_args: string, ctx: ExtensionContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("toggle-plugin requires interactive mode", "warning");
+      if (!hasRichUi(ctx)) {
+        ctx.ui.notify("toggle-plugin requires interactive TUI mode", "warning");
         return;
       }
 

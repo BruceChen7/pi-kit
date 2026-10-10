@@ -23,6 +23,7 @@ import {
   type PickerComponent,
   renderPickerLines,
 } from "../shared/picker-view.ts";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import { sharedUiGate } from "../shared/ui-gate.ts";
 import {
   ASK_SUBMIT_ID,
@@ -62,7 +63,9 @@ export const runAsk = async (
   ctx: ExtensionContext,
   input: AskRunInput,
 ): Promise<AskRunResult> => {
-  if (!ctx.hasUI) return { kind: "unavailable" };
+  // `hasUI` alone is not enough: the RPC transport reports it and then answers
+  // `undefined` to custom(), which the caller would read as a real pick.
+  if (!hasRichUi(ctx)) return { kind: "unavailable" };
 
   // 上屏即独占终端：同批并行的另一个提问要等这个出闸后才上屏（见 shared/ui-gate）。
   // Other… 的自由文本追问属于同一次交互，所以也留在闸门内。

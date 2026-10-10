@@ -25,6 +25,7 @@ import type {
   AutocompleteItem,
   AutocompleteProvider,
 } from "@earendil-works/pi-tui";
+import { hasRichUi } from "../shared/rich-ui.ts";
 
 // ─────────────────────────────────────────────────────────────────────
 // State
@@ -41,8 +42,8 @@ let sessionCwd: string | undefined;
 // ─────────────────────────────────────────────────────────────────────
 
 function captureProvider(ctx: ExtensionContext): void {
-  // Guard: addAutocompleteProvider requires TUI mode
-  if (!ctx.hasUI || typeof ctx.ui.addAutocompleteProvider !== "function") {
+  // Guard: autocomplete only exists on hosts that own the editor widget
+  if (!hasRichUi(ctx)) {
     return;
   }
   ctx.ui.addAutocompleteProvider((current) => {

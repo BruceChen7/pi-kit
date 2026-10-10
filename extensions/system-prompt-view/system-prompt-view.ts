@@ -18,6 +18,7 @@ import {
   matchesKey,
   Text,
 } from "@earendil-works/pi-tui";
+import { hasRichUi } from "../shared/rich-ui.ts";
 
 type ThemeLike = {
   fg?: (name: string, text: string) => string;
@@ -51,8 +52,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      // Guard: custom() requires TUI mode
-      if (!ctx.hasUI || typeof ctx.ui.custom !== "function") {
+      // Guard: the view needs a host that can actually draw a component
+      if (!hasRichUi(ctx)) {
         ctx.ui.notify(
           "System prompt view requires interactive mode",
           "warning",

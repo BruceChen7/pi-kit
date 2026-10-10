@@ -11,6 +11,7 @@ import {
   SelectList,
   Text,
 } from "@earendil-works/pi-tui";
+import { hasRichUi } from "../shared/rich-ui.ts";
 import { type CliReviewResult, runPlannotatorPlanReviewCli } from "./cli.ts";
 import { scanMermaidBlocks } from "./mermaid-validator.ts";
 import {
@@ -254,8 +255,8 @@ export const showPlanFilePicker = async (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
 ): Promise<void> => {
-  if (!ctx.hasUI) {
-    ctx.ui.notify("Review picker requires UI mode.", "warning");
+  if (!hasRichUi(ctx)) {
+    ctx.ui.notify("Review picker requires an interactive TUI host.", "warning");
     return;
   }
 

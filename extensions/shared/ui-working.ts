@@ -2,6 +2,7 @@ import {
   BorderedLoader,
   type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
+import { hasRichUi } from "./rich-ui.ts";
 
 type WorkingLoaderResult<T> =
   | {
@@ -34,8 +35,10 @@ export async function runWithWorkingLoader<T>(
 ): Promise<T> {
   const { message = "Working...", cancellable = false } = options;
 
-  // Headless fallback: no UI, run workflow directly with a never-aborted signal
-  if (!ctx.hasUI || typeof ctx.ui.custom !== "function") {
+  // Headless fallback: no component UI, run workflow directly with a
+  // never-aborted signal. `hasRichUi` keeps the RPC transport out — there
+  // `custom()` answers `undefined` instead of showing anything.
+  if (!hasRichUi(ctx)) {
     const signal = new AbortController().signal;
     return workflow({ dismiss() {}, signal });
   }
@@ -99,6 +102,13 @@ export async function runWithWorkingLoader<T>(
     if ("error" in r) throw r.error;
     return r.value;
   };
+
+  // A host that cannot draw the loader answers with `undefined` and never runs
+  // the factory, so the workflow has not started yet: run it here, headless.
+  if (uiResult === undefined) {
+    const signal = new AbortController().signal;
+    return workflow({ dismiss() {}, signal });
+  }
 
   return reportResult(
     "dismissed" in uiResult

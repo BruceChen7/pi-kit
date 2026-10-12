@@ -565,7 +565,7 @@ export const registerConcepts = (pi: ExtensionAPI): void => {
     name: NOTE_CONCEPT_TOOL_NAME,
     label: "Note Concept",
     description:
-      "Record or update ONE concept in the shared concept table (`<vault>/<topDir>/概念.md`), the newcomer's lookup surface for this vault. " +
+      "Record or update ONE concept in this topic's concept table (`<vault>/<topDir>/<topic>/概念.md`), the newcomer's lookup surface for the topic. " +
       "Call it the first time a term is introduced: name + one-line definition + why it exists + prerequisites + source; the status stays `待验证` until a quiz confirms it (`已确立`) or a miss/「不知道」marks it (`缺口`). " +
       "Omit `definition` to only update status/prerequisites. It answers with any prerequisite that is still unregistered or not established — teach those first.",
     parameters: noteConceptParams,

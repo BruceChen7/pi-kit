@@ -395,6 +395,12 @@ export class PlanModeController {
   private finishTurn(ctx: ExtensionContext): void {
     const restoreTools = this.internalExtensionBypassForTurn;
     this.clearTurnSource();
+    // Persist once at the turn boundary. Tool results no longer persist
+    // individually — a single assistant message can carry several parallel
+    // tool calls, and persisting per toolResult wrote near-duplicate
+    // snapshots (same millisecond, only readFiles/freshlyWrittenFiles
+    // differing) into the session JSONL.
+    this.persist();
     if (restoreTools) {
       this.applyMode(ctx);
     }
@@ -579,7 +585,6 @@ export class PlanModeController {
       this.state.isApprovedReviewArtifactPath(latestArtifactPath);
     if (turnWasAborted(event, ctx)) {
       if (this.state.abortApprovedExecution(latestArtifactPath)) {
-        this.persist();
         // Allow one re-review reminder in the next (non-abort) episode.
         this.reReviewReminderSentFor = null;
         // Do NOT sendUserMessage() here. During agent_end the session still
@@ -683,7 +688,6 @@ export class PlanModeController {
       this.state.pendingApprovedPlanContinuationPath
     ) {
       this.state.clearPendingApprovedPlanContinuation();
-      this.persist();
       this.finishTurn(ctx);
       return;
     }
@@ -712,23 +716,16 @@ export class PlanModeController {
     const toolPolicy = this.toolCallPolicy(event.toolName, event.input);
 
     if (isReadToolCall(event.toolName, toolPolicy) && !event.isError) {
-      let readTrackedPath = false;
       for (const { rawPath } of pathsFromToolArgs(event.input)) {
         this.state.markFileRead(normalizeToolPath(ctx.cwd, rawPath));
-        readTrackedPath = true;
-      }
-      if (readTrackedPath) {
-        this.persist();
       }
       return;
     }
 
     if (isWriteToolCall(event.toolName, toolPolicy) && !event.isError) {
-      let wroteTrackedPath = false;
       for (const { rawPath } of pathsFromToolArgs(event.input)) {
         const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
         this.state.markFileFreshlyWritten(absolutePath);
-        wroteTrackedPath = true;
         if (isAutoReviewTargetPath(ctx.cwd, rawPath, this.htmlArtifactDirs)) {
           const policyPath = relativeToolPath(ctx.cwd, rawPath);
           // Validate the date prefix before marking — a wrong-date path
@@ -749,9 +746,6 @@ export class PlanModeController {
           }
           this.state.markReviewArtifactWritten(policyPath);
         }
-      }
-      if (wroteTrackedPath) {
-        this.persist();
       }
       return;
     }
@@ -824,7 +818,6 @@ export class PlanModeController {
       };
     }
     this.applyMode(ctx);
-    this.persist();
   }
 
   private deliverPendingTodoReconcileReminder(): void {

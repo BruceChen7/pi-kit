@@ -27,7 +27,7 @@ argument-hint: "<文章 URL | 粘贴的文章全文>"
 
 - 是 URL 就**先用 `opencli web read` 抓取**，固定参数：
   `opencli web read --url <URL>`
-  `--stdout true --download-images false --wait 3 -f md`
+  `--stdout true --download-images false --trace=retain-on-failure --wait 3 -f md`
   - 输出是 markdown 全文，直接进对话上下文。
 - 抓取后**先检查内容，再讲解**：
   - 输出为空、`# untitled`、或明显过短（抓 PDF/图片/纯 API 页面时常见）

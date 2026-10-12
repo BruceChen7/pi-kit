@@ -295,6 +295,7 @@ describe("Telegram summary formatting", () => {
       wikiSummary: "Batch 1: 2 summaries <ready> | Batch 2: 1 summary & linked",
       qmdUpdateOk: true,
       qmdEmbedOk: true,
+      qmdCleanupOk: true,
       timings: [
         {
           label: "Step 1–3 · wiki-summarize",
@@ -323,10 +324,12 @@ describe("Telegram summary formatting", () => {
       wikiSummary: "",
       qmdUpdateOk: true,
       qmdEmbedOk: true,
+      qmdCleanupOk: true,
     });
     expect(message).not.toContain("wiki-summarize");
     expect(message).toContain("qmd update：✓");
     expect(message).toContain("qmd embed：✓");
+    expect(message).toContain("qmd cleanup：✓");
   });
 
   it("renders a residual-stale warning section when files remain", () => {
@@ -336,6 +339,7 @@ describe("Telegram summary formatting", () => {
       wikiSummary: "",
       qmdUpdateOk: true,
       qmdEmbedOk: true,
+      qmdCleanupOk: true,
       timings: [],
       residualStale: ["Notes/still-stale.md", "Notes/also-stale.md"],
     });
@@ -351,6 +355,7 @@ describe("Telegram summary formatting", () => {
       wikiSummary: "",
       qmdUpdateOk: true,
       qmdEmbedOk: true,
+      qmdCleanupOk: true,
       timings: [],
       residualStale: [],
     });

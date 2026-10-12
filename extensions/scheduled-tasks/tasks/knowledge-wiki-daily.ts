@@ -11,6 +11,7 @@
  *             - Phase 4: verify
  *   Step 4:   qmd update (full-text reindex)
  *   Step 5:   qmd embed (vector embeddings)
+ *   Step 6:   qmd cleanup (drop inactive/orphan docs, compact FTS, vacuum)
  *
  * Knowledge base root: ~/work/notes
  */
@@ -344,6 +345,7 @@ export async function listStaleFiles(exec: ProcessExecutor): Promise<string[]> {
  * @param wikiSummary - Human-readable summary string from subagent.
  * @param qmdUpdateOk - Whether qmd update succeeded.
  * @param qmdEmbedOk - Whether qmd embed succeeded.
+ * @param qmdCleanupOk - Whether qmd cleanup succeeded.
  */
 /** Inputs for the final knowledge-wiki-daily success notification. */
 export interface TelegramSuccessInput {
@@ -354,6 +356,7 @@ export interface TelegramSuccessInput {
   wikiSummary: string;
   qmdUpdateOk: boolean;
   qmdEmbedOk: boolean;
+  qmdCleanupOk: boolean;
   timings?: StageTiming[];
   /** Residual stale files reported by the single parent-level verify. */
   residualStale?: string[];
@@ -368,6 +371,7 @@ export function buildTelegramSuccessMessage(
     wikiSummary,
     qmdUpdateOk,
     qmdEmbedOk,
+    qmdCleanupOk,
     timings = [],
     residualStale,
   } = input;
@@ -444,6 +448,7 @@ export function buildTelegramSuccessMessage(
   }
   lines.push(`🔍 qmd update：${qmdUpdateOk ? "✓" : "✗"}`);
   lines.push(`🧠 qmd embed：${qmdEmbedOk ? "✓" : "✗"}`);
+  lines.push(`🧹 qmd cleanup：${qmdCleanupOk ? "✓" : "✗"}`);
 
   return lines.join("\n");
 }
@@ -959,6 +964,14 @@ export default defineTask({
     const qmdEmbedOk = qmdEmbedResult.value;
     if (!qmdEmbedOk) return;
 
+    // ── Step 6: qmd cleanup (drop inactive/orphan docs, compact FTS, vacuum) ──
+    const qmdCleanupResult = await runTimedStage("Step 6 · qmd cleanup", () =>
+      runQmdStep(exec, "6", "qmd cleanup", ["cleanup"]),
+    );
+    timings.push(qmdCleanupResult.timing);
+    const qmdCleanupOk = qmdCleanupResult.value;
+    if (!qmdCleanupOk) return;
+
     // ── Success notification ──
     const successMsg = buildTelegramSuccessMessage({
       staleFiles,
@@ -966,6 +979,7 @@ export default defineTask({
       wikiSummary: wikiSummaryDone,
       qmdUpdateOk,
       qmdEmbedOk,
+      qmdCleanupOk,
       timings,
       residualStale,
     });

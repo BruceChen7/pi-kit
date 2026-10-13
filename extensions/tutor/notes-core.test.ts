@@ -54,6 +54,7 @@ import {
   sanitizeName,
   stripQuestionCallouts,
   stripSkillBlocks,
+  stripToolCallMarkup,
   TOPIC_REJECTION_REASONS,
   toolCallQuestions,
   topicNotePath,
@@ -401,6 +402,97 @@ describe("notes-core / duplicate question callouts", () => {
     expect(stripQuestionCallouts(text)).toBe(
       "> [!info] Quiz — I don't know\n> Your answer: I don't know",
     );
+  });
+});
+
+// ── 供应商工具调用残留（模型把 tool call 写进了正文） ──────────────────────
+
+describe("notes-core / provider tool-call markup in the text", () => {
+  /** 实录（2026-10-13 第10章）：provider 把 check_concepts 调用写成了正文。 */
+  const leakedCheckConcepts = [
+    "<｜｜DSML｜｜ calls>",
+    '<｜｜DSML｜｜ invoke name="check_concepts">',
+    '<｜｜DSML｜｜ parameter name="topic">go-runtime-learning</｜｜DSML｜｜ parameter>',
+    '<｜｜DSML｜｜ parameter name="chapter">第10章</｜｜DSML｜｜ parameter>',
+    "</｜｜DSML｜｜ invoke>",
+    "</｜｜DSML｜｜ calls>",
+  ].join("\n");
+
+  /** 同一天更早一条：泄漏的调用是 codemode，正文里直接带着脚本源码。 */
+  const leakedCodemode = [
+    "<｜｜DSML｜｜ calls>",
+    '<｜｜DSML｜｜ invoke name="codemode">',
+    '<｜｜DSML｜｜ parameter name="code" string="true">const R = "/opt/homebrew/Cellar/go/1.25.5/libexec/src/runtime";',
+    "const [goe, prep] = await Promise.all([",
+    "  tools.bash({ command: `cd /opt/homebrew/Cellar/go/1.25.5/libexec/src/runtime && echo '=== goexit ==='`, timeout: null }),",
+    "]);",
+    "text(goe.output);",
+    "</｜｜DSML｜｜ parameter>",
+    "</｜｜DSML｜｜ invoke>",
+    "</｜｜DSML｜｜ calls>",
+  ].join("\n");
+
+  it("drops a leaked call block and keeps the prose around it", () => {
+    const text = ["切换本身便宜到几乎不用计数。", "", leakedCheckConcepts].join(
+      "\n",
+    );
+    expect(stripToolCallMarkup(text)).toBe("切换本身便宜到几乎不用计数。");
+    expect(mirrorAssistantText([{ type: "text", text }])).toBe(
+      "切换本身便宜到几乎不用计数。",
+    );
+  });
+
+  it("drops the script a leaked codemode call carries in its parameter", () => {
+    const text = [
+      "最后回到那个数字：一次完整调度往返 59.8 ns。",
+      "",
+      leakedCodemode,
+    ].join("\n");
+    const stripped = mirrorAssistantText([{ type: "text", text }]);
+    expect(stripped).toBe("最后回到那个数字：一次完整调度往返 59.8 ns。");
+    expect(stripped).not.toContain("tools.bash");
+  });
+
+  it("drops a leak whose opening tags were already eaten upstream", () => {
+    const text = [
+      "伪造现场是通用手法。",
+      "</｜｜DSML｜｜ parameter>",
+      "</｜｜DSML｜｜ invoke>",
+      "</｜｜DSML｜｜ calls>",
+    ].join("\n");
+    expect(stripToolCallMarkup(text)).toBe("伪造现场是通用手法。");
+  });
+
+  it("drops a message that is nothing but the leak", () => {
+    expect(mirrorAssistantText([{ type: "text", text: leakedCodemode }])).toBe(
+      "",
+    );
+  });
+
+  it("also drops the ASCII spellings of the same leak", () => {
+    const text = [
+      "收尾。",
+      "<|tool_calls|>",
+      '<invoke name="check_concepts">',
+      '<parameter name="topic">go-runtime-learning</parameter>',
+      "</invoke>",
+      "</tool_calls>",
+    ].join("\n");
+    expect(stripToolCallMarkup(text)).toBe("收尾。");
+  });
+
+  it("keeps fenced examples and inline-code mentions of the markup", () => {
+    const text = [
+      "这个形状 ``<｜｜DSML｜｜ calls>`` 是 DeepSeek 的特殊 token。",
+      "",
+      "```text",
+      "<｜｜DSML｜｜ calls>",
+      '<｜｜DSML｜｜ invoke name="quiz">',
+      "```",
+      "",
+      "看完这两处就够了。",
+    ].join("\n");
+    expect(stripToolCallMarkup(text)).toBe(text);
   });
 });
 

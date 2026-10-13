@@ -701,6 +701,119 @@ export const stripQuestionCallouts = (text: string): string => {
     .replace(/\s+$/, "");
 };
 
+// ── 供应商工具调用残留（模型把 tool call 写进了正文） ─────────────────────
+//
+// 实录（2026-10-13，deepseek-v4.1-flash / openai-completions）：provider 偶发把
+// 工具调用留在 content 里、`finish_reason` 报 `stop`，形状是 DeepSeek 的 DSML 特殊
+// token —— `<｜｜DSML｜｜ calls>`、`<｜｜DSML｜｜ invoke name="codemode">`、
+// `<｜｜DSML｜｜ parameter name="code" string="true">`。pi 没有这种方言的解析器，
+// 于是整块 markup（codemode 那次连脚本源码一起）成了 assistant 的 text part。
+// 调用丢了是上游的事，但镜像只追加不改写 ⇒ 一旦落进笔记就是永久的洞。
+//
+// 规则只看**形状**：特殊 token 出现在教学正文里只有"泄漏"一种来源，所以整块丢掉
+// （`parameter` 的值夹在中间，也在丢掉的范围里）。围栏与行内代码里的样例是字面
+// 内容——那正是本仓库要教的东西——一律不动。
+
+/** 标签体：可选的 DSML 前缀 + 管道符，两边都容得下 `|` 与 `｜`。 */
+const TOOL_CALL_TAG = String.raw`[｜|]{0,2}\s*(?:DSML\s*[｜|]{0,2}\s*)?(?:calls?|tool_calls?|function_calls?|invoke|parameter|antml:[\w:]+)\s*[｜|]{0,2}`;
+const TOOL_CALL_OPEN_RE = new RegExp(String.raw`<\s*${TOOL_CALL_TAG}\b`, "i");
+const TOOL_CALL_START_RE = new RegExp(
+  String.raw`^\s*<\s*${TOOL_CALL_TAG}\b[^>]*>`,
+  "i",
+);
+const TOOL_CALL_CLOSE_PREFIX_RE = new RegExp(
+  String.raw`^\s*</\s*${TOOL_CALL_TAG}\b[^>]*>`,
+  "i",
+);
+
+/** 行首的闭合标签之后还剩什么（没有闭合标签返回 null）。 */
+const closerRemainder = (line: string): string | null => {
+  const match = TOOL_CALL_CLOSE_PREFIX_RE.exec(line);
+  return match ? line.slice(match[0].length) : null;
+};
+
+/** 反引号 run 是否在 index 之前打开、之后才闭合（CommonMark 的等长配对）。 */
+const insideInlineCode = (line: string, index: number): boolean => {
+  let openLength = 0;
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] !== "`") {
+      i += 1;
+      continue;
+    }
+    // 到达 index 时还没闭合 ⇒ 这个位置在行内代码里。
+    if (i >= index) return openLength !== 0;
+    let run = 0;
+    while (i + run < line.length && line[i + run] === "`") run += 1;
+    if (openLength === 0) openLength = run;
+    else if (run === openLength) openLength = 0;
+    i += run;
+  }
+  return openLength !== 0;
+};
+
+/** 行内打开标签的位置（行内代码里的引用不算），没有返回 -1。 */
+const inlineOpenerIndex = (line: string): number => {
+  const pattern = new RegExp(TOOL_CALL_OPEN_RE.source, "gi");
+  for (const match of line.matchAll(pattern)) {
+    const at = match.index ?? -1;
+    if (at < 0 || insideInlineCode(line, at)) continue;
+    return at;
+  }
+  return -1;
+};
+
+/** 丢掉工具调用残块；代码围栏与行内代码里的样例不动。 */
+export const stripToolCallMarkup = (text: string): string => {
+  const lines = text.split("\n");
+  const kept: string[] = [];
+  let removed = false;
+  let inFence = false;
+  let inBlock = false;
+  for (const line of lines) {
+    const fence = /^\s*(```|~~~)/.test(line);
+    if (inFence || fence) {
+      if (fence) inFence = !inFence;
+      kept.push(line);
+      continue;
+    }
+    if (inBlock) {
+      const rest = closerRemainder(line);
+      if (rest !== null) inBlock = false;
+      removed = true;
+      // 闭合标签同一行还写了正文：正文留下（残块本身照丢）。
+      const prose = rest?.replace(/\s+$/, "") ?? "";
+      if (prose.trim().length > 0) kept.push(prose);
+      continue;
+    }
+    if (TOOL_CALL_START_RE.test(line)) {
+      inBlock = true;
+      removed = true;
+      continue;
+    }
+    const closer = closerRemainder(line);
+    if (closer !== null) {
+      removed = true;
+      const prose = closer.replace(/\s+$/, "");
+      if (prose.trim().length > 0) kept.push(prose);
+      continue;
+    }
+    const inline = inlineOpenerIndex(line);
+    if (inline >= 0) {
+      inBlock = true;
+      removed = true;
+      const prose = line.slice(0, inline).replace(/\s+$/, "");
+      if (prose.trim().length > 0) kept.push(prose);
+      continue;
+    }
+    kept.push(line);
+  }
+  const stripped = kept.join("\n");
+  return (removed ? stripped.replace(/\n{3,}/g, "\n\n") : stripped)
+    .replace(/^\n+/, "")
+    .replace(/\s+$/, "");
+};
+
 /**
  * 会话镜像用：一条 assistant 消息最终写进笔记的正文。
  *
@@ -712,9 +825,12 @@ export const stripQuestionCallouts = (text: string): string => {
  * 选项顺序、加减行内代码，比对认不出来。所以规则取在更上游：**只要这条消息里有
  * 工具在提问，正文里的 `> [!question]` 块就一律不写进笔记**。没有工具提问的正文
  * （纯对话里问的问题）原样保留——那是它唯一的一份。
+ *
+ * 进笔记之前先过一遍 `stripToolCallMarkup`：provider 偶尔把工具调用留在正文里，
+ * 那块 markup 带着参数（codemode 就是整段脚本），不该出现在学习者的笔记里。
  */
 export const mirrorAssistantText = (content: unknown): string => {
-  const text = messageText(content as MessageContent);
+  const text = stripToolCallMarkup(messageText(content as MessageContent));
   return toolCallQuestions(content).length > 0
     ? stripQuestionCallouts(text)
     : text;

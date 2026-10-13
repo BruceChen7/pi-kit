@@ -253,6 +253,56 @@ describe("镜像接线 / 同轮 bind 的块归属", () => {
   });
 });
 
+describe("镜像接线 / 供应商工具调用残留", () => {
+  /**
+   * 实录（2026-10-13 第10章）：provider 把 `check_concepts` 调用写进了 content，
+   * `finish_reason` 报 stop——pi 没有这种方言的解析器，整块 markup 成了 assistant
+   * 的 text part。镜像只追加不改写，所以必须在写盘前按形状丢掉。
+   */
+  const leaked = [
+    "切换本身便宜到几乎不用计数。",
+    "",
+    "<｜｜DSML｜｜ calls>",
+    '<｜｜DSML｜｜ invoke name="codemode">',
+    '<｜｜DSML｜｜ parameter name="code" string="true">const R = "/opt/homebrew/Cellar/go/1.25.5/libexec/src/runtime";',
+    "const [goe] = await Promise.all([",
+    "  tools.bash({ command: `cd /opt/homebrew/Cellar/go/1.25.5/libexec/src/runtime && echo '=== goexit ==='`, timeout: null }),",
+    "]);",
+    "text(goe.output);",
+    "</｜｜DSML｜｜ parameter>",
+    "</｜｜DSML｜｜ invoke>",
+    "</｜｜DSML｜｜ calls>",
+  ].join("\n");
+
+  it("落盘前丢掉泄漏的调用块，正文照写", async () => {
+    const h = setup("镜像泄漏");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+
+    await h.fire("message_end", assistantMessage(leaked));
+
+    const chapter = h.readChapter("01-");
+    expect(chapter).toContain("切换本身便宜到几乎不用计数。");
+    expect(chapter).not.toContain("DSML");
+    expect(chapter).not.toContain("tools.bash");
+  });
+
+  it("整条消息只有泄漏块：不写出空的 PI 块", async () => {
+    const h = setup("镜像纯泄漏");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+
+    await h.fire(
+      "message_end",
+      assistantMessage(leaked.split("\n").slice(2).join("\n")),
+    );
+
+    const chapter = h.readChapter("01-");
+    expect(chapter).not.toContain("DSML");
+    expect(chapter).not.toContain("> [!abstract] PI");
+  });
+});
+
 describe("镜像接线 / 首轮注入不落笔记", () => {
   it("tutor-brief 是角色 custom 的注入消息：不进笔记（也不清空已绑定的文件）", async () => {
     const h = setup("镜像注入");

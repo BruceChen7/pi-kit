@@ -40,7 +40,7 @@ import {
   SelectList,
   Text,
 } from "@earendil-works/pi-tui";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, hasRichUi } from "../shared/rich-ui.ts";
 import {
   extractModelOverride,
   getReviewModel,
@@ -1115,7 +1115,8 @@ export default function reviewExtension(pi: ExtensionAPI) {
         },
       ];
 
-      const result = await ctx.ui.custom<ReviewPresetValue | null>(
+      const result = await customPanel<ReviewPresetValue | null>(
+        ctx,
         (tui, theme, _kb, done) => {
           const container = new Container();
           container.addChild(
@@ -1229,7 +1230,8 @@ export default function reviewExtension(pi: ExtensionAPI) {
       description: branch === defaultBranch ? "(default)" : "",
     }));
 
-    const result = await ctx.ui.custom<string | null>(
+    const result = await customPanel<string | null>(
+      ctx,
       (tui, theme, _kb, done) => {
         const container = new Container();
         container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
@@ -1300,7 +1302,8 @@ export default function reviewExtension(pi: ExtensionAPI) {
       description: "",
     }));
 
-    const result = await ctx.ui.custom<{ sha: string; title: string } | null>(
+    const result = await customPanel<{ sha: string; title: string } | null>(
+      ctx,
       (tui, theme, _kb, done) => {
         const container = new Container();
         container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
@@ -2108,7 +2111,8 @@ Instructions:
     // On a host without component UI the loader would answer `undefined`,
     // which the caller cannot tell from a real result — summarize without it.
     if (showLoader && hasRichUi(ctx)) {
-      return ctx.ui.custom<{ cancelled: boolean; error?: string } | null>(
+      return customPanel<{ cancelled: boolean; error?: string } | null>(
+        ctx,
         (tui, theme, _kb, done) => {
           const loader = new BorderedLoader(
             tui,

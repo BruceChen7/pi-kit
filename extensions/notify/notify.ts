@@ -18,6 +18,7 @@ import {
   type PiKitNotifyIdleEvent,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
+import { uiHostProfile } from "../shared/rich-ui.ts";
 import { loadSettings } from "../shared/settings.ts";
 
 export interface NotifyConfig {
@@ -49,7 +50,15 @@ type AgentEndMessage = {
 };
 type AgentEndEvent = { messages?: AgentEndMessage[] };
 type NotifyTurnStatus = "success" | "aborted" | "error" | "length";
-type NotifyTransportStatus = "sent" | "write-failed" | "failed";
+type NotifyTransportStatus = "sent" | "write-failed" | "failed" | "no-terminal";
+
+/**
+ * 浏览器宿主（pi-web）：没有终端可写 OSC 777，改用宿主自己的 toast。
+ * 写入 stdout 在这里只会进 server 日志，用户看不到。
+ */
+const isWebHostContext = (ctx: NotifyRuntimeContext): boolean =>
+  typeof ctx.ui?.notify === "function" &&
+  uiHostProfile({ hasUI: ctx.hasUI, mode: ctx.mode }).kind === "pi-web";
 
 type NotificationDecision = {
   shouldNotify: boolean;
@@ -63,6 +72,13 @@ type NotificationDecision = {
 type NotifyRuntimeContext = {
   cwd?: string;
   signal?: { aborted?: boolean };
+  /** 宿主是否愿意对话、跑在哪个模式（`uiHostProfile` 需要这两项）。 */
+  hasUI?: boolean;
+  mode?: string;
+  /** 浏览器宿主（pi-web）的 toast 通道；终端宿主不填。 */
+  ui?: {
+    notify?: (message: string, level?: "info" | "warning" | "error") => void;
+  };
 };
 
 /**
@@ -154,6 +170,12 @@ const notify = async (
     termProgram: process.env.TERM_PROGRAM,
     tty: Boolean(process.stdout.isTTY),
   });
+
+  // 明确不是终端（管道/文件）就没有“通知”可发：OSC 777 只会写进日志。
+  // 只在 `false` 时短路：`undefined`（测试、嵌入运行时）沿用旧行为继续写。
+  if (process.stdout.isTTY === false) {
+    return "no-terminal";
+  }
 
   try {
     process.stdout.write(payload);
@@ -464,6 +486,23 @@ const createNotifyIdleEvent = (input: {
   ctx: input.ctx,
 });
 
+/** 浏览器宿主：把通知交给宿主 toast（pi-web 的 NoticeShelf）。 */
+const panelNotify = async (
+  ctx: NotifyRuntimeContext,
+  title: string,
+  body: string,
+): Promise<NotifyTransportStatus> => {
+  try {
+    ctx.ui?.notify(body ? `${title}: ${body}` : title, "info");
+    return "sent";
+  } catch (error) {
+    log?.warn("panel notification failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "failed";
+  }
+};
+
 export default async function (pi: ExtensionAPI) {
   await initLogger();
 
@@ -527,10 +566,14 @@ export default async function (pi: ExtensionAPI) {
     const safeTitle = sanitizeOscField(resolvedTitle);
     const safeBody = sanitizeOscField(decision.body);
     const inHerdr = Boolean(process.env.HERDR_PANE_ID);
-    const transportStatus = inHerdr
-      ? await herdrNotify(safeTitle, safeBody)
-      : await notify(safeTitle, safeBody);
-    if (transportStatus !== "sent") {
+    const transportStatus = isWebHostContext(runtimeCtx)
+      ? await panelNotify(runtimeCtx, safeTitle, safeBody)
+      : inHerdr
+        ? await herdrNotify(safeTitle, safeBody)
+        : await notify(safeTitle, safeBody);
+    // 只有“写失败”才终止：没有终端（no-terminal）不算失败，否则会连带
+    // 吞掉下面的 notify-idle 事件。
+    if (transportStatus === "write-failed" || transportStatus === "failed") {
       return;
     }
 

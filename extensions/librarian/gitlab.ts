@@ -18,6 +18,7 @@ import {
   MAX_PATCH_CHARS,
   normalizePath,
   sanitizeParamValue,
+  summarizeLocalReadCall,
   toolErrorResult,
   truncateInline,
   validateFilePattern,
@@ -205,7 +206,7 @@ export function summarizeGitlabToolCall(toolName: string, args: any): string {
     case "list_gitlab_projects":
       return "Discovering GitLab projects";
     default:
-      return `Running ${toolName}`;
+      return summarizeLocalReadCall(toolName, args) ?? `Running ${toolName}`;
   }
 }
 

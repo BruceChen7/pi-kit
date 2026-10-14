@@ -23,7 +23,7 @@ import {
   type PickerComponent,
   renderPickerLines,
 } from "../shared/picker-view.ts";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, hasRichUi } from "../shared/rich-ui.ts";
 import { sharedUiGate } from "../shared/ui-gate.ts";
 import {
   ASK_SUBMIT_ID,
@@ -85,8 +85,9 @@ const showAskPicker = async (
   const rows = buildAskRows(input.options, input.mode);
   const multi = input.mode === "multi-select";
 
-  const outcome = await ctx.ui.custom<AskRunResult>(
-    (tui, _theme, _kb, done) => {
+  const outcome = await customPanel<AskRunResult>(
+    ctx,
+    (tui, _theme, _kb, done, host) => {
       let state: PickerState = createPickerState();
       const visible = (): PickerOption[] => filterOptions(rows, state.query);
 
@@ -160,6 +161,8 @@ const showAskPicker = async (
             width,
             multiSelect: multi,
             focused: component.focused,
+            chrome: host.chrome,
+            emitCursorMarker: host.wantsFocusMarker,
             footer: multi ? FOOTER_MULTI : FOOTER_SINGLE,
           }),
         );

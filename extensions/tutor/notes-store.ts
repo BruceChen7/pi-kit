@@ -38,7 +38,7 @@ import {
   type PickerComponent,
   renderPickerLines,
 } from "../shared/picker-view.ts";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, hasRichUi, type PanelHost } from "../shared/rich-ui.ts";
 import { sharedUiGate } from "../shared/ui-gate.ts";
 import { conceptLineFor, topicConceptStateFor } from "./concepts-store.ts";
 import {
@@ -1501,6 +1501,7 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
   const showPicker = (args: {
     tui: { requestRender: () => void };
     done: (value: string | undefined) => void;
+    host: PanelHost;
     title: string;
     rows: PickerOption[];
     emptyText: string;
@@ -1519,6 +1520,8 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
           width,
           multiSelect: false,
           focused: component.focused,
+          chrome: args.host.chrome,
+          emitCursorMarker: args.host.wantsFocusMarker,
           footer: "↑/↓ 选择  type 过滤  enter 确认  esc 取消",
           emptyText: args.emptyText,
         }),
@@ -1567,11 +1570,13 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
           kind: "other" as const,
         },
       ];
-      const picked = await ctx.ui.custom<string | undefined>(
-        (tui, _theme, _kb, done) =>
+      const picked = await customPanel<string | undefined>(
+        ctx,
+        (tui, _theme, _kb, done, host) =>
           showPicker({
             tui,
             done,
+            host,
             title: "选择主题",
             rows,
             emptyText: "没有匹配的主题，清空搜索可选「新建主题…」",
@@ -1603,11 +1608,13 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
         chapters: state.chapters,
         resume: state.resume,
       });
-      const picked = await ctx.ui.custom<string | undefined>(
-        (tui, _theme, _kb, done) =>
+      const picked = await customPanel<string | undefined>(
+        ctx,
+        (tui, _theme, _kb, done, host) =>
           showPicker({
             tui,
             done,
+            host,
             title: options.suggested
               ? `选择章节 · ${topic}（agent 提议：${options.suggested}）`
               : `选择章节 · ${topic}`,

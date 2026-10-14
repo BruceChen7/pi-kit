@@ -20,6 +20,7 @@ import {
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
+import type { PanelChrome } from "../shared/ui-host.ts";
 import type { BtwActive, BtwExchange, BtwSelection } from "./core.ts";
 
 export interface BtwOverlayCallbacks {
@@ -43,20 +44,39 @@ function matchesBtwFocusKey(data: string): boolean {
 const CHROME_LINES = 7; // top border, title, rule, status, input, hints, bottom border
 const MIN_CONTENT_LINES = 4;
 
+/** 宿主管不了真实终端时用的行数（pi-web 的 headless stub 是 40）。 */
+const FALLBACK_TERMINAL_ROWS = 30;
+
+export type BtwOverlayOptions = {
+  /** 外框策略：pi-web 这类宿主自带外框且会撕掉自绘的框 → "borderless"。 */
+  chrome: PanelChrome;
+  /** 宿主固定行数（pi-web 为 40）；undefined 时读真实终端。 */
+  rows: number | undefined;
+};
+
 export class BtwOverlayComponent implements Component, Focusable {
   private readonly input = new Input();
   private readonly tui: TUI;
   private readonly theme: Theme;
   private readonly callbacks: BtwOverlayCallbacks;
+  private readonly chrome: PanelChrome;
+  private readonly hostRows: number | undefined;
   private status = "";
   private scrollOffset = 0;
   private followBottom = true;
   focused = false;
 
-  constructor(tui: TUI, theme: Theme, callbacks: BtwOverlayCallbacks) {
+  constructor(
+    tui: TUI,
+    theme: Theme,
+    callbacks: BtwOverlayCallbacks,
+    options: BtwOverlayOptions = { chrome: "boxed", rows: undefined },
+  ) {
     this.tui = tui;
     this.theme = theme;
     this.callbacks = callbacks;
+    this.chrome = options.chrome;
+    this.hostRows = options.rows;
     this.input.onSubmit = (value) => {
       // Keep the draft when the ask is rejected (still answering); the parent shows a hint.
       if (!this.callbacks.readActive()) this.input.setValue("");
@@ -135,17 +155,31 @@ export class BtwOverlayComponent implements Component, Focusable {
     return this.scrollOffset;
   }
 
+  /**
+   * 内容行。borderless 下不画左右竖线（宿主自带外框），也不加行首空格：
+   * 内容自带缩进，与 boxed 的 `│内容…│` 只差两条竖线。
+   */
   private frameLine(content: string, innerWidth: number): string {
     const truncated = truncateToWidth(content, innerWidth, "");
+    if (this.chrome === "borderless") return truncated;
     const padding = Math.max(0, innerWidth - visibleWidth(truncated));
     return `${this.theme.fg("border", "│")}${truncated}${" ".repeat(padding)}${this.theme.fg("border", "│")}`;
   }
 
   private ruleLine(innerWidth: number): string {
+    if (this.chrome === "borderless") {
+      // 裸横线：pi-web 只丢"整行都是带角的框"的行。
+      return this.theme.fg("border", "─".repeat(Math.max(1, innerWidth)));
+    }
     return this.theme.fg("border", `├${"─".repeat(Math.max(1, innerWidth))}┤`);
   }
 
-  private borderLine(innerWidth: number, edge: "top" | "bottom"): string {
+  /** 顶/底线：borderless 下不画（undefined）。 */
+  private borderLine(
+    innerWidth: number,
+    edge: "top" | "bottom",
+  ): string | undefined {
+    if (this.chrome === "borderless") return undefined;
     const left = edge === "top" ? "┌" : "└";
     const right = edge === "top" ? "┐" : "┘";
     return this.theme.fg("border", `${left}${"─".repeat(innerWidth)}${right}`);
@@ -169,7 +203,10 @@ export class BtwOverlayComponent implements Component, Focusable {
   render(width: number): string[] {
     const dim = (color: ThemeColor, text: string) => this.theme.fg(color, text);
     const dialogWidth = Math.max(40, width);
-    const innerWidth = Math.max(20, dialogWidth - 2);
+    const innerWidth =
+      this.chrome === "borderless"
+        ? Math.max(20, dialogWidth)
+        : Math.max(20, dialogWidth - 2);
     const exchanges = this.callbacks.readExchanges();
     const active = this.callbacks.readActive();
     const view = this.callbacks.readCurrent();
@@ -209,9 +246,11 @@ export class BtwOverlayComponent implements Component, Focusable {
       contentLines.push(dim("dim", "No side questions yet."));
     }
 
+    const terminalRows =
+      this.hostRows ?? process.stdout.rows ?? FALLBACK_TERMINAL_ROWS;
     const maxRows = Math.max(
       MIN_CONTENT_LINES,
-      Math.floor((process.stdout.rows ?? 30) * 0.78) - CHROME_LINES,
+      Math.floor(terminalRows * 0.78) - CHROME_LINES,
     );
     const scrollOffset = this.clampScroll(contentLines.length, maxRows);
     const hiddenAbove = contentLines.length > maxRows ? scrollOffset : 0;
@@ -229,7 +268,7 @@ export class BtwOverlayComponent implements Component, Focusable {
       ? ` · ↑${hiddenAbove} above · ↑↓ scroll`
       : "";
 
-    const lines: string[] = [
+    const lines: (string | undefined)[] = [
       this.borderLine(innerWidth, "top"),
       this.frameLine(
         dim("accent", `btw · side question${viewLabel}`),
@@ -249,11 +288,13 @@ export class BtwOverlayComponent implements Component, Focusable {
       ),
       this.borderLine(innerWidth, "bottom"),
     ];
-    return lines.map((line) =>
-      visibleWidth(line) > dialogWidth
-        ? truncateToWidth(line, dialogWidth, "")
-        : line,
-    );
+    return lines
+      .filter((line): line is string => line !== undefined)
+      .map((line) =>
+        visibleWidth(line) > dialogWidth
+          ? truncateToWidth(line, dialogWidth, "")
+          : line,
+      );
   }
 
   invalidate(): void {

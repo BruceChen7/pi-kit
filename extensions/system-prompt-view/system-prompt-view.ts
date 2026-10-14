@@ -18,7 +18,7 @@ import {
   matchesKey,
   Text,
 } from "@earendil-works/pi-tui";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, hasRichUi } from "../shared/rich-ui.ts";
 
 type ThemeLike = {
   fg?: (name: string, text: string) => string;
@@ -61,7 +61,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      await ctx.ui.custom<void>((tui, theme, _kb, done) => {
+      await customPanel<void>(ctx, (tui, theme, _kb, done) => {
         const view = new SystemPromptView(theme, systemPrompt, () => {
           done();
         });

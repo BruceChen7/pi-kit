@@ -23,7 +23,7 @@ import {
   type PiKitFileWatcherControlEvent,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, hasRichUi, uiHostProfile } from "../shared/rich-ui.ts";
 import { isStaleSessionContextError } from "../shared/stale-context.ts";
 import {
   annotationsFromFinishPayload,
@@ -211,7 +211,7 @@ const showSelectList = async <T extends string>(
   title: string,
   items: SelectItem[],
 ): Promise<T | null> =>
-  ctx.ui.custom<T | null>((tui, theme, _kb, done) => {
+  customPanel<T | null>(ctx, (tui, theme, _kb, done) => {
     let query = "";
     const container = new Container();
     const filterText = new Text("");
@@ -300,7 +300,7 @@ const NUMBER_INPUT_DEFAULT = 1;
 const NUMBER_INPUT_HINT = "Enter to confirm · Esc to cancel";
 
 const showNumberInput = async (ctx: ExtensionContext): Promise<number | null> =>
-  ctx.ui.custom<number | null>((tui, theme, _kb, done) => {
+  customPanel<number | null>(ctx, (tui, theme, _kb, done) => {
     let input = String(NUMBER_INPUT_DEFAULT);
     const container = new Container();
 
@@ -590,7 +590,9 @@ const createTuiSuspender = (tui: TUI): TerminalSuspender => ({
 const captureTuiSuspender = async (
   ctx: ExtensionContext,
 ): Promise<TerminalSuspender | null> => {
-  if (!hasRichUi(ctx)) return null;
+  // 只有能把前台终端交给子进程的宿主才行：浏览器里没有“让位”这回事，
+  // 而 pi-web 的 TUI 也只是个 headless stub（没有 stop/start）。
+  if (!uiHostProfile(ctx).terminalSuspend) return null;
   let captured: TUI | null = null;
   await ctx.ui.custom<void>((tui, _theme, _keybindings, done) => {
     captured = tui;
@@ -830,7 +832,10 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     if (!suspender) {
       closeTrackedCrSocketServer();
       clearActiveSessionIfCurrent(session.sessionId);
-      ctx.ui.notify(`/${START_COMMAND} requires interactive mode`, "error");
+      ctx.ui.notify(
+        `/${START_COMMAND} could not take over the terminal for nvim`,
+        "error",
+      );
       return;
     }
 
@@ -867,6 +872,15 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     if (inlineMode && !ctx.hasUI) {
       ctx.ui.notify(
         `/${START_COMMAND} requires interactive mode when no tmux or herdr is available`,
+        "error",
+      );
+      return;
+    }
+
+    if (inlineMode && !uiHostProfile(ctx).terminalSuspend) {
+      // 内联模式要把前台终端让给 nvim；Web 宿主没有可让位的终端。
+      ctx.ui.notify(
+        `/${START_COMMAND} needs a terminal it can hand over to nvim — this host cannot. Use the diff view built into your host instead.`,
         "error",
       );
       return;

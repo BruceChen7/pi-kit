@@ -18,13 +18,15 @@ import {
 } from "@earendil-works/pi-tui";
 import { getGitCommonDir, getRepoRoot } from "../shared/git.ts";
 import { createLogger } from "../shared/logger.ts";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { panelPainter } from "../shared/panel-chrome.ts";
+import { customPanel, hasRichUi } from "../shared/rich-ui.ts";
 import {
   getSettingsPaths,
   loadSettings,
   readSettingsFile,
   writeSettingsFile,
 } from "../shared/settings.ts";
+import type { PanelChrome } from "../shared/ui-host.ts";
 
 export interface Skill {
   name: string;
@@ -953,6 +955,8 @@ export class SkillTogglePicker {
     private onToggle: (skill: Skill) => void,
     private onClose: () => void,
     private onUpdate: () => void,
+    /** 外框策略（见 shared/panel-chrome.ts）：pi-web 这类宿主传 "borderless"。 */
+    private chrome: PanelChrome = "boxed",
   ) {
     this.filtered = skills;
     this.resetInactivityTimeout();
@@ -1039,7 +1043,8 @@ export class SkillTogglePicker {
   }
 
   render(width: number): string[] {
-    const innerW = width - 2;
+    const painter = panelPainter(this.chrome);
+    const innerW = painter.innerWidth(width);
     const lines: string[] = [];
 
     const t = paletteTheme;
@@ -1056,19 +1061,18 @@ export class SkillTogglePicker {
     const italic = (s: string) => `\x1b[3m${s}\x1b[23m`;
 
     const row = (content: string) =>
-      border("│") +
-      truncateToWidth(` ${content}`, innerW, "…", true) +
-      border("│");
-    const emptyRow = () => border("│") + " ".repeat(innerW) + border("│");
+      painter.rowLine({ width, content, paintBorder: border });
+    const emptyRow = () =>
+      painter.rowLine({ width, content: "", paintBorder: border });
 
     const titleText = ` Skill Picker (${this.enabled.size}) `;
-    const borderLen = innerW - visibleWidth(titleText);
-    const leftBorder = Math.floor(borderLen / 2);
-    const rightBorder = borderLen - leftBorder;
     lines.push(
-      border(`╭${"─".repeat(leftBorder)}`) +
-        title(titleText) +
-        border(`${"─".repeat(rightBorder)}╮`),
+      painter.titleLine({
+        width,
+        title: titleText,
+        paintTitle: title,
+        paintBorder: border,
+      }),
     );
 
     lines.push(emptyRow());
@@ -1081,7 +1085,7 @@ export class SkillTogglePicker {
     lines.push(row(`${searchIconChar}  ${queryDisplay}`));
 
     lines.push(emptyRow());
-    lines.push(border(`├${"─".repeat(innerW)}┤`));
+    lines.push(painter.ruleLine({ width, paintBorder: border }));
 
     const maxVisible = 8;
     const startIndex = Math.max(
@@ -1132,7 +1136,7 @@ export class SkillTogglePicker {
       lines.push(emptyRow());
     }
 
-    lines.push(border(`├${"─".repeat(innerW)}┤`));
+    lines.push(painter.ruleLine({ width, paintBorder: border }));
     lines.push(emptyRow());
 
     const managedList = formatManagedList(
@@ -1143,7 +1147,7 @@ export class SkillTogglePicker {
     lines.push(row(hint(managedList)));
 
     lines.push(emptyRow());
-    lines.push(border(`├${"─".repeat(innerW)}┤`));
+    lines.push(painter.ruleLine({ width, paintBorder: border }));
     lines.push(emptyRow());
 
     const hints = `${keyHint("↑/↓")} navigate  ${keyHint("enter")} toggle  ${keyHint("esc")} cancel`;
@@ -1163,7 +1167,8 @@ export class SkillTogglePicker {
       : hintText;
     lines.push(row(hintLine));
 
-    lines.push(border(`╰${"─".repeat(innerW)}╯`));
+    const bottom = painter.bottomLine({ width, paintBorder: border });
+    if (bottom !== undefined) lines.push(bottom);
 
     return lines;
   }
@@ -1219,8 +1224,9 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
 
       let didToggle = false;
 
-      await ctx.ui.custom<void>(
-        (tui, _theme, _kb, done) => {
+      await customPanel<void>(
+        ctx,
+        (tui, _theme, _kb, done, host) => {
           const picker = new SkillTogglePicker(
             skills,
             activeState.enabledSkills,
@@ -1232,6 +1238,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
             },
             () => done(),
             () => tui.requestRender(),
+            host.chrome,
           );
 
           return {

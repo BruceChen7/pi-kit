@@ -29,15 +29,13 @@ type RegisteredTool = {
 };
 
 /**
- * Tools the model may only reach through a codemode script: registered with
- * `deferred` exposure, so pi keeps them callable whenever they are registered
- * but never lists them in the codemode description.
+ * Tools the model may only reach through a codemode script or `tool_search`:
+ * registered with `deferred` exposure, so pi keeps them callable whenever they
+ * are registered but never lists them in the codemode description.
  */
 const UNLISTED_DATA_TOOLS = [
-  "read_github",
   "list_directory_github",
   "glob_github",
-  "search_github",
   "commit_search",
   "diff",
   "list_github_repositories",
@@ -50,8 +48,17 @@ const UNLISTED_DATA_TOOLS = [
   "list_gitlab_projects",
 ];
 
-/** Tools that stay declared, so librarian capability survives without codemode. */
-const DIRECT_TOOLS = ["librarian_github", "librarian_gitlab"];
+/**
+ * Tools that stay declared, so librarian capability survives without codemode:
+ * the two subagent entry points plus the hot data tools for reading and
+ * searching a repository the user already knows.
+ */
+const DIRECT_TOOLS = [
+  "librarian_github",
+  "librarian_gitlab",
+  "read_github",
+  "search_github",
+];
 
 function fakePi() {
   const tools = new Map<string, RegisteredTool>();
@@ -173,7 +180,9 @@ describe("librarian output schema coverage", () => {
 
     expect(
       [...tools.values()]
-        .filter((tool) => tool.exposure === undefined)
+        .filter(
+          (tool) => tool.exposure === undefined || tool.exposure === "direct",
+        )
         .map((tool) => tool.name)
         .sort(),
     ).toEqual(DIRECT_TOOLS);
@@ -185,8 +194,8 @@ describe("librarian output schema coverage", () => {
     // 3000 estimated tokens) and silently drop what does not fit, which would
     // make them undiscoverable. Estimated at 4 chars per token like pi does,
     // plus ~30 tokens per section for the headings and declarations pi renders
-    // around the description. `deferred` tools are never listed, so these 14
-    // tools cost the listing nothing.
+    // around the description. `deferred` tools are never listed and `direct`
+    // tools are declared elsewhere, so these 16 tools cost the listing nothing.
     const { tools } = fakePi();
     const listed = [...tools.values()].filter(
       (tool) =>

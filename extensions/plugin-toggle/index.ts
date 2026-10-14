@@ -8,7 +8,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, hasRichUi } from "../shared/rich-ui.ts";
 import { bootstrapDefaultManagedPlugins } from "./bootstrap.ts";
 import {
   DEFAULT_BOOTSTRAP_SUCCESS_MESSAGE,
@@ -129,8 +129,9 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
       const enabled = new Set(
         getEnabledManagedPlugins(ctx.cwd, plugins).map(normalizeName),
       );
-      await ctx.ui.custom<void>(
-        (tui, _theme, _kb, done) => {
+      await customPanel<void>(
+        ctx,
+        (tui, _theme, _kb, done, host) => {
           const picker = new PluginTogglePicker(
             plugins,
             enabled,
@@ -151,6 +152,7 @@ export default function pluginToggleExtension(pi: ExtensionAPI): void {
             },
             () => done(),
             () => tui.requestRender(),
+            host.chrome,
           );
           return {
             render: (width: number) => picker.render(width),

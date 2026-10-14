@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, uiHostProfile } from "../shared/rich-ui.ts";
 
 export const PLACEHOLDER = "[Review feedback]";
 export const CUSTOM_PENDING = "review-feedback-pending";
@@ -35,7 +35,7 @@ type TUI = {
 
 type ReviewContext = {
   hasUI: boolean;
-  /** Host mode; `hasRichUi` needs it to tell the RPC transport from the terminal. */
+  /** Host mode; `uiHostProfile` needs it to tell the transports apart. */
   mode: string;
   ui: {
     custom<T>(
@@ -48,6 +48,8 @@ type ReviewContext = {
     ): Promise<T>;
     notify(message: string, level: "info" | "warning" | "error"): void;
     setEditorText(text: string): void;
+    /** 宿主自带的编辑器对话框（pi-web 有真实现）；没有终端可让位的宿主靠它。 */
+    editor?(title: string, prefill?: string): Promise<string | undefined>;
   };
   sessionManager: {
     getBranch(): Array<{
@@ -66,6 +68,12 @@ type ReviewContext = {
 type ExternalEditorResult =
   | { ok: true; content: string }
   | { ok: false; reason: string };
+
+/** 编辑结果：内容 / 用户取消 / 拿不到编辑器。 */
+type EditOutcome =
+  | { kind: "content"; content: string }
+  | { kind: "cancelled" }
+  | { kind: "failed"; reason: string };
 
 type AppendEntry = (customType: string, data: unknown) => void;
 type ReviewResolution = "discarded" | "submitted";
@@ -526,16 +534,53 @@ function createReviewArtifact(
 export default function reviewFeedbackExtension(pi: ExtensionAPI) {
   let pendingReview: PendingReview | undefined;
 
+  /**
+   * 终端能“让位”给子进程的宿主（TUI）：沿用 $EDITOR —— 组件会 `tui.stop()`
+   * 把前台终端交给编辑器。
+   */
+  const editInExternalEditor = async (
+    ctx: ReviewContext,
+    markdown: string,
+  ): Promise<EditOutcome> => {
+    const result = await customPanel<ExternalEditorResult>(
+      ctx,
+      (tui, _theme, _keybindings, done) =>
+        new ExternalEditorLauncher(tui, markdown, done),
+    );
+    // 显式比较而不是真值判断：本仓库 tsconfig 是 strict:false（无
+    // strictNullChecks），布尔判别属性的真值窄化在这里不生效。
+    if (result.ok === false) return { kind: "failed", reason: result.reason };
+    return { kind: "content", content: result.content };
+  };
+
+  /**
+   * 没有终端可让位的宿主（pi-web）：改用宿主自带的编辑器对话框。
+   * 这里是“用宿主已有的等价交互”而不是静默跳过 —— 浏览器里根本没有
+   * 前台终端可以交给 $EDITOR，硬走原路径只会让反馈功能变成一句报错。
+   */
+  const editInHostEditor = async (
+    ctx: ReviewContext,
+    markdown: string,
+  ): Promise<EditOutcome> => {
+    if (typeof ctx.ui.editor !== "function") {
+      return { kind: "failed", reason: "this host has no editor dialog" };
+    }
+    const edited = await ctx.ui.editor("Review feedback", markdown);
+    return edited === undefined
+      ? { kind: "cancelled" }
+      : { kind: "content", content: edited };
+  };
+
   async function stageReview(
     ctx: ReviewContext,
     markdown: string,
   ): Promise<void> {
-    // The external editor is a TUI component: on the RPC transport `custom()`
-    // answers `undefined` and the result would be read as a real one.
-    if (!hasRichUi(ctx)) {
+    const profile = uiHostProfile(ctx);
+    const canEdit = profile.customPanels || profile.dialogs;
+    if (!canEdit) {
       if (ctx.hasUI) {
         ctx.ui.notify(
-          "Review feedback requires interactive TUI mode",
+          "Review feedback requires an interactive host (terminal or web).",
           "warning",
         );
       }
@@ -550,21 +595,17 @@ export default function reviewFeedbackExtension(pi: ExtensionAPI) {
       return;
     }
 
-    const editorResult = await ctx.ui.custom<ExternalEditorResult>(
-      (tui, _theme, _keybindings, done) =>
-        new ExternalEditorLauncher(tui, markdown, done),
-    );
-
-    if (editorResult.ok === false) {
-      ctx.ui.notify(
-        `Review feedback skipped: ${editorResult.reason}`,
-        "warning",
-      );
+    const edit = profile.terminalSuspend
+      ? await editInExternalEditor(ctx, markdown)
+      : await editInHostEditor(ctx, markdown);
+    if (edit.kind === "cancelled") return;
+    if (edit.kind === "failed") {
+      ctx.ui.notify(`Review feedback skipped: ${edit.reason}`, "warning");
       return;
     }
 
     const original = markdown.trimEnd();
-    const edited = editorResult.content.trimEnd();
+    const edited = edit.content.trimEnd();
     if (edited.trim().length === 0 || edited === original) {
       return;
     }

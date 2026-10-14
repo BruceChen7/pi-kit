@@ -23,7 +23,7 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, hasRichUi } from "../shared/rich-ui.ts";
 import type { MessageItem } from "./types.js";
 import { DEFAULT_MAX_MESSAGES, truncatePreview } from "./types.js";
 
@@ -358,7 +358,8 @@ export default function (pi: ExtensionAPI) {
       }
 
       // Match answer.ts pattern: use custom interactive TUI and return a result directly.
-      const selectedItems = await ctx.ui.custom<MessageItem[] | null>(
+      const selectedItems = await customPanel<MessageItem[] | null>(
+        ctx,
         (tui, _theme, _kb, done) => {
           return new MessageSelectorComponent(messages, tui, done);
         },

@@ -17,12 +17,16 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, hasRichUi, uiHostProfile } from "../shared/rich-ui.ts";
 import { hasClarifyMarker, stripClarifyMarker } from "./marker.ts";
 import { SYSTEM_PROMPT } from "./prompt.ts";
 
 const USAGE =
   "Usage: /clarify <idea> | /clarify | /clarify revert | add -clarify anywhere in the message";
+
+/** 宿主读不到输入框草稿时的提示（pi-web 的 getEditorText() 恒为 ""）。 */
+const USAGE_NO_COMPOSER_READ =
+  "This host cannot read the composer — pass the text explicitly: /clarify <idea>";
 
 type ClarifyUi = {
   hasUI: boolean;
@@ -124,7 +128,8 @@ async function rewritePrompt(
   // A host that owns the editor can show a loader. Other hosts (native RPC
   // clients included) fall through to a plain call.
   if (hasRichUi(ctx)) {
-    const loaded = await ctx.ui.custom<string | null>(
+    const loaded = await customPanel<string | null>(
+      ctx,
       (tui, theme, _kb, done) => {
         const loader = new BorderedLoader(
           tui,
@@ -169,24 +174,31 @@ async function putRewriteInEditor(raw: string, ctx: ClarifyUi): Promise<void> {
   }
 
   if (ctx.hasUI && typeof ctx.ui.setEditorText === "function") {
-    try {
-      const prev =
-        typeof ctx.ui.getEditorText === "function"
-          ? ctx.ui.getEditorText()
-          : "";
-      lastBefore = String(prev ?? "");
-    } catch {
-      lastBefore = "";
-    }
+    // 只有宿主真能读回草稿时才记旧值：pi-web 的 getEditorText() 恒为 ""，
+    // 把它当“编辑器是空的”会让 /clarify revert 抹掉用户正在写的草稿。
+    lastBefore = uiHostProfile(ctx).editorText.read
+      ? readEditorText(ctx)
+      : null;
     ctx.ui.setEditorText(rewritten);
     ctx.ui.notify(
-      "Rewrite ready. Edit if needed, then send. Use /clarify revert to undo.",
+      lastBefore === null
+        ? "Rewrite ready. Edit if needed, then send. (This host cannot restore the previous draft, so /clarify revert is unavailable.)"
+        : "Rewrite ready. Edit if needed, then send. Use /clarify revert to undo.",
       "info",
     );
     return;
   }
 
   ctx.ui.notify(rewritten, "info");
+}
+
+/** 读输入框草稿；宿主没有这个能力时不要假装它是空的（见 putRewriteInEditor）。 */
+function readEditorText(ctx: ClarifyUi): string {
+  try {
+    return String(ctx.ui.getEditorText?.() ?? "");
+  } catch {
+    return "";
+  }
 }
 
 function handleRevert(ctx: ClarifyUi): void {
@@ -227,14 +239,15 @@ async function handleClarifyCommand(
 
   const ui = toClarifyUi(ctx);
   const fromArgs = rawArgs;
+  const canReadComposer = uiHostProfile(ctx).editorText.read;
   const fromEditor =
-    ctx.hasUI && typeof ctx.ui.getEditorText === "function"
+    ctx.hasUI && canReadComposer && typeof ctx.ui.getEditorText === "function"
       ? ctx.ui.getEditorText().trim()
       : "";
   const source = fromArgs || fromEditor;
 
   if (!source) {
-    ctx.ui.notify(USAGE, "warning");
+    ctx.ui.notify(canReadComposer ? USAGE : USAGE_NO_COMPOSER_READ, "warning");
     return;
   }
 

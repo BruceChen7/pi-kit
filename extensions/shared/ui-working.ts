@@ -2,7 +2,7 @@ import {
   BorderedLoader,
   type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import { hasRichUi } from "./rich-ui.ts";
+import { customPanel, hasRichUi } from "./rich-ui.ts";
 
 type WorkingLoaderResult<T> =
   | {
@@ -67,9 +67,9 @@ export async function runWithWorkingLoader<T>(
     signal: undefined as unknown as AbortSignal,
   };
 
-  const uiResult = await ctx.ui.custom<
+  const uiResult = await customPanel<
     WorkingLoaderResult<T> | WorkingLoaderDismissedResult
-  >((tui, theme, _kb, done) => {
+  >(ctx, (tui, theme, _kb, done) => {
     closeLoader = done;
 
     const loader = new BorderedLoader(tui, theme, message, {

@@ -19,6 +19,7 @@ import {
   MAX_PATCH_CHARS,
   normalizePath,
   sanitizeParamValue,
+  summarizeLocalReadCall,
   toolErrorResult,
   truncateInline,
   validateFilePattern,
@@ -197,7 +198,7 @@ export function summarizeGithubToolCall(toolName: string, args: any): string {
     case "list_repositories":
       return summarizeListRepositoriesCall(args);
     default:
-      return `Running ${toolName}`;
+      return summarizeLocalReadCall(toolName, args) ?? `Running ${toolName}`;
   }
 }
 
@@ -325,7 +326,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
       ),
     }),
     outputSchema: fileContentOutputSchema,
-    exposure: "deferred",
+    exposure: "direct",
 
     async execute(_id, params, signal) {
       try {
@@ -505,7 +506,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
       ),
     }),
     outputSchema: codeSearchOutputSchema,
-    exposure: "deferred",
+    exposure: "direct",
 
     async execute(_id, params, signal) {
       try {

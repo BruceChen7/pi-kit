@@ -263,6 +263,34 @@ export function extractGitLabHost(
 }
 
 /**
+ * Progress line for the read-only local tools the subagent may call.
+ *
+ * Provider-independent: both librarian subagents expose the same `read`,
+ * `grep`, `find`, and `ls` on the local checkout. Returns `undefined` for any
+ * other tool so each provider summarizer keeps its own fallback.
+ */
+export function summarizeLocalReadCall(
+  toolName: string,
+  args: any,
+): string | undefined {
+  const path = typeof args?.path === "string" ? args.path : undefined;
+  const pattern = typeof args?.pattern === "string" ? args.pattern : undefined;
+
+  switch (toolName) {
+    case "read":
+      return `Reading local ${path ?? "(unknown path)"}`;
+    case "grep":
+      return `Grepping local for "${truncateInline(pattern ?? "query", 52)}"`;
+    case "find":
+      return `Finding local ${truncateInline(pattern ?? "pattern", 52)}`;
+    case "ls":
+      return `Listing local ${path?.trim() || "/"}`;
+    default:
+      return undefined;
+  }
+}
+
+/**
  * Text, `details` and `structuredContent` of a librarian tool result: one JSON
  * payload.
  *

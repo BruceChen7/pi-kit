@@ -641,4 +641,26 @@ describe("librarian progress summaries", () => {
     expect(summary).toContain("Searching code");
     expect(summary.length).toBeLessThan(100);
   });
+
+  it("summarizes the read-only local tools the subagent may call", () => {
+    expect(summarizeGithubToolCall("read", { path: "src/index.ts" })).toBe(
+      "Reading local src/index.ts",
+    );
+    expect(summarizeGithubToolCall("grep", { pattern: "registerTool" })).toBe(
+      'Grepping local for "registerTool"',
+    );
+    expect(summarizeGithubToolCall("find", { pattern: "**/*.ts" })).toBe(
+      "Finding local **/*.ts",
+    );
+    expect(summarizeGithubToolCall("ls", { path: "/tmp" })).toBe(
+      "Listing local /tmp",
+    );
+    expect(summarizeGithubToolCall("ls", {})).toBe("Listing local /");
+  });
+
+  it("keeps the generic fallback for unknown tools", () => {
+    expect(summarizeGithubToolCall("some_future_tool", {})).toBe(
+      "Running some_future_tool",
+    );
+  });
 });

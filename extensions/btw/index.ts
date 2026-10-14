@@ -40,7 +40,7 @@ import {
   type ExtensionCommandContext,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, hasRichUi } from "../shared/rich-ui.ts";
 import {
   type BtwActive,
   type BtwExchange,
@@ -173,66 +173,68 @@ export default function btw(pi: ExtensionAPI) {
     };
     overlayRuntime = runtime;
 
-    void ctx.ui
-      .custom<void>(
-        (tui, theme, _keybindings, done) => {
-          runtime.finish = () => done();
+    void customPanel<void>(
+      ctx,
+      (tui, theme, _keybindings, done, host) => {
+        runtime.finish = () => done();
 
-          const callbacks: BtwOverlayCallbacks = {
-            readExchanges: () => exchanges,
-            readActive: () => active,
-            readViewIndex: () => viewIndex,
-            readCurrent: () => currentSelection(active, exchanges, viewIndex),
-            setViewIndex: (index: number) => {
-              viewIndex = index;
-            },
-            onSubmit: (value: string) => {
-              void ask(ctx, value.trim());
-            },
-            onDismiss: () => {
-              if (active) {
-                void abortActive();
-                return;
-              }
-              closeOverlay();
-            },
-            onCopy: () => {
-              void copyCurrentAnswer(ctx);
-            },
-            onUnfocus: () => {
-              overlayRuntime?.handle?.unfocus();
-              refreshOverlay();
-            },
-          };
-
-          const overlay = new BtwOverlayComponent(tui, theme, callbacks);
-
-          runtime.refresh = () => overlay.refresh();
-          runtime.setStatus = (status: string) => overlay.setStatus(status);
-
-          return overlay;
-        },
-        {
-          overlay: true,
-          overlayOptions: {
-            width: "78%",
-            minWidth: 64,
-            maxHeight: "78%",
-            anchor: "top-center",
-            margin: { top: 1, left: 2, right: 2 },
-            nonCapturing: true,
+        const callbacks: BtwOverlayCallbacks = {
+          readExchanges: () => exchanges,
+          readActive: () => active,
+          readViewIndex: () => viewIndex,
+          readCurrent: () => currentSelection(active, exchanges, viewIndex),
+          setViewIndex: (index: number) => {
+            viewIndex = index;
           },
-          onHandle: (handle) => {
-            runtime.handle = handle;
-            handle.focus();
-            if (runtime.closed) runtime.close();
+          onSubmit: (value: string) => {
+            void ask(ctx, value.trim());
           },
+          onDismiss: () => {
+            if (active) {
+              void abortActive();
+              return;
+            }
+            closeOverlay();
+          },
+          onCopy: () => {
+            void copyCurrentAnswer(ctx);
+          },
+          onUnfocus: () => {
+            overlayRuntime?.handle?.unfocus();
+            refreshOverlay();
+          },
+        };
+
+        const overlay = new BtwOverlayComponent(tui, theme, callbacks, {
+          chrome: host.chrome,
+          rows: host.rows,
+        });
+
+        runtime.refresh = () => overlay.refresh();
+        runtime.setStatus = (status: string) => overlay.setStatus(status);
+
+        return overlay;
+      },
+      {
+        overlay: true,
+        overlayOptions: {
+          width: "78%",
+          minWidth: 64,
+          maxHeight: "78%",
+          anchor: "top-center",
+          margin: { top: 1, left: 2, right: 2 },
+          nonCapturing: true,
         },
-      )
-      .catch((error: unknown) => {
-        if (overlayRuntime === runtime) overlayRuntime = null;
-        notify(ctx, getErrorMessage(error), "error");
-      });
+        onHandle: (handle) => {
+          runtime.handle = handle;
+          handle.focus();
+          if (runtime.closed) runtime.close();
+        },
+      },
+    ).catch((error: unknown) => {
+      if (overlayRuntime === runtime) overlayRuntime = null;
+      notify(ctx, getErrorMessage(error), "error");
+    });
   }
 
   // ── 子会话 ──────────────────────────────────────────────────────

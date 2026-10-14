@@ -17,6 +17,23 @@ const MAX_SUBAGENT_STDOUT_BUFFER = 2 * 1024 * 1024;
 const MAX_SUBAGENT_STDERR_BUFFER = 512 * 1024;
 const MAX_QUERY_CHARS = 6000;
 
+/**
+ * Built-in tools that read the local working tree without changing it.
+ *
+ * A subagent may correlate the user's local checkout with the remote
+ * repository, so reading local files is in scope. `bash`, `edit`, and `write`
+ * stay out: they run arbitrary commands or mutate the workspace, which a
+ * remote-codebase analyst has no business doing.
+ */
+export const LOCAL_READ_TOOLS = ["read", "grep", "find", "ls"] as const;
+
+/** The subagent's full tool set: the provider tools plus read-only local tools. */
+export function librarianSubagentTools(
+  providerTools: readonly string[],
+): string[] {
+  return [...providerTools, ...LOCAL_READ_TOOLS];
+}
+
 export type LibrarianEvent =
   | {
       kind: "tool_start";
@@ -152,12 +169,26 @@ export function renderProgress(state: LibrarianProgressState): string {
 /**
  * Pure: pi CLI args for the librarian subagent process.
  *
+ * The subagent sees exactly `subagentTools` — the provider's repository tools
+ * plus the read-only local tools (`read`, `grep`, `find`, `ls`) — and nothing
+ * else: no `bash`, `edit`, or `write`, no codemode, no MCP, no nested
+ * `librarian_*` subagents.
+ *
+ * `--no-tools` starts from an empty tool set and `--tools +name` then activates
+ * exactly those tools. `+name` entries *change the default selection* instead
+ * of replacing it, so without `--no-tools` the child would also get its
+ * built-in tools (read, bash, edit, write) plus every `direct` tool the loaded
+ * extension registers on load (`librarian_github` / `librarian_gitlab`, which
+ * would let a subagent nest further subagents, plus `read_github` /
+ * `search_github`). The plain allowlist form would
+ * isolate the same way, but it cannot remove MCP tools, whose reach follows
+ * their exposure.
+ *
  * `--no-extensions` keeps built-in extensions (mcp / codemode) out, so the
- * subagent has no codemode tool: the librarian tools it needs are registered
- * with `exposure: "deferred"` — unlisted, so they cost the main session no
- * context — and activated here by name, otherwise the subagent would have no
- * repository tools at all. `+name` entries add to the child's resolved default
- * tools — the plain allowlist form cannot activate a `deferred` tool.
+ * subagent has no codemode tool. The repository tools it needs come from this
+ * extension (`read_github` / `search_github` as `direct`, the rest as
+ * `deferred`) and are activated here by name, otherwise the subagent would have
+ * no repository tools at all.
  *
  * `--no-mcp` is stated explicitly so MCP isolation cannot silently regress if
  * the flag semantics or the loaded extension set change.
@@ -178,6 +209,7 @@ export function buildLibrarianSubagentArgs(input: {
     "--no-prompt-templates",
     "--no-themes",
     "--no-mcp",
+    "--no-tools",
     "--tools",
     input.subagentTools.map((name) => `+${name}`).join(","),
     "-e",
@@ -199,7 +231,7 @@ export async function runLibrarianSubagent(
     subagentTools: string[];
     extensionPath: string;
   },
-): Promise<{ finalText: string; stderr: string }> {
+): Promise<{ finalText: string; stderr: string; subagentTools: string[] }> {
   const query = prompt.trim();
   if (!query) {
     throw new Error("Query is required");
@@ -249,11 +281,12 @@ export async function runLibrarianSubagent(
   };
 
   try {
+    const subagentTools = librarianSubagentTools(options.subagentTools);
     const args = buildLibrarianSubagentArgs({
       extensionPath: options.extensionPath,
       promptPath,
       query,
-      subagentTools: options.subagentTools,
+      subagentTools,
     });
 
     const exitCode = await new Promise<number>((resolve) => {
@@ -412,7 +445,7 @@ export async function runLibrarianSubagent(
       throw new Error("librarian returned no output");
     }
 
-    return { finalText, stderr };
+    return { finalText, stderr, subagentTools };
   } finally {
     try {
       fs.unlinkSync(promptPath);

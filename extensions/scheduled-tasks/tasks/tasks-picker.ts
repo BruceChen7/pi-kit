@@ -16,19 +16,20 @@ import {
   SelectList,
   Text,
 } from "@earendil-works/pi-tui";
+import { customPanel } from "../../shared/rich-ui.ts";
 
 /**
  * Show an interactive task picker and resolve with the selected task id,
  * or null if the user cancels.
  *
- * @param ui - The extension UI context (ctx.ui) that owns the custom renderer.
+ * @param ctx - The extension context; `customPanel` reads the host profile from it.
  * @param items - Pre-built SelectItems (labels/descriptions already formatted).
  */
 export function pickTask(
-  ui: ExtensionContext["ui"],
+  ctx: ExtensionContext,
   items: SelectItem[],
 ): Promise<string | null> {
-  return ui.custom<string | null>((tui, theme, _kb, done) => {
+  return customPanel<string | null>(ctx, (tui, theme, _kb, done) => {
     const container = new Container();
 
     container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));

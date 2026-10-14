@@ -24,7 +24,7 @@ import {
   type PickerComponent,
   renderPickerLines,
 } from "../shared/picker-view.ts";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, hasRichUi } from "../shared/rich-ui.ts";
 import { sharedUiGate } from "../shared/ui-gate.ts";
 import {
   buildRows,
@@ -86,7 +86,7 @@ const showQuizPicker = (
   const multi = input.mode === "multi-select";
   input.onDisplay?.(input.options);
 
-  return ctx.ui.custom<QuizRunResult>((tui, _theme, _kb, done) => {
+  return customPanel<QuizRunResult>(ctx, (tui, _theme, _kb, done, host) => {
     let state: PickerState = createPickerState();
     const visible = (): PickerOption[] => filterOptions(rows, state.query);
     const isSubmitRow = (index: number): boolean =>
@@ -181,6 +181,8 @@ const showQuizPicker = (
           width,
           multiSelect: multi,
           focused: component.focused,
+          chrome: host.chrome,
+          emitCursorMarker: host.wantsFocusMarker,
           footer: multi ? FOOTER_MULTI : FOOTER_SINGLE,
         }),
       );

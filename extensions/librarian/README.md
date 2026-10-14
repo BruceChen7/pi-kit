@@ -86,26 +86,33 @@ CLI 登录账号有对应权限。GitLab 支持 `gitlab.com` 以及 `glab` 已�
 
 ## 可用工具
 
-扩展注册 16 个工具：其中只有两个汇总子 agent 是声明给模型的普通工具，其余 14 个远程数据工具
-注册为 `exposure: "deferred"` —— **可被 codemode 脚本随时调用，但默认不占用 context**（pi 不把它们
-列进 `codemode` 的工具描述）。主会话模型需要它们时用 `await describeTool(name)` 取签名，或用
-`await searchTools(query)` / `ALL_TOOLS` 按语义查找；启用 pi 内置的 `tool_search`（用户 settings 的
+扩展注册 16 个工具：4 个是 `exposure: "direct"`（声明给模型：两个汇总子 agent + `read_github` /
+`search_github`），另外 12 个远程数据工具注册为 `exposure: "deferred"` —— **可被 codemode 脚本随时
+调用，但默认不占用 context**（pi 不把它们列进 `codemode` 的工具描述）。主会话模型需要这些 deferred
+工具时用 `await describeTool(name)` 取签名，或用 `await searchTools(query)` / `ALL_TOOLS` 按语义查找；
+启用 pi 内置的 `tool_search`（用户 settings 的
 `defaultTools` 含 `+tool_search`）后，也可以直接 `tool_search("github repository diff")`，命中工具会被
 声明到下一轮、之后不必写脚本即可调用——与 codemode 的 `describeTool`/`searchTools` 是两条并行发现路径。
-`librarian_github` / `librarian_gitlab` 子进程则通过 `--tools +read_github,...` 直接激活这些工具给自己的子模型使用。
+`librarian_github` / `librarian_gitlab` 子进程用 `--no-tools --tools '+read_github,…,+read,+grep,+find,+ls'` 启动：`--no-tools` 先把工具集清空，`+name` 再逐个激活该 provider 的 7 个远程工具 + 4 个本地只读工具（`read`/`grep`/`find`/`ls`），所以子 agent 既能查远程仓库、也能读你本地工作区做对照，但没有 `bash`/`edit`/`write`，也不会再嵌套 `librarian_*` 子 agent。（只写 `+name` 是“追加到默认工具集”的语义，会把本地 `bash`/`edit`/`write` 一起带进子 agent。）
 
 ### 汇总子 agent（已声明给模型）
 
 - `librarian_github`：GitHub 专属代码库理解子 agent，启动隔离子 agent 探索 GitHub 仓库并输出答案。
 - `librarian_gitlab`：GitLab 专属代码库理解子 agent，启动隔离子 agent 探索 GitLab 项目并输出答案。
 
-### GitHub 数据工具（不声明，codemode 专用）
+### 已声明的直读工具（direct）
+
+- `read_github`：读取 GitHub 仓库文件，支持可选行号范围。
+- `search_github`：在 GitHub 仓库中搜索代码并返回上下文片段。
+
+这两个是高频入口，常驻声明、跨会话可见：直接读/搜一个已知仓库时用它们，不要为了读一个文件去 spawn
+汇总子 agent（那会启动子进程跑一整轮模型循环）。
+
+### GitHub 数据工具（不声明，codemode / tool_search 专用）
 
 - `list_github_repositories`：按名称、组织、语言筛选当前账号可访问 GitHub 仓库，并补充公开搜索结果。
-- `read_github`：读取 GitHub 仓库文件，支持可选行号范围。
 - `list_directory_github`：列出 GitHub 仓库目录。
 - `glob_github`：按 glob 匹配 GitHub 仓库文件路径。
-- `search_github`：在 GitHub 仓库中搜索代码并返回上下文片段。
 - `commit_search`：按提交信息、作者、日期、路径搜索 GitHub 提交历史。
 - `diff`：对比 GitHub 两个 ref，可选返回文件 patch。
 
@@ -121,7 +128,7 @@ CLI 登录账号有对应权限。GitLab 支持 `gitlab.com` 以及 `glab` 已�
 
 ## 从 codemode 调用数据工具
 
-这 14 个数据工具没有声明给模型，需要时在 codemode 脚本里调用：先用 `describeTool()` 取参数签名，
+这 12 个 `deferred` 数据工具没有声明给模型，需要时在 codemode 脚本里调用：先用 `describeTool()` 取参数签名，
 或用 `searchTools()` / `ALL_TOOLS` 按语义查找，然后 `tools.<name>({...})`。声明了 `outputSchema` 的工具
 在脚本里解析为结构化对象（错误调用则以 Error 拒绝，可用 `Promise.allSettled()` 保留成功的兄弟调用），
 所以可以并行调用、在脚本里先过滤，只有脚本输出会进入模型上下文。
@@ -153,8 +160,9 @@ const projects = await tools.list_gitlab_projects({ group: "acme", language: "Go
 return projects.projects.map((p) => p.name);
 ```
 
-也可以直接对 Pi 说“用 codemode 调 read_github 读 owner/repo 的 src/index.ts 前 80 行”，
-主会话模型会自己 `describeTool` 后调用；跨仓库的大范围探索则交给 `librarian_github` / `librarian_gitlab`。
+`read_github` / `search_github` 已声明，直接说“读 owner/repo 的 src/index.ts 前 80 行”即可，也可以在
+codemode 脚本里 `tools.read_github({...})`；其余 deferred 工具才需要先 `describeTool` / `searchTools`。
+跨仓库的大范围探索则交给 `librarian_github` / `librarian_gitlab`。
 
 ## 内部模块结构
 
@@ -177,7 +185,9 @@ return projects.projects.map((p) => p.name);
 - `read_github` 和 `read_gitlab` 单次读取内容限制约 128KB；大文件请指定行号范围。
 - `search_github` 使用 GitHub code search，查询可以包含 GitHub 支持的操作符和限定词。
 - `search_gitlab` 使用 GitLab project search，搜索语义比 GitHub code search 更简单。
-- 子 agent 只拿到对应 provider 的远程代码库分析工具，不会读取你的本地文件或环境变量。
-- 14 个数据工具是 `deferred` exposure：启动不占 context，需要时用 codemode 的 `describeTool(name)` / `searchTools(query)`，或直接 `tool_search("github repository diff")`（需 `defaultTools` 含 `+tool_search`），命中工具声明到下一轮后可直接调用；`librarian_*` 子 agent 不受影响，它们显式激活这些工具。
+- 子 agent 的工具集 = 对应 provider 的 7 个远程工具 + 本地只读工具 `read`/`grep`/`find`/`ls`，可以用本地代码和远程仓库做对照；它没有 `bash`/`edit`/`write`、没有 codemode/MCP，也读不到环境变量。
+- 12 个数据工具是 `deferred` exposure：启动不占 context，需要时用 codemode 的 `describeTool(name)` / `searchTools(query)`，或直接 `tool_search("github repository diff")`（需 `defaultTools` 含 `+tool_search`），命中工具声明到下一轮后可直接调用；`librarian_*` 子 agent 不受影响，它们显式激活这些工具。
+- `read_github` / `search_github` 是 `direct`：常驻声明、无需发现，专门避免“只想读一个已知仓库的文件却 spawn 了汇总子 agent”的路径；GitLab 侧（`read_gitlab` / `search_gitlab`）仍保持 deferred，需要时按同一方式改。
+- 这些工具能在 codemode 里调用的前提是它们处于 codemode 的可达集合：默认工具集、`defaultTools` 里的 `+name`、`--tools '+name'` 都会全部保留；但纯白名单 `--tools read,bash,codemode` 会连带裁掉它们（实测 `ALL_TOOLS` 只剩白名单内的项，`describeTool` 返回 `undefined`）。要按名字裁剪工具集时请用 `+name` 形式。
 - 如果看到 `GitHub authentication required`，先运行 `gh auth login` 并确认账号有仓库权限。
 - 如果看到 `GitLab authentication required`，先运行 `glab auth login` 并确认账号有项目权限。

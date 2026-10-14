@@ -11,7 +11,7 @@ import {
   SelectList,
   Text,
 } from "@earendil-works/pi-tui";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { customPanel, hasRichUi } from "../shared/rich-ui.ts";
 import { type CliReviewResult, runPlannotatorPlanReviewCli } from "./cli.ts";
 import { scanMermaidBlocks } from "./mermaid-validator.ts";
 import {
@@ -103,7 +103,7 @@ const showFileSelector = async (
   ctx: ExtensionContext,
   files: FileItem[],
 ): Promise<string | null> =>
-  ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
+  customPanel<string | null>(ctx, (tui, theme, _kb, done) => {
     const container = new Container();
     container.addChild(new DynamicBorder((str) => theme.fg("accent", str)));
     container.addChild(

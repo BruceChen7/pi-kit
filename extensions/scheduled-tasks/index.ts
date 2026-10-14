@@ -217,7 +217,7 @@ export default async function (pi: ExtensionAPI) {
       };
     });
 
-    const selectedId = await pickTask(ctx.ui, items);
+    const selectedId = await pickTask(ctx, items);
 
     if (!selectedId) {
       ctx.ui.notify("Cancelled", "info");

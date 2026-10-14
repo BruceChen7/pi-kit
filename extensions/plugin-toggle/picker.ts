@@ -1,8 +1,6 @@
-import {
-  matchesKey,
-  truncateToWidth,
-  visibleWidth,
-} from "@earendil-works/pi-tui";
+import { matchesKey } from "@earendil-works/pi-tui";
+import { panelPainter } from "../shared/panel-chrome.ts";
+import type { PanelChrome } from "../shared/ui-host.ts";
 import { PICKER_PAGE_SIZE } from "./constants.ts";
 import type { PluginEntry } from "./types.ts";
 import { normalizeName } from "./utils.ts";
@@ -26,6 +24,8 @@ export class PluginTogglePicker {
     private onToggle: (plugin: PluginEntry) => void,
     private onClose: () => void,
     private onUpdate: () => void,
+    /** 外框策略（见 shared/panel-chrome.ts）：pi-web 这类宿主传 "borderless"。 */
+    private chrome: PanelChrome = "boxed",
   ) {
     this.filtered = plugins;
   }
@@ -75,15 +75,18 @@ export class PluginTogglePicker {
   }
 
   render(width: number): string[] {
-    const innerW = Math.max(20, width - 2);
+    const painter = panelPainter(this.chrome);
     const border = (text: string) => `\x1b[2m${text}\x1b[0m`;
     const active = (text: string) => `\x1b[36m${text}\x1b[0m`;
     const muted = (text: string) => `\x1b[2m${text}\x1b[0m`;
     const reverse = (text: string) => `\x1b[7m${text}\x1b[0m`;
-    const row = (content: string, isSelected = false) => {
-      const body = truncateToWidth(` ${content}`, innerW, "…", true);
-      return border("│") + (isSelected ? reverse(body) : body) + border("│");
-    };
+    const row = (content: string, isSelected = false) =>
+      painter.rowLine({
+        width,
+        content,
+        paintBorder: border,
+        decorate: isSelected ? reverse : undefined,
+      });
     const pluginRowContent = (plugin: PluginEntry, isSelected: boolean) => {
       const marker = isSelected ? "▸" : "·";
       const isEnabled = this.enabled.has(normalizeName(plugin.name));
@@ -93,17 +96,16 @@ export class PluginTogglePicker {
       }
       return `${marker} ${active(enabledMark)} ${plugin.name}`;
     };
-    const title = ` Plugin Picker (${this.enabled.size}) `;
-    const borderLen = Math.max(0, innerW - visibleWidth(title));
-    const left = Math.floor(borderLen / 2);
-    const right = borderLen - left;
     const lines = [
-      border(`╭${"─".repeat(left)}`) +
-        active(title) +
-        border(`${"─".repeat(right)}╮`),
+      painter.titleLine({
+        width,
+        title: ` Plugin Picker (${this.enabled.size}) `,
+        paintTitle: active,
+        paintBorder: border,
+      }),
     ];
     lines.push(row(`Search: ${this.query || muted("type to filter...")}`));
-    lines.push(border(`├${"─".repeat(innerW)}┤`));
+    lines.push(painter.ruleLine({ width, paintBorder: border }));
     const pageStart =
       Math.floor(this.selected / PICKER_PAGE_SIZE) * PICKER_PAGE_SIZE;
     const visiblePlugins = this.filtered.slice(
@@ -118,9 +120,10 @@ export class PluginTogglePicker {
     }
     if (this.filtered.length === 0)
       lines.push(row(muted("No matching plugins")));
-    lines.push(border(`├${"─".repeat(innerW)}┤`));
+    lines.push(painter.ruleLine({ width, paintBorder: border }));
     lines.push(row(muted("↑/↓ navigate  enter toggle  esc cancel")));
-    lines.push(border(`╰${"─".repeat(innerW)}╯`));
+    const bottom = painter.bottomLine({ width, paintBorder: border });
+    if (bottom !== undefined) lines.push(bottom);
     return lines;
   }
 

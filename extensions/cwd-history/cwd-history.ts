@@ -8,7 +8,18 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 import { CustomEditor } from "@earendil-works/pi-coding-agent";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { truncateToWidth } from "@earendil-works/pi-tui";
+import {
+  createPickerState,
+  filterOptions,
+  type PickerOption,
+} from "../shared/picker-core.ts";
+import { applyPickerKey } from "../shared/picker-input.ts";
+import {
+  type PickerComponent,
+  renderPickerLines,
+} from "../shared/picker-view.ts";
+import { customPanel, hasRichUi, uiHostProfile } from "../shared/rich-ui.ts";
 
 /**
  * Extension that seeds the prompt editor history with recent prompts from the
@@ -290,8 +301,9 @@ function setEditorHistory(
 
 function applyEditorWithHistory(pi: ExtensionAPI, ctx: ExtensionContext) {
   // The editor component and its history only exist where the host owns the
-  // input widget; a native RPC client has its own.
-  if (!hasRichUi(ctx)) return;
+  // input widget; a native RPC client (and pi-web) has its own.
+  // 这些宿主改用 `/history` 面板 + `setEditorText`（见 registerHistoryCommand）。
+  if (!uiHostProfile(ctx).editorComponent) return;
 
   const sessionFile = ctx.sessionManager.getSessionFile();
   const initialPrompts = collectUserPromptsFromEntries(
@@ -320,7 +332,101 @@ function applyEditorWithHistory(pi: ExtensionAPI, ctx: ExtensionContext) {
   })();
 }
 
+/**
+ * Web 宿主（pi-web）没有 `setEditorComponent`：拿不到输入组件，但**能**写输入框。
+ * 所以把历史做成一个 `/history` 面板，选中后回填（`setEditorText`），
+ * 并保留 TUI 上的上箭头历史（两条路互不影响）。
+ *
+ * 读不到草稿（`editorText.read === false`）时仍然安全：这里不依赖旧草稿值。
+ */
+function registerHistoryCommand(pi: ExtensionAPI): void {
+  // 嵌入运行时/测试替身可能没有命令注册（同 confluence 的写法）。
+  if (typeof pi.registerCommand !== "function") return;
+
+  pi.registerCommand("history", {
+    description: "Pick a previous prompt and put it back in the editor",
+    handler: async (_args, ctx) => {
+      if (!hasRichUi(ctx)) {
+        ctx.ui.notify("History picker requires an interactive host", "warning");
+        return;
+      }
+      if (typeof ctx.ui.setEditorText !== "function") {
+        ctx.ui.notify("This host cannot write to the editor", "warning");
+        return;
+      }
+
+      const sessionFile = ctx.sessionManager.getSessionFile();
+      const current = collectUserPromptsFromEntries(
+        ctx.sessionManager.getBranch(),
+      );
+      const previous = await loadPromptHistoryForCwd(
+        ctx.cwd,
+        sessionFile ?? undefined,
+      );
+      // 新的在前：buildHistoryList 负责去重与排序，直接复用它的结果。
+      const history = buildHistoryList(current, previous);
+      if (history.length === 0) {
+        ctx.ui.notify("No prompt history for this folder yet", "info");
+        return;
+      }
+
+      const picked = await pickHistoryPrompt(ctx, history);
+      if (picked === undefined) return;
+      ctx.ui.setEditorText(picked.text);
+      ctx.ui.notify("Prompt restored — edit and send.", "info");
+    },
+  });
+}
+
+/** 历史面板：纯展示 + 回填（复用共享 picker 的 Core）。 */
+const pickHistoryPrompt = (
+  ctx: ExtensionContext,
+  history: PromptEntry[],
+): Promise<PromptEntry | undefined> =>
+  customPanel<PromptEntry | undefined>(ctx, (tui, _theme, _kb, done, host) => {
+    const rows: PickerOption[] = history.map((entry, index) => {
+      const label = truncateToWidth(entry.text.replaceAll("\n", " "), 96, "…");
+      return { id: String(index), label, value: label };
+    });
+    let state = createPickerState();
+    const visible = (): PickerOption[] => filterOptions(rows, state.query);
+    const component: PickerComponent = {
+      focused: true,
+      render: (width: number) =>
+        renderPickerLines({
+          title: `Prompt history (${rows.length})`,
+          options: visible(),
+          state,
+          width,
+          multiSelect: false,
+          focused: component.focused,
+          chrome: host.chrome,
+          emitCursorMarker: host.wantsFocusMarker,
+          footer: "↑/↓ 选择  type 过滤  enter 回填  esc 取消",
+          emptyText: "没有匹配的历史",
+        }),
+      invalidate: () => {},
+      handleInput: (data: string) => {
+        const action = applyPickerKey(data, state, visible().length);
+        if (action.kind === "cancel") {
+          done(undefined);
+          return;
+        }
+        if (action.kind === "submit") {
+          const row = visible()[action.index];
+          done(row ? history[Number(row.id)] : undefined);
+          return;
+        }
+        if (action.kind === "update") state = action.state;
+        tui.requestRender();
+      },
+    };
+    return component;
+  });
+
 export default function (pi: ExtensionAPI) {
+  registerHistoryCommand(pi);
+
   pi.on("session_start", (_event, ctx) => {
     applyEditorWithHistory(pi, ctx);
   });

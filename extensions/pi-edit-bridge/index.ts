@@ -25,13 +25,18 @@ import type {
   AutocompleteItem,
   AutocompleteProvider,
 } from "@earendil-works/pi-tui";
-import { hasRichUi } from "../shared/rich-ui.ts";
+import { uiHostProfile } from "../shared/rich-ui.ts";
 
 // ─────────────────────────────────────────────────────────────────────
 // State
 // ─────────────────────────────────────────────────────────────────────
 
 let liveProvider: AutocompleteProvider | undefined;
+/**
+ * 宿主没有自动补全钩子时的宿主类型（pi-web 这类自带编辑器的宿主）：
+ * RPC 调用要回一条明确的 JSON-RPC 错误，而不是让 `getProvider()` 抛未捕获异常。
+ */
+let unsupportedHostKind: string | undefined;
 let server: ReturnType<typeof createServer> | undefined;
 let socketPath: string | undefined;
 let token: string | undefined;
@@ -42,8 +47,11 @@ let sessionCwd: string | undefined;
 // ─────────────────────────────────────────────────────────────────────
 
 function captureProvider(ctx: ExtensionContext): void {
-  // Guard: autocomplete only exists on hosts that own the editor widget
-  if (!hasRichUi(ctx)) {
+  // 只有“拥有输入框”的宿主才有自动补全钩子：pi-web 这类 Web 宿主自带编辑器，
+  // `addAutocompleteProvider` 是 no-op（没有编辑器可挂钩），於是桥接无法工作。
+  // 这里必须留下一条明确日志，而不是让后面的 getProvider() 抛未捕获错误。
+  if (!uiHostProfile(ctx).autocomplete) {
+    unsupportedHostKind = uiHostProfile(ctx).kind;
     return;
   }
   ctx.ui.addAutocompleteProvider((current) => {
@@ -52,11 +60,15 @@ function captureProvider(ctx: ExtensionContext): void {
   });
 }
 
-function getProvider(): AutocompleteProvider {
-  if (!liveProvider) {
-    throw new Error("pi-edit-bridge: provider not captured yet");
-  }
+function getProvider(): AutocompleteProvider | undefined {
   return liveProvider;
+}
+
+/** 拿不到补全引擎时的统一错误文案（宿主不支持 / 还没捕获到）。 */
+function providerUnavailableMessage(): string {
+  return unsupportedHostKind
+    ? `autocomplete is not available on this host (${unsupportedHostKind})`
+    : "provider not captured yet";
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -301,6 +313,10 @@ async function handleGetSuggestions(
   }
 
   const provider = getProvider();
+  if (!provider) {
+    sendError(sock, id, -32601, providerUnavailableMessage());
+    return;
+  }
   const signal = new AbortController().signal; // no timeout for now
 
   try {
@@ -349,6 +365,10 @@ function handleApplyCompletion(
   }
 
   const provider = getProvider();
+  if (!provider) {
+    sendError(sock, id, -32601, providerUnavailableMessage());
+    return;
+  }
   try {
     const result = provider.applyCompletion(
       p.lines,
@@ -392,6 +412,10 @@ function handleShouldTriggerFileCompletion(
   }
 
   const provider = getProvider();
+  if (!provider) {
+    sendError(sock, id, -32601, providerUnavailableMessage());
+    return;
+  }
   try {
     const result =
       provider.shouldTriggerFileCompletion?.(

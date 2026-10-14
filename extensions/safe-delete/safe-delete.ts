@@ -33,13 +33,6 @@ import {
   SAFE_DELETE_APPROVAL_CHANNEL,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
-import {
-  classifyToolCall,
-  findToolAnnotations,
-  formatMcpCallSummary,
-  mcpServerName,
-  type ToolAnnotationHints,
-} from "../shared/tool-policy.ts";
 
 // --- Configuration ---
 
@@ -802,77 +795,16 @@ async function confirmDestructiveBashCommand(
   return undefined;
 }
 
-/**
- * MCP calls cannot be analyzed like shell commands, so the gate follows the
- * annotations the server declares: anything not proven read-only is confirmed
- * (`docs/extensions.md#tool-exposure`). Without a UI the call passes through,
- * matching the bash branch.
- */
-async function confirmMcpToolCall(
-  pi: ExtensionAPI,
-  ctx: ExtensionContext,
-  event: { toolName: string; input: unknown },
-  annotations: ToolAnnotationHints | undefined,
-): Promise<{ block: true; reason: string } | undefined> {
-  const title =
-    annotations?.destructiveHint === false
-      ? "MCP tool call needs confirmation"
-      : "MCP tool call may modify data";
-  const body = `${formatMcpCallSummary({
-    toolName: event.toolName,
-    args: event.input,
-    annotations,
-  })}\n\nAllow this MCP tool call to run?`;
-
-  log?.info("prompting for MCP tool call confirmation", {
-    toolName: event.toolName,
-    server: mcpServerName(event.toolName),
-  });
-
-  const isConfirmed = await requestApproval(pi, ctx, {
-    title,
-    body,
-    command: event.toolName,
-  });
-
-  if (!isConfirmed) {
-    log?.warn("MCP tool call blocked", { toolName: event.toolName });
-    return {
-      block: true,
-      reason: `${event.toolName} was not approved`,
-    };
-  }
-
-  log?.info("MCP tool call allowed", { toolName: event.toolName });
-  return undefined;
-}
-
 export default function (pi: ExtensionAPI) {
   log = createLogger("safe-delete", { stderr: null });
   log?.debug("extension initialized", { pid: process.pid });
 
+  // Only bash is gated. MCP calls are deliberately not confirmed here: the
+  // annotation hints are self-declared and unverified, so the gate was a
+  // prompt on every call rather than a real check.
   pi.on("tool_call", async (event, ctx) => {
-    if (isToolCallEventType("bash", event)) {
-      if (!ctx.hasUI) return;
-      return await confirmDestructiveBashCommand(pi, ctx, event);
-    }
-
-    const annotations = findToolAnnotations(pi.getAllTools?.(), event.toolName);
-    const policy = classifyToolCall({
-      toolName: event.toolName,
-      args: event.input,
-      annotations,
-    });
-
-    if (!policy.isMcp || !policy.requiresApproval) return;
-
-    if (!ctx.hasUI) {
-      log?.debug("skipping MCP tool confirmation without UI", {
-        toolName: event.toolName,
-      });
-      return;
-    }
-
-    return await confirmMcpToolCall(pi, ctx, event, annotations);
+    if (!isToolCallEventType("bash", event)) return;
+    if (!ctx.hasUI) return;
+    return await confirmDestructiveBashCommand(pi, ctx, event);
   });
 }

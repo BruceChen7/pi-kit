@@ -50,7 +50,7 @@ describe("buildLibrarianSubagentArgs", () => {
 
     const toolsArg = args[args.indexOf("--tools") + 1];
     // `+name` adds to the child's resolved defaults; the plain allowlist form
-    // cannot activate an `exposure: "codemode"` tool.
+    // cannot activate an `exposure: "deferred"` tool.
     expect(toolsArg?.startsWith("+")).toBe(true);
     for (const name of SUBAGENT_TOOLS) {
       expect(toolsArg?.split(",")).toContain(`+${name}`);

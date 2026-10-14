@@ -325,7 +325,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
       ),
     }),
     outputSchema: fileContentOutputSchema,
-    exposure: "codemode",
+    exposure: "deferred",
 
     async execute(_id, params, signal) {
       try {
@@ -383,7 +383,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
       ),
     }),
     outputSchema: pathListOutputSchema,
-    exposure: "codemode",
+    exposure: "deferred",
 
     async execute(_id, params, signal) {
       try {
@@ -441,7 +441,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
       ),
     }),
     outputSchema: pathListOutputSchema,
-    exposure: "codemode",
+    exposure: "deferred",
 
     async execute(_id, params, signal) {
       try {
@@ -505,7 +505,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
       ),
     }),
     outputSchema: codeSearchOutputSchema,
-    exposure: "codemode",
+    exposure: "deferred",
 
     async execute(_id, params, signal) {
       try {
@@ -600,7 +600,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
       ),
     }),
     outputSchema: commitListOutputSchema,
-    exposure: "codemode",
+    exposure: "deferred",
 
     async execute(_id, params, signal) {
       try {
@@ -711,7 +711,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
       ),
     }),
     outputSchema: githubDiffOutputSchema,
-    exposure: "codemode",
+    exposure: "deferred",
 
     async execute(_id, params, signal) {
       try {
@@ -794,7 +794,7 @@ export function registerGithubTools(pi: ExtensionAPI) {
       ),
     }),
     outputSchema: repositoryListOutputSchema,
-    exposure: "codemode",
+    exposure: "deferred",
 
     async execute(_id, params, signal) {
       try {

@@ -69,7 +69,7 @@ export function registerLibrarianGithub(pi: ExtensionAPI) {
     name: "librarian_github",
     label: "Librarian (GitHub)",
     description:
-      "Specialized codebase understanding agent for GitHub repositories. Delegates to an isolated subagent with GitHub repository analysis tools.",
+      "Specialized codebase understanding agent for GitHub repositories. Delegates to an isolated subagent with GitHub repository analysis tools. Its data tools (read_github, search_github, diff, …) are unlisted: reach them from a codemode script after `await describeTool(name)` or `await searchTools(query)`.",
     parameters: Type.Object({
       query: Type.String({ description: "Your question about the codebase" }),
       context: Type.Optional(

@@ -51,7 +51,7 @@ export function registerLibrarianGitlab(pi: ExtensionAPI) {
     name: "librarian_gitlab",
     label: "Librarian (GitLab)",
     description:
-      "Specialized codebase understanding agent for GitLab projects. Delegates to an isolated subagent with GitLab repository analysis tools.",
+      "Specialized codebase understanding agent for GitLab projects. Delegates to an isolated subagent with GitLab repository analysis tools. Its data tools (read_gitlab, search_gitlab, diff_gitlab, …) are unlisted: reach them from a codemode script after `await describeTool(name)` or `await searchTools(query)`.",
     parameters: Type.Object({
       query: Type.String({ description: "Your question about the codebase" }),
       context: Type.Optional(

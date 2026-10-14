@@ -154,10 +154,10 @@ export function renderProgress(state: LibrarianProgressState): string {
  *
  * `--no-extensions` keeps built-in extensions (mcp / codemode) out, so the
  * subagent has no codemode tool: the librarian tools it needs are registered
- * with `exposure: "codemode"` and activated here by name, otherwise the
- * subagent would have no repository tools at all. `+name` entries add to the
- * child's resolved default tools — the plain allowlist form cannot activate a
- * `codemode`-exposure tool.
+ * with `exposure: "deferred"` — unlisted, so they cost the main session no
+ * context — and activated here by name, otherwise the subagent would have no
+ * repository tools at all. `+name` entries add to the child's resolved default
+ * tools — the plain allowlist form cannot activate a `deferred` tool.
  *
  * `--no-mcp` is stated explicitly so MCP isolation cannot silently regress if
  * the flag semantics or the loaded extension set change.

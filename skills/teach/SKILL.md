@@ -6,6 +6,7 @@ description: >
   Use when the user wants to learn a new topic, skill, or concept; says "teach me", "教我",
   "help me learn", or wants guided interactive learning sessions.
 argument-hint: "What would you like to learn about?"
+disable-model-invocation: true
 ---
 
 # Teach

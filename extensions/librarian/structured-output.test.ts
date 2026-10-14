@@ -28,8 +28,12 @@ type RegisteredTool = {
   ) => Promise<ToolResult>;
 };
 
-/** Tools the model may only reach through a codemode script. */
-const CODEMODE_DATA_TOOLS = [
+/**
+ * Tools the model may only reach through a codemode script: registered with
+ * `deferred` exposure, so pi keeps them callable whenever they are registered
+ * but never lists them in the codemode description.
+ */
+const UNLISTED_DATA_TOOLS = [
   "read_github",
   "list_directory_github",
   "glob_github",
@@ -151,18 +155,20 @@ describe("librarian output schema coverage", () => {
     );
   });
 
-  it("keeps the fan-out data tools codemode-only", () => {
+  it("keeps the fan-out data tools callable but unlisted", () => {
+    // `deferred` exposure: codemode scripts call them by name at any time, and
+    // the model finds them at runtime with `describeTool()` / `searchTools()`.
     const { tools } = fakePi();
 
     expect(
       [...tools.values()]
-        .filter((tool) => tool.exposure === "codemode")
+        .filter((tool) => tool.exposure === "deferred")
         .map((tool) => tool.name)
         .sort(),
-    ).toEqual([...CODEMODE_DATA_TOOLS].sort());
+    ).toEqual([...UNLISTED_DATA_TOOLS].sort());
   });
 
-  it("leaves the model-facing entries declared without codemode", () => {
+  it("keeps the model-facing entries declared", () => {
     const { tools } = fakePi();
 
     expect(
@@ -173,21 +179,28 @@ describe("librarian output schema coverage", () => {
     ).toEqual(DIRECT_TOOLS);
   });
 
-  it("keeps the codemode listing inside the default inline budget", () => {
-    // pi's codemode description spends `codemode.inlineBudget` (default 3000)
-    // estimated tokens on tool sections and silently drops what does not fit,
-    // which would make these tools undiscoverable. Estimated at 4 chars per
-    // token like pi does, plus ~30 tokens per section for headings and
-    // declarations pi renders around the description.
+  it("costs no codemode inline budget", () => {
+    // pi lists the callable tools without `direct` exposure in the codemode
+    // description, where declarations share `codemode.inlineBudget` (default
+    // 3000 estimated tokens) and silently drop what does not fit, which would
+    // make them undiscoverable. Estimated at 4 chars per token like pi does,
+    // plus ~30 tokens per section for the headings and declarations pi renders
+    // around the description. `deferred` tools are never listed, so these 14
+    // tools cost the listing nothing.
     const { tools } = fakePi();
-    const estimated = CODEMODE_DATA_TOOLS.reduce((sum, name) => {
-      const tool = requireTool(tools, name);
+    const listed = [...tools.values()].filter(
+      (tool) =>
+        tool.exposure !== undefined &&
+        tool.exposure !== "direct" &&
+        tool.exposure !== "deferred",
+    );
+    const estimated = listed.reduce((sum, tool) => {
       const chars =
         tool.description.length + JSON.stringify(tool.parameters).length;
       return sum + Math.ceil(chars / 4) + 30;
     }, 0);
 
-    expect(estimated).toBeLessThan(3000);
+    expect(estimated).toBe(0);
   });
 });
 

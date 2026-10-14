@@ -1,6 +1,7 @@
 ---
 name: to-spec
 description: Use when the user wants to turn the current conversation, plan, or design context into a reviewed spec for Pi planning, or optional issue-tracker publication.
+disable-model-invocation: true
 ---
 
 # To Spec

@@ -68,8 +68,8 @@ Look for the originating requirements in this order:
 Collect documented standards and conventions before reading the diff deeply. Common sources:
 
 - `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `README.md`
-- `.pi/contexts/CONTEXT.md`, `.pi/contexts/CONTEXT-MAP.md`, and
-  `.pi/contexts/<context-id>/CONTEXT.md`
+- `.pi/contexts/GLOSSARY.md`, `.pi/contexts/GLOSSARY-MAP.md`, and
+  `.pi/contexts/<context-id>/GLOSSARY.md`
 - `.pi/contexts/**/adr/*.md`
 - `.pi/plans/**` when it contains accepted process constraints
 - `STYLE.md`, `STANDARDS.md`, `STYLEGUIDE.md`, or similar docs

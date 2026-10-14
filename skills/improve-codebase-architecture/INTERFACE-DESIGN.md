@@ -29,7 +29,7 @@ Use a separate technical brief for each pass (file paths, coupling details, depe
 - Pass 3: "Optimise for the most common caller — make the default case trivial."
 - Pass 4 (if applicable): "Design around ports & adapters for cross-seam dependencies."
 
-Include both [LANGUAGE.md](LANGUAGE.md) vocabulary and `.pi/contexts/**/CONTEXT.md` vocabulary in the brief so each pass names things consistently with the architecture language and the project's domain language.
+Include both [LANGUAGE.md](LANGUAGE.md) vocabulary and `.pi/contexts/**/GLOSSARY.md` vocabulary in the brief so each pass names things consistently with the architecture language and the project's domain language.
 
 Each design pass outputs:
 

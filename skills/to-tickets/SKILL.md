@@ -33,7 +33,7 @@ Read when relevant:
 
 - `AGENTS.md` or equivalent repo instructions
 - `.pi/plans/<repo>/specs/` and `.pi/plans/<repo>/plan/`
-- `.pi/contexts/**/CONTEXT.md` — as glossary only, not as ticket/spec/implementation storage
+- `.pi/contexts/**/GLOSSARY.md` — as glossary only, not as ticket/spec/implementation storage
 - `.pi/contexts/**/adr/`
 - relevant code paths if needed for dependency resolution or vertical slicing
 
@@ -98,7 +98,7 @@ Iterate until the user approves the breakdown.
 
 Before writing the final ticket-breakdown spec, handle any durable records that the breakdown crystallized:
 
-- update `.pi/contexts/**/CONTEXT.md` for resolved domain terms, relationships, avoided aliases, or ambiguities
+- update `.pi/contexts/**/GLOSSARY.md` for resolved domain terms, relationships, avoided aliases, or ambiguities
 - propose or create an ADR in `.pi/contexts/**/adr/` for hard-to-reverse, surprising trade-offs with real alternatives
 - do not leave confirmed glossary or ADR material only inside ticket bodies
 

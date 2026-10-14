@@ -3,7 +3,7 @@
 ADRs live under `.pi/contexts/` so they do not pollute application source directories. Use sequential numbering: `0001-slug.md`, `0002-slug.md`, etc.
 
 - **Single-context repo or system-wide decision:** use `<repo>/.pi/contexts/adr/`.
-- **Multi-context repo with `.pi/contexts/CONTEXT-MAP.md`:** use the context-local `adr/` directory next to that context's `.pi` `CONTEXT.md` for context-specific decisions, e.g. `<repo>/.pi/contexts/ordering/adr/`.
+- **Multi-context repo with `.pi/contexts/GLOSSARY-MAP.md`:** use the context-local `adr/` directory next to that context's `.pi` `GLOSSARY.md` for context-specific decisions, e.g. `<repo>/.pi/contexts/ordering/adr/`.
 - **Cross-context/system decision in a multi-context repo:** use root `<repo>/.pi/contexts/adr/`.
 
 Create the relevant `adr/` directory lazily — only when the first ADR is needed for that scope.

@@ -345,7 +345,7 @@ After: the same tree collapsed into one box, with the now-internal calls shown f
 
 ## Tone
 
-Use `.pi/contexts/**/CONTEXT.md` vocabulary for domain concepts and `LANGUAGE.md` vocabulary
+Use `.pi/contexts/**/GLOSSARY.md` vocabulary for domain concepts and `LANGUAGE.md` vocabulary
 for architecture. Concision is not an excuse to drift.
 
 **Use exactly:** module, interface, implementation, depth, deep, shallow, seam, adapter,

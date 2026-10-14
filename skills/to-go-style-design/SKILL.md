@@ -26,7 +26,7 @@ Only place design docs under source `docs/` when the user explicitly asks.
 Read when relevant:
 
 - Existing PRD or spec files under `.pi/plans/<repo>/specs/`
-- `.pi/contexts/**/CONTEXT.md` for domain vocabulary
+- `.pi/contexts/**/GLOSSARY.md` for domain vocabulary
 - `.pi/contexts/**/adr/` for past hard-to-reverse decisions
 - Related code paths if the design doc needs concrete examples
 - The current conversation context (assume that's the main input)
@@ -51,7 +51,7 @@ One question at a time.
 
 ### 3. Update durable language and decisions inline
 
-If the design doc crystallises domain terms, relationships, avoided aliases, or ambiguities, update the relevant `.pi/contexts/**/CONTEXT.md` before writing the final doc.
+If the design doc crystallises domain terms, relationships, avoided aliases, or ambiguities, update the relevant `.pi/contexts/**/GLOSSARY.md` before writing the final doc.
 
 If the design contains a hard-to-reverse, surprising trade-off with real alternatives, propose or create an ADR in `.pi/contexts/**/adr/`.
 

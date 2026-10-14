@@ -26,13 +26,13 @@ Read when relevant:
 
 - `AGENTS.md` or equivalent repo instructions
 - existing plan/spec files under `.pi/plans/<repo>/`
-- domain language under `.pi/contexts/CONTEXT.md`, `.pi/contexts/CONTEXT-MAP.md`, or `.pi/contexts/<context-id>/CONTEXT.md`
+- domain language under `.pi/contexts/GLOSSARY.md`, `.pi/contexts/GLOSSARY-MAP.md`, or `.pi/contexts/<context-id>/GLOSSARY.md`
 - ADRs under `.pi/contexts/adr/` or `.pi/contexts/<context-id>/adr/`
 - relevant code paths and prior tests
 
-Do not create root `CONTEXT.md`, `docs/adr/`, or product docs in source directories from this skill.
+Do not create root `GLOSSARY.md`, `docs/adr/`, or product docs in source directories from this skill.
 
-Treat `.pi/contexts/**/CONTEXT.md` as a domain glossary only. Do not put spec content,
+Treat `.pi/contexts/**/GLOSSARY.md` as a domain glossary only. Do not put spec content,
 implementation plans, file-path-level designs, rollout notes, temporary notes, UI copy drafts,
 or technical decisions there. Put feature requirements in `.pi/plans/<repo>/specs/**`,
 implementation plans in `.pi/plans/<repo>/plan/**`, and hard-to-reverse decisions in ADRs.
@@ -42,7 +42,7 @@ implementation plans in `.pi/plans/<repo>/plan/**`, and hard-to-reverse decision
 ### 1. Explore enough context
 
 - Understand current code shape if not already explored.
-- Use `.pi/contexts/**/CONTEXT.md` vocabulary throughout.
+- Use `.pi/contexts/**/GLOSSARY.md` vocabulary throughout.
 - Respect ADRs under `.pi/contexts/**/adr/`.
 
 ### 2. Sketch test seams
@@ -60,7 +60,7 @@ implementation plans in `.pi/plans/<repo>/plan/**`, and hard-to-reverse decision
 ### 3. Update durable language and decisions inline
 
 - If the spec crystallizes domain terms, relationships, avoided aliases, or ambiguities, update
-  the relevant `.pi/contexts/**/CONTEXT.md` before writing the final spec.
+  the relevant `.pi/contexts/**/GLOSSARY.md` before writing the final spec.
 - If the spec contains a hard-to-reverse, surprising trade-off with real alternatives, propose
   or create an ADR in `.pi/contexts/**/adr/` rather than only listing it in the spec.
 
@@ -120,7 +120,7 @@ A list of testing decisions that were made. Include:
 
 ## Documentation Decisions
 
-- `.pi/contexts/**/CONTEXT.md` terms to add/update, if any
+- `.pi/contexts/**/GLOSSARY.md` terms to add/update, if any
 - `.pi/contexts/**/adr/` records to create, if any
 
 ## Out of Scope

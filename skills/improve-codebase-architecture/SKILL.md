@@ -9,21 +9,21 @@ Surface architectural friction and propose **deepening opportunities** — refac
 
 This skill is built on a shared design vocabulary — run the `/codebase-design` skill for the full architecture terminology (**module**, **interface**, **depth**, **seam**, **adapter**, **leverage**, **locality**). Use these terms exactly in every suggestion — don't drift into "component", "service", "API", or "boundary."
 
-The domain language in `.pi/contexts/**/CONTEXT.md` gives names to good seams; ADRs under `.pi/contexts/adr/` record decisions this skill should not re-litigate.
+The domain language in `.pi/contexts/**/GLOSSARY.md` gives names to good seams; ADRs under `.pi/contexts/adr/` record decisions this skill should not re-litigate.
 
 Default to Chinese unless the user explicitly asks for another language.
 
 ## Pi-native rules
 
 - Review architecture first; do not implement refactors from this skill.
-- Use `.pi/contexts/` for domain docs and ADRs. Do **not** create root `CONTEXT.md`, root `docs/adr/`, or context docs inside source directories.
-- Treat `.pi/contexts/**/CONTEXT.md` as a domain glossary only. Architecture proposals,
+- Use `.pi/contexts/` for domain docs and ADRs. Do **not** create root `GLOSSARY.md`, root `docs/adr/`, or context docs inside source directories.
+- Treat `.pi/contexts/**/GLOSSARY.md` as a domain glossary only. Architecture proposals,
   interface sketches, file paths, rollout notes, implementation plans, and technical decisions
   belong in `.pi/plans/**` or ADRs, not in the glossary.
 - If the task is only architecture exploration with no file edits, the `AGENTS.md` skill-only exception applies and no plan file is required.
 - Before writing `.pi/contexts/**`, specs, plans, or any code, write a plan file at `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` using the required `AGENTS.md` sections
 - When architecture exploration resolves a domain term, relationship, avoided alias, ambiguity,
-  or durable trade-off, update the relevant `.pi/contexts/**/CONTEXT.md` or propose/create an
+  or durable trade-off, update the relevant `.pi/contexts/**/GLOSSARY.md` or propose/create an
   ADR inline before continuing the review.
 - When producing an architecture review artifact, write it to `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-design.md` so `plannotator-auto` can review it.
 
@@ -58,8 +58,8 @@ Key principles:
 Read:
 
 - `AGENTS.md` or equivalent repo instructions
-- `.pi/contexts/CONTEXT.md` or `.pi/contexts/CONTEXT-MAP.md`
-- relevant `.pi/contexts/<context-id>/CONTEXT.md`
+- `.pi/contexts/GLOSSARY.md` or `.pi/contexts/GLOSSARY-MAP.md`
+- relevant `.pi/contexts/<context-id>/GLOSSARY.md`
 - relevant ADRs under `.pi/contexts/adr/` or `.pi/contexts/<context-id>/adr/`
 - `/codebase-design` for the architecture vocabulary and deepening guidance
 
@@ -100,7 +100,7 @@ Each candidate — whether in HTML or list form — includes:
   `ports & adapters`, `mock`)
 - **Doc impact** — `.pi/contexts/**` terms or ADRs that may need updates
 
-Use `.pi/contexts/**/CONTEXT.md` vocabulary for domain names and `/codebase-design` vocabulary for
+Use `.pi/contexts/**/GLOSSARY.md` vocabulary for domain names and `/codebase-design` vocabulary for
 architecture. If a candidate contradicts an existing ADR, surface it only when friction is real
 enough to justify revisiting the ADR.
 
@@ -113,7 +113,7 @@ would you like to explore?”
 
 Once the user picks a candidate, run the `/grill-with-docs` discipline (which uses `/grill-me` for the core interview loop and `/domain-modeling` for glossary/ADR updates).
 
-Side effects happen inline as decisions crystallise — update `.pi/contexts/**/CONTEXT.md` via `/domain-modeling` when domain terms sharpen, and offer ADRs only for hard-to-reverse, surprising, trade-off decisions.
+Side effects happen inline as decisions crystallise — update `.pi/contexts/**/GLOSSARY.md` via `/domain-modeling` when domain terms sharpen, and offer ADRs only for hard-to-reverse, surprising, trade-off decisions.
 
 If the user rejects a candidate with a load-bearing reason, ask whether to record an ADR so future architecture reviews do not re-suggest it.
 

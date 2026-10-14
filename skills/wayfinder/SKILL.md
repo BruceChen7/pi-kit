@@ -258,7 +258,7 @@ Users may run unblocked tickets in parallel, so expect other sessions to be edit
 - **When drawing completes**: submit the map and ticket structure as a spec review:
   `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-wayfinder-design.md`
   via `plannotator_auto_submit_review`.
-- **During advancement, when domain terms or ADR-worthy decisions emerge**: update `.pi/contexts/**/CONTEXT.md` or create an ADR through `/domain-modeling`.
+- **During advancement, when domain terms or ADR-worthy decisions emerge**: update `.pi/contexts/**/GLOSSARY.md` or create an ADR through `/domain-modeling`.
 - **When a ticket resolution warrants recording an architectural decision**: write it to an ADR or plan file, not just the ticket.
 
 ## Dependencies
@@ -279,7 +279,7 @@ This skill depends on the following locally available skills:
 | Assets directory | `.pi/plans/<repo>/wayfinder/assets/` |
 | Spec review (drawing stage) | `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-wayfinder-design.md` |
 | Synthesized design document | `.pi/plans/<repo>/specs/YYYY-MM-DD-<topic>-wayfinder-design.md` |
-| Domain glossary | `.pi/contexts/**/CONTEXT.md` |
+| Domain glossary | `.pi/contexts/**/GLOSSARY.md` |
 | ADR directory | `.pi/contexts/**/adr/` |
 
 ## Version Comparison

@@ -118,8 +118,8 @@ Good interfaces make testing natural:
 ## Pi integration
 
 - This skill provides shared vocabulary consumed by `/improve-codebase-architecture`, `/me-tdd`, and other design skills.
-- Domain language lives in `.pi/contexts/**/CONTEXT.md`; ADRs live in `.pi/contexts/**/adr/`.
-- When this skill's guidance resolves a module shape or seam placement that affects domain language, update `.pi/contexts/**/CONTEXT.md` or record an ADR.
+- Domain language lives in `.pi/contexts/**/GLOSSARY.md`; ADRs live in `.pi/contexts/**/adr/`.
+- When this skill's guidance resolves a module shape or seam placement that affects domain language, update `.pi/contexts/**/GLOSSARY.md` or record an ADR.
 
 ## Attribution
 

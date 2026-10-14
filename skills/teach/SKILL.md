@@ -23,6 +23,8 @@ Create a teaching workspace in a path the user specifies. If they don't specify 
 - For skill-specific learning related to this project: `.pi/teach/<topic>/`
 - The workspace persists across sessions so learning progress is preserved.
 
+Workspace paths (`./lessons/`, `./reference/`, `./learning-records/`, `./assets/`, and the root files) resolve from the chosen workspace directory; only the `*-FORMAT.md` links resolve from this skill's folder.
+
 The state of their learning is captured in several files:
 
 - **`MISSION.md`** — the _reason_ the user is interested in the topic. Grounds all teaching. Use the format in [MISSION-FORMAT.md](./MISSION-FORMAT.md).
@@ -134,7 +136,7 @@ For skill acquisition, difficulty is the tool. Effortful retrieval is what build
 - **Real-world step guides** — e.g. yoga pose sequences, coding exercises
 - **In-agent quizzes** — scenario-based questions about what they've learned
 
-For quizzes, each answer should be exactly the same number of words (and characters, if possible). Don't give the user any clues about the answer through formatting.
+For quizzes, each answer should be exactly the same number of words (and characters, if possible). Vary which position holds the correct answer across questions. Don't give the user any clues about the answer through formatting or order.
 
 Each should be based on a **feedback loop** where the user receives immediate feedback on their performance. The tighter the loop, the faster the learning.
 
@@ -168,3 +170,7 @@ The user will sometimes express preferences for how they want to be taught, or t
 - Teaching workspace paths follow user preference — `.pi/teach/<topic>/` for project-related learning, external paths for general learning.
 - Learning records under `.pi/contexts/` or ADRs for domain terminology are also valid when the learning is closely coupled to this project's domain language.
 - Plan files under `.pi/plans/<repo>/plan/` can reference teaching milestones or lesson outcomes.
+
+## Attribution
+
+Adapted from the `teach` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License.

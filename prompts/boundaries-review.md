@@ -29,7 +29,7 @@ For commit/range/PR scopes, also read commit messages for context:
 0. **Determine scope**: apply the scope detection above. If reviewing a commit or range, first read commit messages (`git log -1`, `git log --oneline`) and display them for context.
 1. **Read every modified file in full** — include surrounding code paths needed to judge seam placement and interface quality, not just the diff hunks.
 2. **Read the three skill references** to internalize the principles.
-3. **Optional context skim**: if the diff touches existing module seams, skim `.pi/contexts/CONTEXT.md` (domain vocabulary) and `.pi/contexts/adr/` (recorded decisions). Use the domain terms; do not re-litigate ADRs unless the diff creates real friction with one.
+3. **Optional context skim**: if the diff touches existing module seams, skim `.pi/contexts/GLOSSARY.md` (domain vocabulary) and `.pi/contexts/adr/` (recorded decisions). Use the domain terms; do not re-litigate ADRs unless the diff creates real friction with one.
 4. **Classify each finding by severity** and tag it with its framework:
    - **P0 (blocking)** — `[boundaries]` IO mixed with domain logic, pure decision embedded in shell, cannot test core without mocking filesystem; `[arch]` new code that silently breaks an existing seam or contradicts a recorded ADR decision without justification
    - **P1 (strongly recommended)** — `[tdd]` tests assert private fields, redundant test coverage (pure logic re-tested in shell), module-level mutable global state; `[arch]` shallow module (interface ≈ implementation), pass-through module that fails the deletion test, behavior untestable through the module interface

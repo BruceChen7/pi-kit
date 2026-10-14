@@ -53,6 +53,16 @@ This gives **zero confidence**: if the code is wrong, the test is wrong in exact
 
 **The fix**: expected values must come from an independent source of truth — a known-good literal, a worked example, or the spec. Treat the expected value as a fixed constant derived from the problem, not recomputed from the implementation.
 
+## Seams: Where Tests Go
+
+A **seam** is the public boundary you test at: the interface where you observe behavior without reaching inside. Tests live at seams, never against internals.
+
+**Test only at pre-agreed seams.** Before writing any test, write down the seams under test and confirm them with the user. No test is written at an unconfirmed seam. You can't test everything, so agreeing the seams up front is how testing effort lands on the critical paths and complex logic instead of every edge case.
+
+Ask: "What's the public interface, and which seams should we test?" Give each proposed seam a one-line note on **what it catches and what it misses**.
+
+When the shape of that interface is itself in question — how deep the module is, where the seam belongs, what the interface should expose — run `/codebase-design` for the shared vocabulary.
+
 ## Workflow
 
 ### 1. Planning
@@ -65,6 +75,7 @@ Before writing any code:
 
 - [ ] Confirm with user what interface changes are needed
 - [ ] Confirm with user which behaviors to test (prioritize)
+- [ ] Confirm the seams under test, each with a one-line catches / misses note
 - [ ] Identify opportunities for [deep modules](deep-modules.md) (small interface, deep implementation) — run `/codebase-design` for the vocabulary and the testability checks
 - [ ] Design interfaces for [testability](interface-design.md)
 - [ ] List the behaviors to test (not implementation steps)
@@ -125,5 +136,5 @@ After all tests pass, look for [refactor candidates](refactoring.md):
 
 ## Attribution
 
-Adapted from the `tdd` skill in https://github.com/mattpocock/skills (v1.0.0+) under the MIT License.
+Adapted from the `tdd` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License.
 References shared architecture vocabulary from `/codebase-design`.

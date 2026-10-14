@@ -97,7 +97,7 @@ Compare evidence, identify corroboration and disagreement, and call out malforme
 ## Pi integration
 
 - Default to Chinese for questions, planning, and summaries.
-- Use `.pi/contexts/**/CONTEXT.md` for domain glossary lookups when defining investigation scopes.
+- Use `.pi/contexts/**/GLOSSARY.md` for domain glossary lookups when defining investigation scopes.
 - Squad configuration (model override) goes in `.pi/third_extension_settings.json` under key `herdrSquad` (project) or `~/.pi/agent/third_extension_settings.json` (global).
 
 ## Attribution

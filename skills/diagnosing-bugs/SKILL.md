@@ -197,7 +197,7 @@ A correct seam is one where the test exercises the **real bug pattern** as it oc
 If a correct seam exists:
 
 1. Turn the minimised repro into a failing test at that seam.
-2. Watch it fail.
+2. Watch it fail. If you forced the red by mutating code or a fixture, `diff` against a pristine copy to prove the mutation landed before trusting the red.
 3. Apply the fix — **ONE change at a time**. No "while I'm here" improvements.
 4. Watch it pass.
 5. Re-run the Phase 1 feedback loop against the original (un-minimised) scenario.
@@ -271,10 +271,10 @@ This skill's directory includes:
 ## Pi integration
 
 - Default to Chinese for questions, summaries, and documentation unless the user specifies another language.
-- Use `.pi/contexts/**/CONTEXT.md` for domain glossary lookups during data flow tracing.
+- Use `.pi/contexts/**/GLOSSARY.md` for domain glossary lookups during data flow tracing.
 - Record significant debugging outcomes (root cause, prevention strategy) in an ADR under `.pi/contexts/**/adr/` or a note in `.pi/plans/<repo>/plan/`.
 - When a debugging session reveals an architectural problem, hand off to `/improve-codebase-architecture` with specific findings.
 
 ## Attribution
 
-Adapted from the `diagnosing-bugs` skill in https://github.com/mattpocock/skills (v1.2.3+) under the MIT License.
+Adapted from the `diagnosing-bugs` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License.

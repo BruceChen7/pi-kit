@@ -1,4 +1,4 @@
-# CONTEXT.md Format
+# GLOSSARY.md Format
 
 ## Structure
 
@@ -21,7 +21,7 @@ _Avoid_: Bill, payment request
 A person or organization that places orders.
 _Avoid_: Client, buyer, account
 
-<!-- CONTEXT.md is a glossary only. Do not turn it into a PRD, wiki, spec, or implementation
+<!-- GLOSSARY.md is a glossary only. Do not turn it into a PRD, wiki, spec, or implementation
      note. -->
 ```
 
@@ -36,18 +36,18 @@ _Avoid_: Client, buyer, account
 
 Domain context is stored under `.pi/contexts/` to avoid polluting the application repository.
 
-**Single context (most repos):** One `.pi/contexts/CONTEXT.md`.
+**Single context (most repos):** One `.pi/contexts/GLOSSARY.md`.
 
-**Multiple contexts:** A `.pi/contexts/CONTEXT-MAP.md` lists the contexts, where their `.pi` context docs live, and how they relate to each other. Links in the map are relative to `.pi/contexts/CONTEXT-MAP.md`:
+**Multiple contexts:** A `.pi/contexts/GLOSSARY-MAP.md` lists the contexts, where their `.pi` context docs live, and how they relate to each other. Links in the map are relative to `.pi/contexts/GLOSSARY-MAP.md`:
 
 ```md
-# Context Map
+# Glossary Map
 
 ## Contexts
 
-- [Ordering](./ordering/CONTEXT.md) — receives and tracks customer orders
-- [Billing](./billing/CONTEXT.md) — generates invoices and processes payments
-- [Fulfillment](./fulfillment/CONTEXT.md) — manages warehouse picking and shipping
+- [Ordering](./ordering/GLOSSARY.md) — receives and tracks customer orders
+- [Billing](./billing/GLOSSARY.md) — generates invoices and processes payments
+- [Fulfillment](./fulfillment/GLOSSARY.md) — manages warehouse picking and shipping
 
 ## Relationships
 
@@ -58,8 +58,8 @@ Domain context is stored under `.pi/contexts/` to avoid polluting the applicatio
 
 The skill infers which structure applies:
 
-- If `.pi/contexts/CONTEXT-MAP.md` exists, read it to find contexts
-- If only `.pi/contexts/CONTEXT.md` exists, single context
-- If neither exists, create `.pi/contexts/CONTEXT.md` lazily when the first term is resolved
+- If `.pi/contexts/GLOSSARY-MAP.md` exists, read it to find contexts
+- If only `.pi/contexts/GLOSSARY.md` exists, single context
+- If neither exists, create `.pi/contexts/GLOSSARY.md` lazily when the first term is resolved
 
 When multiple contexts exist, infer which one the current topic relates to. If unclear, ask.

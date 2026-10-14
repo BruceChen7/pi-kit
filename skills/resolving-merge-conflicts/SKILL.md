@@ -25,9 +25,10 @@ Resolve by **intent**, not by text. Before touching a hunk, trace each side back
 
 ## Pi integration
 
-- Use `.pi/contexts/**/CONTEXT.md` for domain glossary lookups when understanding merge conflict context.
+- Use `.pi/contexts/**/GLOSSARY.md` for domain glossary lookups when understanding merge conflict context.
 - Record significant merge resolutions (trade-offs, intent clashes) in `.pi/contexts/**/adr/` if the resolution has durable architectural implications.
 
 ## Attribution
 
 Adapted from the `resolving-merge-conflicts` skill in https://github.com/mattpocock/skills (v1.0.0+) under the MIT License.
+Upstream removed this skill in v1.3.0; this Pi copy is kept deliberately because merges still happen here.

@@ -15,6 +15,10 @@ describe("resolveUiHostProfile", () => {
       lines: true,
       factory: true,
       placements: "both",
+      // 终端自己画 widget，终端里内容一直可见。
+      contentVisibleWithoutInteraction: true,
+      // 终端不分“展开/折叠”，因此没有自动展开区间。
+      autoExpandedLines: null,
     });
     expect(profile.panelChrome).toBe("boxed");
     expect(profile.panelWidth).toBe("dynamic");
@@ -49,6 +53,10 @@ describe("resolveUiHostProfile", () => {
       lines: true,
       factory: true,
       placements: "both",
+      // shelf 上只有 chip：内容要点开才看到。
+      contentVisibleWithoutInteraction: false,
+      // pi-web 只在 widget 挂载时展开首个 2..3 行的 widget（见 ui-host.ts 实测依据）。
+      autoExpandedLines: { min: 2, max: 3 },
     });
     expect(profile.dialogs).toBe(true);
     // 但它的面板会自己去框、且从不 invalidate / 从不设 focused。
@@ -84,6 +92,10 @@ describe("resolveUiHostProfile", () => {
     expect(profile.customPanels).toBe(false);
     expect(profile.dialogs).toBe(true);
     expect(profile.widgets.factory).toBe(false);
+    // 未知宿主没有实测依据 ⇒ 按现状处理。
+    expect(profile.widgets.contentVisibleWithoutInteraction).toBe(true);
+    // 没有文档化的自动展开行为 ⇒ 不撒 seed。
+    expect(profile.widgets.autoExpandedLines).toBeNull();
     // “需要宿主拥有输入框/终端”的能力一概按没有处理，与旧的 hasRichUi=false 一致。
     expect(profile.editorText).toEqual({ read: false, write: true });
     expect(profile.editorComponent).toBe(false);
@@ -99,6 +111,8 @@ describe("resolveUiHostProfile", () => {
       expect(profile.customPanels).toBe(false);
       expect(profile.dialogs).toBe(false);
       expect(profile.widgets.placements).toBe("none");
+      expect(profile.widgets.contentVisibleWithoutInteraction).toBe(false);
+      expect(profile.widgets.autoExpandedLines).toBeNull();
     }
     const noUi = resolveUiHostProfile({ hasUI: false });
     expect(noUi.kind).toBe("headless");

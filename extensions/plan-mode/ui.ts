@@ -3,6 +3,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   PLAN_MODE_ACT,
   PLAN_MODE_LABELS,
+  PLAN_MODE_PLAN,
   PLAN_MODE_TOGGLE_SHORTCUT_LABEL,
 } from "./constants.ts";
 import type { PlanModeState } from "./state.ts";
@@ -132,10 +133,62 @@ export const formatPlanModeStatus = (
     .join(" • ");
 };
 
+/**
+ * `Plan Mode: {mode}` + 运行状态：两个消费方共用同一对事实，避免文案漂移。
+ *
+ * `dedupeRunStatus` = 运行状态与模式同名时不重复：pi-web 的常驻状态行用它。
+ * TUI 的 mode widget 传 false —— 那里的 `Plan Mode: Act · Act · Alt+0 toggles`
+ * 是既有输出，被 `tui-parity.test.ts` 基线冻结，不要为对齐去重。
+ */
+const formatPlanModeHeadline = (
+  state: PlanModeState,
+  dedupeRunStatus: boolean,
+): string => {
+  const mode = getModeLabel(state);
+  const runStatus = getUserRunStatus(state);
+  return dedupeRunStatus && runStatus === mode
+    ? `Plan Mode: ${mode}`
+    : `Plan Mode: ${mode} · ${runStatus}`;
+};
+
 export const formatModeWidgetLines = (state: PlanModeState): string[] => [
-  `Plan Mode: ${getModeLabel(state)} · ${getUserRunStatus(state)} · ` +
+  `${formatPlanModeHeadline(state, false)} · ` +
     `${PLAN_MODE_TOGGLE_SHORTCUT_LABEL} toggles`,
 ];
+
+/**
+ * pi-web 的常驻状态行（单行）。
+ *
+ * pi-web 会一直显示 `setStatus` 的文本（widget 要点开才看得到），所以这行承担
+ * 两件事：模式/阶段 + 当前 TODO 步骤与计数 —— 面板被折叠、或页面刷新后，用户仍然
+ * 知道进行到哪一步。TUI 不用它（那里 widget 本来就常驻可见）。
+ *
+ * 返回 undefined 表示“没有 plan 相关内容”（普通 act 直聊）：调用方应清空 status，
+ * 不要让每个会话在 shelf 上常驻一格噪音。
+ */
+export const formatPlanModeStatusLine = (
+  state: PlanModeState,
+): string | undefined => {
+  const hasPlanContext =
+    state.mode === PLAN_MODE_PLAN ||
+    state.todos.length > 0 ||
+    state.activeRun !== null;
+  if (!hasPlanContext) {
+    return undefined;
+  }
+
+  const total = state.todos.length;
+  const done = state.todos.filter((todo) => todo.status === "done").length;
+  const current = findCurrentTodo(state.todos);
+  const parts = [formatPlanModeHeadline(state, true)];
+  if (current) {
+    parts.push(`#${current.id}/${total} ${current.text}`);
+  }
+  if (total > 0) {
+    parts.push(`${done}/${total} 已完成`);
+  }
+  return parts.join(" · ");
+};
 
 export const colorModeWidgetLines = (
   lines: string[],

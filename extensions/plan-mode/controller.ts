@@ -17,6 +17,7 @@ interface ToolResultEventResult {
   isError?: boolean;
 }
 
+import { uiHostProfile } from "../shared/rich-ui.ts";
 import {
   classifyToolCall,
   findToolAnnotations,
@@ -94,9 +95,30 @@ import {
   colorTodoWidgetHeading,
   formatModeWidgetLines,
   formatPlanDecision,
+  formatPlanModeStatusLine,
   formatTodoWidgetLines,
   getModeLabel,
 } from "./ui.ts";
+import { decidePlanModeUi } from "./widget-plan.ts";
+
+/**
+ * widget 的观感留在 Shell（Core 只给未上色的内容）：mode widget 整行 accent，
+ * TODO widget 只染标题行 —— 与改造前逐字一致（TUI 基线锁着这个形状）。
+ */
+const colorWidgetLines = (
+  key: string,
+  lines: string[],
+  ctx: ExtensionContext,
+): string[] => {
+  switch (key) {
+    case TODO_WIDGET_KEY:
+      return colorTodoWidgetHeading(lines, ctx);
+    case MODE_WIDGET_KEY:
+      return colorModeWidgetLines(lines, ctx);
+    default:
+      return lines;
+  }
+};
 
 const PLAN_HEADING_REVIEW_GUIDANCE =
   "Keep the plan's first # heading unchanged across denied revisions unless " +
@@ -173,6 +195,9 @@ export class PlanModeController {
     null;
   // Session-scoped values, resolved in restore() (no IO at construction).
   private htmlArtifactDirs: string[] = [];
+  // pi-web 只在 widget 挂载时判定默认展开：TODO widget “首次出现”时要先发一个
+  // 短帧（见 widget-plan.ts）。这里记住它是否已经出现过；restore() 里随会话复位。
+  private todoWidgetPresent = false;
   constructor(private readonly pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext): void {
@@ -187,6 +212,7 @@ export class PlanModeController {
     this.reReviewReminderSentFor = null;
     this.policyReminderSentFor = null;
     this.todoReconcileReminderPending = null;
+    this.todoWidgetPresent = false;
   }
 
   persist(): void {
@@ -240,26 +266,58 @@ export class PlanModeController {
       return;
     }
 
-    ctx.ui.setStatus(STATUS_KEY, undefined);
-    ctx.ui.setWidget(
-      MODE_WIDGET_KEY,
-      colorModeWidgetLines(formatModeWidgetLines(this.state), ctx),
-      { placement: "aboveEditor" },
-    );
+    // 宿主能力进 Core，决策（包括“内容要点开才能看时把模式文案放到状态行”）
+    // 都在 widget-plan.ts 里；这里只负责读档案、上色、执行 emissions。
+    const profile = uiHostProfile(ctx);
+    const decision = decidePlanModeUi({
+      host: {
+        contentVisibleWithoutInteraction:
+          profile.widgets.contentVisibleWithoutInteraction,
+        autoExpandedLines: profile.widgets.autoExpandedLines,
+      },
+      todoWidgetPresent: this.todoWidgetPresent,
+      content: {
+        todoLines: formatTodoWidgetLines(this.state),
+        modeLines: formatModeWidgetLines(this.state),
+        statusText: formatPlanModeStatusLine(this.state),
+      },
+    });
 
-    const widgetLines = formatTodoWidgetLines(this.state);
-    if (widgetLines.length === 0) {
-      ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
+    for (const emission of decision.emissions) {
+      switch (emission.kind) {
+        case "status":
+          ctx.ui.setStatus(emission.key, emission.text);
+          break;
+        case "widget":
+          ctx.ui.setWidget(
+            emission.key,
+            colorWidgetLines(emission.key, emission.lines, ctx),
+            { placement: emission.placement },
+          );
+          break;
+        case "widget-clear":
+          // 清除时不带 options：与改造前的调用形状一致（TUI 断言逐条锁着）。
+          ctx.ui.setWidget(emission.key, undefined);
+          break;
+      }
+    }
+    this.todoWidgetPresent = decision.todoWidgetPresent;
+  }
+
+  /**
+   * 撤销本扩展在宿主上的 UI，并复位 widget 跟踪状态（session_shutdown 用）。
+   *
+   * 与 updateUi 分开：这不是「按当前状态再算一遍」，而是一次性清场，所以形状
+   * （清 widget 不带 options、顺序 status → widget → widget）也与改造前一致。
+   */
+  clearUi(ctx: ExtensionContext): void {
+    this.todoWidgetPresent = false;
+    if (!ctx.hasUI) {
       return;
     }
-
-    ctx.ui.setWidget(
-      TODO_WIDGET_KEY,
-      colorTodoWidgetHeading(widgetLines, ctx),
-      {
-        placement: "belowEditor",
-      },
-    );
+    ctx.ui.setStatus(STATUS_KEY, undefined);
+    ctx.ui.setWidget(MODE_WIDGET_KEY, undefined);
+    ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
   }
 
   buildModePrompt(): string {

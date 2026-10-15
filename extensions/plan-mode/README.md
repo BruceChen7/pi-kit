@@ -83,6 +83,35 @@ During implementation, Pi should:
 
 Completed runs remain visible briefly as an `已交付` task list, then clear on the next run or user turn.
 
+### The widget in pi-web vs. the TUI
+
+The host decides where the same facts go (`controller.updateUi` reads
+`shared/ui-host.ts` and emits through the pure `widget-plan.ts`):
+
+- **TUI**: the mode widget above the editor (with the `Alt+0 toggles` hint) plus
+  the TODO widget below it (`widgets.contentVisibleWithoutInteraction` is true,
+  so no status-row substitute is needed). Nothing here changed:
+  `tui-parity.test.ts` compares every `ctx.ui.setStatus`/`setWidget` call
+  against a baseline recorded before the pi-web adaptation.
+- **pi-web**: the shelf always shows `setStatus` text while a widget has to be
+  clicked open (`widgets.contentVisibleWithoutInteraction` is false), so the mode
+  line moves into that status row and **no mode widget is sent**. When the TODO
+  widget first appears, its first frame carries 2..3 lines and the full list
+  follows immediately: pi-web expands the first 2..3-line widget when it mounts
+  the widget row, and the second frame only replaces the content of an
+  already-expanded widget. That is the whole reason the list is visible without
+  a click — the contract (and its pi-web source references) lives in
+  `shared/ui-host.ts` (`widgets.autoExpandedLines`).
+- **Known boundary**: pi-web keeps a session (and its widgets) alive while the
+  browser has a lease, so a page reload restores the widget with its current
+  content (usually longer than 3 lines) and pi-web expands it by mount-time
+  rule only — the panel comes back collapsed. The same applies whenever another
+  extension's widget already mounted the widget row before the TODO list first
+  appeared: there is no mount moment left to catch, so the panel stays
+  collapsed. In both cases the status row still shows the current step and one
+  click on the TODO chip opens the list. Fixing that would need a change in
+  pi-web itself, which this extension deliberately avoids.
+
 ## Extension reloading and tool schema constraints
 
 Two operational constraints learned from the Console Go / DeepSeek regression

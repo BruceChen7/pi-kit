@@ -1,12 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   ACT_TODO_TOOL_NAME,
-  MODE_WIDGET_KEY,
   PLAN_MODE_COMMAND_OPTIONS,
   PLAN_MODE_TOGGLE_SHORTCUT,
-  STATUS_KEY,
   TODO_TOOL_NAME,
-  TODO_WIDGET_KEY,
 } from "./constants.ts";
 import { PlanModeController } from "./controller.ts";
 import { isPlanMode } from "./state.ts";
@@ -126,12 +123,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    if (!ctx.hasUI) {
-      return;
-    }
-    ctx.ui.setStatus(STATUS_KEY, undefined);
-    ctx.ui.setWidget(MODE_WIDGET_KEY, undefined);
-    ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
+    // 清空 UI 与复位 widget 跟踪状态在同一处（controller.clearUi）：状态本身
+    // （TODO 列表等）由 restore() 在下一个 session_start 重建。
+    controller.clearUi(ctx);
   });
 
   pi.on("input", async (event) => {

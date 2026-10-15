@@ -32,6 +32,8 @@
  * | terminalSuspend     | ✅  | ❌     | ✅          | ❌       |
  * | terminal            | dynamic | 92×40 | dynamic | —      |
  * | panelNormalizesFrame| ❌  | ✅     | ❌          | ❌       |
+ * | widgets.autoExpand  | ❌  | 2..3   | ❌          | ❌       |
+ * | widgets.contentVis  | ✅  | ❌     | ✅          | ❌       |
  *
  * pi-web 的实测依据：
  * - `ctx.ui`（真实现 / no-op）：pi-web `lib/rpc-manager.ts:1859-1985`；
@@ -47,6 +49,17 @@
  * - 颜色：宿主传的是 `PLAIN_TEXT_THEME`（全部返回原文，`lib/rpc-manager.ts:229`），
  *   但面板输出走 `AnsiText`/`ansi_up`（`components/AnsiText.tsx`，支持完整 SGR）
  *   → 所以 themeColors 为 false 时改用 kit 自己的 ANSI 主题才有颜色。
+ * - widget 自动展开：pi-web 只在 widget 数组由空变非空（`ExtensionWidgets` 挂载）
+ *   的那一刻，展开**首个行数在 2..3 之间**的 widget，之后不再重判
+ *   （`components/ExtensionWidgets.tsx` 的 `DEFAULT_EXPANDED_WIDGET_LINES` /
+ *   `getDefaultExpandedWidgetKey()` / `useState(() => …)`；
+ *   `components/ExtensionStatusBar.tsx` 的 `{widgets.length > 0 ? <ExtensionWidgets …> : statusLine}`）
+ *   → 档案字段 `WidgetSurfaces.autoExpandedLines`；想靠它默认展开，就得让 widget
+ *   在那一次挂载时是 2..3 行。
+ * - widget 内容可见性：pi-web 的 widget 平时只是 shelf 上的一枚 chip，内容要点开才看得到；
+ *   而 `setStatus` 的文本一直可见（`components/ExtensionStatusBar.tsx`）→ 档案字段
+ *   `WidgetSurfaces.contentVisibleWithoutInteraction`。谁把这当成“该换一种表达方式”的判据由
+ *   调用方在 Core 里定，档案这里只报事实。
  *
  * 宿主身份怎么认出来（Shell 负责读，见 rich-ui.ts）：pi-web 与扩展同进程，
  * 它的 README「Extension Session Liveness」导出了一个版本化标记
@@ -74,6 +87,24 @@ export type WidgetSurfaces = {
   /** `setWidget(key, factory)`。 */
   factory: boolean;
   placements: "both" | "above" | "none";
+  /**
+   * widget 内容在**不互动**时是否已经可见。
+   *
+   * TUI = true（widget 就画在编辑框上下）；pi-web = false（shelf 上只有 chip，内容
+   * 要点开）；generic-rpc = true（拿不准就不改变现状）；headless = false（widget 不渲染）。
+   * 调用方（Core）拿它决定“该不该把关键信息换到一直可见的地方”，不要把宿主身份
+   * 写回调用点。
+   */
+  contentVisibleWithoutInteraction: boolean;
+  /**
+   * 宿主**自己**在 widget 挂载时展开的“短 widget”行数区间；null = 从不自动展开。
+   *
+   * pi-web = `{ min: 2, max: 3 }`，且只在 widget 数组由空变非空的那一刻判定一次：
+   * 想让它默认展开的 widget 必须在挂载时就是 2..3 行（pi 的 TUI 不分展开/折叠，
+   * 所以这一项只影响外置宿主）。pi-web 改规则时只改这里，调用方读字段、不写
+   * `kind === "pi-web"` 的显示判断。详见文件头的 pi-web 实测依据。
+   */
+  autoExpandedLines: { min: number; max: number } | null;
 };
 
 export type UiHostProfile = {
@@ -119,7 +150,13 @@ export type UiHostInput = {
 const TUI_HOST: UiHostProfile = {
   kind: "tui",
   customPanels: true,
-  widgets: { lines: true, factory: true, placements: "both" },
+  widgets: {
+    lines: true,
+    factory: true,
+    placements: "both",
+    contentVisibleWithoutInteraction: true,
+    autoExpandedLines: null,
+  },
   dialogs: true,
   panelChrome: "boxed",
   panelWidth: "dynamic",
@@ -138,7 +175,15 @@ const TUI_HOST: UiHostProfile = {
 const PI_WEB_HOST: UiHostProfile = {
   kind: "pi-web",
   customPanels: true,
-  widgets: { lines: true, factory: true, placements: "both" },
+  widgets: {
+    lines: true,
+    factory: true,
+    placements: "both",
+    // shelf 上只有 chip：内容要点开才看到（setStatus 的文本才是常驻的）。
+    contentVisibleWithoutInteraction: false,
+    // 只在此刻（数组由空变非空）展开首个 2..3 行的 widget，见 WidgetSurfaces。
+    autoExpandedLines: { min: 2, max: 3 },
+  },
   dialogs: true,
   panelChrome: "borderless",
   panelWidth: 92,
@@ -162,7 +207,14 @@ const PI_WEB_HOST: UiHostProfile = {
 const GENERIC_RPC_HOST: UiHostProfile = {
   kind: "generic-rpc",
   customPanels: false,
-  widgets: { lines: true, factory: false, placements: "both" },
+  widgets: {
+    lines: true,
+    factory: false,
+    placements: "both",
+    // 未知宿主：没有实测依据就不改变现状（调用方继续走 widget 路径）。
+    contentVisibleWithoutInteraction: true,
+    autoExpandedLines: null,
+  },
   dialogs: true,
   panelChrome: "boxed",
   panelWidth: "dynamic",
@@ -185,7 +237,13 @@ const GENERIC_RPC_HOST: UiHostProfile = {
 const HEADLESS_HOST: UiHostProfile = {
   kind: "headless",
   customPanels: false,
-  widgets: { lines: false, factory: false, placements: "none" },
+  widgets: {
+    lines: false,
+    factory: false,
+    placements: "none",
+    contentVisibleWithoutInteraction: false,
+    autoExpandedLines: null,
+  },
   dialogs: false,
   panelChrome: "boxed",
   panelWidth: "dynamic",

@@ -1,15 +1,19 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { profileForHostKind } from "../shared/ui-host.js";
 import {
   ACT_MODE_TODO_TOOL,
   buildCtx,
   buildHarness,
+  buildPiWebCtx,
   type CustomEntry,
+  clearPiWebHost,
   completeApprovedDemoRun,
   demoPlanPath,
   lastModeWidgetCall,
   lastPersistedPlanModeSnapshot,
   lastTodoWidgetCall,
+  markPiWebHost,
   oneItemCompletedSummary,
   PLAN_MODE_CURRENT_MODE_WIDGET,
   PLAN_MODE_TODO_TOOL,
@@ -18,10 +22,12 @@ import {
   plainWidgetText,
   planModeExtension,
   planModeStateEntry,
+  recordUiCalls,
   registeredTool,
   sendAgentPrompt,
   sendInput,
   startPlanModeSession,
+  type UiCall,
 } from "./test-harness.js";
 
 describe("plan-mode extension: todo state and widgets", () => {
@@ -547,5 +553,181 @@ describe("plan-mode extension: todo state and widgets", () => {
       expect.stringContaining("plan_mode_todo"),
       { deliverAs: "followUp" },
     );
+  });
+});
+
+/**
+ * pi-web 适配的契约用例。
+ *
+ * pi-web 只在 `ExtensionWidgets` 挂载时展开「首个 2..3 行」的 widget，且
+ * `setStatus` 始终可见 —— 所以这里钉住两件事：TODO widget 首次出现时先发
+ * 2..3 行再补完整列表；pi-web 下不发 mode widget、改发常驻状态行。
+ */
+describe("plan-mode extension: pi-web widget contract", () => {
+  afterEach(clearPiWebHost);
+
+  const startPiWebSession = async () => {
+    markPiWebHost();
+    const harness = buildHarness();
+    const ctx = buildPiWebCtx();
+    const calls = recordUiCalls(ctx);
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+    return { harness, ctx, calls };
+  };
+
+  const todoWidgetSets = (calls: UiCall[]) =>
+    calls.filter(
+      (call): call is Extract<UiCall, { call: "setWidget" }> =>
+        call.call === "setWidget" &&
+        call.key === PLAN_MODE_TODOS_WIDGET &&
+        call.lines !== undefined,
+    );
+
+  /** pi-web 档案里的自动展开区间（用例不硬编码 2..3：档案是唯一契约来源）。 */
+  const autoExpandedRange = (): { min: number; max: number } => {
+    const range = profileForHostKind("pi-web").widgets.autoExpandedLines;
+    if (!range) {
+      throw new Error("pi-web 宿主档案缺少 widgets.autoExpandedLines");
+    }
+    return range;
+  };
+
+  /** 一次同步的 emissions 从它的 status 开始 —— 定位“本次”，而不是“最后两个调用”。 */
+  const lastSync = (calls: UiCall[]): UiCall[] => {
+    const start = calls.findLastIndex((call) => call.call === "setStatus");
+    return start === -1 ? calls : calls.slice(start);
+  };
+
+  /** 本次同步里 TODO widget 的帧高（行数）。具体数字由 Core 表负责，这里只看编排。 */
+  const todoFrameHeights = (calls: UiCall[]): number[] =>
+    todoWidgetSets(lastSync(calls)).map((call) => call.lines?.length ?? 0);
+
+  const fourTodos = [
+    { text: "实现状态机", status: "in_progress" },
+    { text: "补充 README", status: "todo" },
+    { text: "补测试", status: "todo" },
+    { text: "提交", status: "todo" },
+  ];
+
+  it("pi-web 下不发 mode widget，模式信息走常驻状态行", async () => {
+    const { harness, ctx, calls } = await startPiWebSession();
+    await harness.runCommand("plan-mode", "plan", ctx);
+
+    expect(
+      calls.filter(
+        (call) =>
+          call.call === "setWidget" &&
+          call.key === PLAN_MODE_CURRENT_MODE_WIDGET,
+      ),
+    ).toEqual([]);
+    expect(calls.filter((call) => call.call === "setStatus").at(-1)).toEqual({
+      call: "setStatus",
+      key: "plan-mode",
+      text: expect.stringContaining("Plan Mode: Plan"),
+    });
+  });
+
+  it("TODO 首次出现：先发落在宿主展开区间内的短帧，再发完整列表", async () => {
+    const { harness, ctx, calls } = await startPiWebSession();
+    await harness.runCommand("plan-mode", "plan", ctx);
+    await harness.runTool(
+      PLAN_MODE_TODO_TOOL,
+      { action: "set", items: fourTodos },
+      ctx,
+    );
+
+    const range = autoExpandedRange();
+    const [seedHeight, fullHeight] = todoFrameHeights(calls);
+    expect(seedHeight).toBeGreaterThanOrEqual(range.min);
+    expect(seedHeight).toBeLessThanOrEqual(range.max);
+    expect(fullHeight).toBeGreaterThan(seedHeight);
+
+    // 状态行同时在讲当前步骤（面板被折叠/刷新后的兜底）。
+    expect(calls.filter((call) => call.call === "setStatus").at(-1)).toEqual({
+      call: "setStatus",
+      key: "plan-mode",
+      text: expect.stringContaining("#1/4 实现状态机"),
+    });
+  });
+
+  it("后续更新只发一次完整列表（不重复 seed）", async () => {
+    const { harness, ctx, calls } = await startPiWebSession();
+    await harness.runTool(
+      PLAN_MODE_TODO_TOOL,
+      { action: "set", items: fourTodos },
+      ctx,
+    );
+
+    const before = calls.length;
+    await harness.runTool(
+      PLAN_MODE_TODO_TOOL,
+      { action: "update", id: 1, status: "done" },
+      ctx,
+    );
+
+    const frames = todoFrameHeights(calls.slice(before));
+    expect(frames).toHaveLength(1);
+    // 不再是短帧：行数超过宿主的自动展开区间（= 完整列表）。
+    expect(frames[0]).toBeGreaterThan(autoExpandedRange().max);
+  });
+
+  it("清空后再次出现会重新 seed（面板再次默认展开）", async () => {
+    const { harness, ctx, calls } = await startPiWebSession();
+    await harness.runTool(
+      PLAN_MODE_TODO_TOOL,
+      { action: "set", items: fourTodos },
+      ctx,
+    );
+    await harness.runTool(PLAN_MODE_TODO_TOOL, { action: "clear" }, ctx);
+
+    const before = calls.length;
+    await harness.runTool(
+      PLAN_MODE_TODO_TOOL,
+      { action: "set", items: fourTodos },
+      ctx,
+    );
+
+    const frames = todoFrameHeights(calls.slice(before));
+    expect(frames).toHaveLength(2);
+    expect(frames[0]).toBeLessThanOrEqual(autoExpandedRange().max);
+    expect(frames[1]).toBeGreaterThan(frames[0]);
+  });
+
+  it("session_shutdown 清场后，下一次出现的 TODO 仍会 seed", async () => {
+    const { harness, ctx, calls } = await startPiWebSession();
+    await harness.runTool(
+      PLAN_MODE_TODO_TOOL,
+      { action: "set", items: fourTodos },
+      ctx,
+    );
+    expect(todoFrameHeights(calls)).toHaveLength(2);
+
+    const beforeShutdown = calls.length;
+    await harness.emit("session_shutdown", {}, ctx);
+    expect(calls.slice(beforeShutdown)).toEqual([
+      { call: "setStatus", key: "plan-mode", text: undefined },
+      { call: "setWidget", key: PLAN_MODE_CURRENT_MODE_WIDGET },
+      { call: "setWidget", key: PLAN_MODE_TODOS_WIDGET },
+    ]);
+
+    await harness.emit("session_start", {}, ctx);
+    await harness.runTool(
+      PLAN_MODE_TODO_TOOL,
+      { action: "set", items: fourTodos },
+      ctx,
+    );
+
+    const frames = todoFrameHeights(calls);
+    expect(frames).toHaveLength(2);
+    expect(frames[0]).toBeLessThanOrEqual(autoExpandedRange().max);
+  });
+
+  it("普通 act 直聊不发常驻状态行", async () => {
+    const { calls } = await startPiWebSession();
+
+    expect(calls.filter((call) => call.call === "setStatus")).toEqual([
+      { call: "setStatus", key: "plan-mode", text: undefined },
+    ]);
   });
 });

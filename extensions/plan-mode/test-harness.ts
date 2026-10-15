@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { expect, vi } from "vitest";
+import { PI_WEB_HOST_SYMBOL } from "../shared/ui-host.js";
 import {
   ACT_TODO_TOOL_NAME as ACT_MODE_TODO_TOOL,
   MODE_WIDGET_KEY as PLAN_MODE_CURRENT_MODE_WIDGET,
@@ -75,6 +76,8 @@ export type CustomEntry = {
 export type TestCtx = {
   cwd: string;
   hasUI: boolean;
+  /** 宿主模式；pi-web 与 pi 自带 rpc-mode 都报 "rpc"，pi-web 另有同进程标记。 */
+  mode?: string;
   isIdle: () => boolean;
   signal?: AbortSignal;
   ui: {
@@ -214,6 +217,58 @@ export const buildCtx = (
     getBranch: () => branchEntries,
   },
 });
+
+/**
+ * One recorded `ctx.ui` call, in the order it happened.
+ *
+ * `text` / `lines` 写成可选：基线 fixture 由 `JSON.stringify` 生成，值为
+ * `undefined` 的字段会被丢掉，必须能直接赋值给这个类型。
+ */
+export type UiCall =
+  | { call: "setStatus"; key: string; text?: string | undefined }
+  | { call: "setWidget"; key: string; lines?: string[] | undefined };
+
+/** pi-web 的同进程标记（与 pi-web 真实行为一致：`mode: "rpc"` + marker）。 */
+export const markPiWebHost = (): void => {
+  (globalThis as Record<PropertyKey, unknown>)[PI_WEB_HOST_SYMBOL] = {
+    version: 1,
+  };
+};
+
+export const clearPiWebHost = (): void => {
+  delete (globalThis as Record<PropertyKey, unknown>)[PI_WEB_HOST_SYMBOL];
+};
+
+/** pi-web 宿主下的 ctx（先 `markPiWebHost()`，用完 `clearPiWebHost()`）。 */
+export const buildPiWebCtx = (
+  entries: CustomEntry[] = [],
+  branchEntries: CustomEntry[] = entries,
+): TestCtx => ({
+  ...buildCtx(entries, branchEntries),
+  mode: "rpc",
+});
+
+/**
+ * Records `ctx.ui.setStatus` / `ctx.ui.setWidget` in call order.
+ *
+ * 两个用途：
+ * - `tui-parity.test.ts`：把终端下的调用序列与录制基线逐条比对，钉住「改 pi-web 适配不影响 TUI」。
+ * - pi-web 契约用例：断言 seed 与完整列表的先后顺序、行数与状态文本。
+ */
+export const recordUiCalls = (ctx: TestCtx): UiCall[] => {
+  const calls: UiCall[] = [];
+  ctx.ui.setStatus.mockImplementation(
+    (key: string, text: string | undefined) => {
+      calls.push({ call: "setStatus", key, text });
+    },
+  );
+  ctx.ui.setWidget.mockImplementation(
+    (key: string, lines: string[] | undefined) => {
+      calls.push({ call: "setWidget", key, lines });
+    },
+  );
+  return calls;
+};
 
 export const lastTodoWidgetCall = (ctx: TestCtx) => {
   const call = ctx.ui.setWidget.mock.calls.findLast(

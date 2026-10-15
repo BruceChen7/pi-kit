@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NOTIFY_IDLE_CHANNEL } from "../shared/internal-events.ts";
 import { clearSettingsCache } from "../shared/settings.ts";
@@ -36,7 +36,15 @@ type NotifyHarness = {
   write: ReturnType<typeof vi.spyOn>;
 };
 
-const buildNotifyHarness = async (): Promise<NotifyHarness> => {
+const installStdoutSpy = (): ReturnType<typeof vi.spyOn> =>
+  vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+const buildNotifyHarness = async (
+  options: {
+    /** Share one stdout spy across harnesses to count the real transport calls. */
+    write?: NotifyHarness["write"];
+  } = {},
+): Promise<NotifyHarness> => {
   delete process.env.TMUX;
   const events = {
     emitted: [] as Array<{ channel: string; payload: unknown }>,
@@ -46,9 +54,7 @@ const buildNotifyHarness = async (): Promise<NotifyHarness> => {
     on: vi.fn(),
   };
   const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
-  const write = vi
-    .spyOn(process.stdout, "write")
-    .mockImplementation(() => true);
+  const write = options.write ?? installStdoutSpy();
   const notify = (await loadNotify()).default;
 
   await notify({
@@ -61,20 +67,36 @@ const buildNotifyHarness = async (): Promise<NotifyHarness> => {
   return { handlers, events, write };
 };
 
+const buildDispatchContext = (
+  cwd: string,
+  ctxOverrides: Record<string, unknown> = {},
+): unknown => ({
+  cwd,
+  sessionManager: {
+    getEntries: () => [],
+  },
+  ...ctxOverrides,
+});
+
+const dispatchAgentEnd = async (
+  harness: NotifyHarness,
+  event: unknown,
+  ctx: unknown,
+): Promise<void> => {
+  await harness.handlers.get("agent_end")?.(event, ctx);
+};
+
 const emitAgentEnd = async (
   harness: NotifyHarness,
   event: unknown,
   cwd = process.cwd(),
   ctxOverrides: Record<string, unknown> = {},
 ): Promise<void> => {
-  const ctx = {
-    cwd,
-    sessionManager: {
-      getEntries: () => [],
-    },
-    ...ctxOverrides,
-  };
-  await harness.handlers.get("agent_end")?.(event, ctx);
+  await dispatchAgentEnd(
+    harness,
+    event,
+    buildDispatchContext(cwd, ctxOverrides),
+  );
 };
 
 afterEach(() => {
@@ -158,6 +180,62 @@ describe("notify idle events", () => {
         body: "Finished the work.",
       }),
     });
+  });
+});
+
+describe("duplicate notify loads", () => {
+  // These tests assert on the local transport, so they must not depend on the
+  // order in which the file's other tests cleaned up HERDR_* / TMUX.
+  beforeEach(() => {
+    delete process.env.HERDR_PANE_ID;
+    delete process.env.HERDR_BIN_PATH;
+    delete process.env.TMUX;
+  });
+
+  it("claims every dispatch context exactly once", async () => {
+    const { claimDispatch } = await loadNotify();
+    const claims = new WeakSet<object>();
+    const ctx = {};
+
+    expect(claimDispatch(claims, ctx)).toBe(true);
+    expect(claimDispatch(claims, ctx)).toBe(false);
+    expect(claimDispatch(claims, {})).toBe(true);
+    // Hosts that hand over no ctx keep the old behaviour: nothing is deduped.
+    expect(claimDispatch(claims, undefined)).toBe(true);
+  });
+
+  it("handles one agent_end dispatch once when notify is loaded twice", async () => {
+    const write = installStdoutSpy();
+    const primary = await buildNotifyHarness({ write });
+    const duplicate = await buildNotifyHarness({ write });
+    // pi hands the same ctx object to every handler of one dispatch, even when
+    // two extension paths loaded the same file.
+    const ctx = buildDispatchContext(process.cwd());
+    const event = {
+      messages: [{ role: "assistant", content: "Finished the work." }],
+    };
+
+    await dispatchAgentEnd(primary, event, ctx);
+    await dispatchAgentEnd(duplicate, event, ctx);
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(primary.events.emitted).toHaveLength(1);
+    expect(duplicate.events.emitted).toHaveLength(0);
+  });
+
+  it("keeps notifying for separate dispatches in the same process", async () => {
+    const write = installStdoutSpy();
+    const harness = await buildNotifyHarness({ write });
+
+    await emitAgentEnd(harness, {
+      messages: [{ role: "assistant", content: "First turn." }],
+    });
+    await emitAgentEnd(harness, {
+      messages: [{ role: "assistant", content: "Second turn." }],
+    });
+
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(harness.events.emitted).toHaveLength(2);
   });
 });
 

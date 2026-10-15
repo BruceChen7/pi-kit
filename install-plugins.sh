@@ -14,6 +14,12 @@
 #                                 the sole source file; sibling modules are
 #                                 unreachable through a file symlink)
 #   extensions/foo.ts          -> creates foo.ts symlink
+#
+# A plugin that switches between those shapes (gaining or losing an index.ts)
+# leaves the symlink of the abandoned shape behind, and pi loads *both* shapes
+# as separate extensions — the extension then runs twice per event (visible as
+# duplicated notifications). Every install therefore prunes the other shape's
+# symlink when it really points at the plugin being installed.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Overridable for tests (see scripts/install-plugins.test.ts).
@@ -130,6 +136,29 @@ install_symlink() {
     mark_failed_item "$source_name => $target_dir"
     echo -e "${RED}✗${NC} Failed to install: $source_name"
     return 1
+}
+
+# Prune the symlink of the abandoned shape after a plugin switched between
+# `foo/` and `foo.ts`: only a symlink that resolves to the very source being
+# installed is removed (real files, real directories, and symlinks pointing at
+# something else are left alone).
+remove_stale_shape_symlink() {
+    local expected_path="$1"
+    local stale_path="$2"
+
+    [ -L "$stale_path" ] || return 0
+
+    local expected_real_path
+    local stale_real_path
+    expected_real_path="$(realpath "$expected_path" 2>/dev/null || true)"
+    stale_real_path="$(realpath "$stale_path" 2>/dev/null || true)"
+    if [ -z "$expected_real_path" ] || [ "$expected_real_path" != "$stale_real_path" ]; then
+        return 0
+    fi
+
+    rm -f "$stale_path"
+    mark_removed_item "$(basename "$stale_path") => $(dirname "$stale_path")"
+    echo -e "${YELLOW}−${NC} Removed abandoned symlink: $(basename "$stale_path") => $(dirname "$stale_path")"
 }
 
 install_shared_symlink() {
@@ -279,6 +308,9 @@ install_plugin_sources() {
 
             if [ -f "$dir/index.ts" ]; then
                 install_plugin_dependencies "$dir" "$dir_name"
+                # The plugin used to install as ${dir_name}.ts before it grew
+                # an index.ts entry; drop that abandoned symlink.
+                remove_stale_shape_symlink "${dir}${dir_name}.ts" "$target_dir/${dir_name}.ts"
                 if install_symlink "$dir" "$dir_name" "$target_dir"; then
                     mark_installed "$dir_name"
                 fi
@@ -296,6 +328,7 @@ install_plugin_sources() {
                 if [ -n "$sibling_source" ]; then
                     echo -e "${YELLOW}!${NC} $dir_name has sibling .ts files not reachable through the ${dir_name}.ts symlink (pi resolves relative imports against the symlink's directory). Add an index.ts entry so it installs as a directory."
                 fi
+                remove_stale_shape_symlink "$dir" "$target_dir/$dir_name"
                 if install_symlink "$dir${dir_name}.ts" "${dir_name}.ts" "$target_dir"; then
                     mark_installed "${dir_name}.ts"
                 fi

@@ -127,6 +127,87 @@ describe("install-plugins.sh", () => {
     expect(output).toContain("has sibling .ts files not reachable");
   });
 
+  it("removes the abandoned file symlink when a plugin grows an index.ts entry", () => {
+    const home = createTempDir();
+    const fixture = createTempDir();
+    const extensionsDir = path.join(fixture, "extensions");
+    const pluginDir = path.join(extensionsDir, "notify");
+    fs.mkdirSync(pluginDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginDir, "notify.ts"),
+      "export default function () {}\n",
+    );
+
+    // Single-file shape first: no index.ts yet.
+    runInstall(home, [], { PI_KIT_EXTENSIONS_DIR: extensionsDir });
+
+    const libraryDir = path.join(home, ".agents", "pi-plugins");
+    const fileLink = path.join(libraryDir, "notify.ts");
+    expect(fs.lstatSync(fileLink).isSymbolicLink()).toBe(true);
+
+    fs.writeFileSync(
+      path.join(pluginDir, "index.ts"),
+      'export { default } from "./notify.ts";\n',
+    );
+
+    const output = runInstall(home, [], {
+      PI_KIT_EXTENSIONS_DIR: extensionsDir,
+    });
+
+    // Both shapes would load as two separate extensions (two notifications),
+    // so the abandoned file symlink has to go.
+    expect(fs.realpathSync(path.join(libraryDir, "notify"))).toBe(
+      fs.realpathSync(pluginDir),
+    );
+    expect(fs.existsSync(fileLink)).toBe(false);
+    expect(output).toContain("Removed abandoned symlink: notify.ts");
+  });
+
+  it("removes the abandoned directory symlink when a plugin becomes a single file", () => {
+    const home = createTempDir();
+    const fixture = createTempDir();
+    const extensionsDir = path.join(fixture, "extensions");
+    const pluginDir = createPluginDir(extensionsDir, "notify");
+    fs.writeFileSync(
+      path.join(pluginDir, "notify.ts"),
+      "export default function () {}\n",
+    );
+
+    runInstall(home, [], { PI_KIT_EXTENSIONS_DIR: extensionsDir });
+
+    const libraryDir = path.join(home, ".agents", "pi-plugins");
+    const dirLink = path.join(libraryDir, "notify");
+    expect(fs.statSync(dirLink).isDirectory()).toBe(true);
+
+    fs.rmSync(path.join(pluginDir, "index.ts"));
+
+    runInstall(home, [], { PI_KIT_EXTENSIONS_DIR: extensionsDir });
+
+    expect(fs.realpathSync(path.join(libraryDir, "notify.ts"))).toBe(
+      fs.realpathSync(path.join(pluginDir, "notify.ts")),
+    );
+    expect(fs.existsSync(dirLink)).toBe(false);
+  });
+
+  it("keeps a symlink of the other shape that points at another source", () => {
+    const home = createTempDir();
+    const fixture = createTempDir();
+    const extensionsDir = path.join(fixture, "extensions");
+    createPluginDir(extensionsDir, "notify");
+    const foreignSource = path.join(fixture, "foreign.ts");
+    fs.writeFileSync(foreignSource, "export default function () {}\n");
+
+    const libraryDir = path.join(home, ".agents", "pi-plugins");
+    fs.mkdirSync(libraryDir, { recursive: true });
+    const foreignLink = path.join(libraryDir, "notify.ts");
+    fs.symlinkSync(foreignSource, foreignLink);
+
+    runInstall(home, [], { PI_KIT_EXTENSIONS_DIR: extensionsDir });
+
+    expect(fs.lstatSync(foreignLink).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(foreignLink)).toBe(fs.realpathSync(foreignSource));
+  });
+
   it("migrates old global symlink plugins into the shared library by default", () => {
     const home = createTempDir();
     const oldSource = createTempDir();

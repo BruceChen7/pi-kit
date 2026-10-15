@@ -503,6 +503,65 @@ const panelNotify = async (
   }
 };
 
+/**
+ * 同一个 `agent_end` dispatch 只处理一次。
+ *
+ * 同一个扩展文件被两个入口路径加载时（历史上 `extensions/<dir>/notify.ts` 与
+ * `extensions/<dir>/notify/index.ts` 两条软链并存），工厂会跑两次，模块作用域
+ * 也各有一份，于是每条通知都发两遍、`notify.idle` 也发两遍。
+ *
+ * pi 的 `ExtensionRunner.emit()` 每次 dispatch 只 `createContext()` 一次，再把
+ * 同一个 ctx 交给所有 handler。所以"这个 ctx 已被认领"等价于"这次 dispatch
+ * 已被本扩展的另一个实例处理过"，而不同会话、不同轮次、reload 后的 ctx 都是
+ * 新对象，不会被误伤。
+ *
+ * Core：value in → value out，注册表由调用方传入（Shell 负责跨实例共享）。
+ * `ctx` 拿不到（老宿主 / 测试桩）时不去重，保持旧行为。
+ */
+export const claimDispatch = (
+  claims: WeakSet<object>,
+  ctx: unknown,
+): boolean => {
+  if (!ctx || typeof ctx !== "object") {
+    return true;
+  }
+  if (claims.has(ctx)) {
+    return false;
+  }
+  claims.add(ctx);
+  return true;
+};
+
+/**
+ * Shell：两个模块实例各有一份模块作用域，只有 globalThis 能共享这份注册表；
+ * `Symbol.for` 保证两边取到同一个键。
+ */
+const DISPATCH_CLAIMS_KEY = Symbol.for("pi-kit:notify:dispatch-claims/v1");
+
+const dispatchClaims = (): WeakSet<object> => {
+  const host = globalThis as Record<PropertyKey, unknown>;
+  const existing = host[DISPATCH_CLAIMS_KEY];
+  if (existing instanceof WeakSet) {
+    return existing as WeakSet<object>;
+  }
+  const claims = new WeakSet<object>();
+  host[DISPATCH_CLAIMS_KEY] = claims;
+  return claims;
+};
+
+let warnedDuplicateDispatch = false;
+
+const warnDuplicateDispatch = (): void => {
+  if (warnedDuplicateDispatch) {
+    log?.debug("duplicate agent_end dispatch suppressed");
+    return;
+  }
+  warnedDuplicateDispatch = true;
+  log?.warn("duplicate agent_end dispatch suppressed", {
+    hint: "notify is loaded twice: two extension paths point at the same file. Remove the abandoned `notify.ts` (or `notify/`) symlink from the extensions directory (install-plugins.sh prunes it from now on).",
+  });
+};
+
 export default async function (pi: ExtensionAPI) {
   await initLogger();
 
@@ -514,6 +573,11 @@ export default async function (pi: ExtensionAPI) {
   });
 
   pi.on("agent_end", async (event: AgentEndEvent, ctx: unknown) => {
+    if (!claimDispatch(dispatchClaims(), ctx)) {
+      warnDuplicateDispatch();
+      return;
+    }
+
     const messages = event.messages ?? [];
     const last = messages.at(-1);
     const lastContentType =

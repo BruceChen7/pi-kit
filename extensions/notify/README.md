@@ -13,6 +13,17 @@ Sends best-effort desktop notifications when an agent turn ends.
 Failure, truncation, and aborted notifications do not emit the `notify.idle` internal event. That
 keeps the idle event focused on successful ready-for-input turns.
 
+## Duplicate loads
+
+Pi loads one extension per entry path and dedupes by path, not by resolved file. Two symlinks to
+the same extension (`notify/` and `notify.ts` in the same extensions directory) therefore register
+two `agent_end` handlers and send every notification twice.
+
+`install-plugins.sh` prunes the abandoned symlink when a plugin switches shape. As a safety net the
+extension also claims each dispatch: pi hands every handler of one dispatch the same context
+object, so the second instance sees the claim and returns without notifying. Different sessions,
+later turns, and reloads get fresh context objects and keep notifying normally.
+
 ## Transport
 
 Notifications use OSC 777:

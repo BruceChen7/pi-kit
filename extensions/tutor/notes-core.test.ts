@@ -1583,7 +1583,7 @@ describe("notes-core / 会话绑定与主题简报", () => {
     ).toBe(
       [
         "笔记：/v/Docker实现/02-sds字符串.md",
-        "索引：/v/Docker实现/Docker实现.md（先读 ## 已知边界 / ## 未解决）",
+        "索引：/v/Docker实现/Docker实现.md（先读 ## 背景 / ## 已知边界 / ## 未解决）",
         "当前章节：第2章 · sds字符串",
         "章节：第2章 · sds字符串（ok 3 / wrong 1 / gaps 0）；对象层robj（ok 1 / wrong 0 / gaps 2 / unanswered 1）",
         "续做：第2章 · sds字符串（recent）",

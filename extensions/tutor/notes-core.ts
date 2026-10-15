@@ -1674,7 +1674,9 @@ export const formatTopicBrief = (input: {
 }): string => {
   const lines: string[] = [`笔记：${input.notePath ?? input.indexPath}`];
   if (input.notePath) {
-    lines.push(`索引：${input.indexPath}（先读 ## 已知边界 / ## 未解决）`);
+    lines.push(
+      `索引：${input.indexPath}（先读 ## 背景 / ## 已知边界 / ## 未解决）`,
+    );
   }
   if (input.chapter) {
     lines.push(

@@ -17,8 +17,10 @@ import {
   PLANNOTATOR_PENDING_REVIEW_CHANNEL,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
+import { resolveHtmlReviewDirs } from "../shared/review-targets.ts";
 import { pathsFromToolArgs } from "../shared/tool-targets.ts";
 import {
+  type CliReviewDecision,
   runPlannotatorAnnotateCli,
   runPlannotatorPlanReviewCli,
 } from "./cli.ts";
@@ -27,8 +29,17 @@ import {
   formatPlanMermaidErrors,
   runPlanMermaidValidation,
 } from "./mermaid-validator.ts";
-import { isHtmlPath, resolveReviewTargetMatch } from "./paths.ts";
-import type { PendingPlanReview } from "./plan-review/types.ts";
+import {
+  isAutoReviewTarget,
+  isHtmlPath,
+  resolveReviewTargetMatch,
+  toRepoRelativePath,
+} from "./paths.ts";
+import type {
+  ManualReviewStatus,
+  ManualReviewVerdict,
+  PendingPlanReview,
+} from "./plan-review/types.ts";
 import { getSessionState, type SessionRuntimeState } from "./session.ts";
 
 const KEEP_PLAN_HEADING_GUIDANCE =
@@ -59,12 +70,6 @@ type PendingPlanReviewEventHandle = {
 
 type PlanReviewSubmitToolParams = {
   path?: unknown;
-};
-
-type PlanReviewDecisionLike = {
-  approved?: boolean;
-  feedback?: string;
-  dismissed?: boolean;
 };
 
 const getPendingPlanReviewTargets = (
@@ -444,45 +449,153 @@ const clearPendingPlanReviewTarget = (
   state.pendingPlanReviewTargetsByCwd.delete(cwd);
 };
 
-const approvePendingPlanReview = (
-  state: SessionRuntimeState,
-  cwd: string,
-  pendingPlanReviews: Map<string, PendingPlanReview>,
-  pendingPlanReview: PendingPlanReview,
-) => {
-  state.settledPlanReviewPaths.add(pendingPlanReview.resolvedPlanPath);
-  clearPendingPlanReviewTarget(
-    state,
-    cwd,
-    pendingPlanReviews,
-    pendingPlanReview.resolvedPlanPath,
-  );
-  markPendingPlanReviewEventsHandled(state, cwd, [
-    pendingPlanReview.resolvedPlanPath,
-  ]);
+// --- Review state machine (pending gate + settled set) ---
+
+/** Which entry asked for the review. Both flows share one decision table. */
+export type ReviewFlow = "auto" | "manual";
+
+/** What the reviewer decided, independent of how the CLI encoded it. */
+export type ReviewOutcome =
+  | "approved"
+  | "rejected"
+  | "dismissed"
+  | "no-verdict";
+
+/** Where the reviewed path lands in the session's settled set. */
+export type ReviewSettledState = "settled" | "armed" | "unchanged";
+
+export type ReviewStateTransition = {
+  outcome: ReviewOutcome;
+  /** The revision the reviewer just saw leaves the pending queue. */
+  clearPendingTarget: boolean;
+  /** `settled` = silent afterwards, `armed` = future writes re-queue, `unchanged` = keep. */
+  nextSettledState: ReviewSettledState;
+};
+
+type ReviewToolResult = {
+  content: Array<{ type: "text"; text: string }>;
+  details: Record<string, unknown>;
+};
+
+const SETTLED_STATE_BY_OUTCOME: Record<ReviewOutcome, ReviewSettledState> = {
+  approved: "settled",
+  rejected: "armed",
+  dismissed: "armed",
+  "no-verdict": "unchanged",
+};
+
+/**
+ * Functional Core: read the reviewer's verdict out of the CLI decision.
+ * `exit` marks a run that ended without a verdict (empty CLI output), which is
+ * neither an approval nor a request for changes. Pure value in / value out.
+ */
+const decideReviewOutcome = (decision: CliReviewDecision): ReviewOutcome => {
+  if (decision.approved) {
+    return "approved";
+  }
+  if (decision.dismissed) {
+    return "dismissed";
+  }
+  if (decision.exit) {
+    return "no-verdict";
+  }
+
+  return "rejected";
+};
+
+/**
+ * Functional Core: map a reviewer decision onto the pending gate and settled
+ * set. Pure value in / value out — no session access, no IO.
+ *
+ * The two flows differ in exactly one place: the manual entry releases the
+ * revision it just showed the reviewer (the follow-up message drives the
+ * rewrite), while the auto flow keeps the pending target on rejection so the
+ * agent has to resubmit that revision.
+ */
+export const decideReviewStateTransition = (
+  decision: CliReviewDecision,
+  flow: ReviewFlow,
+): ReviewStateTransition => {
+  const outcome = decideReviewOutcome(decision);
+  const clearPendingTarget =
+    flow === "manual"
+      ? outcome !== "no-verdict"
+      : outcome === "approved" || outcome === "dismissed";
 
   return {
-    content: [
-      {
-        type: "text" as const,
-        text: `Review approved for ${pendingPlanReview.planFile}.`,
-      },
-    ],
-    details: { status: "approved" },
+    outcome,
+    clearPendingTarget,
+    nextSettledState: SETTLED_STATE_BY_OUTCOME[outcome],
   };
 };
 
-const denyPendingPlanReview = (
+/**
+ * Imperative Shell: the single write point for review state, shared by the
+ * auto submit tool and both manual entries. The pending-review event handle is
+ * only resolved when the revision actually leaves the queue — a kept pending
+ * target stays gated.
+ */
+const applyReviewStateTransition = (
+  state: SessionRuntimeState,
+  cwd: string,
+  resolvedPlanPath: string,
+  transition: ReviewStateTransition,
+): void => {
+  if (transition.clearPendingTarget) {
+    const pendingTargets = findPendingPlanReviewTargets(state, cwd);
+    if (pendingTargets?.has(resolvedPlanPath)) {
+      clearPendingPlanReviewTarget(
+        state,
+        cwd,
+        pendingTargets,
+        resolvedPlanPath,
+      );
+    }
+    markPendingPlanReviewEventsHandled(state, cwd, [resolvedPlanPath]);
+  }
+
+  if (transition.nextSettledState === "settled") {
+    state.settledPlanReviewPaths.add(resolvedPlanPath);
+  } else if (transition.nextSettledState === "armed") {
+    state.settledPlanReviewPaths.delete(resolvedPlanPath);
+  }
+};
+
+const formatApprovedReviewResult = (
+  pendingPlanReview: PendingPlanReview,
+): ReviewToolResult => ({
+  content: [
+    {
+      type: "text",
+      text: `Review approved for ${pendingPlanReview.planFile}.`,
+    },
+  ],
+  details: { status: "approved" },
+});
+
+const formatDismissedReviewResult = (
+  pendingPlanReview: PendingPlanReview,
+): ReviewToolResult => ({
+  content: [
+    {
+      type: "text",
+      text: `Review dismissed for ${pendingPlanReview.planFile} without a decision. The pending gate is released; the file will be queued for review again on its next write, or review it anytime with the plan/spec file picker.`,
+    },
+  ],
+  details: { status: "dismissed" },
+});
+
+const formatDeniedReviewResult = (
   pendingPlanReview: PendingPlanReview,
   feedback?: string,
-) => {
+): ReviewToolResult => {
   const headingGuidance = isHtmlPath(pendingPlanReview.resolvedPlanPath)
     ? ""
     : ` ${KEEP_PLAN_HEADING_GUIDANCE}`;
   return {
     content: [
       {
-        type: "text" as const,
+        type: "text",
         text: `YOUR REVIEW WAS NOT APPROVED. Revise ${pendingPlanReview.planFile} and call ${PLAN_REVIEW_SUBMIT_TOOL} again after addressing this feedback.${headingGuidance}\n\n${feedback || "Review changes requested."}`,
       },
     ],
@@ -490,62 +603,30 @@ const denyPendingPlanReview = (
   };
 };
 
-const dismissPendingPlanReview = (
-  state: SessionRuntimeState,
-  cwd: string,
-  pendingPlanReviews: Map<string, PendingPlanReview>,
-  pendingPlanReview: PendingPlanReview,
-) => {
-  // Dismissed = no decision, no revision demand. Release the gate but do NOT
-  // settle the path: the next write to the same file re-queues the review.
-  clearPendingPlanReviewTarget(
-    state,
-    cwd,
-    pendingPlanReviews,
-    pendingPlanReview.resolvedPlanPath,
-  );
-  markPendingPlanReviewEventsHandled(state, cwd, [
-    pendingPlanReview.resolvedPlanPath,
-  ]);
-
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text: `Review dismissed for ${pendingPlanReview.planFile} without a decision. The pending gate is released; the file will be queued for review again on its next write, or review it anytime with the plan/spec file picker.`,
-      },
-    ],
-    details: { status: "dismissed" },
-  };
-};
-
+/** Auto-flow shell: decide → apply state → format the tool result. */
 const completePendingPlanReview = (
   ctx: ExtensionContext,
   state: SessionRuntimeState,
-  pendingPlanReviews: Map<string, PendingPlanReview>,
   pendingPlanReview: PendingPlanReview,
-  result: PlanReviewDecisionLike,
-) => {
+  decision: CliReviewDecision,
+): ReviewToolResult => {
+  const transition = decideReviewStateTransition(decision, "auto");
+  applyReviewStateTransition(
+    state,
+    ctx.cwd,
+    pendingPlanReview.resolvedPlanPath,
+    transition,
+  );
   setReviewWidget(ctx);
-  if (result.approved) {
-    return approvePendingPlanReview(
-      state,
-      ctx.cwd,
-      pendingPlanReviews,
-      pendingPlanReview,
-    );
+
+  if (transition.outcome === "approved") {
+    return formatApprovedReviewResult(pendingPlanReview);
+  }
+  if (transition.outcome === "dismissed") {
+    return formatDismissedReviewResult(pendingPlanReview);
   }
 
-  if (result.dismissed) {
-    return dismissPendingPlanReview(
-      state,
-      ctx.cwd,
-      pendingPlanReviews,
-      pendingPlanReview,
-    );
-  }
-
-  return denyPendingPlanReview(pendingPlanReview, result.feedback);
+  return formatDeniedReviewResult(pendingPlanReview, decision.feedback);
 };
 
 export const notifyPendingReviewGateIfNeeded = (
@@ -558,6 +639,162 @@ export const notifyPendingReviewGateIfNeeded = (
   if (queuedPlanReview && pendingPlanReviews.length > 0) {
     notifyPendingPlanReviewGate(pi, ctx, state, pendingPlanReviews);
   }
+};
+
+// --- Manual review (picker / annotate-latest) state transition ---
+
+const getManualReviewVerdicts = (
+  state: SessionRuntimeState,
+  cwd: string,
+): Map<string, ManualReviewVerdict> => {
+  const existing = state.manualReviewVerdictsByCwd.get(cwd);
+  if (existing) {
+    return existing;
+  }
+
+  const next = new Map<string, ManualReviewVerdict>();
+  state.manualReviewVerdictsByCwd.set(cwd, next);
+  return next;
+};
+
+/**
+ * Record (or clear, with `null`) the verdict a manual review left for a path.
+ * The auto submit tool is the channel other extensions observe approval
+ * through (`details.status === "approved"`), so a manual verdict has to stay
+ * claimable there instead of living only inside this module.
+ */
+const setManualReviewVerdict = (
+  state: SessionRuntimeState,
+  cwd: string,
+  resolvedPlanPath: string,
+  status: ManualReviewStatus | null,
+): void => {
+  const verdicts = getManualReviewVerdicts(state, cwd);
+  if (status === null) {
+    verdicts.delete(resolvedPlanPath);
+    if (verdicts.size === 0) {
+      state.manualReviewVerdictsByCwd.delete(cwd);
+    }
+    return;
+  }
+
+  verdicts.set(resolvedPlanPath, { resolvedPlanPath, status });
+};
+
+/**
+ * Imperative Shell: one-shot claim of the manual verdict waiting for
+ * `resolvedPlanPath` (consumed by the auto submit tool, which is where other
+ * extensions read the approval from). Returns null when the path has no
+ * unclaimed verdict.
+ */
+const claimManualReviewVerdict = (
+  state: SessionRuntimeState,
+  cwd: string,
+  resolvedPlanPath: string,
+): ManualReviewVerdict | null => {
+  const verdicts = state.manualReviewVerdictsByCwd.get(cwd);
+  const verdict = verdicts?.get(resolvedPlanPath);
+  if (!verdicts || !verdict) {
+    return null;
+  }
+
+  verdicts.delete(resolvedPlanPath);
+  if (verdicts.size === 0) {
+    state.manualReviewVerdictsByCwd.delete(cwd);
+  }
+  return verdict;
+};
+
+const MANUAL_VERDICT_STATUS_BY_OUTCOME: Partial<
+  Record<ReviewOutcome, ManualReviewStatus>
+> = {
+  approved: "approved",
+  rejected: "denied",
+};
+
+/**
+ * Imperative Shell: the single write point for the manual entries (file picker
+ * and annotate-latest). A manual review is an explicit re-arm: the reviewed
+ * revision leaves the pending queue, approval settles the path, and any other
+ * verdict keeps it armed so later revisions come back for review until the
+ * user approves.
+ *
+ * Only auto-review targets (plan / specs / `.pi/html`) are affected: manual
+ * review of any other `.pi/` document (teach notes, issues, skills, …) leaves
+ * the auto review queue untouched.
+ */
+const applyManualReviewDecision = (
+  ctx: ExtensionContext,
+  reviewedPath: string,
+  decision: CliReviewDecision,
+): void => {
+  const targetPath = path.resolve(ctx.cwd, reviewedPath);
+  if (
+    !isAutoReviewTarget(resolveHtmlReviewDirs(ctx.cwd), ctx.cwd, targetPath)
+  ) {
+    return;
+  }
+
+  const state = getSessionState(ctx);
+  const transition = decideReviewStateTransition(decision, "manual");
+  applyReviewStateTransition(state, ctx.cwd, targetPath, transition);
+  setManualReviewVerdict(
+    state,
+    ctx.cwd,
+    targetPath,
+    MANUAL_VERDICT_STATUS_BY_OUTCOME[transition.outcome] ?? null,
+  );
+  setReviewWidget(ctx);
+};
+
+/**
+ * Manual-entry wrapper for callers that only hold a decision when the review
+ * produced a verdict (`null` = CLI error / interrupted / closed). A review
+ * without a verdict must not change the gate state.
+ */
+export const applyManualReviewVerdict = (
+  ctx: ExtensionContext,
+  reviewedPath: string,
+  decision: CliReviewDecision | null,
+): void => {
+  if (!decision) {
+    return;
+  }
+
+  applyManualReviewDecision(ctx, reviewedPath, decision);
+};
+
+/**
+ * Report a manual verdict through the auto submit tool. Phrasing matters: the
+ * approved line keeps the `Review approved for <path>` shape so consumers that
+ * parse the text (not just `details.status`) still recognise the approval.
+ */
+const formatManualReviewVerdictResult = (
+  ctx: ExtensionContext,
+  verdict: ManualReviewVerdict,
+): ReviewToolResult => {
+  const planFile = toRepoRelativePath(ctx, verdict.resolvedPlanPath);
+  if (verdict.status === "approved") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Review approved for ${planFile} (reviewed manually).`,
+        },
+      ],
+      details: { status: "approved" },
+    };
+  }
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: `${planFile} was rejected in a manual review. Revise it and call ${PLAN_REVIEW_SUBMIT_TOOL} again after the next write re-queues it.`,
+      },
+    ],
+    details: { status: "denied" },
+  };
 };
 
 export const createPendingReviewGateMessage = (
@@ -586,11 +823,6 @@ export const createPendingReviewGateMessage = (
 
 // --- Plannotator (HTML artifact) review flow ---
 
-type ReviewToolResult = {
-  content: Array<{ type: "text"; text: string }>;
-  details: Record<string, unknown>;
-};
-
 /**
  * One-shot Plannotator review for a pending HTML artifact:
  *   `plannotator annotate <file> --gate --json` blocks until the reviewer
@@ -604,7 +836,6 @@ type ReviewToolResult = {
 const runPlannotatorHtmlReviewFlow = async (
   ctx: ExtensionContext,
   state: SessionRuntimeState,
-  pendingPlanReviews: Map<string, PendingPlanReview>,
   pendingPlanReview: PendingPlanReview,
   signal: AbortSignal,
 ): Promise<ReviewToolResult> => {
@@ -633,36 +864,25 @@ const runPlannotatorHtmlReviewFlow = async (
     };
   }
 
-  const decision = cliResult.result;
-  if (decision.approved) {
-    return approvePendingPlanReview(
-      state,
-      ctx.cwd,
-      pendingPlanReviews,
-      pendingPlanReview,
-    );
-  }
-  if (decision.dismissed) {
-    return dismissPendingPlanReview(
-      state,
-      ctx.cwd,
-      pendingPlanReviews,
-      pendingPlanReview,
-    );
-  }
-  return denyPendingPlanReview(pendingPlanReview, decision.feedback);
+  return completePendingPlanReview(
+    ctx,
+    state,
+    pendingPlanReview,
+    cliResult.result,
+  );
 };
 
 /**
  * Manual-entry Plannotator HTML review (picker / Ctrl+Alt+L): run the
  * annotate CLI once and deliver the feedback as a follow-up. No pending
- * gate involvement.
+ * gate involvement — the caller feeds the returned decision (or `null` when
+ * the review never produced a verdict) to `applyManualReviewVerdict`.
  */
 export const runPlannotatorHtmlReviewOnce = async (
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   filePath: string,
-): Promise<void> => {
+): Promise<CliReviewDecision | null> => {
   const response = await runPlannotatorAnnotateCli(ctx, filePath, {
     signal: ctx.signal,
     timeoutMs: SYNC_PLANNOTATOR_TIMEOUT_MS,
@@ -672,11 +892,11 @@ export const runPlannotatorHtmlReviewOnce = async (
   });
   if (response.status === "error") {
     ctx.ui.notify(response.error, "warning");
-    return;
+    return null;
   }
   if (response.status === "aborted") {
     ctx.ui.notify("Plannotator review interrupted.", "info");
-    return;
+    return null;
   }
 
   const feedback = response.result.feedback ?? "";
@@ -687,9 +907,10 @@ export const runPlannotatorHtmlReviewOnce = async (
         : "Plannotator review closed (no feedback).",
       "info",
     );
-    return;
+    return response.result;
   }
   await pi.sendUserMessage(feedback, { deliverAs: "followUp" });
+  return response.result;
 };
 
 export const registerPlanReviewSubmitTool = (
@@ -707,28 +928,38 @@ export const registerPlanReviewSubmitTool = (
     async execute(_toolCallId, rawParams, signal, _onUpdate, ctx) {
       const params = rawParams as PlanReviewSubmitToolParams;
       const state = getSessionState(ctx);
-      const pendingPlanReviews = findPendingPlanReviewTargets(state, ctx.cwd);
-      if (!pendingPlanReviews || pendingPlanReviews.size === 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: "Error: there is no pending Plannotator review draft in this session.",
-            },
-          ],
-          details: { status: "error" },
-        };
-      }
-
       const requestedPathValue = params.path;
       const requestedPath =
         typeof requestedPathValue === "string"
           ? path.resolve(ctx.cwd, requestedPathValue)
           : null;
+      const pendingPlanReviews = findPendingPlanReviewTargets(state, ctx.cwd);
       const pendingPlanReview = requestedPath
-        ? pendingPlanReviews.get(requestedPath)
+        ? pendingPlanReviews?.get(requestedPath)
         : undefined;
       if (!pendingPlanReview) {
+        // A manual review consumes the pending target, so its verdict has to be
+        // reportable here: this tool result is the channel other extensions
+        // observe approval through (`details.status === "approved"`).
+        const verdict = requestedPath
+          ? claimManualReviewVerdict(state, ctx.cwd, requestedPath)
+          : null;
+        if (verdict) {
+          return formatManualReviewVerdictResult(ctx, verdict);
+        }
+
+        if (!pendingPlanReviews || pendingPlanReviews.size === 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "Error: there is no pending Plannotator review draft in this session.",
+              },
+            ],
+            details: { status: "error" },
+          };
+        }
+
         return {
           content: [
             {
@@ -772,7 +1003,6 @@ export const registerPlanReviewSubmitTool = (
           return await runPlannotatorHtmlReviewFlow(
             ctx,
             state,
-            pendingPlanReviews,
             pendingPlanReview,
             signal,
           );
@@ -884,7 +1114,6 @@ export const registerPlanReviewSubmitTool = (
         const result = completePendingPlanReview(
           ctx,
           state,
-          pendingPlanReviews,
           pendingPlanReview,
           cliResult.result,
         );

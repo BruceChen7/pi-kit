@@ -35,19 +35,54 @@ export function createMockPlannotatorChild(): MockPlannotatorChild {
 export function mockPlannotatorSpawn(result: MockPlannotatorCliResult) {
   const spawn = vi.fn(() => {
     const child = createMockPlannotatorChild();
-    queueMicrotask(() => {
-      if (result.error) {
-        child.emit("error", result.error);
-        return;
-      }
-      if (result.stdout) {
-        child.stdout.emit("data", result.stdout);
-      }
-      if (result.stderr) {
-        child.stderr.emit("data", result.stderr);
-      }
-      child.emit("close", result.status);
-    });
+    scheduleCliResult(child, result);
+    return child;
+  });
+  vi.doMock("node:child_process", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("node:child_process")>()),
+    spawn,
+  }));
+  return spawn;
+}
+
+/** Emits one mocked CLI outcome on the given fake child (async, like spawn). */
+const scheduleCliResult = (
+  child: MockPlannotatorChild,
+  result: MockPlannotatorCliResult,
+): void => {
+  queueMicrotask(() => {
+    if (result.error) {
+      child.emit("error", result.error);
+      return;
+    }
+    if (result.stdout) {
+      child.stdout.emit("data", result.stdout);
+    }
+    if (result.stderr) {
+      child.stderr.emit("data", result.stderr);
+    }
+    child.emit("close", result.status);
+  });
+};
+
+/**
+ * Spawn mock that returns one CLI outcome per call, in order; the last entry
+ * repeats. Use when a single test drives several reviews (e.g. auto-submit
+ * approves, then a manual review asks for changes).
+ */
+export function mockPlannotatorSpawnSequence(
+  results: MockPlannotatorCliResult[],
+) {
+  if (results.length === 0) {
+    throw new Error("mockPlannotatorSpawnSequence needs at least one result");
+  }
+
+  let index = 0;
+  const spawn = vi.fn(() => {
+    const child = createMockPlannotatorChild();
+    const result = results[Math.min(index, results.length - 1)];
+    index += 1;
+    scheduleCliResult(child, result);
     return child;
   });
   vi.doMock("node:child_process", async (importOriginal) => ({
@@ -69,6 +104,53 @@ export function mockHangingPlannotatorSpawn() {
   }));
   return { spawn, getChild: () => child };
 }
+
+export const PLAN_DRAFT_CONTENT = `# Plan
+
+## Goal
+
+这是一个用于测试的计划草稿，描述提交 Plannotator 审核前的上下文。
+
+## Current Flow
+
+\`\`\`mermaid
+sequenceDiagram
+  A->>B: current step
+\`\`\`
+
+## Desired Flow
+
+\`\`\`mermaid
+sequenceDiagram
+  A->>B: new step  ← 新增
+\`\`\`
+
+## Boundaries
+
+\`\`\`mermaid
+sequenceDiagram
+  L1->>L2: call  ← ownership
+\`\`\`
+- Functional Core / Imperative Shell 边界 DTO：Core 纯函数 ↔ Shell 薄包装（IO）。
+
+## Implementation
+
+parentFn()  ← Functional Core / Imperative Shell 拆分示例
+  ├─ childA()  ← Functional Core 纯函数 value in / value out
+  └─ childB()  ← Imperative Shell 副作用
+
+## Testing
+
+核心 Functional Core value in / value out 表测；Imperative Shell 薄包装只测边界。
+
+## Decisions
+
+推荐方案和被拒原因。
+
+## Non-goals
+
+不做什么。
+`;
 
 export type TestCtx = {
   cwd: string;

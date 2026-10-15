@@ -15,6 +15,7 @@ import { customPanel, hasRichUi } from "../shared/rich-ui.ts";
 import { type CliReviewResult, runPlannotatorPlanReviewCli } from "./cli.ts";
 import { scanMermaidBlocks } from "./mermaid-validator.ts";
 import {
+  applyManualReviewVerdict,
   preprocessPlanMarkdown,
   runPlannotatorHtmlReviewOnce,
 } from "./plan-review.ts";
@@ -201,7 +202,8 @@ const runPlanReview = async (
   try {
     if (filePath.endsWith(".html")) {
       // HTML artifacts review through Plannotator annotate (one-shot).
-      await runPlannotatorHtmlReviewOnce(pi, ctx, filePath);
+      const decision = await runPlannotatorHtmlReviewOnce(pi, ctx, filePath);
+      applyManualReviewVerdict(ctx, filePath, decision);
       return;
     }
 
@@ -222,6 +224,11 @@ const runPlanReview = async (
       // Markdown picker review follows the session toggle (browser default).
       hostMode: getSessionState(ctx).reviewHostMode,
     });
+    // Manual review re-arms the path until an approval: the reviewed revision
+    // leaves the pending queue and later writes queue again.
+    if (response.status === "handled") {
+      applyManualReviewVerdict(ctx, filePath, response.result);
+    }
     await handleCliResult(pi, ctx, response, (result) => {
       if (result.approved) {
         return `# Plan Review\n\nReview approved for **${relativePath}** — no changes requested.`;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isAutoReviewTarget } from "./paths.ts";
 
 type ImportedModule = {
   resolvePlanFileForReview?: (
@@ -153,6 +154,49 @@ describe("index path helpers", () => {
       expect(
         resolvePlanFileForReview?.({ cwd: "/repo" }, htmlDirs, targetPath),
       ).toBe(expected);
+    });
+  });
+
+  describe("isAutoReviewTarget (pure predicate)", () => {
+    it.each([
+      {
+        name: "accepts dated plans under any repo slug",
+        htmlDirs: [],
+        targetPath: "/repo/.pi/plans/repo/plan/2026-04-15-auth-flow.md",
+        expected: true,
+      },
+      {
+        name: "accepts dated HTML artifacts inside the html dirs",
+        htmlDirs: ["/repo/.pi/html/repo"],
+        targetPath: "/repo/.pi/html/repo/2026-04-16-prototype.html",
+        expected: true,
+      },
+      {
+        name: "rejects teach notes",
+        htmlDirs: [],
+        targetPath: "/repo/.pi/teach/demo/lesson.md",
+        expected: false,
+      },
+      {
+        name: "rejects undated plan drafts",
+        htmlDirs: [],
+        targetPath: "/repo/.pi/plans/repo/plan/draft.md",
+        expected: false,
+      },
+      {
+        name: "rejects artifacts outside the resolved html dirs",
+        htmlDirs: [],
+        targetPath: "/repo/.pi/html/repo/2026-04-16-prototype.html",
+        expected: false,
+      },
+      {
+        name: "rejects paths outside the workspace cwd",
+        htmlDirs: [],
+        targetPath: "/elsewhere/.pi/plans/repo/plan/2026-04-15-auth-flow.md",
+        expected: false,
+      },
+    ])("$name", ({ htmlDirs, targetPath, expected }) => {
+      expect(isAutoReviewTarget(htmlDirs, "/repo", targetPath)).toBe(expected);
     });
   });
 

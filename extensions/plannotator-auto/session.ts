@@ -1,5 +1,6 @@
 import type {
   ActivePlanReview,
+  ManualReviewVerdict,
   PendingPlanReview,
   SessionKeyContext,
 } from "./plan-review/types.ts";
@@ -24,6 +25,8 @@ export type SessionRuntimeState = {
   >;
   pendingPlanReviewGateKeysByCwd: Map<string, string>;
   pendingPlanReviewTargetsByCwd: Map<string, Map<string, PendingPlanReview>>;
+  /** Manual verdicts awaiting collection by the auto submit tool, keyed by cwd then path. */
+  manualReviewVerdictsByCwd: Map<string, Map<string, ManualReviewVerdict>>;
   toolArgsByCallId: Map<string, unknown>;
   reviewDocumentsByCwd: Map<string, Map<string, SessionReviewDocument>>;
   /** Markdown review hosting: regular browser (default) or Herdr panel (temporary toggle). */
@@ -37,6 +40,7 @@ const createSessionRuntimeState = (): SessionRuntimeState => ({
   pendingPlanReviewEventsByCwd: new Map(),
   pendingPlanReviewGateKeysByCwd: new Map(),
   pendingPlanReviewTargetsByCwd: new Map(),
+  manualReviewVerdictsByCwd: new Map(),
   toolArgsByCallId: new Map<string, unknown>(),
   reviewDocumentsByCwd: new Map(),
   activePlanReviewByCwd: new Map(),

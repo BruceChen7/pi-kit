@@ -85,6 +85,17 @@ export const resolveReviewTargetMatch = (
   };
 };
 
+/**
+ * Pure predicate: is `targetPath` a path the auto review flow may queue?
+ * Value in / value out — `htmlDirs` come from `resolveHtmlReviewDirs` (Shell),
+ * everything else is derived from the arguments.
+ */
+export const isAutoReviewTarget = (
+  htmlDirs: readonly string[],
+  cwd: string,
+  targetPath: string,
+): boolean => getReviewTargetKind(htmlDirs, targetPath, cwd) !== null;
+
 export const resolvePlanFileForReview = (
   ctx: { cwd: string },
   htmlDirs: readonly string[],

@@ -1,10 +1,11 @@
 .PHONY: help install install-all install-plugins install-skills install-third-party \
 	install-clis install-opencli-adapters update-peer-deps update-skills test lint \
-	package-settings restore-settings
+	package-settings restore-settings pi-web pi-web-restart pi-web-stop
 
 PLUGIN_SCOPE ?= --library
 THIRD_PARTY_MODE ?= --install-only
 SKILLS_COMMAND ?= import
+PORT ?= 30141
 
 help:
 	@echo "pi-kit installer targets:"
@@ -20,10 +21,15 @@ help:
 	@echo "  make restore-settings       Restore extension settings + plugin data + qmd config + teach data from a package-settings zip"
 	@echo "                              (ZIP=<zip-or-dir> | DRY_RUN=1 preview | NO_BACKUP=1 skip .bak backups)"
 	@echo ""
+	@echo "  make pi-web                  Start Pi Web detached (PORT=$(PORT)) with the browser open"
+	@echo "  make pi-web-restart          Stop the instance on PORT, then start it detached again"
+	@echo "  make pi-web-stop             Stop the Pi Web instance on PORT"
+	@echo ""
 	@echo "Examples:"
 	@echo "  make install"
 	@echo "  make install-plugins PLUGIN_SCOPE=--project"
 	@echo "  make install-third-party THIRD_PARTY_MODE=--enable-defaults"
+	@echo "  make pi-web"
 
 install: install-all
 
@@ -55,6 +61,15 @@ restore-settings:
 
 update-skills:
 	./skills/migrate.sh update
+
+pi-web:
+	node scripts/pi-web-daemon.mjs start --port $(PORT)
+
+pi-web-restart:
+	node scripts/pi-web-daemon.mjs restart --port $(PORT)
+
+pi-web-stop:
+	pi-web stop --port $(PORT)
 
 test:
 	npm test

@@ -12,7 +12,10 @@ import {
   isReviewDocumentPath,
   toRepoRelativePath,
 } from "./paths.ts";
-import { runPlannotatorHtmlReviewOnce } from "./plan-review.ts";
+import {
+  applyManualReviewVerdict,
+  runPlannotatorHtmlReviewOnce,
+} from "./plan-review.ts";
 import type { SessionReviewDocument, SessionRuntimeState } from "./session.ts";
 import { getSessionState } from "./session.ts";
 
@@ -186,7 +189,12 @@ const annotateLatestReviewDocument = async (
   try {
     if (latestDocument.absolutePath.toLowerCase().endsWith(".html")) {
       // HTML artifacts review through Plannotator annotate (one-shot).
-      await runPlannotatorHtmlReviewOnce(pi, ctx, latestDocument.absolutePath);
+      const decision = await runPlannotatorHtmlReviewOnce(
+        pi,
+        ctx,
+        latestDocument.absolutePath,
+      );
+      applyManualReviewVerdict(ctx, latestDocument.absolutePath, decision);
       return;
     }
 
@@ -202,6 +210,14 @@ const annotateLatestReviewDocument = async (
     );
 
     if (response.status === "handled") {
+      // Same state machine as the picker: an annotated / approved document
+      // re-arms or settles the auto review queue for that path.
+      applyManualReviewVerdict(
+        ctx,
+        latestDocument.absolutePath,
+        response.result,
+      );
+
       const message = formatAnnotationMessage({
         filePath: latestDocument.repoRelativePath,
         feedback: response.result.feedback ?? "",

@@ -29,6 +29,7 @@ import {
   formatTouchedAt,
   hasIndexEntry,
   indexEntryLine,
+  interpretTopicPick,
   isValidChapter,
   isValidTopic,
   isVaultNotePath,
@@ -55,10 +56,12 @@ import {
   stripQuestionCallouts,
   stripSkillBlocks,
   stripToolCallMarkup,
+  TOPIC_PICKER_NEW_ID,
   TOPIC_REJECTION_REASONS,
   toolCallQuestions,
   topicNotePath,
   topicOfNotePath,
+  topicPickerOptions,
   upsertChapterToc,
   vaultDirOf,
 } from "./notes-core.ts";
@@ -1084,6 +1087,69 @@ describe("notes-core / resume", () => {
     });
     expect(state.chapters).toHaveLength(1);
     expect(state.resume).toEqual({ chapter: "进程与隔离", reason: "recent" });
+  });
+});
+
+describe("notes-core / 主题 picker 行", () => {
+  const redis = {
+    topic: "redis高可用",
+    chapters: 3,
+    lastTouchedAt: "2026-09-24T10:11:00.000Z",
+  };
+  const docker = { topic: "Docker实现", chapters: 0, lastTouchedAt: null };
+
+  it("puts the 「＋新建主题…」 row first so a long topic list cannot bury it", () => {
+    const { rows, cursor } = topicPickerOptions({ topics: [redis, docker] });
+
+    expect(rows.map((row) => row.id)).toEqual([
+      TOPIC_PICKER_NEW_ID,
+      "redis高可用",
+      "Docker实现",
+    ]);
+    expect(rows[0]).toEqual({
+      id: TOPIC_PICKER_NEW_ID,
+      label: "＋ 新建主题…",
+      value: TOPIC_PICKER_NEW_ID,
+      kind: "other",
+    });
+    // 光标随行策略一起返回：新建行在首行，回车即进名字输入。
+    expect(cursor).toBe(0);
+  });
+
+  it("orders by recency itself and only adds the display tail", () => {
+    // 传入是乱序（Docker 在前）：行序仍由函数自己决定，不依赖调用方。
+    const { rows } = topicPickerOptions({ topics: [docker, redis] });
+
+    expect(rows.map((row) => row.label)).toEqual([
+      "＋ 新建主题…",
+      "redis高可用 · 3 章 · 2026-09-24 10:11",
+      "Docker实现",
+    ]);
+  });
+
+  it("keeps the new-topic row for an empty vault", () => {
+    const { rows } = topicPickerOptions({ topics: [] });
+    expect(rows.map((row) => row.value)).toEqual([TOPIC_PICKER_NEW_ID]);
+  });
+});
+
+describe("notes-core / picker 选中行的解释", () => {
+  it("reads 「＋新建主题…」 by kind, not by the sentinel string", () => {
+    const { rows } = topicPickerOptions({ topics: [] });
+    expect(interpretTopicPick(rows[0])).toEqual({ kind: "new" });
+  });
+
+  it("treats a topic named exactly like the sentinel as an existing topic", () => {
+    const { rows } = topicPickerOptions({
+      topics: [
+        { topic: TOPIC_PICKER_NEW_ID, chapters: 0, lastTouchedAt: null },
+      ],
+    });
+    expect(interpretTopicPick(rows[1])).toEqual({
+      kind: "existing",
+      topic: TOPIC_PICKER_NEW_ID,
+    });
+    expect(interpretTopicPick(rows[0])).toEqual({ kind: "new" });
   });
 });
 

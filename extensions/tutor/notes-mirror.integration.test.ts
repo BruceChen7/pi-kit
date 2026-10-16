@@ -12,11 +12,20 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PickerOption } from "../shared/picker-core.ts";
 import { CHAPTER_PICKER_NEW_ID } from "./notes-core.ts";
 import { registerNotes } from "./notes-store.ts";
 
 type EventHandler = (event: never, ctx: never) => unknown;
 type ToolExecute = (...args: never[]) => unknown;
+
+/** 假 UI 的「学习者选中行」：真 picker 结算的是整行（见 notes-store 的 showPicker）。 */
+const newChapterRow: PickerOption = {
+  id: CHAPTER_PICKER_NEW_ID,
+  label: "＋ 新建章节…",
+  value: CHAPTER_PICKER_NEW_ID,
+  kind: "other",
+};
 
 let root: string;
 let vault: string;
@@ -64,7 +73,7 @@ const setup = (topic: string): Harness => {
 
   /** 落点 gate 会弹章节 picker：默认模拟学习者接受 agent 的提议（新建章节）。 */
   let proposedChapter: string | undefined;
-  let nextPick: string | undefined = CHAPTER_PICKER_NEW_ID;
+  let nextPick: PickerOption | undefined = newChapterRow;
   const ctx = {
     cwd,
     mode: "tui",
@@ -141,7 +150,7 @@ const setup = (topic: string): Harness => {
       try {
         await bind(toolCallId, chapter);
       } finally {
-        nextPick = CHAPTER_PICKER_NEW_ID;
+        nextPick = newChapterRow;
       }
     },
     topicDir,

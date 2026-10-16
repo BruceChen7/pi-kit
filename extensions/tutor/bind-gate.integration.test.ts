@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PickerOption } from "../shared/picker-core.ts";
 import { CHAPTER_PICKER_NEW_ID } from "./notes-core.ts";
 import { registerNotes } from "./notes-store.ts";
 
@@ -78,12 +79,37 @@ type Harness = {
   entries: Array<{ customType: string; data: unknown }>;
 };
 
+/**
+ * 假 UI 的「学习者选中行」：真 picker 结算的是整行（`PickerOption`，见 notes-store 的
+ * showPicker），所以替身也按行给 —— 顺带让用例读得出「选的是主题行还是章节行」。
+ */
+const topicRow = (topic: string): PickerOption => ({
+  id: topic,
+  label: topic,
+  value: topic,
+  kind: "option",
+});
+
+const chapterRow = (name: string): PickerOption => ({
+  id: `chapter:${name}`,
+  label: name,
+  value: name,
+  kind: "option",
+});
+
+const newChapterRow: PickerOption = {
+  id: CHAPTER_PICKER_NEW_ID,
+  label: "＋ 新建章节…",
+  value: CHAPTER_PICKER_NEW_ID,
+  kind: "other",
+};
+
 const setup = (options: {
   entries?: readonly unknown[];
   /** 非 TUI（print / json / rpc）走「交回对话」那条路。 */
   mode?: "tui" | "print";
-  /** `ctx.ui.custom` 的返回值队列（每次 picker 消费一个）。 */
-  picks?: Array<string | undefined>;
+  /** `ctx.ui.custom` 的返回值队列（每次 picker 消费一个选中行）。 */
+  picks?: Array<PickerOption | undefined>;
   /** `ctx.ui.input` 的返回值队列（「＋新建主题/章节…」消费一个）。 */
   inputs?: Array<string | undefined>;
 }): Harness => {
@@ -146,7 +172,7 @@ describe("bind_notes 落点 gate", () => {
   it("学习者选定落点后才写盘：章节名当主题名不再造出新主题", async () => {
     seedTopic("redis高可用", ["四个动作"]);
     const h = setup({
-      picks: ["redis高可用", "redis集群方案和实现"],
+      picks: [topicRow("redis高可用"), chapterRow("redis集群方案和实现")],
     });
 
     const result = await h.bind({ topic: "redis集群方案和实现" });
@@ -212,7 +238,7 @@ describe("bind_notes 落点 gate", () => {
     seedTopic("redis高可用", ["四个动作", "redis集群方案和实现"]);
     const h = setup({
       entries: [boundEntry("redis高可用")],
-      picks: ["redis集群方案和实现"],
+      picks: [chapterRow("redis集群方案和实现")],
     });
 
     const result = await h.bind({ topic: "redis高可用", chapter: "gossip" });
@@ -234,7 +260,7 @@ describe("bind_notes 落点 gate", () => {
     seedTopic("redis高可用", ["四个动作", "redis集群方案和实现"]);
     const h = setup({
       entries: [boundEntry("redis高可用")],
-      picks: [CHAPTER_PICKER_NEW_ID],
+      picks: [newChapterRow],
       inputs: ["gossip"],
     });
 
@@ -268,7 +294,7 @@ describe("bind_notes 落点 gate", () => {
           data: { file: chapter, chapter: "四个动作" },
         },
       ],
-      picks: ["四个动作"],
+      picks: [chapterRow("四个动作")],
     });
 
     const result = await h.bind({ topic: "redis高可用" });
@@ -294,7 +320,7 @@ describe("bind_notes 落点 gate", () => {
     seedTopic("redis高可用", ["四个动作"]);
     const h = setup({
       entries: [boundEntry("redis高可用")],
-      picks: [CHAPTER_PICKER_NEW_ID],
+      picks: [newChapterRow],
       inputs: ["四个动作"],
     });
     await h.bind({ topic: "redis高可用", chapter: "四个动作" });

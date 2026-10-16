@@ -216,7 +216,7 @@ describe("md-topic picker 在 Kitty 键盘协议下的按键", () => {
   it("无参主题 picker：esc 取消、down 移动光标", async () => {
     prepareTopic("主题甲", ["a"]);
     prepareTopic("主题乙", ["a"]);
-    // 主题列表按 lastTouched 倒序：甲最新，所以乙是第二行（down 的目标）。
+    // 行序：首行「＋新建主题…」，其后按 lastTouched 倒序（甲最新 +1、乙第 +2）。
     stampTopic("主题甲", "2026-09-18T00:10:00.000Z");
     stampTopic("主题乙", "2026-09-18T00:00:10.000Z");
     const esc = setup({ keys: [[KITTY_ESC]], inputs: [] });
@@ -226,7 +226,10 @@ describe("md-topic picker 在 Kitty 键盘协议下的按键", () => {
     expect(esc.entries).toEqual([]);
     expect(esc.notify).toHaveBeenCalledWith("未选择主题。", "warning");
 
-    const down = setup({ keys: [[KITTY_DOWN, "\r"], ["\r"]], inputs: [] });
+    const down = setup({
+      keys: [[KITTY_DOWN, KITTY_DOWN, "\r"], ["\r"]],
+      inputs: [],
+    });
 
     await down.mdTopic("");
 
@@ -234,6 +237,46 @@ describe("md-topic picker 在 Kitty 键盘协议下的按键", () => {
     expect(down.boundFiles()).toEqual([
       path.join(topicDir("主题乙"), "01-a.md"),
     ]);
+  });
+
+  it("首行「＋新建主题…」：回车 = 输入名字建主题，不用翻清单末尾", async () => {
+    prepareTopic("主题甲", ["a"]);
+    prepareTopic("主题乙", ["a"]);
+    stampTopic("主题甲", "2026-09-18T00:10:00.000Z");
+    stampTopic("主题乙", "2026-09-18T00:00:10.000Z");
+    // 主题 picker 回车（首行新建）→ input 主题名 → 新主题没有章节，
+    // 章节 picker 首行是「＋新建章节…」，down 一行选「主题索引页」。
+    const h = setup({
+      keys: [["\r"], [KITTY_DOWN, "\r"]],
+      inputs: ["主题丙"],
+    });
+
+    await h.mdTopic("");
+
+    expect(h.counter.customCalls).toBe(2);
+    expect(h.boundFiles()).toEqual([
+      path.join(topicDir("主题丙"), "主题丙.md"),
+    ]);
+  });
+
+  it("新建主题：名字留空 / esc ⇒ 一个目录都不建、notify 警告", async () => {
+    prepareTopic("主题甲", ["a"]);
+    // 默认光标就在「＋新建主题…」上：回车 → 名字输入；留空提交与 esc 都必须原样退回。
+    const blank = setup({ keys: [["\r"]], inputs: [""] });
+
+    await blank.mdTopic("");
+
+    expect(blank.entries).toEqual([]);
+    expect(blank.notify).toHaveBeenCalledWith("未选择主题。", "warning");
+    expect(fs.readdirSync(path.join(vault, "Learn"))).toEqual(["主题甲"]);
+
+    const esc = setup({ keys: [["\r"]], inputs: [undefined] });
+
+    await esc.mdTopic("");
+
+    expect(esc.entries).toEqual([]);
+    expect(esc.notify).toHaveBeenCalledWith("未选择主题。", "warning");
+    expect(fs.readdirSync(path.join(vault, "Learn"))).toEqual(["主题甲"]);
   });
   it("shift 过的可打印键（CSI 98:66;2u = B）也能进 filter", async () => {
     prepareTopic("分布式共识", ["a", "b"]);
@@ -268,7 +311,8 @@ describe("md-topic picker 在 Kitty 键盘协议下的按键", () => {
     prepareTopic("主题乙", ["a"]);
     stampTopic("主题甲", "2026-09-18T00:10:00.000Z");
     stampTopic("主题乙", "2026-09-18T00:00:10.000Z");
-    // 打字「乙」→ 只剩主题乙一行；不打字时 enter 会选中第一行（主题甲）。
+    // 打字「乙」→ 只剩主题乙一行（首行「＋新建主题…」同样被过滤掉）；
+    // 不打字时 enter 选中的是首行（新建主题），所以要靠过滤直达已有主题。
     const h = setup({ keys: [["乙", "\r"], ["\r"]], inputs: [] });
 
     await h.mdTopic("");
@@ -383,7 +427,8 @@ describe("md-topic 章节 picker", () => {
 
   it("无参：主题 picker → 章节 picker 链，主题来自 ctx.cwd 的设置", async () => {
     prepareTopic("分布式共识", ["a", "b"]);
-    const h = setup({ keys: [["\r"], ["\r"]], inputs: [] });
+    // 用过滤直达主题行：不依赖「新建行占第几行」，行序再变这条用例也不会误报。
+    const h = setup({ keys: [["分布式共识", "\r"], ["\r"]], inputs: [] });
 
     await h.mdTopic("");
 

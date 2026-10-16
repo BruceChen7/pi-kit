@@ -22,6 +22,7 @@ import {
   parseChapterFileName,
   parseIndexEntries,
   proposeChapterOrder,
+  sortTopicsByRecency,
   summarizeChapter,
   type TopicState,
   type TopicSummary,
@@ -136,7 +137,7 @@ export const readTopicState = (
 export const listTopics = (settings: TutorSettings): TopicSummary[] => {
   const root = vaultDirOf(settings);
   if (!fs.existsSync(root)) return [];
-  return fs
+  const entries = fs
     .readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name !== "_archive")
     .map((entry) => {
@@ -159,10 +160,8 @@ export const listTopics = (settings: TutorSettings): TopicSummary[] => {
         chapters: chapters.length,
         lastTouchedAt: newest > 0 ? new Date(newest).toISOString() : null,
       };
-    })
-    .sort((a, b) =>
-      (b.lastTouchedAt ?? "").localeCompare(a.lastTouchedAt ?? ""),
-    );
+    });
+  return sortTopicsByRecency(entries);
 };
 
 /** 最近改动的主题 + 它的章节（未绑定会话的 brief 用；纯事实，不做「应该绑哪儿」的推断）。 */

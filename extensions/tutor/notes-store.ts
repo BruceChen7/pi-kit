@@ -7,7 +7,8 @@
  * - 绑定路径由 notes-core 的纯函数算出，这里只做 mkdir/读现有的内容。
  *
  * 命令与工具：
- * - `/md-topic [主题] [章节]`：无参弹主题 picker（列出 `Learn/` 下已有主题 + 「新建主题…」）；
+ * - `/md-topic [主题] [章节]`：无参弹主题 picker（首行「＋新建主题…」，其后是 `Learn/` 下已有主题，
+ *   行序见 notes-core 的 `topicPickerOptions`——新建主题不能靠翻到清单末尾）；
  *   给主题（或选完主题）后弹章节 picker（已有章节 / ＋新建章节… / 主题索引页）；
  *   `/md-topic <主题> <章节>` 绕过 picker，直接绑 `<vaultRoot>/<topDir>/<主题>/<NN-章节>.md`。
  * - `/md-log <路径>`：只链接**已存在**的文件（保留 learn 的安全语义，不因笔误造文件）。
@@ -66,10 +67,10 @@ import {
   formatSectionHeader,
   formatTopicBrief,
   formatTopicHeader,
-  formatTouchedAt,
   formatUserBlock,
   hasIndexEntry,
   indexEntryLine,
+  interpretTopicPick,
   isValidChapter,
   isValidTopic,
   isVaultNotePath,
@@ -98,6 +99,7 @@ import {
   topicDirOf,
   topicNotePath,
   topicOfNotePath,
+  topicPickerOptions,
   upsertChapterToc,
   vaultDirOf,
 } from "./notes-core.ts";
@@ -1490,8 +1492,6 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
     },
   });
 
-  const NEW_TOPIC_ID = "__new_topic__";
-
   /**
    * 两个 picker 的壳完全一样：Core（applyPickerKey）决定动作，这里只做渲染、
    * 焦点态与结算。`focused` 让搜索框发出 CURSOR_MARKER —— pi 靠它把硬件光标
@@ -1500,12 +1500,13 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
    */
   const showPicker = (args: {
     tui: { requestRender: () => void };
-    done: (value: string | undefined) => void;
+    /** 结算**选中的那一行**（不是裸 value）：调用方按 id / kind 认行，不猜字符串。 */
+    done: (row: PickerOption | undefined) => void;
     host: PanelHost;
     title: string;
     rows: PickerOption[];
     emptyText: string;
-    /** 初始光标（如章节 picker 的 resume 行）。 */
+    /** 初始光标（主题 picker 的新建行 / 章节 picker 的 resume 行）。 */
     cursor?: number;
   }): PickerComponent => {
     let state = { ...createPickerState(), cursor: args.cursor ?? 0 };
@@ -1533,7 +1534,7 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
           return;
         }
         if (action.kind === "submit") {
-          args.done(visible()[action.index]?.value);
+          args.done(visible()[action.index]);
           return;
         }
         if (action.kind === "update") {
@@ -1547,6 +1548,8 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
 
   /**
    * 无参 `/md-topic`：用 picker 选已有主题（或新建），复用 shared/picker-*。
+   * 行序与初始光标都由 notes-core 的 `topicPickerOptions` 决定（新建行在第一行），
+   * 「选中的是哪一行」由 notes-core 的 `interpretTopicPick` 判定（不比较哨兵字符串）。
    * 整段交互（picker + 「新建主题…」的名字输入）都占着终端，所以走 sharedUiGate：
    * 终端只有一块编辑器槽位，别的模态要等这次交互出闸（见 ui-gate）。
    */
@@ -1555,22 +1558,10 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
     options: { suggested?: string } = {},
   ): Promise<string | undefined> =>
     sharedUiGate.run(async () => {
-      const topics = listTopics(settingsFor(ctx));
-      const rows: PickerOption[] = [
-        ...topics.map((entry) => ({
-          id: entry.topic,
-          label: `${entry.topic}${entry.chapters > 0 ? ` · ${entry.chapters} 章` : ""}${entry.lastTouchedAt ? ` · ${formatTouchedAt(entry.lastTouchedAt)}` : ""}`,
-          value: entry.topic,
-          kind: "option" as const,
-        })),
-        {
-          id: NEW_TOPIC_ID,
-          label: "＋ 新建主题…",
-          value: NEW_TOPIC_ID,
-          kind: "other" as const,
-        },
-      ];
-      const picked = await customPanel<string | undefined>(
+      const { rows, cursor } = topicPickerOptions({
+        topics: listTopics(settingsFor(ctx)),
+      });
+      const row = await customPanel<PickerOption | undefined>(
         ctx,
         (tui, _theme, _kb, done, host) =>
           showPicker({
@@ -1580,10 +1571,12 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
             title: "选择主题",
             rows,
             emptyText: "没有匹配的主题，清空搜索可选「新建主题…」",
+            cursor,
           }),
       );
-      if (picked === undefined) return undefined;
-      if (picked !== NEW_TOPIC_ID) return picked;
+      if (row === undefined) return undefined;
+      const pick = interpretTopicPick(row);
+      if (pick.kind === "existing") return pick.topic;
       // agent 提议的名字只做 placeholder：人能看到、能改、能放弃。
       const created = await ctx.ui.input("新主题名", options.suggested);
       return created?.trim() || undefined;
@@ -1608,7 +1601,7 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
         chapters: state.chapters,
         resume: state.resume,
       });
-      const picked = await customPanel<string | undefined>(
+      const row = await customPanel<PickerOption | undefined>(
         ctx,
         (tui, _theme, _kb, done, host) =>
           showPicker({
@@ -1623,15 +1616,15 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
             cursor,
           }),
       );
-      if (picked === undefined) return undefined;
-      if (picked === CHAPTER_PICKER_INDEX_ID) return { kind: "index" };
-      if (picked === CHAPTER_PICKER_NEW_ID) {
+      if (row === undefined) return undefined;
+      if (row.id === CHAPTER_PICKER_INDEX_ID) return { kind: "index" };
+      if (row.id === CHAPTER_PICKER_NEW_ID) {
         const name = (
           await ctx.ui.input("新章节名", options.suggested)
         )?.trim();
         return name ? { kind: "chapter", name } : undefined;
       }
-      return { kind: "chapter", name: picked };
+      return { kind: "chapter", name: row.value };
     });
 
   pi.registerCommand("md-topic", {

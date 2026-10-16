@@ -15,7 +15,10 @@ export type PickerOption = {
   /** 机器可读值，默认等于 label（由调用方归一化时填充）。 */
   value: string;
   description?: string;
-  /** 特殊行：other = 自由文本，dont-know = 诚实放弃（探针场景需要）。 */
+  /**
+   * 特殊行（不是普通选项）：other = 要再多一步的行（自由文本输入 / 提交 / 新建…），
+   * dont-know = 诚实放弃（探针场景需要）。**认行身份用它**，不要比较 label / value 字符串。
+   */
   kind?: "option" | "other" | "dont-know";
 };
 

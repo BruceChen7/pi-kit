@@ -1231,7 +1231,55 @@ export const buildTopicState = (input: {
   resume: pickResume(input.chapters),
 });
 
-// ── 章节 picker 的行（纯） ──────────────────────────────────────────────
+// ── picker 的行（纯）：主题 / 章节 ─────────────────────────────────────
+
+export const TOPIC_PICKER_NEW_ID = "__new_topic__";
+
+/** 主题概览按最近改动倒序（ISO 字符串比较即可）：picker 行序与 topic_status 共用。 */
+export const sortTopicsByRecency = (topics: TopicSummary[]): TopicSummary[] =>
+  [...topics].sort((a, b) =>
+    (b.lastTouchedAt ?? "").localeCompare(a.lastTouchedAt ?? ""),
+  );
+
+/**
+ * 主题 picker 的行**与初始光标**：「＋新建主题…」排**最前**——主题一多，排在末尾就要
+ * 翻过整份清单才够得着；行序与光标一起返回，调用方不必自己记「首行就是光标」。
+ * 行序全由这里决定：新建行之后是已有主题（最近改动在前），不依赖调用方是否排过序。
+ * 注意：行序 = 过滤后的显示顺序，搜到非空 query 时新建行同样会被过滤掉。
+ */
+export const topicPickerOptions = (input: {
+  topics: TopicSummary[];
+}): { rows: PickerOption[]; cursor: number } => ({
+  rows: [
+    {
+      id: TOPIC_PICKER_NEW_ID,
+      label: "＋ 新建主题…",
+      value: TOPIC_PICKER_NEW_ID,
+      kind: "other",
+    },
+    ...sortTopicsByRecency(input.topics).map((entry) => ({
+      id: entry.topic,
+      label: `${entry.topic}${entry.chapters > 0 ? ` · ${entry.chapters} 章` : ""}${
+        entry.lastTouchedAt ? ` · ${formatTouchedAt(entry.lastTouchedAt)}` : ""
+      }`,
+      value: entry.topic,
+      kind: "option" as const,
+    })),
+  ],
+  cursor: 0,
+});
+
+/** picker 的选择结果：已有主题（要绑定）还是新建（要去问名字）。 */
+export type TopicPick = { kind: "existing"; topic: string } | { kind: "new" };
+
+/**
+ * 把主题 picker 选中的**行**翻译成选择结果：靠 `kind` 认「新建」（本 picker 里唯一的
+ * other 行），不比较哨兵字符串 —— 主题名恰好等于哨兵值时也不会被误认成新建。
+ */
+export const interpretTopicPick = (row: PickerOption): TopicPick =>
+  row.kind === "other"
+    ? { kind: "new" }
+    : { kind: "existing", topic: row.value };
 
 export const CHAPTER_PICKER_NEW_ID = "__new_chapter__";
 export const CHAPTER_PICKER_INDEX_ID = "__topic_index__";

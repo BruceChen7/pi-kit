@@ -1,11 +1,16 @@
 .PHONY: help install install-all install-plugins install-skills install-third-party \
 	install-clis install-opencli-adapters update-peer-deps update-skills test lint \
-	package-settings restore-settings pi-web pi-web-restart pi-web-stop
+	package-settings restore-settings pi-web pi-web-restart pi-web-stop pi-web-update
 
 PLUGIN_SCOPE ?= --library
 THIRD_PARTY_MODE ?= --install-only
 SKILLS_COMMAND ?= import
 PORT ?= 30141
+# Pi Web npm registry. Pinned to the public registry on purpose: a NODE_OPTIONS
+# security hook rewrites `npm install` to an internal mirror that lags behind
+# (it would install an older pi-web than the one already present). Pass an
+# explicit registry here and the hook skips its probe.
+PI_WEB_REGISTRY ?= https://registry.npmjs.org/
 
 help:
 	@echo "pi-kit installer targets:"
@@ -24,12 +29,14 @@ help:
 	@echo "  make pi-web                  Start Pi Web detached (PORT=$(PORT)) with the browser open"
 	@echo "  make pi-web-restart          Stop the instance on PORT, then start it detached again"
 	@echo "  make pi-web-stop             Stop the Pi Web instance on PORT"
+	@echo "  make pi-web-update           Upgrade the global pi-web install (registry: $(PI_WEB_REGISTRY))"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make install"
 	@echo "  make install-plugins PLUGIN_SCOPE=--project"
 	@echo "  make install-third-party THIRD_PARTY_MODE=--enable-defaults"
 	@echo "  make pi-web"
+	@echo "  make pi-web-update"
 
 install: install-all
 
@@ -70,6 +77,11 @@ pi-web-restart:
 
 pi-web-stop:
 	pi-web stop --port $(PORT)
+
+pi-web-update:
+	npm install -g @agegr/pi-web@latest --registry=$(PI_WEB_REGISTRY)
+	@pi-web --version
+	@echo "Restart to load it: make pi-web-restart"
 
 test:
 	npm test

@@ -65,9 +65,7 @@ opposite lessons:
   worse; what's missing is a picture, not a fact.
 
 The test is one sentence: 学习者能不能指着一幅图说「这句 / 这个字段在哪儿」. A chapter whose only
-picture is the 备课图 has not passed it — that graph answers 「先学 A 还是先学 B」, never
-「A 和 B 在哪一格」. And the picture has to be *usable*: 画到**逻辑上的内存分布**——重点字段落在
-哪、指针指向谁、哪块跟着哪块走——粒度取在「读者能拿它去分析问题」那一档（§Background）。
+picture is the 备课图 has not passed it——两张图各答什么、底图画到什么粒度，见 §Background。
 
 ## Session shape
 
@@ -119,10 +117,9 @@ rests on? Which does the learner already hold (from phase 1)? What is the motiva
 discovery path from those to their goal? Socratic or expository for each stretch?
 
 Present the plan in chat — always — as two parts: prose (what we cover, in what order, and
-why *this* way given their edge and their goal), and the plan's backbone as a small
-```mermaid``` dependency graph (unconditional truths at the roots, their goal at the sink;
-few nodes, short labels). **这个 mermaid 图同样必须先验证通过才能展示——而且校验要单独一条
-消息，见 §Diagrams。**
+why *this* way given their edge and their goal), and the plan's backbone as a small mermaid
+dependency graph (unconditional truths at the roots, their goal at the sink).
+**这张图同样要先过校验，再展示（§Diagrams）。**
 Stress-test each root: is it genuinely unconditional for *them*,
 or a disguised theorem? Then **stop and wait for their go-ahead**. This plan is their
 checkpoint — a wrong root is cheap to fix now and expensive mid-lesson.
@@ -145,9 +142,21 @@ the mechanism, because a part with no home gets forgotten.
 2. **解决方式（Solution）** — 机制是什么？用 mermaid 图 + 代码/伪代码解释。从问题自然
    推出解决方案，让学习者觉得「哦，这样就解决了」。**这一节必须配图**——画什么图、怎么画、
    怎么校验，见 §Diagrams。
-3. **Quiz（验证）** — 用 `quiz` 确认落地。答错就停在这节，换角度重讲；答对再往下。
+3. **Quiz（验证）** — 用 `quiz` 确认落地。答错、选「不知道」、或学习者说「没懂」，
+   就停在这节换角度重讲（格式见下）；答对再往下。
 
 **每节开头用二级标题标注它在备课图中的位置**，格式：`## 本节对应备课图节点 N：标题`。这能让笔记生成目录、支持导航，让学习者知道「我们在哪、为什么在这里」。
+
+**每次重讲都是一个三级标题，不是一段接在后面的正文。** 这一节还没结束：**不新开 `##`**
+（备课图里没有它），**也不摊平成正文**（读者分不出哪段是第一遍、哪段是掰过来的那一遍）。格式：
+`### <本节节点号> · 换角度：<新入口一句话>`——例如
+`### C3-2 · 换角度：matchH2 的「视野」里没有 key`，同一节第二次写 `换角度②`，
+本节没有节点号就用标题简称。**换的必须是入口**（换证据、换图、换反例、从源码反推），复述不算
+重讲；重讲以一条**新** `quiz` 收尾，本节过没过看的是重讲后那一题。图不重画——本节那张仍然
+算数；入口本身就是图的（接线缺口、底图缺格）才补一张，照 §Diagrams 先验证。
+
+**标题总共三档：** 节点（上）· 重讲（上）· 补课
+`## 补课 · 本节对应备课图节点 <章号>-0-<序号>：…`（§Background）——别的一律不新开标题。
 
 Never assert a fact the learner would have to take on faith — motivate it and confirm it,
 or ground it in something already established.
@@ -178,10 +187,10 @@ read it as signal, and do not count it against them.
 
 **Where the lesson goes is the learner's call, not yours.** A session usually opens already
 bound: `/md-topic` (or an earlier `bind_notes`) put it on a topic. The **first turn of the
-session** carries a `[tutor]` brief with the bound note, the chapters and their tallies, the
-resume point, the index path and the concept gaps — read it before anything else. It is
-injected **once per session and never refreshes**: a chapter bound, a quiz answered or a
-concept confirmed later in the session will not change it. So whenever the state may have
+session** carries a `[tutor]` brief — 绑定的笔记与索引路径、各章 tally、resume、概念缺口
+（`bind_notes` 返回的是同一份状态）— read it before anything else. It is injected **once per
+session and never refreshes**: a chapter bound, a quiz answered or a concept confirmed later in
+the session will not change it. So whenever the state may have
 moved — after any `bind_notes`, before closing a chapter, or any time the brief feels stale —
 call `topic_status` (read-only; `topic_status({ topic })` for one topic, `{ topic, chapter }`
 for one chapter) instead of exploring the vault with `ls`/`cat`. (The `📝 <file>` in the TUI
@@ -211,13 +220,12 @@ opens a picker — the learner chooses the topic and then the chapter (an existi
   close the gate by hand with `/tutor-mode on|off|status` — that switch is theirs, not something
   you call.
 
-**With no argument and nothing bound, there is nothing to bind.** `bind_notes` needs a `topic`,
-and new topics only appear when a human picks「＋ 新建主题…」— so a bare `/skill:tutor` in an
-unbound session is not yours to resolve. Do not invent a topic name, and do not let it stall the
-session: phase 1 (the probe) writes nothing, so run it normally, and when the lesson needs a
-home, say so and ask the learner to run `/md-topic` (it opens the topic picker). A bare
-`/skill:tutor` still opens the tutor gate, so `quiz` and `ask_user_question` work before
-anything is bound.
+**With no argument and nothing bound, there is nothing to bind.** `bind_notes` needs a `topic`
+and you cannot create one — so a bare `/skill:tutor` in an unbound session is not yours to
+resolve. Do not invent a topic name, and do not let it stall the session: phase 1 (the probe)
+writes nothing, so run it normally, and when the lesson needs a home, say so and ask the learner
+to run `/md-topic` (it opens the topic picker). A bare `/skill:tutor` still opens the tutor gate,
+so `quiz` and `ask_user_question` work before anything is bound.
 
 **Bind before teaching.** Once the placement is confirmed, `bind_notes({ topic })` binds
 `<vaultRoot>/<topDir>/<topic>/<topic>.md` (creating it when the learner's choice was
@@ -227,7 +235,7 @@ to continue, and a `概念缺口` line (gaps / unverified concepts / unmet prere
 state the `[tutor]` brief carries. Read that first: earlier sessions recorded their edge, their
 questions, the quiz outcomes and the concepts they left loose, which is exactly what phase 1
 needs. Do not create notes anywhere else, and never edit or reorder what is already there —
-the mirror only appends.
+the mirror only appends（唯一例外：给摊平的重讲补那一行标题，§Chapter closing）。
 
 **Names never contain spaces.** A topic becomes a directory and a chapter becomes a file, so
 both must be space-free: `Docker实现`, `进程与命名空间`, `chroot与挂载时机`. Write them in
@@ -303,28 +311,26 @@ longer the displayed one), so the mirror drops it. Prose goes *around* the quest
 question itself is the tool call. A question asked in prose with no tool call is kept —
 that is the only copy it has.
 
-`/md-topic` with no argument opens a topic picker (existing topics + "新建主题…") and then a
-chapter picker; `/md-topic <topic>` opens the chapter picker directly — pick an existing
-chapter, "＋新建章节…", or the topic index page. `/md-topic <topic> <章节>` binds a chapter by
-hand without the picker — `第3章`, `03-调度与唤醒` and the plain name all work;
-`/md-log <path>` links an existing file without creating one; `/md-unlog` stops mirroring.
-These pickers are the same ones `bind_notes` opens — for a new topic, and for every chapter
-placement (which existing chapter, or「＋ 新建章节…」). So just call `bind_notes` and let the
-learner choose; the only calls that go through without asking are ones that change nothing about
-the placement (re-binding the topic index page of the topic the session is already on).
+`/md-topic` opens the same pickers `bind_notes` does: no argument → topic picker (existing
+topics + "新建主题…") then chapter picker; `<topic>` → chapter picker directly; `<topic> <章节>`
+→ bind by hand, no picker (`第3章`, `03-调度与唤醒`, the plain name all work). `/md-log <path>`
+links an existing file without creating one; `/md-unlog` stops mirroring. So just call
+`bind_notes` and let the learner choose; only a call that changes nothing about the placement
+(re-binding the topic index page of the topic the session is already on) goes through without
+asking.
 
 ## Background（主题底图 · 章开篇 · 名词名片）
 
 Background knowledge is not a preamble — it is what makes a note re-readable. Without it the
-learner recognises every part and still cannot follow the line (principle iv). Three artifacts,
-three homes (plus one retrofit path for chapters that never had them); a chapter is not finished
-without them.
+learner recognises every part and still cannot follow the line (principle iv). 两件底图（主题的
+总图、这一章的底图）加上章末的**名词名片**；名片算在 §Chapter closing 的三个产出里，这里只定义
+它的格式，不另立一套计数。A chapter that never had its pictures gets the retrofit path below.
 
 **主题底图 — the index's `## 背景` section.** When a topic opens, write down the thing's 总图: what
 it is for, how it splits into layers, and which chapter lights up which part. One mermaid (never a
 chapter-order graph) plus five or six lines; when the thing lives in memory, that 总图 *is* the
-whole 逻辑上的内存分布 — 一个具体实例，重点字段都在图上 — and each chapter lights up one piece of
-it. **One per topic** — later chapters point back at it, and a chapter that changes the picture
+逻辑上的内存分布（画法与粒度见下），and each chapter lights up one piece of it.
+**One per topic** — later chapters point back at it, and a chapter that changes the picture
 extends it（就在那一章里说清多了哪一格），不重讲一遍。 A topic whose index has no `## 背景` has no
 front door: write it before teaching the next chapter (it is also how you decide where that chapter
 starts). It goes between the `## 章节` block and `## 已知边界` — or right after the byline when
@@ -340,8 +346,7 @@ there is no chapter block yet; the tools only touch `## 章节`.
   （`map[int64]int64`、一个 sds 头），把**重点字段**摆上去——谁指向谁、哪块跟着哪块走、哪块在堆上；
   分层或分代只是它的标签，不是它的替代。它是用来立心智模型的，不是复刻 struct：粒度取在「读者拿
   这张图能分析后面的代码和文章」那一档就够，不必逐字段逐字节铺开，也不必画用不到的格子；有实测
-  的字节数就标上，没有就照源码的结构体定义写，不要凭直觉。Validate it first, in a message of its
-  own (§Diagrams).
+  的字节数就标上，没有就照源码的结构体定义写，不要凭直觉。Validate it first (§Diagrams).
 - **前置** — the facts the reader must already hold **unconditionally**, one per line, each
   pointing at where it was established (`[[章节]]` or a concept-table entry). What `check_concepts`
   reports as `缺口` / `未登记` is not a prerequisite but this chapter's work: teach it first, or
@@ -362,9 +367,8 @@ meets an unknown name mid-chapter finds it at the chapter's end instead of re-re
 this is also what lets the chapter be read again six months later.
 
 **补底图 — retrofitting a chapter that has none.** 「读过但串不起来 / 这句挂不上 / 缺背景」 means
-that chapter has no 底图. Do not rewrite the chapter: teach a **补课** inside it, numbered as an
-extra node — `C<章号>-0-<序号>`, heading `## 补课 · 本节对应备课图节点 C2-0-1：…`, same shape as any
-node (问题 → 解决方式（图）→ quiz). The 补课's diagram *is* the chapter's missing 底图, and the
+that chapter has no 底图. Do not rewrite the chapter: teach a **补课** inside it — an extra node
+numbered `C<章号>-0-<序号>`，标题按 §Teach 的三档写. The 补课's diagram *is* the chapter's missing 底图, and the
 chapter's other sections point at it from then on. Log one line in the index's `## 已知边界` when it
 lands. **One 补课 per missing picture** — if every chapter needs one, what is actually missing is
 the topic 总图; write that first.
@@ -387,8 +391,7 @@ Three points in a session, one loop:
 
 1. **Plan (phase 2).** Before committing to a node, `check_concepts({ terms: [...] })` on the
    concepts it rests on. `缺口` / `未登记` are not roots — teach them first or move them out of
-   the plan; `已确立` means the learner already holds it (from this or another topic — reference it
-   instead of re-teaching it).
+   the plan; `已确立` means the learner already holds it — reference it, do not re-teach it.
 2. **Teach (phase 3).** First use of a term: `note_concept({ name, definition, why, requires,
    source, topic, chapter })` — one Chinese sentence per field, status defaults to `待验证`.
    When the quiz confirms it: `note_concept({ name, topic, status: "已确立", evidence: "quiz
@@ -402,8 +405,7 @@ Three points in a session, one loop:
    was never registered (marked terms like `` `mtr` ``, `**Read View**`, 「快照读」). Every
    candidate gets either a `note_concept` call or a conscious skip — implementation trivia
    (`row_upd_step`, `row0upd.cc:2988`) is a skip; anything a newcomer would trip on is not. A
-   skipped name is not dropped: it lands on the chapter's 名词名片 (§Background), which is what
-   keeps the note readable when the same symbol shows up again five sections later.
+   skipped name is not dropped: it lands on the chapter's 名词名片 (§Background).
    Then update the index's `## 已知边界` / `## 未解决` as usual.
 
 Backfilling an old topic is the same sweep without `chapter` (`check_concepts({ topic })`),
@@ -413,23 +415,22 @@ dictionary, not a second copy of the lesson. The table is not indexed into any s
 
 ## Diagrams
 
-**每节至少一张 mermaid 图**——用来解释逻辑、概念或流程。图不是装饰，是认知锚点：
-小白需要视觉结构来建立心智模型，不是「文字够了就不用图」。
+**图不是装饰，是认知锚点**——每节的图是「解决方式」的一部分（§Teach），用来解释逻辑、概念
+或流程：小白需要视觉结构来建立心智模型，不是「文字够了就不用图」。
 
 - **什么图**：结构图（分层/组成）、流程图（步骤/分支）、状态机（状态转换）、依赖图
   （节点关系）、**内存布局图**（一个具体实例的逻辑内存分布：重点字段在哪、指针指向谁、
   哪块跟着哪块走）——东西住在内存里时它是默认图型。选最能表达「为什么需要这个」的那种。
-- **什么时候画**：在「解决方式」步骤里，作为机制解释的一部分。问题步骤可以用文字，
-  解决方式步骤**必须有图**。
+- **画在哪儿**：在「解决方式」那一步的机制解释里；问题那一步用文字即可。
 - **怎么画**：few nodes with short labels; prune every element that does not carry the idea;
   keep the diagram narrow (prefer `flowchart TB` over `flowchart LR`; a long chain explodes
   horizontally).
 - Mermaid fences in the note — Obsidian renders them natively.
 - **⚠️ 强制验证（MANDATORY VALIDATION）**：每一个到达学习者的 mermaid 图——不管在聊天里
   还是笔记里——**必须**先通过 `validate_mermaid`。不通过 = 笔记里有一个洞，不可接受。
-- **顺序不是直觉的那个，而且不能反。** 镜像在 `message_end` 写正文，**早于同一条消息里的
-  tool call**（见 §Notes 规则 2）。所以「先写 mermaid → 同一轮再调 `validate_mermaid`」
-  里，图在校验跑之前就已经落进笔记了；而镜像只追加、不删改，校验失败也修不掉。
+- **顺序不是直觉的那个，而且不能反。** 一条消息的正文**早于**它自己的 tool call 落盘
+  （§Notes 规则 2），所以「先写 mermaid → 同一轮再调 `validate_mermaid`」里，图在校验跑之前
+  就已经落进笔记了；而镜像只追加、不删改，校验失败也修不掉。
   正确流程是**两条消息**：
   1. 单独一条消息，**只**调 `validate_mermaid(source)`，消息里不要带那张图的正文；
      报错就改、再验，直到通过。
@@ -444,7 +445,7 @@ dictionary, not a second copy of the lesson. The table is not indexed into any s
 
 每章结尾必须有**三个产出**，把全章内容压缩成可迁移的形态：**N 把钥匙**（原则）、**综合表**
 （迁移测试）、**名词名片**（每个名字落在底图哪一格，格式见 §Background）——三样都在，读者
-才有不看聊天记录也读得懂的章。
+才有不看聊天记录也读得懂的章。（背景那两件底图不在这三个里——§Background 只定义格式。）
 
 ### N 把钥匙（核心原则总结）
 
@@ -473,12 +474,15 @@ dictionary, not a second copy of the lesson. The table is not indexed into any s
 | 模型流式返回中 | 最后一个 partial | `running → pending`；重跑 |
 | 工具执行中 | 停在 `execute` | 按 replay 决定重跑或报告 |
 
-综合表是**迁移测试**——它检验学习者能不能把多个规则同时应用到一个场景。
-
 **收尾前先回读开篇。** 把这一章的 开篇（定位 / 底图 / 前置）单独读一遍，问三句：一个不记得
 本章正文的人，能不能说出「这章解决什么问题、零件挂在哪儿、得先会什么」？不能就把开篇补上。
 然后把检验交给学习者——他才是这件事的唯一权威：「回读这一章的第一节，如果还有『这句挂在
 哪』的感觉，把那句话指出来」。
+
+**顺手数一遍本章的重讲。** 每一遍都该有自己的 `### … · 换角度：…` 三级标题。发现哪一遍摊平在
+正文里，**只允许补那一行标题**——这是已写章节唯一允许的编辑；章节的其他毛病（缺口、错说法）
+只报告给学习者、等他定夺。缺标题的重讲在笔记里等于没发生过：读者翻回去只看到一大段解释，
+认不出哪几段是同一个问题的两种说法，也找不到自己当初卡在哪。
 
 ## Boundaries
 
@@ -487,7 +491,8 @@ dictionary, not a second copy of the lesson. The table is not indexed into any s
   multi-source dig, the read-only herdr squad is available.
 - **No bulk retrofit.** Do not sweep the vault rewriting chapters that lack background: a
   chapter gets its 开篇 when it is next taught (a new chapter), or a 补课 when the learner
-  reports the gap (§Background). Never reorder or rewrite a chapter that is already written.
+  reports the gap (§Background). Never reorder or rewrite a chapter that is already written —
+  the one exception is a re-teach's missing heading line (§Chapter closing).
 - **Do not touch `.pi/teach/**`** — that is the separate course-workspace skill's data.
   This system's outputs are the notes under the vault's `Learn/` directory and each topic's
   `概念.md` (written only through `note_concept`).

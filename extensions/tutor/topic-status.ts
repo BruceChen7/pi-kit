@@ -117,7 +117,8 @@ export const registerTopicStatus = (pi: ExtensionAPI): void => {
   pi.on("before_agent_start", async (event, ctx) => {
     if (injected) return;
     const bound = boundNoteOf(ctx);
-    const skill = detectTutorSkill(event.prompt);
+    const skill =
+      event.messageType === "user" && detectTutorSkill(event.prompt);
     if (bound === null && !skill) return;
 
     injected = true;

@@ -524,7 +524,8 @@ const registerTutorMode = (
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
-    const skill = detectTutorSkill(event.prompt);
+    const skill =
+      event.messageType === "user" && detectTutorSkill(event.prompt);
     if (skill) setMode("on", true);
     else {
       // 每轮按会话事实重新推导：绑定 / 解绑都落在 `tutor-notes` 条目里，

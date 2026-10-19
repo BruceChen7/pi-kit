@@ -17,35 +17,83 @@ import { pickTask } from "./tasks/tasks-picker.ts";
 const WIDGET_KEY = "deferred-queue";
 const PERSIST_FILE = join(os.homedir(), ".pi", "agent", "deferred-queue.json");
 
-type TaskModule = { default?: TaskDefinition };
+/** Module namespace returned by importing a candidate task file. */
+type TaskModule = { default?: unknown };
+
+/** Imports a candidate task file. Injectable so discovery is testable. */
+export type ImportTaskModule = (fileUrl: string) => Promise<TaskModule>;
+
+const DURATION_PATTERN = /^\d+[mhd]$/;
+
+/**
+ * Whether a tasks/ entry may hold a task definition.
+ *
+ * Test modules sit beside task modules in tasks/. They must never be imported
+ * outside the vitest runner: their top-level describe()/vi.mock() calls need
+ * runner state, so importing them throws (and vi.mock can patch resolution).
+ */
+export function isTaskDefinitionFile(name: string): boolean {
+  if (extname(name) !== ".ts") return false;
+  const base = name.slice(0, -extname(name).length);
+  return !base.endsWith(".test") && !base.endsWith(".spec");
+}
+
+/**
+ * Whether a module's default export is a task definition.
+ *
+ * The truthiness check this replaces was not enough: under pi's jiti loader an
+ * `import()` of a module without a default export yields the module namespace
+ * as `default`, so helper modules were registered as tasks with no id and then
+ * rejected by the queue (parseDuration(task.every) on undefined).
+ */
+export function isTaskDefinition(value: unknown): value is TaskDefinition {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<TaskDefinition>;
+  return (
+    typeof candidate.id === "string" &&
+    candidate.id.length > 0 &&
+    typeof candidate.every === "string" &&
+    DURATION_PATTERN.test(candidate.every) &&
+    typeof candidate.handler === "function"
+  );
+}
 
 /**
  * Auto-discover task files from the tasks/ directory sibling to this file.
+ *
+ * Only modules that export a task definition become tasks: test modules are
+ * filtered by name before the import happens, and any other module found in the
+ * directory (helpers, fixtures) is skipped after import.
  */
-async function discoverTasks(tasksDir: string): Promise<TaskDefinition[]> {
+export async function discoverTasks(
+  tasksDir: string,
+  importTaskModule: ImportTaskModule = (fileUrl) => import(fileUrl),
+): Promise<TaskDefinition[]> {
   const tasks: TaskDefinition[] = [];
 
   try {
     const entries = readdirSync(tasksDir);
     for (const entry of entries) {
+      if (!isTaskDefinitionFile(entry)) continue;
       const filePath = join(tasksDir, entry);
-      if (statSync(filePath).isFile() && extname(entry) === ".ts") {
-        try {
-          const fileUrl = pathToFileURL(filePath).href;
-          const mod = (await import(fileUrl)) as TaskModule;
-          if (mod.default) {
-            tasks.push(mod.default);
-            log.info("discovered task file", {
-              file: entry,
-              id: mod.default.id,
-            });
-          }
-        } catch (err) {
-          log.warn("failed to load task file", {
-            file: entry,
-            error: err instanceof Error ? err.message : String(err),
-          });
+      if (!statSync(filePath).isFile()) continue;
+      try {
+        const fileUrl = pathToFileURL(filePath).href;
+        const mod = await importTaskModule(fileUrl);
+        if (!isTaskDefinition(mod.default)) {
+          log.debug("skipping non-task module", { file: entry });
+          continue;
         }
+        tasks.push(mod.default);
+        log.info("discovered task file", {
+          file: entry,
+          id: mod.default.id,
+        });
+      } catch (err) {
+        log.warn("failed to load task file", {
+          file: entry,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   } catch (err) {

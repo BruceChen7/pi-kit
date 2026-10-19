@@ -881,7 +881,11 @@ const testingStateByHost = new WeakMap<FileWatcherHost, WatcherState>();
  * Calling this cancels any pending debounce timer for the same path so the
  * `fs.watch` callback doesn't duplicate the work.
  */
-export function flushFileChange(host: FileWatcherHost, filePath: string): void {
+export function flushFileChange(
+  host: FileWatcherHost,
+  filePath: string,
+  ctx: FileWatcherContext | null = null,
+): void {
   const state = testingStateByHost.get(host);
   if (!state) {
     log?.warn("flushFileChange: no state found for host");
@@ -894,7 +898,7 @@ export function flushFileChange(host: FileWatcherHost, filePath: string): void {
     state.debounceTimers.delete(filePath);
   }
 
-  handleFileChange(filePath, state, null, host);
+  handleFileChange(filePath, state, ctx, host);
 }
 
 function cleanupState(state: WatcherState): void {

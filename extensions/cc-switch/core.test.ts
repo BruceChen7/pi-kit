@@ -1,133 +1,210 @@
 import { describe, expect, it } from "vitest";
 
-import { type CodexModel, catalogModelsToPiModels } from "./core.ts";
+import {
+  catalogProfilesBySlug,
+  proxyModelsToPiModels,
+  thinkingLevelMapFor,
+} from "./core.ts";
 
-const ALL_LEVELS_NULL = {
-  off: null,
-  minimal: null,
-  low: null,
-  medium: null,
-  high: null,
-  xhigh: null,
-  max: null,
-};
-
-function makeModel(overrides: Partial<CodexModel> = {}): CodexModel {
-  return {
-    slug: "llm-gateway--deepseek-v4-flash",
-    display_name: "deepseek-v4-flash (LLM Gateway)",
-    context_window: 131072,
-    max_context_window: 1048576,
-    input_modalities: ["text"],
-    supported_reasoning_levels: [
-      { effort: "low", description: "Fast responses" },
-      { effort: "medium", description: "Balanced" },
-      { effort: "high", description: "Deep" },
-      { effort: "xhigh", description: "Extra deep" },
-    ],
-    ...overrides,
-  };
-}
-
-describe("catalogModelsToPiModels", () => {
-  it("maps catalog reasoning levels into an exact thinkingLevelMap", () => {
-    const [model] = catalogModelsToPiModels([
-      makeModel({
-        supported_reasoning_levels: [
-          { effort: "low", description: "" },
-          { effort: "high", description: "" },
-          { effort: "max", description: "" },
-          { effort: "ultra", description: "" }, // pi has no such level
-        ],
-      }),
+describe("proxyModelsToPiModels", () => {
+  it("maps provider metadata into a safe selectable pi model", () => {
+    const [model] = proxyModelsToPiModels([
+      {
+        id: "proxy-model",
+        object: "model",
+        owned_by: "MaaS",
+        cc_switch: { provider_name: "LLM Gateway" },
+      },
     ]);
-
-    expect(model.thinkingLevelMap).toEqual({
-      ...ALL_LEVELS_NULL,
-      low: "low",
-      high: "high",
-      max: "max",
-    });
-  });
-
-  it("hides levels the catalog does not list (max stays unselectable)", () => {
-    const [model] = catalogModelsToPiModels([makeModel()]);
-
-    expect(model.thinkingLevelMap).toEqual({
-      ...ALL_LEVELS_NULL,
-      low: "low",
-      medium: "medium",
-      high: "high",
-      xhigh: "xhigh",
-    });
-  });
-
-  it("survives a model without reasoning levels (all levels hidden)", () => {
-    const [model] = catalogModelsToPiModels([
-      makeModel({ supported_reasoning_levels: [] }),
-    ]);
-
-    expect(model.thinkingLevelMap).toEqual(ALL_LEVELS_NULL);
-    expect(model.reasoning).toBe(true);
-  });
-
-  it("drops entries without a usable slug instead of failing registration", () => {
-    const models = catalogModelsToPiModels([
-      makeModel(),
-      makeModel({ slug: "" }),
-      makeModel({ slug: "   " }),
-      {} as CodexModel,
-    ]);
-
-    expect(models).toHaveLength(1);
-    expect(models[0].id).toBe("llm-gateway--deepseek-v4-flash");
-  });
-
-  it("falls back to the slug as display name when display_name is missing", () => {
-    const [model] = catalogModelsToPiModels([
-      makeModel({ display_name: undefined }),
-    ]);
-
-    expect(model.name).toBe("llm-gateway--deepseek-v4-flash");
-  });
-
-  it("derives image input from input_modalities", () => {
-    const [textOnly] = catalogModelsToPiModels([makeModel()]);
-    const [withImage] = catalogModelsToPiModels([
-      makeModel({ input_modalities: ["text", "image"] }),
-    ]);
-
-    expect(textOnly.input).toEqual(["text"]);
-    expect(withImage.input).toEqual(["text", "image"]);
-  });
-
-  it("prefers max_context_window, then context_window, then the default", () => {
-    const [preferred] = catalogModelsToPiModels([makeModel()]);
-    const [fallback] = catalogModelsToPiModels([
-      makeModel({ max_context_window: 0 }),
-    ]);
-    const [defaulted] = catalogModelsToPiModels([
-      makeModel({ max_context_window: 0, context_window: 0 }),
-    ]);
-
-    expect(preferred.contextWindow).toBe(1048576);
-    expect(fallback.contextWindow).toBe(131072);
-    expect(defaulted.contextWindow).toBe(1048576);
-  });
-
-  it("produces a complete registerable pi model config", () => {
-    const [model] = catalogModelsToPiModels([makeModel()]);
 
     expect(model).toMatchObject({
-      id: "llm-gateway--deepseek-v4-flash",
-      name: "deepseek-v4-flash (LLM Gateway)",
-      reasoning: true,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      id: "proxy-model",
+      name: "LLM Gateway · proxy-model",
+      reasoning: false,
+      contextWindow: 1048576,
       maxTokens: 131072,
-      compat: {
-        supportsDeveloperRole: false,
-        requiresAssistantAfterToolResult: false,
-      },
+      input: ["text"],
     });
+    expect(model.thinkingLevelMap).toBeUndefined();
+  });
+
+  it("preserves explicit model metadata and supports image input", () => {
+    const [model] = proxyModelsToPiModels([
+      {
+        id: "  vision-model ",
+        name: "Vision Model",
+        context_window: 131072,
+        max_context_window: 0,
+        input_modalities: ["text", "image"],
+      },
+    ]);
+
+    expect(model).toMatchObject({
+      id: "vision-model",
+      name: "Vision Model",
+      reasoning: false,
+      contextWindow: 131072,
+      input: ["text", "image"],
+    });
+  });
+
+  it("fills thinking levels, context window and image input from the catalog", () => {
+    const catalog = catalogProfilesBySlug({
+      models: [
+        {
+          slug: "gpt-5.6-luna",
+          context_window: 270000,
+          max_context_window: 272000,
+          input_modalities: ["text", "image"],
+          supported_reasoning_levels: [
+            { effort: "low", description: "Fast responses" },
+            { effort: "high", description: "Greater reasoning depth" },
+            { effort: "ultra", description: "Not a pi thinking level" },
+          ],
+        },
+      ],
+    });
+
+    const [model] = proxyModelsToPiModels([{ id: "gpt-5.6-luna" }], catalog);
+
+    expect(model).toMatchObject({
+      reasoning: true,
+      contextWindow: 272000,
+      input: ["text", "image"],
+    });
+    expect(model.thinkingLevelMap).toEqual({
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: null,
+    });
+  });
+
+  it("prefers live proxy metadata over the catalog", () => {
+    const catalog = catalogProfilesBySlug({
+      models: [
+        {
+          slug: "proxy-model",
+          context_window: 272000,
+          input_modalities: ["text", "image"],
+        },
+      ],
+    });
+
+    const [model] = proxyModelsToPiModels(
+      [
+        {
+          id: "proxy-model",
+          context_window: 8192,
+          input_modalities: ["text"],
+        },
+      ],
+      catalog,
+    );
+
+    expect(model).toMatchObject({ contextWindow: 8192, input: ["text"] });
+  });
+
+  it("drops entries without a usable model id", () => {
+    expect(
+      proxyModelsToPiModels([
+        null,
+        {},
+        { id: "" },
+        { id: "   " },
+        { id: "usable-model" },
+      ]),
+    ).toHaveLength(1);
+  });
+});
+
+describe("catalogProfilesBySlug", () => {
+  it("indexes normalized metadata by trimmed slug", () => {
+    const profiles = catalogProfilesBySlug({
+      models: [
+        {
+          slug: "  glm-5.3  ",
+          supported_reasoning_levels: [
+            { effort: "LOW", description: "low" },
+            { effort: " max ", description: "max" },
+          ],
+          input_modalities: [" TEXT ", "Image"],
+          context_window: 1_000_000,
+        },
+      ],
+    });
+
+    expect(profiles.get("glm-5.3")).toEqual({
+      supportedEfforts: ["low", "max"],
+      inputModalities: ["text", "image"],
+      contextWindow: 1_000_000,
+    });
+  });
+
+  it("keeps entries with an unknown context window or reasoning levels", () => {
+    const profiles = catalogProfilesBySlug({
+      models: [{ slug: "catalog-model" }],
+    });
+
+    expect(profiles.get("catalog-model")).toEqual({
+      supportedEfforts: [],
+      inputModalities: [],
+    });
+  });
+
+  it("ignores entries without a usable slug and malformed fields", () => {
+    const profiles = catalogProfilesBySlug({
+      models: [
+        null,
+        { supported_reasoning_levels: [{ effort: "low" }] },
+        { slug: "   " },
+        {
+          slug: "bad-fields",
+          supported_reasoning_levels: "low",
+          input_modalities: "image",
+          context_window: -1,
+          max_context_window: Number.NaN,
+        },
+      ],
+    });
+
+    expect([...profiles.keys()]).toEqual(["bad-fields"]);
+    expect(profiles.get("bad-fields")).toEqual({
+      supportedEfforts: [],
+      inputModalities: [],
+    });
+  });
+
+  it("returns an empty index for unexpected catalog shapes", () => {
+    expect(catalogProfilesBySlug(null).size).toBe(0);
+    expect(catalogProfilesBySlug({ models: {} }).size).toBe(0);
+    expect(catalogProfilesBySlug("<html>").size).toBe(0);
+  });
+});
+
+describe("thinkingLevelMapFor", () => {
+  it("keeps only the levels the upstream advertises", () => {
+    expect(thinkingLevelMapFor(["low", "high", "xhigh"])).toEqual({
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: "xhigh",
+      max: null,
+    });
+  });
+
+  it("uses the upstream no-reasoning effort for off when advertised", () => {
+    expect(thinkingLevelMapFor(["none", "low"])?.off).toBe("none");
+  });
+
+  it("returns null when the model cannot reason", () => {
+    expect(thinkingLevelMapFor([])).toBeNull();
+    expect(thinkingLevelMapFor(["none"])).toBeNull();
+    expect(thinkingLevelMapFor(["ultra"])).toBeNull();
   });
 });

@@ -119,7 +119,7 @@ const setup = (): Harness => {
       const injected: unknown[] = [];
       for (const handler of handlers.get("before_agent_start") ?? []) {
         const result = await handler(
-          { type: "before_agent_start", prompt } as never,
+          { type: "before_agent_start", messageType: "user", prompt } as never,
           ctx(sessionEntries),
         );
         if (result) injected.push(result);

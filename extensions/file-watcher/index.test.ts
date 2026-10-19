@@ -90,7 +90,7 @@ function createFileWatcherHarness(initialIdle = true) {
     },
     /** Directly process a file through the watcher pipeline, bypassing fs.watch. */
     flushFile(filePath: string) {
-      flushFileChange(host, filePath);
+      flushFileChange(host, filePath, ctx);
     },
     async startWatching() {
       await watchHandler?.("start .", ctx);
@@ -250,17 +250,15 @@ describe("file-watcher prompt message formatting", () => {
 });
 
 describe("file-watcher batched delivery", () => {
-  // These tests wait for real fs.watch events plus the 1s batch delay, so
-  // they regularly exceed vitest's 5s default test timeout under parallel
-  // load. Give them explicit, generous timeouts.
+  // These tests use the direct file-processing seam and still wait for the
+  // 1s batch delay, so give them explicit, generous timeouts under load.
   it("batches multiple prompt lines into one message", async () => {
     const harness = createFileWatcherHarness();
     await harness.startWatching();
 
-    writeFileSync(
-      join(harness.repoRoot, "watched.ts"),
-      "// first #pi!\n// second #pi!\n",
-    );
+    const filePath = join(harness.repoRoot, "watched.ts");
+    writeFileSync(filePath, "// first #pi!\n// second #pi!\n");
+    harness.flushFile(filePath);
 
     // The watcher has a 1s batch delay (PROMPT_BATCH_MS). Under parallel
     // test load the setTimeout can be delayed significantly, so be generous.
@@ -279,8 +277,9 @@ describe("file-watcher batched delivery", () => {
     const harness = createFileWatcherHarness(false);
     await harness.startWatching();
 
-    writeFileSync(join(harness.repoRoot, "busy.ts"), "// later #pi!\n");
-    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    const filePath = join(harness.repoRoot, "busy.ts");
+    writeFileSync(filePath, "// later #pi!\n");
+    harness.flushFile(filePath);
     expect(harness.messages).toHaveLength(0);
 
     harness.setIdle(true);
@@ -296,6 +295,7 @@ describe("file-watcher batched delivery", () => {
     await harness.startWatching();
 
     writeFileSync(filePath, "// repeat #pi!\n");
+    harness.flushFile(filePath);
     await vi.waitFor(() => expect(harness.messages).toHaveLength(1), {
       timeout: 10_000,
       interval: 200,
@@ -310,6 +310,7 @@ describe("file-watcher batched delivery", () => {
     // Write the marker back; the processed-prompt key has already been
     // reconciled, so the prompt is treated as new.
     writeFileSync(filePath, "// repeat #pi!\n");
+    harness.flushFile(filePath);
     await vi.waitFor(() => expect(harness.messages).toHaveLength(2), {
       timeout: 10_000,
       interval: 200,

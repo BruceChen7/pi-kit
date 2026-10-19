@@ -152,7 +152,7 @@ const turnStart = async (
   const injected: unknown[] = [];
   for (const handler of seen.handlers.get("before_agent_start") ?? []) {
     const result = await handler(
-      { type: "before_agent_start", prompt } as never,
+      { type: "before_agent_start", messageType: "user", prompt } as never,
       ctx as never,
     );
     if (result) injected.push(result);

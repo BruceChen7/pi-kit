@@ -11,6 +11,7 @@ const PI_RUNTIME_PACKAGES = [
   PI_TUI_PACKAGE,
 ];
 const DEFAULT_GLOBAL_PI_BIN = "/opt/homebrew/bin/pi";
+const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org/";
 
 const getNpmCommand = () => (process.platform === "win32" ? "npm.cmd" : "npm");
 
@@ -44,6 +45,23 @@ export const updatePeerDependencies = (packageJson, latestVersion) => {
 
 export const resolvePiBinary = (env = process.env) =>
   env.PI_BIN || DEFAULT_GLOBAL_PI_BIN;
+
+export const resolveNpmRegistry = (env = process.env) =>
+  env.PI_NPM_REGISTRY || DEFAULT_NPM_REGISTRY;
+
+export const buildInstallArgs = (latestVersion, env = process.env) => {
+  const targetRange = `^${latestVersion}`;
+  const installArgs = PI_RUNTIME_PACKAGES.map(
+    (packageName) => `${packageName}@${targetRange}`,
+  );
+
+  return [
+    "install",
+    ...installArgs,
+    "--save-peer",
+    `--registry=${resolveNpmRegistry(env)}`,
+  ];
+};
 
 const readPackageJson = (packageJsonPath) =>
   JSON.parse(readFileSync(packageJsonPath, "utf8"));
@@ -84,18 +102,10 @@ const getPiVersion = () => {
 };
 
 const runInstall = (latestVersion) => {
-  const targetRange = `^${latestVersion}`;
-  const installArgs = PI_RUNTIME_PACKAGES.map(
-    (packageName) => `${packageName}@${targetRange}`,
-  );
-  const result = spawnSync(
-    getNpmCommand(),
-    ["install", ...installArgs, "--save-peer"],
-    {
-      cwd: process.cwd(),
-      stdio: "inherit",
-    },
-  );
+  const result = spawnSync(getNpmCommand(), buildInstallArgs(latestVersion), {
+    cwd: process.cwd(),
+    stdio: "inherit",
+  });
 
   if (result.status !== 0) {
     throw new Error(

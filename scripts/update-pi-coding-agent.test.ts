@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildInstallArgs,
+  resolveNpmRegistry,
   resolvePiBinary,
   updatePeerDependencies,
 } from "./update-pi-coding-agent.mjs";
@@ -75,5 +77,27 @@ describe("resolvePiBinary", () => {
 
   it("falls back to the default global pi path", () => {
     expect(resolvePiBinary({})).toBe("/opt/homebrew/bin/pi");
+  });
+});
+
+describe("buildInstallArgs", () => {
+  it("passes the public registry as a CLI argument", () => {
+    expect(buildInstallArgs("1.3.0", {})).toEqual([
+      "install",
+      "@earendil-works/pi-ai@^1.3.0",
+      "@earendil-works/pi-coding-agent@^1.3.0",
+      "@earendil-works/pi-tui@^1.3.0",
+      "--save-peer",
+      "--registry=https://registry.npmjs.org/",
+    ]);
+  });
+
+  it("allows an explicit registry override", () => {
+    const env = { PI_NPM_REGISTRY: "https://npm.example.test/" };
+
+    expect(resolveNpmRegistry(env)).toBe("https://npm.example.test/");
+    expect(buildInstallArgs("1.3.0", env).at(-1)).toBe(
+      "--registry=https://npm.example.test/",
+    );
   });
 });

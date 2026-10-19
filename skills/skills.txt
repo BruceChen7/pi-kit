@@ -49,6 +49,9 @@ to-spec|local|skills/to-spec
 to-tickets|local|skills/to-tickets
 # https://github.com/mattpocock/skills (v1.2.0+)
 writing-for-agents|local|skills/writing-for-agents
+# https://github.com/backnotprop/pstack (v0.15.25, cursor/plugins/pstack @ e5136d8)，vendored 2026-10-19，只手动触发
+# 适配点见 .pi/plans/pi-kit/plan/2026-10-19-pstack-tier1-skills.md
+unslop|local|skills/unslop
 # https://github.com/mattpocock/skills (v1.0.0+)
 resolving-merge-conflicts|local|skills/resolving-merge-conflicts
 # https://github.com/mattpocock/skills (v1.1.0+)

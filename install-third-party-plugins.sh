@@ -27,6 +27,12 @@ MODE="install-only"
 LIBRARY_DIR="${PI_PLUGIN_LIBRARY_DIR:-$HOME/.agents/pi-plugins}"
 MANIFEST_FILE="$LIBRARY_DIR/.manifest.json"
 
+# npm registry pinned to the public registry on purpose: a NODE_OPTIONS security
+# hook rewrites `npm install` to an internal mirror that lags behind upstream.
+# An explicit --registry flag outranks the npm_config_registry env var the hook
+# injects, so every npm invocation below passes it explicitly.
+NPM_REGISTRY="${PI_NPM_REGISTRY:-https://registry.npmjs.org/}"
+
 DEFAULT_PLUGINS=(
   # "npm:pi-context"
   "https://github.com/davebcn87/pi-autoresearch"
@@ -110,7 +116,7 @@ install_npm_plugin() {
   local temp_dir
   temp_dir="$(mktemp -d)"
 
-  npm pack "$package" --pack-destination "$temp_dir" >/dev/null
+  npm pack "$package" --pack-destination "$temp_dir" --registry="$NPM_REGISTRY" >/dev/null
   local tarball
   # `-quit` is a GNU find extension; use `head` for BSD find (macOS) compat.
   tarball="$(find "$temp_dir" -maxdepth 1 -name '*.tgz' -print | head -n 1)"
@@ -119,7 +125,7 @@ install_npm_plugin() {
   rm -rf "$target"
   mkdir -p "$(dirname "$target")"
   cp -R "$temp_dir/package" "$target"
-  (cd "$target" && npm install --omit=dev --ignore-scripts >/dev/null)
+  (cd "$target" && npm install --omit=dev --ignore-scripts --registry="$NPM_REGISTRY" >/dev/null)
   rm -rf "$temp_dir"
 }
 

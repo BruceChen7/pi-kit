@@ -1,5 +1,5 @@
 .PHONY: help install install-all install-plugins install-skills install-third-party \
-	install-clis install-opencli-adapters update-peer-deps update-skills test lint \
+	install-clis install-opencli-adapters update-clis update-peer-deps update-skills test lint \
 	package-settings restore-settings pi-web pi-web-restart pi-web-stop pi-web-update
 
 PLUGIN_SCOPE ?= --library
@@ -20,6 +20,7 @@ help:
 	@echo "                              (SKILLS_COMMAND=import|update|export)"
 	@echo "  make install-third-party     Install third-party plugins (THIRD_PARTY_MODE=--install-only|--enable-defaults)"
 	@echo "  make install-clis            Install external CLIs required by extensions/ (codex, qmd, plannotator, gh, ...)"
+	@echo "  make update-clis             Upgrade those CLIs to the latest release (npm @latest, plannotator latest, brew/apt upgrade)"
 	@echo "  make install-opencli-adapters Install opencli adapters under opencli/clis/"
 	@echo "  make update-peer-deps        Sync pi peerDependencies to local pi --version"
 	@echo "  make package-settings       Package extension settings + plugin data + ~/.config/qmd/index.yml + ~/work/*/.pi/teach learn data into a zip with manifest + restore guide (repo root)"
@@ -53,6 +54,9 @@ install-third-party:
 
 install-clis:
 	./install-extension-clis.sh
+
+update-clis:
+	./install-extension-clis.sh --update
 
 install-opencli-adapters:
 	./install-opencli-adapters.sh

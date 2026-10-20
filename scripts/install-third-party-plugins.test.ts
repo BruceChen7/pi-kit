@@ -63,6 +63,9 @@ const createFakeInstallTools = (binDir: string): void => {
 
   const npmScript = `#!/bin/sh
 set -eu
+if [ -n "\${NPM_ARGV_LOG:-}" ]; then
+  printf '%s\\n' "$*" >> "$NPM_ARGV_LOG"
+fi
 if [ "\${1:-}" = "install" ]; then
   mkdir -p node_modules
   echo installed > node_modules/.prod-deps-installed
@@ -96,6 +99,15 @@ echo 'export default function() {}' > "$target/extensions/$name/index.ts"
   writeExecutable(path.join(binDir, "npm"), npmScript);
   writeExecutable(path.join(binDir, "git"), gitScript);
 };
+
+const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org/";
+
+const readNpmCalls = (argvLog: string): string[] =>
+  fs
+    .readFileSync(argvLog, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -249,6 +261,62 @@ describe("install-third-party-plugins.sh", () => {
       "extensions/pi-autoresearch",
     ]);
     expect(fs.existsSync(logPath)).toBe(false);
+  });
+
+  it("pins the public npm registry on every npm call", () => {
+    const home = createTempDir();
+    const project = createTempDir();
+    const binDir = path.join(createTempDir(), "bin");
+    const argvLog = path.join(createTempDir(), "npm-argv.log");
+    createFakeInstallTools(binDir);
+
+    execFileSync("bash", [installerPath], {
+      cwd: project,
+      env: {
+        ...process.env,
+        HOME: home,
+        NPM_ARGV_LOG: argvLog,
+        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      },
+      encoding: "utf8",
+    });
+
+    const npmCalls = readNpmCalls(argvLog);
+    const pinned = `--registry=${DEFAULT_NPM_REGISTRY}`;
+    expect(
+      npmCalls.filter((call) => call.startsWith("pack ")),
+    ).not.toHaveLength(0);
+    expect(
+      npmCalls.filter((call) => call.startsWith("install ")),
+    ).not.toHaveLength(0);
+    for (const call of npmCalls) {
+      expect(call).toContain(pinned);
+    }
+  });
+
+  it("allows overriding the pinned npm registry with PI_NPM_REGISTRY", () => {
+    const home = createTempDir();
+    const project = createTempDir();
+    const binDir = path.join(createTempDir(), "bin");
+    const argvLog = path.join(createTempDir(), "npm-argv.log");
+    const override = "https://registry.example.test/";
+    createFakeInstallTools(binDir);
+
+    execFileSync("bash", [installerPath], {
+      cwd: project,
+      env: {
+        ...process.env,
+        HOME: home,
+        NPM_ARGV_LOG: argvLog,
+        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        PI_NPM_REGISTRY: override,
+      },
+      encoding: "utf8",
+    });
+
+    for (const call of readNpmCalls(argvLog)) {
+      expect(call).toContain(`--registry=${override}`);
+    }
   });
 
   it("can enable default third-party plugins by symlinking them into the project", () => {

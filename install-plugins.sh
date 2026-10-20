@@ -28,6 +28,12 @@ LIBRARY_DIR="$HOME/.agents/pi-plugins"
 GLOBAL_EXTENSION_DIR="$HOME/.pi/agent/extensions"
 SCOPE="library"
 
+# npm registry pinned to the public registry on purpose: a NODE_OPTIONS security
+# hook rewrites `npm install` to an internal mirror that lags behind upstream.
+# An explicit --registry flag outranks the npm_config_registry env var the hook
+# injects, so the npm invocation below passes it explicitly.
+NPM_REGISTRY="${PI_NPM_REGISTRY:-https://registry.npmjs.org/}"
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --library|--global|-g)
@@ -188,7 +194,7 @@ install_plugin_dependencies() {
     fi
 
     echo "Installing runtime dependencies for $source_name..."
-    if (cd "$source_path" && npm install --omit=dev --ignore-scripts >/dev/null); then
+    if (cd "$source_path" && npm install --omit=dev --ignore-scripts --registry="$NPM_REGISTRY" >/dev/null); then
         echo -e "${GREEN}✓${NC} Dependencies ready: $source_name"
         return 0
     fi

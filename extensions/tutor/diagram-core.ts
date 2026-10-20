@@ -2,8 +2,8 @@
  * diagram-core — 图表能力的纯函数核（Functional Core） + 一次注入式解析校验。
  *
  * 两条能力：
- * - 校验：复用 `shared/mermaid-runtime`（linkedom shim + 真 parser，无 Chrome），
- *   以及 `shared/mermaid-normalize` 的类型判断与修正建议。
+ * - 校验：复用 `shared/pele-runtime`（同步、无 DOM、无全局写的 parser），以及
+ *   `shared/mermaid-normalize` 的类型判断与修正建议。
  * - 渲染：**条件能力**——只有机器上存在 `mmdc` 时才出 PNG。core 只负责
  *   "能力判定 / 参数拼装 / 结果映射"，真正的子进程调用在 shell。
  *
@@ -14,11 +14,8 @@ import {
   detectDiagramType,
   getTypeAdviceForDiagram,
 } from "../shared/mermaid-normalize.ts";
-import {
-  extractMermaidErrorLine,
-  formatMermaidError,
-  type MermaidParser,
-} from "../shared/mermaid-runtime.ts";
+import { formatPeleError, peleErrorLine } from "../shared/pele-error.ts";
+import type { PeleParser } from "../shared/pele-runtime.ts";
 
 export type MermaidRenderCapability =
   | { render: true }
@@ -72,22 +69,21 @@ export const extractMermaidBlocks = (
   return blocks;
 };
 
-/** 单个 mermaid 源：用真 parser 校验，失败时给出类型相关的修正建议。 */
-export const validateMermaidSource = async (
+export const validateMermaidSource = (
   source: string,
-  parser: MermaidParser,
-): Promise<MermaidValidation> => {
+  parser: PeleParser,
+): MermaidValidation => {
   const body = source.trim();
   const diagramType = detectDiagramType(body);
   if (body.length === 0) {
     return { ok: false, errors: ["mermaid source is empty"], diagramType };
   }
   try {
-    await parser.parse(body);
+    parser.parse(body);
     return { ok: true, diagramType };
   } catch (error) {
-    const errors = [formatMermaidError(error)];
-    const errorLine = extractMermaidErrorLine(error);
+    const errors = [formatPeleError(error)];
+    const errorLine = peleErrorLine(error);
     if (typeof errorLine === "number") {
       errors.push(`parse error near line ${errorLine}`);
     }
@@ -101,22 +97,22 @@ export const validateMermaidSource = async (
 };
 
 /** 校验一段 mermaid 源，或一段含 mermaid 围栏的 markdown。 */
-export const validateMermaidInput = async (
+export const validateMermaidInput = (
   input: string,
-  parser: MermaidParser,
-): Promise<{ results: MermaidValidation[]; fromFences: boolean }> => {
+  parser: PeleParser,
+): { results: MermaidValidation[]; fromFences: boolean } => {
   const blocks = extractMermaidBlocks(input).filter((block) =>
     block.source.trim(),
   );
   if (blocks.length === 0) {
     return {
-      results: [await validateMermaidSource(input, parser)],
+      results: [validateMermaidSource(input, parser)],
       fromFences: false,
     };
   }
   const results: MermaidValidation[] = [];
   for (const block of blocks) {
-    results.push(await validateMermaidSource(block.source, parser));
+    results.push(validateMermaidSource(block.source, parser));
   }
   return { results, fromFences: true };
 };

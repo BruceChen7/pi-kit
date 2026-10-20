@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { MermaidParser } from "../shared/mermaid-runtime.ts";
+import type { PeleParser } from "../shared/pele-runtime.ts";
 import {
   countLeadingStrippedLines,
   formatPlanMermaidErrors,
@@ -8,29 +8,29 @@ import {
   validatePlanMermaidBlocks,
 } from "./mermaid-validator.ts";
 
-/** Realistic mermaid parse error shape (line 2, caret excerpt). */
-const PARSE_ERROR_LINE_2 = new Error(
-  "Parse error on line 2:\n" +
-    "...lowchart TD  A[bad (label] --> B\n" +
-    "----------------------^\n" +
-    "Expecting 'PS', got 'TEXT'",
+const PARSE_ERROR_LINE_2 = Object.assign(
+  new Error(
+    "Parse error on line 2:\n" +
+      "...lowchart TD  A[bad (label] --> B\n" +
+      "----------------------^\n" +
+      "Expecting 'PS', got 'TEXT'",
+  ),
+  { code: "syntax", line: 2, column: 1 },
 );
 
 /** Parse-only stub for the pure core (validatePlanMermaidBlocks). */
-const failingParser = (failBodies: string[]): MermaidParser => {
+const failingParser = (failBodies: string[]): PeleParser => {
   const fails = new Set(failBodies);
   return {
-    initialize: vi.fn(),
-    parse: vi.fn(async (code: string) => {
+    parse: vi.fn((code: string) => {
       if (fails.has(code)) throw PARSE_ERROR_LINE_2;
       return undefined;
     }),
   };
 };
 
-const passingParser = (): MermaidParser => ({
-  initialize: vi.fn(),
-  parse: vi.fn(async () => undefined),
+const passingParser = (): PeleParser => ({
+  parse: vi.fn(() => undefined),
 });
 
 describe("scanMermaidBlocks", () => {
@@ -182,7 +182,7 @@ describe("countLeadingStrippedLines", () => {
 });
 
 describe("validatePlanMermaidBlocks", () => {
-  it("returns no errors when every block parses", async () => {
+  it("returns no errors when every block parses", () => {
     const markdown = [
       "```mermaid",
       "sequenceDiagram",
@@ -194,12 +194,12 @@ describe("validatePlanMermaidBlocks", () => {
       "```",
     ].join("\n");
 
-    const errors = await validatePlanMermaidBlocks(markdown, passingParser());
+    const errors = validatePlanMermaidBlocks(markdown, passingParser());
 
     expect(errors).toHaveLength(0);
   });
 
-  it("reports a single failed block with mapped file line", async () => {
+  it("reports a single failed block with mapped file line", () => {
     const markdown = [
       "# Plan",
       "",
@@ -210,10 +210,7 @@ describe("validatePlanMermaidBlocks", () => {
     ].join("\n");
     const body = "flowchart TD\n  A[bad (label] --> B";
 
-    const errors = await validatePlanMermaidBlocks(
-      markdown,
-      failingParser([body]),
-    );
+    const errors = validatePlanMermaidBlocks(markdown, failingParser([body]));
 
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatchObject({
@@ -225,7 +222,7 @@ describe("validatePlanMermaidBlocks", () => {
     expect(errors[0]?.message).toContain("Expecting 'PS'");
   });
 
-  it("maps error lines correctly for blocks with YAML frontmatter", async () => {
+  it("maps error lines correctly for blocks with YAML frontmatter", () => {
     const markdown = [
       "```mermaid",
       "---",
@@ -248,16 +245,13 @@ describe("validatePlanMermaidBlocks", () => {
     // Mermaid strips the 4 frontmatter lines before parsing, so the reported
     // line 2 refers to the stripped code — the absolute file line must add
     // the frontmatter height back: 1 (fence) + 4 (frontmatter) + 2.
-    const errors = await validatePlanMermaidBlocks(
-      markdown,
-      failingParser([body]),
-    );
+    const errors = validatePlanMermaidBlocks(markdown, failingParser([body]));
 
     expect(errors).toHaveLength(1);
     expect(errors[0]?.errorLine).toBe(7);
   });
 
-  it("collects ALL failures (no fail-fast)", async () => {
+  it("collects ALL failures (no fail-fast)", () => {
     const markdown = [
       "```mermaid",
       "graph TD",
@@ -283,7 +277,7 @@ describe("validatePlanMermaidBlocks", () => {
       "mindmap\n  root((t",
     ];
 
-    const errors = await validatePlanMermaidBlocks(
+    const errors = validatePlanMermaidBlocks(
       markdown,
       failingParser([blockBodies[1], blockBodies[3]]),
     );
@@ -295,20 +289,17 @@ describe("validatePlanMermaidBlocks", () => {
     expect(errors[1]?.diagramType).toBe("mindmap");
   });
 
-  it("reports unknown diagram types with their detected type", async () => {
+  it("reports unknown diagram types with their detected type", () => {
     const markdown = ["```mermaid", "customThing", "  x", "```"].join("\n");
     const body = "customThing\n  x";
 
-    const errors = await validatePlanMermaidBlocks(
-      markdown,
-      failingParser([body]),
-    );
+    const errors = validatePlanMermaidBlocks(markdown, failingParser([body]));
 
     expect(errors).toHaveLength(1);
     expect(errors[0]?.diagramType).toBe("customThing");
   });
 
-  it("includes fence-structure errors alongside parse errors", async () => {
+  it("includes fence-structure errors alongside parse errors", () => {
     const markdown = [
       "```mermaid", // line 1 — closed block, bad syntax → parse error
       "flowchart LR",
@@ -321,10 +312,7 @@ describe("validatePlanMermaidBlocks", () => {
     ].join("\n");
     const body = "flowchart LR\n  BAD[";
 
-    const errors = await validatePlanMermaidBlocks(
-      markdown,
-      failingParser([body]),
-    );
+    const errors = validatePlanMermaidBlocks(markdown, failingParser([body]));
 
     expect(errors).toHaveLength(2);
     // Fence-structure errors are reported first, then parse errors.
@@ -334,7 +322,7 @@ describe("validatePlanMermaidBlocks", () => {
     expect(errors[1]?.diagramType).toBe("flowchart");
   });
 
-  it("attaches sequenceDiagram diagnostics to a failed block", async () => {
+  it("attaches sequenceDiagram diagnostics to a failed block", () => {
     const markdown = [
       "```mermaid", // line 1
       "sequenceDiagram", // line 2
@@ -346,10 +334,7 @@ describe("validatePlanMermaidBlocks", () => {
     const body =
       "sequenceDiagram\n  A->>B: ok\n  Note over A: bad;one\n  Note over B: bad;two";
 
-    const errors = await validatePlanMermaidBlocks(
-      markdown,
-      failingParser([body]),
-    );
+    const errors = validatePlanMermaidBlocks(markdown, failingParser([body]));
 
     // Wiring contract: a failed sequenceDiagram block carries its
     // content-anchored diagnostics (the core's branching is tested directly
@@ -361,14 +346,11 @@ describe("validatePlanMermaidBlocks", () => {
     ]);
   });
 
-  it("keeps diagnostics empty for non-sequenceDiagram failures", async () => {
+  it("keeps diagnostics empty for non-sequenceDiagram failures", () => {
     const markdown = ["```mermaid", "flowchart LR", "  BAD[", "```"].join("\n");
     const body = "flowchart LR\n  BAD[";
 
-    const errors = await validatePlanMermaidBlocks(
-      markdown,
-      failingParser([body]),
-    );
+    const errors = validatePlanMermaidBlocks(markdown, failingParser([body]));
 
     expect(errors).toHaveLength(1);
     expect(errors[0]?.diagnostics).toEqual([]);
@@ -466,31 +448,13 @@ describe("runPlanMermaidValidation", () => {
     const result = await runPlanMermaidValidation(
       "```mermaid\ngraph TD\n  A-->B\n```\n",
       async () => {
-        throw new Error("mermaid module failed to load");
+        throw new Error("pele module failed to load");
       },
     );
 
     expect(result).toEqual({
       skipped: true,
-      reason: "mermaid module failed to load",
-      errors: [],
-    });
-  });
-
-  it("degrades to skipped when parser configuration fails", async () => {
-    const result = await runPlanMermaidValidation(
-      "```mermaid\ngraph TD\n  A-->B\n```\n",
-      async () => ({
-        initialize: () => {
-          throw new Error("initialize failed");
-        },
-        parse: async () => undefined,
-      }),
-    );
-
-    expect(result).toEqual({
-      skipped: true,
-      reason: "initialize failed",
+      reason: "pele module failed to load",
       errors: [],
     });
   });

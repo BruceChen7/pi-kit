@@ -7,7 +7,7 @@
  * NOTE: this module intentionally no longer contains any code-normalization /
  * auto-fix functions (normalizeMermaidCode and friends were removed): the
  * project policy is "no silent rewriting" — mermaid code is validated
- * against the real parser and failures are reported to the agent instead.
+ * against pele and failures are reported to the agent instead.
  * What remains here is diagram-type detection and type-aware error advice.
  */
 
@@ -156,8 +156,8 @@ const SEQUENCE_NOTE_RE = /^\s*Note\s+(?:over|right of|left of)\b/u;
 /**
  * Diagnose known high-confidence causes of sequenceDiagram parse failures.
  *
- * Only patterns proven to break the real mermaid parser are reported (a
- * semicolon `;` inside a message or Note text line) — things like `{}`,
+ * Only patterns proven to break the pele parser are reported (a semicolon `;`
+ * inside a message or Note text line) — things like `{}`,
  * unicode arrows or unquoted participant aliases are intentionally NOT
  * flagged because they parse fine and flagging them would send the agent
  * chasing red herrings (that happened in earlier sessions).

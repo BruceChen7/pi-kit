@@ -1,30 +1,21 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { getPeleParser, type PeleParser } from "../shared/pele-runtime.ts";
 import type { VisualArtifactSpec } from "./artifact-schema.ts";
-import type { MermaidParser } from "./mermaid-boundary.ts";
 import {
   formatMermaidValidationErrors,
-  getMermaidRuntime,
-  resetMermaidModule,
   validateMermaidCodeWith,
   validateMermaidNodesInSpec,
 } from "./mermaid-boundary.ts";
 
 describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
-  let mermaid: MermaidParser;
+  let parser: PeleParser;
 
   beforeAll(async () => {
-    mermaid = await getMermaidRuntime();
-    // Configuration is the shell's job (validateMermaidCode /
-    // validateMermaidNodesInSpec); initialize once here for direct core tests.
-    mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
+    parser = await getPeleParser();
   });
 
-  afterEach(() => {
-    resetMermaidModule();
-  });
-
-  it("validates sequenceDiagram", async () => {
-    const result = await validateMermaidCodeWith(
+  it("validates sequenceDiagram", () => {
+    const result = validateMermaidCodeWith(
       [
         "sequenceDiagram",
         '  participant U as "User"',
@@ -32,29 +23,29 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
         "  U->>S: Request",
         "  S-->>U: Response",
       ].join("\n"),
-      mermaid,
+      parser,
     );
 
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.diagramType).toBe("sequenceDiagram");
   });
 
-  it("validates flowchart with quoted labels", async () => {
-    const result = await validateMermaidCodeWith(
+  it("validates flowchart with quoted labels", () => {
+    const result = validateMermaidCodeWith(
       [
         "flowchart LR",
         'MODE["mode: plan | act"]',
         'PHASE["phase: plan | act"]',
         "MODE --> PHASE",
       ].join("\n"),
-      mermaid,
+      parser,
     );
 
     expect(result.ok).toBe(true);
   });
 
-  it("validates classDiagram", async () => {
-    const result = await validateMermaidCodeWith(
+  it("validates classDiagram", () => {
+    const result = validateMermaidCodeWith(
       [
         "classDiagram",
         "  class Animal {",
@@ -63,30 +54,30 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
         "  }",
         "  Animal <|-- Dog",
       ].join("\n"),
-      mermaid,
+      parser,
     );
 
     expect(result.ok).toBe(true);
     expect(result.ok && result.diagramType).toBe("classDiagram");
   });
 
-  it("validates stateDiagram-v2", async () => {
-    const result = await validateMermaidCodeWith(
+  it("validates stateDiagram-v2", () => {
+    const result = validateMermaidCodeWith(
       [
         "stateDiagram-v2",
         "  [*] --> Idle",
         "  Idle --> Processing: submit",
         "  Processing --> [*]",
       ].join("\n"),
-      mermaid,
+      parser,
     );
 
     expect(result.ok).toBe(true);
     expect(result.ok && result.diagramType).toBe("stateDiagram-v2");
   });
 
-  it("validates erDiagram", async () => {
-    const result = await validateMermaidCodeWith(
+  it("validates erDiagram", () => {
+    const result = validateMermaidCodeWith(
       [
         "erDiagram",
         '  CUSTOMER ||--o{ ORDER : "places"',
@@ -94,15 +85,15 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
         "    int id PK",
         "  }",
       ].join("\n"),
-      mermaid,
+      parser,
     );
 
     expect(result.ok).toBe(true);
     expect(result.ok && result.diagramType).toBe("erDiagram");
   });
 
-  it("validates gantt", async () => {
-    const result = await validateMermaidCodeWith(
+  it("validates gantt", () => {
+    const result = validateMermaidCodeWith(
       [
         "gantt",
         "  title Project",
@@ -110,25 +101,25 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
         "  section Work",
         "  Task : t1, 2024-01-01, 3d",
       ].join("\n"),
-      mermaid,
+      parser,
     );
 
     expect(result.ok).toBe(true);
     expect(result.ok && result.diagramType).toBe("gantt");
   });
 
-  it("validates mindmap", async () => {
-    const result = await validateMermaidCodeWith(
+  it("validates mindmap", () => {
+    const result = validateMermaidCodeWith(
       ["mindmap", "  root((T))", "    A", "      B"].join("\n"),
-      mermaid,
+      parser,
     );
 
     expect(result.ok).toBe(true);
     expect(result.ok && result.diagramType).toBe("mindmap");
   });
 
-  it("validates gitGraph", async () => {
-    const result = await validateMermaidCodeWith(
+  it("validates gitGraph", () => {
+    const result = validateMermaidCodeWith(
       [
         "gitGraph",
         "  commit",
@@ -138,17 +129,17 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
         "  checkout main",
         "  merge f",
       ].join("\n"),
-      mermaid,
+      parser,
     );
 
     expect(result.ok).toBe(true);
     expect(result.ok && result.diagramType).toBe("gitGraph");
   });
 
-  it("reports parse failures without auto-fixing (no silent rewrite)", async () => {
-    const result = await validateMermaidCodeWith(
+  it("reports parse failures without auto-fixing (no silent rewrite)", () => {
+    const result = validateMermaidCodeWith(
       "flowchart TD\n  A[bad (label] --> B",
-      mermaid,
+      parser,
     );
 
     expect(result.ok).toBe(false);
@@ -160,10 +151,6 @@ describe("validateMermaidCodeWith — Tier 1 diagram types", () => {
 });
 
 describe("validateMermaidNodesInSpec", () => {
-  afterEach(() => {
-    resetMermaidModule();
-  });
-
   const spec = (code: string): VisualArtifactSpec => ({
     slug: "demo",
     title: "demo",

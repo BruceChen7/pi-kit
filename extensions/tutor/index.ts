@@ -20,7 +20,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { getMermaidParser } from "../shared/mermaid-runtime.ts";
+import { getPeleParser } from "../shared/pele-runtime.ts";
 import {
   type AskDetails,
   type AskMode,
@@ -359,7 +359,7 @@ const registerDiagram = (pi: ExtensionAPI): void => {
     name: "validate_mermaid",
     label: "Validate Mermaid",
     description:
-      "Check Mermaid syntax with the real parser (no browser needed). Accepts either a bare diagram or a markdown snippet containing ```mermaid fences. " +
+      "Check Mermaid syntax with pele, the same Mermaid-compatible parser visual-artifact renders with (no browser needed). Accepts either a bare diagram or a markdown snippet containing ```mermaid fences. " +
       "Call it before putting a diagram into a lesson note.",
     parameters: Type.Object({
       source: Type.String({
@@ -367,8 +367,8 @@ const registerDiagram = (pi: ExtensionAPI): void => {
       }),
     }),
     async execute(_toolCallId, params) {
-      const parser = await getMermaidParser();
-      const { results, fromFences } = await validateMermaidInput(
+      const parser = await getPeleParser();
+      const { results, fromFences } = validateMermaidInput(
         params.source,
         parser,
       );

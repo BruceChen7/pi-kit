@@ -2,11 +2,8 @@ import {
   detectDiagramType,
   getTypeAdviceForDiagram,
 } from "../shared/mermaid-normalize.ts";
-import {
-  formatMermaidError,
-  getMermaidParser,
-  type MermaidParser,
-} from "../shared/mermaid-runtime.ts";
+import { formatPeleError } from "../shared/pele-error.ts";
+import { getPeleParser, type PeleParser } from "../shared/pele-runtime.ts";
 import type { VisualArtifactSpec } from "./artifact-schema.ts";
 
 export {
@@ -14,58 +11,45 @@ export {
   getTypeAdviceForDiagram,
   TIER_1_DIAGRAM_TYPES,
 } from "../shared/mermaid-normalize.ts";
-export {
-  getMermaidParser,
-  type MermaidParser,
-  resetMermaidModule,
-} from "../shared/mermaid-runtime.ts";
-
-/** Get the mermaid parser instance for dependency injection. Ensures DOM is set up. */
-export async function getMermaidRuntime(): Promise<MermaidParser> {
-  return getMermaidParser();
-}
 
 export type MermaidValidationResult =
   | { ok: true; diagramType?: string }
   | { ok: false; error: string; diagramType?: string };
 
 /**
- * Validate a mermaid code string against the real parser.
+ * Validate a mermaid code string against pele.
  *
- * This is the **shell** — it acquires + configures the mermaid dependency
- * and delegates to the pure core. Prefer injecting mermaid via
- * {@link validateMermaidCodeWith} when testing or when the caller already
- * has a mermaid instance.
+ * This is the **shell** — it acquires the parser and delegates to the pure
+ * core. Prefer injecting the parser via {@link validateMermaidCodeWith} in
+ * tests or when the caller already has one.
  */
 export async function validateMermaidCode(
   code: string,
 ): Promise<MermaidValidationResult> {
-  const mermaid = await getMermaidParser();
-  mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
-  return validateMermaidCodeWith(code, mermaid);
+  const parser = await getPeleParser();
+  return validateMermaidCodeWith(code, parser);
 }
 
 /**
- * Validate a mermaid code string against a provided mermaid parser instance.
+ * Validate a mermaid code string against a provided parser instance.
  *
- * This is the **core decision function**: given an already-configured parser
- * and code, return whether it parses. No IO, no global state, no silent
- * rewriting — a failed parse is reported to the caller so the agent can fix
- * the source. Configuration (initialize) is the shell's job.
+ * This is the **core decision function**: given a parser and code, return
+ * whether it parses. No IO, no global state, no silent rewriting — a failed
+ * parse is reported to the caller so the agent can fix the source.
  */
-export async function validateMermaidCodeWith(
+export function validateMermaidCodeWith(
   code: string,
-  mermaid: MermaidParser,
-): Promise<MermaidValidationResult> {
+  parser: PeleParser,
+): MermaidValidationResult {
   const diagramType = detectDiagramType(code);
 
   try {
-    await mermaid.parse(code);
+    parser.parse(code);
     return { ok: true, diagramType };
   } catch (error) {
     return {
       ok: false,
-      error: formatMermaidError(error),
+      error: formatPeleError(error),
       diagramType,
     };
   }
@@ -139,35 +123,19 @@ function collectMermaidCodeRefs(
   }
 }
 
-/**
- * Orchestrator: validates mermaid nodes in a spec tree.
- *
- * Architecture (Functional Core, Imperative Shell):
- *   1. Pure tree walk → collect all code refs (core)
- *   2. Validate each ref via injected mermaid parser (shell — IO)
- *   3. Collect errors (core)
- *
- * No auto-fix / silent rewriting: a node that does not parse is reported
- * verbatim so the agent can fix the source code.
- */
-async function collectMermaidErrors(
+function collectMermaidErrors(
   value: unknown,
   path: string,
-  mermaid: MermaidParser,
-): Promise<string[]> {
-  // Phase 1: Pure tree walk — collect all mermaid code references
+  parser: PeleParser,
+): string[] {
   const refs: MermaidCodeRef[] = [];
   collectMermaidCodeRefs(value, path, refs);
 
-  // Phase 2: Validate each code snippet against the real parser (IO)
-  const results = await Promise.all(
-    refs.map(async (ref) => {
-      const result = await validateMermaidCodeWith(ref.code, mermaid);
-      return { ...ref, result };
-    }),
-  );
+  const results = refs.map((ref) => ({
+    ...ref,
+    result: validateMermaidCodeWith(ref.code, parser),
+  }));
 
-  // Phase 3: Collect errors
   const errors: string[] = [];
   for (const { path: refPath, result } of results) {
     if (result.ok === false) {
@@ -179,19 +147,11 @@ async function collectMermaidErrors(
   return errors;
 }
 
-/**
- * Validate all mermaid nodes in a spec against the real parser.
- * Returns all parse errors (no auto-fix, no silent rewriting).
- *
- * Shell: acquires + configures mermaid once, threads it through recursive
- * validation. Core: {@link validateMermaidCodeWith} does the actual parse.
- */
 export async function validateMermaidNodesInSpec(
   spec: VisualArtifactSpec,
 ): Promise<{ errors: string[] }> {
-  const mermaid = await getMermaidParser();
-  mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
-  const errors = await collectMermaidErrors(spec, "", mermaid);
+  const parser = await getPeleParser();
+  const errors = collectMermaidErrors(spec, "", parser);
   return { errors };
 }
 

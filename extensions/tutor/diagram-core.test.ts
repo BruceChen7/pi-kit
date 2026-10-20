@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { getMermaidParser } from "../shared/mermaid-runtime.ts";
+import { beforeAll, describe, expect, it } from "vitest";
+import { getPeleParser, type PeleParser } from "../shared/pele-runtime.ts";
 import {
   detectRenderCapability,
   extractMermaidBlocks,
@@ -47,27 +47,27 @@ describe("diagram-core / fence extraction", () => {
   });
 });
 
-describe("diagram-core / validation (real parser, no browser)", () => {
-  it("accepts a valid diagram and reports its type", async () => {
-    const parser = await getMermaidParser();
-    const result = await validateMermaidSource(goodFlowchart, parser);
+describe("diagram-core / validation (pele parser, no browser)", () => {
+  let parser: PeleParser;
+
+  beforeAll(async () => {
+    parser = await getPeleParser();
+  });
+
+  it("accepts a valid diagram and reports its type", () => {
+    const result = validateMermaidSource(goodFlowchart, parser);
     expect(result.ok).toBe(true);
     expect(result.diagramType).toBe("flowchart");
   });
 
-  it("rejects an empty diagram", async () => {
-    const parser = await getMermaidParser();
-    const result = await validateMermaidSource("   ", parser);
+  it("rejects an empty diagram", () => {
+    const result = validateMermaidSource("   ", parser);
     expect(result.ok).toBe(false);
     if (result.ok === false) expect(result.errors.join(" ")).toContain("empty");
   });
 
-  it("rejects broken syntax with a readable error", async () => {
-    const parser = await getMermaidParser();
-    const result = await validateMermaidSource(
-      "flowchart TB\n  A --> ",
-      parser,
-    );
+  it("rejects broken syntax with a readable error", () => {
+    const result = validateMermaidSource("flowchart TB\n  A --> ", parser);
     expect(result.ok).toBe(false);
     if (result.ok === false) {
       expect(result.errors.length).toBeGreaterThan(0);
@@ -75,9 +75,8 @@ describe("diagram-core / validation (real parser, no browser)", () => {
     }
   });
 
-  it("validates every fence in a markdown snippet", async () => {
-    const parser = await getMermaidParser();
-    const { results, fromFences } = await validateMermaidInput(
+  it("validates every fence in a markdown snippet", () => {
+    const { results, fromFences } = validateMermaidInput(
       `text\n\n\`\`\`mermaid\n${goodFlowchart}\n\`\`\`\n`,
       parser,
     );
@@ -86,12 +85,8 @@ describe("diagram-core / validation (real parser, no browser)", () => {
     expect(results[0].ok).toBe(true);
   });
 
-  it("treats input without fences as a bare diagram", async () => {
-    const parser = await getMermaidParser();
-    const { results, fromFences } = await validateMermaidInput(
-      goodFlowchart,
-      parser,
-    );
+  it("treats input without fences as a bare diagram", () => {
+    const { results, fromFences } = validateMermaidInput(goodFlowchart, parser);
     expect(fromFences).toBe(false);
     expect(results[0].ok).toBe(true);
   });

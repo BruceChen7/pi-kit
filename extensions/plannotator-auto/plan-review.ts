@@ -1042,10 +1042,6 @@ export const registerPlanReviewSubmitTool = (
       const preprocessed = preprocessPlanMarkdown(planContent);
 
       let mermaidValidationNotice: string | null = null;
-      // Real syntax validation against the mermaid parser. Covers fence
-      // structure (unclosed/empty) AND parse errors; all failures are
-      // collected and reported together. A broken runtime degrades to a
-      // skip (never blocks the review gate).
       const mermaidValidation = await runPlanMermaidValidation(preprocessed);
       if (mermaidValidation.skipped) {
         log.warn(`Mermaid validation skipped: ${mermaidValidation.reason}`);

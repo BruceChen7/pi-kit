@@ -71,7 +71,7 @@ export const materializeArtifact = async (
   }
 
   /* ---- 2. Mermaid validation: every mermaid node in the spec is checked
-     against the real parser. ---- */
+     against pele, the parser this UI renders with. ---- */
   const { errors: mermaidErrors } = await validateMermaidNodesInSpec(
     validated.spec,
   );

@@ -19,6 +19,13 @@ import er from "pele/diagrams/er";
 import flowchart from "pele/diagrams/flowchart";
 import sequence from "pele/diagrams/sequence";
 import state from "pele/diagrams/state";
+import {
+  condensePeleMessage,
+  peleErrorColumn,
+  peleErrorLine,
+} from "../../../../../../shared/pele-error.ts";
+
+export { condensePeleMessage };
 
 export type DiagramAppTheme = string;
 
@@ -86,33 +93,12 @@ export function toCssVariableStyle(variables: Record<string, string>): string {
 }
 
 type PeleErrorLike = {
-  name?: unknown;
   code?: unknown;
-  line?: unknown;
-  column?: unknown;
   message?: unknown;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
-
-/** A caret line is source-excerpt decoration: only carets, dashes, pipes. */
-const isCaretLine = (line: string): boolean =>
-  line.includes("^") && /^[\s\-|+^]*$/u.test(line);
-
-/**
- * Collapse pelé's multi-line parser message (excerpt + caret line) into one
- * line: the caret art is noise once the line/column is reported separately.
- */
-export function condensePeleMessage(message: string): string {
-  return message
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !isCaretLine(line))
-    .join(" ")
-    .replace(/^Parse error on line \d+:\s*/u, "")
-    .trim();
-}
 
 /**
  * Turn an engine failure into an agent/human-readable message.
@@ -122,12 +108,14 @@ export function condensePeleMessage(message: string): string {
 export function describePeleError(error: unknown): string {
   if (!isRecord(error)) return String(error);
 
-  const { code, line, column, message } = error as PeleErrorLike;
+  const { code, message } = error as PeleErrorLike;
   const text =
     typeof message === "string" ? condensePeleMessage(message) : String(error);
+  const line = peleErrorLine(error);
+  const column = peleErrorColumn(error);
   const where =
-    typeof line === "number" && line > 0
-      ? ` (line ${line}${typeof column === "number" && column > 0 ? `, column ${column}` : ""})`
+    line !== undefined
+      ? ` (line ${line}${column !== undefined ? `, column ${column}` : ""})`
       : "";
 
   if (code === "unsupported-diagram") {

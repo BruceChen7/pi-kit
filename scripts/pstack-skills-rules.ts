@@ -83,6 +83,32 @@ export const extractSkillReferences = (text: string): string[] => {
   return [...names];
 };
 
+/**
+ * Repo-wide invariant: a flat skill is named after its directory. Nested groups
+ * (`skills/knowledge-wiki/lint/`) are out of scope, their name carries the parent.
+ */
+export const namingFindings = (
+  docs: ReadonlyArray<{ directoryName: string; doc: RepoDoc }>,
+): Finding[] =>
+  docs.flatMap(({ directoryName, doc }) => {
+    const parsed = parseFrontmatter(doc.content);
+    if (!parsed) {
+      return [
+        { path: doc.path, rule: "frontmatter-missing", detail: "no --- block" },
+      ];
+    }
+
+    const name = parsed.fields.name ?? "";
+    if (name === directoryName) return [];
+    return [
+      {
+        path: doc.path,
+        rule: "name-mismatch",
+        detail: `name="${name}" dir="${directoryName}"`,
+      },
+    ];
+  });
+
 const referenceFindings = (
   doc: RepoDoc,
   knownSkillNames: ReadonlySet<string>,

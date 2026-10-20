@@ -1,5 +1,5 @@
 ---
-name: plan-code-review
+name: review
 description: >
   Review changes since a fixed point along two axes — Standards (does the diff follow this
   repo's documented standards?) and Spec (does the diff implement the originating plan, issue,

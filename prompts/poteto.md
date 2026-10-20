@@ -15,14 +15,16 @@ argument-hint: "<task>"
 
 | 类型 | 先做 | 再走 | 收尾 |
 |---|---|---|---|
-| 调查 | `research` 或 `wayfinder`；只读且可切分时 `/skill:herdr-squad` | 给带引用的结论，不改码 | 交结论 |
+| 调查 | `/skill:research` 或 `/skill:wayfinder`；只读且可切分时 `/skill:herdr-squad` | 给带引用的结论，不改码 | 交结论 |
 | 修 bug | `/skill:diagnosing-bugs` 建反馈回路 | 复现 → 根因 → 最小修复 | `/skill:blast-radius` |
-| 重构 | plan 产物里先写「行为不变」的判据 | 小步改，每步验证 | `/skill:blast-radius` + `/skill:plan-code-review` |
+| 重构 | plan 产物里先写「行为不变」的判据 | 小步改，每步验证 | `/skill:blast-radius` + `/skill:review` |
 | 新功能 | plan 或 spec，走 Plannotator | 先定数据形状再写码 | 测试或验证脚本 |
 | 性能 | 先跑基线，记下 limiter | 改一处，测一次 | `/skill:blast-radius` + `/skill:benchmark-checklist` |
-| 收尾发布 | `/skill:plan-code-review` 双轴 | 修 findings；diff 里注释多时 `/skill:no-comments` | 重跑测试 → `/skill:unslop` + conventional commit |
+| 收尾发布 | `/skill:review` 双轴 | 修 findings；diff 里注释多时 `/skill:no-comments` | 重跑测试 → `/skill:unslop` + conventional commit |
 
 类型定不下来时，按「新功能」走：先出计划，用计划换确定性。
+
+route 跟着任务走。todo 第一项写的类型和当前动作对不上时，先改 route 再继续。查着查着变成改，就重写成「修 bug」或「重构」。
 
 ## 2. 非协商触发器
 

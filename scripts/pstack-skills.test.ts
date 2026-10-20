@@ -6,6 +6,7 @@ import {
   extractIndexedPrincipleIds,
   type Finding,
   lintSkillGroup,
+  namingFindings,
   parseFrontmatter,
   type RepoDoc,
 } from "./pstack-skills-rules.ts";
@@ -43,6 +44,13 @@ const skillNameOf = (file: string): string | undefined =>
   parseFrontmatter(fs.readFileSync(path.join(REPO_ROOT, file), "utf8"))?.fields
     .name;
 
+// Only the skills that sit directly under skills/. The knowledge-wiki group nests
+// one level deeper and carries its parent in the name by design.
+const flatSkillFiles = (skillFiles: string[]): string[] =>
+  skillFiles.filter(
+    (file) => path.posix.dirname(path.posix.dirname(file)) === "skills",
+  );
+
 const buildRepoInput = () => {
   const skillFiles = markdownFiles(listFiles("skills")).filter((file) =>
     file.endsWith("/SKILL.md"),
@@ -57,8 +65,14 @@ const buildRepoInput = () => {
     .filter((file) => file.startsWith("skills/pstack/principles/references/"))
     .map((file) => path.basename(file, ".md"));
 
+  const flatSkillDocs = flatSkillFiles(skillFiles).map((file) => ({
+    directoryName: path.posix.basename(path.posix.dirname(file)),
+    doc: readDoc(file),
+  }));
+
   return {
     skillFiles,
+    flatSkillDocs,
     groupFiles,
     referenceIds,
     input: {
@@ -108,6 +122,34 @@ describe("pstack skill group", () => {
     const { input } = buildRepoInput();
 
     expect(input.promptDoc.content).toContain("/skill:principles");
+  });
+});
+
+describe("repo skill naming", () => {
+  it("names every flat skill after its directory", () => {
+    const { flatSkillDocs } = buildRepoInput();
+
+    expect(namingFindings(flatSkillDocs)).toEqual([]);
+  });
+
+  it("flags an upstream sync that rewrites the name", () => {
+    const findings = namingFindings([
+      {
+        directoryName: "review",
+        doc: {
+          path: "skills/review/SKILL.md",
+          content: "---\nname: plan-code-review\ndescription: x\n---\n",
+        },
+      },
+    ]);
+
+    expect(findings).toEqual([
+      {
+        path: "skills/review/SKILL.md",
+        rule: "name-mismatch",
+        detail: 'name="plan-code-review" dir="review"',
+      },
+    ]);
   });
 });
 

@@ -70,7 +70,7 @@ describe("install-plugins.sh", () => {
     const libraryDir = path.join(home, ".agents", "pi-plugins");
     const globalExtensionsDir = path.join(home, ".pi", "agent", "extensions");
 
-    expect(fs.lstatSync(path.join(libraryDir, "copyx")).isSymbolicLink()).toBe(
+    expect(fs.lstatSync(path.join(libraryDir, "tutor")).isSymbolicLink()).toBe(
       true,
     );
     expect(
@@ -84,7 +84,7 @@ describe("install-plugins.sh", () => {
     expect(
       fs.lstatSync(path.join(globalExtensionsDir, "shared")).isSymbolicLink(),
     ).toBe(true);
-    expect(fs.existsSync(path.join(globalExtensionsDir, "copyx"))).toBe(false);
+    expect(fs.existsSync(path.join(globalExtensionsDir, "tutor"))).toBe(false);
   });
 
   it("installs review as a directory symlink so sibling modules stay reachable", () => {
@@ -233,19 +233,19 @@ describe("install-plugins.sh", () => {
   it("leaves conflicting global symlink plugins untouched for manual review", () => {
     const home = createTempDir();
     const oldSource = createTempDir();
-    const oldPlugin = createPluginDir(oldSource, "copyx");
+    const oldPlugin = createPluginDir(oldSource, "tutor");
 
     const globalExtensionsDir = path.join(home, ".pi", "agent", "extensions");
     fs.mkdirSync(globalExtensionsDir, { recursive: true });
-    fs.symlinkSync(oldPlugin, path.join(globalExtensionsDir, "copyx"));
+    fs.symlinkSync(oldPlugin, path.join(globalExtensionsDir, "tutor"));
 
     const output = runInstall(home);
 
-    expect(fs.realpathSync(path.join(globalExtensionsDir, "copyx"))).toBe(
+    expect(fs.realpathSync(path.join(globalExtensionsDir, "tutor"))).toBe(
       fs.realpathSync(oldPlugin),
     );
     expect(output).toContain(
-      "Global plugin name conflict needs manual review: copyx",
+      "Global plugin name conflict needs manual review: tutor",
     );
   });
 
@@ -269,7 +269,7 @@ describe("install-plugins.sh", () => {
 
     const globalExtensionsDir = path.join(home, ".pi", "agent", "extensions");
     expect(
-      fs.lstatSync(path.join(globalExtensionsDir, "copyx")).isSymbolicLink(),
+      fs.lstatSync(path.join(globalExtensionsDir, "tutor")).isSymbolicLink(),
     ).toBe(true);
     expect(
       fs.lstatSync(path.join(globalExtensionsDir, "shared")).isSymbolicLink(),

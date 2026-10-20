@@ -6,7 +6,6 @@ import { join } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FILE_WATCHER_CONTROL_CHANNEL } from "../shared/internal-events.ts";
 
 import type { CrDiffScope } from "./core.ts";
 
@@ -113,11 +112,9 @@ const registerCrCommands = (exec: ReturnType<typeof vi.fn>) => {
   const commands = new Map<string, CommandHandler>();
   const shortcuts = new Map<string, ShortcutHandler>();
   const events = new Map<string, InputHandler>();
-  const internalEvents = { emit: vi.fn() };
   const sendUserMessage = vi.fn();
   crDiffviewExtension({
     exec,
-    events: internalEvents,
     registerCommand(name, definition) {
       commands.set(name, definition.handler);
     },
@@ -148,7 +145,6 @@ const registerCrCommands = (exec: ReturnType<typeof vi.fn>) => {
     sessionShutdownHandler:
       sessionShutdownHandler as unknown as SessionShutdownHandler,
     sendUserMessage,
-    internalEvents,
   };
 };
 
@@ -178,21 +174,6 @@ const expectTmuxNewWindowStarted = (
       buildCrTmuxWindowName(repoRoot),
       expect.stringContaining("nvim --listen"),
     ),
-  );
-};
-
-const expectFileWatcherControlEvent = (
-  emit: ReturnType<typeof vi.fn>,
-  type: "file-watcher.start" | "file-watcher.stop",
-  repoRoot: string,
-): void => {
-  expect(emit).toHaveBeenCalledWith(
-    FILE_WATCHER_CONTROL_CHANNEL,
-    expect.objectContaining({
-      type,
-      path: repoRoot,
-      source: "cr-diffview",
-    }),
   );
 };
 
@@ -411,7 +392,7 @@ describe("cr-diffview command", () => {
       const repoRoot = createRepoRoot();
       const exec = createCrExec(repoRoot);
       const { ctx, notify, setWidget } = createInlineContext(repoRoot);
-      const { startHandler, internalEvents } = registerCrCommands(exec);
+      const { startHandler } = registerCrCommands(exec);
 
       const promise = startHandler("main", ctx);
       await vi.waitFor(() => expect(spawnMock).toHaveBeenCalled());
@@ -442,9 +423,8 @@ describe("cr-diffview command", () => {
 
       expectTuiLifecycle();
       expect(notify).toHaveBeenCalledWith("CR review finished", "info");
-      // inline mode is modal: no widget, no file watcher
+      // inline mode is modal: no widget
       expect(setWidget).not.toHaveBeenCalled();
-      expect(internalEvents.emit).not.toHaveBeenCalled();
     });
 
     it("sends CR annotations received over the socket in inline mode", async () => {
@@ -590,41 +570,21 @@ describe("cr-diffview command", () => {
     );
   });
 
-  it("starts file-watcher for the repo after opening CR diffview", async () => {
-    const { internalEvents, repoRoot } = await startCrReview();
-
-    expectFileWatcherControlEvent(
-      internalEvents.emit,
-      "file-watcher.start",
-      repoRoot,
-    );
-  });
-
   it("clears the widget when the user submits input", async () => {
-    const { ctx, inputHandler, internalEvents, repoRoot, setWidget } =
-      await startCrReview();
+    const { ctx, inputHandler, setWidget } = await startCrReview();
 
-    internalEvents.emit.mockClear();
     inputHandler({ source: "user" }, ctx);
 
     expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
-    expectFileWatcherControlEvent(
-      internalEvents.emit,
-      "file-watcher.stop",
-      repoRoot,
-    );
   });
 
   it("keeps the widget for extension-sourced input", async () => {
-    const { ctx, inputHandler, internalEvents, setWidget } =
-      await startCrReview();
+    const { ctx, inputHandler, setWidget } = await startCrReview();
 
     setWidget.mockClear();
-    internalEvents.emit.mockClear();
     inputHandler({ source: "extension" }, ctx);
 
     expect(setWidget).not.toHaveBeenCalled();
-    expect(internalEvents.emit).not.toHaveBeenCalled();
   });
 
   it("opens the interactive CR diff target picker from the start shortcut", async () => {
@@ -703,9 +663,7 @@ describe("cr-diffview command", () => {
   });
 
   it("clears the widget when CR annotations finish through the socket", async () => {
-    const { exec, internalEvents, repoRoot, setWidget } = await startCrReview();
-
-    internalEvents.emit.mockClear();
+    const { exec, setWidget } = await startCrReview();
 
     await exchangeSocketMessages(socketFromTmuxCommand(exec), [
       { type: "hello" },
@@ -724,11 +682,6 @@ describe("cr-diffview command", () => {
     await vi.waitFor(() => {
       expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
     });
-    expectFileWatcherControlEvent(
-      internalEvents.emit,
-      "file-watcher.stop",
-      repoRoot,
-    );
   });
 
   it("returns focus to the tmux pane that started the CR review", async () => {
@@ -784,17 +737,10 @@ describe("cr-diffview command", () => {
   });
 
   describe("session replacement", () => {
-    it("closes the socket server, file watcher, and tmux review view on session shutdown", async () => {
-      const {
-        ctx,
-        exec,
-        internalEvents,
-        repoRoot,
-        sessionShutdownHandler,
-        setWidget,
-      } = await startCrReview();
+    it("closes the socket server and tmux review view on session shutdown", async () => {
+      const { ctx, exec, repoRoot, sessionShutdownHandler, setWidget } =
+        await startCrReview();
       exec.mockClear();
-      internalEvents.emit.mockClear();
       setWidget.mockClear();
 
       await sessionShutdownHandler({ reason: "new" }, ctx);
@@ -802,11 +748,6 @@ describe("cr-diffview command", () => {
       expect(exec).toHaveBeenCalledWith(
         "tmux",
         buildCrTmuxKillWindowArgs(buildCrTmuxWindowName(repoRoot)),
-      );
-      expectFileWatcherControlEvent(
-        internalEvents.emit,
-        "file-watcher.stop",
-        repoRoot,
       );
       expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
     });
@@ -1036,15 +977,8 @@ describe("cr-diffview command", () => {
   });
 
   it("sends saved annotations before stopping the CR Neovim window", async () => {
-    const {
-      ctx,
-      exec,
-      internalEvents,
-      repoRoot,
-      sendUserMessage,
-      setWidget,
-      stopHandler,
-    } = await startCrReview();
+    const { ctx, exec, sendUserMessage, setWidget, stopHandler } =
+      await startCrReview();
 
     writeFileSync(
       join(sessionDirFromTmuxCommand(exec), "annotations.jsonl"),
@@ -1062,11 +996,6 @@ describe("cr-diffview command", () => {
       { deliverAs: "followUp" },
     );
     expect(setWidget).toHaveBeenCalledWith("cr-diffview", undefined);
-    expectFileWatcherControlEvent(
-      internalEvents.emit,
-      "file-watcher.stop",
-      repoRoot,
-    );
   });
 
   it("selects last N commits by entering a number N interactively", async () => {

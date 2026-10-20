@@ -13,7 +13,6 @@
   "pi": {
     "extensions": [
       "./extensions/tutor",
-      "./extensions/copyx",
       "./extensions/multi-edit",
       "./extensions/skill-toggle",
       "./extensions/plugin-toggle",
@@ -26,7 +25,6 @@
       "./extensions/session-path-copy",
       "./extensions/codex-web-search",
       "./extensions/deepseek-search",
-      "./extensions/file-watcher",
       "./extensions/review-feedback",
       "./extensions/scheduled-tasks",
       "./extensions/cache-graph",

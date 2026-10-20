@@ -18,10 +18,6 @@ import {
   Text,
   type TUI,
 } from "@earendil-works/pi-tui";
-import {
-  FILE_WATCHER_CONTROL_CHANNEL,
-  type PiKitFileWatcherControlEvent,
-} from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
 import { customPanel, hasRichUi, uiHostProfile } from "../shared/rich-ui.ts";
 import { isStaleSessionContextError } from "../shared/stale-context.ts";
@@ -67,7 +63,6 @@ const SELECT_LIST_MAX_VISIBLE = 10;
 const SELECT_LIST_HINT = "Type to filter • Enter to select • esc to cancel";
 const EMPTY_FILTER_HINT = "type to filter...";
 const START_SHORTCUT = "alt+r";
-const CR_FILE_WATCHER_SOURCE = "cr-diffview";
 /**
  * How long to wait for the VimLeavePre finish handshake to land after nvim
  * exits before falling back to reading the annotation artifact.
@@ -81,10 +76,6 @@ type WidgetContext = ExtensionContext & {
     setWidget?: (key: string, content?: unknown) => void;
     theme?: { fg?: (token: string, text: string) => string };
   };
-};
-
-type EventBus = {
-  emit?: (channel: string, payload: unknown) => void;
 };
 
 const shellQuote = (value: string): string =>
@@ -519,23 +510,6 @@ const sendArtifactAnnotationsToPi = (
   sendAnnotationsToPi(pi, readArtifactAnnotations(session.artifactPath));
 };
 
-const emitCrFileWatcherControl = (
-  pi: ExtensionAPI,
-  session: CrSession,
-  ctx: ExtensionContext,
-  type: PiKitFileWatcherControlEvent["type"],
-): void => {
-  const eventBus = pi.events as EventBus | undefined;
-  eventBus?.emit?.(FILE_WATCHER_CONTROL_CHANNEL, {
-    type,
-    requestId: `cr_file_watcher_${session.sessionId}`,
-    createdAt: Date.now(),
-    path: session.repoRoot,
-    source: CR_FILE_WATCHER_SOURCE,
-    ctx,
-  });
-};
-
 const showCrWidget = (ctx: WidgetContext, session: CrSession): boolean => {
   if (!ctx.hasUI || typeof ctx.ui?.setWidget !== "function") return false;
 
@@ -753,7 +727,6 @@ const resolveScope = async (
 export default function crDiffviewExtension(pi: ExtensionAPI): void {
   let activeSession: CrSession | null = null;
   let crWidgetVisible = false;
-  let crWatcherSessionId: string | null = null;
 
   /**
    * Single writer for `activeSession`: clears it only when the given session
@@ -797,23 +770,6 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
   const clearVisibleCrWidget = (ctx: WidgetContext): void => {
     clearCrWidget(ctx);
     crWidgetVisible = false;
-  };
-
-  const startCrFileWatcher = (
-    session: CrSession,
-    ctx: ExtensionContext,
-  ): void => {
-    emitCrFileWatcherControl(pi, session, ctx, "file-watcher.start");
-    crWatcherSessionId = session.sessionId;
-  };
-
-  const stopCrFileWatcher = (
-    session: CrSession | null,
-    ctx: ExtensionContext,
-  ): void => {
-    if (!session || crWatcherSessionId !== session.sessionId) return;
-    emitCrFileWatcherControl(pi, session, ctx, "file-watcher.stop");
-    crWatcherSessionId = null;
   };
 
   const runInlineStart = async (
@@ -916,7 +872,6 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
       multiplexer,
       () => {
         if (!clearActiveSessionIfCurrent(session.sessionId)) return;
-        stopCrFileWatcher(session, widgetCtx);
         clearVisibleCrWidget(widgetCtx);
       },
     );
@@ -942,7 +897,6 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
 
     activeSession = session;
     crWidgetVisible = showCrWidget(widgetCtx, session);
-    startCrFileWatcher(session, widgetCtx);
     sendArtifactAnnotationsToPi(pi, session);
     ctx.ui.notify(`Opened CR diffview for ${session.label}`, "info");
   };
@@ -958,13 +912,11 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
   const teardownSession = async (
     session: CrSession | null,
     multiplexer: CrMultiplexer | null,
-    ctx: WidgetContext,
     options: { sendAnnotations: boolean; closeView: "by-id" | "by-id-or-name" },
   ): Promise<ExecResult | null> => {
     if (session && options.sendAnnotations) {
       sendArtifactAnnotationsToPi(pi, session);
     }
-    stopCrFileWatcher(session, ctx);
     if (!multiplexer) return null;
     if (options.closeView === "by-id" && !session?.reviewViewId) return null;
     return multiplexer.closeReviewView({
@@ -988,12 +940,10 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
       return;
     }
     const widgetCtx = ctx as WidgetContext;
-    const closeResult = await teardownSession(
-      activeSession,
-      multiplexer,
-      widgetCtx,
-      { sendAnnotations: true, closeView: "by-id-or-name" },
-    );
+    const closeResult = await teardownSession(activeSession, multiplexer, {
+      sendAnnotations: true,
+      closeView: "by-id-or-name",
+    });
 
     activeSession = null;
     clearVisibleCrWidget(widgetCtx);
@@ -1028,7 +978,6 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
 
   pi.on("input", (event, ctx) => {
     if (event.source !== "extension" && crWidgetVisible) {
-      stopCrFileWatcher(activeSession, ctx as ExtensionContext);
       clearVisibleCrWidget(ctx as WidgetContext);
     }
 
@@ -1039,16 +988,16 @@ export default function crDiffviewExtension(pi: ExtensionAPI): void {
     // Session replacement (/new, /resume, /fork) and /reload invalidate this
     // extension instance right after this handler returns: any captured pi or
     // ctx becomes stale and throws. Long-lived resources started by this
-    // instance (CR socket server, file watcher) must therefore be torn down
-    // here, and the review view closed, or a late finish handshake from nvim
-    // would call into the stale ctx and crash pi.
+    // instance (CR socket server) must therefore be torn down here, and the
+    // review view closed, or a late finish handshake from nvim would call into
+    // the stale ctx and crash pi.
     const session = activeSession;
     activeSession = null;
     closeTrackedCrSocketServer();
     if (!session) return;
     try {
       const multiplexer = createMultiplexer(pi, getExtensionEnv(ctx));
-      await teardownSession(session, multiplexer, ctx as WidgetContext, {
+      await teardownSession(session, multiplexer, {
         sendAnnotations: false,
         closeView: "by-id",
       });

@@ -135,4 +135,4 @@ Open questions, risks, rollout notes, or follow-ups.
 
 ## Attribution
 
-Adapted from the `to-spec` skill in https://github.com/mattpocock/skills (v1.1.0+) under the MIT License.
+Adapted from the `to-spec` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License. Pi 适配：本地 spec 输出与 Plannotator 评审门；上游的 issue tracker 发布段未进口。

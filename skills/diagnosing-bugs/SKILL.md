@@ -220,7 +220,7 @@ Required before declaring done:
 - [ ] External applications/processes paused or quit for A/B testing restored, or the user is explicitly told what remains changed
 - [ ] The hypothesis that turned out correct is stated in the commit / PR message — so the next debugger learns
 
-**Then ask: what would have prevented this bug?** If the answer involves architectural change (no good test seam, tangled callers, hidden coupling) hand off to `/improve-codebase-architecture` with the specifics. Make the recommendation **after** the fix is in, not before — you have more information now than when you started.
+**Then ask: what would have prevented this bug?** If the answer involves architectural change (no good test seam, tangled callers, hidden coupling) hand off to `/improve-codebase-architecture` with the specifics. Make the recommendation **after** the fix is in, not before — you have more information now than when you started. If the answer lands on the agent's environment instead (navigation pointers, missing checks, coding standards), run `/skill:retro`.
 
 For significant debugging outcomes, consider recording the root cause and prevention strategy in an ADR under `.pi/contexts/**/adr/` or a note in `.pi/plans/<repo>/plan/`.
 

@@ -51,3 +51,7 @@ For UI prototypes, the verdict usually names the winning variant (or the combina
 - **UI prototypes**: write to `.pi/html/<repo>/YYYY-MM-DD-<slug>.html`, then call `plannotator_auto_submit_review({ path })` immediately — the artifact reviews through Plannotator annotate (one-shot; feedback keeps the gate pending; revise and re-submit, the new session shows a version diff; the reviewer's Approve completes the review).
 - **Logic prototypes**: use `plannotator_auto_submit_review` when prototyping produces a document artifact that needs review (e.g., a validated state machine lifted into a spec).
 
+## Attribution
+
+Adapted from the `prototype` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License. Pi 适配：产物落 `.pi/html/<repo>/`，走 `plannotator_auto_submit_review` 评审。
+

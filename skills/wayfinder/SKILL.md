@@ -296,4 +296,4 @@ This skill depends on the following locally available skills:
 
 ## Attribution
 
-Adapted from the `wayfinder` skill in https://github.com/mattpocock/skills (v1.1.0+) under the MIT License.
+Adapted from the `wayfinder` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License. Pi 适配：map 与 ticket 落在 `.pi/plans/<repo>/wayfinder/`，替代上游的 issue tracker 标签与依赖关系。

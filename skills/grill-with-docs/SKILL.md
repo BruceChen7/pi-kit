@@ -130,3 +130,7 @@ This skill depends on the `/domain-modeling` skill for:
 - `ADR-FORMAT.md` — ADR template and offering guidance
 
 Read those files from `/domain-modeling` before creating or editing `.pi/contexts/**/GLOSSARY.md` or ADR files.
+
+## Attribution
+
+Adapted from the `grill-with-docs` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License. Pi 适配：把上游 `grilling` 的访谈内容合进本 skill，并接 Pi 的 spec 与 ADR 落点。

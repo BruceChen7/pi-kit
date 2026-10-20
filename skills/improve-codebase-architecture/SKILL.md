@@ -152,3 +152,7 @@ This skill depends on:
 - `INTERFACE-DESIGN.md` — local convenience copy of interface exploration guidance
 
 For shared architecture vocabulary, you can also invoke `/codebase-design` directly when deeper guidance on module design principles is needed.
+
+## Attribution
+
+Adapted from the `improve-codebase-architecture` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License. Pi 适配：`HTML-REPORT.md` 等本地文件、Plannotator 评审、`.pi/` 路径。

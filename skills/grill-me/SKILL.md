@@ -91,3 +91,7 @@ Walk down the design tree in this order, skipping items already answered by repo
 Use `grill-me` as the lightweight entry point for direct plan interrogation. Escalate to or
 follow `grill-with-docs` when the session needs durable domain language, context maps, ADRs,
 or heavier documentation maintenance.
+
+## Attribution
+
+Adapted from the `grill-me` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License. Pi 适配：把上游 `grilling` 的访谈内容合进本 skill，不做成薄 wrapper，因为 Pi 模板正文里的 `/skill:` 不会二次展开。

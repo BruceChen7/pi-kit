@@ -105,3 +105,7 @@ A good handoff lets a fresh agent answer these questions in under one minute:
 - Where are the durable artifacts?
 - What should I do next?
 - What should I avoid repeating?
+
+## Attribution
+
+Adapted from the `handoff` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License. Pi 适配：用 `mktemp` 生成临时文件，引用 `.pi/plans/**` 与 commit。

@@ -812,8 +812,6 @@ describe("wiki-summarize.md integrity", () => {
   });
 });
 
-// ── task handler ──────────────────────────────────────
-
 describe("task handler", () => {
   it("sends only the completion message when a batch times out", async () => {
     const exec = {

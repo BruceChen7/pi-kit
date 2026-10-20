@@ -488,7 +488,6 @@ export interface BatchResult {
   ok: boolean;
   done?: string;
   summaries?: string[];
-  /** True when the subagent was killed at its deadline instead of failing. */
   timedOut?: boolean;
 }
 
@@ -882,10 +881,6 @@ export async function runSummarizePipeline(
   for (const f of failed) {
     const batch = `${f.batch}/${results.length}`;
 
-    // A batch that hit its deadline is an expected cost of a large backlog,
-    // not an incident: the next run retries those files. Paging the user for
-    // it every 8h made the daily message cry wolf, so it stays in the log.
-    // Files left behind still show up in the final message's residual section.
     if (f.timedOut) {
       log.warn("wiki-summarize batch timed out, not notifying Telegram", {
         batch,

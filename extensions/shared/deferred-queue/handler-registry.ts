@@ -25,13 +25,6 @@ const MAX_EXEC_STDERR_CHARS = 512 * 1024;
 const MAX_SUBAGENT_STDOUT_CHARS = 16 * 1024 * 1024;
 const MAX_SUBAGENT_STDERR_CHARS = 512 * 1024;
 
-/**
- * Rejection reason for a subagent that ran past its timeout.
- *
- * Carries its own type so callers can tell "the batch was killed at the
- * deadline" apart from real failures ("the agent crashed", "exit code 1") and
- * decide separately whether the event is worth notifying a human about.
- */
 export class SubagentTimeoutError extends Error {
   readonly timeoutMs: number;
 

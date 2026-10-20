@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import {
+import { SubagentTimeoutError } from "../../shared/deferred-queue/handler-registry.ts";
+import { sendTelegramNotification } from "../../shared/telegram.ts";
+import task, {
   aggregateBatchResults,
   buildSubagentPrompt,
   buildTelegramSuccessMessage,
@@ -529,12 +531,25 @@ describe("aggregateBatchResults", () => {
     ]);
     expect(result.createdSummaries).toEqual(["S1", "S3"]);
     expect(result.wikiSummaryDone).toBe("Batch 1: a | Batch 3: c");
-    expect(result.failed).toEqual([{ batch: 2, error: "boom" }]);
+    expect(result.failed).toEqual([
+      { batch: 2, error: "boom", timedOut: false },
+    ]);
+  });
+
+  it("marks a timed-out batch as timed out", () => {
+    const result = aggregateBatchResults([
+      { ok: false, done: "subagent timed out after 600000ms", timedOut: true },
+    ]);
+    expect(result.failed).toEqual([
+      { batch: 1, error: "subagent timed out after 600000ms", timedOut: true },
+    ]);
   });
 
   it("uses 'unknown error' when a failed batch has no message", () => {
     const result = aggregateBatchResults([{ ok: false }]);
-    expect(result.failed).toEqual([{ batch: 1, error: "unknown error" }]);
+    expect(result.failed).toEqual([
+      { batch: 1, error: "unknown error", timedOut: false },
+    ]);
     expect(result.createdSummaries).toEqual([]);
     expect(result.wikiSummaryDone).toBe("");
   });
@@ -648,6 +663,30 @@ describe("runSummarizePipeline", () => {
     expect(result.createdSummaries).toEqual(["Wiki/Summaries/A.summary.md"]);
     expect(result.wikiSummaryDone).toContain("Batch 1");
     expect(result.wikiSummaryDone).not.toContain("Batch 2");
+  });
+
+  it("stays silent on Telegram when a batch times out", async () => {
+    const exec = {
+      subagent: vi.fn().mockRejectedValue(new SubagentTimeoutError(600_000)),
+    };
+
+    const result = await runSummarizePipeline(exec, ["A.md"]);
+
+    expect(result.createdSummaries).toEqual([]);
+    expect(sendTelegramNotification).not.toHaveBeenCalled();
+  });
+
+  it("still notifies Telegram for non-timeout batch failures", async () => {
+    const exec = {
+      subagent: vi.fn().mockRejectedValue(new Error("spawn failed")),
+    };
+
+    await runSummarizePipeline(exec, ["A.md"]);
+
+    expect(sendTelegramNotification).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sendTelegramNotification).mock.calls[0][0]).toContain(
+      "spawn failed",
+    );
   });
 
   it("never runs more than 3 subagents at once and processes every batch", async () => {
@@ -770,5 +809,28 @@ describe("wiki-summarize.md integrity", () => {
     const content = readFileSync(WIKI_SUMMARIZE_FILE, "utf8");
     expect(content).toContain("--base-path");
     expect(content).toContain("<cwd>");
+  });
+});
+
+// ── task handler ──────────────────────────────────────
+
+describe("task handler", () => {
+  it("sends only the completion message when a batch times out", async () => {
+    const exec = {
+      exec: vi.fn().mockResolvedValue({
+        code: 0,
+        stdout: JSON.stringify({ sources: ["Notes/A.md"] }),
+        stderr: "",
+      }),
+      subagent: vi.fn().mockRejectedValue(new SubagentTimeoutError(600_000)),
+    };
+
+    await task.handler(exec as never);
+
+    const messages = vi
+      .mocked(sendTelegramNotification)
+      .mock.calls.map((call) => call[0]);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].startsWith("✅")).toBe(true);
   });
 });

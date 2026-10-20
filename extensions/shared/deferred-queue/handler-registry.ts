@@ -26,6 +26,23 @@ const MAX_SUBAGENT_STDOUT_CHARS = 16 * 1024 * 1024;
 const MAX_SUBAGENT_STDERR_CHARS = 512 * 1024;
 
 /**
+ * Rejection reason for a subagent that ran past its timeout.
+ *
+ * Carries its own type so callers can tell "the batch was killed at the
+ * deadline" apart from real failures ("the agent crashed", "exit code 1") and
+ * decide separately whether the event is worth notifying a human about.
+ */
+export class SubagentTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`subagent timed out after ${timeoutMs}ms`);
+    this.name = "SubagentTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
  * Execute a CLI command via spawn with a Promise wrapper.
  * Lightweight — no Pi process overhead.
  *
@@ -131,7 +148,7 @@ function createSubagentHandler(): ExecContext["subagent"] {
         settled = true;
         proc.kill("SIGTERM");
         log.warn("subagent: timed out", { timeoutMs });
-        reject(new Error(`subagent timed out after ${timeoutMs}ms`));
+        reject(new SubagentTimeoutError(timeoutMs));
       }, timeoutMs);
 
       bindCollector(proc.stdout, stdout, () => {

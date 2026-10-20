@@ -21,6 +21,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineTask } from "../../shared/deferred-queue/define-task.ts";
+import { SubagentTimeoutError } from "../../shared/deferred-queue/handler-registry.ts";
 import { log } from "../../shared/deferred-queue/logger.ts";
 import type {
   SubagentOptions,
@@ -487,6 +488,8 @@ export interface BatchResult {
   ok: boolean;
   done?: string;
   summaries?: string[];
+  /** True when the subagent was killed at its deadline instead of failing. */
+  timedOut?: boolean;
 }
 
 /**
@@ -500,7 +503,11 @@ function errorMessage(err: unknown): string {
  * Pure: convert a thrown error into a failed batch result.
  */
 function toBatchFailure(err: unknown): BatchResult {
-  return { ok: false, done: errorMessage(err) };
+  return {
+    ok: false,
+    done: errorMessage(err),
+    timedOut: err instanceof SubagentTimeoutError,
+  };
 }
 
 /**
@@ -533,7 +540,7 @@ function partitionIntoBatches<T>(items: T[], batchSize: number): T[][] {
 export interface PipelineAggregation {
   createdSummaries: string[];
   wikiSummaryDone: string;
-  failed: Array<{ batch: number; error: string }>;
+  failed: Array<{ batch: number; error: string; timedOut: boolean }>;
 }
 
 /** @internal Exported for testing only. */
@@ -541,14 +548,18 @@ export function aggregateBatchResults(
   results: BatchResult[],
 ): PipelineAggregation {
   const createdSummaries: string[] = [];
-  const failed: Array<{ batch: number; error: string }> = [];
+  const failed: Array<{ batch: number; error: string; timedOut: boolean }> = [];
   let wikiSummaryDone = "";
 
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
 
     if (!result.ok) {
-      failed.push({ batch: i + 1, error: result.done ?? "unknown error" });
+      failed.push({
+        batch: i + 1,
+        error: result.done ?? "unknown error",
+        timedOut: result.timedOut ?? false,
+      });
       continue;
     }
 
@@ -869,14 +880,25 @@ export async function runSummarizePipeline(
     aggregateBatchResults(results);
 
   for (const f of failed) {
-    log.warn("wiki-summarize batch failed", {
-      batch: `${f.batch}/${results.length}`,
-      error: f.error,
-    });
+    const batch = `${f.batch}/${results.length}`;
+
+    // A batch that hit its deadline is an expected cost of a large backlog,
+    // not an incident: the next run retries those files. Paging the user for
+    // it every 8h made the daily message cry wolf, so it stays in the log.
+    // Files left behind still show up in the final message's residual section.
+    if (f.timedOut) {
+      log.warn("wiki-summarize batch timed out, not notifying Telegram", {
+        batch,
+        error: f.error,
+      });
+      continue;
+    }
+
+    log.warn("wiki-summarize batch failed", { batch, error: f.error });
 
     await sendTelegramNotification(
       buildTelegramFailureMessage(
-        `Step 1-3 (wiki-summarize batch ${f.batch}/${results.length})`,
+        `Step 1-3 (wiki-summarize batch ${batch})`,
         f.error,
       ),
     ).catch((e) => log.warn("telegram notify failed", { error: String(e) }));

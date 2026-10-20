@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createExecContext } from "./handler-registry.ts";
+import { createExecContext, SubagentTimeoutError } from "./handler-registry.ts";
 
 /**
  * Wiring tests for the shell layer: verify the bounded-output contract
@@ -35,4 +35,14 @@ describe("exec overflow handling", () => {
     expect(result.stderr).toBe("oops");
     expect(result.code).toBe(0);
   }, 30_000);
+});
+
+describe("SubagentTimeoutError", () => {
+  it("keeps the message and name that logs and callers rely on", () => {
+    const err = new SubagentTimeoutError(600_000);
+
+    expect(err.message).toBe("subagent timed out after 600000ms");
+    expect(err.name).toBe("SubagentTimeoutError");
+    expect(err).toBeInstanceOf(Error);
+  });
 });

@@ -9,6 +9,12 @@ argument-hint: "<task>"
 
 如果任务是空的，只回一句「这次要做什么？」，然后停。否则按下面八节执行。第一件事是用 `act_mode_todo` 建清单，第一项固定写 `route: <类型>`。
 
+## 0. 程序文件
+
+下面点到的流程都是本机普通 Markdown。pi 不把它们注册成 skill，`<available_skills>` 里看不到，所以不要写「本工程没有这个 skill」。
+
+正文出现 `/skill:X`，按名字去 `.pi` 里找这份文档：`.pi/skills/X/SKILL.md`，没有就 `.agents/skills/X/SKILL.md`，再没有就 `~/.agents/me-skills/X/SKILL.md`。symlink 也算，`read` 会跟进去。三处都没有才写 `Skipped: X，<原因>`。
+
 ## 1. 路由
 
 先判断任务属于哪一类，把类型写进第一项 todo，再按这一行往下走。

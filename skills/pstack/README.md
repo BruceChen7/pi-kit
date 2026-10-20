@@ -21,6 +21,8 @@
 
 ## 升级上游
 
+入口是 `/sync-pstack-skills`（[`prompts/sync-pstack-skills.md`](../../prompts/sync-pstack-skills.md)）：它读上游最新版、逐文件比对本地、分级、跑结构门禁。下面的三步保留作手工兜底。
+
 上游没有直接可用的 git remote 订阅方式，且本组改过 frontmatter 与正文。升级按手工 diff：
 
 1. 按 pin 的 commit 拉上游：

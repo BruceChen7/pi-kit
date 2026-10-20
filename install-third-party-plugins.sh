@@ -27,10 +27,8 @@ MODE="install-only"
 LIBRARY_DIR="${PI_PLUGIN_LIBRARY_DIR:-$HOME/.agents/pi-plugins}"
 MANIFEST_FILE="$LIBRARY_DIR/.manifest.json"
 
-# npm registry pinned to the public registry on purpose: a NODE_OPTIONS security
-# hook rewrites `npm install` to an internal mirror that lags behind upstream.
-# An explicit --registry flag outranks the npm_config_registry env var the hook
-# injects, so every npm invocation below passes it explicitly.
+# A NODE_OPTIONS hook rewrites `npm install` to a lagging internal mirror; an
+# explicit --registry outranks the injected npm_config_registry.
 NPM_REGISTRY="${PI_NPM_REGISTRY:-https://registry.npmjs.org/}"
 
 DEFAULT_PLUGINS=(

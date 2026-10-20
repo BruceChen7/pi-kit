@@ -10,10 +10,8 @@ import {
 /**
  * `decidePlanModeUi` 的值表（Functional Core：value in / value out）。
  *
- * 三组契约：
- * 1. 表达方式由**宿主能力**决定，不由宿主身份决定（内容要点开才可见 ⇒ 模式文案走状态行）；
- * 2. pi-web 的自动展开契约（`autoExpandedLines`）只在挂载那一刻生效 ⇒ 首次出现的两帧；
- * 3. 内容可见的宿主（TUI）调用序列与改造前逐条一致。
+ * 三组契约：表达方式由**宿主能力**决定，不由宿主身份决定；pi-web 的自动展开
+ * 只在挂载那一刻生效，所以首次出现要发两帧；内容可见的宿主调用序列不变。
  */
 
 const PI_WEB_RANGE = { min: 2, max: 3 };

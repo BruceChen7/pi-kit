@@ -7,20 +7,10 @@
  *
  * 1. Colors and fonts are CSS variables (`--pele-*`) resolved by the SVG at
  *    paint time, not a config object handed to an engine. The theme mapping
- *    therefore lives here as data, and the component only has to put the
- *    variables on an ancestor element.
+ *    lives here as data; the component only puts the variables on an ancestor.
  * 2. The UI build disables code splitting, so the bundle contains exactly the
- *    diagram types this module imports. Registering only the types artifacts
- *    use is what keeps the bundle small; an unregistered type fails loudly
- *    with its source shown instead of rendering something wrong.
- *
- * Architecture: Functional Core, Imperative Shell.
- *   - toPeleCssVariables / toCssVariableStyle / describePeleError are the
- *     **pure core**: value in / value out, no engine, no DOM.
- *   - renderDiagramSvg is the thin **shell**: it calls the registered engine
- *     and turns engine failures into displayable Errors.
- *   - Type registration is a module-load side effect, confined to the bottom
- *     of this file so it is easy to see.
+ *    diagram types this module imports. Registering only what artifacts use is
+ *    what keeps the bundle small.
  */
 
 import { register, render } from "pele/core";

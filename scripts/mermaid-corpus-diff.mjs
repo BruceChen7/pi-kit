@@ -1,14 +1,8 @@
 #!/usr/bin/env node
 /**
- * Mermaid engine differential probe — P0 of the pele migration plan
- * (.pi/plans/pi-kit/plan/2026-10-19-pele-replace-mermaid-dependency.md).
- *
- * Question it answers: would swapping the Node-side validation engine from
- * mermaid to pele change any verdict on the diagrams we actually have?
- *
- * It runs both engines over the repo's mermaid corpus — ```mermaid fences in
- * plan/spec documents plus mermaid nodes in visual-artifact specs — and
- * classifies each block into four buckets:
+ * Mermaid engine differential probe: run mermaid and pele over the repo's
+ * mermaid corpus — ```mermaid fences in plan/spec documents plus mermaid nodes
+ * in visual-artifact specs — and classify each block into four buckets:
  *
  *   both-ok          agreement (most blocks)
  *   both-fail        agreement, diagram is broken either way
@@ -19,12 +13,6 @@
  *
  * Exit code is 1 when any mermaid-only-ok block exists, so the probe can be
  * used as a gate itself.
- *
- * Architecture: Functional Core, Imperative Shell.
- *   - collectMermaidFences / collectArtifactMermaidNodes / classifyDivergence /
- *     parseSamples / summarizeReport are the pure core (value in / value out).
- *   - loadEngines / main do the IO: read files, import engines, time calls,
- *     write the report.
  *
  * Usage:
  *   node scripts/mermaid-corpus-diff.mjs [--root <dir>]... [--out <file>]
@@ -49,10 +37,6 @@ const REPO_ROOT = path.resolve(
 const DEFAULT_ROOTS = [".pi/plans", ".pi/visual-artifact/artifacts"];
 const DEFAULT_OUT = ".pi/plans/pi-kit/evidence/mermaid-corpus-diff.md";
 const SAMPLE_LIMIT = 12;
-
-/* ------------------------------------------------------------------ */
-/*  Pure core: corpus scanning                                         */
-/* ------------------------------------------------------------------ */
 
 const FENCE_OPEN_RE = /^\s*```+\s*mermaid\b\s*$/i;
 const FENCE_CLOSE_RE = /^\s*```+\s*$/;
@@ -149,10 +133,6 @@ export function detectDiagramType(body) {
   }
   return undefined;
 }
-
-/* ------------------------------------------------------------------ */
-/*  Pure core: classification + reporting                              */
-/* ------------------------------------------------------------------ */
 
 /**
  * Classify one block's two engine outcomes.
@@ -309,10 +289,6 @@ export function summarizeReport({ results, engines, sources }) {
 
   return `${lines.join("\n")}\n`;
 }
-
-/* ------------------------------------------------------------------ */
-/*  Shell: engines, filesystem, CLI                                    */
-/* ------------------------------------------------------------------ */
 
 const parseArgs = (argv) => {
   const roots = [];

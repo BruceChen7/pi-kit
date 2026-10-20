@@ -1,37 +1,20 @@
 /**
  * widget-plan — 「这一次同步往宿主发什么」的纯决策（Functional Core）。
  *
- * 背景（只改 pi-kit 的 pi-web 适配，见
- * `.pi/plans/pi-web/plan/2026-10-15-pi-web-extension-widget-default-expand.md`）：
- *
- * - pi-web 只在 `ExtensionWidgets` **挂载**（widget 数组由空变非空）的那一刻，
- *   默认展开「首个行数在 2..3 之间的 widget」，之后不再重判；已展开的 widget
- *   内容更新会保持展开。这两条事实编码在宿主档案 `shared/ui-host.ts` 的
- *   `WidgetSurfaces` 里（`autoExpandedLines` / `contentVisibleWithoutInteraction`）。
- * - 于是「让 TODO widget 默认展开」的唯一杠杆是：**它第一次出现时先发 2..3 行，
- *   紧接着再发完整列表**（两次 `setWidget` 是两次浏览器事件，第一帧触发挂载与
- *   默认展开，第二帧只换内容）。
- * - widget 内容要点击才可见的宿主（pi-web），模式文案改走一直可见的状态行 ——
- *   否则那一行 1 行的 mode widget 会先抢走挂载时刻。这条判断（“内容不可见就换
- *   表达方式”）在**这里**定；调用方只把宿主能力传进来，不写宿主身份判断。
- *
- * 本模块只做 value in / value out：不读 ctx、不碰主题、不认宿主身份，只按输入
- * （宿主能力 + 内容 + 会话状态）产出「要执行的调用序列」。上色与副作用都在
- * `controller.updateUi`（Imperative Shell）里发生。
+ * 两条宿主事实驱动整个决策（编码在 `shared/ui-host.ts` 的 `WidgetSurfaces`）：
+ * pi-web 只在 widget **挂载**那一刻默认展开首个 2..3 行的 widget，之后不再重判；
+ * 它的 widget 内容要点开才看得见，`setStatus` 的文本才常驻。于是「让 TODO widget
+ * 默认展开」的杠杆是第一次出现时先发 2..3 行、紧接着发完整列表；内容不可见时模式
+ * 文案改走状态行。判断都在这里，调用方只传宿主能力，不写宿主身份。
  */
 
 import { MODE_WIDGET_KEY, STATUS_KEY, TODO_WIDGET_KEY } from "./constants.ts";
 
-/**
- * 本模块用到的宿主能力（刻意窄化 `WidgetSurfaces`：只保留影响决策的两项）。
- *
- * 结构上仍是档案字段的子集，所以 `controller.updateUi` 直接传档案值即可；
- * 档案形状若变化，赋值处会先报类型错。
- */
+/** 本模块用到的宿主能力（`WidgetSurfaces` 的子集，赋值处会先报类型错）。 */
 export type PlanModeHostCapabilities = {
-  /** widget 内容在**不互动**时是否已经可见（TUI: true；pi-web 的 chip 要点开: false）。 */
+  /** widget 内容在**不互动**时是否已经可见（pi-web 的 chip 要点开: false）。 */
   contentVisibleWithoutInteraction: boolean;
-  /** 宿主在 widget 挂载时自动展开的短 widget 行数区间；null = 宿主没有这个行为。 */
+  /** 宿主在 widget 挂载时自动展开的行数区间；null = 宿主没有这个行为。 */
   autoExpandedLines: { min: number; max: number } | null;
 };
 
@@ -96,7 +79,7 @@ const autoExpandSeedLines = (
 /**
  * 决定这一次同步要发的调用序列。
  *
- * 顺序与改造前的 TUI 行为一致：status → mode widget（仅“内容一直可见”的宿主）→ TODO widget。
+ * 顺序：status → mode widget（仅“内容一直可见”的宿主）→ TODO widget。
  */
 export const decidePlanModeUi = (
   input: PlanModeUiInput,

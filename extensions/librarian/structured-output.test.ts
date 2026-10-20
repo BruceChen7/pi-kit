@@ -30,8 +30,7 @@ type RegisteredTool = {
 
 /**
  * Tools the model may only reach through a codemode script or `tool_search`:
- * registered with `deferred` exposure, so pi keeps them callable whenever they
- * are registered but never lists them in the codemode description.
+ * `deferred` exposure keeps them callable without listing them.
  */
 const UNLISTED_DATA_TOOLS = [
   "list_directory_github",
@@ -49,9 +48,8 @@ const UNLISTED_DATA_TOOLS = [
 ];
 
 /**
- * Tools that stay declared, so librarian capability survives without codemode:
- * the two subagent entry points plus the hot data tools for reading and
- * searching a repository the user already knows.
+ * Tools that stay declared so librarian capability survives without codemode:
+ * the subagent entry points plus the hot data tools.
  */
 const DIRECT_TOOLS = [
   "librarian_github",
@@ -189,13 +187,11 @@ describe("librarian output schema coverage", () => {
   });
 
   it("costs no codemode inline budget", () => {
-    // pi lists the callable tools without `direct` exposure in the codemode
-    // description, where declarations share `codemode.inlineBudget` (default
-    // 3000 estimated tokens) and silently drop what does not fit, which would
-    // make them undiscoverable. Estimated at 4 chars per token like pi does,
-    // plus ~30 tokens per section for the headings and declarations pi renders
-    // around the description. `deferred` tools are never listed and `direct`
-    // tools are declared elsewhere, so these 16 tools cost the listing nothing.
+    // pi lists non-`direct` callable tools in the codemode description, where
+    // declarations share `codemode.inlineBudget` (default 3000 tokens) and
+    // silently drop what does not fit. Counted at 4 chars/token plus ~30 per
+    // section, as pi does. `deferred` tools are never listed, so these 16 cost
+    // the listing nothing.
     const { tools } = fakePi();
     const listed = [...tools.values()].filter(
       (tool) =>

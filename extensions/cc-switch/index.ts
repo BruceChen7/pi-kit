@@ -1,11 +1,8 @@
 /**
  * cc-switch — LLM provider integration for pi via AIS Switch.
  *
- * Imperative shell: fetches the live model list from cc_switch's `/v1/models`
- * endpoint, reads cc_switch's model catalog for per-model metadata (thinking
- * levels, context window, input modalities), converts both with the pure core
- * (core.ts), registers the models as a pi provider through the local proxy,
- * and exposes `/cc-switch` commands.
+ * Shell half of `core.ts`: fetches `/v1/models` and the model catalog, registers
+ * the models as a pi provider through the local proxy, and exposes `/cc-switch`.
  *
  * Prerequisites:
  *   - AIS Switch (cc_switch) desktop app running with local proxy enabled

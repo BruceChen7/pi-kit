@@ -485,9 +485,9 @@ const SETTLED_STATE_BY_OUTCOME: Record<ReviewOutcome, ReviewSettledState> = {
 };
 
 /**
- * Functional Core: read the reviewer's verdict out of the CLI decision.
- * `exit` marks a run that ended without a verdict (empty CLI output), which is
- * neither an approval nor a request for changes. Pure value in / value out.
+ * Read the reviewer's verdict out of the CLI decision. `exit` marks a run that
+ * ended without a verdict (empty CLI output), which is neither an approval nor
+ * a request for changes.
  */
 const decideReviewOutcome = (decision: CliReviewDecision): ReviewOutcome => {
   if (decision.approved) {
@@ -504,13 +504,12 @@ const decideReviewOutcome = (decision: CliReviewDecision): ReviewOutcome => {
 };
 
 /**
- * Functional Core: map a reviewer decision onto the pending gate and settled
- * set. Pure value in / value out — no session access, no IO.
+ * Map a reviewer decision onto the pending gate and settled set.
  *
- * The two flows differ in exactly one place: the manual entry releases the
- * revision it just showed the reviewer (the follow-up message drives the
- * rewrite), while the auto flow keeps the pending target on rejection so the
- * agent has to resubmit that revision.
+ * The two flows differ in one place: the manual entry releases the revision it
+ * just showed the reviewer (the follow-up message drives the rewrite), while
+ * the auto flow keeps the pending target on rejection so the agent has to
+ * resubmit that revision.
  */
 export const decideReviewStateTransition = (
   decision: CliReviewDecision,
@@ -530,10 +529,9 @@ export const decideReviewStateTransition = (
 };
 
 /**
- * Imperative Shell: the single write point for review state, shared by the
- * auto submit tool and both manual entries. The pending-review event handle is
- * only resolved when the revision actually leaves the queue — a kept pending
- * target stays gated.
+ * The single write point for review state, shared by the auto submit tool and
+ * both manual entries. The pending-review event handle is only resolved when
+ * the revision actually leaves the queue — a kept pending target stays gated.
  */
 const applyReviewStateTransition = (
   state: SessionRuntimeState,
@@ -659,9 +657,8 @@ const getManualReviewVerdicts = (
 
 /**
  * Record (or clear, with `null`) the verdict a manual review left for a path.
- * The auto submit tool is the channel other extensions observe approval
- * through (`details.status === "approved"`), so a manual verdict has to stay
- * claimable there instead of living only inside this module.
+ * The auto submit tool is where other extensions read approval from
+ * (`details.status === "approved"`), so the verdict stays claimable there.
  */
 const setManualReviewVerdict = (
   state: SessionRuntimeState,
@@ -682,10 +679,8 @@ const setManualReviewVerdict = (
 };
 
 /**
- * Imperative Shell: one-shot claim of the manual verdict waiting for
- * `resolvedPlanPath` (consumed by the auto submit tool, which is where other
- * extensions read the approval from). Returns null when the path has no
- * unclaimed verdict.
+ * One-shot claim of the manual verdict waiting for `resolvedPlanPath`, consumed
+ * by the auto submit tool. Returns null when there is no unclaimed verdict.
  */
 const claimManualReviewVerdict = (
   state: SessionRuntimeState,
@@ -713,15 +708,13 @@ const MANUAL_VERDICT_STATUS_BY_OUTCOME: Partial<
 };
 
 /**
- * Imperative Shell: the single write point for the manual entries (file picker
- * and annotate-latest). A manual review is an explicit re-arm: the reviewed
+ * The single write point for the manual entries (file picker and
+ * annotate-latest). A manual review is an explicit re-arm: the reviewed
  * revision leaves the pending queue, approval settles the path, and any other
- * verdict keeps it armed so later revisions come back for review until the
- * user approves.
+ * verdict keeps it armed until the user approves.
  *
- * Only auto-review targets (plan / specs / `.pi/html`) are affected: manual
- * review of any other `.pi/` document (teach notes, issues, skills, …) leaves
- * the auto review queue untouched.
+ * Only auto-review targets (plan / specs / `.pi/html`) are affected; manual
+ * review of any other `.pi/` document leaves the queue untouched.
  */
 const applyManualReviewDecision = (
   ctx: ExtensionContext,

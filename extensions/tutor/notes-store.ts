@@ -1548,10 +1548,7 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
 
   /**
    * 无参 `/md-topic`：用 picker 选已有主题（或新建），复用 shared/picker-*。
-   * 行序与初始光标都由 notes-core 的 `topicPickerOptions` 决定（新建行在第一行），
-   * 「选中的是哪一行」由 notes-core 的 `interpretTopicPick` 判定（不比较哨兵字符串）。
-   * 整段交互（picker + 「新建主题…」的名字输入）都占着终端，所以走 sharedUiGate：
-   * 终端只有一块编辑器槽位，别的模态要等这次交互出闸（见 ui-gate）。
+   * 行序与选中行的含义都在 notes-core；整段交互占着终端，所以走 sharedUiGate。
    */
   const pickTopic = (
     ctx: ExtensionContext,

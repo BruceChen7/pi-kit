@@ -20,11 +20,6 @@
  * group, and closing a macOS terminal window kills that whole group. A
  * detached spawn gives Pi Web its own session (PPID=1, own PGID), so the
  * terminal can no longer reach it.
- *
- * Functional Core / Imperative Shell: parseArgs / parseStatus / decideStart /
- * startPlan are pure (value in / value out, exported for tests); main() is the
- * thin IO shell that runs `pi-web`, spawns the detached server, and polls the
- * health endpoint.
  */
 
 import { execFileSync, spawn } from "node:child_process";

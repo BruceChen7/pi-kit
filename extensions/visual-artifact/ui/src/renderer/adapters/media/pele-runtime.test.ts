@@ -9,10 +9,6 @@ import {
   toPeleCssVariables,
 } from "./pele-runtime.ts";
 
-/* ------------------------------------------------------------------ */
-/*  Pure core: value in / value out                                    */
-/* ------------------------------------------------------------------ */
-
 describe("toPeleCssVariables", () => {
   it("maps the warm-neutral app palette onto pelé variables", () => {
     const variables = toPeleCssVariables("light");
@@ -108,10 +104,6 @@ describe("describePeleError", () => {
     expect(describePeleError("boom")).toBe("boom");
   });
 });
-
-/* ------------------------------------------------------------------ */
-/*  Shell: real engine, real SVG                                       */
-/* ------------------------------------------------------------------ */
 
 describe("renderDiagramSvg", () => {
   it("renders a flowchart to pelé SVG with its label", () => {

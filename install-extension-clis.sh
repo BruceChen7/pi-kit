@@ -30,10 +30,8 @@ FORCE=0
 # 1 = upgrade mode: never skip an installed CLI, always fetch the latest release.
 UPDATE=0
 
-# npm registry pinned to the public registry on purpose: a NODE_OPTIONS security
-# hook rewrites `npm install` to an internal mirror that lags behind upstream.
-# An explicit --registry flag outranks the npm_config_registry env var the hook
-# injects, so every npm invocation below passes it explicitly.
+# A NODE_OPTIONS hook rewrites `npm install` to a lagging internal mirror; an
+# explicit --registry outranks the injected npm_config_registry.
 NPM_REGISTRY="${PI_NPM_REGISTRY:-https://registry.npmjs.org/}"
 
 while [[ $# -gt 0 ]]; do
@@ -65,14 +63,12 @@ already_installed() {
   command -v "$bin" >/dev/null 2>&1
 }
 
-# Which Homebrew list owns "$1": prints "formula" / "cask", returns 1 when
-# Homebrew is missing or does not manage it. Needed because some CLIs here
-# (codex) may be installed as a cask rather than through npm; `npm install -g`
-# then fails with EEXIST on Homebrew's symlink.
+# Which Homebrew list owns "$1": prints "formula" / "cask", returns 1 when brew
+# is missing or does not manage it — codex may be a cask, where `npm install -g`
+# fails with EEXIST on Homebrew's symlink.
 #
-# The list is captured with $(...) before matching on purpose: piping brew into
-# `grep -q` under `set -o pipefail` returns 141 (grep exits early -> SIGPIPE
-# kills brew), which silently reads as "not owned by brew".
+# The list is captured with $(...) on purpose: piping brew into `grep -q` under
+# `set -o pipefail` returns 141 (SIGPIPE) and reads as "not owned by brew".
 brew_owner() {
   local bin="$1"
   local kind
@@ -117,11 +113,9 @@ npm_cli() {
 
 # system_cli <bin> <url> [formula|cask]
 #
-# The optional third argument is the Homebrew kind used when the CLI is not
-# installed yet (codex ships as a cask, so `brew install --cask` is required).
-# codex lives here rather than under the npm CLIs on purpose: it is installed
-# as a brew cask, and `npm install -g @openai/codex` would fail with EEXIST on
-# Homebrew's symlink. Do not put it back in the npm section.
+# The third argument is the Homebrew kind used when the CLI is not installed yet.
+# codex stays here because it is a cask; `npm install -g @openai/codex` hits
+# Homebrew's EEXIST.
 system_cli() {
   local bin="$1"
   local url="$2"

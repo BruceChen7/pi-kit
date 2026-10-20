@@ -1,23 +1,13 @@
 /**
  * pi-web-host-fixture — pi-web 的**宿主契约替身**（只在测试里用）。
  *
- * 不是 mock 编排：这里复刻的是 pi-web 对扩展真正做出的承诺，逐条对照过
- * `pi-web@0.12.1` 的源码，改这个文件前请重新对照：
+ * 复刻的是 pi-web 对扩展真正做出的承诺，逐条对照过 `pi-web@0.12.1`：`ctx.ui` 与
+ * `custom()` 的结果语义见 `lib/rpc-manager.ts:1737-1985`，去框见 `lib/ansi.ts:58-88`，
+ * headless TUI 见 `lib/custom-ui-terminal.ts:1-27`，按键编码见 `lib/terminal-input.ts`。
+ * 改这个文件前重新对照。
  *
- * | 复刻对象 | pi-web 源码 |
- * |---|---|
- * | `ctx.ui` 的真实现 + no-op 清单 | `lib/rpc-manager.ts:1859-1985` |
- * | `custom()` 的结果语义（含各种 `undefined` 分支） | `lib/rpc-manager.ts:1737-1804` |
- * | headless TUI stub（92×40，只有 terminal + requestRender） | `lib/custom-ui-terminal.ts:1-27` |
- * | 面板行去框/去光标标记/去尾空格 | `lib/ansi.ts:58-88` |
- * | 无色主题 | `lib/rpc-manager.ts:229-254`（PLAIN_TEXT_THEME） |
- * | 按键编码 | `lib/terminal-input.ts`（无 Kitty CSI-u，只有裸文本/功能键/paste） |
- *
- * 两个刻意的“更严格”之处（这正是它作为测试替身的意义）：
- * 1. `tui` 是 **strict Proxy**：除了 `terminal` / `requestRender`，访问任何属性
- *    都抛错 —— 组件一旦依赖真实 TUI（`stop()`/`setFocus()`/…）当场暴露。
- * 2. `normalizeCustomPanelLines` 与 `piWebKeys` 是可断言的：测试能直接检查
- *    “我们的行在 pi-web 里会不会被撕掉”“按键回放是否等价”。
+ * `tui` 是 strict Proxy：除了 `terminal` / `requestRender`，访问任何属性都抛错，
+ * 组件一旦依赖真实 TUI（`stop()` / `setFocus()` …）当场变成测试失败。
  */
 
 import type {

@@ -557,11 +557,8 @@ describe("plan-mode extension: todo state and widgets", () => {
 });
 
 /**
- * pi-web 适配的契约用例。
- *
- * pi-web 只在 `ExtensionWidgets` 挂载时展开「首个 2..3 行」的 widget，且
- * `setStatus` 始终可见 —— 所以这里钉住两件事：TODO widget 首次出现时先发
- * 2..3 行再补完整列表；pi-web 下不发 mode widget、改发常驻状态行。
+ * pi-web 适配的契约用例：TODO widget 首次出现时先发 2..3 行再补完整列表；
+ * pi-web 下不发 mode widget、改发常驻状态行。
  */
 describe("plan-mode extension: pi-web widget contract", () => {
   afterEach(clearPiWebHost);

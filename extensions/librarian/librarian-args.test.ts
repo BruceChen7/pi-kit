@@ -101,10 +101,8 @@ describe("buildLibrarianSubagentArgs", () => {
       subagentTools: librarianSubagentTools(PROVIDER_TOOLS),
     });
 
-    // Without `--no-tools`, `+name` keeps the child's default tools
-    // (bash, edit, write) and every `direct` tool the loaded extension
-    // registers on load (`librarian_github`, `librarian_gitlab`), which would
-    // give the subagent shell/write access and let it nest subagents.
+    // Without `--no-tools`, `+name` keeps the child's default tools (bash,
+    // edit, write), which would give the subagent shell/write access.
     const noTools = args.indexOf("--no-tools");
     expect(noTools).toBeGreaterThanOrEqual(0);
     expect(noTools).toBeLessThan(args.indexOf("--tools"));

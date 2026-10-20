@@ -263,11 +263,9 @@ export function extractGitLabHost(
 }
 
 /**
- * Progress line for the read-only local tools the subagent may call.
- *
- * Provider-independent: both librarian subagents expose the same `read`,
- * `grep`, `find`, and `ls` on the local checkout. Returns `undefined` for any
- * other tool so each provider summarizer keeps its own fallback.
+ * Progress line for the read-only local tools. Both librarian subagents expose
+ * the same `read` / `grep` / `find` / `ls`; `undefined` lets each provider
+ * summarizer keep its own fallback.
  */
 export function summarizeLocalReadCall(
   toolName: string,

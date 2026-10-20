@@ -123,8 +123,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    // 清空 UI 与复位 widget 跟踪状态在同一处（controller.clearUi）：状态本身
-    // （TODO 列表等）由 restore() 在下一个 session_start 重建。
+    // 清空 UI 与复位 widget 跟踪状态都在 controller.clearUi；状态本身由 restore() 重建。
     controller.clearUi(ctx);
   });
 

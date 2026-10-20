@@ -4,9 +4,8 @@ export type ReviewTargetKind = "plan" | "spec" | "html";
 export type ManualReviewStatus = "approved" | "denied";
 
 /**
- * A manual review verdict waiting to be claimed by the auto submit tool. The
- * tool result is where other extensions (plan-mode) observe approval, so a
- * manual verdict is parked here instead of staying inside plannotator-auto.
+ * A manual review verdict waiting to be claimed by the auto submit tool, whose
+ * result is where other extensions (plan-mode) observe approval.
  */
 export type ManualReviewVerdict = {
   resolvedPlanPath: string;

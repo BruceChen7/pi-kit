@@ -1,9 +1,6 @@
 /**
- * Structural rules for the vendored pstack skill group.
- *
- * Pure: every function takes text (or text plus a known-name set) and returns
- * findings. No fs, no network. `pstack-skills.test.ts` is the thin shell that
- * reads the repo and asserts the findings list is empty.
+ * Structural rules for the vendored pstack skill group. Every function takes text
+ * and returns findings — no fs, no network.
  */
 
 export type RepoDoc = { path: string; content: string };

@@ -36,9 +36,9 @@ const NO_REASONING_EFFORT = "none";
 const DEFAULT_CONTEXT_WINDOW = 1048576;
 
 /**
- * Minimal model shape returned by AIS Switch's OpenAI-compatible `/v1/models`
- * endpoint. In practice the endpoint returns ids and routing metadata only, so
- * the catalog supplies the model metadata (see `CcSwitchModelProfile`).
+ * Minimal shape returned by AIS Switch's OpenAI-compatible `/v1/models`; in
+ * practice it carries ids and routing metadata only, so the catalog supplies the
+ * rest (see `CcSwitchModelProfile`).
  */
 export interface CcSwitchProxyModel {
   id: string;
@@ -55,9 +55,8 @@ export interface CcSwitchProxyModel {
 export type CcSwitchProfiles = ReadonlyMap<string, CcSwitchModelProfile>;
 
 /**
- * The catalog slice pi can use: reasoning levels, input modalities and context
- * window. Catalog fields without a pi counterpart (description, priority,
- * `default_reasoning_level`, …) are deliberately not mapped.
+ * The catalog slice pi can use. Catalog fields without a pi counterpart
+ * (description, priority, `default_reasoning_level`, …) are not mapped.
  */
 export interface CcSwitchModelProfile {
   /** Reasoning efforts the upstream advertises, in `cc_switch`'s spelling. */
@@ -69,13 +68,10 @@ export interface CcSwitchModelProfile {
 }
 
 /**
- * Index AIS Switch's model catalog (`~/.codex/ais-switch-model-catalog.json`)
- * by model slug. Slugs match the proxy's `/v1/models` ids, so this is the
- * provider's own answer for what each model accepts and how much it holds.
- *
- * The catalog is external data, so every field is re-checked: entries without
- * a usable slug are dropped and malformed fields degrade to "unknown" rather
- * than failing the whole registration.
+ * Index AIS Switch's model catalog (`~/.codex/ais-switch-model-catalog.json`) by
+ * slug; slugs match the proxy's `/v1/models` ids. The catalog is external data,
+ * so entries without a usable slug are dropped and malformed fields degrade to
+ * "unknown" rather than failing the whole registration.
  */
 export function catalogProfilesBySlug(
   catalog: unknown,
@@ -137,13 +133,10 @@ export function catalogProfilesBySlug(
 /**
  * Map `cc_switch`'s reasoning levels onto pi thinking levels.
  *
- * Levels the catalog does not advertise become `null` (unsupported), so Pi
- * never sends an effort the upstream would reject. Levels Pi has no name for
- * (such as `cc_switch`'s "ultra") are ignored.
- *
- * "off" becomes the upstream's explicit no-reasoning effort when the catalog
- * advertises one, and is otherwise hidden: omitting the reasoning field would
- * silently fall back to the upstream's own default (some gateways default to
+ * Levels the catalog does not advertise become `null`, so pi never sends an
+ * effort the upstream would reject; levels pi has no name for are ignored.
+ * "off" becomes the upstream's explicit no-reasoning effort when there is one:
+ * omitting the field would fall back to the gateway's own default (some use
  * "max"), which is not what "off" means.
  *
  * Returns `null` when the model has no reasoning level beyond "off".
@@ -169,13 +162,10 @@ export function thinkingLevelMapFor(
 }
 
 /**
- * Convert the live AIS Switch model list into selectable pi models.
- *
- * `/v1/models` is the live routing view and publishes almost no model
- * metadata, so `catalogProfiles` (see `catalogProfilesBySlug`) fills the gaps.
- * Live proxy metadata wins; the catalog is used when the proxy omits a field;
- * models the catalog does not know stay non-reasoning with the fallback
- * context window instead of advertising capabilities the upstream may reject.
+ * Convert the live AIS Switch model list into selectable pi models. Live proxy
+ * metadata wins; `catalogProfiles` fills the gaps; models the catalog does not
+ * know stay non-reasoning with the fallback context window instead of
+ * advertising capabilities the upstream may reject.
  */
 export function proxyModelsToPiModels(
   models: unknown[],

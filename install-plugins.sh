@@ -28,10 +28,8 @@ LIBRARY_DIR="$HOME/.agents/pi-plugins"
 GLOBAL_EXTENSION_DIR="$HOME/.pi/agent/extensions"
 SCOPE="library"
 
-# npm registry pinned to the public registry on purpose: a NODE_OPTIONS security
-# hook rewrites `npm install` to an internal mirror that lags behind upstream.
-# An explicit --registry flag outranks the npm_config_registry env var the hook
-# injects, so the npm invocation below passes it explicitly.
+# A NODE_OPTIONS hook rewrites `npm install` to a lagging internal mirror; an
+# explicit --registry outranks the injected npm_config_registry.
 NPM_REGISTRY="${PI_NPM_REGISTRY:-https://registry.npmjs.org/}"
 
 while [[ $# -gt 0 ]]; do
@@ -144,10 +142,7 @@ install_symlink() {
     return 1
 }
 
-# Prune the symlink of the abandoned shape after a plugin switched between
-# `foo/` and `foo.ts`: only a symlink that resolves to the very source being
-# installed is removed (real files, real directories, and symlinks pointing at
-# something else are left alone).
+# Prune the abandoned shape's symlink, but only when it resolves to this source.
 remove_stale_shape_symlink() {
     local expected_path="$1"
     local stale_path="$2"
@@ -314,8 +309,7 @@ install_plugin_sources() {
 
             if [ -f "$dir/index.ts" ]; then
                 install_plugin_dependencies "$dir" "$dir_name"
-                # The plugin used to install as ${dir_name}.ts before it grew
-                # an index.ts entry; drop that abandoned symlink.
+                # Grew an index.ts entry: drop the abandoned foo.ts symlink.
                 remove_stale_shape_symlink "${dir}${dir_name}.ts" "$target_dir/${dir_name}.ts"
                 if install_symlink "$dir" "$dir_name" "$target_dir"; then
                     mark_installed "$dir_name"

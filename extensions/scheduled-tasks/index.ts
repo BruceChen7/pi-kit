@@ -26,11 +26,9 @@ export type ImportTaskModule = (fileUrl: string) => Promise<TaskModule>;
 const DURATION_PATTERN = /^\d+[mhd]$/;
 
 /**
- * Whether a tasks/ entry may hold a task definition.
- *
- * Test modules sit beside task modules in tasks/. They must never be imported
- * outside the vitest runner: their top-level describe()/vi.mock() calls need
- * runner state, so importing them throws (and vi.mock can patch resolution).
+ * Whether a tasks/ entry may hold a task definition. Test modules beside task
+ * modules must never be imported outside the vitest runner: their top-level
+ * describe()/vi.mock() calls need runner state.
  */
 export function isTaskDefinitionFile(name: string): boolean {
   if (extname(name) !== ".ts") return false;
@@ -39,12 +37,9 @@ export function isTaskDefinitionFile(name: string): boolean {
 }
 
 /**
- * Whether a module's default export is a task definition.
- *
- * The truthiness check this replaces was not enough: under pi's jiti loader an
- * `import()` of a module without a default export yields the module namespace
- * as `default`, so helper modules were registered as tasks with no id and then
- * rejected by the queue (parseDuration(task.every) on undefined).
+ * Whether a module's default export is a task definition. A truthiness check is
+ * not enough: under pi's jiti loader, `import()` of a module without a default
+ * export yields the module namespace as `default`.
  */
 export function isTaskDefinition(value: unknown): value is TaskDefinition {
   if (typeof value !== "object" || value === null) return false;

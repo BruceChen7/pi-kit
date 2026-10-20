@@ -1,21 +1,9 @@
 /**
  * rich-ui — 扩展与宿主 UI 之间的那一层（Imperative Shell，薄）。
  *
- * 两件事，且只有两件：
- *
- * 1. **判定**：把 `ctx` 的 `mode`/`hasUI`、pi-web 的同进程标记、`PI_KIT_UI_HOST`
- *    读出来，交给 Core 的 `resolveUiHostProfile()`，得到一份宿主能力档案。
- *    `hasRichUi(ctx)` 保留成 `profile.customPanels` 的别名，老调用点无需改动。
- *
- * 2. **适配**：`customPanel(ctx, factory)` 把档案翻译成三件宿主不保证的东西 ——
- *    主题、外框、光标标记 —— 一次性交给面板组件，于是每个调用点只需要把
- *    `ctx.ui.custom(...)` 换成 `customPanel(ctx, ...)` 并转交 `host`。
- *
- * 为什么不能只判 `ctx.mode`：`mode === "rpc"` 只说明"传输层不是 TUI"。pi 自带
- * rpc-mode 的 `custom()` 存在但**不问宿主就 resolve `undefined`**（Waku 这类原生
- * 宿主），所以旧写法要挡；而 **pi-web 同样报 `mode: "rpc"，却真的实现了
- * `custom()`**（组件面板 + `handleInput` + `done(value)`），一概挡住等于把它
- * 也挡在门外。判定规则与逐条证据见 `ui-host.ts`。
+ * 判定交给 `ui-host.ts` 的 `resolveUiHostProfile()`，这里只把档案翻译成宿主不保证
+ * 的三样东西（主题、外框、光标标记）一次性交给面板组件；`hasRichUi` 是
+ * `profile.customPanels` 的别名。
  */
 
 import type {
@@ -64,11 +52,9 @@ export type PanelOptions = {
 };
 
 /**
- * 需要组件面板能力的上下文：只要有 `ui` 就行，具体形状在 internal 处一次性
- * 宽入。之所以不把 `ui.custom` 写进这个公开类型：宿主们各自的签名宽紧不一
- * ——SDK 给 `TUI`/`Theme`/`KeybindingsManager`，扩展里的窄类型常常只声明自己
- * 用到的那几个成员（如 review-feedback 的 `ReviewContext`）。收窄在这里只会把
- * 调用点逼成满屏 `as unknown as`。
+ * 需要组件面板能力的上下文：只要有 `ui` 就行，真实形状在 internal 处一次性宽入。
+ * 不把 `ui.custom` 写进公开类型：宿主与扩展各自的签名宽紧不一，收窄会把调用点逼成
+ * 满屏 `as unknown as`。
  */
 export type PanelContext = RichUiContext & { ui: unknown };
 
@@ -127,9 +113,8 @@ export const hasRichUi = (ctx: RichUiContext): boolean =>
   uiHostProfile(ctx).customPanels;
 
 /**
- * 无色宿主（pi-web 传的是 PLAIN_TEXT_THEME）下换一套 16 色 ANSI 主题：
- * 面板输出由宿主按 ANSI 渲染（pi-web 用 `ansi_up`，全 SGR 支持），所以颜色
- * 能回来；用基本 16 色是为了跟随宿主自己的明暗配色，而不是嵌死 truecolor。
+ * 无色宿主（pi-web 传 PLAIN_TEXT_THEME）下换一套 16 色 ANSI 主题：面板输出由宿主
+ * 按 ANSI 渲染（pi-web 用 `ansi_up`），用基本 16 色才能跟随宿主的明暗配色。
  */
 const ANSI_FG: Partial<Record<ThemeColor, string>> = {
   accent: "36",

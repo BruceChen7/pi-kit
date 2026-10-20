@@ -1,10 +1,8 @@
 /**
- * 终端下的 `ctx.ui` 调用基线（characterization fixture）。
- *
- * 由 `tui-parity.test.ts` 生成，不要手改：
+ * 终端下的 `ctx.ui` 调用基线（characterization fixture）。由 `tui-parity.test.ts`
+ * 生成，不要手改：
  *   PLAN_MODE_RECORD_TUI_PARITY=1 npx vitest run extensions/plan-mode/tui-parity.test.ts
- * 只有“确实要让 TUI 有意变更”的独立决策才可以重新录制；其它情况下与基线不一致
- * 一律按回归处理（改实现，不改基线）。
+ * 只有确实要让 TUI 有意变更时才重新录制；其它不一致一律按回归处理（改实现，不改基线）。
  */
 import type { UiCall } from "./test-harness.js";
 

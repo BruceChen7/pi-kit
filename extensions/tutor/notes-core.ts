@@ -703,16 +703,12 @@ export const stripQuestionCallouts = (text: string): string => {
 
 // ── 供应商工具调用残留（模型把 tool call 写进了正文） ─────────────────────
 //
-// 实录（2026-10-13，deepseek-v4.1-flash / openai-completions）：provider 偶发把
-// 工具调用留在 content 里、`finish_reason` 报 `stop`，形状是 DeepSeek 的 DSML 特殊
-// token —— `<｜｜DSML｜｜ calls>`、`<｜｜DSML｜｜ invoke name="codemode">`、
-// `<｜｜DSML｜｜ parameter name="code" string="true">`。pi 没有这种方言的解析器，
-// 于是整块 markup（codemode 那次连脚本源码一起）成了 assistant 的 text part。
-// 调用丢了是上游的事，但镜像只追加不改写 ⇒ 一旦落进笔记就是永久的洞。
+// deepseek / openai-completions 偶发把工具调用留在 content 里、`finish_reason` 报
+// `stop`，形状是 DSML 特殊 token（`<｜｜DSML｜｜ invoke …>`）。pi 没有这种方言的解析器，
+// 整块 markup 就成了 assistant 的 text part；镜像只追加不改写，落进笔记就是永久的洞。
 //
-// 规则只看**形状**：特殊 token 出现在教学正文里只有"泄漏"一种来源，所以整块丢掉
-// （`parameter` 的值夹在中间，也在丢掉的范围里）。围栏与行内代码里的样例是字面
-// 内容——那正是本仓库要教的东西——一律不动。
+// 规则只看**形状**：特殊 token 出现在教学正文里只有"泄漏"一种来源，所以整块丢掉。
+// 围栏与行内代码里的样例是字面内容 —— 那正是本仓库要教的东西 —— 一律不动。
 
 /** 标签体：可选的 DSML 前缀 + 管道符，两边都容得下 `|` 与 `｜`。 */
 const TOOL_CALL_TAG = String.raw`[｜|]{0,2}\s*(?:DSML\s*[｜|]{0,2}\s*)?(?:calls?|tool_calls?|function_calls?|invoke|parameter|antml:[\w:]+)\s*[｜|]{0,2}`;
@@ -1242,10 +1238,8 @@ export const sortTopicsByRecency = (topics: TopicSummary[]): TopicSummary[] =>
   );
 
 /**
- * 主题 picker 的行**与初始光标**：「＋新建主题…」排**最前**——主题一多，排在末尾就要
- * 翻过整份清单才够得着；行序与光标一起返回，调用方不必自己记「首行就是光标」。
- * 行序全由这里决定：新建行之后是已有主题（最近改动在前），不依赖调用方是否排过序。
- * 注意：行序 = 过滤后的显示顺序，搜到非空 query 时新建行同样会被过滤掉。
+ * 主题 picker 的行**与初始光标**：「＋新建主题…」排最前 —— 排在末尾就要翻过整份
+ * 清单才够得着。行序 = 过滤后的显示顺序（非空 query 时新建行同样会被过滤掉）。
  */
 export const topicPickerOptions = (input: {
   topics: TopicSummary[];

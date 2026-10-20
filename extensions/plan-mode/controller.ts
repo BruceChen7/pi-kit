@@ -101,10 +101,7 @@ import {
 } from "./ui.ts";
 import { decidePlanModeUi } from "./widget-plan.ts";
 
-/**
- * widget 的观感留在 Shell（Core 只给未上色的内容）：mode widget 整行 accent，
- * TODO widget 只染标题行 —— 与改造前逐字一致（TUI 基线锁着这个形状）。
- */
+/** widget 观感留在 Shell（Core 只给未上色的内容）：mode widget 整行 accent，TODO 只染标题行。 */
 const colorWidgetLines = (
   key: string,
   lines: string[],
@@ -195,8 +192,7 @@ export class PlanModeController {
     null;
   // Session-scoped values, resolved in restore() (no IO at construction).
   private htmlArtifactDirs: string[] = [];
-  // pi-web 只在 widget 挂载时判定默认展开：TODO widget “首次出现”时要先发一个
-  // 短帧（见 widget-plan.ts）。这里记住它是否已经出现过；restore() 里随会话复位。
+  // pi-web 只在 widget 挂载时判定默认展开，所以“首次出现”要先发短帧（见 widget-plan.ts）。
   private todoWidgetPresent = false;
   constructor(private readonly pi: ExtensionAPI) {}
 
@@ -266,8 +262,6 @@ export class PlanModeController {
       return;
     }
 
-    // 宿主能力进 Core，决策（包括“内容要点开才能看时把模式文案放到状态行”）
-    // 都在 widget-plan.ts 里；这里只负责读档案、上色、执行 emissions。
     const profile = uiHostProfile(ctx);
     const decision = decidePlanModeUi({
       host: {
@@ -296,7 +290,6 @@ export class PlanModeController {
           );
           break;
         case "widget-clear":
-          // 清除时不带 options：与改造前的调用形状一致（TUI 断言逐条锁着）。
           ctx.ui.setWidget(emission.key, undefined);
           break;
       }
@@ -307,8 +300,7 @@ export class PlanModeController {
   /**
    * 撤销本扩展在宿主上的 UI，并复位 widget 跟踪状态（session_shutdown 用）。
    *
-   * 与 updateUi 分开：这不是「按当前状态再算一遍」，而是一次性清场，所以形状
-   * （清 widget 不带 options、顺序 status → widget → widget）也与改造前一致。
+   * 与 updateUi 分开：这不是「按当前状态再算一遍」，而是一次性清场。
    */
   clearUi(ctx: ExtensionContext): void {
     this.todoWidgetPresent = false;

@@ -136,9 +136,8 @@ export const formatPlanModeStatus = (
 /**
  * `Plan Mode: {mode}` + 运行状态：两个消费方共用同一对事实，避免文案漂移。
  *
- * `dedupeRunStatus` = 运行状态与模式同名时不重复：pi-web 的常驻状态行用它。
- * TUI 的 mode widget 传 false —— 那里的 `Plan Mode: Act · Act · Alt+0 toggles`
- * 是既有输出，被 `tui-parity.test.ts` 基线冻结，不要为对齐去重。
+ * `dedupeRunStatus` 只给 pi-web 的常驻状态行用；TUI 的 mode widget 不去重，
+ * 那里的 `Plan Mode: Act · Act · Alt+0 toggles` 被基线冻结。
  */
 const formatPlanModeHeadline = (
   state: PlanModeState,
@@ -159,12 +158,10 @@ export const formatModeWidgetLines = (state: PlanModeState): string[] => [
 /**
  * pi-web 的常驻状态行（单行）。
  *
- * pi-web 会一直显示 `setStatus` 的文本（widget 要点开才看得到），所以这行承担
- * 两件事：模式/阶段 + 当前 TODO 步骤与计数 —— 面板被折叠、或页面刷新后，用户仍然
- * 知道进行到哪一步。TUI 不用它（那里 widget 本来就常驻可见）。
+ * pi-web 一直显示 `setStatus` 的文本，而 widget 要点开才看得到，所以这行同时讲
+ * 模式/阶段与当前 TODO 步骤，面板折叠或页面刷新后用户仍知道进行到哪一步。
  *
- * 返回 undefined 表示“没有 plan 相关内容”（普通 act 直聊）：调用方应清空 status，
- * 不要让每个会话在 shelf 上常驻一格噪音。
+ * 返回 undefined 表示普通 act 直聊：调用方应清空 status，不要在 shelf 上留噪音。
  */
 export const formatPlanModeStatusLine = (
   state: PlanModeState,

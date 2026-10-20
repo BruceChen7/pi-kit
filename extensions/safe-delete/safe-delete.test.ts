@@ -267,9 +267,7 @@ describe("safe-delete remote approval events", () => {
 });
 
 describe("safe-delete MCP calls", () => {
-  // Deliberate: MCP annotations are self-declared and unverified, so an
-  // annotation-based gate prompted on every call without proving anything.
-  // Only bash stays gated.
+  // Only bash is gated: MCP annotations are self-declared and unverified.
   it("leaves MCP tool calls untouched, even destructive-looking ones", async () => {
     const handlers = new Map<
       string,

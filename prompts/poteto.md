@@ -20,7 +20,7 @@ argument-hint: "<task>"
 | 重构 | plan 产物里先写「行为不变」的判据 | 小步改，每步验证 | `/skill:blast-radius` + `/skill:plan-code-review` |
 | 新功能 | plan 或 spec，走 Plannotator | 先定数据形状再写码 | 测试或验证脚本 |
 | 性能 | 先跑基线，记下 limiter | 改一处，测一次 | `/skill:blast-radius` + `/skill:benchmark-checklist` |
-| 收尾发布 | `/skill:plan-code-review` 双轴 | 修 findings | `/skill:unslop` + conventional commit |
+| 收尾发布 | `/skill:plan-code-review` 双轴 | 修 findings；diff 里注释多时 `/skill:no-comments` | 重跑测试 → `/skill:unslop` + conventional commit |
 
 类型定不下来时，按「新功能」走：先出计划，用计划换确定性。
 

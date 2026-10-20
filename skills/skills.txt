@@ -54,6 +54,7 @@ writing-for-agents|local|skills/writing-for-agents
 principles|local|skills/pstack/principles
 blast-radius|local|skills/pstack/blast-radius
 correct|local|skills/pstack/correct
+no-comments|local|skills/pstack/no-comments
 benchmark-checklist|local|skills/pstack/benchmark-checklist
 show-me-your-work|local|skills/pstack/show-me-your-work
 technical-writing|local|skills/pstack/technical-writing

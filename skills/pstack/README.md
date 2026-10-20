@@ -11,6 +11,7 @@
 | `principles/` | 24 条原则：`SKILL.md` 是索引，`references/<id>.md` 是上游叶子全文 |
 | `blast-radius/` | 改过一次：删多模型 `arena`，forge 命令按 remote 选 `gh` / `glab` |
 | `correct/` | 改过一次：规则表落到 `AGENTS.md`，forge 命令按 remote 选 |
+| `no-comments/` | 改过一次：评审合成单文件两遍走（先出表再改），keep list 与抑制判断逐字保留，补 Go / shell 的抑制写法 |
 | `benchmark-checklist/` | 正文未改，逐字进口 |
 | `show-me-your-work/` | 改过一次：transcript 路径改 pi session，跨模型复核改只读 squad 可选，日志默认中文；`scripts/log.sh` 与 TSV 模板一并搬入 |
 | `technical-writing/` | 改过一次：去 adapter，PR/MR 措辞，开头写清与 `unslop`、`writing-for-agents` 的边界 |
@@ -36,7 +37,7 @@
 ## 删掉整组
 
 ```bash
-# 1. 去掉 skills/skills.txt 里本组七行
+# 1. 去掉 skills/skills.txt 里本组八行
 # 2. 重建链接，清掉 me-skills 中不再被引用的条目
 ./skills/migrate.sh import
 # 3. 删源码与入口

@@ -26,6 +26,8 @@ export type SubagentRun = {
   endedAt?: number;
   /** 最近一次工具名，给 widget 用。 */
   step: string | null;
+  /** 最近一次子会话事件的时间；`progressLine` 用它区分「在跑」和「静默」。 */
+  lastEventAt: number;
   transcript: TranscriptLine[];
   resultText?: string;
   error?: string;
@@ -115,6 +117,7 @@ export function admit(
     status: "queued",
     startedAt: now,
     step: null,
+    lastEventAt: now,
     transcript: [],
     background: request.background,
   };
@@ -151,10 +154,11 @@ export function setStep(
   state: SubagentState,
   runId: string,
   step: string | null,
+  now: number = Date.now(),
 ): SubagentState {
   return {
     runs: state.runs.map((run) =>
-      run.runId === runId ? { ...run, step } : run,
+      run.runId === runId ? { ...run, step, lastEventAt: now } : run,
     ),
   };
 }
@@ -168,7 +172,7 @@ export function appendTranscript(
     runs: state.runs.map((run) => {
       if (run.runId !== runId) return run;
       const transcript = [...run.transcript, line].slice(-MAX_TRANSCRIPT_LINES);
-      return { ...run, transcript };
+      return { ...run, transcript, lastEventAt: line.at };
     }),
   };
 }
@@ -250,6 +254,43 @@ const STATUS_GLYPH: Record<RunStatus, string> = {
   stopped: "■",
 };
 
+/** 静默多久之后开始在进度行里标注 `quiet`。 */
+export const QUIET_AFTER_MS = 30_000;
+
+/**
+ * 一行运行期进度：`explore a1b2c3d4 · running 4m10s · grep subagent · quiet 38s`。
+ * 终态返回 undefined，调用方据此撤掉进度展示。
+ */
+export function progressLine(
+  run: SubagentRun,
+  now: number = Date.now(),
+): string | undefined {
+  if (isTerminal(run.status)) return undefined;
+
+  const elapsed = formatElapsed((run.endedAt ?? now) - run.startedAt);
+  const head = `${run.agent} ${run.runId} · ${run.status} ${elapsed}`;
+  if (run.status === "queued") return `${head} · waiting for slot`;
+
+  const step = run.step ? ` · ${run.step}` : " · no tool yet";
+  const quietMs = Math.max(0, now - run.lastEventAt);
+  const quiet =
+    quietMs >= QUIET_AFTER_MS ? ` · quiet ${formatElapsed(quietMs)}` : "";
+  return `${head}${step}${quiet}`;
+}
+
+/** footer 状态行：单个 run 用它的进度行，多个 run 只报数量。 */
+export function statusLine(
+  state: SubagentState,
+  now: number = Date.now(),
+): string | undefined {
+  const live = activeRuns(state);
+  if (live.length === 0) return undefined;
+  if (live.length === 1) return progressLine(live[0], now);
+
+  const running = live.filter((run) => run.status === "running").length;
+  return `subagent · ${running} running, ${live.length - running} queued`;
+}
+
 /** widget 行。没有任何活跃 run 时返回空数组，让宿主把 widget 撤掉。 */
 export function renderWidgetLines(
   state: SubagentState,
@@ -263,9 +304,7 @@ export function renderWidgetLines(
 
   const rows = live.map((run) => {
     const glyph = STATUS_GLYPH[run.status];
-    const elapsed = formatElapsed(now - run.startedAt);
-    const step = run.step ? ` · ${run.step}` : "";
-    return `  ${glyph} ${run.agent} ${run.runId} ${elapsed}${step}`;
+    return `  ${glyph} ${progressLine(run, now) ?? `${run.agent} ${run.runId}`}`;
   });
 
   return [header, ...rows];

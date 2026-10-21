@@ -180,6 +180,72 @@ describe("foreground run", () => {
   });
 });
 
+describe("progress while a foreground child is silent", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const slowTool = () => {
+    vi.mocked(createAgentSession).mockResolvedValue({
+      session: makeSession("unreachable", { hang: true }),
+    } as never);
+    const { pi, tools } = makePi();
+    return { runtime: registerSubagent(pi as never), tool: tools[0] };
+  };
+
+  it("pushes an update every tick and freezes once the run stops", async () => {
+    vi.useFakeTimers();
+    const { runtime, tool } = slowTool();
+    const ui = { setWidget: vi.fn(), setStatus: vi.fn() };
+    const onUpdate = vi.fn();
+
+    void tool.execute(
+      "call-1",
+      { action: "run", agent: "explore", task: "slow", background: false },
+      undefined,
+      onUpdate,
+      makeCtx({ ui }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => expect(runtime.readState().runs).toHaveLength(1));
+
+    await vi.advanceTimersByTimeAsync(32_000);
+
+    expect(onUpdate.mock.calls.length).toBeGreaterThanOrEqual(3);
+    const last = onUpdate.mock.calls.at(-1)?.[0];
+    expect(last.content[0].text).toContain("quiet");
+    expect(ui.setStatus).toHaveBeenCalled();
+
+    runtime.stopRun(runtime.readState().runs[0].runId);
+    await vi.advanceTimersByTimeAsync(0);
+    const frozen = onUpdate.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(onUpdate.mock.calls.length).toBe(frozen);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("keeps updating when the host has no footer status", async () => {
+    vi.useFakeTimers();
+    const { runtime, tool } = slowTool();
+    const onUpdate = vi.fn();
+
+    void tool.execute(
+      "call-1",
+      { action: "run", agent: "explore", task: "slow", background: false },
+      undefined,
+      onUpdate,
+      makeCtx(),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => expect(runtime.readState().runs).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(onUpdate).toHaveBeenCalled();
+    runtime.stopRun(runtime.readState().runs[0].runId);
+  });
+});
+
 describe("background run", () => {
   it("delivers the result once with triggerTurn", async () => {
     vi.mocked(createAgentSession).mockResolvedValue({

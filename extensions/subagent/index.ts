@@ -13,6 +13,7 @@ import { join } from "node:path";
 import type {
   AgentSession,
   AgentToolResult,
+  AgentToolUpdateCallback,
   ExtensionAPI,
   ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
@@ -43,11 +44,13 @@ import {
   extractAssistantText,
   findRun,
   isTerminal,
+  progressLine,
   renderDoctor,
   renderWidgetLines,
   type SubagentState,
   setStep,
   settle,
+  statusLine,
   stop,
 } from "./core.ts";
 import {
@@ -68,6 +71,9 @@ import {
 import { registerAgentsCommand } from "./ui.ts";
 
 const WIDGET_KEY = "subagent";
+const STATUS_KEY = "subagent";
+/** 进度刷新周期。1s 太吵，5s 又看不出在动；2s 是肉眼连续与重绘量的折中。 */
+const TICK_MS = 2_000;
 const log = createLogger("subagent", { stderr: null });
 
 export type RunOutcome = {
@@ -143,6 +149,9 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   const sessions = new Map<string, AgentSession>();
   const inflight = new Set<string>();
   const pending = new Map<string, (outcome: RunOutcome) => void>();
+  /** foreground 调用的 onUpdate：键是 runId，调用返回后立刻移除。 */
+  const liveUpdates = new Map<string, AgentToolUpdateCallback>();
+  let ticker: ReturnType<typeof setInterval> | undefined;
   const maxConcurrent = DEFAULT_MAX_CONCURRENT;
 
   const projectDir = (cwd: string): string => join(cwd, ".pi", "agents");
@@ -163,15 +172,79 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     };
   };
 
+  const setFooterStatus = (text: string | undefined): void => {
+    const ui = lastContext?.ui as
+      | { setStatus?: (key: string, text: string | undefined) => void }
+      | undefined;
+    if (typeof ui?.setStatus !== "function") return;
+    try {
+      ui.setStatus(STATUS_KEY, text);
+    } catch {
+      // 非交互宿主没有 footer，忽略。
+    }
+  };
+
+  const stopTicker = (): void => {
+    if (ticker !== undefined) {
+      clearInterval(ticker);
+      ticker = undefined;
+    }
+    setFooterStatus(undefined);
+  };
+
+  /** 把当前进度推给 foreground 调用方，父会话的工具行据此刷新。 */
+  const pushProgress = (now: number): void => {
+    for (const [runId, update] of liveUpdates) {
+      const run = findRun(state, runId);
+      const line = run ? progressLine(run, now) : undefined;
+      if (!line) continue;
+      try {
+        update({
+          content: [{ type: "text", text: line }],
+          details: { action: "run", progress: true },
+        });
+      } catch (error) {
+        log.debug("progress update failed", {
+          runId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  };
+
+  const tick = (): void => {
+    const now = Date.now();
+    if (activeRuns(state).length === 0) {
+      stopTicker();
+      return;
+    }
+    pushProgress(now);
+    setFooterStatus(statusLine(state, now));
+    refreshWidget();
+  };
+
+  /** 有活跃 run 就保证 ticker 在跑，没有就停。重复调用无副作用。 */
+  const syncTicker = (): void => {
+    if (activeRuns(state).length === 0) {
+      stopTicker();
+      return;
+    }
+    if (ticker !== undefined) return;
+    ticker = setInterval(tick, TICK_MS);
+    (ticker as { unref?: () => void }).unref?.();
+  };
+
   const refreshWidget = (): void => {
     const ctx = lastContext;
-    if (!ctx) return;
-    const lines = renderWidgetLines(state, Date.now());
-    try {
-      ctx.ui.setWidget(WIDGET_KEY, lines.length > 0 ? lines : undefined);
-    } catch {
-      // widget 在非交互宿主里可能不可用，不影响运行本身。
+    if (ctx) {
+      const lines = renderWidgetLines(state, Date.now());
+      try {
+        ctx.ui.setWidget(WIDGET_KEY, lines.length > 0 ? lines : undefined);
+      } catch {
+        // widget 在非交互宿主里可能不可用，不影响运行本身。
+      }
     }
+    syncTicker();
   };
 
   const resolveWait = (runId: string, outcome: RunOutcome): void => {
@@ -468,6 +541,8 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     agent?: string;
     task: string;
     background: boolean;
+    /** 拿到 runId 的时机早于 run 结束，foreground 调用靠它绑定 onUpdate。 */
+    onRunId?: (runId: string) => void;
   }): Promise<RunOutcome> => {
     const cwd = lastContext?.cwd ?? process.cwd();
     const { profiles } = await loadProfiles(cwd);
@@ -494,6 +569,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       Date.now(),
     );
     state = admitted.state;
+    input.onRunId?.(runId);
     log.debug("admit", {
       runId,
       agent: profile.name,
@@ -595,7 +671,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       _toolCallId,
       params,
       _signal,
-      _onUpdate,
+      onUpdate,
       ctx,
     ): Promise<AgentToolResult<StructuredPayload>> => {
       lastContext = ctx;
@@ -667,11 +743,22 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       const task = params.task?.trim();
       if (!task) throw new Error("run requires task");
 
-      const outcome = await runTask({
-        agent: params.agent,
-        task,
-        background: params.background ?? true,
-      });
+      const background = params.background ?? true;
+      let startedRunId: string | undefined;
+      let outcome: RunOutcome;
+      try {
+        outcome = await runTask({
+          agent: params.agent,
+          task,
+          background,
+          onRunId: (runId) => {
+            startedRunId = runId;
+            if (onUpdate && !background) liveUpdates.set(runId, onUpdate);
+          },
+        });
+      } finally {
+        if (startedRunId) liveUpdates.delete(startedRunId);
+      }
 
       if (outcome.status === "failed") {
         throw new Error(outcome.text || `subagent ${outcome.runId} failed`);
@@ -692,10 +779,17 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   });
 
   pi.on("session_start", () => {
+    stopTicker();
+    liveUpdates.clear();
     state = createState();
     sessions.clear();
     inflight.clear();
     pending.clear();
+  });
+
+  pi.on("session_shutdown", () => {
+    stopTicker();
+    liveUpdates.clear();
   });
 
   try {

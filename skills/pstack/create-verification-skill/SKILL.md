@@ -22,7 +22,7 @@ disable-model-invocation: true
 
 ## 2. 生成 skill
 
-写 `.pi/skills/verify-<app>/SKILL.md`，frontmatter 用 `name: verify-<app>` 与一个 description（写明 app、界面类型、什么时候用它；没有 frontmatter 就不会注册）。下面每一节都落在第 1 步实际找到的东西上，不留占位符：
+写 `.pi/skills/verify-<app>/SKILL.md`，frontmatter 用 `name: verify-<app>` 与一个 description（写明 app、界面类型、什么时候用它；没有 frontmatter 就不会注册）。不要写 `disable-model-invocation: true`：它会让生成物从 system prompt 消失，agent 只能靠手敲 `/skill:` 调用，而项目验证 skill 正是给 agent 自己用的。下面每一节都落在第 1 步实际找到的东西上，不留占位符：
 
 - **Launch**：验证时启动应用的准确命令，以及怎么判断 ready（日志行、提示符）。Launch 必须从空数据目录到可用状态，包含 migration 与 seed。Ready 是可用，不只是进程应答。数据库健康检查可能过，init 脚本还在跑。写 teardown。短命 CLI/TUI 没有常驻 server：launch 指构建一次，然后每次 drive 在自己的 PTY 或 tmux 会话里起。
 - **Doctor**：一条只读检查，回答「这个实例值不值得驱动」：进程在、版本/构建对、端口是我们的、鉴权有效。任何异常先跑它。
@@ -39,6 +39,10 @@ disable-model-invocation: true
 
 按它自己的说明从头到尾跑一次：launch、doctor、drive 一个已映射功能（一个就够；地图存在是为了以后覆盖其余）、留证据、cleanup。cleanup 后确认证据还在指定位置。cleanup 吃掉证明，这一步就失败。修掉失败项；每次失败迭代也要跑生成的 cleanup，别把进程和端口留在那。没跑过的生成 skill 是草稿，不是交付物。如果在替身里证明（容器代替新 VM、本地栈代替远端），列出替身做了而目标不会做的每一步。这些步骤在真实目标跑过之前都算未验证。
 
-## 5. 指向维护环
+## 5. 让 agent 看得到它
+
+skill 只在 pi 启动时进 system prompt。生成或改完后，告诉用户跑 `/reload` 或重开会话。当前会话里新建的文件不会自动出现，agent 看不到就只能手敲 `/skill:` 加 skill 名。
+
+## 6. 指向维护环
 
 告诉用户用 `/maintain-verification-skill` 在应用变化时保持地图诚实。用户问节奏再建议。

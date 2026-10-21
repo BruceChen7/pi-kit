@@ -19,7 +19,7 @@
 | `interrogate/` | 改过一次：评审改 `subagent reviewer`，删 Task 参数名、上游模型规则与 slug 回退；references 原样搬入 |
 | `swarm/` | 改过一次：去 cloud / worktree，改 ≤4 波次；写任务只落不相交目录 |
 | `arena/` | 改过一次：候选写 `/tmp` 或 patch，去 worktree 与 per-model runners |
-| `create-verification-skill/` | 改过一次：`.pi/skills/verify-<app>/`；drive 先找仓库已有 harness，再用 pi 工具；references 一并搬入 |
+| `create-verification-skill/` | 改过两次：`.pi/skills/verify-<app>/`；drive 先找仓库已有 harness，再用 pi 工具；references 一并搬入；生成物不加 `disable-model-invocation`，生成后要求 `/reload` |
 | `maintain-verification-skill/` | 改过一次：源波改 `subagent explore`，4 个一波；PR 按 remote 选 `gh` / `glab` |
 
 入口 `/poteto` 不在这里，是 [`prompts/poteto.md`](../../prompts/poteto.md)。

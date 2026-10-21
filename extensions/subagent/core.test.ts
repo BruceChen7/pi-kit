@@ -11,14 +11,23 @@ import {
   findRun,
   isTerminal,
   MAX_RESULT_CHARS,
+  progressLine,
   renderDoctor,
   renderTranscript,
   renderWidgetLines,
+  type SubagentState,
   setStep,
   settle,
   start,
+  statusLine,
   stop,
 } from "./core.js";
+
+const runOf = (state: SubagentState, runId: string) => {
+  const run = findRun(state, runId);
+  if (!run) throw new Error(`missing run ${runId}`);
+  return run;
+};
 
 const request = (runId: string, agent = "explore") => ({
   runId,
@@ -210,7 +219,7 @@ describe("renderWidgetLines", () => {
     const lines = renderWidgetLines(state, 13_000);
 
     expect(lines[0]).toBe("Subagents · 2 running, 0 queued");
-    expect(lines[1]).toContain("explore a1 12s");
+    expect(lines[1]).toContain("explore a1 · running 12s");
   });
 
   it("marks queued runs distinctly", () => {
@@ -224,6 +233,88 @@ describe("renderWidgetLines", () => {
 
     expect(lines[0]).toBe("Subagents · 4 running, 1 queued");
     expect(lines[5]).toContain("· explore a5");
+  });
+});
+
+describe("progressLine", () => {
+  it("counts elapsed time and says when no tool ran yet", () => {
+    const state = admit(createState(), request("a1"), 4, 1000).state;
+
+    expect(progressLine(runOf(state, "a1"), 13_000)).toBe(
+      "explore a1 · running 12s · no tool yet",
+    );
+  });
+
+  it("shows the last tool and the quiet time once the child goes silent", () => {
+    let state = admit(createState(), request("a1"), 4, 1000).state;
+    state = setStep(state, "a1", "grep", 5_000);
+
+    expect(progressLine(runOf(state, "a1"), 10_000)).toBe(
+      "explore a1 · running 9s · grep",
+    );
+    expect(progressLine(runOf(state, "a1"), 36_000)).toBe(
+      "explore a1 · running 35s · grep · quiet 31s",
+    );
+  });
+
+  it("reports queued runs as waiting instead of quiet", () => {
+    const running = admitMany(["a1", "a2", "a3", "a4"]);
+    const state = admit(running, request("a5"), 4, 1000).state;
+
+    expect(progressLine(runOf(state, "a5"), 61_000)).toBe(
+      "explore a5 · queued 1m00s · waiting for slot",
+    );
+  });
+
+  it("returns nothing once the run settles", () => {
+    const state = admit(createState(), request("a1"), 4, 1000).state;
+    const done = settle(state, { runId: "a1", status: "done" }, 4, 2000);
+
+    expect(progressLine(runOf(done, "a1"), 3000)).toBeUndefined();
+  });
+});
+
+describe("statusLine", () => {
+  it("uses the single run's progress line", () => {
+    const state = admit(createState(), request("a1"), 4, 1000).state;
+
+    expect(statusLine(state, 3000)).toBe(
+      "explore a1 · running 2s · no tool yet",
+    );
+  });
+
+  it("counts runs when several are active", () => {
+    const state = admitMany(["a1", "a2"]);
+
+    expect(statusLine(state, 3000)).toBe("subagent · 2 running, 0 queued");
+  });
+
+  it("returns nothing when no run is active", () => {
+    const state = settle(
+      admit(createState(), request("a1"), 4, 1000).state,
+      { runId: "a1", status: "done" },
+      4,
+      2000,
+    );
+
+    expect(statusLine(state, 3000)).toBeUndefined();
+  });
+});
+
+describe("lastEventAt", () => {
+  it("advances with transcript lines and tool steps", () => {
+    let state = admit(createState(), request("a1"), 4, 1000).state;
+    expect(runOf(state, "a1").lastEventAt).toBe(1000);
+
+    state = appendTranscript(state, "a1", {
+      role: "tool",
+      text: "read",
+      at: 7000,
+    });
+    expect(runOf(state, "a1").lastEventAt).toBe(7000);
+
+    state = setStep(state, "a1", "grep", 9000);
+    expect(runOf(state, "a1").lastEventAt).toBe(9000);
   });
 });
 

@@ -137,6 +137,15 @@ describe("pstack skill group", () => {
 
     expect(input.promptDoc.content).toContain("/skill:principles");
   });
+
+  // A generated project skill that hides from the system prompt can only be
+  // typed by hand, which defeats the point of generating one for an agent.
+  it("keeps generated verification skills agent-callable", () => {
+    const doc = readDoc("skills/pstack/create-verification-skill/SKILL.md");
+
+    expect(doc.content).toContain("不要写 `disable-model-invocation: true`");
+    expect(doc.content).toContain("/reload");
+  });
 });
 
 describe("repo skill naming", () => {

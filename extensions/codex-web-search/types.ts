@@ -1,4 +1,5 @@
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
+import type { WebSearchFallbackRequester } from "../shared/web-search-fallback.ts";
 
 export type SearchMode = "fast" | "deep";
 export type SearchFreshness = "cached" | "live";
@@ -72,6 +73,17 @@ export interface DefuddleProvenance {
   urls: string[];
 }
 
+/**
+ * Where a served result came from after Codex failed. `error` is set when the
+ * fallback was attempted and could not answer.
+ */
+export interface SearchFallbackProvenance {
+  provider: string;
+  reason: string;
+  sourceCount: number;
+  error?: string;
+}
+
 export interface CodexWebSearchDetails extends WebSearchProgressDetails {
   sourceCount: number;
   summary: string;
@@ -80,6 +92,7 @@ export interface CodexWebSearchDetails extends WebSearchProgressDetails {
   fullOutputPath?: string;
   retry?: RetryProvenance;
   defuddle?: DefuddleProvenance;
+  deepseekFallback?: SearchFallbackProvenance;
   failure?: CodexFailureDetails;
 }
 
@@ -155,4 +168,5 @@ export interface ExecuteCodexWebSearchOptions {
   defuddleRunner?: RunDefuddleCommand;
   settings?: WebSearchSettings;
   turnState?: WebSearchTurnState;
+  fallback?: WebSearchFallbackRequester;
 }

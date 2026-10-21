@@ -6,6 +6,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { createWebSearchFallbackRequester } from "../shared/web-search-fallback.ts";
 import { executeCodexWebSearch } from "./codex.js";
 import {
   MAX_ALLOWED_SOURCES,
@@ -63,6 +64,7 @@ const SETTINGS_ARGUMENT_OPTIONS = [
 
 export default function codexWebSearchExtension(pi: ExtensionAPI) {
   const turnState: WebSearchTurnState = { fastModeExhausted: false };
+  const fallback = createWebSearchFallbackRequester({ events: pi.events });
   const resetTurnState = (): void => {
     turnState.fastModeExhausted = false;
   };
@@ -104,6 +106,7 @@ export default function codexWebSearchExtension(pi: ExtensionAPI) {
         cwd: ctx.cwd,
         settings: await loadSettings(),
         turnState,
+        fallback,
       };
 
       if (signal) options.signal = signal;
@@ -181,6 +184,15 @@ export default function codexWebSearchExtension(pi: ExtensionAPI) {
         text += theme.fg("warning", " (defuddle)");
       }
 
+      if (details.deepseekFallback) {
+        text += theme.fg(
+          details.deepseekFallback.error ? "warning" : "success",
+          details.deepseekFallback.error
+            ? " (fallback failed)"
+            : ` (${details.deepseekFallback.provider} fallback)`,
+        );
+      }
+
       if (!expanded) {
         text += theme.fg(
           "dim",
@@ -212,6 +224,16 @@ export default function codexWebSearchExtension(pi: ExtensionAPI) {
       if (details.defuddle) {
         text += `\n${theme.fg("warning", details.defuddle.directUrlQuery ? "Used Defuddle for direct URL extraction" : "Used Defuddle after Codex failed")}`;
         text += `\n${theme.fg("dim", details.defuddle.reason)}`;
+      }
+      if (details.deepseekFallback) {
+        const fallback = details.deepseekFallback;
+        text += `\n${theme.fg(
+          fallback.error ? "warning" : "success",
+          fallback.error
+            ? `Tried the ${fallback.provider} fallback after Codex failed, it did not answer`
+            : `Answered by the ${fallback.provider} fallback after Codex failed`,
+        )}`;
+        text += `\n${theme.fg("dim", fallback.error ?? fallback.reason)}`;
       }
       if (details.statusEvents.length > 0) {
         text += `\n${theme.fg("muted", `Codex events (${details.statusEvents.length}):`)}`;

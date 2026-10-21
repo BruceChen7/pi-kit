@@ -8,6 +8,7 @@ import {
   formatSize,
   truncateHead,
 } from "@earendil-works/pi-coding-agent";
+import type { WebSearchFallbackOutcome } from "../shared/web-search-fallback.ts";
 import { runCodexCommand } from "./codex-command.js";
 import { MAX_ALLOWED_SOURCES } from "./constants.js";
 import {
@@ -30,6 +31,7 @@ import type {
   RunCodexCommand,
   RunCodexCommandOptions,
   RunCodexCommandResult,
+  SearchFallbackProvenance,
   SearchFreshness,
   SearchMode,
   WebSearchInput,
@@ -449,10 +451,23 @@ export async function executeCodexWebSearch(
       return exhaustedDefuddleFallback;
     }
 
+    const exhaustedFallbackAttempt = await maybeRequestDeepSeekFallback(
+      resolvedInput,
+      options,
+      exhaustedFailure,
+      exhaustedProgress,
+    );
+
+    if (exhaustedFallbackAttempt?.kind === "served") {
+      return exhaustedFallbackAttempt.result;
+    }
+
     return buildSoftFailureResult(
       resolvedInput,
       exhaustedProgress,
       exhaustedFailure,
+      undefined,
+      exhaustedFallbackAttempt?.failure,
     );
   }
 
@@ -513,16 +528,30 @@ export async function executeCodexWebSearch(
           markFastModeExhausted(options.turnState);
         }
 
+        const retrySource = {
+          ...resolvedInput,
+          mode: "deep" as const,
+          freshness: "live" as const,
+        };
+
         if (shouldThrowCodexFailure(retryFailureDetails)) {
+          const terminalAttempt = await maybeRequestDeepSeekFallback(
+            retrySource,
+            options,
+            retryFailureDetails,
+            retryProgress,
+            retry,
+          );
+
+          if (terminalAttempt?.kind === "served") {
+            return terminalAttempt.result;
+          }
+
           throw asError(retryFailureDetails, retryProgress);
         }
 
         const defuddleRetryFallback = await maybeRunDefuddleSearch(
-          {
-            ...resolvedInput,
-            mode: "deep",
-            freshness: "live",
-          },
+          retrySource,
           options,
           settings,
           {
@@ -537,20 +566,40 @@ export async function executeCodexWebSearch(
           return defuddleRetryFallback;
         }
 
+        const retryFallbackAttempt = await maybeRequestDeepSeekFallback(
+          retrySource,
+          options,
+          retryFailureDetails,
+          retryProgress,
+          retry,
+        );
+
+        if (retryFallbackAttempt?.kind === "served") {
+          return retryFallbackAttempt.result;
+        }
+
         return buildSoftFailureResult(
-          {
-            ...resolvedInput,
-            mode: "deep",
-            freshness: "live",
-          },
+          retrySource,
           retryProgress,
           retryFailureDetails,
           retry,
+          retryFallbackAttempt?.failure,
         );
       }
     }
 
     if (shouldThrowCodexFailure(diagnosedFailure)) {
+      const terminalAttempt = await maybeRequestDeepSeekFallback(
+        resolvedInput,
+        options,
+        diagnosedFailure,
+        progress,
+      );
+
+      if (terminalAttempt?.kind === "served") {
+        return terminalAttempt.result;
+      }
+
       throw asError(diagnosedFailure, progress);
     }
 
@@ -569,7 +618,24 @@ export async function executeCodexWebSearch(
       return defuddleFallback;
     }
 
-    return buildSoftFailureResult(resolvedInput, progress, diagnosedFailure);
+    const fallbackAttempt = await maybeRequestDeepSeekFallback(
+      resolvedInput,
+      options,
+      diagnosedFailure,
+      progress,
+    );
+
+    if (fallbackAttempt?.kind === "served") {
+      return fallbackAttempt.result;
+    }
+
+    return buildSoftFailureResult(
+      resolvedInput,
+      progress,
+      diagnosedFailure,
+      undefined,
+      fallbackAttempt?.failure,
+    );
   }
 }
 
@@ -831,13 +897,14 @@ async function buildSoftFailureResult(
   progress: WebSearchProgressDetails,
   failure: CodexFailureDetails,
   retry?: RetryProvenance,
+  fallback?: SearchFallbackProvenance,
 ): Promise<{
   content: { type: "text"; text: string }[];
   details: CodexWebSearchDetails;
 }> {
   const summary = buildSoftFailureSummary(failure, retry);
   const renderedResult = await renderToolResult(
-    buildSoftFailureBody(summary, failure),
+    buildSoftFailureBody(summary, failure, fallback),
   );
 
   const details: CodexWebSearchDetails = {
@@ -860,6 +927,10 @@ async function buildSoftFailureResult(
 
   if (retry) {
     details.retry = retry;
+  }
+
+  if (fallback) {
+    details.deepseekFallback = fallback;
   }
 
   if (progress.latestQuery) {
@@ -892,13 +963,20 @@ function buildSoftFailureSummary(
 function buildSoftFailureBody(
   summary: string,
   failure: CodexFailureDetails,
+  fallback?: SearchFallbackProvenance,
 ): string {
-  return [
+  const lines = [
     summary,
     "",
     `Failure kind: ${failure.kind}`,
     `Reason: ${failure.message}`,
-  ].join("\n");
+  ];
+
+  if (fallback?.error) {
+    lines.push(`Fallback (${fallback.provider}) failed: ${fallback.error}`);
+  }
+
+  return lines.join("\n");
 }
 
 function buildFastRetryStatus(
@@ -1055,6 +1133,127 @@ async function maybeRunDefuddleSearch(
   return {
     content: [{ type: "text", text: renderedResult.text }],
     details,
+  };
+}
+
+/**
+ * 任何 Codex 失败都值得问一次兜底，只有用户主动中断例外。
+ */
+export function shouldRequestFallback(failure: CodexFailureDetails): boolean {
+  return failure.kind !== "cancelled";
+}
+
+export function buildFallbackBody(
+  outcome: Extract<WebSearchFallbackOutcome, { ok: true }>,
+  failure: CodexFailureDetails,
+): string {
+  return [
+    `Codex web search failed (${failure.kind}). This result comes from the ${outcome.provider} fallback.`,
+    "",
+    formatWebSearchResult({
+      summary: outcome.summary,
+      sources: outcome.sources,
+    }),
+  ].join("\n");
+}
+
+type DeepSeekFallbackAttempt =
+  | {
+      kind: "served";
+      result: {
+        content: { type: "text"; text: string }[];
+        details: CodexWebSearchDetails;
+      };
+    }
+  | { kind: "failed"; failure: SearchFallbackProvenance };
+
+async function maybeRequestDeepSeekFallback(
+  input: ResolvedWebSearchInput,
+  options: ExecuteCodexWebSearchOptions,
+  failure: CodexFailureDetails,
+  progress: WebSearchProgressDetails,
+  retry?: RetryProvenance,
+): Promise<DeepSeekFallbackAttempt | undefined> {
+  const requester = options.fallback;
+  if (!requester || !shouldRequestFallback(failure)) {
+    return undefined;
+  }
+
+  const outcome = await requester(
+    { query: input.query, maxSources: input.maxSources },
+    options.signal ? { signal: options.signal } : {},
+  );
+
+  if (!outcome) {
+    return undefined;
+  }
+
+  if (outcome.ok === false) {
+    emitProgressUpdate(
+      options,
+      progress,
+      `Fallback (${outcome.provider}) failed: ${outcome.error}`,
+    );
+    return {
+      kind: "failed",
+      failure: {
+        provider: outcome.provider,
+        reason: failure.message,
+        sourceCount: 0,
+        error: outcome.error,
+      },
+    };
+  }
+
+  emitProgressUpdate(
+    options,
+    progress,
+    `Served by the ${outcome.provider} fallback after Codex failed (${failure.kind}).`,
+  );
+
+  const renderedResult = await renderToolResult(
+    buildFallbackBody(outcome, failure),
+  );
+  const details: CodexWebSearchDetails = {
+    query: input.query,
+    mode: input.mode,
+    freshness: input.freshness,
+    searchCount: progress.searchCount,
+    searchQueries: [...progress.searchQueries],
+    pageActions: [...(progress.pageActions ?? [])],
+    statusEvents: [...progress.statusEvents],
+    ...(progress.modelFallback
+      ? { modelFallback: progress.modelFallback }
+      : {}),
+    sourceCount: outcome.sources.length,
+    summary: outcome.summary,
+    sources: outcome.sources,
+    truncated: renderedResult.truncated,
+    deepseekFallback: {
+      provider: outcome.provider,
+      reason: failure.message,
+      sourceCount: outcome.sources.length,
+    },
+  };
+
+  if (retry) {
+    details.retry = retry;
+  }
+
+  if (progress.latestQuery) {
+    details.latestQuery = progress.latestQuery;
+  }
+
+  if (renderedResult.fullOutputPath) {
+    details.fullOutputPath = renderedResult.fullOutputPath;
+  }
+
+  return {
+    kind: "served",
+    result: {
+      content: [{ type: "text", text: renderedResult.text }],
+      details,
+    },
   };
 }
 

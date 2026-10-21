@@ -13,45 +13,24 @@ import {
   loadGlobalSettings,
   writeSettingsFile,
 } from "../shared/settings.ts";
+import { provideWebSearchFallback } from "../shared/web-search-fallback.ts";
+import {
+  type DeepSeekSearchParams,
+  formatSources,
+  readErrorMessage,
+  resolveDeepSeekApiKey,
+  runDeepSeekWebSearch,
+  SEARCH_MODEL,
+  toFallbackSources,
+} from "./search.ts";
 
-const ANTHROPIC_BASE = "https://api.deepseek.com/anthropic";
-const SEARCH_MODEL = process.env.DEEPSEEK_SEARCH_MODEL || "deepseek-v4-flash";
 const TOOL_NAME =
   process.env.DEEPSEEK_SEARCH_TOOL_NAME || "deepseek_web_search";
-const DEFAULT_MAX_TOKENS = 1500;
-const REQUEST_TIMEOUT_MS = 60_000;
-const SERVER_TOOL_TYPE = "web_search_20260209";
 
 const log = createLogger("deepseek-search", { stderr: null });
 
 const SETTINGS_KEY = "deepseekSearch";
 const SETTINGS_FILE_PATH = getGlobalSettingsPath();
-
-type SearchSource = {
-  title: string;
-  url: string;
-  pageAge?: string | null;
-};
-
-type CallAnthropicOptions = {
-  apiKey: string;
-  body: Record<string, unknown>;
-  signal?: AbortSignal;
-  onProgress?: (message: string) => void;
-};
-
-type CallAnthropicResult = {
-  answerParts: string[];
-  sources: SearchSource[];
-  model: string;
-  tokens: number;
-};
-
-type DeepSeekSearchParams = {
-  query: string;
-  allowed_domains?: string[];
-  blocked_domains?: string[];
-};
 
 type ToolDetails = Record<string, unknown>;
 
@@ -75,68 +54,6 @@ const webSearchParams = Type.Object({
     }),
   ),
 });
-
-async function resolveApiKey(ctx: ExtensionContext): Promise<string> {
-  const key = await ctx.modelRegistry.getApiKeyForProvider("deepseek");
-  if (key) {
-    log.debug("resolved DeepSeek API key from model registry");
-    return key;
-  }
-
-  const anthropicToken = process.env.ANTHROPIC_AUTH_TOKEN;
-  if (anthropicToken) {
-    log.debug("resolved DeepSeek API key from ANTHROPIC_AUTH_TOKEN fallback");
-    return anthropicToken;
-  }
-
-  const deepseekKey = process.env.DEEPSEEK_API_KEY;
-  if (deepseekKey) {
-    log.debug("resolved DeepSeek API key from DEEPSEEK_API_KEY fallback");
-    return deepseekKey;
-  }
-
-  log.warn("DeepSeek API key not found");
-  throw new Error(
-    "No DeepSeek API key found. Run /login in pi and select DeepSeek, or set DEEPSEEK_API_KEY.",
-  );
-}
-
-function getAbortSignal(signal?: AbortSignal): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
-}
-
-function readErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object";
-}
-
-function collectSources(block: Record<string, unknown>): SearchSource[] {
-  if (
-    block.type !== "web_search_tool_result" ||
-    !Array.isArray(block.content)
-  ) {
-    return [];
-  }
-
-  const sources: SearchSource[] = [];
-  for (const entry of block.content) {
-    if (!isRecord(entry) || entry.type !== "web_search_result") {
-      continue;
-    }
-
-    sources.push({
-      title: typeof entry.title === "string" ? entry.title : "Untitled",
-      url: typeof entry.url === "string" ? entry.url : "",
-      pageAge: typeof entry.page_age === "string" ? entry.page_age : null,
-    });
-  }
-
-  return sources;
-}
 
 function textResult(
   text: string,
@@ -162,206 +79,11 @@ function notifyProgress(
   onUpdate?.(textResult(text));
 }
 
-async function readDeepSeekError(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as { error?: { message?: string } };
-    return payload.error?.message || response.statusText;
-  } catch {
-    return response.statusText;
-  }
-}
-
-async function callAnthropic({
-  apiKey,
-  body,
-  signal,
-  onProgress,
-}: CallAnthropicOptions): Promise<CallAnthropicResult> {
-  log.info("DeepSeek Anthropic search request started", {
-    model: body.model,
-    serverTool: SERVER_TOOL_TYPE,
-    maxTokens: body.max_tokens,
-  });
-
-  const startedAt = Date.now();
-  const response = await fetch(`${ANTHROPIC_BASE}/v1/messages`, {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ ...body, stream: true }),
-    signal: getAbortSignal(signal),
-  });
-
-  if (!response.ok) {
-    const detail = await readDeepSeekError(response);
-    log.warn("DeepSeek Anthropic search request failed", {
-      status: response.status,
-      detail,
-      elapsedMs: Date.now() - startedAt,
-    });
-    throw new Error(`DeepSeek API ${response.status}: ${detail}`);
-  }
-
-  if (!response.body) {
-    log.warn("DeepSeek Anthropic search response had no body");
-    throw new Error("No response body");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  const answerParts: string[] = [];
-  const sources: SearchSource[] = [];
-  let modelName = "";
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) {
-        continue;
-      }
-
-      const data = line.slice(6);
-      if (data === "[DONE]") {
-        continue;
-      }
-
-      try {
-        const event = JSON.parse(data);
-        if (!isRecord(event)) {
-          continue;
-        }
-
-        if (event.type === "message_start" && isRecord(event.message)) {
-          if (typeof event.message.model === "string") {
-            modelName = event.message.model;
-          }
-          if (isRecord(event.message.usage)) {
-            inputTokens = Number(event.message.usage.input_tokens || 0);
-          }
-        }
-
-        if (
-          event.type === "content_block_start" &&
-          isRecord(event.content_block)
-        ) {
-          const newSources = collectSources(event.content_block);
-          if (newSources.length > 0) {
-            sources.push(...newSources);
-            onProgress?.(
-              `Found ${newSources.length} result${newSources.length === 1 ? "" : "s"}…`,
-            );
-            log.debug("DeepSeek search result block received", {
-              resultCount: newSources.length,
-              totalSources: sources.length,
-            });
-          }
-        }
-
-        if (event.type === "content_block_delta" && isRecord(event.delta)) {
-          const delta = event.delta;
-          if (delta.type === "text_delta" && typeof delta.text === "string") {
-            const lastIndex = answerParts.length - 1;
-            if (lastIndex >= 0) {
-              answerParts[lastIndex] += delta.text;
-            } else {
-              answerParts.push(delta.text);
-            }
-          }
-        }
-
-        if (event.type === "message_delta" && isRecord(event.usage)) {
-          outputTokens = Number(event.usage.output_tokens || 0);
-        }
-      } catch (error) {
-        log.debug("Skipping malformed DeepSeek stream event", {
-          error: readErrorMessage(error),
-        });
-      }
-    }
-  }
-
-  const result = {
-    answerParts,
-    sources,
-    model: modelName || SEARCH_MODEL,
-    tokens: inputTokens + outputTokens,
-  };
-
-  log.info("DeepSeek Anthropic search request completed", {
-    model: result.model,
-    sourceCount: result.sources.length,
-    tokens: result.tokens,
-    elapsedMs: Date.now() - startedAt,
-  });
-
-  return result;
-}
-
-function formatSources(sources: SearchSource[]): string {
-  if (sources.length === 0) {
-    return "";
-  }
-
-  return [
-    "",
-    "Links:",
-    ...sources.map(
-      (source, index) =>
-        `${index + 1}. [${source.title}](${source.url})${source.pageAge ? ` (${source.pageAge})` : ""}`,
-    ),
-  ].join("\n");
-}
-
-function buildSearchTool(
-  params: DeepSeekSearchParams,
-): Record<string, unknown> {
-  const tool: Record<string, unknown> = {
-    type: SERVER_TOOL_TYPE,
-    name: "web_search",
-    max_uses: 8,
-  };
-
-  if (params.allowed_domains?.length) {
-    tool.allowed_domains = params.allowed_domains;
-  }
-  if (params.blocked_domains?.length) {
-    tool.blocked_domains = params.blocked_domains;
-  }
-
-  return tool;
-}
-
-function buildSearchRequestBody(
-  query: string,
-  params: DeepSeekSearchParams,
-): Record<string, unknown> {
-  return {
-    model: SEARCH_MODEL,
-    max_tokens: DEFAULT_MAX_TOKENS,
-    thinking: { type: "disabled" },
-    messages: [{ role: "user", content: query }],
-    system:
-      "You are an assistant for performing a web search tool use. Return only the search results as plain text. Never output function_calls, invoke, or tool_call XML tags.",
-    tools: [buildSearchTool(params)],
-  };
-}
-
 const citationReminder =
   "\n\nREMINDER: You MUST include the sources above in your response to the user using markdown hyperlinks.";
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object";
 
 type DeepSeekSearchSettings = {
   enabled: boolean;
@@ -409,10 +131,34 @@ export default function deepseekSearchExtension(pi: ExtensionAPI) {
   log.info("deepseek-search extension loaded", {
     toolName: TOOL_NAME,
     searchModel: SEARCH_MODEL,
-    endpoint: ANTHROPIC_BASE,
   });
 
   let toolRegistered = false;
+  let lastContext: ExtensionContext | undefined;
+
+  // 只有 web_search 失败后才会有人往总线发请求，这里回不回应取决于用户是否启用。
+  provideWebSearchFallback({
+    events: pi.events,
+    provider: "deepseek",
+    isAvailable: () => loadDeepSeekSearchSettings().enabled,
+    runSearch: async ({ query, maxSources }) => {
+      if (!lastContext) {
+        throw new Error("DeepSeek search is not ready in this session yet");
+      }
+      const apiKey = await resolveDeepSeekApiKey(lastContext);
+      const result = await runDeepSeekWebSearch({ apiKey, params: { query } });
+      log.info("DeepSeek fallback search completed", {
+        query,
+        sourceCount: result.sources.length,
+      });
+      return {
+        ok: true,
+        provider: "deepseek",
+        summary: result.answerParts.join("\n\n") || `No results for: ${query}`,
+        sources: toFallbackSources(result.sources, maxSources),
+      };
+    },
+  });
 
   const registerSearchTool = (): void => {
     if (toolRegistered) {
@@ -425,10 +171,10 @@ export default function deepseekSearchExtension(pi: ExtensionAPI) {
     pi.registerTool({
       name: TOOL_NAME,
       label: "DeepSeek Web Search",
-      description: `Search the web via DeepSeek server-side web search. Returns results with titles, URLs, and a brief summary. The current date is ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long" })} — use the current year for recent queries.`,
-      promptSnippet: `${TOOL_NAME}: search the web via DeepSeek. Returns results with titles, URLs, and a brief summary.`,
+      description: `Fallback web search via DeepSeek server-side search. Use it only after the web_search tool failed or is unavailable. Returns results with titles, URLs, and a brief summary. The current date is ${new Date().toLocaleDateString("en-US", { year: "numeric", month: "long" })} — use the current year for recent queries.`,
+      promptSnippet: `${TOOL_NAME}: fallback web search via DeepSeek, only after web_search fails.`,
       promptGuidelines: [
-        `Use ${TOOL_NAME} when DeepSeek-backed current or source-backed web information is needed.`,
+        `Use ${TOOL_NAME} only when web_search failed or web_search is unavailable. It is not a replacement for web_search.`,
         `After receiving ${TOOL_NAME} results, synthesize a clear answer and cite sources with markdown hyperlinks.`,
       ],
       parameters: webSearchParams,
@@ -496,10 +242,10 @@ export default function deepseekSearchExtension(pi: ExtensionAPI) {
         };
 
         try {
-          const apiKey = await resolveApiKey(ctx);
-          const result = await callAnthropic({
+          const apiKey = await resolveDeepSeekApiKey(ctx);
+          const result = await runDeepSeekWebSearch({
             apiKey,
-            body: buildSearchRequestBody(query, searchParams),
+            params: { ...searchParams, query },
             signal,
             onProgress,
           });
@@ -573,11 +319,14 @@ export default function deepseekSearchExtension(pi: ExtensionAPI) {
         }
 
         try {
-          await resolveApiKey(ctx);
+          await resolveDeepSeekApiKey(ctx);
           registerSearchTool();
           activateTool();
           saveDeepSeekSearchSettings({ enabled: true });
-          ctx.ui.notify("DeepSeek search enabled", "info");
+          ctx.ui.notify(
+            "DeepSeek search enabled — web_search now falls back to it after failing",
+            "info",
+          );
         } catch (error) {
           ctx.ui.notify(`Cannot enable: ${readErrorMessage(error)}`, "error");
         }
@@ -601,6 +350,7 @@ export default function deepseekSearchExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (event, ctx) => {
+    lastContext = ctx;
     try {
       const settings = loadDeepSeekSearchSettings();
       log.info("deepseek-search session ready", {

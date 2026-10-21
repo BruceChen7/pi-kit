@@ -1,7 +1,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildCodexExecArgs, executeCodexWebSearch } from "./codex.js";
+import type {
+  WebSearchFallbackOutcome,
+  WebSearchFallbackRequester,
+} from "../shared/web-search-fallback.ts";
+import {
+  buildCodexExecArgs,
+  buildFallbackBody,
+  executeCodexWebSearch,
+  shouldRequestFallback,
+} from "./codex.js";
 import { DEFAULT_CODEX_WEB_SEARCH_MODEL } from "./constants.js";
 import { DEFAULT_WEB_SEARCH_SETTINGS } from "./settings.js";
 import type {
@@ -355,5 +364,245 @@ describe("executeCodexWebSearch without search activity", () => {
     expect(result.details.searchCount).toBe(1);
     expect(result.details.sourceCount).toBe(1);
     expect(result.content[0]?.text).not.toContain("Warning:");
+  });
+});
+
+const fallbackServed = (): Extract<WebSearchFallbackOutcome, { ok: true }> => ({
+  ok: true,
+  provider: "deepseek",
+  summary: "DeepSeek summary after Codex failed.",
+  sources: [
+    {
+      title: "DeepSeek source",
+      url: "https://example.com/deepseek",
+      snippet: "",
+    },
+  ],
+});
+
+const failingCodex = (): RunCodexCommand => async () => {
+  throw new Error("Codex exec failed: stream disconnected before completion");
+};
+
+describe("shouldRequestFallback", () => {
+  it("asks for every Codex failure except a user cancel", () => {
+    const kinds = [
+      "transport",
+      "auth",
+      "rate_limit",
+      "timeout",
+      "budget",
+      "schema",
+      "empty_result",
+      "search_unavailable",
+      "missing_cli",
+      "local_config",
+      "unknown",
+    ] as const;
+
+    for (const kind of kinds) {
+      expect(
+        shouldRequestFallback({ kind, message: kind, recoverable: true }),
+      ).toBe(true);
+    }
+
+    expect(
+      shouldRequestFallback({
+        kind: "cancelled",
+        message: "aborted by user",
+        recoverable: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("buildFallbackBody", () => {
+  it("names the Codex failure and the provider that answered", () => {
+    const body = buildFallbackBody(fallbackServed(), {
+      kind: "transport",
+      message: "stream disconnected",
+      recoverable: true,
+    });
+
+    expect(body).toContain("Codex web search failed (transport)");
+    expect(body).toContain("deepseek fallback");
+    expect(body).toContain("DeepSeek summary after Codex failed.");
+    expect(body).toContain("https://example.com/deepseek");
+  });
+});
+
+describe("executeCodexWebSearch fallback handoff", () => {
+  it("asks once after Codex fails and serves the fallback answer", async () => {
+    const requests: { query: string; maxSources: number }[] = [];
+    const fallback: WebSearchFallbackRequester = async (query) => {
+      requests.push(query);
+      return fallbackServed();
+    };
+
+    const result = await executeCodexWebSearch(
+      { query: "latest node lts", mode: "fast" },
+      {
+        cwd: process.cwd(),
+        runner: failingCodex(),
+        settings: settingsWith(),
+        fallback,
+      },
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.query).toBe("latest node lts");
+    expect(result.details.deepseekFallback).toEqual({
+      provider: "deepseek",
+      reason: expect.stringContaining("stream disconnected"),
+      sourceCount: 1,
+    });
+    expect(result.details.failure).toBeUndefined();
+    expect(result.details.sourceCount).toBe(1);
+    expect(result.content[0]?.text).toContain(
+      "This result comes from the deepseek fallback",
+    );
+    expect(result.content[0]?.text).toContain("DeepSeek summary");
+  });
+
+  it("never contacts the fallback when Codex succeeds", async () => {
+    let calls = 0;
+    const fallback: WebSearchFallbackRequester = async () => {
+      calls += 1;
+      return fallbackServed();
+    };
+
+    const result = await executeCodexWebSearch(
+      { query: "codex cli release", mode: "fast" },
+      {
+        cwd: process.cwd(),
+        settings: settingsWith(),
+        fallback,
+        runner: async (options) => {
+          options.onStdoutLine?.(searchEventLine("codex cli release"));
+          await writeCodexResult(options, {
+            summary: "Codex answer.",
+            sources: [{ title: "Docs", url: "https://example.com/docs" }],
+          });
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      },
+    );
+
+    expect(calls).toBe(0);
+    expect(result.details.deepseekFallback).toBeUndefined();
+    expect(result.content[0]?.text).toContain("Codex answer.");
+  });
+
+  it("keeps the Codex failure when nobody answers", async () => {
+    const fallback: WebSearchFallbackRequester = async () => undefined;
+
+    const result = await executeCodexWebSearch(
+      { query: "latest node lts", mode: "fast" },
+      {
+        cwd: process.cwd(),
+        runner: failingCodex(),
+        settings: settingsWith(),
+        fallback,
+      },
+    );
+
+    expect(result.details.deepseekFallback).toBeUndefined();
+    expect(result.details.failure?.kind).toBe("transport");
+    expect(result.content[0]?.text).toContain("Failure kind: transport");
+  });
+
+  it("keeps the Codex failure and reports why the fallback failed", async () => {
+    const fallback: WebSearchFallbackRequester = async () => ({
+      ok: false,
+      provider: "deepseek",
+      error: "DeepSeek API 402: Insufficient Balance",
+    });
+
+    const result = await executeCodexWebSearch(
+      { query: "latest node lts", mode: "fast" },
+      {
+        cwd: process.cwd(),
+        runner: failingCodex(),
+        settings: settingsWith(),
+        fallback,
+      },
+    );
+
+    expect(result.details.failure?.kind).toBe("transport");
+    expect(result.details.sourceCount).toBe(0);
+    expect(result.details.deepseekFallback).toEqual({
+      provider: "deepseek",
+      reason: expect.stringContaining("stream disconnected"),
+      sourceCount: 0,
+      error: "DeepSeek API 402: Insufficient Balance",
+    });
+    expect(result.content[0]?.text).toContain(
+      "Fallback (deepseek) failed: DeepSeek API 402: Insufficient Balance",
+    );
+  });
+
+  it("serves the fallback when Codex cannot authenticate", async () => {
+    const fallback: WebSearchFallbackRequester = async () => fallbackServed();
+
+    const result = await executeCodexWebSearch(
+      { query: "latest node lts", mode: "fast" },
+      {
+        cwd: process.cwd(),
+        settings: settingsWith(),
+        fallback,
+        runner: async () => {
+          throw new Error(
+            "Codex authentication appears to be missing or expired.",
+          );
+        },
+      },
+    );
+
+    expect(result.details.deepseekFallback?.provider).toBe("deepseek");
+    expect(result.content[0]?.text).toContain("DeepSeek summary");
+  });
+
+  it("still surfaces an auth failure when the fallback cannot answer", async () => {
+    const fallback: WebSearchFallbackRequester = async () => undefined;
+
+    await expect(
+      executeCodexWebSearch(
+        { query: "latest node lts", mode: "fast" },
+        {
+          cwd: process.cwd(),
+          settings: settingsWith(),
+          fallback,
+          runner: async () => {
+            throw new Error(
+              "Codex authentication appears to be missing or expired.",
+            );
+          },
+        },
+      ),
+    ).rejects.toThrow(/authentication/i);
+  });
+
+  it("does not ask the fallback after a cancelled run", async () => {
+    let calls = 0;
+    const fallback: WebSearchFallbackRequester = async () => {
+      calls += 1;
+      return fallbackServed();
+    };
+
+    await expect(
+      executeCodexWebSearch(
+        { query: "latest node lts", mode: "fast" },
+        {
+          cwd: process.cwd(),
+          settings: settingsWith(),
+          fallback,
+          runner: async () => {
+            throw new Error("Codex run aborted");
+          },
+        },
+      ),
+    ).rejects.toThrow(/aborted/i);
+
+    expect(calls).toBe(0);
   });
 });

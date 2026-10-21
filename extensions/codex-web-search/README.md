@@ -39,6 +39,7 @@ The extension then:
 - detects runs that finished without performing any web search and reports that instead of presenting an unsourced answer as a success
 - records when a default fast search had to be retried as deep/live
 - uses Defuddle for direct URL-only requests and supports optional URL fallback when Codex cannot produce a usable result
+- hands the query to `deepseek-search` over `pi.events` after Codex fails, so DeepSeek only runs as a fallback and only when `/deepseek-search-toggle on` is set
 - returns a concise summary plus numbered sources with URLs and snippets
 
 ## Requirements

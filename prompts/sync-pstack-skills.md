@@ -6,7 +6,7 @@ argument-hint: "[all|<skill ...>] [--report]"
 
 `skills/pstack/` 是从 [cursor/plugins](https://github.com/cursor/plugins) 的 `harness/pstack` vendored 进来的，本地改过，所以升级靠手工比对。
 
-默认中文。作用域是 8 个进口 skill：`principles`（索引 + 24 条叶子）、`blast-radius`、`correct`、`no-comments`、`benchmark-checklist`、`show-me-your-work`、`technical-writing`、`unslop`。参数可以只点名其中几个；`--report` 只出报告，不改文件。
+默认中文。作用域是 13 个进口 skill：`principles`（索引 + 24 条叶子）、`blast-radius`、`correct`、`no-comments`、`benchmark-checklist`、`show-me-your-work`、`technical-writing`、`unslop`、`interrogate`、`swarm`、`arena`、`create-verification-skill`、`maintain-verification-skill`。参数可以只点名其中几个；`--report` 只出报告，不改文件。
 
 ## 真相源
 
@@ -59,7 +59,7 @@ done
 其余 7 个 `SKILL.md` 用整文件 diff 起手，再读两边全文：
 
 ```bash
-for s in blast-radius correct no-comments benchmark-checklist show-me-your-work technical-writing unslop; do
+for s in blast-radius correct no-comments benchmark-checklist show-me-your-work technical-writing unslop interrogate swarm arena create-verification-skill maintain-verification-skill; do
   echo "== $s"
   diff -u "/tmp/pstack-upstream/harness/pstack/claude-code/skills/$s/SKILL.md" "skills/pstack/$s/SKILL.md"
 done
@@ -102,7 +102,7 @@ done
 2. 读上游全文，标 `[UPSTREAM]`：新增的结构单元与规则。
 3. 只搬不冲突的 `[UPSTREAM]`。冲突以 `[PI]` 为准，并写进报告。
 
-不搬：Task/subagent、每角色模型、`AskUserQuestion`、`TodoWrite`、`.cursor` 路径、playbook 引用、Claude Code adapter 段、`poteto-mode`（本地入口是 `prompts/poteto.md`）。
+不搬：上游 Task 参数名、`pstack-models` 规则、上游 model slug、`AskUserQuestion`、`TodoWrite`、`.cursor` 路径、playbook 引用、Claude Code adapter 段、`poteto-mode`（本地入口是 `prompts/poteto.md`）。写委派改写成 `subagent` profile。
 
 叶子按第 2 步的三类改写搬正文，不加 frontmatter。
 
@@ -121,7 +121,7 @@ done
 npx vitest run scripts/pstack-skills.test.ts
 ```
 
-门禁必须全绿（当前 14 passed）。增删原则时，索引 bullet、`references/` 文件、测试里的 `24` 要一起改。
+门禁必须全绿（当前 17 passed）。增删原则时，索引 bullet、`references/` 文件、测试里的 `24` 要一起改。
 
 只有 skill 集合变了（新增、删除、改名）才需要重装：
 
@@ -145,5 +145,5 @@ ls -l ~/.agents/me-skills/<name> .pi/skills/<name>
 - `name` 等于目录名；上游改名不跟。
 - 不把 `principle-*` 拆成顶层 skill。
 - 不改「`git remote -v` 决定 gh 还是 glab」这条判据。
-- 上游新增 skill 只报告，不顺手导入：需要写能力 subagent、每角色模型、worktree PR 的一律不进口。
+- 上游新增 skill 只报告，不顺手导入：需要云隔离、worktree 并发写的先不进口；只读多模型评审按 P3 的 C′ 处理。
 - 不为了对齐上游删本地适配；删一条要在报告里写理由。

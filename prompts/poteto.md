@@ -7,7 +7,7 @@ argument-hint: "<task>"
 
 本次任务：${@:-（空）}
 
-如果任务是空的，只回一句「这次要做什么？」，然后停。否则按下面八节执行。第一件事是用 `act_mode_todo` 建清单，第一项固定写 `route: <类型>`，第二项固定写 `principles: <id>, <id>`（没有引用原则时写 `principles: none`）。
+如果任务是空的，只回一句「这次要做什么？」，然后停。否则按下面九节执行。第一件事是用 `act_mode_todo` 建清单，第一项固定写 `route: <类型>`，第二项固定写 `principles: <id>, <id>`（没有引用原则时写 `principles: none`）。
 
 ## 0. 程序文件
 
@@ -21,12 +21,12 @@ argument-hint: "<task>"
 
 | 类型 | 先做 | 再走 | 收尾 |
 |---|---|---|---|
-| 调查 | `/skill:research` 或 `/skill:wayfinder`；只读且可切分时 `/skill:herdr-squad` | 给带引用的结论，不改码 | 交结论 |
+| 调查 | `/skill:research` 或 `/skill:wayfinder`；只读且可切分时 `/skill:herdr-squad`（要人看着）或 `subagent explore`（后台）；覆盖矩阵可 `/skill:swarm` | 给带引用的结论，不改码 | 交结论 |
 | 修 bug | `/skill:diagnosing-bugs` 建反馈回路 | 复现 → 根因 → 最小修复 | `/skill:blast-radius` |
 | 重构 | plan 产物里先写「行为不变」的判据 | 小步改，每步验证 | `/skill:blast-radius` + `/skill:review` |
-| 新功能 | plan 或 spec，走 Plannotator | 先定数据形状再写码 | 测试或验证脚本 |
+| 新功能 | plan 或 spec，走 Plannotator | 先定数据形状再写码；方案未定时可 `/skill:arena` | 测试或验证脚本；仓库没有可跑路径时 `/skill:create-verification-skill` |
 | 性能 | 先跑基线，记下 limiter | 改一处，测一次 | `/skill:blast-radius` + `/skill:benchmark-checklist` |
-| 收尾发布 | `/skill:review` 双轴 | 修 findings；diff 里注释多时 `/skill:no-comments` | 重跑测试 → `/skill:unslop` + conventional commit |
+| 收尾发布 | `/skill:review` 双轴 | 修 findings；高风险 diff 加 `/skill:interrogate`；注释多时 `/skill:no-comments`；`verify-*` 过期时 `/skill:maintain-verification-skill` | 重跑测试 → `/skill:unslop` + conventional commit |
 
 类型定不下来时，按「新功能」走：先出计划，用计划换确定性。
 
@@ -46,6 +46,7 @@ route 跟着任务走。todo 第一项写的类型和当前动作对不上时，
 - 写回复、PR/MR 描述、commit message → `/skill:unslop`。
 - 任务跨多个阶段，或用户要走开一段时间 → `/skill:show-me-your-work` 留决策轨。
 - 同一个纠正出现第二次 → `/skill:correct`，把错改成不可能再犯。
+- 读多写少或要独立评审 → `subagent reviewer` / `explore`；写任务按文件分区 → `subagent general`。
 
 ## 3. 原则引用纪律
 
@@ -90,10 +91,26 @@ route 跟着任务走。todo 第一项写的类型和当前动作对不上时，
 
 断言字符串和日志字符串承担说明职责，例如 `assert(ok, 'persisted across restart')`。
 
-## 8. 明确不做
+## 8. 委派
 
-- 不派写任务的子代理。pi 没有这个能力。只读侦察用 `/skill:herdr-squad`，最多 4 个，全队一个模型。
-- 不按角色切模型。
+任务能一句自包含地说清，才委派。说不清，先自己拆。
+
+| 场景 | 用什么 | 怎么收 |
+|---|---|---|
+| 读多写少、独立评审 | `subagent` 的 `reviewer` / `explore` | `status <runId>`，贴 findings |
+| 写任务、文件不重叠 | `subagent` 的 `general` | `status <runId>`，再跑测试 |
+| 要人看着、可插话 | `/skill:herdr-squad` | 收 report |
+| 同一文件并发写 | 不委派，串行 | 无需 |
+
+- 写任务按文件或输出目录分区。同一文件不并发。
+- 子会话看不到本对话，`task` 必须自包含：目标、范围、验收、报告格式。
+- 需要不同模型交叉评审时，用 `.pi/agents/` 里 pin 了 `model` 的 profile；没有就同模型多跑几份，并写明。
+- 不把「已派出」当完成。结果必须收回并验证。
+
+## 9. 明确不做
+
+- 不做云隔离、worktree 并发写、Cursor Automations。
+- 不写上游 model slug；模型写在 profile 里。
 - 不引用不存在的 playbook 或 Cursor 专有步骤。
 
 做不到的步骤，在回复里写一行 `Skipped: <步骤>，<原因>`，然后继续下一步。不要停在那里问。

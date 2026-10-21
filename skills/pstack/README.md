@@ -2,7 +2,7 @@
 
 来源：[`cursor/plugins`](https://github.com/cursor/plugins) 的 `harness/pstack`，插件版本 `0.15.29`，commit [`88d4751`](https://github.com/cursor/plugins/commit/88d47514b82e7c44f00f2b2a72ff6dd12158038c)，2026-10-20 vendored。
 
-方案与逐条适配见 [`.pi/plans/pi-kit/specs/2026-10-20-pstack-adoption-design.md`](../../.pi/plans/pi-kit/specs/2026-10-20-pstack-adoption-design.md)。
+方案与逐条适配见 [`.pi/plans/pi-kit/specs/2026-10-20-pstack-adoption-design.md`](../../.pi/plans/pi-kit/specs/2026-10-20-pstack-adoption-design.md)。2026-10-21 的适配更新（`subagent`、C′）见 [`.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md`](../../.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md)。
 
 ## 包含什么
 
@@ -16,6 +16,11 @@
 | `show-me-your-work/` | 改过一次：transcript 路径改 pi session，跨模型复核改只读 squad 可选，日志默认中文；`scripts/log.sh` 与 TSV 模板一并搬入 |
 | `technical-writing/` | 改过一次：去 adapter，PR/MR 措辞，开头写清与 `unslop`、`writing-for-agents` 的边界 |
 | `unslop/` | 正文未改，只是搬进本组 |
+| `interrogate/` | 改过一次：评审改 `subagent reviewer`，删 Task 参数名、上游模型规则与 slug 回退；references 原样搬入 |
+| `swarm/` | 改过一次：去 cloud / worktree，改 ≤4 波次；写任务只落不相交目录 |
+| `arena/` | 改过一次：候选写 `/tmp` 或 patch，去 worktree 与 per-model runners |
+| `create-verification-skill/` | 改过一次：`.pi/skills/verify-<app>/`；drive 先找仓库已有 harness，再用 pi 工具；references 一并搬入 |
+| `maintain-verification-skill/` | 改过一次：源波改 `subagent explore`，4 个一波；PR 按 remote 选 `gh` / `glab` |
 
 入口 `/poteto` 不在这里，是 [`prompts/poteto.md`](../../prompts/poteto.md)。
 
@@ -39,7 +44,7 @@
 ## 删掉整组
 
 ```bash
-# 1. 去掉 skills/skills.txt 里本组八行
+# 1. 去掉 skills/skills.txt 里本组十三行
 # 2. 重建链接，清掉 me-skills 中不再被引用的条目
 ./skills/migrate.sh import
 # 3. 删源码与入口

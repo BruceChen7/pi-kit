@@ -88,6 +88,10 @@ const buildRepoInput = () => {
         referenceIds,
       },
       promptDoc: readDoc("prompts/poteto.md"),
+      promptDocs: promptFiles.map(readDoc),
+      hasSubagentExtension: fs.existsSync(
+        path.join(REPO_ROOT, "extensions/subagent/index.ts"),
+      ),
       knownSkillNames: new Set(
         skillFiles.map(skillNameOf).filter((name): name is string => !!name),
       ),
@@ -99,7 +103,17 @@ const buildRepoInput = () => {
 describe("pstack skill group", () => {
   // The group grows as the spec's P1/P2 phases land, so assert the required
   // skills by name instead of pinning how many there are.
-  const REQUIRED_SKILLS = ["principles", "blast-radius", "correct", "unslop"];
+  const REQUIRED_SKILLS = [
+    "principles",
+    "blast-radius",
+    "correct",
+    "unslop",
+    "interrogate",
+    "swarm",
+    "arena",
+    "create-verification-skill",
+    "maintain-verification-skill",
+  ];
 
   it("scans the vendored group, not an empty set", () => {
     const { groupFiles, referenceIds, input } = buildRepoInput();
@@ -160,6 +174,8 @@ describe("lintSkillGroup", () => {
     groupDocs: [],
     principleIndex: { path: "index.md", text: "", referenceIds: [] },
     promptDoc: { path: "prompts/poteto.md", content: "" },
+    promptDocs: [],
+    hasSubagentExtension: false,
     knownSkillNames: new Set(["principles"]),
     knownRepoPaths: new Set<string>(),
   };
@@ -281,6 +297,76 @@ describe("lintSkillGroup", () => {
         path: "skills/pstack/principles/SKILL.md",
         rule: "principle-not-indexed",
         detail: "references/fix-root-causes.md",
+      },
+    ]);
+  });
+
+  it("catches a prompt that denies a capability the repo has", () => {
+    const findings = lint({
+      promptDocs: [
+        {
+          path: "prompts/poteto.md",
+          content: "不派写任务的子代理。pi 没有这个能力。",
+        },
+      ],
+      hasSubagentExtension: true,
+    });
+
+    expect(findings).toEqual([
+      {
+        path: "prompts/poteto.md",
+        rule: "stale-capability-claim",
+        detail: "pi 没有这个能力",
+      },
+      {
+        path: "prompts/poteto.md",
+        rule: "stale-capability-claim",
+        detail: "不派写任务的子代理",
+      },
+    ]);
+  });
+
+  it("catches an upstream model slug in the group", () => {
+    const findings = lint({
+      groupDocs: [
+        {
+          path: "skills/pstack/interrogate/SKILL.md",
+          content: "Run both on claude-opus-5-5 and grok-4.7-xhigh-fast.",
+        },
+      ],
+    });
+
+    expect(findings).toEqual([
+      {
+        path: "skills/pstack/interrogate/SKILL.md",
+        rule: "upstream-model-slug",
+        detail: "claude-opus-5-5",
+      },
+      {
+        path: "skills/pstack/interrogate/SKILL.md",
+        rule: "upstream-model-slug",
+        detail: "grok-4.7-xhigh-fast",
+      },
+    ]);
+  });
+
+  it("catches a prompt that delegates before the extension exists", () => {
+    const findings = lint({
+      promptDocs: [
+        {
+          path: "prompts/poteto.md",
+          content: "Use subagent general for the write task.",
+        },
+      ],
+      hasSubagentExtension: false,
+    });
+
+    expect(findings).toEqual([
+      {
+        path: "prompts/poteto.md",
+        rule: "delegation-target",
+        detail:
+          "prompts reference subagent but extensions/subagent/index.ts is missing",
       },
     ]);
   });

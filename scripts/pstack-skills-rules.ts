@@ -19,6 +19,20 @@ const FORBIDDEN_MARKERS = [
 
 const MAX_DESCRIPTION_LENGTH = 1024;
 
+/** Claims that turn a working capability back into a forbidden one. */
+const STALE_CAPABILITY_CLAIMS = [
+  "pi 没有这个能力",
+  "不派写任务的子代理",
+  "不按角色切模型",
+];
+
+/** Upstream-only model ids. Pi model ids look like `provider/model`. */
+const UPSTREAM_MODEL_SLUG =
+  /\b(?:claude|grok|composer)-[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?/gi;
+
+/** Harness names that share the `claude-` prefix but are not model ids. */
+const NON_MODEL_SLUGS = new Set(["claude-code"]);
+
 export const parseFrontmatter = (
   text: string,
 ): { fields: Record<string, string>; body: string } | null => {
@@ -172,6 +186,45 @@ const forbiddenMarkerFindings = (doc: RepoDoc): Finding[] =>
     }),
   );
 
+export const staleCapabilityClaimFindings = (doc: RepoDoc): Finding[] =>
+  STALE_CAPABILITY_CLAIMS.filter((claim) => doc.content.includes(claim)).map(
+    (claim) => ({
+      path: doc.path,
+      rule: "stale-capability-claim",
+      detail: claim,
+    }),
+  );
+
+export const upstreamModelSlugFindings = (doc: RepoDoc): Finding[] => {
+  const slugs = new Set(
+    [...doc.content.matchAll(UPSTREAM_MODEL_SLUG)].map((match) =>
+      match[0].toLowerCase(),
+    ),
+  );
+  return [...slugs]
+    .filter((slug) => !NON_MODEL_SLUGS.has(slug))
+    .map((slug) => ({
+      path: doc.path,
+      rule: "upstream-model-slug",
+      detail: slug,
+    }));
+};
+
+export const delegationTargetFindings = (
+  promptDocs: readonly RepoDoc[],
+  hasSubagentExtension: boolean,
+): Finding[] => {
+  if (hasSubagentExtension) return [];
+  return promptDocs
+    .filter((doc) => doc.content.includes("subagent"))
+    .map((doc) => ({
+      path: doc.path,
+      rule: "delegation-target",
+      detail:
+        "prompts reference subagent but extensions/subagent/index.ts is missing",
+    }));
+};
+
 export const extractIndexedPrincipleIds = (indexText: string): string[] => {
   const ids: string[] = [];
   for (const line of indexText.split(/\r?\n/)) {
@@ -224,24 +277,31 @@ export type SkillGroupInput = {
     referenceIds: readonly string[];
   };
   promptDoc: RepoDoc;
+  /** All prompt templates, when the caller wants capability claims checked. */
+  promptDocs?: readonly RepoDoc[];
+  /** Whether `extensions/subagent/index.ts` exists in this checkout. */
+  hasSubagentExtension?: boolean;
   knownSkillNames: ReadonlySet<string>;
   knownRepoPaths: ReadonlySet<string>;
 };
 
 export const lintSkillGroup = (input: SkillGroupInput): Finding[] => {
   const autoRoutable = new Set(input.autoRoutableDirectories);
+  const promptDocs = input.promptDocs ?? [input.promptDoc];
 
   const skillFindings = input.skillDocs.flatMap(({ directoryName, doc }) => [
     ...frontmatterFindings(doc, directoryName, autoRoutable.has(directoryName)),
     ...referenceFindings(doc, input.knownSkillNames),
     ...markdownLinkFindings(doc, input.knownRepoPaths),
     ...forbiddenMarkerFindings(doc),
+    ...upstreamModelSlugFindings(doc),
   ]);
 
   const groupFindings = input.groupDocs.flatMap((doc) => [
     ...referenceFindings(doc, input.knownSkillNames),
     ...markdownLinkFindings(doc, input.knownRepoPaths),
     ...forbiddenMarkerFindings(doc),
+    ...upstreamModelSlugFindings(doc),
   ]);
 
   return [
@@ -254,5 +314,10 @@ export const lintSkillGroup = (input: SkillGroupInput): Finding[] => {
     ),
     ...referenceFindings(input.promptDoc, input.knownSkillNames),
     ...markdownLinkFindings(input.promptDoc, input.knownRepoPaths),
+    ...promptDocs.flatMap(staleCapabilityClaimFindings),
+    ...delegationTargetFindings(
+      promptDocs,
+      input.hasSubagentExtension ?? false,
+    ),
   ];
 };

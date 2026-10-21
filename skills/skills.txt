@@ -59,6 +59,11 @@ benchmark-checklist|local|skills/pstack/benchmark-checklist
 show-me-your-work|local|skills/pstack/show-me-your-work
 technical-writing|local|skills/pstack/technical-writing
 unslop|local|skills/pstack/unslop
+interrogate|local|skills/pstack/interrogate
+swarm|local|skills/pstack/swarm
+arena|local|skills/pstack/arena
+create-verification-skill|local|skills/pstack/create-verification-skill
+maintain-verification-skill|local|skills/pstack/maintain-verification-skill
 # https://github.com/mattpocock/skills (v1.0.0+)
 resolving-merge-conflicts|local|skills/resolving-merge-conflicts
 # https://github.com/mattpocock/skills (v1.1.0+)

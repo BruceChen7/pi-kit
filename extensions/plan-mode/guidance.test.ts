@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { EXECUTION_TODO_DISCIPLINE_GUIDANCE } from "./constants.js";
+import {
+  EXECUTION_TODO_DISCIPLINE_GUIDANCE,
+  FC_IS_TEST_GUIDANCE,
+} from "./constants.js";
 import {
   BOUNDARIES_SEQUENCE_GUIDANCE,
+  FC_IS_GUIDANCE,
   FLOW_TREE_GUIDANCE,
   IMPLEMENTATION_CALL_TREE_GUIDANCE,
   MERMAID_CONFIG_LIGHT,
@@ -101,6 +105,24 @@ describe("IMPLEMENTATION_CALL_TREE_GUIDANCE", () => {
     const text = IMPLEMENTATION_CALL_TREE_GUIDANCE.join("\n");
     expect(text).toContain("├─");
     expect(text).toContain("└─");
+  });
+});
+
+describe("FC/IS guidance scope", () => {
+  it("requires the split only for executable code", () => {
+    const text = FC_IS_GUIDANCE.join("\n");
+    expect(text).toContain("改动可执行代码时");
+    expect(text).toContain("SKILL.md");
+    expect(text).toContain("不适用 FC/IS");
+  });
+
+  it("keeps FC/IS out of the enforced plan checklist", () => {
+    expect(PLAN_SUBMIT_CHECKLIST.join("\n")).not.toContain("FC/IS");
+  });
+
+  it("exempts docs and skill files in act prompts", () => {
+    expect(FC_IS_TEST_GUIDANCE).toContain("SKILL.md 没有 Core/Shell 之分");
+    expect(FC_IS_TEST_GUIDANCE).toContain("写可执行代码的测试");
   });
 });
 

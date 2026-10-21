@@ -59,6 +59,55 @@ describe("plan artifact policy", () => {
     expect(result.issues).toEqual([]);
   });
 
+  it("approves a docs-only plan without a Functional Core / Imperative Shell split", () => {
+    const docsPlan = [
+      "## Goal",
+      "- 重写 SKILL.md，让下一个 agent 能按步骤驱动验证。",
+      "",
+      "## Current Flow",
+      "```mermaid",
+      "sequenceDiagram",
+      "  Agent->>Skill: read stale instructions",
+      "```",
+      "",
+      "## Desired Flow",
+      "```mermaid",
+      "sequenceDiagram",
+      "  Agent->>Skill: follow verified commands  ← 新增",
+      "```",
+      "",
+      "## Boundaries",
+      "```mermaid",
+      "sequenceDiagram",
+      "  Doc->>Reader: sections and examples",
+      "```",
+      "- 只改 `skills/demo/SKILL.md` 与 `skills/demo/features/README.md`。",
+      "",
+      "## Implementation",
+      "SKILL.md",
+      "  ├─ Launch",
+      "  ├─ Drive",
+      "  └─ Evidence",
+      "",
+      "## Testing",
+      "- 按文档路径实跑每个命令，确认输出与文档一致。",
+      "",
+      "## Decisions",
+      "- 文档按读者路径组织，不引入代码分层。",
+      "",
+      "## Non-goals",
+      "- 不改扩展源码。",
+    ].join("\n");
+
+    const result = validateArtifactPolicy({
+      path: planPath,
+      content: docsPlan,
+    });
+
+    expect(result.approved).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
   it("approves a plan using Out of scope alias for Non-goals", () => {
     const result = validateArtifactPolicy({
       path: planPath,

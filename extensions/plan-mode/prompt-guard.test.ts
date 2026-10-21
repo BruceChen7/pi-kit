@@ -25,10 +25,11 @@ describe("plan-mode extension: prompt guards and reminders", () => {
     );
 
     expectPromptContract(result.systemPrompt, [
-      "写测试",
+      "写可执行代码的测试",
       "Module",
       "Interface",
       "test surface",
+      "SKILL.md 没有 Core/Shell 之分",
     ]);
   });
 

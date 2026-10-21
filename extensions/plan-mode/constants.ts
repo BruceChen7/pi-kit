@@ -146,25 +146,27 @@ export const PLAN_INSPECTION_TOOL_SLASH_LIST =
 export const PLAN_INSPECTION_TOOL_COMMA_LIST =
   PLAN_INSPECTION_TOOL_NAMES.join(", ");
 export const FC_IS_TEST_GUIDANCE =
-  "- 写测试时按 Functional Core, Imperative Shell: " +
+  "- 写可执行代码的测试时按 Functional Core, Imperative Shell: " +
   "核心 value in / value out, shell 尽量薄。 " +
   "Module 的 Interface is the test surface; " +
   "test seam/Adapter behavior, not Implementation details。 " +
-  "实现阶段也必须按此拆分：Core 纯函数无副作用，Shell 薄包装只做 IO/编排。";
+  "改代码时按此拆分：Core 纯函数无副作用，Shell 薄包装只做 IO/编排。 " +
+  "纯文档、prompt、SKILL.md 没有 Core/Shell 之分，不套用这条；按文档的读者路径和可复跑命令验证。";
 export const IMPLEMENTATION_DATA_STRUCTURE_GUIDANCE = [
   "- Implementation 强调关键数据结构（types / interfaces / data models），",
-  "  而不是文件路径列表。",
-  "- 包括关键类型、函数签名、条件判断、状态迁移的最小片段。",
+  "  而不是文件路径列表；纯文档改动写章节结构与读者路径。",
+  "- 改代码时包括关键类型、函数签名、条件判断、状态迁移的最小片段。",
   "- 避免粘贴完整实现，只展示能让 reviewer 判断方向的代码。",
-  "- 调用树中标注每层归属 Functional Core 还是 Imperative Shell，副作用归 Shell、纯计算归 Core。",
+  "- 改动可执行代码时，调用树中标注每层归属 Functional Core 还是 Imperative Shell，副作用归 Shell、纯计算归 Core；纯文档改动不需要标。",
 ];
 export const TESTING_VALUE_IN_OUT_GUIDANCE = [
-  "- Testing 围绕核心 value in / value out，",
+  "- Testing 改代码时围绕核心 value in / value out，",
   "  写出核心函数签名 + 关键测试场景（Functional Core 表测）。",
   "- Shell 层尽量薄，只测边界行为，不测 mock choreography。",
+  "- 纯文档改动写验证路径：谁读、按什么顺序执行、预期看到什么；不要编造 Core/Shell 表测。",
 ];
 export const DECISIONS_ADR_GUIDANCE =
-  "- Decisions 记录 ADR-worthy 的决策原因，包括推荐方案、被拒方案以及原因；若涉及 FC/IS 边界划分一并记录取舍。";
+  "- Decisions 记录 ADR-worthy 的决策原因，包括推荐方案、被拒方案以及原因；若涉及可执行代码的 FC/IS 边界划分一并记录取舍。";
 export const NON_GOALS_GUIDANCE =
   "- Non-goals（或 Out of scope）明确不做什么。";
 export const PLAN_REVIEW_ARTIFACT_GUIDANCE = [

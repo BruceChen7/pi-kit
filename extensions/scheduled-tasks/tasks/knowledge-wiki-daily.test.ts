@@ -741,7 +741,7 @@ describe("runSummarizePipeline", () => {
         promptTemplatePaths?: string[];
         timeoutMs?: number;
       };
-      expect(options.model).toBe("opencode-go/deepseek-v4-flash");
+      expect(options.model).toBe("opencode-go/deepseek-v4.1-flash");
       expect(options.outputMode).toBe("text");
       expect(options.promptTemplatePaths).toHaveLength(1);
       expect(options.timeoutMs).toBe(600_000);

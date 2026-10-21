@@ -1,8 +1,3 @@
-/**
- * DeepSeek 搜索边的行为测试：SSE 事件 → 状态（value in / value out），
- * 以及 source 到跨扩展 DTO 的映射。不联网。
- */
-
 import { describe, expect, it } from "vitest";
 import {
   applyDeepSeekStreamEvent,

@@ -1,8 +1,3 @@
-/**
- * 跨扩展兜底链路：codex-web-search 失败 → 总线请求 → deepseek-search 应答。
- * 网络用假 fetch，只验「谁能应答、结果怎么回到 web_search」这段接线。
- */
-
 import { createEventBus } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

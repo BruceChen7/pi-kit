@@ -1,8 +1,3 @@
-/**
- * web-search-fallback 的行为测试：只断言线上可观察的效果——有没有应答、
- * 结果是否按 id 对上、超时与中断是否清理干净、无人应答时是否 0 等待。
- */
-
 import { describe, expect, it } from "vitest";
 import {
   createWebSearchFallbackRequester,

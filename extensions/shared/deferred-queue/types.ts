@@ -34,7 +34,7 @@ export interface SubagentOptions {
    */
   promptTemplatePaths?: string[];
   /**
-   * Explicit model pattern passed via `--models` (e.g. "opencode-go/deepseek-v4-flash").
+   * Explicit model pattern passed via `--models` (e.g. "opencode-go/deepseek-v4.1-flash").
    *
    * When set, pi resolves this pattern instead of the global `enabledModels`
    * from settings. That avoids "No models match pattern" warnings for

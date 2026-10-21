@@ -71,7 +71,7 @@ const PROMPT_TEMPLATE_PATH = join(PI_KIT_DIR, "prompts", "wiki-summarize.md");
  * warnings for every cc-switch-gateway entry, then silently falls back.
  * Pin the subagent to the same opencode-go model the main session uses.
  */
-const SUBAGENT_MODEL = "opencode-go/deepseek-v4-flash";
+const SUBAGENT_MODEL = "opencode-go/deepseek-v4.1-flash";
 
 /**
  * Subagent output mode.

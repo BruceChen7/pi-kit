@@ -37,7 +37,8 @@
       "./extensions/cc-switch",
       "./extensions/confluence",
       "./extensions/prompt-clarify",
-      "./extensions/query-notes-log"
+      "./extensions/query-notes-log",
+      "./extensions/subagent"
     ]
   },
   "scripts": {

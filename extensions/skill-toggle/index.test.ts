@@ -809,7 +809,7 @@ describe("formatDisabledSkillsMessage", () => {
 
 describe("parseFrontmatter", () => {
   it("parses multi-line description blocks", async () => {
-    const { parseFrontmatter } = await importSkillToggle();
+    const { parseFrontmatter } = await import("../shared/frontmatter.js");
 
     const content = [
       "---",
@@ -823,10 +823,9 @@ describe("parseFrontmatter", () => {
 
     const result = parseFrontmatter(content, "fallback");
 
-    expect(result).toEqual({
-      name: "office-hours",
-      description:
-        "Founder-style office hours to clarify the problem, users, and wedge before any code is written. Runs in Startup or Builder mode.",
-    });
+    expect(result.name).toBe("office-hours");
+    expect(result.description).toBe(
+      "Founder-style office hours to clarify the problem, users, and wedge before any code is written. Runs in Startup or Builder mode.",
+    );
   });
 });

@@ -335,7 +335,7 @@ async function handleMessage(
           projectName: context.projectName,
           slug,
         });
-        window.close();
+        window.close?.();
         break;
       }
     }

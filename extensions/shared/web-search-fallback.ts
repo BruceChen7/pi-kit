@@ -73,32 +73,46 @@ export type ProvideWebSearchFallbackOptions = {
   ) => Promise<WebSearchFallbackOutcome>;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isText = (value: unknown): value is string => typeof value === "string";
+
+const isSource = (value: unknown): value is WebSearchFallbackSource =>
+  isRecord(value) &&
+  isText(value.title) &&
+  isText(value.url) &&
+  isText(value.snippet);
+
+/** 成功与失败两个分支都完整校验；畸形 outcome 一律判否，不让它流到上游读取。 */
+const isOutcome = (value: unknown): value is WebSearchFallbackOutcome => {
+  if (!isRecord(value) || !isText(value.provider)) {
+    return false;
+  }
+  if (value.ok === true) {
+    return (
+      isText(value.summary) &&
+      Array.isArray(value.sources) &&
+      value.sources.every(isSource)
+    );
+  }
+  if (value.ok === false) {
+    return isText(value.error);
+  }
+  return false;
+};
+
 const isProbe = (value: unknown): value is WebSearchFallbackProbe =>
-  Boolean(value) && typeof value === "object";
+  isRecord(value) && (value.responder === undefined || isText(value.responder));
 
-const isRequest = (value: unknown): value is WebSearchFallbackRequest => {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const request = value as Partial<WebSearchFallbackRequest>;
-  return (
-    typeof request.id === "string" &&
-    typeof request.query === "string" &&
-    typeof request.maxSources === "number"
-  );
-};
+const isRequest = (value: unknown): value is WebSearchFallbackRequest =>
+  isRecord(value) &&
+  isText(value.id) &&
+  isText(value.query) &&
+  typeof value.maxSources === "number";
 
-const isResponse = (value: unknown): value is WebSearchFallbackResponse => {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const response = value as Partial<WebSearchFallbackResponse>;
-  return (
-    typeof response.id === "string" &&
-    Boolean(response.outcome) &&
-    typeof response.outcome === "object"
-  );
-};
+const isResponse = (value: unknown): value is WebSearchFallbackResponse =>
+  isRecord(value) && isText(value.id) && isOutcome(value.outcome);
 
 /**
  * 创建一个兜底 requester。探测不到 provider 时立刻返回 `undefined`，
@@ -145,11 +159,10 @@ export const createWebSearchFallbackRequester = (options: {
         const stopListening = events.on(
           WEB_SEARCH_FALLBACK_RESULT_CHANNEL,
           (payload) => {
-            const response = payload as unknown;
-            if (!isResponse(response) || response.id !== id) {
+            if (!isResponse(payload) || payload.id !== id) {
               return;
             }
-            finish(response.outcome);
+            finish(payload.outcome);
           },
         );
 

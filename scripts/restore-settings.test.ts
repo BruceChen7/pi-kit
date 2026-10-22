@@ -195,7 +195,7 @@ describe("planRestore", () => {
         kind: "teach",
       },
     ]);
-    expect(skipped.map((s) => s.zipPath)).toEqual([
+    expect(skipped.map((s: { zipPath: string }) => s.zipPath)).toEqual([
       "pi-kit-settings/MANIFEST.txt",
       "pi-kit-settings/INSTALL.md",
     ]);
@@ -253,7 +253,11 @@ describe("planRestore", () => {
       repoRoot: "/tmp/repo",
       teachRoot: "",
     });
-    expect(plans.map((p) => p.kind)).toEqual(["agent", "agent", "project"]);
+    expect(plans.map((p: { kind: string }) => p.kind)).toEqual([
+      "agent",
+      "agent",
+      "project",
+    ]);
     expect(skipped).toContainEqual({
       zipPath: "pi-kit-settings/teach/projA/topic/NOTES.md",
       reason: "teach restore disabled (TEACH_ROOT empty)",

@@ -41,7 +41,9 @@ describe("collectMermaidFences", () => {
     ].join("\n");
 
     expect(
-      collectMermaidFences(markdown).map((fence) => fence.startLine),
+      collectMermaidFences(markdown).map(
+        (fence: { startLine: number }) => fence.startLine,
+      ),
     ).toEqual([4, 8]);
   });
 
@@ -77,7 +79,7 @@ describe("collectArtifactMermaidNodes", () => {
   it("walks nested nodes and both code property names", () => {
     const nodes = collectArtifactMermaidNodes(spec);
 
-    expect(nodes.map((node) => node.body)).toEqual([
+    expect(nodes.map((node: { body: string }) => node.body)).toEqual([
       "flowchart LR\n  A --> B",
       "sequenceDiagram\n  A->>B: hi",
     ]);
@@ -147,14 +149,20 @@ describe("countDivergences / parseSamples", () => {
 
   it("selects samples by bucket and honours the limit", () => {
     expect(
-      parseSamples(results, "mermaid-only-ok").map((r) => r.location),
+      parseSamples(results, "mermaid-only-ok").map(
+        (r: { location: string }) => r.location,
+      ),
     ).toEqual(["b:2", "c:3"]);
     expect(
-      parseSamples(results, "mermaid-only-ok", 1).map((r) => r.location),
+      parseSamples(results, "mermaid-only-ok", 1).map(
+        (r: { location: string }) => r.location,
+      ),
     ).toEqual(["b:2"]);
-    expect(parseSamples(results, "both-ok").map((r) => r.location)).toEqual([
-      "a:1",
-    ]);
+    expect(
+      parseSamples(results, "both-ok").map(
+        (r: { location: string }) => r.location,
+      ),
+    ).toEqual(["a:1"]);
   });
 });
 

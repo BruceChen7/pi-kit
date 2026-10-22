@@ -8,7 +8,12 @@
  * 这样"非法请求不产生副作用"可以被测试断言。
  */
 
-import { findRun, isTerminal, type SubagentState } from "./core.ts";
+import {
+  findRun,
+  isTerminal,
+  type RunStatus,
+  type SubagentState,
+} from "./core.ts";
 
 export const RPC_REQUEST_CHANNEL = "subagent:rpc:request";
 export const RPC_EVENT_CHANNEL = "subagent:run";
@@ -40,6 +45,16 @@ export type RpcAction =
   | { kind: "stop"; runId: string }
   | { kind: "steer"; runId: string; text: string };
 
+export type RunEventInput = {
+  event: "started" | "settled" | "steered";
+  runId: string;
+  agent: string;
+  status?: RunStatus;
+};
+
+/** 运行事件信封。带 `status` 的只有 settled，其余事件不写这个字段。 */
+export type RunEvent = RunEventInput & { version: 1 };
+
 export type RpcOutcome = {
   reply: RpcReply;
   action?: RpcAction;
@@ -52,13 +67,18 @@ const fail = (id: string, error: string): RpcOutcome => ({
   reply: { version: 1, id, ok: false, error },
 });
 
-const asRecord = (value: unknown): Record<string, unknown> | null =>
-  value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : null;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const asText = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim() ? value.trim() : undefined;
+
+const isRpcMethod = (value: string): value is RpcMethod =>
+  METHODS.some((method) => method === value);
+
+/** 只认布尔，其它类型（包括 "false"）一律回落到默认值。 */
+const asBoolean = (value: unknown): boolean | undefined =>
+  typeof value === "boolean" ? value : undefined;
 
 /** 解析并校验一个请求信封。非法输入不抛错，返回可回传的错误。 */
 export type ParsedRpcRequest =
@@ -66,23 +86,22 @@ export type ParsedRpcRequest =
   | { kind: "error"; id: string; error: string };
 
 export function parseRpcRequest(raw: unknown): ParsedRpcRequest {
-  const record = asRecord(raw);
-  if (!record)
+  if (!isRecord(raw))
     return { kind: "error", id: "", error: "request must be an object" };
 
-  const id = asText(record.id);
+  const id = asText(raw.id);
   if (!id) return { kind: "error", id: "", error: "request.id is required" };
 
-  if (record.version !== RPC_VERSION) {
+  if (raw.version !== RPC_VERSION) {
     return {
       kind: "error",
       id,
-      error: `unsupported version ${String(record.version)}; expected ${RPC_VERSION}`,
+      error: `unsupported version ${String(raw.version)}; expected ${RPC_VERSION}`,
     };
   }
 
-  const method = asText(record.method);
-  if (!method || !METHODS.includes(method as RpcMethod)) {
+  const method = asText(raw.method);
+  if (!method || !isRpcMethod(method)) {
     return {
       kind: "error",
       id,
@@ -95,8 +114,8 @@ export function parseRpcRequest(raw: unknown): ParsedRpcRequest {
     request: {
       version: RPC_VERSION,
       id,
-      method: method as RpcMethod,
-      params: record.params,
+      method,
+      params: raw.params,
     },
   };
 }
@@ -109,85 +128,93 @@ export function handleRpc(
   state: SubagentState,
   request: RpcRequest,
 ): RpcOutcome {
-  const params = asRecord(request.params);
+  const params = isRecord(request.params) ? request.params : undefined;
   const reply = (result: unknown): RpcOutcome => ({
     reply: { version: 1, id: request.id, ok: true, result },
   });
-
-  if (request.method === "list") {
-    const runs = state.runs.map((run) => ({
-      runId: run.runId,
-      agent: run.agent,
-      status: run.status,
-      step: run.step,
-      background: run.background,
-    }));
-    return reply({ runs });
-  }
-
   const runId = asText(params?.runId);
 
-  if (request.method === "status") {
-    if (!runId) return fail(request.id, "status requires params.runId");
-    const run = findRun(state, runId);
-    if (!run) return fail(request.id, `unknown run "${runId}"`);
-    return reply({
-      runId: run.runId,
-      agent: run.agent,
-      status: run.status,
-      resultText: run.resultText ?? null,
-      error: run.error ?? null,
-    });
-  }
+  switch (request.method) {
+    case "list":
+      return reply({
+        runs: state.runs.map((run) => ({
+          runId: run.runId,
+          agent: run.agent,
+          status: run.status,
+          step: run.step,
+          background: run.background,
+        })),
+      });
 
-  if (request.method === "stop") {
-    if (!runId) return fail(request.id, "stop requires params.runId");
-    const run = findRun(state, runId);
-    if (!run) return fail(request.id, `unknown run "${runId}"`);
-    if (isTerminal(run.status)) {
-      return fail(request.id, `run "${runId}" already ${run.status}`);
+    case "status": {
+      if (!runId) return fail(request.id, "status requires params.runId");
+      const run = findRun(state, runId);
+      if (!run) return fail(request.id, `unknown run "${runId}"`);
+      return reply({
+        runId: run.runId,
+        agent: run.agent,
+        status: run.status,
+        resultText: run.resultText ?? null,
+        error: run.error ?? null,
+      });
     }
-    const outcome = reply({ runId, stopped: true });
-    return { ...outcome, action: { kind: "stop", runId } };
-  }
 
-  if (request.method === "steer") {
-    if (!runId) return fail(request.id, "steer requires params.runId");
-    const text = asText(params?.text);
-    if (!text) return fail(request.id, "steer requires params.text");
-    const run = findRun(state, runId);
-    if (!run) return fail(request.id, `unknown run "${runId}"`);
-    if (isTerminal(run.status) || run.status === "queued") {
-      return fail(
-        request.id,
-        `run "${runId}" is ${run.status}; nothing to steer`,
-      );
+    case "stop": {
+      if (!runId) return fail(request.id, "stop requires params.runId");
+      const run = findRun(state, runId);
+      if (!run) return fail(request.id, `unknown run "${runId}"`);
+      if (isTerminal(run.status)) {
+        return fail(request.id, `run "${runId}" already ${run.status}`);
+      }
+      return {
+        ...reply({ runId, stopped: true }),
+        action: { kind: "stop", runId },
+      };
     }
-    const outcome = reply({ runId, steered: true });
-    return { ...outcome, action: { kind: "steer", runId, text } };
-  }
 
-  const task = asText(params?.task);
-  if (!task) return fail(request.id, "run requires params.task");
-  const agent = asText(params?.agent);
-  const background =
-    params?.background === undefined ? true : Boolean(params.background);
-  const outcome = reply({ accepted: true, agent: agent ?? "general" });
-  return { ...outcome, action: { kind: "run", agent, task, background } };
+    case "steer": {
+      if (!runId) return fail(request.id, "steer requires params.runId");
+      const text = asText(params?.text);
+      if (!text) return fail(request.id, "steer requires params.text");
+      const run = findRun(state, runId);
+      if (!run) return fail(request.id, `unknown run "${runId}"`);
+      if (isTerminal(run.status) || run.status === "queued") {
+        return fail(
+          request.id,
+          `run "${runId}" is ${run.status}; nothing to steer`,
+        );
+      }
+      return {
+        ...reply({ runId, steered: true }),
+        action: { kind: "steer", runId, text },
+      };
+    }
+
+    case "run": {
+      const task = asText(params?.task);
+      if (!task) return fail(request.id, "run requires params.task");
+      const agent = asText(params?.agent);
+      return {
+        ...reply({ accepted: true, agent: agent ?? "general" }),
+        action: {
+          kind: "run",
+          agent,
+          task,
+          background: asBoolean(params?.background) ?? true,
+        },
+      };
+    }
+
+    default: {
+      const unhandled: never = request.method;
+      return fail(request.id, `unhandled method ${String(unhandled)}`);
+    }
+  }
 }
 
 /** 广播事件的信封（started / settled / steered）。 */
-export function buildRunEvent(input: {
-  event: "started" | "settled" | "steered";
-  runId: string;
-  agent: string;
-  status?: string;
-}): Record<string, unknown> {
-  return {
-    version: RPC_VERSION,
-    event: input.event,
-    runId: input.runId,
-    agent: input.agent,
-    status: input.status,
-  };
+export function buildRunEvent(input: RunEventInput): RunEvent {
+  return input.status === undefined
+    ? { version: RPC_VERSION, ...input }
+    : { version: RPC_VERSION, ...input, status: input.status };
 }

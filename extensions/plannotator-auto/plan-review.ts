@@ -830,7 +830,7 @@ const runPlannotatorHtmlReviewFlow = async (
   ctx: ExtensionContext,
   state: SessionRuntimeState,
   pendingPlanReview: PendingPlanReview,
-  signal: AbortSignal,
+  signal: AbortSignal | undefined,
 ): Promise<ReviewToolResult> => {
   const cliResult = await runPlannotatorAnnotateCli(
     ctx,

@@ -46,6 +46,7 @@ import {
   findRun,
   isTerminal,
   progressLine,
+  type RunStatus,
   renderDoctor,
   renderWidgetLines,
   type SubagentState,
@@ -53,6 +54,7 @@ import {
   settle,
   statusLine,
   stop,
+  type TerminalStatus,
 } from "./core.ts";
 import {
   buildRunEvent,
@@ -77,12 +79,36 @@ const STATUS_KEY = "subagent";
 const TICK_MS = 2_000;
 const log = createLogger("subagent", { stderr: null });
 
-export type RunOutcome = {
+type SubagentAction = "run" | "list" | "status" | "stop" | "doctor";
+
+const SUBAGENT_ACTIONS: readonly SubagentAction[] = [
+  "run",
+  "list",
+  "status",
+  "stop",
+  "doctor",
+];
+
+/** 未知 action 直接报错，而不是静默落到 `run` 上把参数字典当任务跑。 */
+const parseAction = (raw: string | undefined): SubagentAction => {
+  const normalized = (raw ?? "run").trim().toLowerCase();
+  const matched = SUBAGENT_ACTIONS.find((action) => action === normalized);
+  if (!matched) throw new Error(`unknown action "${normalized}"`);
+  return matched;
+};
+
+export type SettledOutcome = {
+  kind: "settled";
   runId: string;
-  status: "done" | "failed" | "stopped";
   agent: string;
+  status: TerminalStatus;
   text: string;
 };
+
+/** `accepted` 只表示已受理（开跑或排队），不是终态；foreground 调用等到的永远是 `settled`。 */
+export type RunOutcome =
+  | { kind: "accepted"; runId: string; agent: string }
+  | SettledOutcome;
 
 export type SubagentRuntime = {
   readState: () => SubagentState;
@@ -99,7 +125,7 @@ export type SubagentRuntime = {
   steer: (runId: string, text: string) => Promise<boolean>;
   stopRun: (runId: string) => void;
   doctor: () => Promise<string[]>;
-  waitFor: (runId: string) => Promise<RunOutcome>;
+  waitFor: (runId: string) => Promise<SettledOutcome>;
 };
 
 async function readAgentDir(
@@ -132,10 +158,7 @@ async function readAgentDir(
 
 function lastAssistantText(session: AgentSession): string {
   for (let i = session.messages.length - 1; i >= 0; i--) {
-    const message = session.messages[i] as {
-      role?: string;
-      content?: unknown;
-    };
+    const message = session.messages[i];
     if (message?.role !== "assistant") continue;
     const text = extractAssistantText(message.content).trim();
     if (text) return text;
@@ -149,7 +172,9 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   let lastContext: ExtensionToolContext | undefined;
   const sessions = new Map<string, AgentSession>();
   const inflight = new Set<string>();
-  const pending = new Map<string, (outcome: RunOutcome) => void>();
+  const pending = new Map<string, (outcome: SettledOutcome) => void>();
+  /** 已经投递过终态的 runId，防止 launch 与 stop 两路各自 deliver 一次。 */
+  const delivered = new Set<string>();
   /** foreground 调用的 onUpdate：键是 runId，调用返回后立刻移除。 */
   const liveUpdates = new Map<string, AgentToolUpdateCallback>();
   let ticker: ReturnType<typeof setInterval> | undefined;
@@ -259,35 +284,47 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     syncTicker();
   };
 
-  const resolveWait = (runId: string, outcome: RunOutcome): void => {
+  const resolveWait = (runId: string, outcome: SettledOutcome): void => {
     const resolve = pending.get(runId);
     if (!resolve) return;
     pending.delete(runId);
     resolve(outcome);
   };
 
-  const outcomeOf = (
-    runId: string,
-    fallbackStatus: RunOutcome["status"],
-  ): RunOutcome => {
+  /** 只对真正终态的 run 出结果；非终态返回 undefined，让调用方继续等。 */
+  const settledOutcome = (runId: string): SettledOutcome | undefined => {
     const run = findRun(state, runId);
-    const status = run?.status;
+    if (!run || !isTerminal(run.status)) return undefined;
     return {
+      kind: "settled",
       runId,
-      agent: run?.agent ?? "unknown",
-      status:
-        status === "done" || status === "failed" || status === "stopped"
-          ? status
-          : fallbackStatus,
-      text: run?.resultText ?? run?.error ?? "",
+      agent: run.agent,
+      status: run.status,
+      text: run.resultText ?? run.error ?? "",
     };
   };
 
-  const deliver = (runId: string): void => {
-    const run = findRun(state, runId);
-    if (!run) return;
+  /** 会话边界：先把还在等的调用方收敛掉，否则 foreground 调用会永远挂着。 */
+  const abortPending = (): void => {
+    for (const [runId, resolve] of pending) {
+      resolve({
+        kind: "settled",
+        runId,
+        agent: findRun(state, runId)?.agent ?? "unknown",
+        status: "stopped",
+        text: "",
+      });
+    }
+    pending.clear();
+  };
 
-    const outcome = outcomeOf(runId, "done");
+  const deliver = (runId: string): void => {
+    if (delivered.has(runId)) return;
+    const run = findRun(state, runId);
+    const outcome = settledOutcome(runId);
+    if (!run || !outcome) return;
+
+    delivered.add(runId);
     resolveWait(runId, outcome);
     emitEvent("settled", run);
     if (!run.background) return;
@@ -318,7 +355,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
 
   const emitEvent = (
     event: "started" | "settled" | "steered",
-    run: { runId: string; agent: string; status?: string } | undefined,
+    run: { runId: string; agent: string; status?: RunStatus } | undefined,
   ): void => {
     if (!run) return;
     try {
@@ -356,7 +393,12 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       stopRun(action.runId);
       return;
     }
-    void steer(action.runId, action.text).catch(() => undefined);
+    void steer(action.runId, action.text).catch((error: unknown) =>
+      log.warn("rpc steer failed", {
+        runId: action.runId,
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    );
   };
 
   const onRpcRequest = (raw: unknown): void => {
@@ -487,14 +529,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
 
     sessions.set(runId, session);
     session.subscribe((event) => {
-      const line = eventToTranscriptLine(
-        event as {
-          type: string;
-          toolName?: string;
-          message?: { role?: string; content?: unknown };
-        },
-        Date.now(),
-      );
+      const line = eventToTranscriptLine(event, Date.now());
       if (!line) return;
       state = appendTranscript(state, runId, line);
       if (line.role === "tool") state = setStep(state, runId, line.text);
@@ -539,11 +574,11 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     }
   };
 
-  const waitFor = (runId: string): Promise<RunOutcome> =>
-    new Promise<RunOutcome>((resolve) => {
-      const run = findRun(state, runId);
-      if (run && isTerminal(run.status)) {
-        resolve(outcomeOf(runId, "done"));
+  const waitFor = (runId: string): Promise<SettledOutcome> =>
+    new Promise<SettledOutcome>((resolve) => {
+      const settledNow = settledOutcome(runId);
+      if (settledNow) {
+        resolve(settledNow);
         return;
       }
       pending.set(runId, resolve);
@@ -585,15 +620,14 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     log.debug("admit", {
       runId,
       agent: profile.name,
-      admitted: admitted.admitted,
-      queued: admitted.queued,
+      outcome: admitted.outcome,
     });
     refreshWidget();
     emitEvent("started", findRun(state, runId));
     pump();
 
     if (input.background) {
-      return { runId, status: "done", agent: profile.name, text: "" };
+      return { kind: "accepted", runId, agent: profile.name };
     }
     return waitFor(runId);
   };
@@ -618,6 +652,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     if (session) void session.abort().catch(() => undefined);
     state = stop(state, runId, maxConcurrent, Date.now());
     refreshWidget();
+    deliver(runId);
     pump();
   };
 
@@ -687,119 +722,128 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       ctx,
     ): Promise<AgentToolResult<StructuredPayload>> => {
       lastContext = ctx;
-      const action = (params.action ?? "run").trim().toLowerCase();
+      const action = parseAction(params.action);
 
-      if (action === "doctor") {
-        const lines = await doctor();
-        return structuredResult(lines.join("\n"), { action, lines });
-      }
+      switch (action) {
+        case "doctor": {
+          const lines = await doctor();
+          return structuredResult(lines.join("\n"), { action, lines });
+        }
 
-      if (action === "list") {
-        const live = activeRuns(state);
-        const text =
-          live.length === 0
-            ? "no active subagent runs"
-            : live.map((run) => describeRun(run.runId)).join("\n");
-        return structuredResult(text, {
-          action,
-          runs: live.map((run) => ({
-            runId: run.runId,
-            agent: run.agent,
-            status: run.status,
-            step: run.step,
-          })),
-        });
-      }
+        case "list": {
+          const live = activeRuns(state);
+          const text =
+            live.length === 0
+              ? "no active subagent runs"
+              : live.map((run) => describeRun(run.runId)).join("\n");
+          return structuredResult(text, {
+            action,
+            runs: live.map((run) => ({
+              runId: run.runId,
+              agent: run.agent,
+              status: run.status,
+              step: run.step,
+            })),
+          });
+        }
 
-      if (action === "status") {
-        const runId = params.runId?.trim();
-        if (!runId) throw new Error("status requires runId");
-        const run = findRun(state, runId);
-        if (!run) throw new Error(`unknown run "${runId}"`);
-        const text = [
-          describeRun(runId),
-          run.resultText ? `\nresult:\n${run.resultText}` : "",
-          run.error ? `\nerror: ${run.error}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n");
-        return structuredResult(text, {
-          action,
-          runId,
-          agent: run.agent,
-          status: run.status,
-          resultText: run.resultText ?? null,
-          error: run.error ?? null,
-        });
-      }
-
-      if (action === "stop") {
-        const runId = params.runId?.trim();
-        if (!runId) throw new Error("stop requires runId");
-        stopRun(runId);
-        const run = findRun(state, runId);
-        return structuredResult(
-          `stopped ${runId} (${run?.status ?? "unknown"})`,
-          {
+        case "status": {
+          const runId = params.runId?.trim();
+          if (!runId) throw new Error("status requires runId");
+          const run = findRun(state, runId);
+          if (!run) throw new Error(`unknown run "${runId}"`);
+          const text = [
+            describeRun(runId),
+            run.resultText ? `\nresult:\n${run.resultText}` : "",
+            run.error ? `\nerror: ${run.error}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n");
+          return structuredResult(text, {
             action,
             runId,
-            status: run?.status ?? null,
-          },
-        );
+            agent: run.agent,
+            status: run.status,
+            resultText: run.resultText ?? null,
+            error: run.error ?? null,
+          });
+        }
+
+        case "stop": {
+          const runId = params.runId?.trim();
+          if (!runId) throw new Error("stop requires runId");
+          stopRun(runId);
+          const run = findRun(state, runId);
+          return structuredResult(
+            `stopped ${runId} (${run?.status ?? "unknown"})`,
+            {
+              action,
+              runId,
+              status: run?.status ?? null,
+            },
+          );
+        }
+
+        case "run": {
+          const task = params.task?.trim();
+          if (!task) throw new Error("run requires task");
+
+          const background = params.background ?? true;
+          let startedRunId: string | undefined;
+          let outcome: RunOutcome;
+          try {
+            outcome = await runTask({
+              agent: params.agent,
+              task,
+              background,
+              onRunId: (runId) => {
+                startedRunId = runId;
+                if (onUpdate && !background) liveUpdates.set(runId, onUpdate);
+              },
+            });
+          } finally {
+            if (startedRunId) liveUpdates.delete(startedRunId);
+          }
+
+          if (outcome.kind === "settled" && outcome.status === "failed") {
+            throw new Error(outcome.text || `subagent ${outcome.runId} failed`);
+          }
+
+          const text =
+            outcome.kind === "settled"
+              ? outcome.text.trim() ||
+                `subagent ${outcome.agent} (${outcome.runId}) ${outcome.status}`
+              : `subagent ${outcome.agent} (${outcome.runId}) started in the background`;
+
+          return structuredResult(text, {
+            action,
+            runId: outcome.runId,
+            agent: outcome.agent,
+            status: outcome.kind === "settled" ? outcome.status : null,
+            resultText: outcome.kind === "settled" ? outcome.text : "",
+          });
+        }
+
+        default: {
+          const unhandled: never = action;
+          throw new Error(`unhandled action ${String(unhandled)}`);
+        }
       }
-
-      if (action !== "run") {
-        throw new Error(`unknown action "${action}"`);
-      }
-
-      const task = params.task?.trim();
-      if (!task) throw new Error("run requires task");
-
-      const background = params.background ?? true;
-      let startedRunId: string | undefined;
-      let outcome: RunOutcome;
-      try {
-        outcome = await runTask({
-          agent: params.agent,
-          task,
-          background,
-          onRunId: (runId) => {
-            startedRunId = runId;
-            if (onUpdate && !background) liveUpdates.set(runId, onUpdate);
-          },
-        });
-      } finally {
-        if (startedRunId) liveUpdates.delete(startedRunId);
-      }
-
-      if (outcome.status === "failed") {
-        throw new Error(outcome.text || `subagent ${outcome.runId} failed`);
-      }
-
-      const text =
-        outcome.text.trim() ||
-        `subagent ${outcome.agent} (${outcome.runId}) started in the background`;
-
-      return structuredResult(text, {
-        action,
-        runId: outcome.runId,
-        agent: outcome.agent,
-        status: outcome.status,
-        resultText: outcome.text,
-      });
     },
   });
 
   pi.on("session_start", () => {
+    abortPending();
     stopTicker();
     liveUpdates.clear();
+    delivered.clear();
     state = createState();
     sessions.clear();
     inflight.clear();
-    pending.clear();
   });
 
   pi.on("session_shutdown", () => {
+    abortPending();
     stopTicker();
     liveUpdates.clear();
   });

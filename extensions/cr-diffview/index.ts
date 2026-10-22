@@ -9,6 +9,7 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
   type ExtensionContext,
+  type Theme,
 } from "@earendil-works/pi-coding-agent";
 import {
   Container,
@@ -140,9 +141,7 @@ const resolveFallbackReviewViewName = async (
     : CR_TMUX_WINDOW_NAME_PREFIX;
 };
 
-const buildSelectListTheme = (theme: {
-  fg: (token: string, text: string) => string;
-}) => ({
+const buildSelectListTheme = (theme: Pick<Theme, "fg">) => ({
   selectedPrefix: (text: string) => theme.fg("accent", text),
   selectedText: (text: string) => theme.fg("accent", text),
   description: (text: string) => theme.fg("muted", text),

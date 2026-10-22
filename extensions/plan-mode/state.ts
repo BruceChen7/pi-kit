@@ -14,9 +14,7 @@ import {
   PLAN_RUN_STATUS_VALUES,
   RECENT_RUN_LIMIT,
   STATE_ENTRY_TYPE,
-  TODO_STATUS_BLOCKED,
   TODO_STATUS_DONE,
-  TODO_STATUS_IN_PROGRESS,
   TODO_STATUS_PENDING,
   TODO_STATUS_TODO,
   TODO_STATUS_VALUES,
@@ -114,27 +112,6 @@ export const hasCompletedAllTodos = (todos: TodoItem[]): boolean =>
  */
 export const todoListSignature = (todos: readonly TodoItem[]): string =>
   JSON.stringify(todos.map((todo) => [todo.id, todo.text]));
-
-/**
- * Pure decision for the one-at-a-time discipline normalization: the
- * index of the first todo item that should become in_progress, or -1 when
- * nothing should be promoted (an item is already in_progress, any item is
- * blocked, or no pending todo item exists). Mutation is applied by the
- * caller (PlanModeState.normalizeTodoDiscipline).
- */
-export const nextTodoToPromoteIndex = (todos: readonly TodoItem[]): number => {
-  const hasInProgress = todos.some(
-    (todo) => todo.status === TODO_STATUS_IN_PROGRESS,
-  );
-  if (hasInProgress) {
-    return -1;
-  }
-  const hasBlocked = todos.some((todo) => todo.status === TODO_STATUS_BLOCKED);
-  if (hasBlocked) {
-    return -1;
-  }
-  return todos.findIndex((todo) => todo.status === TODO_STATUS_TODO);
-};
 
 export const isPlanRunStatus = (value: unknown): value is PlanRunStatus =>
   isStringValue(PLAN_RUN_STATUS_VALUES, value);
@@ -716,7 +693,6 @@ export class PlanModeState {
       this.addTodo(item.text, item.status ?? TODO_STATUS_TODO, item.notes);
     }
     this.syncActiveRunStatus();
-    this.normalizeTodoDiscipline();
   }
 
   addTodo(
@@ -745,7 +721,6 @@ export class PlanModeState {
     this.activeRun.nextTodoId = this.nextTodoId;
     this.touchTodoUpdate();
     this.syncActiveRunStatus();
-    this.normalizeTodoDiscipline();
     return todo;
   }
 
@@ -769,7 +744,6 @@ export class PlanModeState {
     }
     this.touchTodoUpdate();
     this.syncActiveRunStatus();
-    this.normalizeTodoDiscipline();
     return true;
   }
 
@@ -783,7 +757,6 @@ export class PlanModeState {
       this.touchTodoUpdate();
     }
     this.syncActiveRunStatus();
-    this.normalizeTodoDiscipline();
     return before !== this.todos.length;
   }
 
@@ -814,27 +787,9 @@ export class PlanModeState {
   }
 
   /**
-   * Discipline normalization: whenever the run has unfinished items but no
-   * in_progress and no blocked item, promote the first todo item to
-   * in_progress so the widget always shows a current step. Also enforces the
-   * "at most one in_progress" invariant. The decision is the pure
-   * `nextTodoToPromoteIndex`; this method only applies it. Called explicitly
-   * after every todo mutation, alongside `syncActiveRunStatus`.
-   */
-  private normalizeTodoDiscipline(): void {
-    const index = nextTodoToPromoteIndex(this.todos);
-    if (index < 0) {
-      return;
-    }
-    const candidate = this.todos[index];
-    candidate.status = TODO_STATUS_IN_PROGRESS;
-    this.touchTodoUpdate();
-  }
-
-  /**
    * Recompute the active run status from the todo list after a mutation.
-   * Pure status bookkeeping: does NOT touch todo items (the discipline
-   * normalization is applied separately by `normalizeTodoDiscipline`).
+   * Pure status bookkeeping: does NOT touch todo items. Item statuses are
+   * written only by the todo tool, never implicitly.
    */
   private syncActiveRunStatus(): void {
     if (!this.activeRun) {

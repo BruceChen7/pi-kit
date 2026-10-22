@@ -9,6 +9,7 @@ import {
   namingFindings,
   parseFrontmatter,
   type RepoDoc,
+  type SkillGroupInput,
 } from "./pstack-skills-rules.ts";
 
 const REPO_ROOT = path.resolve(
@@ -180,7 +181,7 @@ describe("repo skill naming", () => {
 });
 
 describe("lintSkillGroup", () => {
-  const emptyInput = {
+  const emptyInput: SkillGroupInput = {
     skillDocs: [],
     autoRoutableDirectories: ["principles"],
     groupDocs: [],

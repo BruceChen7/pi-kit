@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
@@ -10,7 +10,6 @@ const PI_RUNTIME_PACKAGES = [
   PI_CODING_AGENT_PACKAGE,
   PI_TUI_PACKAGE,
 ];
-const DEFAULT_GLOBAL_PI_BIN = "/opt/homebrew/bin/pi";
 const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org/";
 
 const getNpmCommand = () => (process.platform === "win32" ? "npm.cmd" : "npm");
@@ -43,8 +42,46 @@ export const updatePeerDependencies = (packageJson, latestVersion) => {
   };
 };
 
-export const resolvePiBinary = (env = process.env) =>
-  env.PI_BIN || DEFAULT_GLOBAL_PI_BIN;
+export const piBinaryName = (platform = process.platform) =>
+  platform === "win32" ? "pi.cmd" : "pi";
+
+// `npm run` prepends node_modules/.bin to PATH, so a stale repo-local copy of
+// pi would shadow the installed one and report the wrong version.
+const isRepoLocalNodeModulesBin = (candidate) =>
+  candidate.split(path.sep).includes("node_modules");
+
+// Places to look for the pi launcher, in priority order. `pi` is installed
+// three different ways on real machines (managed install under ~/.pi/agent/bin,
+// a global npm prefix, or Homebrew), so the script must not hardcode one path.
+export const listPiBinaryCandidates = (env = process.env) => {
+  const binaryName = piBinaryName();
+  const candidates = [];
+
+  if (env.PI_MANAGED_INSTALL_ROOT) {
+    candidates.push(path.join(env.PI_MANAGED_INSTALL_ROOT, "bin", binaryName));
+  }
+
+  for (const dir of (env.PATH ?? "").split(path.delimiter)) {
+    if (dir) {
+      candidates.push(path.join(dir, binaryName));
+    }
+  }
+
+  return [...new Set(candidates)].filter(
+    (candidate) => !isRepoLocalNodeModulesBin(candidate),
+  );
+};
+
+export const resolvePiBinary = (env = process.env, exists = existsSync) => {
+  if (env.PI_BIN) {
+    return env.PI_BIN;
+  }
+
+  return (
+    listPiBinaryCandidates(env).find((candidate) => exists(candidate)) ??
+    piBinaryName()
+  );
+};
 
 export const resolveNpmRegistry = (env = process.env) =>
   env.PI_NPM_REGISTRY || DEFAULT_NPM_REGISTRY;
@@ -75,13 +112,20 @@ const writePackageJson = (packageJsonPath, packageJson) => {
 };
 
 const getPiVersion = () => {
-  const result = spawnSync(resolvePiBinary(), ["--version"], {
+  const piBinary = resolvePiBinary();
+  const result = spawnSync(piBinary, ["--version"], {
     cwd: process.cwd(),
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
 
   if (result.error) {
+    if (result.error.code === "ENOENT") {
+      throw new Error(
+        `Could not run \`${piBinary} --version\`: binary not found. Install pi, add it to PATH, or set PI_BIN=/path/to/pi.`,
+      );
+    }
+
     throw result.error;
   }
 

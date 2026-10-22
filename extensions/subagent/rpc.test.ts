@@ -167,6 +167,39 @@ describe("handleRpc run", () => {
     expect(outcome.reply).toMatchObject({ ok: false });
     expect(outcome.action).toBeUndefined();
   });
+
+  it("把非布尔的 background 回落到默认值，而不是按真值转换", () => {
+    // 旧行为 Boolean(0) === false 会把「没传类型」当成显式 false。
+    const outcome = handleRpc(
+      seeded(),
+      request("run", { task: "count dirs", background: 0 }),
+    );
+
+    expect(outcome.action).toEqual({
+      kind: "run",
+      agent: undefined,
+      task: "count dirs",
+      background: true,
+    });
+  });
+
+  it('字符串 "false" 按非法值回落到默认值，而不是被 Boolean 当成 true', () => {
+    const outcome = handleRpc(
+      seeded(),
+      request("run", { task: "count dirs", background: "false" }),
+    );
+
+    expect(outcome.action).toMatchObject({ background: true });
+  });
+
+  it("接受显式 false", () => {
+    const outcome = handleRpc(
+      seeded(),
+      request("run", { task: "count dirs", background: false }),
+    );
+
+    expect(outcome.action).toMatchObject({ kind: "run", background: false });
+  });
 });
 
 describe("buildRunEvent", () => {

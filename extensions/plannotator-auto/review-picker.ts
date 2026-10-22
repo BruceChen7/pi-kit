@@ -4,7 +4,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, type Theme } from "@earendil-works/pi-coding-agent";
 import {
   Container,
   type SelectItem,
@@ -39,10 +39,7 @@ export type FileItem = {
 // SelectList theme builder
 // ---------------------------------------------------------------------------
 
-const buildSelectListTheme = (theme: {
-  fg: (tone: string, text: string) => string;
-  bold: (text: string) => string;
-}) => ({
+const buildSelectListTheme = (theme: Pick<Theme, "fg" | "bold">) => ({
   selectedPrefix: (text: string) => theme.fg("accent", text),
   selectedText: (text: string) => theme.fg("accent", text),
   description: (text: string) => theme.fg("muted", text),

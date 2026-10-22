@@ -7,26 +7,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // ── Mocks ──────────────────────────────────────────────────────────────
 
 vi.mock("node:child_process", () => {
-  const execFile = vi.fn();
-  execFile[Symbol.for("nodejs.util.promisify.custom")] = (
-    cmd: string,
-    args: string[],
-    options?: unknown,
-  ) =>
-    new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      execFile(
-        cmd,
-        args,
-        options,
-        (error: Error | null, stdout = "", stderr = "") => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve({ stdout, stderr });
-        },
-      );
-    });
+  const execFile = Object.assign(vi.fn(), {
+    [Symbol.for("nodejs.util.promisify.custom")]: (
+      cmd: string,
+      args: string[],
+      options?: unknown,
+    ) =>
+      new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+        execFile(
+          cmd,
+          args,
+          options,
+          (error: Error | null, stdout = "", stderr = "") => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve({ stdout, stderr });
+          },
+        );
+      }),
+  });
 
   return { execFile };
 });

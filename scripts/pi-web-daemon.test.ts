@@ -7,7 +7,7 @@ import {
   startPlan,
 } from "./pi-web-daemon.mjs";
 
-const okOptions = (argv, env = {}) => {
+const okOptions = (argv: string[], env: Record<string, string> = {}) => {
   const parsed = parseArgs(argv, env, "/tmp/project");
   if (!parsed.ok) throw new Error(parsed.error);
   return parsed.options;

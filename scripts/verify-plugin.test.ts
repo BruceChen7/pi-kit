@@ -12,7 +12,7 @@ import {
 
 const PLUGIN_DIR = "/repo/extensions/plan-mode";
 
-const okOptions = (argv) => {
+const okOptions = (argv: string[]) => {
   const parsed = parseArgs(argv);
   if (!parsed.ok) throw new Error(parsed.error);
   return parsed.options;

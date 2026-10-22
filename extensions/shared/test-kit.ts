@@ -7,7 +7,10 @@ import { expect } from "vitest";
  * assertions — the failure message is the plain vitest "expected value to
  * be defined" instead of an uncontrolled TypeError.
  */
-export function expectDefined<T>(value: T | undefined): T {
+export function expectDefined<T>(value: T | null | undefined): T {
   expect(value).toBeDefined();
-  return value as T;
+  if (value === null || value === undefined) {
+    throw new Error("expected a defined value");
+  }
+  return value;
 }

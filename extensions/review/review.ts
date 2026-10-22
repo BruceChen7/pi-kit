@@ -33,7 +33,11 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { BorderedLoader, DynamicBorder } from "@earendil-works/pi-coding-agent";
+import {
+  BorderedLoader,
+  DynamicBorder,
+  type Theme,
+} from "@earendil-works/pi-coding-agent";
 import {
   Container,
   type SelectItem,
@@ -64,9 +68,7 @@ const REVIEW_LOOP_START_POLL_MS = 50;
 const SELECT_LIST_MAX_VISIBLE = 10;
 const SELECT_LIST_HINT = "Enter to select • esc to cancel";
 
-function buildSelectListTheme(theme: {
-  fg: (token: string, text: string) => string;
-}) {
+function buildSelectListTheme(theme: Pick<Theme, "fg">) {
   return {
     selectedPrefix: (text: string) => theme.fg("accent", text),
     selectedText: (text: string) => theme.fg("accent", text),
@@ -1610,7 +1612,7 @@ export default function reviewExtension(pi: ExtensionAPI) {
     // The session stays on the review model for the whole turn (review + any
     // follow-up tool calls), and returns to the work model afterwards.
     await ctx.waitForIdle();
-    if (switched) {
+    if (switched && workModel) {
       const restored = await pi.setModel(workModel);
       if (!restored) {
         ctx.ui.notify(

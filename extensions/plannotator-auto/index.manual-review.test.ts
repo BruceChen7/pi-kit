@@ -7,6 +7,7 @@ import {
   mockPlannotatorSpawnSequence,
   PLAN_DRAFT_CONTENT,
   removeTempRepo,
+  type TestCtx,
   writeTestFile,
 } from "./test-helpers.js";
 
@@ -45,11 +46,11 @@ const getHtmlFileRelative = (repoRoot: string): string => {
   return `.pi/html/${repoName}/2026-04-16-workflow.html`;
 };
 
-type EmitFn = (name: string, event: unknown, ctx: unknown) => Promise<unknown>;
+type EmitFn = (name: string, event: unknown, ctx: TestCtx) => Promise<unknown>;
 
 async function emitToolWrite(
   emit: EmitFn,
-  ctx: unknown,
+  ctx: TestCtx,
   relativePath: string,
 ): Promise<void> {
   await emit(
@@ -67,7 +68,7 @@ async function emitToolWrite(
 /** The pending-review gate message pi would inject on the next agent turn. */
 async function gateMessage(
   emit: EmitFn,
-  ctx: unknown,
+  ctx: TestCtx,
 ): Promise<string | undefined> {
   const result = (await emit("before_agent_start", {}, ctx)) as
     | { message?: { content?: string } }
@@ -78,12 +79,12 @@ async function gateMessage(
 type RunToolFn = (
   name: string,
   params: Record<string, unknown>,
-  ctx: unknown,
+  ctx: TestCtx,
 ) => Promise<unknown>;
 
 async function submitReview(
   runTool: RunToolFn,
-  ctx: unknown,
+  ctx: TestCtx,
   relativePath: string,
 ): Promise<string | undefined> {
   const result = (await runTool(
@@ -98,7 +99,7 @@ async function submitReview(
 async function settlePlanThroughAutoReview(
   emit: EmitFn,
   runTool: RunToolFn,
-  ctx: unknown,
+  ctx: TestCtx,
   relativePath: string,
 ): Promise<void> {
   await emitToolWrite(emit, ctx, relativePath);

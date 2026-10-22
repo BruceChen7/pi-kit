@@ -39,6 +39,9 @@ export function resolveConfiguredModel(
     ? (globalSettings.herdrSquad as Record<string, unknown>)
     : {};
   const globalModel = sanitizeModel(globalSection.defaultModel);
+  if (globalModel === null) {
+    return { source: "pi-default" };
+  }
   if (globalModel !== undefined) {
     return { model: globalModel, source: "global" };
   }

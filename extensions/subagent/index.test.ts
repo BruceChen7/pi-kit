@@ -128,6 +128,15 @@ describe("subagent tool registration", () => {
     );
   });
 
+  it("rejects an unknown action instead of falling through to run", async () => {
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    await expect(
+      call(tools[0], { action: "stop-all", task: "x" }, makeCtx()),
+    ).rejects.toThrow('unknown action "stop-all"');
+  });
+
   it("names the available agents when asked for an unknown one", async () => {
     const { pi, tools } = makePi();
     registerSubagent(pi as never);
@@ -311,7 +320,9 @@ describe("background run", () => {
       makeCtx(),
     );
 
-    expect(result.structuredContent.status).toBe("done");
+    // 后台调用是「已受理」，不是「已完成」：终态只在 deliver 之后出现。
+    expect(result.structuredContent.status).toBeNull();
+    expect(result.structuredContent.runId).toBeTypeOf("string");
     await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalledTimes(1));
 
     const [message, options] = pi.sendMessage.mock.calls[0];
@@ -347,6 +358,35 @@ describe("concurrency ceiling", () => {
     await vi.waitFor(() =>
       expect(vi.mocked(createAgentSession)).toHaveBeenCalledTimes(4),
     );
+  });
+});
+
+describe("session reset", () => {
+  it("settles a pending foreground run instead of leaving it hanging", async () => {
+    vi.mocked(createAgentSession).mockImplementation((async () => ({
+      session: makeSession("never", { hang: true }),
+    })) as never);
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    const pendingRun = call(
+      tools[0],
+      { action: "run", task: "slow", background: false },
+      makeCtx(),
+    );
+    await vi.waitFor(() =>
+      expect(vi.mocked(createAgentSession)).toHaveBeenCalledTimes(1),
+    );
+
+    const onSessionStart = pi.on.mock.calls.find(
+      ([event]) => event === "session_start",
+    )?.[1];
+    expect(onSessionStart).toBeTypeOf("function");
+    onSessionStart?.();
+
+    const result = await pendingRun;
+    expect(result.structuredContent.status).toBe("stopped");
+    expect(result.content[0].text).toContain("stopped");
   });
 });
 

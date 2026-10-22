@@ -48,6 +48,16 @@ describe("resolveConfiguredModel", () => {
     expect(result.source).toBe("pi-default");
   });
 
+  it("returns pi-default when the global config explicitly sets null", () => {
+    const result = resolveConfiguredModel(
+      { herdrSquad: { defaultModel: null } },
+      {},
+      true,
+    );
+    expect(result.model).toBeUndefined();
+    expect(result.source).toBe("pi-default");
+  });
+
   it("ignores empty string model", () => {
     const result = resolveConfiguredModel(
       { herdrSquad: { defaultModel: "   " } },

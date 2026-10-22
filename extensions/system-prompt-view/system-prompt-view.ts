@@ -8,7 +8,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, type Theme } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
   Container,
@@ -20,25 +20,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { customPanel, hasRichUi } from "../shared/rich-ui.ts";
 
-type ThemeLike = {
-  fg?: (name: string, text: string) => string;
-  heading?: (text: string) => string;
-  link?: (text: string) => string;
-  linkUrl?: (text: string) => string;
-  code?: (text: string) => string;
-  codeBlock?: (text: string) => string;
-  codeBlockBorder?: (text: string) => string;
-  quote?: (text: string) => string;
-  quoteBorder?: (text: string) => string;
-  hr?: (text: string) => string;
-  listBullet?: (text: string) => string;
-  bold?: (text: string) => string;
-  italic?: (text: string) => string;
-  strikethrough?: (text: string) => string;
-  underline?: (text: string) => string;
-  highlightCode?: (code: string, lang?: string) => string[];
-  codeBlockIndent?: string;
-};
+type ThemeLike = Pick<Theme, "fg" | "bold">;
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("system_prompt_view", {
@@ -196,27 +178,23 @@ class SystemPromptView implements Component {
 
 function createMarkdownTheme(theme: ThemeLike): MarkdownTheme {
   const identity = (text: string) => text;
-  const dim = (text: string) =>
-    typeof theme?.fg === "function" ? theme.fg("dim", text) : text;
-  const accent = (text: string) =>
-    typeof theme?.fg === "function" ? theme.fg("accent", text) : text;
+  const dim = (text: string) => theme.fg("dim", text);
+  const accent = (text: string) => theme.fg("accent", text);
 
   return {
-    heading: theme?.heading ?? accent,
-    link: theme?.link ?? accent,
-    linkUrl: theme?.linkUrl ?? dim,
-    code: theme?.code ?? dim,
-    codeBlock: theme?.codeBlock ?? dim,
-    codeBlockBorder: theme?.codeBlockBorder ?? dim,
-    quote: theme?.quote ?? dim,
-    quoteBorder: theme?.quoteBorder ?? dim,
-    hr: theme?.hr ?? dim,
-    listBullet: theme?.listBullet ?? dim,
-    bold: theme?.bold ?? identity,
-    italic: theme?.italic ?? identity,
-    strikethrough: theme?.strikethrough ?? identity,
-    underline: theme?.underline ?? identity,
-    highlightCode: theme?.highlightCode,
-    codeBlockIndent: theme?.codeBlockIndent,
+    heading: accent,
+    link: accent,
+    linkUrl: dim,
+    code: dim,
+    codeBlock: dim,
+    codeBlockBorder: dim,
+    quote: dim,
+    quoteBorder: dim,
+    hr: dim,
+    listBullet: dim,
+    bold: theme.bold,
+    italic: identity,
+    strikethrough: identity,
+    underline: identity,
   };
 }

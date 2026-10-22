@@ -225,7 +225,7 @@ export default function btw(pi: ExtensionAPI) {
           margin: { top: 1, left: 2, right: 2 },
           nonCapturing: true,
         },
-        onHandle: (handle) => {
+        onHandle: (handle: OverlayHandleLike) => {
           runtime.handle = handle;
           handle.focus();
           if (runtime.closed) runtime.close();

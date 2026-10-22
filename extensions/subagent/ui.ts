@@ -27,9 +27,9 @@ export function registerAgentsCommand(
     description: "List subagent runs, open one, and steer it",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
       const state = runtime.readState();
-      const { labels, ids } = renderRunOptions(state, Date.now());
+      const options = renderRunOptions(state, Date.now());
 
-      if (ids.length === 0) {
+      if (options.length === 0) {
         ctx.ui.notify(renderEmptyFleetMessage(state), "info");
         return;
       }
@@ -45,63 +45,58 @@ export function registerAgentsCommand(
         return;
       }
 
-      const picked = await ctx.ui.select("Subagent runs", labels);
-      const index = picked ? labels.indexOf(picked) : -1;
-      if (index < 0) return;
-      const runId = ids[index];
-      if (!runId) return;
+      const picked = await ctx.ui.select(
+        "Subagent runs",
+        options.map((option) => option.label),
+      );
+      const chosen = options.find((option) => option.label === picked);
+      if (!chosen) return;
+      const runId = chosen.runId;
 
-      let open = true;
-      while (open) {
-        const run = findRun(runtime.readState(), runId);
-        if (!run) {
-          ctx.ui.notify(`run ${runId} disappeared`, "warning");
-          return;
-        }
-
-        const answer = await ctx.ui.custom<string | undefined>(
-          (tui, theme, _keybindings, done) =>
-            new FleetOverlay(
-              tui,
-              theme,
-              {
-                readLines: () => renderTranscript(run),
-                onSubmit: (value) => done(value),
-                onDismiss: () => done(undefined),
-              },
-              {
-                chrome: host.panelChrome,
-                title: `subagent · ${run.agent} ${run.runId}`,
-                hint: "type to steer · enter send · esc close",
-              },
-            ),
-          {
-            overlay: true,
-            overlayOptions: {
-              width: "78%",
-              minWidth: 60,
-              maxHeight: "78%",
-              anchor: "top-center",
-              margin: { top: 1, left: 2, right: 2 },
-              nonCapturing: true,
-            },
-          },
-        );
-
-        if (!answer?.trim()) {
-          open = false;
-          continue;
-        }
-
-        const delivered = await runtime.steer(runId, answer);
-        ctx.ui.notify(
-          delivered
-            ? `steered ${runId}`
-            : `${runId} is no longer running; steer not delivered`,
-          delivered ? "info" : "warning",
-        );
-        open = false;
+      const run = findRun(runtime.readState(), runId);
+      if (!run) {
+        ctx.ui.notify(`run ${runId} disappeared`, "warning");
+        return;
       }
+
+      const answer = await ctx.ui.custom<string | undefined>(
+        (tui, theme, _keybindings, done) =>
+          new FleetOverlay(
+            tui,
+            theme,
+            {
+              readLines: () => renderTranscript(run),
+              onSubmit: (value) => done(value),
+              onDismiss: () => done(undefined),
+            },
+            {
+              chrome: host.panelChrome,
+              title: `subagent · ${run.agent} ${run.runId}`,
+              hint: "type to steer · enter send · esc close",
+            },
+          ),
+        {
+          overlay: true,
+          overlayOptions: {
+            width: "78%",
+            minWidth: 60,
+            maxHeight: "78%",
+            anchor: "top-center",
+            margin: { top: 1, left: 2, right: 2 },
+            nonCapturing: true,
+          },
+        },
+      );
+
+      if (!answer?.trim()) return;
+
+      const delivered = await runtime.steer(runId, answer);
+      ctx.ui.notify(
+        delivered
+          ? `steered ${runId}`
+          : `${runId} is no longer running; steer not delivered`,
+        delivered ? "info" : "warning",
+      );
     },
   });
 }

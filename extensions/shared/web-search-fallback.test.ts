@@ -162,6 +162,69 @@ describe("createWebSearchFallbackRequester", () => {
     });
   });
 
+  it("只收到畸形 outcome 时不把它当结果，等满一个超时", async () => {
+    const bus = createBus();
+    provideWebSearchFallback({
+      events: bus,
+      provider: "deepseek",
+      isAvailable: () => true,
+      runSearch: async () => new Promise<never>(() => {}),
+    });
+    const request = createWebSearchFallbackRequester({
+      events: bus,
+      timeoutMs: 5,
+    });
+    const pending = request({ query: "q", maxSources: 1 });
+
+    const id = bus.requests[0]?.id;
+    if (!id) throw new Error("requester did not emit a request");
+    // ok:true 但缺 provider/summary/sources；ok 不是布尔；sources 元素不对。
+    bus.deliver(WEB_SEARCH_FALLBACK_RESULT_CHANNEL, {
+      id,
+      outcome: { ok: true },
+    });
+    bus.deliver(WEB_SEARCH_FALLBACK_RESULT_CHANNEL, {
+      id,
+      outcome: { ok: "yes", provider: "deepseek", summary: "s", sources: [] },
+    });
+    bus.deliver(WEB_SEARCH_FALLBACK_RESULT_CHANNEL, {
+      id,
+      outcome: {
+        ok: true,
+        provider: "deepseek",
+        summary: "s",
+        sources: [{ title: "t", url: "u" }],
+      },
+    });
+
+    expect(await pending).toBeUndefined();
+  });
+
+  it("畸形响应被忽略，后续合法响应仍能交付", async () => {
+    const bus = createBus();
+    provideWebSearchFallback({
+      events: bus,
+      provider: "deepseek",
+      isAvailable: () => true,
+      runSearch: async () => new Promise<never>(() => {}),
+    });
+    const request = createWebSearchFallbackRequester({
+      events: bus,
+      timeoutMs: 50,
+    });
+    const pending = request({ query: "q", maxSources: 1 });
+
+    const id = bus.requests[0]?.id;
+    if (!id) throw new Error("requester did not emit a request");
+    bus.deliver(WEB_SEARCH_FALLBACK_RESULT_CHANNEL, { id, outcome: {} });
+    bus.deliver(WEB_SEARCH_FALLBACK_RESULT_CHANNEL, {
+      id,
+      outcome: okOutcome("真的结果"),
+    });
+
+    expect(await pending).toEqual(okOutcome("真的结果"));
+  });
+
   it("超时返回 undefined 并清掉监听", async () => {
     const bus = createBus();
     bus.on(WEB_SEARCH_FALLBACK_REQUEST_CHANNEL, () => {});

@@ -55,23 +55,17 @@ const profile = (over: Partial<AgentProfile> = {}): AgentProfile => ({
 
 describe("admit", () => {
   it("runs the first request immediately", () => {
-    const { state, admitted, queued } = admit(
-      createState(),
-      request("a1"),
-      4,
-      1000,
-    );
+    const { state, outcome } = admit(createState(), request("a1"), 4, 1000);
 
-    expect(admitted).toEqual(["a1"]);
-    expect(queued).toEqual([]);
+    expect(outcome).toBe("running");
     expect(findRun(state, "a1")?.status).toBe("running");
   });
 
   it("queues past the concurrency ceiling", () => {
     const state = admitMany(["a1", "a2", "a3", "a4"]);
-    const { state: next, queued } = admit(state, request("a5"), 4, 1000);
+    const { state: next, outcome } = admit(state, request("a5"), 4, 1000);
 
-    expect(queued).toEqual(["a5"]);
+    expect(outcome).toBe("queued");
     expect(findRun(next, "a5")?.status).toBe("queued");
     expect(next.runs.filter((run) => run.status === "running")).toHaveLength(4);
     expect(activeRuns(next)).toHaveLength(5);

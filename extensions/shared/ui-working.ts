@@ -110,9 +110,12 @@ export async function runWithWorkingLoader<T>(
     return workflow({ dismiss() {}, signal });
   }
 
-  return reportResult(
-    "dismissed" in uiResult
-      ? await (workflowPromise as Promise<WorkingLoaderResult<T>>)
-      : uiResult,
-  );
+  if ("dismissed" in uiResult) {
+    if (!workflowPromise) {
+      throw new Error("loader dismissed before the workflow started");
+    }
+    return reportResult(await workflowPromise);
+  }
+
+  return reportResult(uiResult);
 }

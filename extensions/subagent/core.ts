@@ -9,6 +9,8 @@ import type { AgentProfile } from "./agents.ts";
 
 export type RunStatus = "queued" | "running" | "done" | "failed" | "stopped";
 
+export type TerminalStatus = "done" | "failed" | "stopped";
+
 export type TranscriptRole = "user" | "assistant" | "tool";
 
 export type TranscriptLine = {
@@ -72,7 +74,7 @@ export const MAX_TRANSCRIPT_LINES = 40;
 
 const TERMINAL: readonly RunStatus[] = ["done", "failed", "stopped"];
 
-export const isTerminal = (status: RunStatus): boolean =>
+export const isTerminal = (status: RunStatus): status is TerminalStatus =>
   TERMINAL.includes(status);
 
 export const createState = (): SubagentState => ({ runs: [] });
@@ -93,10 +95,10 @@ function promote(state: SubagentState, maxConcurrent: number): SubagentState {
   let capacity = maxConcurrent - countRunning(state);
   if (capacity <= 0) return state;
 
-  const runs = state.runs.map((run) => {
+  const runs = state.runs.map((run): SubagentRun => {
     if (capacity > 0 && run.status === "queued") {
       capacity -= 1;
-      return { ...run, status: "running" as RunStatus };
+      return { ...run, status: "running" };
     }
     return run;
   });
@@ -109,7 +111,7 @@ export function admit(
   request: AdmitRequest,
   maxConcurrent: number = DEFAULT_MAX_CONCURRENT,
   now: number = Date.now(),
-): { state: SubagentState; admitted: string[]; queued: string[] } {
+): { state: SubagentState; outcome: "running" | "queued" } {
   const run: SubagentRun = {
     runId: request.runId,
     agent: request.agent,
@@ -122,18 +124,13 @@ export function admit(
     background: request.background,
   };
 
-  const withRun: SubagentState = { runs: [...state.runs, run] };
-  const next = promote(withRun, maxConcurrent);
+  const next = promote({ runs: [...state.runs, run] }, maxConcurrent);
+  const admitted = findRun(next, request.runId);
 
-  const admitted: string[] = [];
-  const queued: string[] = [];
-  for (const candidate of next.runs) {
-    if (candidate.runId !== request.runId) continue;
-    if (candidate.status === "running") admitted.push(candidate.runId);
-    else queued.push(candidate.runId);
-  }
-
-  return { state: next, admitted, queued };
+  return {
+    state: next,
+    outcome: admitted?.status === "running" ? "running" : "queued",
+  };
 }
 
 export function start(
@@ -239,7 +236,7 @@ export function clipResult(
   return `${text.slice(0, limit)}\n\n[truncated ${dropped} chars]`;
 }
 
-const formatElapsed = (ms: number): string => {
+export const formatElapsed = (ms: number): string => {
   const seconds = Math.max(0, Math.round(ms / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);

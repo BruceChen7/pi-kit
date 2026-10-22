@@ -7,6 +7,15 @@ import {
 } from "./constants.ts";
 import { PlanModeController } from "./controller.ts";
 import { isPlanMode } from "./state.ts";
+import {
+  buildTodoReminder,
+  createTodoReminderCadence,
+  drainTodoReminderForContext,
+  noteToolResult,
+  noteTurnEnd,
+  onTurnStart,
+  resetTodoReminderCadence,
+} from "./todo-reminder.ts";
 import { registerTodoTool } from "./todo-tool.ts";
 import type { PlanMode } from "./types.ts";
 import { formatPlanModeStatus } from "./ui.ts";
@@ -59,6 +68,14 @@ export const parsePlanModeCommand = (args: string): PlanModeCommandDecision => {
 
 export default function planModeExtension(pi: ExtensionAPI): void {
   const controller = new PlanModeController(pi);
+  // Cadence for the "agent drifted off the list" reminder. Session-scoped and
+  // transient: nothing here is persisted, and the reminder itself is injected
+  // into one request via the `context` hook.
+  const reminderCadence = createTodoReminderCadence();
+  const isActPhase = (): boolean => controller.state.phase === "act";
+  const hasInProgressTodo = (): boolean =>
+    controller.state.todos.some((todo) => todo.status === "in_progress");
+  const hasTodo = (): boolean => controller.state.todos.length > 0;
 
   pi.registerFlag?.("plan-mode", {
     description: "Start with Plan Mode workflow enabled",
@@ -111,6 +128,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (_event, ctx) => {
     controller.restore(ctx);
+    resetTodoReminderCadence(reminderCadence);
     if (pi.getFlag?.("plan-mode") === true) {
       controller.state.setMode("plan");
     }
@@ -119,11 +137,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
   pi.on("session_tree", async (_event, ctx) => {
     controller.restore(ctx);
+    resetTodoReminderCadence(reminderCadence);
     controller.applyMode(ctx);
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
     // 清空 UI 与复位 widget 跟踪状态都在 controller.clearUi；状态本身由 restore() 重建。
+    resetTodoReminderCadence(reminderCadence);
     controller.clearUi(ctx);
   });
 
@@ -146,7 +166,67 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   pi.on("tool_result", async (event, ctx) => {
     const result = controller.handleToolResult(event, ctx);
     controller.updateUi(ctx);
+    if (isActPhase()) {
+      noteToolResult(reminderCadence, {
+        toolName: event.toolName,
+        hasTodos: hasTodo(),
+        hasInProgress: hasInProgressTodo(),
+      });
+    } else {
+      resetTodoReminderCadence(reminderCadence);
+    }
     return result;
+  });
+
+  pi.on("turn_start", async () => {
+    if (!isActPhase()) {
+      resetTodoReminderCadence(reminderCadence);
+      return;
+    }
+    onTurnStart(reminderCadence);
+  });
+
+  pi.on("turn_end", async (event) => {
+    if (!isActPhase()) {
+      return;
+    }
+    // A text-only turn that leaves work in_progress is invisible to the
+    // tool_result path: no tool fires, so the idle window alone would never
+    // catch "answered, but did not finish".
+    noteTurnEnd(reminderCadence, {
+      toolResultCount: event.toolResults.length,
+      hasInProgress: hasInProgressTodo(),
+    });
+  });
+
+  pi.on("context", async (event) => {
+    if (!isActPhase() || !hasTodo()) {
+      return {};
+    }
+    const reason = reminderCadence.reason ?? "idle";
+    if (!drainTodoReminderForContext(reminderCadence)) {
+      return {};
+    }
+    const reminder = buildTodoReminder({
+      todos: controller.state.todos,
+      reason,
+      toolName: ACT_TODO_TOOL_NAME,
+    });
+    if (!reminder) {
+      return {};
+    }
+    // Transient: appended to this request's messages only, never persisted and
+    // never merged into a tool result.
+    return {
+      messages: [
+        ...event.messages,
+        {
+          role: "user" as const,
+          content: [{ type: "text" as const, text: reminder }],
+          timestamp: Date.now(),
+        },
+      ],
+    };
   });
 
   pi.on("agent_end", async (event, ctx) => {

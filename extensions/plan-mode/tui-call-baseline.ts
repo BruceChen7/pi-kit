@@ -162,10 +162,10 @@ export const TUI_CALL_BASELINE: Record<string, UiCall[]> = {
       "call": "setWidget",
       "key": "plan-mode-todos",
       "lines": [
-        "<accent>【Act】进行中 #2/4：补充 README · 更新于 刚刚</accent>",
+        "<accent>【Act】下一步 #2/4：补充 README · 更新于 刚刚</accent>",
         "已完成 1/4 · 剩余 3 项",
         "  #1 [✓] 实现状态机",
-        "→ #2 [~] 补充 README",
+        "→ #2 [ ] 补充 README",
         "  #3 [ ] 补测试",
         "  #4 [ ] 提交"
       ]
@@ -202,9 +202,9 @@ export const TUI_CALL_BASELINE: Record<string, UiCall[]> = {
       "call": "setWidget",
       "key": "plan-mode-todos",
       "lines": [
-        "<accent>【Act】进行中 #1/1：实现已批准任务 · 更新于 刚刚</accent>",
+        "<accent>【Act】下一步 #1/1：实现已批准任务 · 更新于 刚刚</accent>",
         "已完成 0/1 · 剩余 1 项",
-        "→ #1 [~] 实现已批准任务"
+        "→ #1 [ ] 实现已批准任务"
       ]
     },
     {
@@ -222,9 +222,9 @@ export const TUI_CALL_BASELINE: Record<string, UiCall[]> = {
       "call": "setWidget",
       "key": "plan-mode-todos",
       "lines": [
-        "<accent>【Approved, executing】进行中 #1/1：实现已批准任务 · 更新于 刚刚</accent>",
+        "<accent>【Approved, executing】下一步 #1/1：实现已批准任务 · 更新于 刚刚</accent>",
         "已完成 0/1 · 剩余 1 项",
-        "→ #1 [~] 实现已批准任务"
+        "→ #1 [ ] 实现已批准任务"
       ]
     },
     {
@@ -242,9 +242,9 @@ export const TUI_CALL_BASELINE: Record<string, UiCall[]> = {
       "call": "setWidget",
       "key": "plan-mode-todos",
       "lines": [
-        "<accent>【Approved, executing】进行中 #1/1：实现已批准任务 · 更新于 刚刚</accent>",
+        "<accent>【Approved, executing】下一步 #1/1：实现已批准任务 · 更新于 刚刚</accent>",
         "已完成 0/1 · 剩余 1 项",
-        "→ #1 [~] 实现已批准任务"
+        "→ #1 [ ] 实现已批准任务"
       ]
     },
     {

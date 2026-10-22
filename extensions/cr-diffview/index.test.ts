@@ -115,13 +115,16 @@ const registerCrCommands = (exec: ReturnType<typeof vi.fn>) => {
   const sendUserMessage = vi.fn();
   crDiffviewExtension({
     exec,
-    registerCommand(name, definition) {
+    registerCommand(name: string, definition: { handler: CommandHandler }) {
       commands.set(name, definition.handler);
     },
-    registerShortcut(shortcut, definition) {
+    registerShortcut(
+      shortcut: string,
+      definition: { handler: ShortcutHandler },
+    ) {
       shortcuts.set(String(shortcut), definition.handler);
     },
-    on(name, handler) {
+    on(name: string, handler: InputHandler) {
       events.set(String(name), handler as InputHandler);
     },
     sendUserMessage,

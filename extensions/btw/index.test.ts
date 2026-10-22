@@ -46,7 +46,9 @@ interface FakeSession {
 
 const createAgentSession = vi.hoisted(() => vi.fn());
 const SessionManager = vi.hoisted(() => vi.fn());
-const buildSessionContext = vi.hoisted(() => vi.fn(() => ({ messages: [] })));
+const buildSessionContext = vi.hoisted(() =>
+  vi.fn((): { messages: unknown[] } => ({ messages: [] })),
+);
 const convertToLlm = vi.hoisted(() => vi.fn((messages: unknown) => messages));
 const getAgentDir = vi.hoisted(() => vi.fn(() => "/tmp/agent-dir"));
 const getMarkdownTheme = vi.hoisted(() => vi.fn(() => ({})));

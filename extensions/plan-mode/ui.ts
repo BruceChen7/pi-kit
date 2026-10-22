@@ -50,8 +50,11 @@ export const symbolForStatus = (status: TodoStatus): string => {
   }
 };
 
+const findInProgressTodo = (todos: TodoItem[]): TodoItem | undefined =>
+  todos.find((todo) => todo.status === "in_progress");
+
 const findCurrentTodo = (todos: TodoItem[]): TodoItem | undefined =>
-  todos.find((todo) => todo.status === "in_progress") ??
+  findInProgressTodo(todos) ??
   todos.find((todo) => todo.status === "todo") ??
   todos.find((todo) => todo.status === "blocked");
 
@@ -228,9 +231,13 @@ export const formatTodoWidgetLines = (state: PlanModeState): string[] => {
   const lastUpdate = state.activeRun?.lastTodoUpdateAt
     ? ` · 更新于 ${formatRelativeTime(state.activeRun.lastTodoUpdateAt)}`
     : "";
+  // "进行中" is reserved for a status the agent actually wrote. An item that
+  // is merely next in line reads as "下一步", so the widget never claims
+  // progress the model did not make.
+  const currentLabel = findInProgressTodo(state.todos) ? "进行中" : "下一步";
   const heading = `${
     current
-      ? `进行中 #${current.id}/${total}：${current.text}`
+      ? `${currentLabel} #${current.id}/${total}：${current.text}`
       : `已完成 ${done}/${total}`
   }${lastUpdate}`;
   const progress = `已完成 ${done}/${total} · 剩余 ${total - done} 项`;

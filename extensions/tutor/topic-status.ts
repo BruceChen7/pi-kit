@@ -195,7 +195,8 @@ export const registerTopicStatus = (pi: ExtensionAPI): void => {
           formatTopicList(topics),
         ];
         const boundTopic = bound ? topicOfNotePath(bound) : null;
-        if (boundTopic) lines.push(briefForTopic(settings, boundTopic, bound));
+        if (bound && boundTopic)
+          lines.push(briefForTopic(settings, boundTopic, bound));
         return {
           content: [{ type: "text" as const, text: lines.join("\n") }],
           details: { bound, topics },

@@ -65,7 +65,9 @@ describe("buildPlan", () => {
     expect(built.plan.agentDir.endsWith("agent")).toBe(true);
     expect(built.plan.baseUrl).toBe("http://127.0.0.1:30242");
     expect(
-      built.plan.extensionLinks.map((link) => link.link.split("/").at(-1)),
+      built.plan.extensionLinks.map((link: { link: string }) =>
+        link.link.split("/").at(-1),
+      ),
     ).toEqual(["shared", "plan-mode"]);
   });
 

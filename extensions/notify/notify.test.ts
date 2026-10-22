@@ -112,7 +112,7 @@ describe("notify tmux title", () => {
     const execFile = await loadExecFile();
     vi.mocked(execFile).mockImplementation(
       (_file, _args, _options, callback) => {
-        callback(null, "work\n", "");
+        callback?.(null, "work\n", "");
         return {} as never;
       },
     );
@@ -128,7 +128,7 @@ describe("notify tmux title", () => {
     const execFile = await loadExecFile();
     vi.mocked(execFile).mockImplementation(
       (_file, _args, _options, callback) => {
-        callback(null, "\n", "");
+        callback?.(null, "\n", "");
         return {} as never;
       },
     );
@@ -144,7 +144,7 @@ describe("notify tmux title", () => {
     const execFile = await loadExecFile();
     vi.mocked(execFile).mockImplementation(
       (_file, _args, _options, callback) => {
-        callback(null, "work\n", "");
+        callback?.(null, "work\n", "");
         return {} as never;
       },
     );
@@ -340,7 +340,7 @@ describe("notify failure scenarios", () => {
 const mockHerdrExec = async (error?: Error) => {
   const execFile = await loadExecFile();
   vi.mocked(execFile).mockImplementation((_file, _args, _options, callback) => {
-    callback((error ?? null) as never, "", "");
+    callback?.((error ?? null) as never, "", "");
     return {} as never;
   });
   return execFile;

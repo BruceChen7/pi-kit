@@ -493,7 +493,7 @@ const panelNotify = async (
   body: string,
 ): Promise<NotifyTransportStatus> => {
   try {
-    ctx.ui?.notify(body ? `${title}: ${body}` : title, "info");
+    ctx.ui?.notify?.(body ? `${title}: ${body}` : title, "info");
     return "sent";
   } catch (error) {
     log?.warn("panel notification failed", {

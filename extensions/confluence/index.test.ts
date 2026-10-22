@@ -157,9 +157,9 @@ describe("Confluence page tool", () => {
       readBaseUrl: () => "https://confluence.example.test",
       reader,
     })(pi as never);
-    const result = await pi.tools
-      .get("confluence_page")
-      .execute("call-1", { pageId: "123" });
+    const tool = pi.tools.get("confluence_page");
+    if (!tool) throw new Error("confluence_page tool was not registered");
+    const result = await tool.execute("call-1", { pageId: "123" });
     expect(reader.read).toHaveBeenCalled();
     const numericCall = (reader.read as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(numericCall?.[0]).toBe(
@@ -210,7 +210,9 @@ describe("Confluence page tool", () => {
       readBaseUrl: () => "https://confluence.example.test",
       reader,
     })(pi as never);
-    const result = await pi.tools.get("confluence_page").execute("call-2", {
+    const tool = pi.tools.get("confluence_page");
+    if (!tool) throw new Error("confluence_page tool was not registered");
+    const result = await tool.execute("call-2", {
       url: "https://confluence.example.test/display/SPPT/Guide",
     });
     expect(reader.read).toHaveBeenCalled();

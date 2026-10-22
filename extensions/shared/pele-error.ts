@@ -6,12 +6,6 @@
  * collapse. No engine import, no DOM, no IO.
  */
 
-type PeleErrorLike = {
-  line?: unknown;
-  column?: unknown;
-  message?: unknown;
-};
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
@@ -35,7 +29,7 @@ export function condensePeleMessage(message: string): string {
 /** Agent-facing message without position decoration. */
 export function formatPeleError(error: unknown): string {
   if (!isRecord(error)) return String(error);
-  const { message } = error as PeleErrorLike;
+  const message = error.message;
   return typeof message === "string"
     ? condensePeleMessage(message)
     : String(error);
@@ -43,7 +37,7 @@ export function formatPeleError(error: unknown): string {
 
 export function peleErrorLine(error: unknown): number | undefined {
   if (isRecord(error)) {
-    const { line } = error as PeleErrorLike;
+    const line = error.line;
     if (typeof line === "number" && line > 0) return line;
   }
   const message = error instanceof Error ? error.message : String(error);
@@ -53,6 +47,6 @@ export function peleErrorLine(error: unknown): number | undefined {
 
 export function peleErrorColumn(error: unknown): number | undefined {
   if (!isRecord(error)) return undefined;
-  const { column } = error as PeleErrorLike;
+  const column = error.column;
   return typeof column === "number" && column > 0 ? column : undefined;
 }

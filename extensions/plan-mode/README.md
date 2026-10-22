@@ -81,6 +81,18 @@ During implementation, Pi should:
   shows the step about to be executed
 - keep the widget aligned with the current step
 
+Item statuses are written only by these tool calls: nothing promotes an item
+implicitly. The widget heading is derived from the list, so an item that is
+merely next in line reads `下一步`; `进行中` appears only after the agent marks
+it `in_progress`.
+
+If the agent stops touching the list, the extension reminds it at request
+time. A transient `<system-reminder>` is appended to the next LLM call when 4
+turns pass without a todo tool call (2 turns while something is
+`in_progress`), or immediately after a text-only turn that leaves work
+`in_progress`. The reminder echoes the open items and the next step, is capped
+at 10 items, and is never persisted or shown to the user.
+
 Completed runs remain visible briefly as an `已交付` task list, then clear on the next run or user turn.
 
 ### The widget in pi-web vs. the TUI

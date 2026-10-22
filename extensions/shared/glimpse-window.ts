@@ -115,15 +115,20 @@ function glimpseWindowArgs(options: GlimpseWindowOptions): string[] {
 class PiKitGlimpseWindow extends EventEmitter implements GlimpseWindow {
   #pendingHtmlBase64: string | null;
   #closed = false;
+  readonly #stdin: NonNullable<ReturnType<typeof spawn>["stdin"]>;
 
   constructor(
-    private readonly proc: ReturnType<typeof spawn>,
+    proc: ReturnType<typeof spawn>,
     initialHtml: string,
     private readonly options: GlimpseWindowOptions,
   ) {
     super();
+    if (!proc.stdin || !proc.stdout) {
+      throw new Error("glimpse child was spawned without stdio pipes");
+    }
+    this.#stdin = proc.stdin;
     this.#pendingHtmlBase64 = Buffer.from(initialHtml).toString("base64");
-    proc.stdin.on("error", () => {});
+    this.#stdin.on("error", () => {});
     const rl = createInterface({ input: proc.stdout, crlfDelay: Infinity });
     rl.on("line", (line) => this.#handleLine(line));
     proc.on("error", (error) => this.emit("error", error));
@@ -171,7 +176,7 @@ class PiKitGlimpseWindow extends EventEmitter implements GlimpseWindow {
 
   #write(message: JsonRecord): void {
     if (this.#closed) return;
-    this.proc.stdin.write(`${JSON.stringify(message)}\n`);
+    this.#stdin.write(`${JSON.stringify(message)}\n`);
   }
 
   #markClosed(): void {

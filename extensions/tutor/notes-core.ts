@@ -931,7 +931,7 @@ export const formatQuizAnswerBlock = (details: QuizDetails): string => {
     return callout("warning", "Quiz — cancelled", ["(user skipped)"]);
   }
   if (details.status === "unavailable") {
-    return callout("warning", "Quiz — unavailable", [details.message]);
+    return callout("warning", "Quiz — unavailable", [details.message ?? ""]);
   }
   const dontKnow = details.dontKnow === true;
   const title = dontKnow
@@ -967,7 +967,9 @@ export const formatAskAnswerBlock = (details: AskDetails): string => {
     return callout("warning", "Question — cancelled", ["(user skipped)"]);
   }
   if (details.status === "unavailable") {
-    return callout("warning", "Question — unavailable", [details.message]);
+    return callout("warning", "Question — unavailable", [
+      details.message ?? "",
+    ]);
   }
   const body: string[] = [];
   if (details.otherText) {

@@ -5,33 +5,23 @@
  * core.renderTranscript 产出。两处都不画边框 —— 边框归 Shell 的 panelPainter。
  */
 
-import { activeRuns, type SubagentRun, type SubagentState } from "./core.ts";
+import { activeRuns, formatElapsed, type SubagentState } from "./core.ts";
 
-export type RunOptions = {
-  labels: string[];
-  ids: string[];
-};
-
-const elapsedLabel = (run: SubagentRun, now: number): string => {
-  const end = run.endedAt ?? now;
-  const seconds = Math.max(0, Math.round((end - run.startedAt) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, "0")}s`;
-};
+export type RunOption = { label: string; runId: string };
 
 /** 选项标签：`explore a1b2c3d4 · running · 12s · grep`。 */
 export function renderRunOptions(
   state: SubagentState,
   now: number = Date.now(),
-): RunOptions {
-  const runs = activeRuns(state);
-  return {
-    ids: runs.map((run) => run.runId),
-    labels: runs.map((run) => {
-      const step = run.step ? ` · ${run.step}` : "";
-      return `${run.agent} ${run.runId} · ${run.status} · ${elapsedLabel(run, now)}${step}`;
-    }),
-  };
+): RunOption[] {
+  return activeRuns(state).map((run) => {
+    const step = run.step ? ` · ${run.step}` : "";
+    const elapsed = formatElapsed((run.endedAt ?? now) - run.startedAt);
+    return {
+      runId: run.runId,
+      label: `${run.agent} ${run.runId} · ${run.status} · ${elapsed}${step}`,
+    };
+  });
 }
 
 /** 没有活跃 run 时给用户的静态文案，用于 notify。 */

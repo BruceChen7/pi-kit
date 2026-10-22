@@ -10,6 +10,7 @@ import {
   mockPlannotatorSpawn,
   PLAN_DRAFT_CONTENT,
   removeTempRepo,
+  type TestCtx,
   writeTestFile,
 } from "./test-helpers.js";
 
@@ -48,8 +49,8 @@ type PendingReviewEvent = {
 };
 
 async function emitToolWrite(
-  emit: (name: string, event: unknown, ctx: unknown) => Promise<unknown>,
-  ctx: unknown,
+  emit: (name: string, event: unknown, ctx: TestCtx) => Promise<unknown>,
+  ctx: TestCtx,
   relativePath: string,
 ): Promise<void> {
   await emit(

@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildInstallArgs,
+  listPiBinaryCandidates,
   resolveNpmRegistry,
   resolvePiBinary,
   updatePeerDependencies,
 } from "./update-pi-coding-agent.mjs";
 
-const createPiPeerDependencies = (version) => ({
+const createPiPeerDependencies = (version: string) => ({
   "@earendil-works/pi-ai": `^${version}`,
   "@earendil-works/pi-coding-agent": `^${version}`,
   "@earendil-works/pi-tui": `^${version}`,
@@ -67,16 +68,68 @@ describe("updatePeerDependencies", () => {
 });
 
 describe("resolvePiBinary", () => {
-  it("prefers the explicit PI_BIN override", () => {
+  it("prefers the explicit PI_BIN override even when other pi binaries exist", () => {
     expect(
-      resolvePiBinary({
-        PI_BIN: "/custom/bin/pi",
-      }),
+      resolvePiBinary(
+        { PI_BIN: "/custom/bin/pi", PATH: "/usr/bin" },
+        () => true,
+      ),
     ).toBe("/custom/bin/pi");
   });
 
-  it("falls back to the default global pi path", () => {
-    expect(resolvePiBinary({})).toBe("/opt/homebrew/bin/pi");
+  it("finds pi through the managed install root before PATH", () => {
+    expect(
+      resolvePiBinary(
+        {
+          PI_MANAGED_INSTALL_ROOT: "/home/u/.pi/agent/install",
+          PATH: "/opt/homebrew/bin",
+        },
+        (candidate: string) => candidate === "/home/u/.pi/agent/install/bin/pi",
+      ),
+    ).toBe("/home/u/.pi/agent/install/bin/pi");
+  });
+
+  it("finds pi on PATH instead of a hardcoded global path", () => {
+    expect(
+      resolvePiBinary(
+        { PATH: "/nowhere/bin:/home/u/.pi/agent/bin" },
+        (candidate: string) => candidate === "/home/u/.pi/agent/bin/pi",
+      ),
+    ).toBe("/home/u/.pi/agent/bin/pi");
+  });
+
+  it("falls back to a bare pi lookup when nothing exists yet", () => {
+    expect(resolvePiBinary({ PATH: "/nowhere/bin" }, () => false)).toBe("pi");
+    expect(resolvePiBinary({}, () => false)).toBe("pi");
+  });
+});
+
+describe("listPiBinaryCandidates", () => {
+  it("orders managed install root before PATH entries and dedupes", () => {
+    expect(
+      listPiBinaryCandidates({
+        PI_MANAGED_INSTALL_ROOT: "/home/u/.pi/agent/install",
+        PATH: "/home/u/.pi/agent/bin:/opt/homebrew/bin:/home/u/.pi/agent/bin",
+      }),
+    ).toEqual([
+      "/home/u/.pi/agent/install/bin/pi",
+      "/home/u/.pi/agent/bin/pi",
+      "/opt/homebrew/bin/pi",
+    ]);
+  });
+
+  it("ignores empty PATH segments", () => {
+    expect(listPiBinaryCandidates({ PATH: ":/usr/bin:" })).toEqual([
+      "/usr/bin/pi",
+    ]);
+  });
+
+  it("skips repo-local node_modules/.bin copies so npm run cannot shadow pi", () => {
+    expect(
+      listPiBinaryCandidates({
+        PATH: "node_modules/.bin:/Users/u/.pi/agent/bin:/repo/node_modules/.bin",
+      }),
+    ).toEqual(["/Users/u/.pi/agent/bin/pi"]);
   });
 });
 

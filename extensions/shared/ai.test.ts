@@ -67,8 +67,8 @@ describe("shared ai", () => {
     );
 
     expect(result).toBe("auth-header-cleanup");
-    const [, , options] = vi.mocked(complete).mock.calls[0];
-    expect(options.headers).toEqual({ "x-keep": "yes", "x-drop": null });
+    const call = vi.mocked(complete).mock.calls[0];
+    expect(call?.[2]?.headers).toEqual({ "x-keep": "yes", "x-drop": null });
   });
 
   it("returns null when there is no active model", async () => {

@@ -1,18 +1,48 @@
 ---
-description: 把 skills/pstack/ 对齐到上游 cursor/plugins 的最新版：本地文件逐条比对上游、按 P0-P3 分级、保住本地适配、跑结构门禁。用法 /sync-pstack-skills [all|<skill ...>] [--report]
+description: 把 skills/pstack/ 对齐到上游 cursor/plugins 的最新版：按内核清单判断哪些差异算 material、按 P0-P3 分级、保住本地适配、跑结构门禁。用法 /sync-pstack-skills [all|<skill ...>] [--report]
 argument-hint: "[all|<skill ...>] [--report]"
 ---
 # Sync pstack skills
 
 `skills/pstack/` 是从 [cursor/plugins](https://github.com/cursor/plugins) 的 `harness/pstack` vendored 进来的，本地改过，所以升级靠手工比对。
 
-默认中文。作用域是 13 个进口 skill：`principles`（索引 + 24 条叶子）、`blast-radius`、`correct`、`no-comments`、`benchmark-checklist`、`show-me-your-work`、`technical-writing`、`unslop`、`interrogate`、`swarm`、`arena`、`create-verification-skill`、`maintain-verification-skill`。参数可以只点名其中几个；`--report` 只出报告，不改文件。
+进口图的是内核，不是文件名：哪条判断值得成为本仓自己的东西，看下一节的清单。
+
+默认中文。作用域是 16 个进口 skill：`principles`（索引 + 24 条叶子）、`blast-radius`、`correct`、`no-comments`、`benchmark-checklist`、`show-me-your-work`、`technical-writing`、`unslop`、`interrogate`、`swarm`、`arena`、`create-verification-skill`、`maintain-verification-skill`、`ketchup`、`typescript-best-practices`、`sharpen`。参数可以只点名其中几个；`--report` 只出报告，不改文件。
 
 ## 真相源
 
 - **对照基准是 `skills/pstack/` 里的真实文件。** README 的 pin 只记「上次同步自哪里」，可能过时，不当 base。
-- **适配契约**：`skills/pstack/README.md` 的「包含什么」表，加 `.pi/plans/pi-kit/specs/2026-10-20-pstack-adoption-design.md` 的「适配替换表」与 Decisions。
+- **适配契约**：下面「内核清单」表，加 `skills/pstack/README.md` 的「包含什么」表（文件级已知适配）。`.pi/plans/` 下的方案文档只当历史记录，不当今天的判据。
 - **门禁**：`scripts/pstack-skills.test.ts`。
+
+## 内核清单
+
+pstack 值钱的是一套判断，不是目录结构。左列是内核，右列是它在本仓落到哪——本地已进口的每一行都必须有可见落点，否则就是一句好话。
+
+| 内核 | 上游载体 | 本地落点 |
+|---|---|---|
+| 有名字的判据：先挑一条，再动手 | `principles/` 24 条叶子 | 已 vendor：全文进口，`SKILL.md` 是中文化索引 |
+| 证据优先于自述：留决策轨，不留感慨 | `show-me-your-work/` 决策 TSV | 已本地化：transcript 走 pi session，日志默认中文 |
+| 同一个错犯两遍就改结构：架构 → 类型 → lint → 测试 → 文档 | `correct/` | 已本地化：规则表落 `AGENTS.md` |
+| 删在加之前：注释、死代码、一次性兼容层 | `no-comments/` | 已 vendor：评审合成两遍走，keep list 逐字保留 |
+| 改动前证影响面：证明那一个事实，不写说明文 | `blast-radius/` | 已 vendor：forge 命令按 remote 选 `gh` / `glab` |
+| 独立对抗评审：一个 reviewer 一份，父会话裁 | `interrogate/` | 已本地化：`subagent reviewer` |
+| 并行分片覆盖：写作任务落不相交目录 | `swarm/` | 已本地化：≤4 波次，去 cloud / worktree |
+| 候选竞争：N 个候选选一作基底，嫁落选者强项 | `arena/` | 已本地化：候选落 `/tmp` 或 patch |
+| 验证流程可生成、可审计、可复跑 | `create-verification-skill/`、`maintain-verification-skill/` | 已本地化：`.pi/skills/verify-<app>/` |
+| 人读文字两把刀：分层写作标准 + 去 AI 腔 | `technical-writing/`、`unslop/` | 已 vendor，各带中文补充段 |
+| 报数字前先解释数字：先找限速因素 | `benchmark-checklist/` | 已 vendor，正文未改 |
+| 报进度给不在场的人：只列他必须决定的，每条带证据与风险 | `ketchup/` | 已本地化：对话里的图指 `/show-me`，通知与 subagent 结果不算用户消息 |
+| 类型挡在运行时之前：坏状态写不出来 | `typescript-best-practices/` | 已 vendor：去 `paths:`，接 `type-system-discipline` 原则 |
+| 做深不做大：先问专业做法与原始材料，再重写任务 | `sharpen/` | 已 vendor，正文未改 |
+| 复盘落在环境上：三镜头、三桶、逐条落点 | `reflect/`（未进口） | 已并入 `skills/retro/SKILL.md`，不单独进口 |
+
+**不 vendor** 的是上游 harness，不是内核：Task 参数名、`pstack-models` 规则与 model slug、`AskUserQuestion`、`TodoWrite`、`.cursor` 路径、playbook 引用、Claude Code adapter 段、`poteto-mode`（本地入口是 `prompts/poteto.md`）、云端隔离与 worktree 并发写。
+
+**判据**：上游差异只有落在「已 vendor / 已本地化」的行上才算 material，进第 4 步分级；落在不 vendor 项上的一行带过。表外冒出新内核时，报告里写三行——是什么、上游怎么用、本地缺什么落点——然后问人「要不要 vendor 进来」，不自动进口。
+
+`reflect/` 那行是「并入」不是「进口」：它和本地 `retro` 同题，只搬机制，`skills/pstack/` 下没有目录，所以第 2 步对不到文件。
 
 ## 1 解析 target
 
@@ -56,16 +86,18 @@ for f in skills/pstack/principles/references/*.md; do
 done
 ```
 
-其余 7 个 `SKILL.md` 用整文件 diff 起手，再读两边全文：
+其余 12 个 `SKILL.md` 用整文件 diff 起手，再读两边全文：
 
 ```bash
-for s in blast-radius correct no-comments benchmark-checklist show-me-your-work technical-writing unslop interrogate swarm arena create-verification-skill maintain-verification-skill; do
+for s in blast-radius correct no-comments benchmark-checklist show-me-your-work technical-writing unslop interrogate swarm arena create-verification-skill maintain-verification-skill ketchup typescript-best-practices sharpen; do
   echo "== $s"
   diff -u "/tmp/pstack-upstream/harness/pstack/claude-code/skills/$s/SKILL.md" "skills/pstack/$s/SKILL.md"
 done
 ```
 
-整文件 diff 会带上已知适配，这是预期。只判断一件事：diff 里有没有**适配契约之外**的上游新规则。
+带 `references/` 的三个（`interrogate`、`create-verification-skill`、`typescript-best-practices`）再 `diff -rq` 一遍，确认子文件没漏。
+
+整文件 diff 会带上已知适配，这是预期。只判断一件事：diff 里有没有**内核清单之外**的上游新规则。
 
 `principles/SKILL.md` 没有上游对应物，是本地索引；它只在叶子增删时跟着改 bullet。
 
@@ -79,7 +111,7 @@ done
 
 | 级别 | 判据 | 本组例子 |
 |---|---|---|
-| P0 | 适配契约被上游改写；原则 id 增删；新增/删除原则 | 上游删掉 `blast-radius` 的「证明那一个事实」；上游新增一条 `principle-*` |
+| P0 | 适配契约（内核清单）被上游改写；原则 id 增删；新增/删除原则 | 上游删掉 `blast-radius` 的「证明那一个事实」；上游新增一条 `principle-*` |
 | P1 | 正文规则变化，会改变行为 | `no-comments` 的 keep list 多一类或少一类注释 |
 | P2 | 措辞收紧，行为不变 | 同一句改短；表格重排 |
 | P3 | 链接、编码、格式 | principle 链接的写法变了 |
@@ -102,7 +134,7 @@ done
 2. 读上游全文，标 `[UPSTREAM]`：新增的结构单元与规则。
 3. 只搬不冲突的 `[UPSTREAM]`。冲突以 `[PI]` 为准，并写进报告。
 
-不搬：上游 Task 参数名、`pstack-models` 规则、上游 model slug、`AskUserQuestion`、`TodoWrite`、`.cursor` 路径、playbook 引用、Claude Code adapter 段、`poteto-mode`（本地入口是 `prompts/poteto.md`）。写委派改写成 `subagent` profile。
+不搬「内核清单」标为不 vendor 的 harness 项（Task 参数名、`pstack-models`、model slug、`AskUserQuestion`、`TodoWrite`、`.cursor` 路径、playbook、adapter 段、`poteto-mode`）。写委派改写成 `subagent` profile。
 
 叶子按第 2 步的三类改写搬正文，不加 frontmatter。
 
@@ -121,7 +153,7 @@ done
 npx vitest run scripts/pstack-skills.test.ts
 ```
 
-门禁必须全绿（当前 17 passed）。增删原则时，索引 bullet、`references/` 文件、测试里的 `24` 要一起改。
+门禁必须全绿（当前 18 passed）。增删原则时，索引 bullet、`references/` 文件、测试里的 `24` 要一起改。
 
 只有 skill 集合变了（新增、删除、改名）才需要重装：
 
@@ -138,6 +170,7 @@ ls -l ~/.agents/me-skills/<name> .pi/skills/<name>
 - 更新 `skills/skills.txt` 的 `v<version> @ <sha>` 注释。
 - commit：`chore(skills): sync pstack to <version> (<sha>)`。
 - 回一句：用 `/poteto` 的人会看到什么变化；没变就说没变。
+- 改了这个 prompt 自己，`~/.pi/agent/prompts/` 下是 copy 不是链接，`cp prompts/sync-pstack-skills.md ~/.pi/agent/prompts/` 后才生效。
 
 ## 约束
 

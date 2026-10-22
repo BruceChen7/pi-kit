@@ -16,7 +16,9 @@ disable-model-invocation: true
 
 2. 读这次会话的一手材料。用户指定了就按指定的，没指定就是当前会话。Pi 的会话记录在 `~/.pi/agent/sessions/<cwd 转义>/*.jsonl`，一行一个事件，能查到工具调用、报错、反复读同一个文件。
 
-3. 按下面几类找候选。每条都要能指到会话里的具体位置。
+3. 先判要不要做。**一次性事件不是 learning**：只发生一次、下个会话不会再撞上的事，不要写成规则。会话琐碎、跑题，或者某个 skill 已经正确执行过，就停，直接说这次没有值得落的改进。
+
+4. 按下面几类找候选。每条都要能指到会话里的具体位置。
 
 - **导航**：agent 找对文件花了多久？文件之间有没有藏起来的依赖？加一条**导航指针**能不能省掉这段。_用在_ 找一份信息花了很久的时候。
 - **自动检查**：有没有哪种自动检查能抓住 agent 犯的错？lint、类型、测试、文件系统 lint。先读仓库自己的检查命令（`package.json` 的 `lint`/`check`、构建工具的脚本、CI workflow），所以"检查已经存在但没接上或者已经坏了"才是结论，重写一遍不算。仓库**完全没有护栏**（没有 pre-commit hook，也没有跑 lint/typecheck/test 的 CI job）本身就是一条 finding，不是中性默认。_用在_ agent 犯了自动检查能抓的错，或者仓库压根没有护栏的时候。
@@ -26,7 +28,32 @@ disable-model-invocation: true
 - **空转指令**：steering 文件里有没有不改变 agent 行为的指令。_用在_ steering 文件又长又难维护的时候。
 - **信息获取**：有没有办法让 agent 拿到更多信息。tee 开发服务器日志、给第三方服务只读权限。_用在_ 关键信息拿不到的时候。
 
-4. 按严重度排序，把候选摆给用户。每条写清：会话里的证据、改哪个文件、改完能抓住什么。
+5. 会话长、或这次改动风险高、或用户要严格时，把上一步拆成三个互不知情的只读视角并行跑。每个视角一次 `subagent` run，`agent: "reviewer"`，`background: true`，`task` 自包含（子会话看不到本对话）：
+
+- **判断**：这次哪些决定是错的，哪该权衡的地方没权衡。
+- **工具**：哪些工具调用是白花钱，哪个 CLI 或 MCP 特别费 token，缺了哪个信息源。
+- **发散**：还有哪些做法没试，哪些方案被过早否掉，哪些该问没问。
+
+三个视角各自回报后，同一件事的不同说法合成一条，冲突的写进结论。会话短就自己一遍过完，不派。
+
+6. 每条落进三个桶之一，一次分完：
+
+- **Accepted**：这次就要改。
+- **Rejected**：不成立或缺上下文，每条一句原因。
+- **Backlog**：成立但现在不做。
+
+凡是能靠 lint、脚本、元数据标记或运行时检查更可靠地挡住的事，从 Accepted 移进 Backlog，并写明检查长什么样。判据见「编码标准」：默认造检查，不写规则。
+
+Accepted 里按严重度排序，每条写清：会话里的证据、改哪个文件、改完能抓住什么。落点按体量分流：
+
+- 一行以内的改动（补一条 bullet、收紧一句、修一个过期事实）：父会话直接改。
+- 结构性改动（新的一节、新的对照表、超过十行）：交给 `skill-creator` 走它的 draft / test / iterate 环。
+- 只有「该触发时没触发」的 skill：交给 `skill-creator` 走 description 优化环。
+- 要新建 skill：同样交给 `skill-creator`，不要在对话里临时发明一个形状。
+
+7. 应用前过门禁。把三个桶完整摆出来，等用户明确挑子集再动手改 skill：skill 的改动影响以后每一个 agent。Backlog 里那些不依赖用户挑的事可以直接落地。
+
+8. 收尾，不带前言：改了的 skill 一条一行；新建的 skill（很少）；落进 Backlog 的；Rejected 的每条一句原因。
 
 ## 参考
 
@@ -49,3 +76,5 @@ review 阶段的 agent 上下文压力最小，它拿到的是 diff，不用探�
 ## Attribution
 
 Adapted from the `retro` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License. Pi 适配：中文默认、会话记录路径、`.pi/` 路径约定、review 阶段由 `/skill:review` 承担、去掉 Claude 专用 tool 名与 `agents/openai.yaml`。
+
+第 3 步的跳过条件、第 5 步的三视角、第 6 步的三桶与落点分流搬自 pstack 的 `reflect` skill（https://github.com/cursor/plugins，MIT），按本仓改写成 `subagent` profile 与 `skill-creator`。

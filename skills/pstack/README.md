@@ -1,8 +1,8 @@
 # pstack 进口组
 
-来源：[`cursor/plugins`](https://github.com/cursor/plugins) 的 `harness/pstack`，插件版本 `0.15.29`，commit [`88d4751`](https://github.com/cursor/plugins/commit/88d47514b82e7c44f00f2b2a72ff6dd12158038c)，2026-10-20 vendored。
+来源：[`cursor/plugins`](https://github.com/cursor/plugins) 的 `harness/pstack`，插件版本 `0.15.30`，commit [`eb4db2b`](https://github.com/cursor/plugins/commit/eb4db2b55b2b7dec3d9282754cddf0a56bf4ff10)，2026-10-22 vendored。
 
-方案与逐条适配见 [`.pi/plans/pi-kit/specs/2026-10-20-pstack-adoption-design.md`](../../.pi/plans/pi-kit/specs/2026-10-20-pstack-adoption-design.md)。2026-10-21 的适配更新（`subagent`、C′）见 [`.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md`](../../.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md)。
+逐条适配见下表。升级判据不是上游文件本身，是 [`prompts/sync-pstack-skills.md`](../../prompts/sync-pstack-skills.md) 的「内核清单」：内核必须在本仓有落点，harness 绑定不进口。2026-10-21 的适配更新（`subagent`、C′）见 [`.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md`](../../.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md)。
 
 ## 包含什么
 
@@ -21,6 +21,9 @@
 | `arena/` | 改过一次：候选写 `/tmp` 或 patch，去 worktree 与 per-model runners |
 | `create-verification-skill/` | 改过两次：`.pi/skills/verify-<app>/`；drive 先找仓库已有 harness，再用 pi 工具；references 一并搬入；生成物不加 `disable-model-invocation`，生成后要求 `/reload` |
 | `maintain-verification-skill/` | 改过一次：源波改 `subagent explore`，4 个一波；PR 按 remote 选 `gh` / `glab` |
+| `ketchup/` | 改过一次：去 `/bro` 与 `/visualize` 依赖，对话里的图改指 `/show-me`，通知与 subagent 结果不算用户消息 |
+| `typescript-best-practices/` | 改过一次：去 `paths: ["**/*.ts"]`（pi 没有按路径自动挂载），原则引用改本地写法；`references/patterns.md` 除首行外逐字进口 |
+| `sharpen/` | 正文未改，只译成中文 |
 
 入口 `/poteto` 不在这里，是 [`prompts/poteto.md`](../../prompts/poteto.md)。
 
@@ -34,7 +37,7 @@
 
    ```bash
    git clone --filter=blob:none --sparse https://github.com/cursor/plugins /tmp/cursor-plugins
-   git -C /tmp/cursor-plugins checkout 88d47514b82e7c44f00f2b2a72ff6dd12158038c
+   git -C /tmp/cursor-plugins checkout eb4db2b55b2b7dec3d9282754cddf0a56bf4ff10
    git -C /tmp/cursor-plugins sparse-checkout set harness/pstack/claude-code/skills
    ```
 
@@ -44,7 +47,7 @@
 ## 删掉整组
 
 ```bash
-# 1. 去掉 skills/skills.txt 里本组十三行
+# 1. 去掉 skills/skills.txt 里本组十六行
 # 2. 重建链接，清掉 me-skills 中不再被引用的条目
 ./skills/migrate.sh import
 # 3. 删源码与入口

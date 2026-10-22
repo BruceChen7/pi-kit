@@ -49,8 +49,8 @@ to-spec|local|skills/to-spec
 to-tickets|local|skills/to-tickets
 # https://github.com/mattpocock/skills (v1.2.0+)
 writing-for-agents|local|skills/writing-for-agents
-# pstack 进口组（cursor/plugins harness/pstack v0.15.29 @ 88d4751，vendored 2026-10-20），只手动触发
-# 方案与逐条适配见 .pi/plans/pi-kit/specs/2026-10-20-pstack-adoption-design.md
+# pstack 进口组（cursor/plugins harness/pstack v0.15.30 @ eb4db2b，vendored 2026-10-22），只手动触发
+# 逐条适配与内核清单见 skills/pstack/README.md、prompts/sync-pstack-skills.md
 principles|local|skills/pstack/principles
 blast-radius|local|skills/pstack/blast-radius
 correct|local|skills/pstack/correct
@@ -64,8 +64,9 @@ swarm|local|skills/pstack/swarm
 arena|local|skills/pstack/arena
 create-verification-skill|local|skills/pstack/create-verification-skill
 maintain-verification-skill|local|skills/pstack/maintain-verification-skill
-# https://github.com/mattpocock/skills (v1.0.0+)
-resolving-merge-conflicts|local|skills/resolving-merge-conflicts
+ketchup|local|skills/pstack/ketchup
+typescript-best-practices|local|skills/pstack/typescript-best-practices
+sharpen|local|skills/pstack/sharpen
 # https://github.com/mattpocock/skills (v1.1.0+)
 wayfinder|local|skills/wayfinder
 opencli-usage|local|skills/opencli-usage

@@ -45,6 +45,9 @@ route 跟着任务走。todo 第一项写的类型和当前动作对不上时，
 - 写文档、RFC、README、runbook → `/skill:technical-writing` 定结构与句式，再过 `/skill:unslop`。
 - 写回复、PR/MR 描述、commit message → `/skill:unslop`。
 - 任务跨多个阶段，或用户要走开一段时间 → `/skill:show-me-your-work` 留决策轨。
+- 长跑、后台任务或 squad 结束，用户回来要交差 → `/skill:ketchup`：只列他必须决定的，每条带链接、证据与风险。
+- 改 `.ts` / `.tsx`，或 review 里出现 `as`、`any`、`!`、可选字段堆砌 → `/skill:typescript-best-practices`：先用类型把坏状态挡住，再写实现。
+- 这件活看上去只是把现成结论再加工一遍 → `/skill:sharpen`：先问这个领域专业的人会怎么做，再重写任务。
 - 同一个纠正出现第二次 → `/skill:correct`，把错改成不可能再犯。
 - 读多写少或要独立评审 → `subagent reviewer` / `explore`；写任务按文件分区 → `subagent general`。
 

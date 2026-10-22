@@ -113,6 +113,9 @@ describe("pstack skill group", () => {
     "arena",
     "create-verification-skill",
     "maintain-verification-skill",
+    "ketchup",
+    "typescript-best-practices",
+    "sharpen",
   ];
 
   it("scans the vendored group, not an empty set", () => {

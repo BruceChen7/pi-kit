@@ -19,6 +19,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createLogger, resolveMinLogLevel } from "../shared/logger.ts";
+import { uiHostProfile } from "../shared/rich-ui.ts";
 import {
   getGlobalSettingsPath,
   loadGlobalSettings,
@@ -219,7 +220,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       return;
     }
     pushProgress(now);
-    setFooterStatus(statusLine(state, now));
     refreshWidget();
   };
 
@@ -234,16 +234,28 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     (ticker as { unref?: () => void }).unref?.();
   };
 
+  /**
+   * pi-web 只展开一次：widget 挂载时必须是 2..3 行，超过就只剩一个 chip。
+   * 上限从宿主档案来，TUI 没有这条限制（返回 undefined = 全列）。
+   */
+  const widgetRowLimit = (ctx: ExtensionToolContext): number | undefined => {
+    const window = uiHostProfile(ctx).widgets.autoExpandedLines;
+    return window ? Math.max(0, window.max - 1) : undefined;
+  };
+
+  /** widget 与 footer 状态总是同一时刻、同一份状态，避免两处各写一套。 */
   const refreshWidget = (): void => {
     const ctx = lastContext;
+    const now = Date.now();
     if (ctx) {
-      const lines = renderWidgetLines(state, Date.now());
+      const lines = renderWidgetLines(state, now, widgetRowLimit(ctx));
       try {
         ctx.ui.setWidget(WIDGET_KEY, lines.length > 0 ? lines : undefined);
       } catch {
         // widget 在非交互宿主里可能不可用，不影响运行本身。
       }
     }
+    setFooterStatus(statusLine(state, now));
     syncTicker();
   };
 

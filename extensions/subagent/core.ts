@@ -285,24 +285,40 @@ export function statusLine(
 ): string | undefined {
   const live = activeRuns(state);
   if (live.length === 0) return undefined;
-  if (live.length === 1) return progressLine(live[0], now);
+
+  if (live.length === 1) {
+    const run = live[0];
+    const elapsed = formatElapsed((run.endedAt ?? now) - run.startedAt);
+    return `subagent ${run.agent} ${elapsed}`;
+  }
 
   const running = live.filter((run) => run.status === "running").length;
-  return `subagent · ${running} running, ${live.length - running} queued`;
+  return `subagent ${running} running, ${live.length - running} queued`;
 }
 
-/** widget 行。没有任何活跃 run 时返回空数组，让宿主把 widget 撤掉。 */
+/**
+ * widget 行。没有任何活跃 run 时返回空数组，让宿主把 widget 撤掉。
+ *
+ * `maxRows` 是宿主能自动展开的行数上限（不含 header）：pi-web 只在 widget
+ * 由空变非空那一刻展开 2..3 行的 widget，超过就永远只剩一个 chip。不传
+ * （TUI）就全列。
+ */
 export function renderWidgetLines(
   state: SubagentState,
   now: number = Date.now(),
+  maxRows?: number,
 ): string[] {
   const live = activeRuns(state);
   if (live.length === 0) return [];
 
   const running = live.filter((run) => run.status === "running").length;
-  const header = `Subagents · ${running} running, ${live.length - running} queued`;
+  const shown =
+    maxRows === undefined ? live : live.slice(0, Math.max(0, maxRows));
+  const hidden = live.length - shown.length;
+  const more = hidden > 0 ? ` · +${hidden} more` : "";
+  const header = `Subagents · ${running} running, ${live.length - running} queued${more}`;
 
-  const rows = live.map((run) => {
+  const rows = shown.map((run) => {
     const glyph = STATUS_GLYPH[run.status];
     return `  ${glyph} ${progressLine(run, now) ?? `${run.agent} ${run.runId}`}`;
   });

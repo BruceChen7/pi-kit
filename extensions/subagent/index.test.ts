@@ -25,6 +25,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 
 const { createAgentSession } = await import("@earendil-works/pi-coding-agent");
 const { registerSubagent } = await import("./index.js");
+const { PI_WEB_HOST_SYMBOL } = await import("../shared/ui-host.ts");
 
 type FakeSession = {
   messages: unknown[];
@@ -243,6 +244,56 @@ describe("progress while a foreground child is silent", () => {
 
     expect(onUpdate).toHaveBeenCalled();
     runtime.stopRun(runtime.readState().runs[0].runId);
+  });
+});
+
+describe("widget shape per host", () => {
+  const withPiWebMarker = () => {
+    const global = globalThis as Record<PropertyKey, unknown>;
+    global[PI_WEB_HOST_SYMBOL] = { version: 1 };
+    return () => {
+      delete global[PI_WEB_HOST_SYMBOL];
+    };
+  };
+
+  const admitThree = async () => {
+    vi.mocked(createAgentSession).mockImplementation((async () => ({
+      session: makeSession("never", { hang: true }),
+    })) as never);
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+    const ui = { setWidget: vi.fn(), setStatus: vi.fn() };
+    const ctx = { cwd: "/repo", mode: "rpc", hasUI: true, ui };
+    for (const id of ["a1", "a2", "a3"]) {
+      await call(tools[0], { action: "run", agent: "explore", task: id }, ctx);
+    }
+    const widgets = ui.setWidget.mock.calls.filter(
+      ([key]) => key === "subagent",
+    );
+    return { ui, widget: widgets.at(-1)?.[1] as string[] | undefined };
+  };
+
+  it("fits the widget into pi-web's 3-line auto-expand window", async () => {
+    const clearMarker = withPiWebMarker();
+    try {
+      const { ui, widget } = await admitThree();
+
+      expect(Array.isArray(widget)).toBe(true);
+      expect(widget?.length).toBeLessThanOrEqual(3);
+      expect(widget?.[0]).toContain("+1 more");
+      const status = ui.setStatus.mock.calls.at(-1)?.[1] as string;
+      expect(status).toBe("subagent 3 running, 0 queued");
+      expect(status.length).toBeLessThanOrEqual(40);
+    } finally {
+      clearMarker();
+    }
+  });
+
+  it("lists every run when the host has no line limit", async () => {
+    const { widget } = await admitThree();
+
+    expect(widget).toHaveLength(4);
+    expect(widget?.[0]).not.toContain("more");
   });
 });
 

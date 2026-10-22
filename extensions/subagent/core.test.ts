@@ -234,6 +234,22 @@ describe("renderWidgetLines", () => {
     expect(lines[0]).toBe("Subagents · 4 running, 1 queued");
     expect(lines[5]).toContain("· explore a5");
   });
+
+  it("caps the rows a host will auto-expand and folds the rest into the header", () => {
+    const state = admitMany(["a1", "a2", "a3", "a4"]);
+    const lines = renderWidgetLines(state, 2000, 2);
+
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toBe("Subagents · 4 running, 0 queued · +2 more");
+    expect(lines[1]).toContain("explore a1");
+    expect(lines[2]).toContain("explore a2");
+  });
+
+  it("lists every run when the host has no line limit", () => {
+    const state = admitMany(["a1", "a2", "a3", "a4"]);
+
+    expect(renderWidgetLines(state, 2000)).toHaveLength(5);
+  });
 });
 
 describe("progressLine", () => {
@@ -275,18 +291,25 @@ describe("progressLine", () => {
 });
 
 describe("statusLine", () => {
-  it("uses the single run's progress line", () => {
+  it("keeps the single run short: agent and elapsed only", () => {
     const state = admit(createState(), request("a1"), 4, 1000).state;
 
-    expect(statusLine(state, 3000)).toBe(
-      "explore a1 · running 2s · no tool yet",
-    );
+    expect(statusLine(state, 3000)).toBe("subagent explore 2s");
+  });
+
+  it("stays short even when the child has been quiet for a while", () => {
+    let state = admit(createState(), request("a1"), 4, 1000).state;
+    state = setStep(state, "a1", "grep", 2000);
+
+    const text = statusLine(state, 200_000);
+    expect(text).toBe("subagent explore 3m19s");
+    expect(text?.length).toBeLessThanOrEqual(40);
   });
 
   it("counts runs when several are active", () => {
     const state = admitMany(["a1", "a2"]);
 
-    expect(statusLine(state, 3000)).toBe("subagent · 2 running, 0 queued");
+    expect(statusLine(state, 3000)).toBe("subagent 2 running, 0 queued");
   });
 
   it("returns nothing when no run is active", () => {

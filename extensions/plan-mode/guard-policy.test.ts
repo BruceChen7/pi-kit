@@ -41,6 +41,13 @@ describe("plan-mode guard policy", () => {
     });
   });
 
+  it("names the read tool in the block reason so a bash read is not mistaken for one", () => {
+    const result = decideToolBlock(input());
+    expect(result?.reason).toContain("Use the read tool");
+    expect(result?.reason).toContain("bash");
+    expect(result?.reason).toContain("src/example.ts");
+  });
+
   it("allows write targets that were read first", () => {
     expect(
       decideToolBlock(input({ targets: [target({ wasRead: true })] })),

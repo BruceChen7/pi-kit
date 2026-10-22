@@ -28,6 +28,9 @@ describe("plan-mode extension: commands and prompt basics", () => {
     expect(harness.api.setActiveTools).toHaveBeenLastCalledWith(
       expect.arrayContaining([ACT_MODE_TODO_TOOL]),
     );
+    expect(harness.api.setActiveTools).toHaveBeenLastCalledWith(
+      expect.not.arrayContaining([PLAN_MODE_TODO_TOOL]),
+    );
   });
 
   it("uses plan_mode_todo in plan mode", async () => {
@@ -40,6 +43,9 @@ describe("plan-mode extension: commands and prompt basics", () => {
     expect(result.systemPrompt).not.toContain("Use act_mode_todo");
     expect(harness.api.setActiveTools).toHaveBeenLastCalledWith(
       expect.arrayContaining([PLAN_MODE_TODO_TOOL]),
+    );
+    expect(harness.api.setActiveTools).toHaveBeenLastCalledWith(
+      expect.not.arrayContaining([ACT_MODE_TODO_TOOL]),
     );
   });
 

@@ -281,6 +281,20 @@ const writeEvidence = (directory, files) => {
   }
 };
 
+/**
+ * Two runs of the same plugin and mode can land in the same second, which used
+ * to make the second run silently overwrite the first run's evidence. Suffix
+ * the directory instead so every run keeps its own proof.
+ */
+export const uniqueEvidenceDir = (directory, exists = fs.existsSync) => {
+  if (!exists(directory)) return directory;
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${directory}-${index}`;
+    if (!exists(candidate)) return candidate;
+  }
+  return `${directory}-${Date.now()}`;
+};
+
 const buildResult = (options, repoRoot, pluginDir, extra) => ({
   mode: options.mode,
   plugin: options.plugin,
@@ -288,10 +302,12 @@ const buildResult = (options, repoRoot, pluginDir, extra) => ({
   evidenceDir:
     options.out.length > 0
       ? path.resolve(options.out)
-      : path.join(
-          repoRoot,
-          EVIDENCE_ROOT,
-          `${stamp()}-${options.plugin}-${options.mode}`,
+      : uniqueEvidenceDir(
+          path.join(
+            repoRoot,
+            EVIDENCE_ROOT,
+            `${stamp()}-${options.plugin}-${options.mode}`,
+          ),
         ),
   ...extra,
 });

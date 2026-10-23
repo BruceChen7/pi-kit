@@ -14,6 +14,7 @@ export const GLOBAL_EXTENSION_DIR = path.join(
   "extensions",
 );
 export const GLOBAL_AUTOLOAD_BOOTSTRAP_ENTRIES = new Set([
+  "auto-trust-work",
   "plugin-toggle",
   "shared",
   "cc-switch",

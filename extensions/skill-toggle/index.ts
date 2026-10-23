@@ -1107,9 +1107,9 @@ export class SkillTogglePicker {
   }
 }
 
+// Deliberately no session_start handler: scanning skill dirs and pruning stale
+// links costs ~50ms per launch, and only the slash commands need the result.
 export default function skillToggleExtension(pi: ExtensionAPI): void {
-  let state: ToggleState | null = null;
-
   log.debug("extension initialized", { pid: process.pid });
 
   const refreshState = (
@@ -1117,9 +1117,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
     skills: Skill[],
   ): ToggleState => {
     pruneSettingsFiles(ctx.cwd, skills);
-    const nextState = loadToggleState(ctx.cwd);
-    state = nextState;
-    return nextState;
+    return loadToggleState(ctx.cwd);
   };
 
   pi.registerCommand("toggle-skill", {
@@ -1185,8 +1183,7 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
     description: "Show currently disabled skills",
     handler: async (_args: string, ctx: ExtensionContext) => {
       const skills = loadSkills(ctx.cwd);
-      state = loadToggleState(ctx.cwd);
-      const activeState = state;
+      const activeState = loadToggleState(ctx.cwd);
       ctx.ui.notify(
         formatDisabledSkillsMessage(activeState.enabledSkills, skills),
         "info",
@@ -1218,10 +1215,5 @@ export default function skillToggleExtension(pi: ExtensionAPI): void {
         : "Nothing to clean up";
       ctx.ui.notify(`${summary}. Run /reload to apply.`, "info");
     },
-  });
-
-  pi.on("session_start", (_event, ctx) => {
-    const skills = loadSkills(ctx.cwd);
-    refreshState(ctx, skills);
   });
 }

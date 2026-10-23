@@ -7,7 +7,6 @@ import {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { createWebSearchFallbackRequester } from "../shared/web-search-fallback.ts";
-import { executeCodexWebSearch } from "./codex.js";
 import {
   MAX_ALLOWED_SOURCES,
   MAX_QUERY_BUDGET,
@@ -112,6 +111,8 @@ export default function codexWebSearchExtension(pi: ExtensionAPI) {
       if (signal) options.signal = signal;
       if (onUpdate) options.onUpdate = onUpdate;
 
+      // codex.ts is 59KB of search pipeline that only a real search needs.
+      const { executeCodexWebSearch } = await import("./codex.js");
       return executeCodexWebSearch(params, options);
     },
     renderCall(args, theme) {

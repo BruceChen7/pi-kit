@@ -694,17 +694,17 @@ describe("legacy settings cleanup", () => {
   });
 });
 
-describe("input interception", () => {
-  it("does not register input interception", async () => {
+describe("startup cost", () => {
+  // Skill scanning in session_start cost ~50ms per launch while only the slash
+  // commands consume the result.
+  it("registers no session_start hook and no input interception", async () => {
     const cwd = createTempDir("pi-kit-skill-toggle-cwd-");
     const skillPath = path.join(cwd, ".agents", "skills", "alpha", "SKILL.md");
     writeGlobalSkillToggleEntry(cwd, {
       managedSkills: ["alpha"],
     });
     const skillToggle = await importSkillToggle();
-    const sessionStartHandlers: Array<
-      (event: unknown, ctx: unknown) => unknown
-    > = [];
+    const registeredHooks: string[] = [];
     const pi = {
       getCommands: vi.fn(() => [
         {
@@ -715,27 +715,14 @@ describe("input interception", () => {
         },
       ]),
       registerCommand: vi.fn(),
-      on: vi.fn(
-        (name: string, handler: (event: unknown, ctx: unknown) => unknown) => {
-          if (name === "session_start") sessionStartHandlers.push(handler);
-        },
-      ),
-    };
-    const ctx = {
-      cwd,
-      hasUI: false,
-      ui: {
-        notify: vi.fn(),
-        setStatus: vi.fn(),
-      },
+      on: vi.fn((name: string) => {
+        registeredHooks.push(name);
+      }),
     };
 
     skillToggle.default(pi as never);
-    expect(sessionStartHandlers).toHaveLength(1);
-    const handleSessionStart = sessionStartHandlers[0];
 
-    await handleSessionStart({}, ctx);
-
+    expect(registeredHooks).not.toContain("session_start");
     expect(pi.on).not.toHaveBeenCalledWith("input", expect.any(Function));
     expect(pi.getCommands).not.toHaveBeenCalled();
   });

@@ -191,13 +191,18 @@ export class PlanModeController {
   private todoReconcileReminderPending: PendingTodoReconcileReminder | null =
     null;
   // Session-scoped values, resolved in restore() (no IO at construction).
-  private htmlArtifactDirs: string[] = [];
+  // HTML artifact dirs need a `git rev-parse` (repo slug), so they resolve on
+  // first use instead of on session_start; only the write guard and the mode
+  // prompt read them, both after startup.
+  private sessionCwd: string | null = null;
+  private htmlArtifactDirsCache: string[] | null = null;
   // pi-web 只在 widget 挂载时判定默认展开，所以“首次出现”要先发短帧（见 widget-plan.ts）。
   private todoWidgetPresent = false;
   constructor(private readonly pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext): void {
-    this.htmlArtifactDirs = resolveHtmlArtifactDirs(ctx.cwd);
+    this.sessionCwd = ctx.cwd;
+    this.htmlArtifactDirsCache = null;
     this.config = loadPlanModeConfig(ctx.cwd);
     const entries = getSessionStateEntries(ctx);
     this.state.restore(latestSnapshot(entries), this.config.defaultMode);
@@ -209,6 +214,12 @@ export class PlanModeController {
     this.policyReminderSentFor = null;
     this.todoReconcileReminderPending = null;
     this.todoWidgetPresent = false;
+  }
+
+  private get htmlArtifactDirs(): string[] {
+    if (this.sessionCwd === null) return [];
+    this.htmlArtifactDirsCache ??= resolveHtmlArtifactDirs(this.sessionCwd);
+    return this.htmlArtifactDirsCache;
   }
 
   persist(): void {

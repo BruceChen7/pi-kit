@@ -89,3 +89,5 @@ research|local|skills/research
 retro|local|skills/retro
 # learn 教学系统（probe→plan→teach + quiz/笔记/图表）
 tutor|local|skills/tutor
+# pstack poteto 入口的步骤清单（被 prompts/poteto.md §1 取用）
+poteto-playbooks|local|skills/poteto-playbooks

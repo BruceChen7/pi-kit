@@ -38,7 +38,7 @@ pstack 值钱的是一套判断，不是目录结构。左列是内核，右列�
 | 做深不做大：先问专业做法与原始材料，再重写任务 | `sharpen/` | 已 vendor，正文未改 |
 | 复盘落在环境上：三镜头、三桶、逐条落点 | `reflect/`（未进口） | 已并入 `skills/retro/SKILL.md`，不单独进口 |
 
-**不 vendor** 的是上游 harness，不是内核：Task 参数名、`pstack-models` 规则与 model slug、`AskUserQuestion`、`TodoWrite`、`.cursor` 路径、playbook 引用、Claude Code adapter 段、`poteto-mode`（本地入口是 `prompts/poteto.md`）、云端隔离与 worktree 并发写。
+**不 vendor** 的是上游 harness，不是内核：Task 参数名、`pstack-models` 规则与 model slug、`AskUserQuestion`、`TodoWrite`、`.cursor` 路径、playbook 内的 harness 段（playbook 内容本身已进口到 `skills/poteto-playbooks/`，逐文件判定见 `scripts/poteto-kernel-map.json`）、Claude Code adapter 段、`poteto-mode`（本地入口是 `prompts/poteto.md`）、云端隔离与 worktree 并发写。
 
 **判据**：上游差异只有落在「已 vendor / 已本地化」的行上才算 material，进第 4 步分级；落在不 vendor 项上的一行带过。表外冒出新内核时，报告里写三行——是什么、上游怎么用、本地缺什么落点——然后问人「要不要 vendor 进来」，不自动进口。
 
@@ -134,7 +134,7 @@ done
 2. 读上游全文，标 `[UPSTREAM]`：新增的结构单元与规则。
 3. 只搬不冲突的 `[UPSTREAM]`。冲突以 `[PI]` 为准，并写进报告。
 
-不搬「内核清单」标为不 vendor 的 harness 项（Task 参数名、`pstack-models`、model slug、`AskUserQuestion`、`TodoWrite`、`.cursor` 路径、playbook、adapter 段、`poteto-mode`）。写委派改写成 `subagent` profile。
+不搬「内核清单」标为不 vendor 的 harness 项（Task 参数名、`pstack-models`、model slug、`AskUserQuestion`、`TodoWrite`、`.cursor` 路径、playbook 内的 harness 段、adapter 段、`poteto-mode`）。写委派改写成 `subagent` profile。playbook 内容与不进口清单以 `scripts/poteto-kernel-map.json` 为准，先跑 `node scripts/poteto-kernel-gap.mjs --check` 再动手。
 
 叶子按第 2 步的三类改写搬正文，不加 frontmatter。
 

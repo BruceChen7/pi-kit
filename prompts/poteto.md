@@ -7,7 +7,7 @@ argument-hint: "<task>"
 
 本次任务：${@:-（空）}
 
-如果任务是空的，只回一句「这次要做什么？」，然后停。否则按下面九节执行。第一件事是用 `act_mode_todo` 建清单，第一项固定写 `route: <类型>`，第二项固定写 `principles: <id>, <id>`（没有引用原则时写 `principles: none`）。
+如果任务是空的，只回一句「这次要做什么？」，然后停。否则按下面九节执行。第一件事是用 `act_mode_todo` 建清单，第一项固定写 `route: <类型>`，第二项固定写 `principles: <id>, <id>`（没有引用原则时写 `principles: none`）。这两项之后按 §1 看有没有对应 playbook，有就先取它，再写任务专属待办。
 
 ## 0. 程序文件
 
@@ -21,12 +21,14 @@ argument-hint: "<task>"
 
 | 类型 | 先做 | 再走 | 收尾 |
 |---|---|---|---|
-| 调查 | `/skill:research` 或 `/skill:wayfinder`；只读且可切分时 `/skill:herdr-squad`（要人看着）或 `subagent explore`（后台）；覆盖矩阵可 `/skill:swarm` | 给带引用的结论，不改码 | 交结论 |
+| 调查 | `/skill:research` 或 `/skill:wayfinder`；只读且可切分时 `/skill:herdr-squad`（要人看着）或 `subagent explore`（后台）；覆盖矩阵可 `/skill:swarm`；运行时症状用 `playbook: runtime-forensics`，手上已有 trace 或快照用 `playbook: trace-forensics` | 给带引用的结论，不改码 | 交结论 |
 | 修 bug | `/skill:diagnosing-bugs` 建反馈回路 | 复现 → 根因 → 最小修复 | `/skill:blast-radius` |
-| 重构 | plan 产物里先写「行为不变」的判据 | 小步改，每步验证 | `/skill:blast-radius` + `/skill:review` |
-| 新功能 | plan 或 spec，走 Plannotator | 先定数据形状再写码；方案未定时可 `/skill:arena` | 测试或验证脚本；仓库没有可跑路径时 `/skill:create-verification-skill` |
-| 性能 | 先跑基线，记下 limiter | 改一处，测一次 | `/skill:blast-radius` + `/skill:benchmark-checklist` |
+| 重构 | plan 产物里先写「行为不变」的判据，步骤走 `playbook: refactoring` | 小步改，每步验证 | `/skill:blast-radius` + `/skill:review` |
+| 新功能 | plan 或 spec，走 Plannotator，步骤走 `playbook: feature` | 先定数据形状再写码；方案未定时可 `/skill:arena` | 测试或验证脚本；仓库没有可跑路径时 `/skill:create-verification-skill` |
+| 性能 | 先跑基线，记下 limiter，步骤走 `playbook: perf-issue` | 改一处，测一次 | `/skill:blast-radius` + `/skill:benchmark-checklist` |
 | 收尾发布 | `/skill:review` 双轴 | 修 findings；高风险 diff 加 `/skill:interrogate`；注释多时 `/skill:no-comments`；`verify-*` 过期时 `/skill:maintain-verification-skill` | 重跑测试 → `/skill:unslop` + conventional commit |
+
+长跑无人值守用 `playbook: autonomous-run`，明确要停或要离线用 `playbook: pause-safely`。playbook 索引在 `/skill:poteto-playbooks`，按上面第 0 节的查找顺序定位；在本仓也可以直接读 `skills/poteto-playbooks/playbooks/<name>.md`。取到之后按索引里的「怎么用」办。
 
 类型定不下来时，按「新功能」走：先出计划，用计划换确定性。
 
@@ -44,6 +46,7 @@ route 跟着任务走。todo 第一项写的类型和当前动作对不上时，
 - 收尾前 → 对真实产物跑一次，贴输出。不看「应该没问题」。
 - 写文档、RFC、README、runbook → `/skill:technical-writing` 定结构与句式，再过 `/skill:unslop`。
 - 写回复、PR/MR 描述、commit message → `/skill:unslop`。
+- 评审机器人或自动安全评审留了评论 → 打开 `/skill:poteto-playbooks`，按 `references/review-comment-triage.md` 分诊，每条先定修 / 驳回 / 追问，不要默认改代码。
 - 任务跨多个阶段，或用户要走开一段时间 → `/skill:show-me-your-work` 留决策轨。
 - 长跑、后台任务或 squad 结束，用户回来要交差 → `/skill:ketchup`：只列他必须决定的，每条带链接、证据与风险。
 - 改 `.ts` / `.tsx`，或 review 里出现 `as`、`any`、`!`、可选字段堆砌 → `/skill:typescript-best-practices`：先用类型把坏状态挡住，再写实现。

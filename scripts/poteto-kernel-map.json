@@ -1,0 +1,230 @@
+{
+  "upstream": "cursor/plugins harness/pstack 0.15.30, skills/poteto-mode",
+  "rows": [
+    {
+      "upstream": "playbooks/investigation.md",
+      "verdict": "已有替代",
+      "tier": "n/a",
+      "landing": "skills/research/SKILL.md",
+      "note": "只读调查走 research，开放式找路走 wayfinder"
+    },
+    {
+      "upstream": "playbooks/bug-fix.md",
+      "verdict": "已有替代",
+      "tier": "n/a",
+      "landing": "skills/diagnosing-bugs/SKILL.md",
+      "note": "先建反馈回路的纪律已在本仓"
+    },
+    {
+      "upstream": "playbooks/refactoring.md",
+      "verdict": "缺",
+      "tier": "P0",
+      "landing": "skills/poteto-playbooks/playbooks/refactoring.md",
+      "note": "行为不变量与等价性证明的步骤清单本仓没有"
+    },
+    {
+      "upstream": "playbooks/feature.md",
+      "verdict": "缺",
+      "tier": "P0",
+      "landing": "skills/poteto-playbooks/playbooks/feature.md",
+      "note": "throughput checkpoint 四格与数据形状先行本仓没有"
+    },
+    {
+      "upstream": "playbooks/perf-issue.md",
+      "verdict": "缺",
+      "tier": "P0",
+      "landing": "skills/poteto-playbooks/playbooks/perf-issue.md",
+      "note": "benchmark-checklist 给了判据，没给步骤顺序"
+    },
+    {
+      "upstream": "playbooks/hillclimb.md",
+      "verdict": "缺",
+      "tier": "P2",
+      "landing": null,
+      "note": "持续爬指标，本仓暂无宿主任务，先不进口"
+    },
+    {
+      "upstream": "playbooks/runtime-forensics.md",
+      "verdict": "缺",
+      "tier": "P0",
+      "landing": "skills/poteto-playbooks/playbooks/runtime-forensics.md",
+      "note": "交付诊断不交付修法，本仓无对应"
+    },
+    {
+      "upstream": "playbooks/trace-forensics.md",
+      "verdict": "缺",
+      "tier": "P0",
+      "landing": "skills/poteto-playbooks/playbooks/trace-forensics.md",
+      "note": "已抓到的 profile 怎么读，本仓无对应"
+    },
+    {
+      "upstream": "playbooks/prototype.md",
+      "verdict": "已有替代",
+      "tier": "n/a",
+      "landing": "skills/prototype/SKILL.md",
+      "note": "一次性 HTML 原型本仓已有"
+    },
+    {
+      "upstream": "playbooks/visual-parity.md",
+      "verdict": "不搬",
+      "tier": "n/a",
+      "landing": null,
+      "note": "依赖像素 diff harness 与截图基础设施，本仓没有"
+    },
+    {
+      "upstream": "playbooks/authoring-a-skill.md",
+      "verdict": "已有替代",
+      "tier": "n/a",
+      "landing": null,
+      "note": "本仓靠 skills.txt 声明、装到 ~/.agents/me-skills 的 skill-creator，路径不入库",
+      "landingKind": "env"
+    },
+    {
+      "upstream": "playbooks/eval.md",
+      "verdict": "不搬",
+      "tier": "n/a",
+      "landing": null,
+      "note": "绑 Cursor eval 与 subagent_type，无本地宿主"
+    },
+    {
+      "upstream": "playbooks/babysit.md",
+      "verdict": "缺",
+      "tier": "P1",
+      "landing": null,
+      "note": "PR 轮询与评审机器人分诊，需先改写才能进口"
+    },
+    {
+      "upstream": "playbooks/shipping.md",
+      "verdict": "缺",
+      "tier": "P1",
+      "landing": null,
+      "note": "绿了不等于安全的独立逐 PR 判定，需改写"
+    },
+    {
+      "upstream": "playbooks/autonomous-run.md",
+      "verdict": "缺",
+      "tier": "P0",
+      "landing": "skills/poteto-playbooks/playbooks/autonomous-run.md",
+      "note": "退出条件与每轮最小改动本仓没有；唤醒机制改 scheduled-tasks"
+    },
+    {
+      "upstream": "playbooks/orchestrate.md",
+      "verdict": "不搬",
+      "tier": "n/a",
+      "landing": null,
+      "note": "112 行，依赖 bun 编排 store 与长期项目态，本仓无宿主"
+    },
+    {
+      "upstream": "playbooks/autopilot-full.md",
+      "verdict": "不搬",
+      "tier": "n/a",
+      "landing": null,
+      "note": "一 PR 一 owner 全自动到合并，依赖云隔离与 fleet"
+    },
+    {
+      "upstream": "playbooks/autopilot-stack.md",
+      "verdict": "不搬",
+      "tier": "n/a",
+      "landing": null,
+      "note": "同上，且要求栈式交付与逐层独立验证"
+    },
+    {
+      "upstream": "playbooks/session-pickup.md",
+      "verdict": "已有替代",
+      "tier": "n/a",
+      "landing": "skills/handoff/SKILL.md",
+      "note": "接手别人在飞的活，本仓已有 handoff"
+    },
+    {
+      "upstream": "playbooks/pause-safely.md",
+      "verdict": "缺",
+      "tier": "P0",
+      "landing": "skills/poteto-playbooks/playbooks/pause-safely.md",
+      "note": "停机点与 resume note 的判据本仓没有"
+    },
+    {
+      "upstream": "playbooks/multi-phase-plan.md",
+      "verdict": "缺",
+      "tier": "P1",
+      "landing": null,
+      "note": "155 行且四处撞禁用词，需整篇改写"
+    },
+    {
+      "upstream": "playbooks/worktree-cleanup.md",
+      "verdict": "不搬",
+      "tier": "n/a",
+      "landing": null,
+      "note": "撞入口 §9 的 worktree 不做"
+    },
+    {
+      "upstream": "playbooks/opening-a-pr.md",
+      "verdict": "已有替代",
+      "tier": "n/a",
+      "landing": "skills/branch-commit-push/SKILL.md",
+      "note": "开分支到推送的流程本仓已有"
+    },
+    {
+      "upstream": "references/bugbot-triage.md",
+      "verdict": "缺",
+      "tier": "P0",
+      "landing": "skills/poteto-playbooks/references/review-comment-triage.md",
+      "note": "修 / 驳回 / 追问三段口径本仓没有；改名去掉上游产品名"
+    },
+    {
+      "upstream": "scripts/bootstrap.ts",
+      "verdict": "不搬",
+      "tier": "n/a",
+      "landing": null,
+      "note": "bun 依赖安装器，harness 绑定"
+    },
+    {
+      "upstream": "scripts/check-plan.mjs",
+      "verdict": "不搬",
+      "tier": "n/a",
+      "landing": null,
+      "note": "PR 正文三格验证契约，判据已由 benchmark-checklist 与 review 覆盖"
+    },
+    {
+      "upstream": "scripts/orch/",
+      "verdict": "不搬",
+      "tier": "n/a",
+      "landing": null,
+      "note": "bun 多代理编排与状态存储"
+    },
+    {
+      "upstream": "scripts/watch-pr/",
+      "verdict": "不搬",
+      "tier": "n/a",
+      "landing": null,
+      "note": "轮询上游评审机器人，含禁用词"
+    },
+    {
+      "upstream": "scripts/worktree-audit.sh",
+      "verdict": "不搬",
+      "tier": "n/a",
+      "landing": null,
+      "note": "worktree 清理，撞入口 §9"
+    },
+    {
+      "upstream": "SKILL.md:principles",
+      "verdict": "已有替代",
+      "tier": "n/a",
+      "landing": "skills/pstack/principles/SKILL.md",
+      "note": "24 条原则已逐字进口，内联段不需要"
+    },
+    {
+      "upstream": "SKILL.md:subagents",
+      "verdict": "缺",
+      "tier": "P1",
+      "landing": null,
+      "note": "per-role 模型档位与 fresh vs resume 判据，需落 .pi/agents 说明"
+    },
+    {
+      "upstream": "SKILL.md:reply",
+      "verdict": "缺",
+      "tier": "P2",
+      "landing": null,
+      "note": "短不等于省内容、冒号不作中句连接词两条护栏"
+    }
+  ]
+}

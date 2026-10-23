@@ -7,7 +7,7 @@ export type RepoDoc = { path: string; content: string };
 
 export type Finding = { path: string; rule: string; detail: string };
 
-const FORBIDDEN_MARKERS = [
+export const FORBIDDEN_MARKERS: readonly string[] = [
   ".cursor/",
   ".mdc",
   "pstack-models",

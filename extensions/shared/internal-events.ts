@@ -2,6 +2,8 @@ export const NOTIFY_IDLE_CHANNEL = "pi-kit:notify:idle";
 export const SAFE_DELETE_APPROVAL_CHANNEL = "pi-kit:safe-delete:approval";
 export const PLANNOTATOR_PENDING_REVIEW_CHANNEL =
   "pi-kit:plannotator-auto:pending-review";
+export const PLANNOTATOR_REVIEW_VERDICT_CHANNEL =
+  "pi-kit:plannotator-auto:review-verdict";
 
 export type HandledState = {
   isHandled: () => boolean;
@@ -42,6 +44,22 @@ export type PiKitSafeDeleteApprovalEvent = {
   fullContextLines: string[];
   localDecision?: Promise<boolean>;
   attachRemoteDecision: (decision: Promise<boolean>) => void;
+  ctx: unknown;
+};
+
+/**
+ * A decided manual review (picker / annotate-latest), broadcast so approval
+ * state can follow the reviewer's verdict without the agent re-submitting.
+ * Only definite verdicts are broadcast: no verdict → no state transition.
+ */
+export type PiKitPlannotatorReviewVerdictEvent = {
+  type: "plannotator-auto.review-verdict";
+  requestId: string;
+  createdAt: number;
+  cwd: string;
+  /** Repo-relative path with `/` separators, the shape plan-mode stores. */
+  path: string;
+  approved: boolean;
   ctx: unknown;
 };
 

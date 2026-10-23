@@ -194,7 +194,7 @@ const annotateLatestReviewDocument = async (
         ctx,
         latestDocument.absolutePath,
       );
-      applyManualReviewVerdict(ctx, latestDocument.absolutePath, decision);
+      applyManualReviewVerdict(pi, ctx, latestDocument.absolutePath, decision);
       return;
     }
 
@@ -213,6 +213,7 @@ const annotateLatestReviewDocument = async (
       // Same state machine as the picker: an annotated / approved document
       // re-arms or settles the auto review queue for that path.
       applyManualReviewVerdict(
+        pi,
         ctx,
         latestDocument.absolutePath,
         response.result,

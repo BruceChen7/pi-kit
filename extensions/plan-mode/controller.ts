@@ -57,6 +57,7 @@ import {
   decideTodoReconcileDelivery,
   getApprovedReviewPathToQueue,
   type PendingTodoReconcileReminder,
+  parseReviewVerdictEvent,
   shouldRemindTodoReconciliation,
 } from "./controller-decisions.ts";
 import { decideToolBlock, type GuardPolicyTarget } from "./guard-policy.ts";
@@ -838,6 +839,15 @@ export class PlanModeController {
       return;
     }
 
+    this.recordApprovedPlan(ctx, pathToQueue);
+  }
+
+  /**
+   * Record an approval for `planPath`: the single state transition shared by
+   * the submit tool result and a manual review verdict. Ownership stays here;
+   * the callers only decide that this path is approved.
+   */
+  private recordApprovedPlan(ctx: ExtensionContext, planPath: string): void {
     // Todos created before this plan was approved (run not yet bound to it)
     // may not match the approved plan after review iterations — remind the
     // agent to reconcile them once before execution starts. The reminder
@@ -845,20 +855,20 @@ export class PlanModeController {
     // every later approval of the same plan.
     const remindTodoReconciliation = shouldRemindTodoReconciliation({
       activeRunPlanPath: this.state.activeRun?.planPath ?? null,
-      approvedPlanPath: pathToQueue,
+      approvedPlanPath: planPath,
       hasUnfinishedTodos: this.state.hasUnfinishedTodos(),
     });
 
-    this.state.activePlanPath = pathToQueue;
-    this.state.latestReviewArtifactPath = pathToQueue;
-    this.state.reviewApprovedPlanPaths.add(pathToQueue);
+    this.state.activePlanPath = planPath;
+    this.state.latestReviewArtifactPath = planPath;
+    this.state.reviewApprovedPlanPaths.add(planPath);
     // Approval recovers the run; allow a future unapproved episode to
     // send its single re-review reminder again.
     this.reReviewReminderSentFor = null;
-    this.state.pendingApprovedPlanContinuationPath = pathToQueue;
-    this.state.resumableApprovedPlanPath = pathToQueue;
+    this.state.pendingApprovedPlanContinuationPath = planPath;
+    this.state.resumableApprovedPlanPath = planPath;
     if (this.state.activeRun) {
-      this.state.activeRun.planPath = pathToQueue;
+      this.state.activeRun.planPath = planPath;
       this.state.activeRun.status = hasCompletedAllTodos(this.state.todos)
         ? "completed"
         : "executing";
@@ -874,11 +884,49 @@ export class PlanModeController {
       // agent already rewrote it. Latest approval wins, so a spec→plan
       // approval pair yields one reminder.
       this.todoReconcileReminderPending = {
-        planPath: pathToQueue,
+        planPath,
         todoSignature: todoListSignature(this.state.todos),
       };
     }
     this.applyMode(ctx);
+  }
+
+  /**
+   * Manual reviews (picker / annotate-latest) end in plannotator-auto, whose
+   * verdict only reached plan-mode through a later submit-tool call. Follow
+   * the verdict directly so an approved artifact stops asking for review and
+   * a rejected one stops approved execution.
+   */
+  handleReviewVerdict(raw: unknown, ctx: ExtensionContext): void {
+    const verdict = parseReviewVerdictEvent(raw);
+    if (verdict === null) {
+      return;
+    }
+    if (path.resolve(verdict.cwd) !== path.resolve(ctx.cwd)) {
+      return;
+    }
+    // Only the artifact this controller is gating: a manual review of some
+    // other document must not change the run's approval.
+    if (verdict.path !== this.state.getLatestReviewArtifactPath()) {
+      return;
+    }
+
+    if (verdict.approved) {
+      if (this.state.isApprovedReviewArtifactPath(verdict.path)) {
+        return;
+      }
+      this.recordApprovedPlan(ctx, verdict.path);
+      // The review runs between agent turns, so no turn-end will persist
+      // this transition for us.
+      this.persist();
+      return;
+    }
+
+    this.state.clearApprovalForPlanPath(verdict.path);
+    // New unapproved episode: the next turn-end may remind once.
+    this.reReviewReminderSentFor = null;
+    this.applyMode(ctx);
+    this.persist();
   }
 
   private deliverPendingTodoReconcileReminder(): void {

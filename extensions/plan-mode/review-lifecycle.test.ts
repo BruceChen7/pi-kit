@@ -11,6 +11,7 @@ import {
   emitAbortedAgentEnd,
   emitApprovedReview,
   emitReviewArtifactWrite,
+  emitReviewVerdict,
   expectNoApprovedArtifactChangedFollowUp,
   expectNoApprovedContinuationFollowUp,
   expectToolAllowed,
@@ -768,6 +769,118 @@ describe("plan-mode extension: review lifecycle", () => {
         expect.stringContaining("approved artifact changed"),
         { deliverAs: "followUp" },
       );
+    });
+  });
+
+  it("does not require review again after a manual approval following an abort", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await startApprovedDemoRun(harness, ctx);
+
+      // ESC abort withdraws the approval; the run stays bound to the plan.
+      await emitAbortedAgentEnd(harness, ctx);
+      harness.api.sendUserMessage.mockClear();
+
+      // The user re-reviews by hand (picker / annotate-latest) and approves.
+      emitReviewVerdict(harness, ctx, {
+        path: demoPlanPath,
+        approved: true,
+      });
+
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      expectNoApprovedArtifactChangedFollowUp(harness);
+      expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
+        expect.stringContaining("waiting for an approved Plannotator"),
+        expect.anything(),
+      );
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        phase: "act",
+        latestReviewArtifactPath: demoPlanPath,
+        reviewApprovedPlanPaths: [demoPlanPath],
+        activeRun: { status: "executing", planPath: demoPlanPath },
+      });
+    });
+  });
+
+  it("starts approved execution after a first manual approval", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await emitReviewArtifactWrite(harness, ctx, demoPlanPath);
+      await harness.runTool(
+        PLAN_MODE_TODO_TOOL,
+        { action: "set", items: [{ text: "实现已批准任务", status: "todo" }] },
+        ctx,
+      );
+
+      emitReviewVerdict(harness, ctx, {
+        path: demoPlanPath,
+        approved: true,
+      });
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
+        expect.stringContaining("waiting for an approved Plannotator"),
+        expect.anything(),
+      );
+      expectNoApprovedArtifactChangedFollowUp(harness);
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        phase: "act",
+        reviewApprovedPlanPaths: [demoPlanPath],
+        activeRun: { planPath: demoPlanPath },
+      });
+    });
+  });
+
+  it("withdraws approved execution when a manual review rejects the plan", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await startApprovedDemoRun(harness, ctx);
+
+      emitReviewVerdict(harness, ctx, {
+        path: demoPlanPath,
+        approved: false,
+      });
+
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        phase: "plan",
+        reviewApprovedPlanPaths: [],
+        activeRun: { status: "draft", planPath: demoPlanPath },
+      });
+      expect(
+        lastPersistedPlanModeSnapshot(harness).activeRun,
+      ).not.toHaveProperty("approvedAt");
+    });
+  });
+
+  it("ignores manual verdicts for another artifact", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await startApprovedDemoRun(harness, ctx);
+      await emitAbortedAgentEnd(harness, ctx);
+
+      emitReviewVerdict(harness, ctx, {
+        path: ".pi/plans/pi-kit/plan/2026-05-08-other.md",
+        approved: true,
+      });
+
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        phase: "plan",
+        reviewApprovedPlanPaths: [],
+        activeRun: { status: "draft", planPath: demoPlanPath },
+      });
     });
   });
 

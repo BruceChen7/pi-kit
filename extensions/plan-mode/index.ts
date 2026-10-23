@@ -1,4 +1,8 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import { PLANNOTATOR_REVIEW_VERDICT_CHANNEL } from "../shared/internal-events.ts";
 import {
   ACT_TODO_TOOL_NAME,
   PLAN_MODE_COMMAND_OPTIONS,
@@ -6,7 +10,7 @@ import {
   TODO_TOOL_NAME,
 } from "./constants.ts";
 import { PlanModeController } from "./controller.ts";
-import { isPlanMode } from "./state.ts";
+import { isPlanMode, isRecord } from "./state.ts";
 import {
   buildTodoReminder,
   createTodoReminderCadence,
@@ -145,6 +149,18 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     // 清空 UI 与复位 widget 跟踪状态都在 controller.clearUi；状态本身由 restore() 重建。
     resetTodoReminderCadence(reminderCadence);
     controller.clearUi(ctx);
+  });
+
+  // Manual reviews end in plannotator-auto; follow its verdict so approval
+  // state (and the review gate) does not wait for the agent to re-submit.
+  pi.events.on(PLANNOTATOR_REVIEW_VERDICT_CHANNEL, (payload) => {
+    if (!isRecord(payload) || !isRecord(payload.ctx)) {
+      return;
+    }
+    controller.handleReviewVerdict(
+      payload,
+      payload.ctx as unknown as ExtensionContext,
+    );
   });
 
   pi.on("input", async (event) => {

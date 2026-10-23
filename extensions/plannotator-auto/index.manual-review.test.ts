@@ -1,6 +1,10 @@
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  type PiKitPlannotatorReviewVerdictEvent,
+  PLANNOTATOR_REVIEW_VERDICT_CHANNEL,
+} from "../shared/internal-events.js";
+import {
   createFakePi,
   createTempRepo,
   createTestContext,
@@ -450,5 +454,97 @@ describe("manual review re-arms the auto review gate", () => {
     } finally {
       await emit("session_shutdown", {}, ctx);
     }
+  });
+});
+
+describe("manual review verdict broadcast", () => {
+  let repoRoot: string;
+
+  afterEach(async () => {
+    if (repoRoot) {
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  const recordVerdicts = (
+    api: ReturnType<typeof createFakePi>["api"],
+  ): PiKitPlannotatorReviewVerdictEvent[] => {
+    const verdicts: PiKitPlannotatorReviewVerdictEvent[] = [];
+    api.events.on(PLANNOTATOR_REVIEW_VERDICT_CHANNEL, (event) => {
+      verdicts.push(event as PiKitPlannotatorReviewVerdictEvent);
+    });
+    return verdicts;
+  };
+
+  const runManualReview = async (
+    stdout: string,
+    prefix: string,
+  ): Promise<PiKitPlannotatorReviewVerdictEvent[]> => {
+    mockPlannotatorSpawnSequence([{ status: 0, stdout }]);
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runShortcut, api } = createFakePi();
+    plannotatorAuto(api as never);
+    const verdicts = recordVerdicts(api);
+
+    repoRoot = await createTempRepo(prefix);
+    const planFileRelative = getPlanFileRelative(repoRoot);
+    const planFilePath = await writeTestFile(
+      repoRoot,
+      planFileRelative,
+      PLAN_DRAFT_CONTENT,
+    );
+    const ctx = createTestContext(repoRoot, {
+      uiCustom: vi.fn().mockResolvedValue(planFilePath),
+    });
+
+    try {
+      await emit("session_start", {}, ctx);
+      await emitToolWrite(emit, ctx, planFileRelative);
+      await runShortcut("ctrl+shift+r", ctx);
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+    }
+    return verdicts;
+  };
+
+  it("broadcasts an approved manual review", async () => {
+    vi.resetModules();
+    const verdicts = await runManualReview(
+      cliPlanApprovedStdout,
+      "plannotator-verdict-approved-",
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({
+      cwd: repoRoot,
+      path: getPlanFileRelative(repoRoot),
+      approved: true,
+    });
+  });
+
+  it("broadcasts a rejected manual review as not approved", async () => {
+    vi.resetModules();
+    const verdicts = await runManualReview(
+      cliPlanDeniedStdout("Restructure the sections."),
+      "plannotator-verdict-rejected-",
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({
+      cwd: repoRoot,
+      path: getPlanFileRelative(repoRoot),
+      approved: false,
+    });
+  });
+
+  it("stays silent when the review closes without a verdict", async () => {
+    vi.resetModules();
+    const verdicts = await runManualReview(
+      JSON.stringify({ decision: "dismissed" }),
+      "plannotator-verdict-dismissed-",
+    );
+
+    expect(verdicts).toHaveLength(0);
   });
 });

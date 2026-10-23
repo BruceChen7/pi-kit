@@ -200,7 +200,7 @@ const runPlanReview = async (
     if (filePath.endsWith(".html")) {
       // HTML artifacts review through Plannotator annotate (one-shot).
       const decision = await runPlannotatorHtmlReviewOnce(pi, ctx, filePath);
-      applyManualReviewVerdict(ctx, filePath, decision);
+      applyManualReviewVerdict(pi, ctx, filePath, decision);
       return;
     }
 
@@ -224,7 +224,7 @@ const runPlanReview = async (
     // Manual review re-arms the path until an approval: the reviewed revision
     // leaves the pending queue and later writes queue again.
     if (response.status === "handled") {
-      applyManualReviewVerdict(ctx, filePath, response.result);
+      applyManualReviewVerdict(pi, ctx, filePath, response.result);
     }
     await handleCliResult(pi, ctx, response, (result) => {
       if (result.approved) {

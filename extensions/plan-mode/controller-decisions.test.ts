@@ -5,6 +5,7 @@ import {
   decidePlanReviewObligation,
   decideTodoReconcileDelivery,
   getApprovedReviewPathToQueue,
+  parseReviewVerdictEvent,
   shouldRemindTodoReconciliation,
 } from "./controller-decisions.js";
 
@@ -21,6 +22,82 @@ const approvedReviewQueueInput = {
 };
 
 describe("plan-mode controller decisions", () => {
+  it.each([
+    {
+      name: "parses an approved manual-review verdict",
+      raw: {
+        type: "plannotator-auto.review-verdict",
+        cwd: "/repo",
+        path: reviewArtifactPath,
+        approved: true,
+      },
+      expected: {
+        cwd: "/repo",
+        path: reviewArtifactPath,
+        approved: true,
+      },
+    },
+    {
+      name: "parses a rejected manual-review verdict",
+      raw: {
+        type: "plannotator-auto.review-verdict",
+        cwd: "/repo",
+        path: reviewArtifactPath,
+        approved: false,
+      },
+      expected: {
+        cwd: "/repo",
+        path: reviewArtifactPath,
+        approved: false,
+      },
+    },
+    {
+      name: "ignores another event type",
+      raw: {
+        type: "notify.idle",
+        cwd: "/repo",
+        path: reviewArtifactPath,
+        approved: true,
+      },
+      expected: null,
+    },
+    {
+      name: "ignores a verdict without cwd",
+      raw: {
+        type: "plannotator-auto.review-verdict",
+        path: reviewArtifactPath,
+        approved: true,
+      },
+      expected: null,
+    },
+    {
+      name: "ignores a verdict without a path",
+      raw: {
+        type: "plannotator-auto.review-verdict",
+        cwd: "/repo",
+        approved: true,
+      },
+      expected: null,
+    },
+    {
+      name: "ignores a non-boolean verdict",
+      raw: {
+        type: "plannotator-auto.review-verdict",
+        cwd: "/repo",
+        path: reviewArtifactPath,
+        approved: "yes",
+      },
+      expected: null,
+    },
+    {
+      name: "ignores a non-object payload",
+      raw: "plannotator-auto.review-verdict",
+      expected: null,
+    },
+  ])("$name", ({ raw, expected }) => {
+    expect(parseReviewVerdictEvent(raw)).toEqual(expected);
+  });
+
   it.each([
     {
       name: "bypasses plan-mode turn decisions for extension-sourced prompts",

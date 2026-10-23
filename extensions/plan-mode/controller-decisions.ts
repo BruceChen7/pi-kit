@@ -1,4 +1,4 @@
-import { promptRequestsPlanMode } from "./state.ts";
+import { isRecord, promptRequestsPlanMode, stringProperty } from "./state.ts";
 import type { InputSource, PlanMode, PlanPhase } from "./types.ts";
 
 export type AgentStartPreDecisionInput = {
@@ -86,6 +86,32 @@ export const decidePlanReviewObligation = ({
   return (
     reviewRequiredForTurn || todoCount > 0 || latestReviewArtifactPath !== null
   );
+};
+
+/** A decided manual review, as broadcast by plannotator-auto. */
+export type ReviewVerdict = {
+  cwd: string;
+  path: string;
+  approved: boolean;
+};
+
+/**
+ * Parse the manual-review verdict event. Pure: unknown input in, DTO or null
+ * out. Anything malformed is ignored rather than partially applied.
+ */
+export const parseReviewVerdictEvent = (raw: unknown): ReviewVerdict | null => {
+  if (!isRecord(raw) || raw.type !== "plannotator-auto.review-verdict") {
+    return null;
+  }
+  const cwd = stringProperty(raw, "cwd");
+  const reviewedPath = stringProperty(raw, "path");
+  if (cwd === null || reviewedPath === null) {
+    return null;
+  }
+  if (typeof raw.approved !== "boolean") {
+    return null;
+  }
+  return { cwd, path: reviewedPath, approved: raw.approved };
 };
 
 export type ApprovedReviewQueueInput = {

@@ -14,7 +14,9 @@ import { PLAN_SUBMIT_CHECKLIST } from "../plan-mode/guidance.ts";
 import {
   createHandledState,
   type PiKitPlannotatorPendingReviewEvent,
+  type PiKitPlannotatorReviewVerdictEvent,
   PLANNOTATOR_PENDING_REVIEW_CHANNEL,
+  PLANNOTATOR_REVIEW_VERDICT_CHANNEL,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
 import { resolveHtmlReviewDirs } from "../shared/review-targets.ts";
@@ -713,10 +715,15 @@ const MANUAL_VERDICT_STATUS_BY_OUTCOME: Partial<
  * revision leaves the pending queue, approval settles the path, and any other
  * verdict keeps it armed until the user approves.
  *
+ * A decided verdict is also broadcast: other extensions (plan-mode) observe
+ * approval through the auto submit tool result, which a manual review never
+ * produces on its own.
+ *
  * Only auto-review targets (plan / specs / `.pi/html`) are affected; manual
  * review of any other `.pi/` document leaves the queue untouched.
  */
 const applyManualReviewDecision = (
+  pi: ExtensionAPI,
   ctx: ExtensionContext,
   reviewedPath: string,
   decision: CliReviewDecision,
@@ -738,6 +745,21 @@ const applyManualReviewDecision = (
     MANUAL_VERDICT_STATUS_BY_OUTCOME[transition.outcome] ?? null,
   );
   setReviewWidget(ctx);
+
+  const status = MANUAL_VERDICT_STATUS_BY_OUTCOME[transition.outcome];
+  if (status === undefined) {
+    // No verdict (dismissed / interrupted): no decision, no state transition.
+    return;
+  }
+  pi.events.emit(PLANNOTATOR_REVIEW_VERDICT_CHANNEL, {
+    type: "plannotator-auto.review-verdict",
+    requestId: `plannotator_review_verdict_${Date.now()}`,
+    createdAt: Date.now(),
+    cwd: ctx.cwd,
+    path: toRepoRelativePath(ctx, targetPath).split(path.sep).join("/"),
+    approved: status === "approved",
+    ctx,
+  } satisfies PiKitPlannotatorReviewVerdictEvent);
 };
 
 /**
@@ -746,6 +768,7 @@ const applyManualReviewDecision = (
  * without a verdict must not change the gate state.
  */
 export const applyManualReviewVerdict = (
+  pi: ExtensionAPI,
   ctx: ExtensionContext,
   reviewedPath: string,
   decision: CliReviewDecision | null,
@@ -754,7 +777,7 @@ export const applyManualReviewVerdict = (
     return;
   }
 
-  applyManualReviewDecision(ctx, reviewedPath, decision);
+  applyManualReviewDecision(pi, ctx, reviewedPath, decision);
 };
 
 /**

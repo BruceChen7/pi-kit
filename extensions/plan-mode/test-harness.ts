@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { expect, vi } from "vitest";
+import {
+  type PiKitPlannotatorReviewVerdictEvent,
+  PLANNOTATOR_REVIEW_VERDICT_CHANNEL,
+} from "../shared/internal-events.js";
 import { PI_WEB_HOST_SYMBOL } from "../shared/ui-host.js";
 import {
   ACT_TODO_TOOL_NAME as ACT_MODE_TODO_TOOL,
@@ -105,8 +109,30 @@ export const buildHarness = () => {
   const tools = new Map<string, ToolRegistration>();
   let activeTools = ["read", "grep", "find", "ls", "bash", "edit", "write"];
   let toolInfos: TestToolInfo[] = [];
+  const eventHandlers = new Map<string, Array<(payload: unknown) => void>>();
+  const events = {
+    on: vi.fn((channel: string, handler: (payload: unknown) => void) => {
+      const list = eventHandlers.get(channel) ?? [];
+      list.push(handler);
+      eventHandlers.set(channel, list);
+      return () => {
+        eventHandlers.set(
+          channel,
+          (eventHandlers.get(channel) ?? []).filter(
+            (entry) => entry !== handler,
+          ),
+        );
+      };
+    }),
+    emit: vi.fn((channel: string, payload: unknown) => {
+      for (const handler of eventHandlers.get(channel) ?? []) {
+        handler(payload);
+      }
+    }),
+  };
 
   const api = {
+    events,
     on: vi.fn((event: string, handler: Handler) => {
       const list = handlers.get(event) ?? [];
       list.push(handler);
@@ -567,6 +593,26 @@ export const emitApprovedReview = async (
     },
     ctx,
   );
+};
+
+/**
+ * Broadcast a decided manual review the way plannotator-auto does — the input
+ * that lets plan-mode follow the reviewer's verdict without a re-submit.
+ */
+export const emitReviewVerdict = (
+  harness: ReturnType<typeof buildHarness>,
+  ctx: TestCtx,
+  verdict: { path: string; approved: boolean },
+): void => {
+  harness.api.events.emit(PLANNOTATOR_REVIEW_VERDICT_CHANNEL, {
+    type: "plannotator-auto.review-verdict",
+    requestId: "review-verdict-1",
+    createdAt: Date.now(),
+    cwd: ctx.cwd,
+    path: verdict.path,
+    approved: verdict.approved,
+    ctx,
+  } satisfies PiKitPlannotatorReviewVerdictEvent);
 };
 
 export const approveDemoPlan = async (

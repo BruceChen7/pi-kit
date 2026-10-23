@@ -4,6 +4,7 @@ export const PLANNOTATOR_PENDING_REVIEW_CHANNEL =
   "pi-kit:plannotator-auto:pending-review";
 export const PLANNOTATOR_REVIEW_VERDICT_CHANNEL =
   "pi-kit:plannotator-auto:review-verdict";
+export const PLAN_MODE_BADGE_CHANNEL = "pi-kit:plan-mode:badge";
 
 export type HandledState = {
   isHandled: () => boolean;
@@ -75,4 +76,21 @@ export type PiKitPlannotatorPendingReviewEvent = {
   continueEnabled: boolean;
   handled: HandledState;
   ctx: unknown;
+};
+
+/**
+ * 一串要挂在 plan-mode footer 上的短标签。
+ *
+ * 生产方只管广播自己的状态，渲染方（plan-mode）负责拼接与清空：
+ * `text: null` 表示撤下这个 key。事件总线没有返回值，所以没有 ack；
+ * 没装 plan-mode 时广播会丢掉，各扩展自己的读取命令仍是权威读法。
+ */
+export type PiKitPlanModeBadgeEvent = {
+  type: "plan-mode.badge";
+  ctx: unknown;
+  /** 生产方所在 cwd；渲染方按此过滤，避免跨仓污染。 */
+  cwd: string;
+  /** 同一个 key 后写覆盖前写。 */
+  key: string;
+  text: string | null;
 };

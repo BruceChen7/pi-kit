@@ -7,7 +7,7 @@ argument-hint: "<task>"
 
 本次任务：${@:-（空）}
 
-如果任务是空的，只回一句「这次要做什么？」，然后停。否则按下面九节执行。第一件事是用 `act_mode_todo` 建清单，第一项固定写 `route: <类型>`，第二项固定写 `principles: <id>, <id>`（没有引用原则时写 `principles: none`）。这两项之后按 §1 看有没有对应 playbook，有就先取它，再写任务专属待办。
+如果任务是空的，只回一句「这次要做什么？」，然后停。否则按下面九节执行。第一件事是用当前阶段的 todo 工具建清单（Act 阶段是 `act_mode_todo`，Plan 阶段是 `plan_mode_todo`），第一项固定写 `route: <类型>`，第二项固定写 `principles: <id>, <id>`（没有引用原则时写 `principles: none`）。这两项之后按 §1 看有没有对应 playbook，有就先取它，再写任务专属待办。
 
 ## 0. 程序文件
 
@@ -66,7 +66,7 @@ route 跟着任务走。todo 第一项写的类型和当前动作对不上时，
 
 结论分三种标签，写在同一句话里：
 
-- **跑过**：贴命令与输出，或产物路径。
+- **跑过**：贴命令加输出末行原文，例如 `npx vitest run x` → `Tests  12 passed (12)`。
 - **推断**：说明依据了哪些事实。
 - **猜**：显式写「未验证」。
 
@@ -103,14 +103,15 @@ route 跟着任务走。todo 第一项写的类型和当前动作对不上时，
 
 | 场景 | 用什么 | 怎么收 |
 |---|---|---|
-| 读多写少、独立评审 | `subagent` 的 `reviewer` / `explore` | `status <runId>`，贴 findings |
-| 写任务、文件不重叠 | `subagent` 的 `general` | `status <runId>`，再跑测试 |
+| 读多写少、独立评审 | `subagent` 的 `review` / `judgment` / `explore` | `status <runId>`，贴 findings |
+| 写任务、文件不重叠 | `subagent` 的 `code` / `bug-fix` / `perf` / `strongest` | `status <runId>`，再跑测试 |
+| 验证别人的结论 | `subagent` 的 `verification` | 收逐条 criterion 与退出码 |
 | 要人看着、可插话 | `/skill:herdr-squad` | 收 report |
 | 同一文件并发写 | 不委派，串行 | 无需 |
 
 - 写任务按文件或输出目录分区。同一文件不并发。
 - 子会话看不到本对话，`task` 必须自包含：目标、范围、验收、报告格式。
-- 需要不同模型交叉评审时，用 `.pi/agents/` 里 pin 了 `model` 的 profile；没有就同模型多跑几份，并写明。
+- 需要不同模型交叉评审时，用 `agents/<角色>.md`（装到 `~/.pi/agent/agents`）里 pin 了 `model` 的 profile；这一版九个角色都没 pin，按需要自己加一行。没有就同模型多跑几份，并写明。
 - 不把「已派出」当完成。结果必须收回并验证。
 
 ## 9. 明确不做

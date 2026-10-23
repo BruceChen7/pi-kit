@@ -1,41 +1,47 @@
 ---
+
 description: 查询 my_notes 知识库，直接使用 qmd 工具（qmd_query / qmd_search / qmd_get / qmd_multi_get）
 argument-hint: "<查询内容>"
 ---
+
 # 查询 my_notes
 
 当用户提出关于笔记的任何问题时，**必须直接使用 qmd 工具**，不能先尝试其他方法（如 grep/find/rg）再 fallback 到 qmd。
 
 ## 工具选择指南
 
-| 意图 | 工具 | 说明 |
-|------|------|------|
-| 检查集合状态 | `qmd_status` | 第一步，确认 `my_notes` 集合存在 |
-| 语义搜索（自然语言） | `qmd_query` | 用自然语言描述要找的内容，适合模糊/概念性搜索 |
-| 关键词搜索 | `qmd_search` | 精确关键词，适合已知术语/文件名匹配 |
-| 读取单篇笔记 | `qmd_get` | 获取具体文档的完整内容 |
-| 批量读取 | `qmd_multi_get` | 按 glob 或列表批量获取多个文档 |
+| 意图                 | 工具            | 说明                                          |
+| -------------------- | --------------- | --------------------------------------------- |
+| 检查集合状态         | `qmd_status`    | 第一步，确认 `my_notes` 集合存在              |
+| 语义搜索（自然语言） | `qmd_query`     | 用自然语言描述要找的内容，适合模糊/概念性搜索 |
+| 关键词搜索           | `qmd_search`    | 精确关键词，适合已知术语/文件名匹配           |
+| 读取单篇笔记         | `qmd_get`       | 获取具体文档的完整内容                        |
+| 批量读取             | `qmd_multi_get` | 按 glob 或列表批量获取多个文档                |
 
 ## 查询流程
 
 ### 第一步：检查集合
+
 ```json
 qmd_status()
 ```
 确认 `my_notes` 集合在线、有文档。
 
 ### 第二步：选择搜索策略
+
 - **模糊/概念性查询**（如"找关于 eBPF 观测的笔记"）→ 用 `qmd_query(query, {collections: ["my_notes"]})`
 - **精确关键词查询**（如"找 malloc 实现的笔记"）→ 用 `qmd_search(query, {collections: ["my_notes"]})`
 - **已知路径查询**（如"读 Wiki/Summaries/Notes/malloc的实现-summary.md"）→ 用 `qmd_get` 或 `qmd_multi_get`
 
 ### 第三步：阅读文档
+
 - 搜索结果会返回 `docid`（如 `#a1b2c3`）和 `file` 路径
 - 用 `qmd_get({file: "qmd://my_notes/path/to/file.md"})` 读取完整内容
 - 用 `qmd_get({file: "qmd://my_notes/path/to/file.md", fromLine: 10, maxLines: 50})` 读取部分内容
 - 用 `qmd_multi_get({pattern: "qmd://my_notes/Wiki/Summaries/Notes/*-cache*.md"})` 批量读取
 
 ### 第四步：组织回答
+
 - 用中文回答（匹配笔记语言）
 - 标注来源文件路径
 - 如果有多个相关结果，按相关性排序展示

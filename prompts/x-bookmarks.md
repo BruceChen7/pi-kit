@@ -1,7 +1,9 @@
 ---
+
 description: Fetch my recent X bookmarks or likes with content and links for quick reading
 argument-hint: "[limit] [bookmarks|likes] [theme]"
 ---
+
 Fetch my recent X saved items with **both content and direct links**, optimized for fast reading and later triage.
 
 Use `opencli` with the X/Twitter adapter:
@@ -13,10 +15,12 @@ Use `opencli` with the X/Twitter adapter:
 - If the arguments are ambiguous, infer the most likely intent and state the assumption briefly
 
 ## Command selection
+
 - Bookmarks: `opencli twitter bookmarks --limit <N> -f json`
 - Likes: `opencli twitter likes --limit <N> -f json`
 
 ## Required behavior
+
 1. Run the appropriate `opencli twitter ... -f json` command.
 2. Parse the returned items.
 3. Present results in a **reading-friendly Markdown format**.
@@ -32,9 +36,11 @@ Use `opencli` with the X/Twitter adapter:
 9. Do **not** output raw JSON unless the user explicitly asks for it.
 
 ## Output format
+
 Use this structure unless the user requests another one:
 
 # X 收藏速览
+
 - 类型：bookmarks 或 likes
 - 条数：N
 - 时间范围：根据返回结果概括
@@ -43,12 +49,14 @@ Use this structure unless the user requests another one:
 Then list items like:
 
 ## 1. <optional theme or running number>
+
 - 作者：@handle
 - 时间：<created_at>
 - 内容：<cleaned readable excerpt>
 - 链接：<full x.com url>
 
 ## Notes
+
 - If `opencli` fails because login/session is missing, explain that clearly and tell the user what to run next.
 - If the result set is large, prioritize readability over verbosity.
 - If many posts are just bare links or very short repost-style text, say that explicitly.

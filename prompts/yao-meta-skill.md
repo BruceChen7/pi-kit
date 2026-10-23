@@ -1,7 +1,9 @@
 ---
+
 description: Create or harden an agent skill with yao-meta-skill using a short grill plus quickstart
 argument-hint: "[skill-name] [workflow/job]"
 ---
+
 Use the local Yao Meta Skill to turn a repeated workflow into a reusable agent skill.
 
 Yao root: `~/work/yao-meta-skill`
@@ -45,7 +47,6 @@ For each question, include:
 ```
 
 Resolve these fields, using the arguments when possible:
-
 - skill name
 - repeated job / workflow
 - real inputs people will give the skill
@@ -55,7 +56,6 @@ Resolve these fields, using the arguments when possible:
 - output directory
 
 Defaults:
-
 - mode/archetype: `scaffold` for personal or exploratory skills
 - mode/archetype: `production` when other people will reuse it soon
 - mode/archetype: `library` for shared infrastructure skills

@@ -1,7 +1,9 @@
 ---
+
 description: Find stale wiki summaries and regenerate them with concept linking for the knowledge base
 argument-hint: "[scope]"
 ---
+
 # Wiki Summarize
 
 Find source files in the wiki knowledge base whose summaries are missing or outdated (stale), then regenerate them with automatic concept linking.
@@ -18,11 +20,11 @@ Default to Chinese unless the user explicitly asks for another language.
 
 Three skill scripts in the pi-kit repo under `skills/knowledge-wiki/`:
 
-| Script | Location | Commands used |
-|--------|----------|---------------|
-| `wiki-summary.mjs` | `skills/knowledge-wiki/summary/wiki-summary.mjs` | `list-stale`, `create`, `insert-concept` |
-| `wiki-concept.mjs` | `skills/knowledge-wiki/concept/wiki-concept.mjs` | `create` (with `--tags` + stdin body), `insert-source` |
-| `wiki-index.mjs` (state) | `skills/knowledge-wiki/state/wiki-index.mjs` | `upsert-summary` |
+| Script                   | Location                                         | Commands used                                          |
+| ------------------------ | ------------------------------------------------ | ------------------------------------------------------ |
+| `wiki-summary.mjs`       | `skills/knowledge-wiki/summary/wiki-summary.mjs` | `list-stale`, `create`, `insert-concept`               |
+| `wiki-concept.mjs`       | `skills/knowledge-wiki/concept/wiki-concept.mjs` | `create` (with `--tags` + stdin body), `insert-source` |
+| `wiki-index.mjs` (state) | `skills/knowledge-wiki/state/wiki-index.mjs`     | `upsert-summary`                                       |
 
 The placeholders `<path-to-wiki-summary.mjs>`, `<path-to-wiki-concept.mjs>`, `<path-to-wiki-index.mjs>`, and `<cwd>` are filled in by the task configuration (see the injected `## Task Configuration` section). Use those absolute paths exactly. Pass `--base-path <cwd>` to every command.
 
@@ -49,7 +51,6 @@ If it reports `"sources": []`, report "全部摘要已是最新 ✅" and stop.
 ### Phase 2: Process each stale file
 
 For each stale source file in the list (or the single file from `$1`):
-
 1. **Read** the full source file content.
 
 2. **Generate a summary body** — a concise Chinese paragraph (2-6 sentences) that captures the core topic, key insights, and structure of the note. Use specific terms and concepts from the content. Do NOT use generic templates like "关于...的笔记" or "关键洞察：...".
@@ -85,7 +86,6 @@ For each stale source file in the list (or the single file from `$1`):
 After creating each summary, determine 1-3 relevant concepts based on the source content. Read `Wiki/Concepts/` to discover existing concept slugs and their scope.
 
 For each relevant concept:
-
 1. **Check if the concept slug already exists** in `Wiki/Concepts/<slug>.md`. If not, create it with a body describing the concept:
 
    Generate a body text (2-8 sentences) that covers the concept's definition, key ideas, and use cases. Structure it with one or more `##` sections as appropriate (e.g. `## Core Concepts`, `## How It Works`, `## Use Cases`). Write the body in Chinese.

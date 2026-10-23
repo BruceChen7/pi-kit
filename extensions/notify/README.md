@@ -60,7 +60,6 @@ file.
 ```
 
 Options:
-
 - `enabled`: enable or disable all notify behavior. Default: `true`.
 - `notifyOnAbort`: notify when the user aborts a turn. Default: `false`.
 - `notifyOnFailure`: notify on error turns. Default: `true`.

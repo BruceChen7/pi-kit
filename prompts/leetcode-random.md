@@ -1,7 +1,9 @@
 ---
+
 description: 随机出 LeetCode 题目（支持难度/标签筛选），展示标题、描述、代码模板、链接
 argument-hint: "[count] [--tag <slug>] [--difficulty easy|medium|hard|all] [--lang go|rust|python]"
 ---
+
 从力扣（LeetCode.cn）随机抽取题目，展示完整信息用于刷题。
 
 ## 用法
@@ -76,15 +78,17 @@ opencli leetcode problem --slug "<slug>" --lang <lang> -f json
 
 ## 输出格式
 
-```markdown
+````markdown
 # 🎯 今日随机出题
 
 ## <题号>. <标题> — <Difficulty>
+
 - 标签：<topicTags>
 - 通过率：<acRate>（转百分比）
 - 题目链接：https://leetcode.cn/problems/<slug>/
 
 ### 题目描述
+
 <description 字段内容>
 
 ### 代码模板
@@ -95,6 +99,7 @@ opencli leetcode problem --slug "<slug>" --lang <lang> -f json
 ```go
 <go 模板代码>
 ```
+````
 </details>
 
 <details>

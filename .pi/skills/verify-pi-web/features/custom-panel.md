@@ -18,7 +18,6 @@ This is the surface that separates pi-web from pi's own rpc mode, where the same
 ## Driving it with verify-pi-web
 
 Preconditions:
-
 - `doctor --plugin skill-toggle --expect-command toggle-skill` passes on this run.
 - Browser session `piweb-probe` is open on the project (`?cwd=…`).
 - No other panel is open: `opencli browser piweb-probe find --css 'div[role="dialog"]'` reports zero matches.

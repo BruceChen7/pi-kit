@@ -28,7 +28,6 @@ Pi  ←→  127.0.0.1:15721 (cc_switch 本地代理)  ←→  Upstream Provider
 ### 模型元数据
 
 代理接口不提供模型能力元数据，因此 reasoning level、context window、input modalities 都来自 cc_switch 自己生成的 Codex model catalog（`~/.codex/ais-switch-model-catalog.json`），按模型 slug 匹配：
-
 - 优先级：代理 `/v1/models` 里带了的字段优先，catalog 补上代理没给的（当前代理只回 id 和路由信息，所以实际上都来自 catalog）；catalog 也没收录的模型回退为「非 reasoning + 1M context + 纯文本」
 - `context_window` / `max_context_window` 直接作为 Pi 的 `contextWindow`（`effective_context_window_percent` 不参与，Pi 自己管 compact 余量）
 - `input_modalities` 含 `image` 时模型才允许图片输入
@@ -55,7 +54,6 @@ Pi  ←→  127.0.0.1:15721 (cc_switch 本地代理)  ←→  Upstream Provider
 ## 配置
 
 插件默认使用：
-
 - 代理地址：`http://127.0.0.1:15721`
 - API Key：`PROXY_MANAGED`（cc_switch 代理识别此值并注入真实认证）
 - API 协议：`openai-responses`

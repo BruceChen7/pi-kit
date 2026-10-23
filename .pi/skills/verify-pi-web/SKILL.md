@@ -1,4 +1,5 @@
 ---
+
 name: verify-pi-web
 description: "pi-kit 插件在 pi-web（浏览器宿主）里的确定性验证：证明扩展被 pi-web 的 pi 运行时加载、斜杠命令在浏览器里产出可见 UI（状态行 / 自定义面板 / 回到会话的输出），并留下可复跑证据。Use for /verify-pi-web、\"这个插件在 pi-web 里能用吗\"、改完 extensions/ 或 shared/ui-host 后要证明浏览器宿主没退化、或要给某个插件补一条 pi-web recipe 时。"
 ---
@@ -26,7 +27,6 @@ node scripts/verify-pi-web.mjs serve --plugin plan-mode --plugin skill-toggle --
 ```
 
 输出 JSON，记下 `runDir`、`port`、`pid`、`baseUrl`、`evidenceDir`。做了三件事：
-
 1. 建 `<runDir>/agent/extensions/`，把 `extensions/<plugin>` 与 `extensions/shared` 软链进去。pi 的扩展发现走 agent 目录的 `extensions/`，所以挂什么就是什么。
 2. `PI_CODING_AGENT_DIR=<runDir>/agent` 起 `pi-web --port <port> --no-open`，会话文件、auth、模型缓存全落在 runDir 里，不碰 `~/.pi/agent`。
 3. 轮询 `GET /api/sessions` 到 200。
@@ -42,7 +42,6 @@ node scripts/verify-pi-web.mjs doctor --run-dir <runDir> --plugin plan-mode --ex
 ```
 
 判定靠 pi-web 自己的 pi 运行时报出来的命令表，不是看日志：
-
 1. `POST /api/agent/new {cwd, type: "ensure_session"}` 拿到真实 `sessionId`。
 2. `POST /api/agent/<sessionId> {type: "get_commands"}` 拿到命令表。
 3. 只认 `sourceInfo.path` 落在 `<runDir>/agent/extensions/` 下的命令。落在别处的不算这个 run 的插件（用户 `~/.agents/skills` 的 skill 命令会是几十条噪音（本机 26 条），正常）。
@@ -81,7 +80,6 @@ opencli browser piweb-probe state | grep "chat-input-textarea"
 框里还留着刚才那行（`value=/toggle-skill`）= 没发出去。上一条命令刚结束、composer 还没回到空闲态时，Enter 会被丢掉；重新 `click` + `keys Enter` 一次即可。别把这个当成插件失败。
 
 观测点按插件用哪个 UI 面来选，recipe 在 feature map：
-
 - 会话输出：`opencli browser piweb-probe state` 里出现插件写的那行英文。
 - 状态行：`div[role=status]` 的 `aria-label` 就是插件调的 `setStatus` 文本。
 - 自定义面板：`div[role="dialog"]` 存在，面板内是插件自己 `render()` 出来的文本（ANSI 转成的 HTML）。
@@ -92,7 +90,6 @@ opencli browser piweb-probe state | grep "chat-input-textarea"
 ## Evidence
 
 一次 run 的证据全在 `runDir` 里，cleanup 之后仍然在：
-
 - `launch.json`：端口、pid、agentDir、插件清单。
 - `commands.json` / `doctor.json`：Doctor 的原始命令表与判定。
 - `evidence/<feature>.png`：`opencli browser <s> screenshot <path>`。
@@ -100,7 +97,6 @@ opencli browser piweb-probe state | grep "chat-input-textarea"
 - `pi-web.log`：服务端输出。
 
 证明标准：
-
 - 断言落在**插件输出的文本**或 `role=dialog` / `role=status` 这类稳定句柄上。
 - 一次 drive 至少留下「动作命令 + 截图 + state 快照」三样。
 - 面板类证据要包含面板里的插件文本（例如 `Skill Picker (`），不能只有一张空截图。

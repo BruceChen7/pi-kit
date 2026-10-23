@@ -1,7 +1,9 @@
 ---
+
 description: Map a code flow with Visual Artifact, key data structures, blast radius, and grill-me checks
 argument-hint: "[flow/module/question]"
 ---
+
 Map the existing code flow for: ${@:-<ask me which flow/module/question first>}
 
 Generate a Visual Artifact code-flow learning map via the `create_visual_artifact` tool from
@@ -13,7 +15,6 @@ start broad repo exploration until I answer.
 ## Mission
 
 Help me rebuild a working mental model of one code path:
-
 - What triggers it and where it enters the system
 - Which modules/functions/types participate
 - Which data structures and state transitions matter
@@ -28,7 +29,6 @@ Use source evidence first. Prefer `grep`/`find` to locate likely implementations
 files in full context. Use `rg` for exact identifiers, callers, tests, config keys, and error strings.
 
 Gather these facts before generating the artifact:
-
 1. **Entry points** — commands, handlers, routes, event listeners, scheduled jobs, hooks, or public
    APIs that start the flow.
 2. **Main control flow** — important branches, validation, transformations, retries, fallbacks,
@@ -49,7 +49,6 @@ Gather these facts before generating the artifact:
 
 Before calling `create_visual_artifact`, produce a compact fact sheet. Every claim that will appear
 in the artifact must include evidence:
-
 - `file:line` for functions, types, behavior, branches, invariants, and tests
 - command output for counts or git-derived claims
 - `uncertain` label for anything inferred but not verified
@@ -59,7 +58,6 @@ Do not present unsupported guesses as facts. If evidence conflicts, call out the
 ## Artifact structure
 
 Build a `spec` object and call `create_visual_artifact` with:
-
 - `slug`: `code-flow-map-<topic-slug>`
 - `title`: `Code Flow Map: <topic>`
 - `artifactType`: `explainer`
@@ -75,29 +73,27 @@ trim the 3b caption first — never cut 3a or Section 6.
 
 ### Section-to-node mapping
 
-| # | Section | Node types | Purpose |
-|---|---------|------------|---------|
-| 1 | Executive mental model | `heading`, `text`, `badge` | A short summary of what the flow does and why it exists. |
-| 2 | Flow dashboard | `kpi-grid` | 4-6 metrics: entry points, key modules, data types, side effects, tests, risk flags. |
-| 3a | **Participant diagram** (强制) | `heading` + `text` 图注, `mermaid` `sequenceDiagram` | 跨参与者/跨 boundary 的消息和调用链，不画内部分支。标注每个 participant。 |
-| 3b | **Logic diagram** (条件) | `heading` + `text` 图注, `mermaid` `flowchart` | 仅当存在非平凡分支（≥3 条路径、状态机、重试/回退）时才产出。聚焦核心决策树。 |
-| 4a | **State/lifecycle diagram** (条件) | `heading` + `text` 图注, `mermaid` `stateDiagram` | 有生命周期/状态转换时产出（enable→disable、draft→published 等）。 |
-| 4b | **Entity/relationship diagram** (条件) | `heading` + `text` 图注, `mermaid` `erDiagram`（结构化替代：`er-diagram`） | 有多个实体 + 关系时产出。默认保留 Mermaid 结构；只有实体、字段、关系已经结构化时才改用 `er-diagram`。无状态机也无实体关系时降级为 `table`。 |
-| 5 | Walkthrough (强制) | `timeline` | Step-by-step execution with file/function references. Same priority as diagrams — do not fold into accordion. |
-| 6 | **Boundary tree** (强制, 独立顶层节点) | `section` (title: "Boundary Map") 内含 `code-block` | ASCII 调用树：副作用/IO 节点带 `← 注释` + `file:line`；纯逻辑节点省略行号。见 Boundary tree guidance。 |
-| 7 | Blast Radius + Tests/Gaps/Gotchas | `accordion` (2 项) | 项 1 "Blast Radius"：callers, dependents, tests, docs, config (file-tree/table)。项 2 "Tests, Gaps & Gotchas"：Coverage table + callout for gaps + list/card of invariants and traps. |
-| 8 | Grill-me starter | `callout` or `card` | The first question you will ask me after creating the artifact. |
+| #   | Section                                | Node types                                                                 | Purpose                                                                                                                                                                               |
+| --- | -------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Executive mental model                 | `heading`, `text`, `badge`                                                 | A short summary of what the flow does and why it exists.                                                                                                                              |
+| 2   | Flow dashboard                         | `kpi-grid`                                                                 | 4-6 metrics: entry points, key modules, data types, side effects, tests, risk flags.                                                                                                  |
+| 3a  | **Participant diagram** (强制)         | `heading` + `text` 图注, `mermaid` `sequenceDiagram`                       | 跨参与者/跨 boundary 的消息和调用链，不画内部分支。标注每个 participant。                                                                                                             |
+| 3b  | **Logic diagram** (条件)               | `heading` + `text` 图注, `mermaid` `flowchart`                             | 仅当存在非平凡分支（≥3 条路径、状态机、重试/回退）时才产出。聚焦核心决策树。                                                                                                          |
+| 4a  | **State/lifecycle diagram** (条件)     | `heading` + `text` 图注, `mermaid` `stateDiagram`                          | 有生命周期/状态转换时产出（enable→disable、draft→published 等）。                                                                                                                     |
+| 4b  | **Entity/relationship diagram** (条件) | `heading` + `text` 图注, `mermaid` `erDiagram`（结构化替代：`er-diagram`） | 有多个实体 + 关系时产出。默认保留 Mermaid 结构；只有实体、字段、关系已经结构化时才改用 `er-diagram`。无状态机也无实体关系时降级为 `table`。                                           |
+| 5   | Walkthrough (强制)                     | `timeline`                                                                 | Step-by-step execution with file/function references. Same priority as diagrams — do not fold into accordion.                                                                         |
+| 6   | **Boundary tree** (强制, 独立顶层节点) | `section` (title: "Boundary Map") 内含 `code-block`                        | ASCII 调用树：副作用/IO 节点带 `← 注释` + `file:line`；纯逻辑节点省略行号。见 Boundary tree guidance。                                                                                |
+| 7   | Blast Radius + Tests/Gaps/Gotchas      | `accordion` (2 项)                                                         | 项 1 "Blast Radius"：callers, dependents, tests, docs, config (file-tree/table)。项 2 "Tests, Gaps & Gotchas"：Coverage table + callout for gaps + list/card of invariants and traps. |
+| 8   | Grill-me starter                       | `callout` or `card`                                                        | The first question you will ask me after creating the artifact.                                                                                                                       |
 
 **图注规则（原有 Mermaid 图强制）：** 每个 `mermaid` 图之前必须紧跟两行图注：`heading`（level `h2`，图名）+ 一行 `text`（≤60 字）。如果选择下面的结构化节点替代 Mermaid，也沿用同样的图注格式。
 
 `text` 必须根据这张图**实际画出的内容**撰写，从该图的 Mermaid definition 或结构化 props 反推，写"图里有什么"：
-
 - 3a：概括真实参与者与消息，如 "CLI → PluginManager → FS 同步调用链，箭头标签为传入参数"；
 - 3b：写真实分支，如 "决策树：拦截链放行 / 降级 / 失败回退"；
 - 4a/4b：写真实状态转换、实体字段或实体关系。
 
 禁止：
-
 - 套模板句（如一律写 "跨 boundary 的消息流：谁调用谁"）——图注必须能被该图本身验证；
 - 声称图里没有的元素；
 - 在排除句里枚举省略项——"内部分支不在此图"是通用句即可，被省略内容的具体名称由对应图（3b）的正面图注承担；
@@ -114,16 +110,14 @@ top-level nodes — never buried inside accordions. Every diagram is preceded by
 **Section 3a — Participant diagram (强制):**
 
 Always produce a `sequenceDiagram` showing cross-boundary message flow between participants.
-
 - Each distinct module, process, or external system is a `participant`.
 - Only show calls/messages between participants; do not draw internal branches here.
 - If the flow has **no cross-boundary interaction** (pure in-process pipeline), note this
-explicitly and fall back to a single `flowchart` that combines 3a + 3b roles.
+  explicitly and fall back to a single `flowchart` that combines 3a + 3b roles.
 
 **Section 3b — Logic diagram (条件):**
 
 Produce a `flowchart` **only when** the flow has non-trivial branching:
-
 - ≥ 3 distinct code paths
 - State machine or mode-dependent behavior
 - Retry, fallback, or rollback loops
@@ -133,7 +127,6 @@ Focus on the core decision tree. Skip 3b for linear flows.
 **Section 4 — Data/state diagram (至少一个):**
 
 Choose based on what the flow's data actually does:
-
 - Has **lifecycle / state transitions** (enable→disable, pending→active→done) → `stateDiagram-v2`
 - Has **multiple entities with relationships** (Plugin→Settings, Project→Symlink) → `erDiagram`; use `er-diagram` only when the entities, fields, and relationships are already structured as data
 - Has **neither** → fall back to a `table` of key structures
@@ -143,7 +136,6 @@ If the flow has both state transitions and entity relationships, produce both 4a
 ### Optional structured diagram alternatives
 
 Keep the original Mermaid sections above as the default. Add these nodes only when the evidence is already structured and the native layout adds information without inventing it:
-
 - `architecture-diagram`: components, groups, boundaries, and verified edges.
 - `layer-diagram`: ordered abstraction, data, security, or governance layers.
 - `er-diagram`: entities, fields, keys, and verified relationships.
@@ -179,81 +171,206 @@ const spec = {
   description: "Evidence-backed map of <topic> in <repo>.",
   nodes: [
     // --- Section 1-2: overview ---
-    { "type": "heading", "props": { "text": "Code Flow Map: <topic>", "level": "h1" } },
-    { "type": "text", "props": { "text": "<one-paragraph mental model>", "size": "xl" } },
-    { "type": "kpi-grid", "props": { "columns": 3, "items": [] } },
+    { type: "heading", props: { text: "Code Flow Map: <topic>", level: "h1" } },
+    {
+      type: "text",
+      props: { text: "<one-paragraph mental model>", size: "xl" },
+    },
+    { type: "kpi-grid", props: { columns: 3, items: [] } },
 
     // --- Section 3a: participant diagram (强制, 独立顶层节点) ---
     // 图注: heading(图名) + 一行 text(图是 what / 怎么读)，然后才是 mermaid
-    { "type": "heading", "props": { "text": "Participant Diagram: CLI → Plugin Manager → FS", "level": "h2" } },
-    { "type": "text", "props": { "text": "CLI → PluginManager → FS 同步调用链，箭头标签为传入参数；内部分支不在此图。" } },
-    { "type": "mermaid", "props": { "definition": "sequenceDiagram\n  participant CLI as \"CLI\"\n  participant PM as \"PluginManager\"\n  participant FS as \"FS\"\n  CLI->>PM: config\n  PM->>FS: write symlink\n  FS-->>PM: result" } },
+    {
+      type: "heading",
+      props: {
+        text: "Participant Diagram: CLI → Plugin Manager → FS",
+        level: "h2",
+      },
+    },
+    {
+      type: "text",
+      props: {
+        text: "CLI → PluginManager → FS 同步调用链，箭头标签为传入参数；内部分支不在此图。",
+      },
+    },
+    {
+      type: "mermaid",
+      props: {
+        definition:
+          'sequenceDiagram\n  participant CLI as "CLI"\n  participant PM as "PluginManager"\n  participant FS as "FS"\n  CLI->>PM: config\n  PM->>FS: write symlink\n  FS-->>PM: result',
+      },
+    },
 
     // --- Section 3b: logic diagram (条件, 独立顶层节点) ---
-    { "type": "heading", "props": { "text": "Logic Diagram: 启用插件的核心决策树", "level": "h2" } },
-    { "type": "text", "props": { "text": "决策树：condition 命中 → Path 1，否则 → Path 2。" } },
-    { "type": "mermaid", "props": { "definition": "flowchart TD\n  A[\"Entry\"] --> |\"condition\"| B[\"Path 1\"]\n  A --> |\"else\"| C[\"Path 2\"]" } },
+    {
+      type: "heading",
+      props: { text: "Logic Diagram: 启用插件的核心决策树", level: "h2" },
+    },
+    {
+      type: "text",
+      props: { text: "决策树：condition 命中 → Path 1，否则 → Path 2。" },
+    },
+    {
+      type: "mermaid",
+      props: {
+        definition:
+          'flowchart TD\n  A["Entry"] --> |"condition"| B["Path 1"]\n  A --> |"else"| C["Path 2"]',
+      },
+    },
 
     // --- Section 4a/b: data/state diagram (至少一个, 独立顶层节点) ---
-    { "type": "heading", "props": { "text": "State Diagram: 插件生命周期", "level": "h2" } },
-    { "type": "text", "props": { "text": "状态转换：初始 → Active → Disabled → 终态；无生命周期则用 table 代替。" } },
-    { "type": "mermaid", "props": { "definition": "stateDiagram-v2\n  [*] --> Active\n  Active --> Disabled\n  Disabled --> [*]" } },
+    {
+      type: "heading",
+      props: { text: "State Diagram: 插件生命周期", level: "h2" },
+    },
+    {
+      type: "text",
+      props: {
+        text: "状态转换：初始 → Active → Disabled → 终态；无生命周期则用 table 代替。",
+      },
+    },
+    {
+      type: "mermaid",
+      props: {
+        definition:
+          "stateDiagram-v2\n  [*] --> Active\n  Active --> Disabled\n  Disabled --> [*]",
+      },
+    },
 
     // --- Optional additional structured sections (do not replace 3a/3b/4a/4b) ---
-    { "type": "heading", "props": { "text": "Architecture Diagram: 组件与边界", "level": "h2" } },
-    { "type": "text", "props": { "text": "组件、分组、边界和已验证连接；不把未证实的依赖画进图里。" } },
-    { "type": "architecture-diagram", "props": {
-      "nodes": [
-        { "id": "client", "label": "Client", "kind": "external" },
-        { "id": "api", "label": "API", "kind": "service", "focal": true },
-        { "id": "store", "label": "Store", "kind": "store" }
-      ],
-      "groups": [{ "id": "runtime", "label": "Runtime", "members": ["api", "store"] }],
-      "edges": [{ "from": "client", "to": "api", "label": "request" }, { "from": "api", "to": "store", "label": "read/write" }]
-    } },
-    { "type": "heading", "props": { "text": "Entity Diagram: 实体与关系", "level": "h2" } },
-    { "type": "text", "props": { "text": "结构化实体、字段和关系；每条关系都引用已声明的实体 ID。" } },
-    { "type": "er-diagram", "props": {
-      "entities": [
-        { "id": "user", "name": "User", "fields": [{ "name": "id", "type": "string", "key": "PK" }] },
-        { "id": "order", "name": "Order", "fields": [{ "name": "user_id", "type": "string", "key": "FK" }] }
-      ],
-      "relationships": [{ "from": "user", "to": "order", "cardinality": "one-to-many" }]
-    } },
-    { "type": "heading", "props": { "text": "Layer Diagram: 抽象层级", "level": "h2" } },
-    { "type": "text", "props": { "text": "按层展示抽象或治理边界；条目和跨层关系必须来自证据。" } },
-    { "type": "layer-diagram", "props": {
-      "layers": [
-        { "id": "application", "label": "Application", "items": [{ "id": "handler", "label": "Handler", "focal": true }] },
-        { "id": "data", "label": "Data", "items": ["Cache", "Database"] }
-      ],
-      "edges": [{ "from": "handler", "to": "Cache", "label": "lookup" }]
-    } },
+    {
+      type: "heading",
+      props: { text: "Architecture Diagram: 组件与边界", level: "h2" },
+    },
+    {
+      type: "text",
+      props: {
+        text: "组件、分组、边界和已验证连接；不把未证实的依赖画进图里。",
+      },
+    },
+    {
+      type: "architecture-diagram",
+      props: {
+        nodes: [
+          { id: "client", label: "Client", kind: "external" },
+          { id: "api", label: "API", kind: "service", focal: true },
+          { id: "store", label: "Store", kind: "store" },
+        ],
+        groups: [
+          { id: "runtime", label: "Runtime", members: ["api", "store"] },
+        ],
+        edges: [
+          { from: "client", to: "api", label: "request" },
+          { from: "api", to: "store", label: "read/write" },
+        ],
+      },
+    },
+    {
+      type: "heading",
+      props: { text: "Entity Diagram: 实体与关系", level: "h2" },
+    },
+    {
+      type: "text",
+      props: {
+        text: "结构化实体、字段和关系；每条关系都引用已声明的实体 ID。",
+      },
+    },
+    {
+      type: "er-diagram",
+      props: {
+        entities: [
+          {
+            id: "user",
+            name: "User",
+            fields: [{ name: "id", type: "string", key: "PK" }],
+          },
+          {
+            id: "order",
+            name: "Order",
+            fields: [{ name: "user_id", type: "string", key: "FK" }],
+          },
+        ],
+        relationships: [
+          { from: "user", to: "order", cardinality: "one-to-many" },
+        ],
+      },
+    },
+    {
+      type: "heading",
+      props: { text: "Layer Diagram: 抽象层级", level: "h2" },
+    },
+    {
+      type: "text",
+      props: { text: "按层展示抽象或治理边界；条目和跨层关系必须来自证据。" },
+    },
+    {
+      type: "layer-diagram",
+      props: {
+        layers: [
+          {
+            id: "application",
+            label: "Application",
+            items: [{ id: "handler", label: "Handler", focal: true }],
+          },
+          { id: "data", label: "Data", items: ["Cache", "Database"] },
+        ],
+        edges: [{ from: "handler", to: "Cache", label: "lookup" }],
+      },
+    },
 
     // --- Section 5: walkthrough (强制, 独立顶层节点) ---
-    { "type": "timeline", "props": { "items": [
-      { "step": 1, "title": "<step name>", "description": "<what happens and where>" }
-    ] } },
+    {
+      type: "timeline",
+      props: {
+        items: [
+          {
+            step: 1,
+            title: "<step name>",
+            description: "<what happens and where>",
+          },
+        ],
+      },
+    },
 
     // --- Section 6: boundary tree (强制, 独立顶层节点) ---
     // section 包裹 ASCII 调用树: 副作用节点带 file:line，纯逻辑节点省略行号
-    { "type": "section", "props": { "title": "Boundary Map", "nodes": [
-      { "type": "code-block", "props": { "code": "bootstrapDefaultManagedPlugins(cwd, plugins)\n├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）\n└─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared\n     └─ bootstrapPlugins(...)\n          └─ 遍历: disabled.has(name) → skip\n               其余 → enablePlugin()  ← 副作用: 写 symlink, extensions/plugin-toggle/project.ts:142", "language": "text" } }
-    ] } },
+    {
+      type: "section",
+      props: {
+        title: "Boundary Map",
+        nodes: [
+          {
+            type: "code-block",
+            props: {
+              code: "bootstrapDefaultManagedPlugins(cwd, plugins)\n├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）\n└─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared\n     └─ bootstrapPlugins(...)\n          └─ 遍历: disabled.has(name) → skip\n               其余 → enablePlugin()  ← 副作用: 写 symlink, extensions/plugin-toggle/project.ts:142",
+              language: "text",
+            },
+          },
+        ],
+      },
+    },
 
     // --- Section 7: details in accordion (2 项) ---
-    { "type": "accordion", "props": { "items": [
-      { "title": "Blast Radius", "nodes": [] },
-      { "title": "Tests, Gaps & Gotchas", "nodes": [] }
-    ] } },
+    {
+      type: "accordion",
+      props: {
+        items: [
+          { title: "Blast Radius", nodes: [] },
+          { title: "Tests, Gaps & Gotchas", nodes: [] },
+        ],
+      },
+    },
 
     // --- Section 8: grill-me ---
-    { "type": "callout", "props": {
-      "title": "Grill-me starter",
-      "text": "<first comprehension question>",
-      "variant": "info"
-    } }
-  ]
+    {
+      type: "callout",
+      props: {
+        title: "Grill-me starter",
+        text: "<first comprehension question>",
+        variant: "info",
+      },
+    },
+  ],
 };
 
 create_visual_artifact({
@@ -270,7 +387,6 @@ create_visual_artifact({
 ### Additional structured diagram sections (optional)
 
 Keep the original Mermaid sections 3a, 3b, 4a, and 4b unchanged by default. When the evidence is already structured, add a **separate section** for the native diagram instead of replacing the corresponding Mermaid diagram:
-
 - **Architecture section**: `heading` + `text` caption + `architecture-diagram` for components, groups, boundaries, and verified edges.
 - **Entity/data-model section**: `heading` + `text` caption + `er-diagram` for entities, fields, keys, and verified relationships.
 - **Layer section**: `heading` + `text` caption + `layer-diagram` for ordered abstraction, data, security, or governance layers.
@@ -283,7 +399,9 @@ Examples of the diagram node inside its new section:
 {
   "type": "architecture-diagram",
   "props": {
-    "nodes": [{ "id": "api", "label": "API", "kind": "service", "focal": true }],
+    "nodes": [
+      { "id": "api", "label": "API", "kind": "service", "focal": true }
+    ],
     "groups": [{ "id": "runtime", "label": "Runtime", "members": ["api"] }],
     "edges": []
   }
@@ -294,7 +412,13 @@ Examples of the diagram node inside its new section:
 {
   "type": "er-diagram",
   "props": {
-    "entities": [{ "id": "user", "name": "User", "fields": [{ "name": "id", "key": "PK" }] }],
+    "entities": [
+      {
+        "id": "user",
+        "name": "User",
+        "fields": [{ "name": "id", "key": "PK" }]
+      }
+    ],
     "relationships": []
   }
 }
@@ -304,7 +428,9 @@ Examples of the diagram node inside its new section:
 {
   "type": "layer-diagram",
   "props": {
-    "layers": [{ "id": "data", "label": "Data", "items": ["Cache", "Database"] }],
+    "layers": [
+      { "id": "data", "label": "Data", "items": ["Cache", "Database"] }
+    ],
     "edges": []
   }
 }

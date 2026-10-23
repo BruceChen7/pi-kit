@@ -6,7 +6,6 @@ This copy is vendored into `pi-kit` under `extensions/codex-web-search` and is r
 default from the root `package.json`.
 
 It is designed for the case where:
-
 - you already use `codex`
 - you are already authenticated with `codex login`
 - you do **not** want to manage a separate API key inside the extension
@@ -14,7 +13,6 @@ It is designed for the case where:
 ## How it works
 
 When Pi calls `web_search`, the extension auto-resolves a usable Codex binary, then runs Codex non-interactively:
-
 - `codex exec --json`
 - `-c web_search="cached"` or `-c web_search="live"`
 - read-only sandbox
@@ -27,7 +25,6 @@ This extension uses `cached` and `live` explicitly per tool call. In Codex CLI t
 `--search` is equivalent to live web search.
 
 The extension then:
-
 - parses Codex JSONL events to show search progress in Pi
 - tracks the actual search queries Codex issued across multiple item event shapes
 - keeps page opens/find-in-page activity separate so document inspection does not incorrectly consume the query budget
@@ -90,14 +87,12 @@ is intended to be used through `pi-kit`.
 ### `web_search`
 
 Parameters:
-
 - `query: string` — what to search for
 - `maxSources?: number` — optional cap from 1 to 10. If omitted, the saved fast/deep default is used for the chosen mode.
 - `mode?: "fast" | "deep"` — optional depth override. If omitted, the saved default mode is used.
 - `freshness?: "cached" | "live"` — optional freshness override. Use `live` for time-sensitive questions.
 
 Behavior:
-
 - uses the local Codex CLI
 - requires a non-empty query
 - defaults to saved settings of:
@@ -137,7 +132,6 @@ Use the slash command below to persist defaults across sessions:
 ```
 
 The interactive dialog is grouped into:
-
 - Search defaults
 - Codex runtime
 - Defuddle behavior
@@ -166,7 +160,6 @@ You can also use direct subcommands:
 ```
 
 Notes:
-
 - `default-max-sources` is kept as a compatibility alias and updates both `fast-max-sources` and `deep-max-sources`.
 - `codex-model` is passed to `codex exec -m <model>`. It defaults to
   `DEFAULT_CODEX_WEB_SEARCH_MODEL` in `constants.ts`; set it to `inherit` to follow
@@ -207,7 +200,6 @@ pnpm run check
 This repo includes a manual GitHub Actions release workflow modeled after the one used in `pi-copilot-queue`.
 
 Requirements:
-
 - `NPM_TOKEN` GitHub Actions secret configured for the repository
 - permissions to run the `Release` workflow
 

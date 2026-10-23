@@ -1,12 +1,14 @@
 ---
+
 description: Explain a technical spec or proposed change in plain language — problem, solution, and every schema change. Output defaults to Simplified Chinese
 argument-hint: "[spec/PR/branch/commit]"
 ---
+
 Explain the referenced spec or change in plain language, for a technical reader who did not live the work:
 they have read none of the code, none of the diff, and none of the session's messages. Simplify the
 telling, never the claims. Pseudocode and precise claims land fine; invented labels do not.
 
-thanks to  https://github.com/dzhng/skills/blob/main/skills/engineering/eli5/SKILL.md
+thanks to https://github.com/dzhng/skills/blob/main/skills/engineering/eli5/SKILL.md
 
 ## Scope detection — determine what to explain based on `$1`:
 
@@ -39,15 +41,18 @@ If the spec alone cannot establish behavior, read the current code owners before
 Use these headings in order:
 
 ### Problem
+
 Explain the problem through its user or operational consequence, including why the current design
 produces it.
 
 ### Solution
+
 Explain the solution as one simple before/after data flow. Introduce each component by
 responsibility, not by filename or internal symbol. Lead with behavior and boundaries; mention
 implementation names only when they clarify ownership or a contract.
 
 ### Schema changes
+
 Inventory schema and durable-contract changes exhaustively: added, changed, removed, reset, and
 deliberately unchanged. Include cursor or wire-format cutovers when they affect stored data or
 readers. Distinguish canonical records from derived indexes, caches, summaries, and presentation

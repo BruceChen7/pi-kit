@@ -13,7 +13,6 @@ The skill-toggle plugin enables and disables managed skills. `/disabled-skills` 
 ## Driving it with verify-plugin
 
 Preconditions: repository root, `npm install` done, and `$HOME/.agents/git-skills` or `$HOME/.agents/me-skills` holds skills with a frontmatter `description`. Repo-side `.pi/skills` alone does not fill the list.
-
 - Read the enabled skills:
   `node scripts/verify-plugin.mjs command --plugin skill-toggle --command "/disabled-skills" --expect "Enabled managed skills (" --reject "No enabled managed skills"`
   Observable: `PASS`, one notify starting with `Enabled managed skills (` and a populated name list.

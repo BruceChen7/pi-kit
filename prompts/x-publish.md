@@ -1,7 +1,9 @@
 ---
+
 description: 把今天学到的一条信息发到 X（Twitter）：写文案 + 配图 + 预发布预览 → 用户确认 → opencli 发帖 → 反查核实
 argument-hint: "[主题词 | 素材路径] [--draft-dir <dir>] [--no-image] [--en]"
 ---
+
 把一条值得说的信息发到 X，**先给预发布的样子，确认后才发**。
 走 `opencli` 的 X/Twitter 适配器（UI 策略，复用我的登录态），一条推文 = 一段文案 + 一张配图。
 
@@ -22,7 +24,6 @@ argument-hint: "[主题词 | 素材路径] [--draft-dir <dir>] [--no-image] [--e
 ## 草稿目录
 
 默认 `~/work/notes/.pi/x-drafts/`（`--draft-dir` 可覆盖）：
-
 - `tweet.txt` — 最终文案（发帖时 `cat` 出来用，避免 shell 转义问题）
 - `YYYY-MM-DD-image.svg` — 配图源（手写 SVG）
 - `YYYY-MM-DD-image.png` — 栅格化后的图（1600×900，真正上传的那个）
@@ -49,7 +50,6 @@ opencli twitter post --help       # 确认签名：post <text> --images [paths]�
 ## 阶段 2：写文案
 
 结构（中文推文，260~280 权重内）：
-
 - 第 1 行：钩子，一句话说清"哪里反直觉"（带主题词，便于检索）
 - 第 2~3 段：具体事实 + 关键数字对比（用 `——`、`→` 这类符号压缩字数）
 - 末段：出处（`（internal/runtime/maps · split）` 这种）+ 1 个 hashtag
@@ -85,7 +85,6 @@ EOF
 一张图讲一件事：**左边"直觉以为的"，右边"实际发生的"** 这类对比图最好用。
 
 图的标准：
-
 - 手写单文件 SVG，无外链、无 JS、无 `<image>` 位图
 - `viewBox="0 0 1600 900"` + `width="1600" height="900"`
 - 深色底 + 大字，字号按"手机上缩到一半也能看清"来定；一屏一个观点，不堆细节
@@ -112,7 +111,6 @@ X 只收位图（opencli 适配器只认 jpg/png/gif/webp），所以 **`.svg` �
 ## 阶段 4：出预发布预览，等确认
 
 直接在对话里给：
-
 - 文案原文（代码块，含空行，方便我逐字看）
 - `未发布 | 字数权重 <N> / 280 | 图片 <W>×<H>`（`--no-image` 时写"无图"）
 - 有图就用系统默认程序打开：`open "$D/<date>-image.png"`
@@ -144,6 +142,7 @@ opencli twitter tweets --limit 1 -f json        # 文本 / has_media / media_url
 - 文本一致 + `has_media: true` → 报成功，把 `url` 给我。
 - `has_media: false` 或图没挂上 → 视为失败：删掉重发（`opencli twitter delete <url>`），或先说明原因再问我。
 - 想确认图没被压坏，把实际挂的图拉回来目检：
+
   ```bash
   curl -sSL "<media_url>?name=orig" -o /tmp/posted-media.jpg && file /tmp/posted-media.jpg
   ```
@@ -151,11 +150,11 @@ opencli twitter tweets --limit 1 -f json        # 文本 / has_media / media_url
 
 ## 已知坑
 
-| 症状 | 含义 | 处理 |
-|---|---|---|
+| 症状                                            | 含义                                                  | 处理                                                                                                                                                                                                       |
+| ----------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Page.fileChooserOpened not received within 5s` | 浏览器桥的 CDP 上传超时，适配器该走 base64 降级却没走 | 先看扩展版本（`opencli doctor`）。v1.0.x 的临时办法：`clis/twitter/utils.js` 的 `isRecoverableFileInputError` 正则加 `\|filechooseropened\|not received`，**先备份原文件**；治本是升级浏览器桥扩展到 v1.6+ |
-| `TIMEOUT: twitter post timed out after 15s` | 只是它自己的确认轮询超时，**帖子很可能已经发出** | 立刻 `opencli twitter tweets --limit 1 -f json` 反查；已发出就当成功 |
-| 想抓失败现场 | — | `opencli twitter post ... --trace retain-on-failure`，再按 opencli-autofix 的流程处理 |
+| `TIMEOUT: twitter post timed out after 15s`     | 只是它自己的确认轮询超时，**帖子很可能已经发出**      | 立刻 `opencli twitter tweets --limit 1 -f json` 反查；已发出就当成功                                                                                                                                       |
+| 想抓失败现场                                    | —                                                     | `opencli twitter post ... --trace retain-on-failure`，再按 opencli-autofix 的流程处理                                                                                                                      |
 
 跨会话我该主动说清：任何对全局 npm 包的本地补丁，都要在收尾报告里写明备份路径和"重装即还原"。
 

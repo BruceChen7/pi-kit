@@ -16,7 +16,6 @@ A pi-kit plugin loaded by pi-web's own pi runtime is reachable as a slash comman
 ## Driving it with verify-pi-web
 
 Preconditions:
-
 - Run from the pi-kit repository root.
 - Port 30242 is free (`lsof -nP -iTCP:30242 -sTCP:LISTEN` prints nothing).
 - `pi-web` is on `PATH`.

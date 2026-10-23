@@ -38,10 +38,10 @@ opencli space user-token -f plain
 opencli space user-token --write ~/.space/token
 ```
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `--write <path>` | string | 将 token 写入指定文件 |
-| `-f, --format` | `plain\|json\|yaml` | 输出格式 |
+| 参数             | 类型                | 说明                  |
+| ---------------- | ------------------- | --------------------- |
+| `--write <path>` | string              | 将 token 写入指定文件 |
+| `-f, --format`   | `plain\|json\|yaml` | 输出格式              |
 
 **数据源：** `localStorage["session"].token`（JWT）
 

@@ -1,13 +1,14 @@
 ---
+
 description: Explain the current topic visually with concise diagrams and code-shape sketches
 argument-hint: "[topic]"
 ---
+
 > **参考 / Reference**: 本 prompt 改编自 HumanLayer 的 `show-me` skill — https://github.com/humanlayer/skills (`plugins/show-me/skills/show-me/SKILL.md`)。内容形状(pseudocode、call tree、component tree、file tree、Mermaid、diff)与上游保持一致。
 
 Explain ${@:-the current topic of conversation} visually. Skip the preamble and keep prose brief. Pick the smallest view that makes the key point clear.
 
 The shapes below are content to render in chat, each placed next to the short text it supports:
-
 - Show logic or an algorithm as pseudocode:
 
 ```text
@@ -59,7 +60,6 @@ sequenceDiagram
 ```
 
 Compose Mermaid so it renders as terminal art inside the chat pane. The diagram must fit the terminal width — wider diagrams silently fall back to the raw code block:
-
 - Prefer `flowchart TB` over `flowchart LR`. A long chain of nodes in `LR` explodes horizontally: 8 chained nodes can reach ~285 columns, far beyond a typical fullscreen terminal (~180–240 columns).
 - Keep node labels short. Wrap long text with `<br/>` instead of one long line, and keep branch labels terse.
 - Keep the whole diagram under ~100 columns wide. If a graph needs more than ~8 nodes, split it into two or three smaller diagrams.
@@ -131,8 +131,8 @@ For a state or control-flow change:
 
 ```ts
 function expandSkill(command: string): string {
-  const skillName = command.slice(1)
-  return `use the ${skillName} skill`
+  const skillName = command.slice(1);
+  return `use the ${skillName} skill`;
 }
 ```
 

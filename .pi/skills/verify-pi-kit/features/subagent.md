@@ -14,7 +14,6 @@ The subagent plugin runs child agents and exposes them through `/agents`. The li
 ## Driving it with verify-plugin
 
 Preconditions: repository root, `npm install` done. Run state is memory-only, so any new process starts empty; emptiness does not depend on `--no-session`.
-
 - Read the run listing:
   `node scripts/verify-plugin.mjs command --plugin subagent --command "/agents" --expect "no subagent runs in this session"`
   Observable: `PASS`, one notify reading `no subagent runs in this session`.

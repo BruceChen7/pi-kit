@@ -6,7 +6,6 @@ Auto-detects generated plan/spec files, gates the next agent turn until the agen
 
 Auto review (pending-gate → `plannotator_auto_submit_review`) accepts only files in
 `plan` / `specs` directories and HTML artifact dirs:
-
 - Plans: any directory named `plan` — `.pi/plans/<repo>/plan/YYYY-MM-DD-<slug>.md` or `.html`
 - Specs: any directory named `specs` — `.pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md` (`.md` only)
 - HTML artifacts: `.pi/html/<repo>/YYYY-MM-DD-<slug>.html`
@@ -35,16 +34,15 @@ All review locations are convention-based and NOT configurable: any directory na
 
 Both manual entries feed the same state machine, so a file that was approved earlier in the
 session (settled → silent) is re-armed as soon as you review it by hand:
-
 - `Ctrl+Shift+R` / `/plannotator-review` — file picker → Plannotator review
 - `Ctrl+Alt+L` — annotate the latest Markdown/HTML document modified in this session
 
-| Manual verdict | Pending target | Auto review |
-| --- | --- | --- |
-| `approved` | cleared | settled — later edits stay silent |
-| deny / `annotated` (with or without feedback) | cleared | armed — later edits queue again |
-| `dismissed` | cleared | armed (same as the auto flow: dismissal is not an approval) |
-| no verdict (CLI error / abort / empty output) | kept | unchanged |
+| Manual verdict                                | Pending target | Auto review                                                 |
+| --------------------------------------------- | -------------- | ----------------------------------------------------------- |
+| `approved`                                    | cleared        | settled — later edits stay silent                           |
+| deny / `annotated` (with or without feedback) | cleared        | armed — later edits queue again                             |
+| `dismissed`                                   | cleared        | armed (same as the auto flow: dismissal is not an approval) |
+| no verdict (CLI error / abort / empty output) | kept           | unchanged                                                   |
 
 "Cleared" means the revision you just reviewed leaves the pending queue, so the agent is not
 asked to auto-submit that same revision again. Only auto-review targets (`plan` / `specs`
@@ -65,7 +63,6 @@ auto approval does, and the plan gate is not left waiting for a review that can 
 ### Review hosting toggle
 
 `/plannotator-review-host` flips how **Markdown** reviews are hosted for the current session (no arguments, toggle both ways):
-
 - `browser` (default): the plannotator CLI opens the review in your regular browser.
 - `herdr-panel` (temporary): the review opens in a `terminal-browser` panel split to the right of the current Herdr pane — or a new tab when a right pane already exists — and is auto-closed on a terminal verdict.
 
@@ -80,7 +77,6 @@ settings (`planFile`, `htmlDirs`) are ignored.
 ## CLI commands used
 
 Plannotator Auto requires the `plannotator` CLI to be available on `PATH`.
-
 - `plannotator` with a PermissionRequest hook payload on stdin for Markdown plan/spec/issue review
 - `plannotator annotate <file> --json` for manual Markdown annotation
 - `plannotator annotate <file> --gate --json` for HTML artifact review (pending-gate flow)
@@ -90,6 +86,5 @@ Plannotator Auto requires the `plannotator` CLI to be available on `PATH`.
 Logs use the shared extension logger (default file: `~/.pi/agent/pi-debug.log`).
 
 Useful filters:
-
 - `ext:plannotator-auto`
 - `sessionKey`

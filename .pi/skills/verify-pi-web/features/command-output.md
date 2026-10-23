@@ -16,7 +16,6 @@ A slash command handled by a pi-kit plugin writes its result where the browser u
 ## Driving it with verify-pi-web
 
 Preconditions:
-
 - `doctor --plugin plan-mode --expect-command plan-mode` passes on this run.
 - Browser session `piweb-probe` is open on `http://127.0.0.1:30242/?cwd=<urlencoded cwd>`.
 

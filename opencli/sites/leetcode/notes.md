@@ -5,6 +5,7 @@
 Created adapters: `leetcode/problems` and `leetcode/problem`
 
 ### Key findings
+
 - GraphQL endpoint: `https://leetcode.cn/graphql` (POST)
 - Auth: COOKIE strategy — Chrome browser bridge provides login session
 - No anti-bot detected; GraphQL works directly via `fetch` inside `page.evaluate`
@@ -16,6 +17,7 @@ Created adapters: `leetcode/problems` and `leetcode/problem`
 - Difficulty filter: `filters: { difficulty: EASY | MEDIUM | HARD }` (single value only, not array)
 
 ### Adapter commands
+
 - `opencli leetcode problems` — list problems (default easy+medium, --include-hard, --sort, --limit)
 - `opencli leetcode problem --slug <slug>` — single problem detail
 

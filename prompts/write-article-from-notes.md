@@ -1,7 +1,9 @@
 ---
+
 description: 基于 my_notes 知识库中的笔记，写一篇面向小白的完整科普文章，同步创建/更新 Wiki/Concepts/ 薄概念索引
 argument-hint: "<topic>"
 ---
+
 # Write Article from Notes
 
 基于 my_notes 知识库中的笔记，撰写一篇**面向小白**的完整科普文章。文章自动写入 `Notes/`，同时创建或更新 `Wiki/Concepts/` 中的薄概念作为入口索引。
@@ -51,6 +53,7 @@ argument-hint: "<topic>"
 
 ```markdown
 ---
+
 type: Concept
 _icon: note
 tags: []
@@ -87,10 +90,7 @@ tags: []
   "ok": true,
   "article": "Notes/GLB工作原理.md",
   "concept": "Wiki/Concepts/github-glb.md",
-  "sources": [
-    "Notes/lvs的转发模式",
-    "Calendar/DailyNotes/2024/2024-03-25"
-  ]
+  "sources": ["Notes/lvs的转发模式", "Calendar/DailyNotes/2024/2024-03-25"]
 }
 ```
 

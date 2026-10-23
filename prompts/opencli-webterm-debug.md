@@ -1,7 +1,9 @@
 ---
+
 description: Specialize the generic browser-debug workflow for pi-webterm
 argument-hint: "[url] [focus: width|pty|switch|full] [extra-instructions]"
 ---
+
 Use `browser-debug` as the base workflow, then apply these `pi-webterm`-specific checks.
 
 Defaults:
@@ -9,6 +11,7 @@ Defaults:
 - Focus: `${2:-full}`
 
 ## pi-webterm specialization
+
 Prioritize these areas:
 - xterm layout and fit timing
 - session switching and reconnect ordering
@@ -17,6 +20,7 @@ Prioritize these areas:
 - stale tmux client residue, especially old `80x24` clients
 
 ## Extra checks for pi-webterm
+
 When relevant, include:
 - DOM measurements for:
   - `.main-layout`

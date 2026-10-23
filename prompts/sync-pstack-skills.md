@@ -1,7 +1,9 @@
 ---
+
 description: 把 skills/pstack/ 对齐到上游 cursor/plugins 的最新版：按内核清单判断哪些差异算 material、按 P0-P3 分级、保住本地适配、跑结构门禁。用法 /sync-pstack-skills [all|<skill ...>] [--report]
 argument-hint: "[all|<skill ...>] [--report]"
 ---
+
 # Sync pstack skills
 
 `skills/pstack/` 是从 [cursor/plugins](https://github.com/cursor/plugins) 的 `harness/pstack` vendored 进来的，本地改过，所以升级靠手工比对。
@@ -20,23 +22,23 @@ argument-hint: "[all|<skill ...>] [--report]"
 
 pstack 值钱的是一套判断，不是目录结构。左列是内核，右列是它在本仓落到哪——本地已进口的每一行都必须有可见落点，否则就是一句好话。
 
-| 内核 | 上游载体 | 本地落点 |
-|---|---|---|
-| 有名字的判据：先挑一条，再动手 | `principles/` 24 条叶子 | 已 vendor：全文进口，`SKILL.md` 是中文化索引 |
-| 证据优先于自述：留决策轨，不留感慨 | `show-me-your-work/` 决策 TSV | 已本地化：transcript 走 pi session，日志默认中文 |
-| 同一个错犯两遍就改结构：架构 → 类型 → lint → 测试 → 文档 | `correct/` | 已本地化：规则表落 `AGENTS.md` |
-| 删在加之前：注释、死代码、一次性兼容层 | `no-comments/` | 已 vendor：评审合成两遍走，keep list 逐字保留 |
-| 改动前证影响面：证明那一个事实，不写说明文 | `blast-radius/` | 已 vendor：forge 命令按 remote 选 `gh` / `glab` |
-| 独立对抗评审：一个 reviewer 一份，父会话裁 | `interrogate/` | 已本地化：`subagent reviewer` |
-| 并行分片覆盖：写作任务落不相交目录 | `swarm/` | 已本地化：≤4 波次，去 cloud / worktree |
-| 候选竞争：N 个候选选一作基底，嫁落选者强项 | `arena/` | 已本地化：候选落 `/tmp` 或 patch |
-| 验证流程可生成、可审计、可复跑 | `create-verification-skill/`、`maintain-verification-skill/` | 已本地化：`.pi/skills/verify-<app>/` |
-| 人读文字两把刀：分层写作标准 + 去 AI 腔 | `technical-writing/`、`unslop/` | 已 vendor，各带中文补充段 |
-| 报数字前先解释数字：先找限速因素 | `benchmark-checklist/` | 已 vendor，正文未改 |
-| 报进度给不在场的人：只列他必须决定的，每条带证据与风险 | `ketchup/` | 已本地化：对话里的图指 `/show-me`，通知与 subagent 结果不算用户消息 |
-| 类型挡在运行时之前：坏状态写不出来 | `typescript-best-practices/` | 已 vendor：去 `paths:`，接 `type-system-discipline` 原则 |
-| 做深不做大：先问专业做法与原始材料，再重写任务 | `sharpen/` | 已 vendor，正文未改 |
-| 复盘落在环境上：三镜头、三桶、逐条落点 | `reflect/`（未进口） | 已并入 `skills/retro/SKILL.md`，不单独进口 |
+| 内核                                                     | 上游载体                                                     | 本地落点                                                            |
+| -------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------- |
+| 有名字的判据：先挑一条，再动手                           | `principles/` 24 条叶子                                      | 已 vendor：全文进口，`SKILL.md` 是中文化索引                        |
+| 证据优先于自述：留决策轨，不留感慨                       | `show-me-your-work/` 决策 TSV                                | 已本地化：transcript 走 pi session，日志默认中文                    |
+| 同一个错犯两遍就改结构：架构 → 类型 → lint → 测试 → 文档 | `correct/`                                                   | 已本地化：规则表落 `AGENTS.md`                                      |
+| 删在加之前：注释、死代码、一次性兼容层                   | `no-comments/`                                               | 已 vendor：评审合成两遍走，keep list 逐字保留                       |
+| 改动前证影响面：证明那一个事实，不写说明文               | `blast-radius/`                                              | 已 vendor：forge 命令按 remote 选 `gh` / `glab`                     |
+| 独立对抗评审：一个 reviewer 一份，父会话裁               | `interrogate/`                                               | 已本地化：`subagent reviewer`                                       |
+| 并行分片覆盖：写作任务落不相交目录                       | `swarm/`                                                     | 已本地化：≤4 波次，去 cloud / worktree                              |
+| 候选竞争：N 个候选选一作基底，嫁落选者强项               | `arena/`                                                     | 已本地化：候选落 `/tmp` 或 patch                                    |
+| 验证流程可生成、可审计、可复跑                           | `create-verification-skill/`、`maintain-verification-skill/` | 已本地化：`.pi/skills/verify-<app>/`                                |
+| 人读文字两把刀：分层写作标准 + 去 AI 腔                  | `technical-writing/`、`unslop/`                              | 已 vendor，各带中文补充段                                           |
+| 报数字前先解释数字：先找限速因素                         | `benchmark-checklist/`                                       | 已 vendor，正文未改                                                 |
+| 报进度给不在场的人：只列他必须决定的，每条带证据与风险   | `ketchup/`                                                   | 已本地化：对话里的图指 `/show-me`，通知与 subagent 结果不算用户消息 |
+| 类型挡在运行时之前：坏状态写不出来                       | `typescript-best-practices/`                                 | 已 vendor：去 `paths:`，接 `type-system-discipline` 原则            |
+| 做深不做大：先问专业做法与原始材料，再重写任务           | `sharpen/`                                                   | 已 vendor，正文未改                                                 |
+| 复盘落在环境上：三镜头、三桶、逐条落点                   | `reflect/`（未进口）                                         | 已并入 `skills/retro/SKILL.md`，不单独进口                          |
 
 **不 vendor** 的是上游 harness，不是内核：Task 参数名、`pstack-models` 规则与 model slug、`AskUserQuestion`、`TodoWrite`、`.cursor` 路径、playbook 内的 harness 段（playbook 内容本身已进口到 `skills/poteto-playbooks/`，逐文件判定见 `scripts/poteto-kernel-map.json`）、Claude Code adapter 段、`poteto-mode`（本地入口是 `prompts/poteto.md`）、云端隔离与 worktree 并发写。
 
@@ -47,7 +49,6 @@ pstack 值钱的是一套判断，不是目录结构。左列是内核，右列�
 ## 1 解析 target
 
 按顺序取第一条成立的：
-
 1. `git ls-remote --tags https://github.com/cursor/plugins` 有标签 → 最新标签指向的 commit。
 2. 没有标签 → 上游 `harness/pstack/claude-code/plugin.json` 的 `version`，配 HEAD commit。
 3. 版本没变但 HEAD 前进 → 照比，上游可能改了正文没改版本。
@@ -109,12 +110,12 @@ done
 
 ## 4 分级
 
-| 级别 | 判据 | 本组例子 |
-|---|---|---|
-| P0 | 适配契约（内核清单）被上游改写；原则 id 增删；新增/删除原则 | 上游删掉 `blast-radius` 的「证明那一个事实」；上游新增一条 `principle-*` |
-| P1 | 正文规则变化，会改变行为 | `no-comments` 的 keep list 多一类或少一类注释 |
-| P2 | 措辞收紧，行为不变 | 同一句改短；表格重排 |
-| P3 | 链接、编码、格式 | principle 链接的写法变了 |
+| 级别 | 判据                                                        | 本组例子                                                                 |
+| ---- | ----------------------------------------------------------- | ------------------------------------------------------------------------ |
+| P0   | 适配契约（内核清单）被上游改写；原则 id 增删；新增/删除原则 | 上游删掉 `blast-radius` 的「证明那一个事实」；上游新增一条 `principle-*` |
+| P1   | 正文规则变化，会改变行为                                    | `no-comments` 的 keep list 多一类或少一类注释                            |
+| P2   | 措辞收紧，行为不变                                          | 同一句改短；表格重排                                                     |
+| P3   | 链接、编码、格式                                            | principle 链接的写法变了                                                 |
 
 冲突只有一个定义：上游改的正是本地改过的那一段。冲突文件停下问人，其余继续。
 
@@ -129,7 +130,6 @@ done
 ## 6 合并
 
 逐文件三步：
-
 1. 读本地全文，标 `[PI]`：frontmatter（`disable-model-invocation: true`，`principles` 例外）、中文补充段、`/skill:` 路由、gh/glab 双写、plan 评审门、中文日志。
 2. 读上游全文，标 `[UPSTREAM]`：新增的结构单元与规则。
 3. 只搬不冲突的 `[UPSTREAM]`。冲突以 `[PI]` 为准，并写进报告。

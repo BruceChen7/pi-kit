@@ -17,7 +17,6 @@ Plan Mode is the act/plan workflow switch. The user reaches it from a slash comm
 ## Driving it with verify-plugin
 
 Preconditions: repository root, `npm install` done.
-
 - Read the current mode:
   `node scripts/verify-plugin.mjs command --plugin plan-mode --command "/plan-mode status" --expect "Plan Mode: Act"`
   Observable: `PASS`, one notify containing `Plan Mode: Act`.

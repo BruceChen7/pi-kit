@@ -1,4 +1,5 @@
 ---
+
 name: verify-pi-kit
 description: "pi-kit 扩展的确定性验证：证明某个 plugin 真的被 pi 加载、斜杠命令产出了用户可见输出、注册的工具进了工具集，并留下可复跑证据。Use for /verify-pi-kit、'check 一下 plan-mode'、'这个插件还正常吗'、改完 extensions/ 要证明还能用、或需要给某个 plugin 补一条验证 recipe 时。"
 ---
@@ -12,7 +13,6 @@ pi-kit 是扩展集合，`npm test` 只证明进程内逻辑。这个 skill 证�
 ## Launch
 
 不需要单独起服务。每次验证由 helper 起一个一次性的 pi：
-
 - 命令模式：`pi --mode rpc --no-session --no-extensions --no-skills --no-mcp --no-prompt-templates --no-themes --offline -e <repo>/extensions/<plugin>`
 - 工具 / doctor 模式：`DefaultResourceLoader({ noExtensions: true, additionalExtensionPaths: [<plugin>] })` + `createAgentSession`
 
@@ -41,7 +41,6 @@ node scripts/verify-plugin.mjs command --plugin plan-mode --command "/plan-mode 
 ```
 
 三重信号，缺一不算通过：
-
 1. `get_commands` 里有这个命令，且 `sourceInfo.path` 指向目标扩展目录。
 2. `prompt` 响应的 `disposition` 是 `handled`。`started` 表示没有扩展接手，命令名写错了。
 3. 有一条 `notify` 文本命中 `--expect`。
@@ -65,7 +64,6 @@ node scripts/verify-plugin.mjs tool --plugin confluence --tool confluence_page
 ## Evidence
 
 每次运行写一个目录，默认 `.pi/verify-runs/<yyyymmdd-hhmmss>-<plugin>-<mode>/`。同一秒内同一 plugin + mode 再跑一次会自动加 `-2` 后缀，不覆盖前一次的证据。
-
 - `transcript.jsonl`：命令模式的原始 RPC 记录。
 - `active-tools.json`：工具 / doctor 模式的工具名列表。
 - `summary.json`：判定、findings、steps、notifies。

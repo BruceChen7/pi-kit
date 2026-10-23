@@ -29,7 +29,6 @@ GET /rest/api/content/{pageId}?expand=body.storage,version,space
 ```
 
 Supported URL forms:
-
 - Numeric page ID, e.g. `123456789`
 - Page URL with a numeric ID, e.g. `/pages/viewpage.action?pageId=123456789`, `/pages/123456789`, `/spaces/SPACE/pages/123456789`
 - Display URL with space key and title, e.g. `/display/SPACE/My+Page+Title`

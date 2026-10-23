@@ -1,4 +1,4 @@
-.PHONY: help install install-all install-plugins install-skills install-agents install-third-party \
+.PHONY: help install install-all install-plugins install-skills install-third-party \
 	install-clis install-opencli-adapters update-clis update-peer-deps update-skills test lint \
 	package-settings restore-settings pi-web pi-web-restart pi-web-stop pi-web-update
 
@@ -16,7 +16,6 @@ help:
 	@echo "pi-kit installer targets:"
 	@echo "  make install                 Install all: plugins, skills, third-party, extension CLIs, opencli adapters, peer deps"
 	@echo "  make install-plugins         Install repo plugins (PLUGIN_SCOPE=--library|--project|--autoload)"
-	@echo "  make install-agents          Link agents/*.md into ~/.pi/agent/agents (--check reports drift)"
 	@echo "  make install-skills          Install prompts and skills; uninstall skills removed from skills.txt"
 	@echo "                              (SKILLS_COMMAND=import|update|export)"
 	@echo "  make install-third-party     Install third-party plugins (THIRD_PARTY_MODE=--install-only|--enable-defaults)"
@@ -42,16 +41,13 @@ help:
 
 install: install-all
 
-install-all: install-plugins install-skills install-agents install-third-party install-clis install-opencli-adapters update-peer-deps
+install-all: install-plugins install-skills install-third-party install-clis install-opencli-adapters update-peer-deps
 
 install-plugins:
 	./install-plugins.sh $(PLUGIN_SCOPE)
 
 install-skills:
 	./skills/migrate.sh $(SKILLS_COMMAND)
-
-install-agents:
-	./scripts/install-agents.sh $(AGENTS_MODE)
 
 install-third-party:
 	./install-third-party-plugins.sh $(THIRD_PARTY_MODE)

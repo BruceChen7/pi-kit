@@ -35,7 +35,6 @@ Sibling map: [verify-pi-kit](../../verify-pi-kit/features/README.md) covers the 
 ## Feature entry contract
 
 Each feature file starts with an H1 title and one paragraph describing the user-visible behavior. It then uses exactly four H2 sections in this order.
-
 1. `Sub-features` lists short IDs with one line for each behavior.
 2. `How to get to it (user POV)` lists every user entry point.
 3. `Driving it with verify-pi-web` starts with `Preconditions:` and pairs each action with an exact command and observable result.

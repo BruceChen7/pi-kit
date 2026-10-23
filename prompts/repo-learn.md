@@ -1,7 +1,9 @@
 ---
+
 description: Resume learning a repo by opening existing lessons and reference docs
 argument-hint: "[topic]"
 ---
+
 Resume learning this repo by opening previously created lessons. Detect `.pi/teach/` and `~/learning/` for teach workspaces.
 
 ## Topic detection
@@ -20,7 +22,6 @@ Resume learning this repo by opening previously created lessons. Detect `.pi/tea
 ## Opening lessons
 
 For the selected topic, do both:
-
 - **`.pi/teach/<topic>/lessons/*.html`** — open each file via `open` in filename order (0001 → 0009 → …)
 - **`~/learning/<topic>/lessons/*.html`** — open each file via `open` in filename order
 - Also open reference files if present:
@@ -38,7 +39,6 @@ After opening, present a summary:
 ## No workspace
 
 If no teach workspace exists in either `.pi/teach/` or `~/learning/`:
-
 1. **Check for reference docs** at `.pi/teach/<topic>/reference/*.html` — open if found
 2. If still nothing, tell me no lessons found and **suggest running `/teach` to start learning** this repo
 

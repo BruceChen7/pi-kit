@@ -28,7 +28,6 @@ This directory is the maintained source for verifying the user-facing behavior o
 ## Feature entry contract
 
 Each feature file starts with an H1 title and one paragraph describing the user-visible behavior. It then uses exactly four H2 sections in this order.
-
 1. `Sub-features` lists short IDs with one line for each behavior.
 2. `How to get to it (user POV)` lists every user entry point.
 3. `Driving it with verify-plugin` starts with `Preconditions:` and pairs each action with an exact command and observable result.
@@ -37,7 +36,6 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 ## Features
 
 - [Plan Mode](./plan-mode.md) covers the act/plan switch and reading the current mode back.
-- [Poteto mode](./poteto-mode.md) covers the persistent on/off switch, the status and preview readouts, and where the nine role profiles live.
 - [Bash hook status](./bash-hook.md) covers the status readout for registered bash hooks.
 - [Skill toggle](./skill-toggle.md) covers the enabled managed skills readout.
 - [Subagent runs](./subagent.md) covers the empty run listing in a fresh session.

@@ -15,7 +15,6 @@ The confluence plugin exposes `confluence_page`, a tool that reads an internal C
 ## Driving it with verify-plugin
 
 Preconditions: repository root, `npm install` done, and `ATLASSIAN_CONFLUENCE_BASE_URL` exported (this repo's shell sets `https://confluence.shopee.io`).
-
 - Prove the tool is registered:
   `node scripts/verify-plugin.mjs tool --plugin confluence --tool confluence_page`
   Observable: `PASS`, `confluence_page` present in the active tool names.

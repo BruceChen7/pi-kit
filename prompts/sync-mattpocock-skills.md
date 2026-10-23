@@ -1,6 +1,7 @@
 ---
-description: Compare local pi-kit skills against mattpocock/skills and determine what to sync, with P0-P3 priority classification
----
+
+## description: Compare local pi-kit skills against mattpocock/skills and determine what to sync, with P0-P3 priority classification
+
 # Sync mattpocock/skills
 
 Compare the local `skills/` directory against [mattpocock/skills](https://github.com/mattpocock/skills), classify differences by severity, and sync the high-priority ones.
@@ -25,7 +26,6 @@ Default to Chinese unless the user explicitly asks for another language.
 ### 3. Build comparison matrix
 
 Categorise every skill into one of:
-
 - **Overlapping** — exists in both upstream and local (same or similar name)
 - **Upstream-only** — new skill in upstream, not in local
 - **Local-only** — local skill with no upstream equivalent
@@ -34,12 +34,12 @@ For overlapping skills, read **both** SKILL.md files to compare content depth, l
 
 ### 4. Classify by severity
 
-| Severity | Label | Criteria | Typical patterns |
-|---|---|---|---|
-| **P0** | Must sync | Structural/architecture change that significantly improves the skill | New file system (e.g. `./assets/`), extracted shared skill, changed output path/format |
-| **P1** | Strongly recommended | New features or important refinements that adapt cleanly to Pi context | New frontmatter field, new section/template, introduced external skill reference |
-| **P2** | Moderate | Minor polish or optional pattern improvements | Wording tightening, structural reorganisation (content equivalent), checklist add/drop |
-| **P3** | Minor / note | Cosmetic or alignment-only | Typo fix, description tweak, name alignment |
+| Severity | Label                | Criteria                                                               | Typical patterns                                                                       |
+| -------- | -------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| **P0**   | Must sync            | Structural/architecture change that significantly improves the skill   | New file system (e.g. `./assets/`), extracted shared skill, changed output path/format |
+| **P1**   | Strongly recommended | New features or important refinements that adapt cleanly to Pi context | New frontmatter field, new section/template, introduced external skill reference       |
+| **P2**   | Moderate             | Minor polish or optional pattern improvements                          | Wording tightening, structural reorganisation (content equivalent), checklist add/drop |
+| **P3**   | Minor / note         | Cosmetic or alignment-only                                             | Typo fix, description tweak, name alignment                                            |
 
 For upstream-only skills, classify whether they're worth importing and why.
 
@@ -48,7 +48,6 @@ For local-only skills, note that they are Pi-native adaptations and out of scope
 ### 5. Report
 
 Produce a structured report with:
-
 - **Summary** — version diff, notable upstream events
 - **P0 list** — what to sync now, with rationale
 - **P1 list** — what to sync after P0, with rationale
@@ -60,7 +59,6 @@ For each item in P0 and P1, include the concrete changes needed.
 ### 6. Sync (when approved)
 
 For each approved sync, use this 3-way merge checklist:
-
 - [ ] **Read full local SKILL.md** —逐行标记内容来源：`[PI]` = Pi-native（中文默认、`.pi/`路径、plannotator 引用、Pi plan workflow）、`[REF]` = 本地文件引用（LANGUAGE.md、DEEPENING.md）、`[UPSTREAM]` = 来自上游
 - [ ] **Read full upstream SKILL.md** — 标记 upstream 新增的结构单元（如 Assets 章节、shared skill 引用、新模板）
 - [ ] **Keep** — 所有 `[PI]` 标记内容不动

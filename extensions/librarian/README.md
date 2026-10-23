@@ -168,15 +168,15 @@ codemode 脚本里 `tools.read_github({...})`；其余 deferred 工具才需要�
 
 扩展内部按职责拆分为 7 个文件，各自保持干净：
 
-| 文件 | 职责 |
-|------|------|
-| `shared.ts` | 纯工具函数（无 pi 依赖）：路径归一化、glob 匹配、进度渲染等 |
-| `github.ts` | GitHub 专属：`parseRepository`、`ghApi`、7 个 GitHub 工具 handler |
-| `gitlab.ts` | GitLab 专属：`parseGitLabProject`、`glabApi`、7 个 GitLab 工具 handler |
-| `librarian-runner.ts` | Provider 无关的子 agent 运行器 |
-| `librarian-github.ts` | `librarian_github` 工具注册（GitHub-only system prompt + tool list） |
-| `librarian-gitlab.ts` | `librarian_gitlab` 工具注册（GitLab-only system prompt + tool list） |
-| `index.ts` | 入口，组合各模块注册所有工具 |
+| 文件                  | 职责                                                                   |
+| --------------------- | ---------------------------------------------------------------------- |
+| `shared.ts`           | 纯工具函数（无 pi 依赖）：路径归一化、glob 匹配、进度渲染等            |
+| `github.ts`           | GitHub 专属：`parseRepository`、`ghApi`、7 个 GitHub 工具 handler      |
+| `gitlab.ts`           | GitLab 专属：`parseGitLabProject`、`glabApi`、7 个 GitLab 工具 handler |
+| `librarian-runner.ts` | Provider 无关的子 agent 运行器                                         |
+| `librarian-github.ts` | `librarian_github` 工具注册（GitHub-only system prompt + tool list）   |
+| `librarian-gitlab.ts` | `librarian_gitlab` 工具注册（GitLab-only system prompt + tool list）   |
+| `index.ts`            | 入口，组合各模块注册所有工具                                           |
 
 ## 注意事项
 

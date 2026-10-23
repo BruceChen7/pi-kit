@@ -53,7 +53,6 @@ Herdr Squad skill
 ## 配置
 
 模型选择优先级：
-
 1. `herdr_squad_start` 显式传入的 `model` 参数
 2. 项目配置 `.pi/third_extension_settings.json` 中 `herdrSquad.defaultModel`
 3. 全局配置 `~/.pi/agent/third_extension_settings.json` 中 `herdrSquad.defaultModel`

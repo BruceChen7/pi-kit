@@ -17,7 +17,6 @@ interface ToolResultEventResult {
   isError?: boolean;
 }
 
-import type { PiKitPlanModeBadgeEvent } from "../shared/internal-events.ts";
 import { uiHostProfile } from "../shared/rich-ui.ts";
 import {
   classifyToolCall,
@@ -198,8 +197,6 @@ export class PlanModeController {
   // prompt read them, both after startup.
   private sessionCwd: string | null = null;
   private htmlArtifactDirsCache: string[] | null = null;
-  // 其它扩展广播的 footer 短标签。渲染态，不进快照：重放时生产方会补发。
-  private readonly badges = new Map<string, string>();
   // pi-web 只在 widget 挂载时判定默认展开，所以“首次出现”要先发短帧（见 widget-plan.ts）。
   private todoWidgetPresent = false;
   constructor(private readonly pi: ExtensionAPI) {}
@@ -278,7 +275,6 @@ export class PlanModeController {
     }
 
     const profile = uiHostProfile(ctx);
-    const badges = [...this.badges.values()];
     const decision = decidePlanModeUi({
       host: {
         contentVisibleWithoutInteraction:
@@ -288,8 +284,8 @@ export class PlanModeController {
       todoWidgetPresent: this.todoWidgetPresent,
       content: {
         todoLines: formatTodoWidgetLines(this.state),
-        modeLines: formatModeWidgetLines(this.state, badges),
-        statusText: formatPlanModeStatusLine(this.state, badges),
+        modeLines: formatModeWidgetLines(this.state),
+        statusText: formatPlanModeStatusLine(this.state),
       },
     });
 
@@ -311,29 +307,6 @@ export class PlanModeController {
       }
     }
     this.todoWidgetPresent = decision.todoWidgetPresent;
-  }
-
-  /**
-   * 接收其它扩展广播的 footer 短标签。
-   *
-   * 同一个 key 后写覆盖前写，`null` 表示撤下。只认本会话 cwd 的广播，
-   * 避免在同一个进程里串到别的仓库。不改会话状态，所以不调 persist：
-   * 重放时生产方会重新广播，这里只是渲染缓存。
-   */
-  setBadge(event: PiKitPlanModeBadgeEvent, ctx: ExtensionContext): void {
-    if (this.sessionCwd !== event.cwd) {
-      return;
-    }
-    if (event.text === null) {
-      if (!this.badges.delete(event.key)) {
-        return;
-      }
-    } else if (this.badges.get(event.key) !== event.text) {
-      this.badges.set(event.key, event.text);
-    } else {
-      return;
-    }
-    this.updateUi(ctx);
   }
 
   /**

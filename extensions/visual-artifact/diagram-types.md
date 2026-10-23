@@ -1,7 +1,6 @@
 # Structured diagram nodes
 
 Visual Artifact supports three structured SVG diagram nodes in addition to the generic `mermaid` and `svg-diagram` nodes:
-
 - `er-diagram` — entities, fields, and relationships.
 - `architecture-diagram` — components, groups, boundaries, and connections.
 - `layer-diagram` — ordered abstraction layers and optional cross-layer edges.
@@ -67,8 +66,16 @@ The nodes accept data, not coordinates or raw markup. Layout, orthogonal connect
   "type": "layer-diagram",
   "props": {
     "layers": [
-      { "id": "presentation", "label": "Presentation", "items": ["Web", "Mobile"] },
-      { "id": "application", "label": "Application", "items": [{ "id": "api", "label": "API", "focal": true }] },
+      {
+        "id": "presentation",
+        "label": "Presentation",
+        "items": ["Web", "Mobile"]
+      },
+      {
+        "id": "application",
+        "label": "Application",
+        "items": [{ "id": "api", "label": "API", "focal": true }]
+      },
       { "id": "data", "label": "Data", "items": ["Postgres", "Redis"] }
     ],
     "edges": [{ "from": "Web", "to": "api", "label": "requests" }]

@@ -26,31 +26,36 @@ Once qmd is installed, the extension automatically detects it at session startup
 A knowledge wiki repo follows a 5-step daily loop (source folders → summaries → concepts):
 
 ### 1. Write notes
+
 Put `.md` files in source folders (`Notes/`, `Ideas/`, `Docs/`, etc.).
 Each file should focus on one topic. Standard Markdown recommended.
 
 ### 2. Index
+
 Run `qmd update` (full-text) + `qmd embed` (vectors) to index new content.
 If you configured auto-indexing (see below), changes are picked up automatically within 3 seconds.
 
 ### 3. /knowledge-wiki-summary
+
 Run this in Pi chat. It scans source files, computes content hashes (skips unchanged ones), and writes structured summaries (tags, abstract, key concepts) to `Wiki/Summaries/`.
 
 ### 4. /knowledge-wiki-concept
+
 Run after summary. It reads `## Key Concepts` from each summary and creates/updates concept articles in `Wiki/Concepts/`, with backlinks to source summaries.
 
 ### 5. Review
+
 Quick-check `Wiki/Summaries/`, `Wiki/Concepts/`, and `Wiki/index.md` for correctness.
 
 ### Periodic maintenance
 
-| Scenario | Command | Frequency |
-|----------|---------|-----------|
-| 5+ new concepts accumulated | `/knowledge-wiki-synthesis` | weekly |
-| Source files moved/deleted | `/knowledge-wiki-lint` | after reorganization |
-| Thin concepts (< 150 字，≤ 2 sources) | `/knowledge-wiki-enrich` | monthly |
-| Duplicate concepts found | `/knowledge-wiki-merge` | as needed |
-| Too fragmented / missing parent topic | `/knowledge-wiki-cluster` | as needed |
+| Scenario                              | Command                     | Frequency            |
+| ------------------------------------- | --------------------------- | -------------------- |
+| 5+ new concepts accumulated           | `/knowledge-wiki-synthesis` | weekly               |
+| Source files moved/deleted            | `/knowledge-wiki-lint`      | after reorganization |
+| Thin concepts (< 150 字，≤ 2 sources) | `/knowledge-wiki-enrich`    | monthly              |
+| Duplicate concepts found              | `/knowledge-wiki-merge`     | as needed            |
+| Too fragmented / missing parent topic | `/knowledge-wiki-cluster`   | as needed            |
 
 ### Searching
 
@@ -179,25 +184,25 @@ The `path` is watched for changes. `pattern` and `collections` are informational
 
 All 8 `knowledge-wiki-*` skills (registered in `skills/skills.txt`) use `--base-path <dir>` to point at the knowledge base root.
 
-| Skill | Description |
-|-------|-------------|
-| `knowledge-wiki-summary` | Batch process stale/new source files — read, generate summary content with language-aware LLM prompting, and write structured summaries (tags, abstract, key concepts) to `Wiki/Summaries/`. Supports subagent dispatch for files >1500 lines. |
-| `knowledge-wiki-concept` | Create or update concept articles in `Wiki/Concepts/` from summary `## Key Concepts` entries. Handles both new concept creation (article body generation) and incremental updates (tag merge, prose extension). |
-| `knowledge-wiki-synthesis` | Two-phase discovery: scan index for cross-cutting connections, relationships, contradictions, and gaps, then synthesize 3–5 paragraph concept articles with bidirectional Connected Concepts links. |
-| `knowledge-wiki-merge` | Interactive session — detects duplicate concept pairs by shared sources and semantic overlap, presents one pair at a time with 4-option decision (Merge A→B, Merge B→A, Dismiss, Skip). Handles prose integration, tag merging, source/backlink updates. |
-| `knowledge-wiki-cluster` | Detects implied-parent clusters (e.g. `react-auth` + `react-routing` → `react`). Supports Fold (absorb thin child into parent), Link (bidirectional standalone), and sibling merging. Interactive session with LLM pre-filter for meaningless prefixes. |
-| `knowledge-wiki-lint` | 12 sequential integrity checks: orphan summaries → broken wikilinks → ungrounded concepts → orphan concepts → dead index links → missing index entries → stale dismissals → self-links → duplicate concept links. Each check repairs before the next runs. |
-| `knowledge-wiki-enrich` | Finds thin concept articles (<150 words, ≤2 sources) and expands them via web search. Integrates authoritative external information into existing prose while flagging contradictions. |
-| `knowledge-wiki-state` | Utility skill: manages `Wiki/.state.json` (unprocessed-summary tracking, last-run timestamps, pair dismissal/pruning) and `Wiki/index.md` (upsert/delete/sort/find gaps). Used by all other knowledge-wiki skills.
+| Skill                      | Description                                                                                                                                                                                                                                                |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `knowledge-wiki-summary`   | Batch process stale/new source files — read, generate summary content with language-aware LLM prompting, and write structured summaries (tags, abstract, key concepts) to `Wiki/Summaries/`. Supports subagent dispatch for files >1500 lines.             |
+| `knowledge-wiki-concept`   | Create or update concept articles in `Wiki/Concepts/` from summary `## Key Concepts` entries. Handles both new concept creation (article body generation) and incremental updates (tag merge, prose extension).                                            |
+| `knowledge-wiki-synthesis` | Two-phase discovery: scan index for cross-cutting connections, relationships, contradictions, and gaps, then synthesize 3–5 paragraph concept articles with bidirectional Connected Concepts links.                                                        |
+| `knowledge-wiki-merge`     | Interactive session — detects duplicate concept pairs by shared sources and semantic overlap, presents one pair at a time with 4-option decision (Merge A→B, Merge B→A, Dismiss, Skip). Handles prose integration, tag merging, source/backlink updates.   |
+| `knowledge-wiki-cluster`   | Detects implied-parent clusters (e.g. `react-auth` + `react-routing` → `react`). Supports Fold (absorb thin child into parent), Link (bidirectional standalone), and sibling merging. Interactive session with LLM pre-filter for meaningless prefixes.    |
+| `knowledge-wiki-lint`      | 12 sequential integrity checks: orphan summaries → broken wikilinks → ungrounded concepts → orphan concepts → dead index links → missing index entries → stale dismissals → self-links → duplicate concept links. Each check repairs before the next runs. |
+| `knowledge-wiki-enrich`    | Finds thin concept articles (<150 words, ≤2 sources) and expands them via web search. Integrates authoritative external information into existing prose while flagging contradictions.                                                                     |
+| `knowledge-wiki-state`     | Utility skill: manages `Wiki/.state.json` (unprocessed-summary tracking, last-run timestamps, pair dismissal/pruning) and `Wiki/index.md` (upsert/delete/sort/find gaps). Used by all other knowledge-wiki skills.                                         |
 
 ## What makes qmd-search different from code search
 
-| | `grep` / `find` | `qmd_query` |
-|---|---|---|
-| What it searches | Source code in the repo | Markdown knowledge base files |
-| Search backend | Exact text / filename matching | qmd (BM25 + vector + reranking) |
-| Scope | Current repo | Any qmd collection (any directory) |
-| Best for | Finding exact identifiers and files | Semantic search across docs, notes, wiki |
+|                  | `grep` / `find`                     | `qmd_query`                              |
+| ---------------- | ----------------------------------- | ---------------------------------------- |
+| What it searches | Source code in the repo             | Markdown knowledge base files            |
+| Search backend   | Exact text / filename matching      | qmd (BM25 + vector + reranking)          |
+| Scope            | Current repo                        | Any qmd collection (any directory)       |
+| Best for         | Finding exact identifiers and files | Semantic search across docs, notes, wiki |
 
 ## Tips
 

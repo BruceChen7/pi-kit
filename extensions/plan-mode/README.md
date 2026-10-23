@@ -1,7 +1,6 @@
 # Plan Mode
 
 Plan Mode gives Pi two clear workflows:
-
 - `act`: do the work directly.
 - `plan`: write a reviewable plan/spec first, wait for approval, execute automatically after approval, then return to `act`.
 
@@ -16,7 +15,6 @@ Use `act` for normal coding, tests, git operations, and small safe changes. Use 
 ```
 
 Typical `plan` workflow:
-
 1. Choose `/plan-mode plan`.
 2. Ask Pi to do the work.
 3. Pi writes a plan/spec and submits it to Plannotator.
@@ -37,7 +35,6 @@ By default, Plan Mode starts in `act`. For normal interactive runs, Pi may show 
 ## User-facing states
 
 Plan Mode hides the internal state machine. Status and widgets should use product states such as:
-
 - `Act`
 - `Planning`
 - `Waiting for review`
@@ -51,7 +48,6 @@ Internally, the extension may still track lower-level state to enforce guards an
 `plan` mode is intentionally strict. Pi writes a reviewable plan/spec, submits it to Plannotator, and waits for approval before implementation.
 
 The normal flow is:
-
 1. Pi creates a concrete TODO list.
 2. Pi writes a plan or spec under `.pi/plans/<repo>/...`.
 3. Pi submits it for review.
@@ -67,13 +63,11 @@ Operational commands such as tests, lint, git status, commit, or push are not au
 ## TODO progress
 
 Plan Mode uses TODO tools to show the active run in the below-editor widget:
-
 - `act_mode_todo` in `act`
 - `plan_mode_todo` while planning or waiting for review
 - `act_mode_todo` during approved execution
 
 During implementation, Pi should:
-
 - mark a task `in_progress` before starting it
 - mark it `done` after finishing it
 - update the todo list before switching steps: mark the finished step
@@ -99,7 +93,6 @@ Completed runs remain visible briefly as an `已交付` task list, then clear on
 
 The host decides where the same facts go (`controller.updateUi` reads
 `shared/ui-host.ts` and emits through the pure `widget-plan.ts`):
-
 - **TUI**: the mode widget above the editor (with the `Alt+0 toggles` hint) plus
   the TODO widget below it (`widgets.contentVisibleWithoutInteraction` is true,
   so no status-row substitute is needed). Nothing here changed:
@@ -128,7 +121,6 @@ The host decides where the same facts go (`controller.updateUi` reads
 
 Two operational constraints learned from the Console Go / DeepSeek regression
 (`5a52fed`):
-
 - **Extension source changes require `/reload` or a pi restart.** Extensions
   are loaded into a per-process module cache (`loadExtensionsCached`);
   editing a worktree file under `extensions/` does not affect already running
@@ -161,27 +153,35 @@ Markdown plan files should use this standard shape:
 
 ```markdown
 ## Goal
+
 - Product goal in user language.
 
 ## Current Flow
+
 - Module-level UX/system flow tree + Mermaid sequenceDiagram.
 
 ## Desired Flow
+
 - Target state flow with added/removed/changed nodes highlighted.
 
 ## Boundaries
+
 - Mermaid sequenceDiagram showing inter-layer interaction and ownership (detection, side effects, state/UI updates, persistence).
 
 ## Implementation
+
 - Key data structures (types / interfaces / data models), function signatures, file anchors.
 
 ## Testing
+
 - Core value in / value out, thin imperative shell. Function signatures + key test scenarios.
 
 ## Decisions
+
 - ADR-worthy decisions: recommended approach, rejected alternatives, open questions.
 
 ## Non-goals
+
 - Explicitly what is out of scope.
 ```
 
@@ -209,7 +209,6 @@ Most users only need these options:
 ```
 
 Presets:
-
 - `strict`: review-first defaults.
 - `balanced`: review requirements with automatic continuation after approval.
 - `solo`: fewer review waiting reminders, with the same approved-plan continuation.
@@ -219,19 +218,16 @@ Explicit settings override preset defaults.
 ## Troubleshooting
 
 If Pi is not editing files:
-
 - Check `/plan-mode status`.
 - If the workflow is `Planning` or `Waiting for review`, approve the plan or switch to `/plan-mode act`.
 - If a plan was rejected, revise the same plan file and submit it again. Keep the first `#` heading unchanged unless the reviewer explicitly asked for a rename; Plannotator keys plan-version diffs from that heading.
 
 If approval does not start implementation:
-
 - Check that `/plan-mode status` shows `Approved, executing`.
 - Check that the approved plan path is the latest submitted artifact.
 - If the artifact was edited after approval, submit it for review again.
 
 If a file write is blocked:
-
 - While planning or waiting for review, only reviewable plan/spec files can be written.
 - In `act`, source-code writes are allowed, but safety guards may still require reading an existing file before editing it.
 

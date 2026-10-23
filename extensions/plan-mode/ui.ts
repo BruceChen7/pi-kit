@@ -153,19 +153,9 @@ const formatPlanModeHeadline = (
     : `Plan Mode: ${mode} · ${runStatus}`;
 };
 
-/** 挂到 footer 上的一串短标签，由其它扩展通过 badge 通道提供。 */
-const withBadges = (line: string, badges: readonly string[]): string =>
-  badges.length === 0 ? line : `${line} · ${badges.join(" · ")}`;
-
-export const formatModeWidgetLines = (
-  state: PlanModeState,
-  badges: readonly string[] = [],
-): string[] => [
-  withBadges(
-    `${formatPlanModeHeadline(state, false)} · ` +
-      `${PLAN_MODE_TOGGLE_SHORTCUT_LABEL} toggles`,
-    badges,
-  ),
+export const formatModeWidgetLines = (state: PlanModeState): string[] => [
+  `${formatPlanModeHeadline(state, false)} · ` +
+    `${PLAN_MODE_TOGGLE_SHORTCUT_LABEL} toggles`,
 ];
 
 /**
@@ -178,14 +168,12 @@ export const formatModeWidgetLines = (
  */
 export const formatPlanModeStatusLine = (
   state: PlanModeState,
-  badges: readonly string[] = [],
 ): string | undefined => {
   const hasPlanContext =
     state.mode === PLAN_MODE_PLAN ||
     state.todos.length > 0 ||
     state.activeRun !== null;
-  // 没有计划上下文但有 badge 时必须出行：否则普通 Act 会话里 badge 无处可显。
-  if (!hasPlanContext && badges.length === 0) {
+  if (!hasPlanContext) {
     return undefined;
   }
 
@@ -199,7 +187,7 @@ export const formatPlanModeStatusLine = (
   if (total > 0) {
     parts.push(`${done}/${total} 已完成`);
   }
-  return withBadges(parts.join(" · "), badges);
+  return parts.join(" · ");
 };
 
 export const colorModeWidgetLines = (

@@ -25,7 +25,6 @@ via `envGuard.gitDiffFlags` (string or string array).
 ## Configuration
 
 Add overrides under the `envGuard` key in either project settings or global settings:
-
 - `env`: environment variables to override
 - `gitDiffFlags`: extra flags appended to `git diff` (string or string array)
 

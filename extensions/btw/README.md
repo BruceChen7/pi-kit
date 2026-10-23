@@ -11,7 +11,6 @@ Nothing reaches the main agent unless you explicitly inject it back.
 ## When to use it
 
 Use `/btw` when you want to:
-
 - Ask what the agent is doing while it continues working.
 - Discuss an alternative plan without changing the current task.
 - Have a side agent read files in the repo and answer with evidence.
@@ -67,15 +66,15 @@ overlay after injecting.
 
 The overlay is a top-center floating panel (requires the pi TUI).
 
-| Key | Action |
-|-----|--------|
-| `Enter` | submit a follow-up in the input |
-| `Esc` | abort while answering; close when idle |
-| `c` | copy the current answer (raw markdown) to the clipboard |
-| `←` / `→` | page through this session's side Q&A history |
-| `↑` / `↓` | scroll a long answer |
+| Key         | Action                                                                                                                                            |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Enter`     | submit a follow-up in the input                                                                                                                   |
+| `Esc`       | abort while answering; close when idle                                                                                                            |
+| `c`         | copy the current answer (raw markdown) to the clipboard                                                                                           |
+| `←` / `→`   | page through this session's side Q&A history                                                                                                      |
+| `↑` / `↓`   | scroll a long answer                                                                                                                              |
 | Mouse wheel | scroll the answer when the pointer is over the overlay (pi fullscreen TUI); when the answer fits, the wheel keeps scrolling the transcript behind |
-| `Alt+/` | toggle focus between the overlay and the main editor (overlay stays visible; `Ctrl+Alt+W` as fallback) |
+| `Alt+/`     | toggle focus between the overlay and the main editor (overlay stays visible; `Ctrl+Alt+W` as fallback)                                            |
 
 Earlier questions appear as a dimmed list above the current answer. History is
 capped at the most recent 20 exchanges.
@@ -83,7 +82,6 @@ capped at the most recent 20 exchanges.
 ## How context works
 
 Each `/btw` ask runs against a lazily-created **in-memory sub-session**:
-
 1. Seeded with the main session's current messages.
 2. Given read-only tools (`read`, `grep`, `find`, `ls`) — it can inspect the
    repository but cannot modify anything.

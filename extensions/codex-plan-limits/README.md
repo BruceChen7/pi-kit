@@ -5,12 +5,10 @@
 ## 功能
 
 当前模型满足以下条件时：
-
 - provider: `openai-codex`
 - 鉴权方式：OAuth（订阅登录）
 
 扩展会在编辑器下方以**灰色单独一行**显示订阅信息（widget）：
-
 - 5h 窗口剩余额度
 - Weekly 窗口剩余额度
 - 两个窗口的重置时间
@@ -20,7 +18,6 @@
 ## 刷新策略
 
 额度信息会在以下时机更新：
-
 - session start
 - model select
 - turn end
@@ -31,13 +28,11 @@
 ## 在 pi-kit 中启用
 
 本仓库已在 `package.json` 的 `pi.extensions` 中注册：
-
 - `./extensions/codex-plan-limits`
 
 ## 致谢
 
 本实现基于并致谢：
-
 - [kmiyh/pi-codex-plan-limits](https://github.com/Kmiyh/pi-codex-plan-limits)
 
 感谢原项目提供的思路与实现基础。

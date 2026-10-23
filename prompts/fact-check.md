@@ -1,6 +1,7 @@
 ---
-description: Verify the factual accuracy of a document against the actual codebase, correct inaccuracies in place
----
+
+## description: Verify the factual accuracy of a document against the actual codebase, correct inaccuracies in place
+
 Verify the factual accuracy of a document that makes claims about a codebase. Read the file, extract every verifiable claim, check each against the actual code and git history, correct inaccuracies in place, and add a verification summary.
 
 This prompt may edit an existing document in place. Prefer targets under `.pi/plans/<repo>/...` so Plan Mode and Plannotator Auto can track reviewable artifacts. If the target is a reviewed Plan Mode artifact, preserve its required format. For Markdown implementation plans under `.pi/plans/<repo>/plan/*.md`, keep only the standard `## Context`, `## Steps`, `## Verification`, and `## Review` top-level sections; put the verification summary inside `## Review` instead of adding a new `## Verification Summary` section. If the edited artifact has a pending or prior Plannotator review, submit it again with `plannotator_auto_submit_review({ path })`.

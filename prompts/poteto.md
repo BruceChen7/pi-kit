@@ -1,4 +1,5 @@
 ---
+
 description: pstack 工程模式：先判断再动手，按任务类型路由到对应 skill，收尾用跑过的证据。用法 /poteto <task>
 argument-hint: "<task>"
 ---
@@ -19,14 +20,14 @@ argument-hint: "<task>"
 
 先判断任务属于哪一类，把类型写进第一项 todo，再按这一行往下走。
 
-| 类型 | 先做 | 再走 | 收尾 |
-|---|---|---|---|
-| 调查 | `/skill:research` 或 `/skill:wayfinder`；只读且可切分时 `/skill:herdr-squad`（要人看着）或 `subagent explore`（后台）；覆盖矩阵可 `/skill:swarm`；运行时症状用 `playbook: runtime-forensics`，手上已有 trace 或快照用 `playbook: trace-forensics` | 给带引用的结论，不改码 | 交结论 |
-| 修 bug | `/skill:diagnosing-bugs` 建反馈回路 | 复现 → 根因 → 最小修复 | `/skill:blast-radius` |
-| 重构 | plan 产物里先写「行为不变」的判据，步骤走 `playbook: refactoring` | 小步改，每步验证 | `/skill:blast-radius` + `/skill:review` |
-| 新功能 | plan 或 spec，走 Plannotator，步骤走 `playbook: feature` | 先定数据形状再写码；方案未定时可 `/skill:arena` | 测试或验证脚本；仓库没有可跑路径时 `/skill:create-verification-skill` |
-| 性能 | 先跑基线，记下 limiter，步骤走 `playbook: perf-issue` | 改一处，测一次 | `/skill:blast-radius` + `/skill:benchmark-checklist` |
-| 收尾发布 | `/skill:review` 双轴 | 修 findings；高风险 diff 加 `/skill:interrogate`；注释多时 `/skill:no-comments`；`verify-*` 过期时 `/skill:maintain-verification-skill` | 重跑测试 → `/skill:unslop` + conventional commit |
+| 类型     | 先做                                                                                                                                                                                                                                              | 再走                                                                                                                                    | 收尾                                                                  |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 调查     | `/skill:research` 或 `/skill:wayfinder`；只读且可切分时 `/skill:herdr-squad`（要人看着）或 `subagent explore`（后台）；覆盖矩阵可 `/skill:swarm`；运行时症状用 `playbook: runtime-forensics`，手上已有 trace 或快照用 `playbook: trace-forensics` | 给带引用的结论，不改码                                                                                                                  | 交结论                                                                |
+| 修 bug   | `/skill:diagnosing-bugs` 建反馈回路                                                                                                                                                                                                               | 复现 → 根因 → 最小修复                                                                                                                  | `/skill:blast-radius`                                                 |
+| 重构     | plan 产物里先写「行为不变」的判据，步骤走 `playbook: refactoring`                                                                                                                                                                                 | 小步改，每步验证                                                                                                                        | `/skill:blast-radius` + `/skill:review`                               |
+| 新功能   | plan 或 spec，走 Plannotator，步骤走 `playbook: feature`                                                                                                                                                                                          | 先定数据形状再写码；方案未定时可 `/skill:arena`                                                                                         | 测试或验证脚本；仓库没有可跑路径时 `/skill:create-verification-skill` |
+| 性能     | 先跑基线，记下 limiter，步骤走 `playbook: perf-issue`                                                                                                                                                                                             | 改一处，测一次                                                                                                                          | `/skill:blast-radius` + `/skill:benchmark-checklist`                  |
+| 收尾发布 | `/skill:review` 双轴                                                                                                                                                                                                                              | 修 findings；高风险 diff 加 `/skill:interrogate`；注释多时 `/skill:no-comments`；`verify-*` 过期时 `/skill:maintain-verification-skill` | 重跑测试 → `/skill:unslop` + conventional commit                      |
 
 长跑无人值守用 `playbook: autonomous-run`，明确要停或要离线用 `playbook: pause-safely`。playbook 索引在 `/skill:poteto-playbooks`，按上面第 0 节的查找顺序定位；在本仓也可以直接读 `skills/poteto-playbooks/playbooks/<name>.md`。取到之后按索引里的「怎么用」办。
 
@@ -37,7 +38,6 @@ route 跟着任务走。todo 第一项写的类型和当前动作对不上时，
 ## 2. 非协商触发器
 
 遇到下面任何一条，先做它说的事，再继续。
-
 - 非平凡改动、架构决定、或有人说「are we sure」→ 读 `/skill:principles` 索引，挑出这次要用的 1 到 3 条。
 - 改动碰共享类型、跨模块边界、删公开 API、或只有三行但改的是大家共用的东西 → `/skill:blast-radius`。
 - bug 没有可复现路径 → `/skill:diagnosing-bugs`，先有失败复现再改代码。
@@ -65,8 +65,7 @@ route 跟着任务走。todo 第一项写的类型和当前动作对不上时，
 ## 4. 验证契约
 
 结论分三种标签，写在同一句话里：
-
-- **跑过**：贴命令加输出末行原文，例如 `npx vitest run x` → `Tests  12 passed (12)`。
+- **跑过**：贴命令与输出，或产物路径。
 - **推断**：说明依据了哪些事实。
 - **猜**：显式写「未验证」。
 
@@ -101,17 +100,15 @@ route 跟着任务走。todo 第一项写的类型和当前动作对不上时，
 
 任务能一句自包含地说清，才委派。说不清，先自己拆。
 
-| 场景 | 用什么 | 怎么收 |
-|---|---|---|
-| 读多写少、独立评审 | `subagent` 的 `review` / `judgment` / `explore` | `status <runId>`，贴 findings |
-| 写任务、文件不重叠 | `subagent` 的 `code` / `bug-fix` / `perf` / `strongest` | `status <runId>`，再跑测试 |
-| 验证别人的结论 | `subagent` 的 `verification` | 收逐条 criterion 与退出码 |
-| 要人看着、可插话 | `/skill:herdr-squad` | 收 report |
-| 同一文件并发写 | 不委派，串行 | 无需 |
-
+| 场景               | 用什么                               | 怎么收                        |
+| ------------------ | ------------------------------------ | ----------------------------- |
+| 读多写少、独立评审 | `subagent` 的 `reviewer` / `explore` | `status <runId>`，贴 findings |
+| 写任务、文件不重叠 | `subagent` 的 `general`              | `status <runId>`，再跑测试    |
+| 要人看着、可插话   | `/skill:herdr-squad`                 | 收 report                     |
+| 同一文件并发写     | 不委派，串行                         | 无需                          |
 - 写任务按文件或输出目录分区。同一文件不并发。
 - 子会话看不到本对话，`task` 必须自包含：目标、范围、验收、报告格式。
-- 需要不同模型交叉评审时，用 `agents/<角色>.md`（装到 `~/.pi/agent/agents`）里 pin 了 `model` 的 profile；这一版九个角色都没 pin，按需要自己加一行。没有就同模型多跑几份，并写明。
+- 需要不同模型交叉评审时，用 `.pi/agents/` 里 pin 了 `model` 的 profile；没有就同模型多跑几份，并写明。
 - 不把「已派出」当完成。结果必须收回并验证。
 
 ## 9. 明确不做

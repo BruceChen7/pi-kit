@@ -17,7 +17,6 @@ The bash-hook plugin overrides the `bash` tool and the user `!`/`!!` path so reg
 ## Driving it with verify-plugin
 
 Preconditions: repository root, `npm install` done.
-
 - Read hook status:
   `node scripts/verify-plugin.mjs command --plugin bash-hook --command "/bash-hook-status" --expect "Bash hooks registered: none | ordered: none"`
   Observable: `PASS`, one notify whose full literal is `Bash hooks registered: none | ordered: none | order setting: … | last run: none`.

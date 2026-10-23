@@ -29,10 +29,10 @@ in every project by default**. The settings file only records deviations:
     "defaultDisabledPlugins": ["copyx", "pi-autoresearch"],
     "byCwd": {
       "/path/to/project-a": {
-        "enabledPlugins": ["copyx"]        // force-on override for a default-disabled plugin
+        "enabledPlugins": ["copyx"] // force-on override for a default-disabled plugin
       },
       "/path/to/project-b": {
-        "disabledPlugins": ["qmd-search"]  // turned off relative to the default
+        "disabledPlugins": ["qmd-search"] // turned off relative to the default
       }
     }
   }
@@ -63,7 +63,6 @@ extensions/skills/prompts/themes/settings as the root repo. Plugin settings
 are keyed by the main repo root, so toggling a plugin in the worktree applies
 to the root repo (and every other linked worktree) and vice versa; the root
 repo's `.pi/extensions` is the single source of truth.
-
 - The first session in a fresh worktree creates the link; run `/reload` once
   to load the shared project plugins.
 - If the worktree already has its own real `.pi` directory (for example the

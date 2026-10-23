@@ -1,19 +1,19 @@
 ---
+
 description: Review code/test changes using Boundaries Refactor + me-tdd + Improve Codebase Architecture principles with P0-P3 severity classification
 argument-hint: "[scope]"
 ---
-Review the code or test changes using three complementary frameworks:
 
+Review the code or test changes using three complementary frameworks:
 1. **Boundaries Refactor (Functional Core, Imperative Shell)** — Identify where IO/side effects mix with pure decision logic, where boundary DTOs are missing, and where module-level mutable state leaks. Read `/skill:boundaries-refactor` for full reference.
 2. **me-tdd** — Evaluate whether tests verify behavioral contracts through public interfaces, or are coupled to implementation details, mock too deeply, or assert on call-choreography instead of outcomes. Read `/skill:me-tdd` for full reference.
 3. **Improve Codebase Architecture** — Evaluate module depth and seam quality: shallow modules (interface nearly as complex as implementation), pass-through modules that fail the deletion test, tightly-coupled modules leaking across seams, and whether new tests exercise behavior through the module interface. Read `/skill:improve-codebase-architecture` for full reference.
 
-> **Vocabulary note**: the two architecture frameworks use different terms for related concepts — boundaries-refactor speaks of *boundary DTOs* at the *IO/logic boundary*; improve-codebase-architecture speaks of *seams* and *adapters* and deliberately avoids the word "boundary". Use each framework's own terms when applying it, and tag every finding with its framework (below) so terms never mix inside one finding.
+> **Vocabulary note**: the two architecture frameworks use different terms for related concepts — boundaries-refactor speaks of _boundary DTOs_ at the _IO/logic boundary_; improve-codebase-architecture speaks of _seams_ and _adapters_ and deliberately avoids the word "boundary". Use each framework's own terms when applying it, and tag every finding with its framework (below) so terms never mix inside one finding.
 
 ## Scope detection
 
 Determine what to review based on the argument (`$@`):
-
 - **No argument**: uncommitted changes only — `git diff` (working tree) and `git diff --staged` (staged)
 - **Commit ref** (e.g. `HEAD`, `HEAD~1`, `abc123`): that commit's changes — `git diff <ref>~1 <ref>` and `git log -1 <ref>`
 - **Commit range** (e.g. `abc123..def456`): diff between two commits

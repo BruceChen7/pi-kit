@@ -1,6 +1,7 @@
 ---
-description: Generate a Visual Artifact plan review — current codebase state vs. proposed implementation plan
----
+
+## description: Generate a Visual Artifact plan review — current codebase state vs. proposed implementation plan
+
 Generate a comprehensive plan review as a Visual Artifact via the `create_visual_artifact` tool, comparing the current codebase against a proposed implementation plan.
 
 This prompt produces a reviewed visual artifact, not source-code implementation. It uses the `create_visual_artifact` tool — pass `nodes` as a JSON string of the node array, and `data` as a JSON string when present — not a standalone HTML page.
@@ -10,7 +11,6 @@ This prompt produces a reviewed visual artifact, not source-code implementation.
 - Codebase: `$2` if provided, otherwise the current working directory
 
 **Data gathering phase** — read and cross-reference these before generating:
-
 1. **Read the plan file in full.** Extract:
    - The problem statement and motivation
    - Each proposed change (files to modify, new files, deletions)
@@ -35,7 +35,7 @@ This prompt produces a reviewed visual artifact, not source-code implementation.
 - Every function, type, and module name you will reference from both the plan and the codebase
 - Every behavior description: what the code currently does vs. what the plan proposes
 - For each, cite the source: the plan section or the file:line where you read it
-Verify each claim against the code and the plan. If something cannot be verified, mark it as uncertain rather than stating it as fact. This fact sheet is your source of truth during artifact generation — do not deviate from it.
+  Verify each claim against the code and the plan. If something cannot be verified, mark it as uncertain rather than stating it as fact. This fact sheet is your source of truth during artifact generation — do not deviate from it.
 
 **Artifact structure** — build a spec object with 9 sections mapped to Visual Artifact node types, then call `create_visual_artifact` with `nodes: JSON.stringify(spec.nodes)` and `data: JSON.stringify(spec.data)` when `data` is present.
 
@@ -43,17 +43,17 @@ Sections 1-4 are the visual anchor — use `heading` (h1/h2) + `text` (size lg/x
 
 ### Section-to-node mapping
 
-| # | Section | VA Node Type(s) | Notes |
-|---|---------|-----------------|-------|
-| 1 | **Plan summary** | `heading` (h1) + `text` (xl) + `badge` | Lead with intuition, then scope. Use text xl for the lead paragraph. |
-| 2 | **Impact dashboard** | `kpi-grid` | Use 4-6 high-signal metrics: files to modify/create/delete, est. lines, new tests, dependencies. Omit redundant zeros. Completeness (tests/docs/migration) goes in `badge` nodes below the grid. |
-| 3 | **Current architecture** | `mermaid` | Current-subsystem diagram. Use `flowchart` syntax, double-quoted labels. Use the same layout direction as section 4. |
-| 4 | **Planned architecture** | `mermaid` | Post-plan subsystem diagram. Use the same layout direction as section 3. **Label convention for diff visibility (no CSS):** prefix new nodes with `"+"`, removed with `"-"`, modified with `"~"`. |
-| 5 | **Change-by-change breakdown** | `accordion` | One accordion (collapsible). Each change = one accordion item. Inside each item: `side-by-side` (left=current code, right=planned code) + `callout`(info) for rationale. Flag discrepancies where plan describes current behavior incorrectly. |
-| 6 | **Dependency & ripple analysis** | `table` + `badge` | Table with columns: file, impact type, status. Use badge variants: success=covered, warning=unmentioned, danger=missed. |
-| 7 | **Risk assessment** | `accordion` | One accordion. Items: Edge cases, Assumptions, Ordering risks, Rollback complexity, Cognitive complexity. Per item: `card` + `badge`(severity: info=low, warning=medium, danger=high). Each cognitive complexity flag includes a mitigation suggestion. |
-| 8 | **Plan review** | `accordion` | One accordion. Items: Good (success badge), Bad (danger badge), Ugly (warning badge), Questions (info badge). Per item: `card` + `list` with file:plan-section references. If nothing to flag, say "None found." |
-| 9 | **Understanding gaps** | `kpi-grid` + `card` + `list` | Two `stat-card`s: Rationale Coverage (covered/total) and Cognitive Flags (count). Below: a `list` of flagged items with severity, and explicit recommendations. |
+| #   | Section                          | VA Node Type(s)                        | Notes                                                                                                                                                                                                                                                   |
+| --- | -------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Plan summary**                 | `heading` (h1) + `text` (xl) + `badge` | Lead with intuition, then scope. Use text xl for the lead paragraph.                                                                                                                                                                                    |
+| 2   | **Impact dashboard**             | `kpi-grid`                             | Use 4-6 high-signal metrics: files to modify/create/delete, est. lines, new tests, dependencies. Omit redundant zeros. Completeness (tests/docs/migration) goes in `badge` nodes below the grid.                                                        |
+| 3   | **Current architecture**         | `mermaid`                              | Current-subsystem diagram. Use `flowchart` syntax, double-quoted labels. Use the same layout direction as section 4.                                                                                                                                    |
+| 4   | **Planned architecture**         | `mermaid`                              | Post-plan subsystem diagram. Use the same layout direction as section 3. **Label convention for diff visibility (no CSS):** prefix new nodes with `"+"`, removed with `"-"`, modified with `"~"`.                                                       |
+| 5   | **Change-by-change breakdown**   | `accordion`                            | One accordion (collapsible). Each change = one accordion item. Inside each item: `side-by-side` (left=current code, right=planned code) + `callout`(info) for rationale. Flag discrepancies where plan describes current behavior incorrectly.          |
+| 6   | **Dependency & ripple analysis** | `table` + `badge`                      | Table with columns: file, impact type, status. Use badge variants: success=covered, warning=unmentioned, danger=missed.                                                                                                                                 |
+| 7   | **Risk assessment**              | `accordion`                            | One accordion. Items: Edge cases, Assumptions, Ordering risks, Rollback complexity, Cognitive complexity. Per item: `card` + `badge`(severity: info=low, warning=medium, danger=high). Each cognitive complexity flag includes a mitigation suggestion. |
+| 8   | **Plan review**                  | `accordion`                            | One accordion. Items: Good (success badge), Bad (danger badge), Ugly (warning badge), Questions (info badge). Per item: `card` + `list` with file:plan-section references. If nothing to flag, say "None found."                                        |
+| 9   | **Understanding gaps**           | `kpi-grid` + `card` + `list`           | Two `stat-card`s: Rationale Coverage (covered/total) and Cognitive Flags (count). Below: a `list` of flagged items with severity, and explicit recommendations.                                                                                         |
 
 ### Visual hierarchy guidelines
 
@@ -68,24 +68,24 @@ Sections 1-4 are the visual anchor — use `heading` (h1/h2) + `text` (size lg/x
 
 Refer to the `create_visual_artifact` tool's `nodes` parameter for the full list. Key types for plan reviews:
 
-| Type | Use for |
-|------|---------|
-| `heading` | Section titles (h1-h4) |
-| `text` | Prose, with sizes sm/md/lg/xl |
-| `list` | Bulleted items |
-| `card` | Bordered container with optional title |
-| `stat-card` | Single metric with trend |
-| `table` | Rows and columns of data |
-| `diff` | Code-level before/after diff |
-| `code-block` | Highlighted code |
-| `mermaid` | Flowcharts, sequence diagrams, state diagrams |
-| `badge` | Short colored labels (info/success/warning/danger/default) |
-| `callout` | Info/success/warning/danger callouts |
-| `side-by-side` | Before/after comparison panels |
-| `kpi-grid` | Dashboard-style KPI grid |
-| `file-tree` | Nested file tree with optional `status` |
-| `accordion` | Collapsible groups (use for reference sections 5, 7, 8) |
-| `section` | Untitled section container |
+| Type           | Use for                                                    |
+| -------------- | ---------------------------------------------------------- |
+| `heading`      | Section titles (h1-h4)                                     |
+| `text`         | Prose, with sizes sm/md/lg/xl                              |
+| `list`         | Bulleted items                                             |
+| `card`         | Bordered container with optional title                     |
+| `stat-card`    | Single metric with trend                                   |
+| `table`        | Rows and columns of data                                   |
+| `diff`         | Code-level before/after diff                               |
+| `code-block`   | Highlighted code                                           |
+| `mermaid`      | Flowcharts, sequence diagrams, state diagrams              |
+| `badge`        | Short colored labels (info/success/warning/danger/default) |
+| `callout`      | Info/success/warning/danger callouts                       |
+| `side-by-side` | Before/after comparison panels                             |
+| `kpi-grid`     | Dashboard-style KPI grid                                   |
+| `file-tree`    | Nested file tree with optional `status`                    |
+| `accordion`    | Collapsible groups (use for reference sections 5, 7, 8)    |
+| `section`      | Untitled section container                                 |
 
 ### Mermaid guidelines (always follow)
 
@@ -199,7 +199,6 @@ Example condensed structure:
 ### Change-by-change content guidelines (section 5)
 
 For each change in the plan, an accordion item containing:
-
 - `side-by-side` with `leftLabel: "Current"` and `rightLabel: "Planned"`
   - Left: `code-block` of current code/function signatures
   - Right: `code-block` of planned code as described in the plan
@@ -211,7 +210,6 @@ For each change in the plan, an accordion item containing:
 ### Risk assessment content guidelines (section 7)
 
 Five categories, each as an accordion item:
-
 - **Edge cases** — what the plan doesn't address
 - **Assumptions** — what the plan assumes about the codebase that should be verified
 - **Ordering risks** — if changes need a specific sequence
@@ -223,7 +221,6 @@ Per item: `card` with severity `badge` (info=low, warning=medium, danger=high).
 ### Plan review content guidelines (section 8)
 
 Four categories in one accordion:
-
 - **Good** (green/success) — solid design decisions, well-reasoned tradeoffs
 - **Bad** (red/danger) — gaps: missing files, unaddressed edge cases, incorrect assumptions
 - **Ugly** (amber/warning) — subtle concerns: complexity, maintenance burden, future problems
@@ -234,7 +231,6 @@ Each item references specific plan sections and code files. If nothing to flag, 
 ### Understanding gaps guidelines (section 9)
 
 Rolls up decision-rationale gaps from section 5 and cognitive complexity flags from section 7:
-
 - Two `stat-card`s in a `kpi-grid`: Rationale Coverage (covered/total) and Cognitive Flags (count)
 - A `card` containing a `list` of explicit recommendations: "Before implementing, document the rationale for changes X and Y — the plan doesn't explain why these approaches were chosen over alternatives"
 - This section makes cognitive debt visible _before_ the work starts, when it's cheapest to address.

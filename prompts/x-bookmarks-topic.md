@@ -1,7 +1,9 @@
 ---
+
 description: 检索我在 X 收藏中与某个 topic 相关的全部帖子(全量覆盖、去重、分类、可点击链接)
 argument-hint: "<topic> [related-terms...] [--recent N] [--strict] [--refresh]"
 ---
+
 按主题检索我收藏的 X 帖子,并输出**可点击链接**列表。这是"深度主题检索":默认扫描**全部收藏**(自动翻页),而不是只看最近几条;适合回答"我收藏过哪些 sqlite / rust / agent 相关帖子"这类问题。
 
 使用 `opencli` 的 X/Twitter 适配器(bookmarks,COOKIE 策略,复用我的登录态)。
@@ -31,7 +33,7 @@ argument-hint: "<topic> [related-terms...] [--recent N] [--strict] [--refresh]"
    - sqlite → turso, libsql, litestream, sqlcipher, wcdb, sqlite3
    - ai agent → claude code, mcp, openclaw, agent framework, skills
    - 保存优化 → 缓存,索引,分页,wal,fts
-   不要过度扩展成"顺带提一词就全收"——拿不准时靠摘要判断。
+     不要过度扩展成"顺带提一词就全收"——拿不准时靠摘要判断。
 4. **去重**:按 tweet id 去重,重复书签显式标注"重复"或只保留一次并在旁注明。
 5. **分类**(判断每条归属,给出小标题):
    - **核心主题**:帖子本身在讲这个 topic(技术、工具、库、方案)
@@ -46,6 +48,7 @@ argument-hint: "<topic> [related-terms...] [--recent N] [--strict] [--refresh]"
 结构:
 
 # X 收藏检索:<主题>
+
 - 覆盖范围:全部收藏 <N> 条 / 最近 N 条,检索日期
 - 命中:共 M 条(字面命中 X 条 + 扩展命中 Y 条,已去重)
 - 缓存:复用 `/tmp/x-bookmarks-<日期>.json` 或"本次已新建"
@@ -53,13 +56,16 @@ argument-hint: "<topic> [related-terms...] [--recent N] [--strict] [--refresh]"
 分组输出(按上面分类):
 
 ## 🎯 核心主题
+
 1. **<短标题/摘要>** — @作者,<时间>,<👍/♻️ 数据>
    https://x.com/<handle>/status/<id>
 
 ## 🧰 用到该主题(工具/项目)
+
 (同上格式)
 
 ## ♻️ 顺带提及
+
 (同上格式,`--strict` 时去掉本组)
 
 > 注:如遇推文只有链接/转发式短文本,如实说明;命中数少(≤3)时可直接平铺不分组。

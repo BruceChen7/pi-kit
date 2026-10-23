@@ -15,11 +15,16 @@ extensions/visual-artifact/ui-dist/
 package-lock.json
 pnpm-lock.yaml
 skills/*/reports/
-/.pi
+# The verification skill maps are tracked; the rest of .pi/ stays local.
+**/.pi/
+!/.pi/
+/.pi/*
+!/.pi/skills/
+/.pi/skills/*
+!/.pi/skills/verify-pi-kit/
+!/.pi/skills/verify-pi-web/
 .config/wt.toml
 .worktreeinclude
 .worktrees/
 docs/
 .alma-snapshots
-
-.pi/

@@ -141,11 +141,18 @@ describe("subagent tool registration", () => {
     const { pi, tools } = makePi();
     registerSubagent(pi as never);
 
-    await expect(
-      call(tools[0], { action: "run", agent: "ghost", task: "x" }, makeCtx()),
-    ).rejects.toThrow(
-      /unknown agent "ghost"\. Available: explore, general, reviewer/,
-    );
+    // 用 contains 而不是整串匹配：可用列表还包含用户目录里安装的 profile，
+    // 断言全量集合会把测试绑到跑测试这台机器的 ~/.pi/agent/agents 上。
+    const error = (await call(
+      tools[0],
+      { action: "run", agent: "ghost", task: "x" },
+      makeCtx(),
+    ).catch((thrown: unknown) => thrown)) as Error;
+
+    expect(error.message).toContain('unknown agent "ghost". Available:');
+    for (const builtin of ["explore", "general", "reviewer"]) {
+      expect(error.message).toContain(builtin);
+    }
   });
 });
 

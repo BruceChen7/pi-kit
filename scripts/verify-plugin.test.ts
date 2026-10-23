@@ -8,6 +8,7 @@ import {
   findRegisteredCommand,
   formatSummary,
   parseArgs,
+  uniqueEvidenceDir,
 } from "./verify-plugin.mjs";
 
 const PLUGIN_DIR = "/repo/extensions/plan-mode";
@@ -265,6 +266,21 @@ describe("evaluateDoctor", () => {
         extensionErrors: [],
       }).findings,
     ).toEqual([`extension is not loaded: ${PLUGIN_DIR}`]);
+  });
+});
+
+describe("uniqueEvidenceDir", () => {
+  it("keeps the stamped directory when it is free", () => {
+    expect(uniqueEvidenceDir("/repo/run", () => false)).toBe("/repo/run");
+  });
+
+  it("suffixes instead of overwriting a directory taken in the same second", () => {
+    const taken = new Set(["/repo/run", "/repo/run-2"]);
+    expect(
+      uniqueEvidenceDir("/repo/run", (candidate: string) =>
+        taken.has(candidate),
+      ),
+    ).toBe("/repo/run-3");
   });
 });
 

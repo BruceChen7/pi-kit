@@ -2,7 +2,11 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { PLANNOTATOR_REVIEW_VERDICT_CHANNEL } from "../shared/internal-events.ts";
+import {
+  type PiKitPlanModeBadgeEvent,
+  PLAN_MODE_BADGE_CHANNEL,
+  PLANNOTATOR_REVIEW_VERDICT_CHANNEL,
+} from "../shared/internal-events.ts";
 import {
   ACT_TODO_TOOL_NAME,
   PLAN_MODE_COMMAND_OPTIONS,
@@ -159,6 +163,24 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     }
     controller.handleReviewVerdict(
       payload,
+      payload.ctx as unknown as ExtensionContext,
+    );
+  });
+
+  // Footer badges from other extensions (poteto-mode is the first producer).
+  // The controller owns the cwd filter; a producer in another repo is dropped.
+  pi.events.on(PLAN_MODE_BADGE_CHANNEL, (payload) => {
+    if (!isRecord(payload) || !isRecord(payload.ctx)) {
+      return;
+    }
+    if (typeof payload.cwd !== "string" || typeof payload.key !== "string") {
+      return;
+    }
+    if (typeof payload.text !== "string" && payload.text !== null) {
+      return;
+    }
+    controller.setBadge(
+      payload as unknown as PiKitPlanModeBadgeEvent,
       payload.ctx as unknown as ExtensionContext,
     );
   });

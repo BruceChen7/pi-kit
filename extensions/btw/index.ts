@@ -17,7 +17,7 @@
 //   /btw:inject [指令] 把整个 btw 线程作为 followUp 注入主 agent，然后重置
 //   /btw:summarize [指令] 用 fast 模型摘要后注入主 agent，然后重置
 //
-// 交互（overlay）：Enter 追问 · Esc 中止/关闭 · c 复制 · ←→ 历史 · ↑↓ 滚动 ·
+// 交互（overlay）：Enter 追问 · Esc 中止/关闭 · c 复制 · ←→ 历史 · ↑↓ 或滚轮滚动 ·
 //                 alt+/（或 ctrl+alt+w）切回主编辑。
 //
 // 持久化：无（纯内存）。重启 / reload 即清——因侧对话是旁支，不值得落盘。

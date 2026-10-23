@@ -1,7 +1,7 @@
 // # btw overlay — top-center 展示组件（移植自 L2ncE/pi-btw，Apache-2.0）
 //
 // BtwOverlayComponent 是纯展示组件：读回调暴露的状态、Markdown 渲染、
-// 处理输入（←→ 历史翻页 / ↑↓ 滚动 / c 复制 / Esc 中止或关闭 / alt+/ 切焦点）。
+// 处理输入（←→ 历史翻页 / ↑↓ 与滚轮滚动 / c 复制 / Esc 中止或关闭 / alt+/ 切焦点）。
 // 组件本身不单测（纯渲染）；接线与状态在 index.ts。
 
 import {
@@ -17,11 +17,23 @@ import {
   Markdown,
   matchesKey,
   type TUI,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
   truncateToWidth,
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { PanelChrome } from "../shared/ui-host.ts";
-import type { BtwActive, BtwExchange, BtwSelection } from "./core.ts";
+import {
+  type BtwActive,
+  type BtwExchange,
+  type BtwSelection,
+  clampScroll,
+  FOLLOW_BOTTOM,
+  isScrollable,
+  type ScrollGeometry,
+  type ScrollState,
+  scrollByLines,
+} from "./core.ts";
 
 export interface BtwOverlayCallbacks {
   readExchanges: () => BtwExchange[];
@@ -62,8 +74,9 @@ export class BtwOverlayComponent implements Component, Focusable {
   private readonly chrome: PanelChrome;
   private readonly hostRows: number | undefined;
   private status = "";
-  private scrollOffset = 0;
-  private followBottom = true;
+  private scroll: ScrollState = FOLLOW_BOTTOM;
+  /** 上一次 render 的可见窗口；滚轮按它换算，没有 render 过就不吃事件。 */
+  private geometry: ScrollGeometry = { contentHeight: 0, maxRows: 0 };
   focused = false;
 
   constructor(
@@ -80,7 +93,7 @@ export class BtwOverlayComponent implements Component, Focusable {
     this.input.onSubmit = (value) => {
       // Keep the draft when the ask is rejected (still answering); the parent shows a hint.
       if (!this.callbacks.readActive()) this.input.setValue("");
-      this.followBottom = true;
+      this.scroll = FOLLOW_BOTTOM;
       this.callbacks.onSubmit(value);
     };
   }
@@ -109,7 +122,7 @@ export class BtwOverlayComponent implements Component, Focusable {
         const index = this.callbacks.readViewIndex();
         if (!this.callbacks.readActive() && index > 0) {
           this.callbacks.setViewIndex(index - 1);
-          this.followBottom = false;
+          this.scroll = { offset: this.scroll.offset, followBottom: false };
           this.tui.requestRender();
         }
         return;
@@ -128,31 +141,34 @@ export class BtwOverlayComponent implements Component, Focusable {
         return;
       }
       if (matchesKey(data, Key.up)) {
-        this.followBottom = false;
-        this.scrollOffset = Math.max(0, this.scrollOffset - 1);
-        this.tui.requestRender();
+        this.moveScroll(-1);
         return;
       }
       if (matchesKey(data, Key.down)) {
-        this.scrollOffset += 1;
-        this.tui.requestRender();
+        this.moveScroll(1);
         return;
       }
     }
     this.input.handleInput(data);
   }
 
-  /** Clamp the scroll state against the current content; returns the visible offset. */
-  private clampScroll(contentHeight: number, maxRows: number): number {
-    if (contentHeight <= maxRows) {
-      this.scrollOffset = 0;
-      return 0;
-    }
-    const maxOffset = contentHeight - maxRows;
-    if (this.followBottom) this.scrollOffset = maxOffset;
-    this.scrollOffset = Math.min(this.scrollOffset, maxOffset);
-    if (this.scrollOffset >= maxOffset) this.followBottom = true;
-    return this.scrollOffset;
+  /**
+   * 滚轮同样走这里。宿主的 fullscreen 渲染器把指针下的滚轮事件交给 overlay；
+   * 不返回 handled 就会被当成没人要，转而滚背景 transcript。
+   */
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    const lines = event.type === "wheel" ? event.wheelDelta : undefined;
+    if (!lines) return undefined;
+    const { contentHeight, maxRows } = this.geometry;
+    if (!isScrollable(contentHeight, maxRows)) return undefined;
+    this.moveScroll(lines);
+    return { handled: true };
+  }
+
+  private moveScroll(lines: number): void {
+    const { contentHeight, maxRows } = this.geometry;
+    this.scroll = scrollByLines(this.scroll, lines, contentHeight, maxRows);
+    this.tui.requestRender();
   }
 
   /**
@@ -252,7 +268,9 @@ export class BtwOverlayComponent implements Component, Focusable {
       MIN_CONTENT_LINES,
       Math.floor(terminalRows * 0.78) - CHROME_LINES,
     );
-    const scrollOffset = this.clampScroll(contentLines.length, maxRows);
+    this.geometry = { contentHeight: contentLines.length, maxRows };
+    this.scroll = clampScroll(this.scroll, contentLines.length, maxRows);
+    const scrollOffset = this.scroll.offset;
     const hiddenAbove = contentLines.length > maxRows ? scrollOffset : 0;
     const visible = contentLines.slice(scrollOffset, scrollOffset + maxRows);
 

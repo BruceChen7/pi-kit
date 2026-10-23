@@ -74,6 +74,7 @@ The overlay is a top-center floating panel (requires the pi TUI).
 | `c` | copy the current answer (raw markdown) to the clipboard |
 | `←` / `→` | page through this session's side Q&A history |
 | `↑` / `↓` | scroll a long answer |
+| Mouse wheel | scroll the answer when the pointer is over the overlay (pi fullscreen TUI); when the answer fits, the wheel keeps scrolling the transcript behind |
 | `Alt+/` | toggle focus between the overlay and the main editor (overlay stays visible; `Ctrl+Alt+W` as fallback) |
 
 Earlier questions appear as a dimmed list above the current answer. History is

@@ -3,11 +3,15 @@ import {
   type BtwActive,
   type BtwExchange,
   capHistory,
+  clampScroll,
   currentSelection,
   extractTextContent,
+  FOLLOW_BOTTOM,
   formatInjectedPayload,
   formatThread,
+  isScrollable,
   MAX_HISTORY_EXCHANGES,
+  scrollByLines,
 } from "./core.js";
 
 // core.ts 是纯逻辑层：无 IO、无 TUI、无会话依赖，测试不需要任何 mock。
@@ -113,6 +117,52 @@ describe("formatInjectedPayload", () => {
     expect(formatInjectedPayload("summary", "s", "carry it")).toContain(
       "Here's a summary of a side conversation I had. carry it",
     );
+  });
+});
+
+describe("clampScroll / scrollByLines", () => {
+  const content = 100;
+  const rows = 20;
+  const maxOffset = content - rows;
+
+  it("跟随尾部时贴在最后一行", () => {
+    expect(clampScroll(FOLLOW_BOTTOM, content, rows)).toEqual({
+      offset: maxOffset,
+      followBottom: true,
+    });
+  });
+
+  it("内容装得下就停在顶部，也不当作可滚动", () => {
+    expect(isScrollable(rows, rows)).toBe(false);
+    expect(isScrollable(rows + 1, rows)).toBe(true);
+    expect(clampScroll(FOLLOW_BOTTOM, rows, rows)).toEqual({
+      offset: 0,
+      followBottom: true,
+    });
+  });
+
+  it("向上滚停在上边界，并停止跟随", () => {
+    const once = scrollByLines(FOLLOW_BOTTOM, -5, content, rows);
+    expect(once).toEqual({ offset: maxOffset - 5, followBottom: false });
+
+    const past = scrollByLines(once, -500, content, rows);
+    expect(past).toEqual({ offset: 0, followBottom: false });
+  });
+
+  it("向下滚回底部就恢复跟随", () => {
+    const up = scrollByLines(FOLLOW_BOTTOM, -5, content, rows);
+    expect(scrollByLines(up, 500, content, rows)).toEqual({
+      offset: maxOffset,
+      followBottom: true,
+    });
+  });
+
+  it("流式追加内容时不改变用户停下的位置", () => {
+    const scrolled = scrollByLines(FOLLOW_BOTTOM, -5, content, rows);
+    expect(clampScroll(scrolled, content + 30, rows)).toEqual({
+      offset: maxOffset - 5,
+      followBottom: false,
+    });
   });
 });
 

@@ -303,6 +303,78 @@ describe("plan-mode extension: tool guards", () => {
       reason: expect.stringContaining(": ."),
     });
   });
+
+  it("counts a bash content read as having read the file", async () => {
+    await withTempCtx(async (ctx) => {
+      const targetPath = "src/bash-read.ts";
+      writeSourceFile(ctx, targetPath, "export const value = 1;\n");
+      const { harness } = await startPlanModeSession("act", ctx);
+
+      await harness.emit(
+        "tool_result",
+        {
+          toolName: "bash",
+          input: { command: `sed -n '1,5p' ${targetPath}` },
+          isError: false,
+        },
+        ctx,
+      );
+
+      await expectToolAllowed(harness, ctx, "edit", {
+        path: targetPath,
+        oldText: "export const value = 1;\n",
+        newText: "export const value = 2;\n",
+      });
+    });
+  });
+
+  it("does not count a failed bash call as a read", async () => {
+    await withTempCtx(async (ctx) => {
+      const targetPath = "src/bash-failed.ts";
+      writeSourceFile(ctx, targetPath, "export const value = 1;\n");
+      const { harness } = await startPlanModeSession("act", ctx);
+
+      await harness.emit(
+        "tool_result",
+        {
+          toolName: "bash",
+          input: { command: `sed -n '1,5p' ${targetPath}` },
+          isError: true,
+        },
+        ctx,
+      );
+
+      await expectToolBlocked(harness, ctx, "edit", {
+        path: targetPath,
+        oldText: "export const value = 1;\n",
+        newText: "export const value = 2;\n",
+      });
+    });
+  });
+
+  it("does not count a bash in-place edit as a read", async () => {
+    await withTempCtx(async (ctx) => {
+      const targetPath = "src/bash-write.ts";
+      writeSourceFile(ctx, targetPath, "export const value = 1;\n");
+      const { harness } = await startPlanModeSession("act", ctx);
+
+      await harness.emit(
+        "tool_result",
+        {
+          toolName: "bash",
+          input: { command: `sed -i '' 's/1/2/' ${targetPath}` },
+          isError: false,
+        },
+        ctx,
+      );
+
+      await expectToolBlocked(harness, ctx, "edit", {
+        path: targetPath,
+        oldText: "export const value = 1;\n",
+        newText: "export const value = 3;\n",
+      });
+    });
+  });
 });
 
 describe("plan-mode extension: MCP tool guards", () => {

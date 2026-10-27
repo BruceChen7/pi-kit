@@ -30,6 +30,7 @@ import {
   isStandardPlanArtifactPath,
   validateArtifactPolicy,
 } from "./artifact-policy.ts";
+import { readPathsFromBashCommand } from "./bash-read-paths.ts";
 import {
   ACT_CODE_WRITING_GUIDANCE,
   ACT_TODO_TOOL_NAME,
@@ -141,6 +142,16 @@ const TODO_RECONCILE_AFTER_APPROVAL_MESSAGE =
 // to avoid restarting the agent (which caused an infinite retry loop).
 
 // ── Date helpers ──────────────────────────────────────────────
+
+/** Regular file on disk, so a shell argument that merely looks like a path
+ *  (a sed range, a grep pattern) is never registered as a read. */
+const isExistingFile = (absolutePath: string): boolean => {
+  try {
+    return fs.statSync(absolutePath).isFile();
+  } catch {
+    return false;
+  }
+};
 
 /** Return today's date as YYYY-MM-DD (UTC, which matches local date
  *  for all practical purposes). Pure function, no side-effects. */
@@ -776,6 +787,17 @@ export class PlanModeController {
     ctx: ExtensionContext,
   ): ToolResultEventResult | undefined {
     const toolPolicy = this.toolCallPolicy(event.toolName, event.input);
+
+    if (event.toolName === "bash" && !event.isError) {
+      const command = stringProperty(event.input, "command");
+      for (const rawPath of readPathsFromBashCommand(command ?? "")) {
+        const absolutePath = normalizeToolPath(ctx.cwd, rawPath);
+        if (isExistingFile(absolutePath)) {
+          this.state.markFileRead(absolutePath);
+        }
+      }
+      return;
+    }
 
     if (isReadToolCall(event.toolName, toolPolicy) && !event.isError) {
       for (const { rawPath } of pathsFromToolArgs(event.input)) {

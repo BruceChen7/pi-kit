@@ -1,6 +1,6 @@
 ---
-
-## description: Generate a Visual Artifact plan review — current codebase state vs. proposed implementation plan
+description: Generate a Visual Artifact plan review — current codebase state vs. proposed implementation plan
+---
 
 Generate a comprehensive plan review as a Visual Artifact via the `create_visual_artifact` tool, comparing the current codebase against a proposed implementation plan.
 

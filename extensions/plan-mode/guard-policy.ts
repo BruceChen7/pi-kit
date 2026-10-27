@@ -93,8 +93,9 @@ export const decideToolBlock = (
         block: true,
         reason:
           `plan-mode blocked ${input.toolName}: read the file first before ` +
-          `modifying it: ${target.rawPath}. Use the read tool — cat/sed/grep ` +
-          `via bash do not register as a read.`,
+          `modifying it: ${target.rawPath}. Use the read tool, or a bash ` +
+          `command that prints the file (cat/sed -n/head/tail); pattern scans ` +
+          `and in-place edits do not register as a read.`,
       };
     }
   }

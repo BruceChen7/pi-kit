@@ -1,6 +1,6 @@
 ---
-
-## description: Compare local pi-kit skills against mattpocock/skills and determine what to sync, with P0-P3 priority classification
+description: Compare local pi-kit skills against mattpocock/skills and determine what to sync, with P0-P3 priority classification
+---
 
 # Sync mattpocock/skills
 

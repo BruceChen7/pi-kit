@@ -38,7 +38,8 @@
       "./extensions/confluence",
       "./extensions/prompt-clarify",
       "./extensions/query-notes-log",
-      "./extensions/subagent"
+      "./extensions/subagent",
+      "./extensions/poteto-route"
     ]
   },
   "scripts": {

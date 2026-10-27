@@ -8,7 +8,7 @@ argument-hint: "<task>"
 
 本次任务：$@
 
-如果任务是空的，只回一句「这次要做什么？」，然后停。否则按下面九节执行。第一件事是用当前阶段的 todo 工具建清单（Act 阶段是 `act_mode_todo`，Plan 阶段是 `plan_mode_todo`），第一项固定写 `route: <类型>`，第二项固定写 `principles: <id>, <id>`（没有引用原则时写 `principles: none`）。这两项之后按 §1 看有没有对应 playbook，有就先取它，再写任务专属待办。
+如果任务是空的，只回一句「这次要做什么？」，然后停。否则按下面九节执行。第一件事是用当前阶段的 todo 工具建清单（Act 阶段是 `act_mode_todo`，Plan 阶段是 `plan_mode_todo`）。清单开头固定放两项：`route: <id>`（id 由 §1 的 `route_task` 给出）和 `principles: <id>, <id>`（没有引用原则时写 `principles: none`）。`route` 在前，`principles` 紧跟其后；`route_task` 返回 `mode:` 行时，`mode:` 插在两者之间，`principles:` 顺延一位。这些固定项之后，按 §1 拿 route_task 的返回，先抄 steps，再写任务专属待办。
 
 ## 0. 程序文件
 
@@ -16,22 +16,22 @@ argument-hint: "<task>"
 
 ## 1. 路由
 
-先判断任务属于哪一类，把类型写进第一项 todo，再按这一行往下走。
+先调 `route_task({route})`，route 用你判定的类型 id：
 
-| 类型     | 先做                                                                                                                                                                                                                                              | 再走                                                                                                                                    | 收尾                                                                  |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| 调查     | `/skill:research` 或 `/skill:wayfinder`；只读且可切分时 `/skill:herdr-squad`（要人看着）或 `subagent explore`（后台）；覆盖矩阵可 `/skill:swarm`；运行时症状用 `playbook: runtime-forensics`，手上已有 trace 或快照用 `playbook: trace-forensics` | 给带引用的结论，不改码                                                                                                                  | 交结论                                                                |
-| 修 bug   | `/skill:diagnosing-bugs` 建反馈回路                                                                                                                                                                                                               | 复现 → 根因 → 最小修复                                                                                                                  | `/skill:blast-radius`                                                 |
-| 重构     | plan 产物里先写「行为不变」的判据，步骤走 `playbook: refactoring`                                                                                                                                                                                 | 小步改，每步验证                                                                                                                        | `/skill:blast-radius` + `/skill:review`                               |
-| 新功能   | plan 或 spec，走 Plannotator，步骤走 `playbook: feature`                                                                                                                                                                                          | 先定数据形状再写码；方案未定时可 `/skill:arena`                                                                                         | 测试或验证脚本；仓库没有可跑路径时 `/skill:create-verification-skill` |
-| 性能     | 先跑基线，记下 limiter，步骤走 `playbook: perf-issue`                                                                                                                                                                                             | 改一处，测一次                                                                                                                          | `/skill:blast-radius` + `/skill:benchmark-checklist`                  |
-| 收尾发布 | `/skill:review` 双轴                                                                                                                                                                                                                              | 修 findings；高风险 diff 加 `/skill:interrogate`；注释多时 `/skill:no-comments`；`verify-*` 或形式化验证过期时 `/skill:maintain-verification-skill` / `/skill:maintain-formal-verification-skill` | 重跑测试 → `/skill:unslop` + conventional commit                      |
+- `research` 调查、`bugfix` 修 bug、`refactor` 重构、`feature` 新功能、`perf` 性能、`ship` 收尾发布。
+- 判不准就传 `feature`，先出计划换确定性。
+- 长跑加 `mode: "autonomous"`，明确要停或要离线加 `mode: "pause"`。
 
-长跑无人值守用 `playbook: autonomous-run`，明确要停或要离线用 `playbook: pause-safely`。playbook 索引在 `/skill:poteto-playbooks`，按上面第 0 节的查找顺序定位；在本仓也可以直接读 `skills/poteto-playbooks/playbooks/<name>.md`。取到之后按索引里的「怎么用」办。
+它返回四样东西，照做：
 
-类型定不下来时，按「新功能」走：先出计划，用计划换确定性。
+1. 第一项 todo 写 `route: <id>`，再把返回的 steps 按顺序抄进清单。
+2. 先做列出的 skill：用返回的绝对路径 `read`，不要凭名字猜。很多目标是 `disable-model-invocation: true`，描述不在系统提示里。
+3. 读返回的 playbook 正文，按它走。
+4. 返回的闸门写进清单，不得违反。
 
-route 跟着任务走。todo 第一项写的类型和当前动作对不上时，先改 route 再继续。查着查着变成改，就重写成「修 bug」或「重构」。
+没调 `route_task` 就 `edit` / `write` 会被扩展拦下，直到拿到 route。route 跟着任务走：todo 第一项和当前动作对不上时先改 route 再继续；查着查着变成改，就重调一次 `route_task` 换成 `bugfix` 或 `refactor`。
+
+playbook 索引在 `/skill:poteto-playbooks`，按上面第 0 节的查找顺序定位；在本仓也可以直接读 `skills/poteto-playbooks/playbooks/<name>.md`。取到之后按索引里的「怎么用」办。
 
 ## 2. 非协商触发器
 
@@ -55,9 +55,9 @@ route 跟着任务走。todo 第一项写的类型和当前动作对不上时，
 
 ## 3. 原则引用纪律
 
-开工前声明这次要引用哪几条原则，从 `principles` 索引里点。把 id 写进 `act_mode_todo` 的第二项 `principles: <id>, <id>`；没有引用时写 `principles: none`。计划或设计文档的 Decisions 段写两件事：引用了哪条 id，它改变了哪个选择。
+开工前声明这次要引用哪几条原则，从 `principles` 索引里点。把 id 写进 `act_mode_todo` 里 `principles: <id>, <id>` 这一项；没有引用时写 `principles: none`。计划或设计文档的 Decisions 段写两件事：引用了哪条 id，它改变了哪个选择。
 
-只引用这次真的读过 `references/<id>.md` 的原则。没读过的不写。每次 `set` 列表后检查第二项；缺失就补，补不上就在回复里提示重新生成列表，不要继续往下做。
+只引用这次真的读过 `references/<id>.md` 的原则。没读过的不写。每次 `set` 列表后检查 `principles:` 这一项；缺失就补，补不上就在回复里提示重新生成列表，不要继续往下做。
 
 原则给判据，现有 skill 给流程。冲突时以更具体的那条为准，并在回复里说清为什么。
 

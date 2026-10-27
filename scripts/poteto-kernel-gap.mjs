@@ -5,7 +5,7 @@
  * Usage:
  *   node scripts/poteto-kernel-gap.mjs                 # 打印矩阵
  *   node scripts/poteto-kernel-gap.mjs --check         # 缺项必须有落点且文件存在
- *   node scripts/poteto-kernel-gap.mjs --check-routes [prompt]  # 入口路由与 playbook 对齐
+ *   node scripts/poteto-kernel-gap.mjs --check-routes [entry]  # 入口路由与 playbook 对齐（.json 走 catalog，其余当 prompt 抽 `playbook:`）
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -16,7 +16,7 @@ const REPO_ROOT = path.resolve(
   "..",
 );
 const MAP_PATH = "scripts/poteto-kernel-map.json";
-const DEFAULT_PROMPT = "prompts/poteto.md";
+const DEFAULT_CATALOG = "skills/poteto-playbooks/routes.json";
 const PLAYBOOK_DIR = "skills/poteto-playbooks/playbooks";
 
 const VERDICTS = new Set(["已有替代", "缺", "不搬"]);
@@ -131,6 +131,21 @@ export const formatMatrix = (rows) => {
   return lines.join("\n");
 };
 
+/** 抽取 routes.json 里的 playbook 引用（route playbookHints + mode playbook），去重后返回。 */
+export const extractCatalogRefs = (catalogText) => {
+  const catalog = JSON.parse(catalogText);
+  const refs = [];
+  for (const route of catalog.routes ?? []) {
+    for (const hint of route.playbookHints ?? []) {
+      if (hint?.playbook) refs.push(hint.playbook);
+    }
+  }
+  for (const mode of catalog.modes ?? []) {
+    if (mode?.playbook) refs.push(mode.playbook);
+  }
+  return [...new Set(refs)];
+};
+
 /** 抽取入口正文里全部 `playbook: <name>` 引用，去重后返回。 */
 export const extractRouteRefs = (promptText) => {
   const refs = [];
@@ -190,14 +205,16 @@ const main = (argv) => {
 
   if (argv.includes("--check-routes")) {
     const given = argv[argv.indexOf("--check-routes") + 1];
-    const relative = given && !given.startsWith("--") ? given : DEFAULT_PROMPT;
+    const relative = given && !given.startsWith("--") ? given : DEFAULT_CATALOG;
     const absolute = path.join(REPO_ROOT, relative);
     if (!fs.existsSync(absolute)) {
       console.error(`--check-routes 找不到入口文件：${relative}`);
       return 1;
     }
-    const promptText = fs.readFileSync(absolute, "utf8");
-    const refs = extractRouteRefs(promptText);
+    const sourceText = fs.readFileSync(absolute, "utf8");
+    const refs = relative.endsWith(".json")
+      ? extractCatalogRefs(sourceText)
+      : extractRouteRefs(sourceText);
     const findings = checkRoutes(refs, listPlaybooks());
     if (findings.length > 0) {
       for (const f of findings) console.error(`${f.rule}\t${f.detail}`);

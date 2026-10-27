@@ -1,0 +1,142 @@
+{
+  "$comment": "poteto 路由的唯一事实来源。prompts/poteto.md §1 只保留调用方式，接线全在这里。skill id 按 .pi/skills → .agents/skills → ~/.agents/me-skills 解析；playbook 相对本目录的 playbooks/。",
+  "version": 1,
+  "routes": [
+    {
+      "id": "research",
+      "label": "调查",
+      "useWhen": "只读地把事情搞清楚：现状、根因、某个行为为什么发生。交付带引用的结论，不改码。",
+      "phase": false,
+      "firstSteps": ["research"],
+      "optionalSteps": ["wayfinder", "herdr-squad", "swarm"],
+      "playbookHints": [
+        {
+          "when": "症状来自活进程（泄漏、空转、抖动）",
+          "playbook": "runtime-forensics"
+        },
+        {
+          "when": "手上已有 cpuprofile / trace / spindump / heapsnapshot",
+          "playbook": "trace-forensics"
+        }
+      ],
+      "steps": [
+        "只读且可切分时，用 herdr-squad（要人看着）或 subagent explore（后台）并行",
+        "覆盖矩阵类调查用 swarm",
+        "给带引用的结论，不改码"
+      ],
+      "closingSteps": [],
+      "gates": ["调查阶段不改代码", "结论必须带引用，不写推测"]
+    },
+    {
+      "id": "bugfix",
+      "label": "修 bug",
+      "useWhen": "有可观察的错误行为，需要先复现、再定位根因、再做最小修复。",
+      "phase": false,
+      "firstSteps": ["diagnosing-bugs"],
+      "optionalSteps": [],
+      "playbookHints": [],
+      "steps": ["复现 → 根因 → 最小修复"],
+      "closingSteps": ["blast-radius"],
+      "gates": ["没有可复现路径时不得改代码", "先有失败复现，再改实现"]
+    },
+    {
+      "id": "refactor",
+      "label": "重构",
+      "useWhen": "结构变、行为不变。要动的形状明确，缺的是等价性证据。",
+      "phase": false,
+      "firstSteps": [],
+      "optionalSteps": ["research"],
+      "playbookHints": [
+        {
+          "when": "中等规模、聚焦的结构改动",
+          "playbook": "refactoring"
+        }
+      ],
+      "steps": ["plan 产物里先写「行为不变」的判据", "小步改，每步验证"],
+      "closingSteps": ["blast-radius", "review"],
+      "gates": [
+        "先有刻画测试、快照或等价性 harness，再动结构",
+        "类型检查与 lint 不算钉住行为"
+      ]
+    },
+    {
+      "id": "feature",
+      "label": "新功能",
+      "useWhen": "加新行为或改可见行为。方案还没定，或者定了但要落成计划。类型判不准时兜底走这里。",
+      "phase": false,
+      "firstSteps": [],
+      "optionalSteps": ["arena", "interrogate"],
+      "playbookHints": [
+        {
+          "when": "默认路径：先定数据形状再写码",
+          "playbook": "feature"
+        }
+      ],
+      "steps": [
+        "先出 plan 或 spec，走 Plannotator",
+        "方案未定时用 arena 让候选竞争",
+        "先定数据形状再写码"
+      ],
+      "closingSteps": ["review"],
+      "gates": [
+        "计划里必须有一条可判定的完成条件",
+        "仓库没有可跑路径时用 create-verification-skill"
+      ]
+    },
+    {
+      "id": "perf",
+      "label": "性能",
+      "useWhen": "有数字要改：延迟、吞吐、内存、卡顿。先基线，再动代码。",
+      "phase": false,
+      "firstSteps": ["benchmark-checklist"],
+      "optionalSteps": ["research"],
+      "playbookHints": [
+        {
+          "when": "一次性性能修复",
+          "playbook": "perf-issue"
+        }
+      ],
+      "steps": ["先跑基线，记下 limiter", "改一处，测一次"],
+      "closingSteps": ["blast-radius", "benchmark-checklist"],
+      "gates": ["先跑基线再改", "报告的数字必须过 benchmark-checklist"]
+    },
+    {
+      "id": "ship",
+      "label": "收尾发布",
+      "useWhen": "改动已完成，要评审、修 findings、提交或开 PR。",
+      "phase": true,
+      "firstSteps": ["review"],
+      "optionalSteps": [
+        "interrogate",
+        "no-comments",
+        "maintain-verification-skill",
+        "maintain-formal-verification-skill",
+        "branch-commit-push"
+      ],
+      "playbookHints": [],
+      "steps": [
+        "双轴 review：标准与规格",
+        "修 findings；高风险 diff 加 interrogate",
+        "注释多时过 no-comments",
+        "verify-* 或形式化验证过期时走 maintain-*",
+        "重跑测试"
+      ],
+      "closingSteps": ["unslop"],
+      "gates": ["重跑测试后才提交", "commit 用 conventional commit"]
+    }
+  ],
+  "modes": [
+    {
+      "id": "autonomous",
+      "label": "长跑",
+      "useWhen": "用户说跑完为止、跑到某个条件变绿为止。",
+      "playbook": "autonomous-run"
+    },
+    {
+      "id": "pause",
+      "label": "停机",
+      "useWhen": "用户明确说要停、要离线，或即将上下文压缩。",
+      "playbook": "pause-safely"
+    }
+  ]
+}

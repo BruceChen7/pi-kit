@@ -1,0 +1,89 @@
+[
+  {
+    "task": "调查一下导出接口为什么在高并发下偶尔返回空数组",
+    "expect": "research"
+  },
+  {
+    "task": "摸清 billing 模块的现状，只读，不改代码",
+    "expect": "research"
+  },
+  {
+    "task": "investigate why the retry queue drains slowly",
+    "expect": "research"
+  },
+  {
+    "task": "修一下登录接口 500，报错日志里有 panic",
+    "expect": "bugfix"
+  },
+  {
+    "task": "线上出现回归，用户说下单崩了，需要复现",
+    "expect": "bugfix"
+  },
+  {
+    "task": "fix the crash in the CSV parser, it broke after the upgrade",
+    "expect": "bugfix"
+  },
+  {
+    "task": "把 payment 里的结算逻辑抽出来，行为不变",
+    "expect": "refactor"
+  },
+  {
+    "task": "重构 request 层的错误处理，先解耦再重命名",
+    "expect": "refactor"
+  },
+  {
+    "task": "整理结构：把 utils 里混在一起的三个职责拆开",
+    "expect": "refactor"
+  },
+  {
+    "task": "给下载接口加个过期检查，支持按天配置",
+    "expect": "feature"
+  },
+  {
+    "task": "新增一个导出 CSV 的功能，先出计划",
+    "expect": "feature"
+  },
+  {
+    "task": "接入企业微信通知，支持多租户",
+    "expect": "feature"
+  },
+  {
+    "task": "首页加载太慢，优化一下首屏耗时",
+    "expect": "perf"
+  },
+  {
+    "task": "内存占用高，需要 profile 一下再看",
+    "expect": "perf"
+  },
+  {
+    "task": "P99 延迟超标，先跑 benchmark 基线",
+    "expect": "perf"
+  },
+  {
+    "task": "收尾，跑测试然后提交 PR",
+    "expect": "ship"
+  },
+  {
+    "task": "准备发布，先把 review findings 修完再合入",
+    "expect": "ship"
+  },
+  {
+    "task": "commit 之前过一遍 unslop",
+    "expect": "ship"
+  },
+  {
+    "task": "把这个脚本改成能处理多文件",
+    "expect": "feature",
+    "note": "零信号，靠 feature 兜底"
+  },
+  {
+    "task": "看看这个需求怎么做比较好",
+    "expect": "feature",
+    "note": "零信号，靠 feature 兜底"
+  },
+  {
+    "task": "帮我处理一下这块",
+    "expect": "feature",
+    "note": "零信号，靠 feature 兜底"
+  }
+]

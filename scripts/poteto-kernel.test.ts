@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { extractRouteRefs, parseMap } from "./poteto-kernel-gap.mjs";
+import { extractCatalogRefs, parseMap } from "./poteto-kernel-gap.mjs";
 import { FORBIDDEN_MARKERS, parseFrontmatter } from "./pstack-skills-rules.ts";
 
 const REPO_ROOT = path.resolve(
@@ -11,7 +11,7 @@ const REPO_ROOT = path.resolve(
 );
 const GROUP_DIR = "skills/poteto-playbooks";
 const PLAYBOOK_DIR = `${GROUP_DIR}/playbooks`;
-const PROMPT = "prompts/poteto.md";
+const CATALOG = `${GROUP_DIR}/routes.json`;
 const MAP = "scripts/poteto-kernel-map.json";
 
 const listDir = (dir: string, ext: string) => {
@@ -171,9 +171,8 @@ describe("poteto playbook group", () => {
     }
   });
 
-  it("keeps the prompt routes and the playbook files in step", () => {
-    const prompt = read(PROMPT);
-    const refs = extractRouteRefs(prompt);
+  it("keeps the route catalog and the playbook files in step", () => {
+    const refs = extractCatalogRefs(read(CATALOG));
     expect(refs.sort()).toEqual(playbooks);
   });
 

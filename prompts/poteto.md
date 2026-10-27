@@ -6,13 +6,11 @@ argument-hint: "<task>"
 
 # Poteto mode
 
-本次任务：${@:-（空）}
+本次任务：$@
 
 如果任务是空的，只回一句「这次要做什么？」，然后停。否则按下面九节执行。第一件事是用当前阶段的 todo 工具建清单（Act 阶段是 `act_mode_todo`，Plan 阶段是 `plan_mode_todo`），第一项固定写 `route: <类型>`，第二项固定写 `principles: <id>, <id>`（没有引用原则时写 `principles: none`）。这两项之后按 §1 看有没有对应 playbook，有就先取它，再写任务专属待办。
 
 ## 0. 程序文件
-
-下面点到的流程都是本机普通 Markdown。pi 不把它们注册成 skill，`<available_skills>` 里看不到，所以不要写「本工程没有这个 skill」。
 
 正文出现 `/skill:X`，按名字去 `.pi` 里找这份文档：`.pi/skills/X/SKILL.md`，没有就 `.agents/skills/X/SKILL.md`，再没有就 `~/.agents/me-skills/X/SKILL.md`。symlink 也算，`read` 会跟进去。三处都没有才写 `Skipped: X，<原因>`。
 

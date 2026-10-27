@@ -1,6 +1,6 @@
 # pstack 进口组
 
-来源：[`cursor/plugins`](https://github.com/cursor/plugins) 的 `harness/pstack`，插件版本 `0.15.32`，commit [`e73df47`](https://github.com/cursor/plugins/commit/e73df471cd4bd918367e99f3dd9c51bd53ddf5f0)，2026-10-22 vendored，2026-10-27 对 `0.15.32` 复核：本组 16 个 skill 与上游无内核差异，只有 `swarm` 的步骤编号与一处措辞变化（P2/P3），本地已是等价写法。
+来源：[`cursor/plugins`](https://github.com/cursor/plugins) 的 `harness/pstack`，插件版本 `0.15.32`，commit [`e73df47`](https://github.com/cursor/plugins/commit/e73df471cd4bd918367e99f3dd9c51bd53ddf5f0)，2026-10-22 vendored；2026-10-27 复核 `0.15.32` 无内核差异，同日按用户点名进口形式化验证一对。
 
 逐条适配见下表。升级判据不是上游文件本身，是 [`prompts/sync-pstack-skills.md`](../../prompts/sync-pstack-skills.md) 的「内核清单」：内核必须在本仓有落点，harness 绑定不进口。2026-10-21 的适配更新（`subagent`、C′）见 [`.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md`](../../.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md)。
 
@@ -21,6 +21,8 @@
 | `arena/` | 改过一次：候选写 `/tmp` 或 patch，去 worktree 与 per-model runners |
 | `create-verification-skill/` | 改过两次：`.pi/skills/verify-<app>/`；drive 先找仓库已有 harness，再用 pi 工具；references 一并搬入；生成物不加 `disable-model-invocation`，生成后要求 `/reload` |
 | `maintain-verification-skill/` | 改过一次：源波改 `subagent explore`，4 个一波；PR 按 remote 选 `gh` / `glab` |
+| `create-formal-verification-skill/` | 2026-10-27 进口。改过：生成物落 `.pi/skills/verify-<area>-formal/`，不加 `disable-model-invocation`，要求 `/reload`；去 adapter 段；`/statechart` 换成「反例讲成代码里的最短路径，画图用 `validate_mermaid` / `render_mermaid`」 |
+| `maintain-formal-verification-skill/` | 2026-10-27 进口。改过：按「跑模型检查器的项目级 skill」找目标，不看名字；PR 按 remote 选 `gh` / `glab`；去 adapter 段 |
 | `ketchup/` | 改过一次：去 `/bro` 与 `/visualize` 依赖，对话里的图改指 `/show-me`，通知与 subagent 结果不算用户消息 |
 | `typescript-best-practices/` | 改过一次：去 `paths: ["**/*.ts"]`（pi 没有按路径自动挂载），原则引用改本地写法；`references/patterns.md` 除首行外逐字进口 |
 | `sharpen/` | 正文未改，只译成中文 |

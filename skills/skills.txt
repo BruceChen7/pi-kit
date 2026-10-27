@@ -49,7 +49,7 @@ to-spec|local|skills/to-spec
 to-tickets|local|skills/to-tickets
 # https://github.com/mattpocock/skills (v1.2.0+)
 writing-for-agents|local|skills/writing-for-agents
-# pstack 进口组（cursor/plugins harness/pstack v0.15.32 @ e73df47，vendored 2026-10-22），只手动触发
+# pstack 进口组（cursor/plugins harness/pstack v0.15.32 @ e73df47，vendored 2026-10-22；形式化验证一对 2026-10-27 进口），只手动触发
 # 逐条适配与内核清单见 skills/pstack/README.md、prompts/sync-pstack-skills.md
 principles|local|skills/pstack/principles
 blast-radius|local|skills/pstack/blast-radius
@@ -64,6 +64,8 @@ swarm|local|skills/pstack/swarm
 arena|local|skills/pstack/arena
 create-verification-skill|local|skills/pstack/create-verification-skill
 maintain-verification-skill|local|skills/pstack/maintain-verification-skill
+create-formal-verification-skill|local|skills/pstack/create-formal-verification-skill
+maintain-formal-verification-skill|local|skills/pstack/maintain-formal-verification-skill
 ketchup|local|skills/pstack/ketchup
 typescript-best-practices|local|skills/pstack/typescript-best-practices
 sharpen|local|skills/pstack/sharpen

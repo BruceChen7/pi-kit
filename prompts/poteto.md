@@ -27,7 +27,7 @@ argument-hint: "<task>"
 | 重构     | plan 产物里先写「行为不变」的判据，步骤走 `playbook: refactoring`                                                                                                                                                                                 | 小步改，每步验证                                                                                                                        | `/skill:blast-radius` + `/skill:review`                               |
 | 新功能   | plan 或 spec，走 Plannotator，步骤走 `playbook: feature`                                                                                                                                                                                          | 先定数据形状再写码；方案未定时可 `/skill:arena`                                                                                         | 测试或验证脚本；仓库没有可跑路径时 `/skill:create-verification-skill` |
 | 性能     | 先跑基线，记下 limiter，步骤走 `playbook: perf-issue`                                                                                                                                                                                             | 改一处，测一次                                                                                                                          | `/skill:blast-radius` + `/skill:benchmark-checklist`                  |
-| 收尾发布 | `/skill:review` 双轴                                                                                                                                                                                                                              | 修 findings；高风险 diff 加 `/skill:interrogate`；注释多时 `/skill:no-comments`；`verify-*` 过期时 `/skill:maintain-verification-skill` | 重跑测试 → `/skill:unslop` + conventional commit                      |
+| 收尾发布 | `/skill:review` 双轴                                                                                                                                                                                                                              | 修 findings；高风险 diff 加 `/skill:interrogate`；注释多时 `/skill:no-comments`；`verify-*` 或形式化验证过期时 `/skill:maintain-verification-skill` / `/skill:maintain-formal-verification-skill` | 重跑测试 → `/skill:unslop` + conventional commit                      |
 
 长跑无人值守用 `playbook: autonomous-run`，明确要停或要离线用 `playbook: pause-safely`。playbook 索引在 `/skill:poteto-playbooks`，按上面第 0 节的查找顺序定位；在本仓也可以直接读 `skills/poteto-playbooks/playbooks/<name>.md`。取到之后按索引里的「怎么用」办。
 
@@ -41,6 +41,7 @@ route 跟着任务走。todo 第一项写的类型和当前动作对不上时，
 - 非平凡改动、架构决定、或有人说「are we sure」→ 读 `/skill:principles` 索引，挑出这次要用的 1 到 3 条。
 - 改动碰共享类型、跨模块边界、删公开 API、或只有三行但改的是大家共用的东西 → `/skill:blast-radius`。
 - bug 没有可复现路径 → `/skill:diagnosing-bugs`，先有失败复现再改代码。
+- 改并发、重试、状态机、parser 或 unsafe 代码 → 先看仓库有没有形式化验证 skill：有就跑到它；它记的 sync commit 之后被覆盖的代码变过，先 `/skill:maintain-formal-verification-skill`。没有而这段代码坏了伤用户、测试够不着，`/skill:create-formal-verification-skill`。
 - 写新功能或重构 → 先出 plan 或 spec，走 Plannotator。计划里必须有一条可判定的完成条件。
 - 要报告任何数字（性能、覆盖率、收益）→ `/skill:benchmark-checklist`。先跑基线，找 limiter，排除「测到的不是这份工作」。
 - 收尾前 → 对真实产物跑一次，贴输出。不看「应该没问题」。

@@ -10,7 +10,7 @@ argument-hint: "[all|<skill ...>] [--report]"
 
 进口图的是内核，不是文件名：哪条判断值得成为本仓自己的东西，看下一节的清单。
 
-默认中文。作用域是 16 个进口 skill：`principles`（索引 + 24 条叶子）、`blast-radius`、`correct`、`no-comments`、`benchmark-checklist`、`show-me-your-work`、`technical-writing`、`unslop`、`interrogate`、`swarm`、`arena`、`create-verification-skill`、`maintain-verification-skill`、`ketchup`、`typescript-best-practices`、`sharpen`。参数可以只点名其中几个；`--report` 只出报告，不改文件。
+默认中文。作用域是 18 个进口 skill：`principles`（索引 + 24 条叶子）、`blast-radius`、`correct`、`no-comments`、`benchmark-checklist`、`show-me-your-work`、`technical-writing`、`unslop`、`interrogate`、`swarm`、`arena`、`create-verification-skill`、`maintain-verification-skill`、`create-formal-verification-skill`、`maintain-formal-verification-skill`、`ketchup`、`typescript-best-practices`、`sharpen`。参数可以只点名其中几个；`--report` 只出报告，不改文件。
 
 ## 真相源
 
@@ -33,6 +33,7 @@ pstack 值钱的是一套判断，不是目录结构。左列是内核，右列�
 | 并行分片覆盖：写作任务落不相交目录                       | `swarm/`                                                     | 已本地化：≤4 波次，去 cloud / worktree                              |
 | 候选竞争：N 个候选选一作基底，嫁落选者强项               | `arena/`                                                     | 已本地化：候选落 `/tmp` 或 patch                                    |
 | 验证流程可生成、可审计、可复跑                           | `create-verification-skill/`、`maintain-verification-skill/` | 已本地化：`.pi/skills/verify-<app>/`                                |
+| 测试盖不到的用例交给形式化：选最强那条承诺，让问题挑工具，必须见过它失败 | `create-formal-verification-skill/`、`maintain-formal-verification-skill/` | 已本地化：`.pi/skills/verify-<area>-formal/`，反例讲成代码里的最短路径，画图走 Mermaid |
 | 人读文字两把刀：分层写作标准 + 去 AI 腔                  | `technical-writing/`、`unslop/`                              | 已 vendor，各带中文补充段                                           |
 | 报数字前先解释数字：先找限速因素                         | `benchmark-checklist/`                                       | 已 vendor，正文未改                                                 |
 | 报进度给不在场的人：只列他必须决定的，每条带证据与风险   | `ketchup/`                                                   | 已本地化：对话里的图指 `/show-me`，通知与 subagent 结果不算用户消息 |
@@ -87,10 +88,10 @@ for f in skills/pstack/principles/references/*.md; do
 done
 ```
 
-其余 12 个 `SKILL.md` 用整文件 diff 起手，再读两边全文：
+其余 14 个 `SKILL.md` 用整文件 diff 起手，再读两边全文：
 
 ```bash
-for s in blast-radius correct no-comments benchmark-checklist show-me-your-work technical-writing unslop interrogate swarm arena create-verification-skill maintain-verification-skill ketchup typescript-best-practices sharpen; do
+for s in blast-radius correct no-comments benchmark-checklist show-me-your-work technical-writing unslop interrogate swarm arena create-verification-skill maintain-verification-skill create-formal-verification-skill maintain-formal-verification-skill ketchup typescript-best-practices sharpen; do
   echo "== $s"
   diff -u "/tmp/pstack-upstream/harness/pstack/claude-code/skills/$s/SKILL.md" "skills/pstack/$s/SKILL.md"
 done

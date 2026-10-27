@@ -1,6 +1,6 @@
 # pstack 进口组
 
-来源：[`cursor/plugins`](https://github.com/cursor/plugins) 的 `harness/pstack`，插件版本 `0.15.30`，commit [`eb4db2b`](https://github.com/cursor/plugins/commit/eb4db2b55b2b7dec3d9282754cddf0a56bf4ff10)，2026-10-22 vendored。
+来源：[`cursor/plugins`](https://github.com/cursor/plugins) 的 `harness/pstack`，插件版本 `0.15.32`，commit [`e73df47`](https://github.com/cursor/plugins/commit/e73df471cd4bd918367e99f3dd9c51bd53ddf5f0)，2026-10-22 vendored，2026-10-27 对 `0.15.32` 复核：本组 16 个 skill 与上游无内核差异，只有 `swarm` 的步骤编号与一处措辞变化（P2/P3），本地已是等价写法。
 
 逐条适配见下表。升级判据不是上游文件本身，是 [`prompts/sync-pstack-skills.md`](../../prompts/sync-pstack-skills.md) 的「内核清单」：内核必须在本仓有落点，harness 绑定不进口。2026-10-21 的适配更新（`subagent`、C′）见 [`.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md`](../../.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md)。
 
@@ -37,7 +37,7 @@
 
    ```bash
    git clone --filter=blob:none --sparse https://github.com/cursor/plugins /tmp/cursor-plugins
-   git -C /tmp/cursor-plugins checkout eb4db2b55b2b7dec3d9282754cddf0a56bf4ff10
+   git -C /tmp/cursor-plugins checkout e73df471cd4bd918367e99f3dd9c51bd53ddf5f0
    git -C /tmp/cursor-plugins sparse-checkout set harness/pstack/claude-code/skills
    ```
 

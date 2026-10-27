@@ -49,7 +49,7 @@ to-spec|local|skills/to-spec
 to-tickets|local|skills/to-tickets
 # https://github.com/mattpocock/skills (v1.2.0+)
 writing-for-agents|local|skills/writing-for-agents
-# pstack 进口组（cursor/plugins harness/pstack v0.15.30 @ eb4db2b，vendored 2026-10-22），只手动触发
+# pstack 进口组（cursor/plugins harness/pstack v0.15.32 @ e73df47，vendored 2026-10-22），只手动触发
 # 逐条适配与内核清单见 skills/pstack/README.md、prompts/sync-pstack-skills.md
 principles|local|skills/pstack/principles
 blast-radius|local|skills/pstack/blast-radius

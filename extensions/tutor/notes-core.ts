@@ -1822,3 +1822,271 @@ export const formatPlacementRequired = (input: {
       : `本会话已绑定的主题是《${input.boundTopic}》。`,
     "下一步：用 ask_user_question 让学习者选（放到哪个主题 / 哪个章节：已有章节还是新建），确定后再 bind_notes；或让他自己敲 `/md-topic` 选。",
   ].join("\n");
+
+// ── 单写入口：一个会话同一时刻只有一个可写章节 ──────────────────────────────
+//
+// 实录（2026-10-27 · Kafka实现）：会话绑在 07 时，模型先请求「控制面」却被落到了
+// 「协调面」，随后用 write 把第 6 章的补测写进 07；下一会话又把同一段补测镜像进
+// 06 —— 同一课躺在两个章节文件里。镜像本来只有一个目标（noteFile），另外两条
+// 写路径是模型的手写，和落点与请求不一致的 bind。这里给两条路各一个纯判定，
+// Shell 只负责把 tool_call 的事实喂进来。
+
+export type PlacementConflict = { requested: string; placed: string };
+
+const chapterNameOf = (raw: string | undefined): string | null => {
+  const trimmed = raw?.trim();
+  if (!trimmed) return null;
+  const parsed = parseChapterRef(trimmed).name ?? trimmed;
+  return sanitizeName(parsed) || null;
+};
+
+/** 请求的章节名与学习者选的落点不一致 ⇒ 这次 bind 不能成立。 */
+export const findPlacementConflict = (input: {
+  requestedChapter?: string;
+  placedChapter?: string;
+}): PlacementConflict | null => {
+  const requested = chapterNameOf(input.requestedChapter);
+  if (requested === null) return null;
+  const placed = chapterNameOf(input.placedChapter);
+  if (placed === requested) return null;
+  return { requested, placed: placed ?? "" };
+};
+
+export const formatPlacementConflict = (conflict: PlacementConflict): string =>
+  [
+    conflict.placed
+      ? `落点与请求不一致：你请求「${conflict.requested}」，学习者选的是「${conflict.placed}」——两章都已经存在。没有写盘，也没有绑定。`
+      : `落点与请求不一致：你请求「${conflict.requested}」，学习者选的是主题索引页。没有写盘，也没有绑定。`,
+    "下一步：先跟学习者确认这次课文该放哪一章；确认后用落点那一章的名字重新调 bind_notes（或让他敲 /md-topic），不要在这个落点上直接开讲。",
+  ].join("\n");
+
+/**
+ * 请求与落点不一致时，要不要拒绑。
+ *
+ * 只在「两章都是该主题已有的章节」时拒：那是「把 A 章的内容写进 B 章」。
+ * agent 提议新章、学习者改成已有章节是常见的有意选择（bind-gate 的 01a0d1a7
+ * 用例），那种不一致照旧绑定，只给一行提示。
+ */
+export const isBlockingPlacementConflict = (input: {
+  conflict: PlacementConflict;
+  existingChapters: readonly string[];
+}): boolean => {
+  const existing = new Set(
+    input.existingChapters
+      .map((name) => chapterNameOf(name))
+      .filter((name): name is string => name !== null),
+  );
+  return (
+    existing.has(input.conflict.requested) &&
+    existing.has(input.conflict.placed)
+  );
+};
+
+/** 照旧绑定、但提醒一句：这一轮按学习者的落点讲。 */
+export const formatPlacementNotice = (conflict: PlacementConflict): string =>
+  conflict.placed
+    ? `落点提示：你请求「${conflict.requested}」，学习者选的是「${conflict.placed}」——这一轮按学习者的落点讲，别把「${conflict.requested}」的内容写进别的章。`
+    : `落点提示：你请求「${conflict.requested}」，学习者选的是主题索引页——这一轮只写索引页，别写章节文件。`;
+
+/** 会改文件的工具名；`bash` 走独立的命令判定（见 findChapterWriteInCommand）。 */
+export const CHAPTER_WRITE_TOOL_NAMES = [
+  "write",
+  "edit",
+  "multi_edit",
+  "patch",
+] as const;
+
+export type ChapterWriteVerdict =
+  | { kind: "allow" }
+  | { kind: "block"; path: string; reason: string };
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const nonEmptyPath = (value: unknown): string | null =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+
+const PATCH_FILE_LINE = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/;
+
+/** 一次工具调用会碰到的路径：`path` / `multi[].path` / patch 载荷里的文件名。 */
+export const writeToolTargets = (input: unknown): string[] => {
+  const record = asRecord(input);
+  if (!record) return [];
+  const paths: string[] = [];
+  const single = nonEmptyPath(record.path);
+  if (single) paths.push(single);
+  if (Array.isArray(record.multi)) {
+    for (const item of record.multi) {
+      const nested = nonEmptyPath(asRecord(item)?.path);
+      if (nested) paths.push(nested);
+    }
+  }
+  if (typeof record.patch === "string") {
+    for (const line of record.patch.split("\n")) {
+      const patched = nonEmptyPath(PATCH_FILE_LINE.exec(line.trim())?.[1]);
+      if (patched) paths.push(patched);
+    }
+  }
+  return paths;
+};
+
+/** 字符串版 resolve：Core 不读 cwd、不碰 node:path。 */
+export const resolvePathFrom = (cwd: string, target: string): string => {
+  const joined = target.startsWith("/") ? target : `${cwd}/${target}`;
+  const parts: string[] = [];
+  for (const part of joined.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return `/${parts.join("/")}`;
+};
+
+/** `<topic>/<topic>.md`（索引页）与 `<topic>/概念.md` 不是章节。 */
+const isChapterFile = (topicDir: string, absolutePath: string): boolean => {
+  const prefix = `${topicDir}/`;
+  if (!absolutePath.startsWith(prefix)) return false;
+  const base = absolutePath.slice(prefix.length);
+  if (!base.endsWith(".md")) return false;
+  const topic = topicDir.slice(topicDir.lastIndexOf("/") + 1);
+  return base !== `${topic}.md` && base !== "概念.md";
+};
+
+/** 只插入了一行标题（`##`–`####`）：替换、删改、插入正文都算 false。 */
+export const headingOnlyInsertion = (
+  oldText: string,
+  newText: string,
+): boolean => {
+  const before = oldText.split("\n");
+  const after = newText.split("\n");
+  let head = 0;
+  while (
+    head < before.length &&
+    head < after.length &&
+    before[head] === after[head]
+  ) {
+    head += 1;
+  }
+  let tailBefore = before.length - 1;
+  let tailAfter = after.length - 1;
+  while (
+    tailBefore >= head &&
+    tailAfter >= head &&
+    before[tailBefore] === after[tailAfter]
+  ) {
+    tailBefore -= 1;
+    tailAfter -= 1;
+  }
+  if (tailBefore >= head) return false;
+  const inserted = after
+    .slice(head, tailAfter + 1)
+    .filter((line) => line.trim().length > 0);
+  return inserted.length === 1 && /^#{2,4}\s/u.test(inserted[0].trim());
+};
+
+const headingEditsOnly = (input: unknown): boolean => {
+  const record = asRecord(input);
+  if (!record) return false;
+  if (record.patch !== undefined) return false;
+  const items = Array.isArray(record.multi) ? record.multi : [record];
+  return (
+    items.length > 0 &&
+    items.every((item) => {
+      const entry = asRecord(item);
+      if (!entry) return false;
+      return (
+        typeof entry.oldText === "string" &&
+        typeof entry.newText === "string" &&
+        headingOnlyInsertion(entry.oldText, entry.newText)
+      );
+    })
+  );
+};
+
+const basenameOf = (target: string): string =>
+  target.slice(target.lastIndexOf("/") + 1);
+
+/** 被拦下时的说明：点名当前章节，并且给出唯一合法的下一步。 */
+export const formatChapterWriteBlock = (input: {
+  boundFile: string;
+  target: string;
+}): string => {
+  const parsed = parseChapterFileName(
+    basenameOf(input.boundFile).replace(/\.md$/u, ""),
+  );
+  const label = `${chapterLabel(parsed.number, parsed.name)}（${basenameOf(input.boundFile)}）`;
+  if (input.target === input.boundFile) {
+    return [
+      `章节正文只由镜像追加：${label} 就是当前绑定的那一章，你写进对话的正文会自动落盘。`,
+      "别把同一段话再写一遍文件；唯一允许的手改是补一行重讲标题。",
+    ].join("");
+  }
+  return [
+    `章节文件只由镜像追加：这一轮绑定的是 ${label}。`,
+    `要写 ${basenameOf(input.target)}，先单独发一条 bind_notes 换章（学习者确认落点），再在下一轮开讲。`,
+  ].join("");
+};
+
+/**
+ * 模型的手写会不会碰到本主题的章节文件。
+ *
+ * 例外只有一处：`edit` 的目标全是当前绑定章节，且每处改动都只是插入一行重讲标题
+ * ——SKILL.md 的 `§Chapter closing` 允许这件事，挡掉它是删能力。
+ */
+export const planChapterWrite = (input: {
+  toolName: string;
+  input: unknown;
+  cwd: string;
+  boundFile: string | null;
+}): ChapterWriteVerdict => {
+  if (!(CHAPTER_WRITE_TOOL_NAMES as readonly string[]).includes(input.toolName))
+    return { kind: "allow" };
+  const bound = input.boundFile;
+  if (!bound) return { kind: "allow" };
+  const topicDir = topicDirOf(bound);
+  const chapters = writeToolTargets(input.input)
+    .map((target) => resolvePathFrom(input.cwd, target))
+    .filter((target) => isChapterFile(topicDir, target));
+  if (chapters.length === 0) return { kind: "allow" };
+  const allowed =
+    input.toolName === "edit" &&
+    chapters.every((target) => target === bound) &&
+    headingEditsOnly(input.input);
+  if (allowed) return { kind: "allow" };
+  const target = chapters.find((chapter) => chapter !== bound) ?? chapters[0];
+  return {
+    kind: "block",
+    path: target,
+    reason: formatChapterWriteBlock({ boundFile: bound, target }),
+  };
+};
+
+/**
+ * bash 里的写重定向有没有落到章节文件上。
+ *
+ * 只认「写操作 + 章节文件名」这一种形状：读操作、写到 /tmp 都放行，误报优先放过。
+ */
+export const findChapterWriteInCommand = (input: {
+  command: string;
+  chapterFileNames: readonly string[];
+}): string | null => {
+  for (const name of input.chapterFileNames) {
+    if (!name.endsWith(".md")) continue;
+    const quoted = `["']?(?:[^\\s"'/][^\\s"']*/)?${escapeRegExp(name)}["']?`;
+    const patterns = [
+      new RegExp(`(?:^|[^-\\w"'=])>>?\\s*${quoted}`, "u"),
+      new RegExp(`\\btee\\b(?:\\s+-a)?\\s+${quoted}`, "u"),
+      new RegExp(`\\bsed\\b[^;|&]*\\s-i\\S*\\s[^;|&]*${quoted}`, "u"),
+      new RegExp(`\\btruncate\\b[^;|&]*${quoted}`, "u"),
+      new RegExp(`\\brm\\b[^;|&]*${quoted}`, "u"),
+      new RegExp(`\\b(?:cp|mv)\\b[^;|&]*\\s${quoted}\\s*$`, "u"),
+    ];
+    if (patterns.some((pattern) => pattern.test(input.command))) return name;
+  }
+  return null;
+};

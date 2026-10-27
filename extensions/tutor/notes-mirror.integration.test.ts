@@ -47,22 +47,44 @@ afterEach(() => {
 });
 
 type Harness = {
-  fire: (event: string, payload: unknown) => Promise<void>;
+  fire: (event: string, payload: unknown) => Promise<unknown[]>;
+  toolCall: (toolName: string, input: unknown) => Promise<unknown>;
   bind: (toolCallId: string, chapter: string) => Promise<void>;
   bindCancelled: (toolCallId: string, chapter: string) => Promise<void>;
+  runCommand: (name: string, args: string) => Promise<void>;
   topicDir: string;
   readChapter: (prefix: string) => string;
   ctx: never;
 };
 
-const setup = (topic: string): Harness => {
+/** 假会话日志：pi 在消息定稿前就把条目追加进去，backfill 读的就是这一份。 */
+const setup = (
+  topic: string,
+  options: { bindAtStart?: boolean } = {},
+): Harness => {
   const handlers = new Map<string, EventHandler[]>();
   const tools = new Map<string, { execute: ToolExecute }>();
+  const commands = new Map<string, (args: string, ctx: never) => unknown>();
+  const entries: Array<Record<string, unknown>> =
+    options.bindAtStart === false
+      ? []
+      : [
+          {
+            type: "custom",
+            customType: "tutor-notes",
+            data: { file: path.join(vault, "Learn", topic, `${topic}.md`) },
+          },
+        ];
   registerNotes({
     registerTool: (tool: { name: string }) => {
       tools.set(tool.name, tool as never);
     },
-    registerCommand: () => {},
+    registerCommand: (
+      name: string,
+      command: { handler: (args: string, ctx: never) => unknown },
+    ) => {
+      commands.set(name, command.handler);
+    },
     on: (event: string, handler: EventHandler) => {
       handlers.set(event, [...(handlers.get(event) ?? []), handler]);
     },
@@ -86,21 +108,40 @@ const setup = (topic: string): Harness => {
     },
     // 会话已经绑定到这个主题的索引页（等价于学习者先跑过 /md-topic 选完主题）：
     // 镜像测试要验的是「绑定切换时块落在哪」，不是 picker 本身。
-    sessionManager: {
-      getEntries: () => [
-        {
-          type: "custom",
-          customType: "tutor-notes",
-          data: { file: path.join(vault, "Learn", topic, `${topic}.md`) },
-        },
-      ],
-    },
+    sessionManager: { getEntries: () => entries },
   };
 
-  const fire = async (event: string, payload: unknown): Promise<void> => {
-    for (const handler of handlers.get(event) ?? []) {
-      await handler(payload as never, ctx as never);
+  const fire = async (event: string, payload: unknown): Promise<unknown[]> => {
+    if (event === "message_end") {
+      const message = (payload as { message?: unknown }).message;
+      entries.push({ type: "message", message });
     }
+    const results: unknown[] = [];
+    for (const handler of handlers.get(event) ?? []) {
+      results.push(await handler(payload as never, ctx as never));
+    }
+    return results;
+  };
+
+  /** 一次工具调用的判定：第一个非空 handler 返回值（pi 的 `{ block, reason }`）。 */
+  const toolCall = async (
+    toolName: string,
+    input: unknown,
+  ): Promise<unknown> => {
+    const results = await fire("tool_call", {
+      type: "tool_call",
+      toolName,
+      toolCallId: `call-${toolName}`,
+      input,
+    });
+    return results.find((result) => result !== undefined);
+  };
+
+  /** 人敲的斜杠命令（`/md-topic`、`/md-log`）：与真实 handler 同一个入口。 */
+  const runCommand = async (name: string, args: string): Promise<void> => {
+    const handler = commands.get(name);
+    if (!handler) throw new Error(`${name} 未注册`);
+    await handler(args, ctx as never);
   };
 
   const bindTool = tools.get("bind_notes");
@@ -143,7 +184,9 @@ const setup = (topic: string): Harness => {
 
   return {
     fire,
+    toolCall,
     bind,
+    runCommand,
     /** 学习者 Esc 的 bind：同一个流程，但 picker 返回取消。 */
     bindCancelled: async (toolCallId: string, chapter: string) => {
       nextPick = undefined;
@@ -262,6 +305,101 @@ describe("镜像接线 / 同轮 bind 的块归属", () => {
   });
 });
 
+describe("镜像接线 / 单写入口（一个会话只写一章）", () => {
+  const blocked = (value: unknown): { block?: boolean; reason?: string } =>
+    (value ?? {}) as { block?: boolean; reason?: string };
+
+  it("绑定 01 时写 02：拦，理由点名当前章节", async () => {
+    const h = setup("单写入口");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+
+    const verdict = blocked(
+      await h.toolCall("write", {
+        path: path.join(h.topicDir, "02-第二章.md"),
+        content: "第2章正文",
+      }),
+    );
+    expect(verdict.block).toBe(true);
+    expect(verdict.reason).toContain("第1章 · 第一章");
+    expect(verdict.reason).toContain("bind_notes");
+  });
+
+  it("绑定章本身不能手写正文；补一行重讲标题放行", async () => {
+    const h = setup("单写入口二");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+    const boundFile = path.join(h.topicDir, "01-第一章.md");
+
+    expect(
+      blocked(
+        await h.toolCall("write", { path: boundFile, content: "再写一遍" }),
+      ).block,
+    ).toBe(true);
+    expect(
+      await h.toolCall("edit", {
+        path: boundFile,
+        oldText: "第一遍的正文。",
+        newText: "### C1-1 · 换角度：换个入口\n\n第一遍的正文。",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("索引页与概念表放行", async () => {
+    const h = setup("单写入口三");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+
+    expect(
+      await h.toolCall("write", {
+        path: path.join(h.topicDir, "单写入口三.md"),
+        content: "索引页的已知边界",
+      }),
+    ).toBeUndefined();
+    expect(
+      await h.toolCall("write", {
+        path: path.join(h.topicDir, "概念.md"),
+        content: "概念表",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("bash 追写章节文件被拦，读章节文件放行", async () => {
+    const h = setup("单写入口四");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+
+    expect(
+      blocked(
+        await h.toolCall("bash", { command: "echo 补测 >> 01-第一章.md" }),
+      ).block,
+    ).toBe(true);
+    expect(
+      await h.toolCall("bash", { command: "grep -n quiz 01-第一章.md" }),
+    ).toBeUndefined();
+  });
+
+  it("patch 载荷（multi-edit 的 apply_patch 形状）同样被拦", async () => {
+    const h = setup("单写入口五");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+
+    const verdict = blocked(
+      await h.toolCall("edit", {
+        patch: [
+          "*** Begin Patch",
+          `*** Update File: ${path.join(h.topicDir, "02-第二章.md")}`,
+          "@@",
+          "-旧",
+          "+新",
+          "*** End Patch",
+        ].join("\n"),
+      }),
+    );
+    expect(verdict.block).toBe(true);
+  });
+});
+
 describe("镜像接线 / 供应商工具调用残留", () => {
   /**
    * 实录（2026-10-13 第10章）：provider 把 `check_concepts` 调用写进了 content，
@@ -330,6 +468,76 @@ describe("镜像接线 / 首轮注入不落笔记", () => {
     const chapter = h.readChapter("01-");
     expect(chapter).not.toContain("[tutor]");
     expect(chapter).not.toContain("本会话已绑定");
+  });
+});
+
+describe("镜像接线 / 换绑不重放历史（回填的归属）", () => {
+  /**
+   * 实录（2026-10-27，Kafka实现 第6/7章）：会话先绑在第7章，教完第6章补测后
+   * 人敲 `/md-topic Kafka实现 控制面` 换绑第6章——`/md-topic` 的 backfill 把整个
+   * 会话重放了一遍，第6章补测那四块于是同时躺在 06 与 07 两个文件里。
+   * 已经镜像过的块有主了，换绑不能把它们再投影一份到新章节。
+   */
+  it("换绑另一章：已镜像的块不写进新章节", async () => {
+    const h = setup("镜像重放");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+
+    await h.fire("message_end", assistantMessage("第一章补测的说明。"));
+    await h.runCommand("md-topic", "镜像重放 第二章");
+
+    expect(h.readChapter("01-")).toContain("第一章补测的说明。");
+    expect(h.readChapter("02-")).not.toContain("第一章补测的说明。");
+  });
+
+  it("绑定前那段没镜像过的会话照样回填（会话先聊、后绑笔记）", async () => {
+    const h = setup("镜像开场", { bindAtStart: false });
+    await h.fire("session_start", { type: "session_start" });
+    await h.fire("message_end", {
+      type: "message_end",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "先聊两句。" }],
+      },
+    });
+    await h.fire("message_end", assistantMessage("绑定前的回答。"));
+
+    const target = path.join(h.topicDir, "开场笔记.md");
+    fs.mkdirSync(h.topicDir, { recursive: true });
+    fs.writeFileSync(target, "# 开场笔记\n", "utf-8");
+    await h.runCommand("md-log", target);
+
+    const note = fs.readFileSync(target, "utf-8");
+    expect(note).toContain("先聊两句。");
+    expect(note).toContain("绑定前的回答。");
+  });
+
+  it("反复换绑不累积：同一块在文件里只出现一次", async () => {
+    const h = setup("镜像重复绑");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+    await h.fire("message_end", assistantMessage("只该写一次。"));
+    await h.runCommand("md-topic", "镜像重复绑 第二章");
+    await h.runCommand("md-topic", "镜像重复绑 第一章");
+
+    const chapter = h.readChapter("01-");
+    expect(chapter.split("只该写一次。").length - 1).toBe(1);
+  });
+
+  it("解绑之后那一段照样回填，绑着时写过的块不重写", async () => {
+    const h = setup("镜像解绑");
+    await h.fire("session_start", { type: "session_start" });
+    await h.bind("b1", "第一章");
+    await h.fire("message_end", assistantMessage("绑着时写的。"));
+    await h.runCommand("md-unlog", "");
+    await h.fire("message_end", assistantMessage("解绑后写的。"));
+
+    const target = path.join(h.topicDir, "01-第一章.md");
+    await h.runCommand("md-log", target);
+
+    const chapter = h.readChapter("01-");
+    expect(chapter.split("绑着时写的。").length - 1).toBe(1);
+    expect(chapter.split("解绑后写的。").length - 1).toBe(1);
   });
 });
 

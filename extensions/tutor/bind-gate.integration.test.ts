@@ -273,6 +273,30 @@ describe("bind_notes 落点 gate", () => {
     expect(result.details?.chapterNumber).toBe(3);
   });
 
+  it("两章都已存在、落点与请求不一致：不绑定，一个字节都不写", async () => {
+    seedTopic("Kafka实现", ["控制面", "协调面"]);
+    const h = setup({
+      entries: [boundEntry("Kafka实现")],
+      picks: [chapterRow("协调面")],
+    });
+
+    const result = await h.bind({ topic: "Kafka实现", chapter: "控制面" });
+
+    expect(result.isError).toBe(true);
+    expect(result.details?.conflict).toEqual({
+      requested: "控制面",
+      placed: "协调面",
+    });
+    expect(result.content[0]?.text).toContain("没有写盘");
+    expect(h.entries).toEqual([]);
+    expect(
+      fs.readFileSync(
+        path.join(topicDir("Kafka实现"), "02-协调面.md"),
+        "utf-8",
+      ),
+    ).toBe("# 第2章 · 协调面\n");
+  });
+
   it("同一主题、绑的就是索引页、只要索引页：不问（只有落点真变了才拦）", async () => {
     seedTopic("redis高可用", ["四个动作"]);
     const h = setup({ entries: [boundEntry("redis高可用")] });

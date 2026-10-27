@@ -59,9 +59,14 @@ import {
   chapterLabel,
   chapterNotePath,
   chapterPickerOptions,
+  findChapterWriteInCommand,
+  findPlacementConflict,
   formatAnswerBlock,
   formatAssistantBlock,
   formatBindCancelled,
+  formatChapterWriteBlock,
+  formatPlacementConflict,
+  formatPlacementNotice,
   formatPlacementRequired,
   formatQuestionBlock,
   formatSectionHeader,
@@ -71,6 +76,7 @@ import {
   hasIndexEntry,
   indexEntryLine,
   interpretTopicPick,
+  isBlockingPlacementConflict,
   isValidChapter,
   isValidTopic,
   isVaultNotePath,
@@ -82,6 +88,7 @@ import {
   type NumberingAssignment,
   parseChapterRef,
   parseIndexEntries,
+  planChapterWrite,
   planNumbering,
   planPlacementGate,
   planSplit,
@@ -556,6 +563,14 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
   let noteFile: string | null = null;
   /** 镜像闸门：关闸期间扣住还没归属的块（见 notes-core 的 mirrorStep）。 */
   let mirror: MirrorPending | null = null;
+  /**
+   * 还没镜像过的会话起点（session 条目下标）；null = 当前已绑定，没有待回填的窗口。
+   *
+   * 回填只该补「会话还没有笔记」那一段：那几块没有主人，绑定后才有落点。
+   * 已经镜像过的块有主了——换绑时再重放一遍，就是同一段内容被投影进两个章节
+   * （实录：Kafka实现 第6章补测同时躺在 06 与 07 两个文件里）。
+   */
+  let unmirroredFrom: number | null = null;
   let writeLock: Promise<void> = Promise.resolve();
   const loggedQuestions = new Set<string>();
 
@@ -626,6 +641,8 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
       if (check.ok === false) return { ok: false, error: check.error };
     }
     noteFile = file;
+    // 绑定当下的会话归这篇笔记管：此前的待回填窗口到此为止，起点由调用方在 bind 前取走。
+    unmirroredFrom = null;
     pi.appendEntry(ENTRY_TYPE, { file, chapter: options.chapter ?? null });
     setStatus(ctx);
     // ① 绑定教学内容 = 教学会话：把事实交给 mode 控制器（index.ts 据此开 tutor 闸门）；
@@ -740,12 +757,17 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
 
   // ── 会话恢复 ──────────────────────────────────────────────────────────────
   pi.on("session_start", async (_event, ctx) => {
+    const entries = ctx.sessionManager.getEntries();
     let last: { file: string | null } | undefined;
-    for (const entry of ctx.sessionManager.getEntries()) {
+    let lastIndex = -1;
+    entries.forEach((entry, index) => {
       if (entry.type === "custom" && entry.customType === ENTRY_TYPE) {
         last = entry.data as { file: string | null } | undefined;
+        lastIndex = index;
       }
-    }
+    });
+    // 上次解绑之后的那段会话没人镜像过，重新绑定时该补上；还在绑定状态就没有窗口。
+    unmirroredFrom = last ? (last.file ? null : lastIndex + 1) : 0;
     if (last?.file) {
       noteFile = last.file;
       mirror = null;
@@ -819,6 +841,55 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
         options,
       }),
     });
+  });
+
+  // 单写入口：章节文件只由镜像写。一条会话任一时刻只有一个 noteFile；模型的
+  // write / edit / patch / bash 重定向落到本章节目录下的章节文件时，在工具执行
+  // 之前就拦掉（判定全在 notes-core 的 planChapterWrite / findChapterWriteInCommand）。
+  pi.on("tool_call", async (event, ctx) => {
+    const bound = noteFile;
+    if (!bound) return undefined;
+    if (event.toolName === "bash") {
+      const command = (event.input as { command?: unknown }).command;
+      if (typeof command !== "string" || command.length === 0) return undefined;
+      const topicDir = topicDirOf(bound);
+      const topic = path.basename(topicDir);
+      let chapterNames: string[];
+      try {
+        chapterNames = fs
+          .readdirSync(topicDir)
+          .filter(
+            (name) =>
+              name.endsWith(".md") &&
+              name !== `${topic}.md` &&
+              name !== "概念.md",
+          );
+      } catch {
+        return undefined; // 目录读不了就不推断，交给工具自己报错
+      }
+      const hit = findChapterWriteInCommand({
+        command,
+        chapterFileNames: chapterNames,
+      });
+      return hit
+        ? {
+            block: true,
+            reason: formatChapterWriteBlock({
+              boundFile: bound,
+              target: `${topicDir}/${hit}`,
+            }),
+          }
+        : undefined;
+    }
+    const verdict = planChapterWrite({
+      toolName: event.toolName,
+      input: event.input,
+      cwd: ctx.cwd,
+      boundFile: bound,
+    });
+    return verdict.kind === "block"
+      ? { block: true, reason: verdict.reason }
+      : undefined;
   });
 
   pi.on("tool_result", async (event, _ctx) => {
@@ -963,7 +1034,34 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
           isError: placement.cancelled !== true,
         };
       }
+      // 落点与请求不一致：两章都是已有章节时不绑定、不建文件——把 A 章的内容写进 B 章。
+      // 其余不一致（agent 提议新章、学习者改成已有章节）照旧绑定，结果里加一行提示。
       const topic = placement.topic.trim();
+      const conflict = findPlacementConflict({
+        requestedChapter: params.chapter,
+        placedChapter: placement.chapter,
+      });
+      if (
+        conflict &&
+        isBlockingPlacementConflict({
+          conflict,
+          existingChapters: topicStateFor(settings, topic).chapters.map(
+            (chapter) => chapter.name,
+          ),
+        })
+      ) {
+        return {
+          content: [
+            { type: "text" as const, text: formatPlacementConflict(conflict) },
+          ],
+          details: {
+            conflict,
+            requestedChapter: params.chapter ?? null,
+            placedChapter: placement.chapter ?? null,
+          },
+          isError: true,
+        };
+      }
       const result = bindFromSettings(
         ctx,
         topic,
@@ -976,6 +1074,9 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
         const healedLine = result.healedFrom
           ? `\n已给旧章节补编号：${path.basename(result.healedFrom)} → ${path.basename(result.file)}`
           : "";
+        const noticeLine = conflict
+          ? `${formatPlacementNotice(conflict)}\n`
+          : "";
         const chapterLine = result.chapter
           ? `（章节：${chapterLabel(result.number, result.chapter)}）`
           : "（主题索引页）";
@@ -984,7 +1085,7 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
             {
               type: "text" as const,
               text: [
-                `已绑定本会话笔记：${result.file}${chapterLine}${healedLine}`,
+                `${noticeLine}已绑定本会话笔记：${result.file}${chapterLine}${healedLine}`,
                 formatTopicBrief({
                   topic,
                   indexPath: result.indexPath,
@@ -1007,6 +1108,7 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
             topic,
             chapter: result.chapter ?? null,
             chapterNumber: result.number ?? null,
+            placementConflict: conflict ?? null,
             healedFrom: result.healedFrom ?? null,
             created: result.created,
             vaultRoot: settings.vaultRoot,
@@ -1673,6 +1775,7 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
         }
         if (choice.kind === "chapter") chapter = choice.name;
       }
+      const resumeFrom = unmirroredFrom;
       const result = bindFromSettings(ctx, topic, chapter, chapterNumber);
       if (result.ok === false) {
         const hint = result.suggestedChapter
@@ -1684,7 +1787,7 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
         );
         return;
       }
-      const backfilled = await backfill(ctx);
+      const backfilled = await backfill(ctx, resumeFrom);
       const state = topicStateFor(settingsFor(ctx), topic.trim());
       const resumeChapter =
         state.resume &&
@@ -1719,12 +1822,13 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
       const resolved = path.isAbsolute(target)
         ? target
         : path.resolve(ctx.cwd, target);
+      const resumeFrom = unmirroredFrom;
       const result = bind(ctx, resolved, { create: false });
       if (result.ok === false) {
         ctx.ui.notify(`Cannot bind: ${result.error}`, "error");
         return;
       }
-      const backfilled = await backfill(ctx);
+      const backfilled = await backfill(ctx, resumeFrom);
       ctx.ui.notify(
         `Linked: ${resolved}${backfilled > 0 ? ` (${backfilled} blocks backfilled)` : ""}`,
         "info",
@@ -1741,6 +1845,7 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
       }
       noteFile = null;
       mirror = null;
+      unmirroredFrom = ctx.sessionManager.getEntries().length;
       pi.appendEntry(ENTRY_TYPE, { file: null });
       // 解绑也是「绑定状态变化」：mode 控制器按会话条目重新推导（下一轮关闸）。
       deps.onBindingChange?.({ file: null, inVault: false });
@@ -1749,10 +1854,14 @@ export const registerNotes = (pi: ExtensionAPI, deps: NotesDeps = {}): void => {
     },
   });
 
-  /** 链接后回填本次会话已有的内容（只看当前分支）。 */
-  async function backfill(ctx: ExtensionContext): Promise<number> {
+  /** 回填「会话还没有笔记」那段（`from` 之前的部分已有落点，不重放）。 */
+  async function backfill(
+    ctx: ExtensionContext,
+    from: number | null,
+  ): Promise<number> {
+    if (from === null) return 0;
     const blocks: string[] = [];
-    for (const entry of ctx.sessionManager.getEntries()) {
+    for (const entry of ctx.sessionManager.getEntries().slice(from)) {
       if (entry.type !== "message") continue;
       const message = (
         entry as { message?: { role?: string; content?: unknown } }

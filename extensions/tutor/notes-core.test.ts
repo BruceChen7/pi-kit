@@ -13,11 +13,15 @@ import {
   chapterPickerOptions,
   countVerdicts,
   expandHome,
+  findChapterWriteInCommand,
+  findPlacementConflict,
   formatAnswerBlock,
   formatAskAnswerBlock,
   formatBindCancelled,
   formatChapterTally,
   formatNumberingConflict,
+  formatPlacementConflict,
+  formatPlacementNotice,
   formatPlacementRequired,
   formatQuestionBlock,
   formatQuizAnswerBlock,
@@ -30,6 +34,7 @@ import {
   hasIndexEntry,
   indexEntryLine,
   interpretTopicPick,
+  isBlockingPlacementConflict,
   isValidChapter,
   isValidTopic,
   isVaultNotePath,
@@ -42,6 +47,7 @@ import {
   parseIndexEntries,
   parseNoteBlocks,
   pickResume,
+  planChapterWrite,
   planNumbering,
   planPlacementGate,
   planSplit,
@@ -1746,5 +1752,213 @@ describe("notes-core / 会话绑定与主题简报", () => {
       boundTopic: "redis高可用",
     });
     expect(bound).toContain("《redis高可用》");
+  });
+});
+
+describe("单写入口 / 章节文件只能由镜像写", () => {
+  const boundFile = "/v/Kafka实现/07-协调面.md";
+  const topicDir = "/v/Kafka实现";
+  const chapter = (name: string): string => `${topicDir}/${name}`;
+  const plan = (
+    toolName: string,
+    input: unknown,
+    options: { boundFile?: string | null; cwd?: string } = {},
+  ) =>
+    planChapterWrite({
+      toolName,
+      input,
+      cwd: options.cwd ?? "/v",
+      boundFile:
+        options.boundFile === undefined ? boundFile : options.boundFile,
+    });
+
+  it("绑定 07 时写 06：拦，理由点名当前章节与换章动作", () => {
+    const verdict = plan("write", {
+      path: chapter("06-控制面.md"),
+      content: "第6章补测",
+    });
+    expect(verdict.kind).toBe("block");
+    if (verdict.kind !== "block") return;
+    expect(verdict.path).toBe(chapter("06-控制面.md"));
+    expect(verdict.reason).toContain("第7章 · 协调面");
+    expect(verdict.reason).toContain("bind_notes");
+  });
+
+  it("绑定章本身也不能手写正文：镜像已经在写它了", () => {
+    const verdict = plan("write", {
+      path: boundFile,
+      content: "同一段话再写一遍",
+    });
+    expect(verdict.kind).toBe("block");
+    if (verdict.kind !== "block") return;
+    expect(verdict.reason).toContain("镜像");
+  });
+
+  it("索引页 / 概念表 / 其他主题 / 非章节文件 / 未绑定：放行", () => {
+    expect(plan("write", { path: chapter("Kafka实现.md") }).kind).toBe("allow");
+    expect(plan("write", { path: chapter("概念.md") }).kind).toBe("allow");
+    expect(plan("write", { path: "/v/Redis/07-协调面.md" }).kind).toBe("allow");
+    expect(plan("write", { path: chapter("图.png") }).kind).toBe("allow");
+    expect(
+      plan("write", { path: chapter("06-控制面.md") }, { boundFile: null })
+        .kind,
+    ).toBe("allow");
+    expect(plan("read", { path: chapter("06-控制面.md") }).kind).toBe("allow");
+  });
+
+  it("补一行重讲标题的 edit 放行；标题里夹正文就拦", () => {
+    const paragraph = "第一遍的正文摊平在这里。\n第二行。";
+    expect(
+      plan("edit", {
+        path: boundFile,
+        oldText: paragraph,
+        newText: `### C7-2 · 换角度：append 之后那一行代码\n\n${paragraph}`,
+      }).kind,
+    ).toBe("allow");
+    expect(
+      plan("edit", {
+        path: boundFile,
+        oldText: paragraph,
+        newText: "### C7-2 · 换角度：append 之后那一行代码\n\n新写的正文。",
+      }).kind,
+    ).toBe("block");
+    expect(
+      plan("edit", {
+        path: chapter("06-控制面.md"),
+        oldText: paragraph,
+        newText: `### 换角度\n\n${paragraph}`,
+      }).kind,
+    ).toBe("block");
+  });
+
+  it("multi 里混进兄弟章节：整条拦", () => {
+    const verdict = plan("edit", {
+      path: boundFile,
+      multi: [
+        { oldText: "甲", newText: "甲。" },
+        { path: chapter("06-控制面.md"), oldText: "乙", newText: "乙。" },
+      ],
+    });
+    expect(verdict.kind).toBe("block");
+    if (verdict.kind !== "block") return;
+    expect(verdict.path).toBe(chapter("06-控制面.md"));
+  });
+
+  it("patch 载荷里的 *** Update File 也认", () => {
+    const verdict = plan("edit", {
+      patch: `*** Begin Patch\n*** Update File: ${chapter("06-控制面.md")}\n@@\n-旧\n+新\n*** End Patch`,
+    });
+    expect(verdict.kind).toBe("block");
+  });
+
+  it("相对路径按 cwd 解析后再判定", () => {
+    expect(
+      plan("write", { path: "Kafka实现/06-控制面.md" }, { cwd: "/v" }).kind,
+    ).toBe("block");
+    expect(
+      plan("write", { path: "./Kafka实现/../Kafka实现/06-控制面.md" }).kind,
+    ).toBe("block");
+    expect(
+      plan("write", { path: "../Redis/06-控制面.md" }, { cwd: "/v/Kafka实现" })
+        .kind,
+    ).toBe("allow");
+  });
+});
+
+describe("单写入口 / 落点与请求不一致就不绑定", () => {
+  it("同一章（含 第N章 前缀）不算冲突", () => {
+    expect(
+      findPlacementConflict({
+        requestedChapter: "控制面",
+        placedChapter: "控制面",
+      }),
+    ).toBeNull();
+    expect(
+      findPlacementConflict({
+        requestedChapter: "第6章 · 控制面",
+        placedChapter: "控制面",
+      }),
+    ).toBeNull();
+  });
+
+  it("请求 控制面、落点 协调面 → 冲突", () => {
+    expect(
+      findPlacementConflict({
+        requestedChapter: "控制面",
+        placedChapter: "协调面",
+      }),
+    ).toEqual({ requested: "控制面", placed: "协调面" });
+  });
+
+  it("没请求章节 → 不看落点", () => {
+    expect(findPlacementConflict({ placedChapter: "协调面" })).toBeNull();
+    expect(
+      findPlacementConflict({ requestedChapter: "", placedChapter: "协调面" }),
+    ).toBeNull();
+  });
+
+  it("请求了章节、学习者选了索引页 → 冲突", () => {
+    expect(findPlacementConflict({ requestedChapter: "控制面" })).toEqual({
+      requested: "控制面",
+      placed: "",
+    });
+  });
+
+  it("冲突文案带两个名字与下一步", () => {
+    const text = formatPlacementConflict({
+      requested: "控制面",
+      placed: "协调面",
+    });
+    expect(text).toContain("控制面");
+    expect(text).toContain("协调面");
+    expect(text).toContain("没有写盘");
+  });
+
+  it("只有两章都已存在才拒绑；提议新章被改成旧章只提示", () => {
+    const conflict = { requested: "控制面", placed: "协调面" };
+    expect(
+      isBlockingPlacementConflict({
+        conflict,
+        existingChapters: ["控制面", "协调面"],
+      }),
+    ).toBe(true);
+    expect(
+      isBlockingPlacementConflict({
+        conflict: { requested: "gossip", placed: "协调面" },
+        existingChapters: ["控制面", "协调面"],
+      }),
+    ).toBe(false);
+    expect(formatPlacementNotice(conflict)).toContain("按学习者的落点讲");
+  });
+});
+
+describe("单写入口 / bash 写章节文件", () => {
+  const chapterFileNames = ["06-控制面.md", "07-协调面.md"];
+  const find = (command: string): string | null =>
+    findChapterWriteInCommand({ command, chapterFileNames });
+
+  it("读章节文件放行", () => {
+    expect(find("grep -n 'quiz' 06-控制面.md")).toBeNull();
+    expect(find("sed -n '1,20p' 07-协调面.md")).toBeNull();
+    expect(find("cat 06-控制面.md | head -5")).toBeNull();
+  });
+
+  it("重定向 / tee / sed -i / rm / mv 指到章节文件：拦", () => {
+    expect(find("echo 补测 >> 06-控制面.md")).toBe("06-控制面.md");
+    expect(find("echo 补测 > 06-控制面.md")).toBe("06-控制面.md");
+    expect(find("echo 补测 | tee -a 07-协调面.md")).toBe("07-协调面.md");
+    expect(find("sed -i '' 's/旧/新/' 06-控制面.md")).toBe("06-控制面.md");
+    expect(find("rm 06-控制面.md")).toBe("06-控制面.md");
+    expect(find("mv /tmp/x.md 06-控制面.md")).toBe("06-控制面.md");
+  });
+
+  it("写到 /tmp 或别处不拦", () => {
+    expect(find("grep -n quiz 06-控制面.md > /tmp/out.txt")).toBeNull();
+    expect(find("echo x > /tmp/06-控制面.md")).toBeNull();
+  });
+
+  it("引号里的 > 与文本里的箭头不算重定向", () => {
+    expect(find("echo 'a -> 06-控制面.md'")).toBeNull();
+    expect(find("grep '>' 06-控制面.md")).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isAutoReviewTarget } from "./paths.ts";
+import { isAutoReviewTarget, resolveReviewTargetMatch } from "./paths.ts";
 
 type ImportedModule = {
   resolvePlanFileForReview?: (
@@ -197,6 +197,47 @@ describe("index path helpers", () => {
       },
     ])("$name", ({ htmlDirs, targetPath, expected }) => {
       expect(isAutoReviewTarget(htmlDirs, "/repo", targetPath)).toBe(expected);
+    });
+  });
+
+  describe("resolveReviewTargetMatch (pure, manually reviewed paths)", () => {
+    it.each([
+      {
+        name: "does not queue an unconventional document on its own",
+        targetPath: "/repo/.pi/research/2026-04-16-widget.md",
+        manuallyReviewed: false,
+        expected: null,
+      },
+      {
+        name: "queues a reviewed .pi research document as a plan review",
+        targetPath: "/repo/.pi/research/2026-04-16-widget.md",
+        manuallyReviewed: true,
+        expected: {
+          kind: "plan",
+          reviewFile: ".pi/research/2026-04-16-widget.md",
+        },
+      },
+      {
+        name: "queues a reviewed .pi research HTML document as an HTML review",
+        targetPath: "/repo/.pi/research/2026-04-16-widget.html",
+        manuallyReviewed: true,
+        expected: {
+          kind: "html",
+          reviewFile: ".pi/research/2026-04-16-widget.html",
+        },
+      },
+      {
+        name: "leaves a reviewed source file out of the review loop",
+        targetPath: "/repo/extensions/demo/README.md",
+        manuallyReviewed: true,
+        expected: null,
+      },
+    ])("$name", ({ targetPath, manuallyReviewed, expected }) => {
+      expect(
+        resolveReviewTargetMatch({ cwd: "/repo" }, [], targetPath, {
+          manuallyReviewed,
+        }),
+      ).toEqual(expected);
     });
   });
 

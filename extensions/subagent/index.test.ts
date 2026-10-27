@@ -84,6 +84,9 @@ const makePi = (): { pi: FakePi; tools: any[] } => {
   return { pi, tools };
 };
 
+/** 宿主一定提供 theme；假的 ui 也必须带上，否则 TUI 分支会去读 undefined。 */
+const testTheme = { fg: (_tone: string, text: string) => text };
+
 const makeCtx = (over: Record<string, unknown> = {}) => ({
   cwd: "/repo",
   model: { id: "parent-model" },
@@ -91,7 +94,7 @@ const makeCtx = (over: Record<string, unknown> = {}) => ({
   modelRegistry: { find: () => undefined },
   mode: "tui",
   hasUI: true,
-  ui: { setWidget: vi.fn() },
+  ui: { setWidget: vi.fn(), theme: testTheme },
   ...over,
 });
 
@@ -213,7 +216,7 @@ describe("progress while a foreground child is silent", () => {
   it("pushes an update every tick and freezes once the run stops", async () => {
     vi.useFakeTimers();
     const { runtime, tool } = slowTool();
-    const ui = { setWidget: vi.fn(), setStatus: vi.fn() };
+    const ui = { setWidget: vi.fn(), setStatus: vi.fn(), theme: testTheme };
     const onUpdate = vi.fn();
 
     void tool.execute(
@@ -278,7 +281,7 @@ describe("widget shape per host", () => {
     })) as never);
     const { pi, tools } = makePi();
     registerSubagent(pi as never);
-    const ui = { setWidget: vi.fn(), setStatus: vi.fn() };
+    const ui = { setWidget: vi.fn(), setStatus: vi.fn(), theme: testTheme };
     const ctx = { cwd: "/repo", mode: "rpc", hasUI: true, ui };
     for (const id of ["a1", "a2", "a3"]) {
       await call(tools[0], { action: "run", agent: "explore", task: id }, ctx);

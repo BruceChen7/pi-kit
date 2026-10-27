@@ -1,9 +1,11 @@
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it } from "vitest";
 import type { AgentProfile } from "./agents.js";
 import {
   activeRuns,
   admit,
   appendTranscript,
+  type Colorize,
   clipResult,
   createState,
   DEFAULT_MAX_CONCURRENT,
@@ -21,6 +23,9 @@ import {
   start,
   statusLine,
   stop,
+  summarizeTask,
+  truncateToColumns,
+  WIDGET_LINE_BUDGET,
 } from "./core.js";
 
 const runOf = (state: SubagentState, runId: string) => {
@@ -208,12 +213,70 @@ describe("renderWidgetLines", () => {
     expect(renderWidgetLines(done, 3000)).toEqual([]);
   });
 
-  it("shows the running count, the agent and the elapsed time", () => {
-    const state = admitMany(["a1", "a2"]);
+  it("shows the agent, the elapsed time and the task on one row", () => {
+    const state = admit(
+      createState(),
+      { ...request("a1"), task: "找 widget 的渲染路径" },
+      4,
+      1000,
+    ).state;
     const lines = renderWidgetLines(state, 13_000);
 
-    expect(lines[0]).toBe("Subagents · 2 running, 0 queued");
-    expect(lines[1]).toContain("explore a1 · running 12s");
+    expect(lines[0]).toBe("Subagents · 1 running, 0 queued");
+    expect(lines[1]).toContain("explore a1");
+    expect(lines[1]).toContain("12s");
+    expect(lines[1]).toContain("找 widget 的渲染路径");
+  });
+
+  it("keeps the first non-empty task line and drops the rest", () => {
+    const state = admit(
+      createState(),
+      { ...request("a1"), task: "\n  第一行\n第二行" },
+      4,
+      1000,
+    ).state;
+    const lines = renderWidgetLines(state, 2000);
+
+    expect(lines[1]).toContain("第一行");
+    expect(lines[1]).not.toContain("第二行");
+  });
+
+  it("right-aligns the status column inside the widget budget", () => {
+    const long = admit(
+      createState(),
+      {
+        runId: "a1",
+        agent: "code-reviewer",
+        task: "找 widget 的渲染路径，对比三个第三方实现并给出结论",
+        background: true,
+      },
+      4,
+      1000,
+    ).state;
+    const state = admit(
+      long,
+      { ...request("a2"), background: true },
+      4,
+      5000,
+    ).state;
+    const lines = renderWidgetLines(state, 13_000);
+
+    expect(visibleWidth(lines[1])).toBe(WIDGET_LINE_BUDGET);
+    expect(visibleWidth(lines[2])).toBe(WIDGET_LINE_BUDGET);
+  });
+
+  it("keeps a very long tool name inside the budget", () => {
+    let state = admit(createState(), request("a1"), 4, 1000).state;
+    state = setStep(
+      state,
+      "a1",
+      "mcp__some_server__long_tool_name".repeat(3),
+      5000,
+    );
+    const lines = renderWidgetLines(state, 13_000);
+
+    expect(visibleWidth(lines[1])).toBe(WIDGET_LINE_BUDGET);
+    expect(lines[1]).toContain("explore a1");
   });
 
   it("marks queued runs distinctly", () => {
@@ -226,12 +289,77 @@ describe("renderWidgetLines", () => {
     const lines = renderWidgetLines(state, 2000);
 
     expect(lines[0]).toBe("Subagents · 4 running, 1 queued");
-    expect(lines[5]).toContain("· explore a5");
+    expect(lines[5]).toContain("explore a5");
+    expect(lines[5]).toContain("queued");
+  });
+
+  it("says quiet instead of the stale tool once the child goes silent", () => {
+    let state = admit(createState(), request("a1"), 4, 1000).state;
+    state = setStep(state, "a1", "grep", 5000);
+    const lines = renderWidgetLines(state, 60_000);
+
+    expect(lines[1]).toContain("quiet 55s");
+    expect(lines[1]).not.toContain("grep");
+  });
+
+  it("leaves escape codes out when no colorize is passed", () => {
+    const state = admit(
+      createState(),
+      { ...request("a1"), task: "很长很长的任务描述，用来触发截断路径" },
+      4,
+      1000,
+    ).state;
+    const lines = renderWidgetLines(state, 13_000);
+
+    expect(lines.join("")).not.toContain("\x1b");
+  });
+
+  it("paints the glyph, the agent and the status without changing the width", () => {
+    const colorize: Colorize = (tone, text) =>
+      tone === "accent" ? `\x1b[36m${text}\x1b[39m` : `\x1b[90m${text}\x1b[39m`;
+    const state = admit(createState(), request("a1"), 4, 1000).state;
+    const lines = renderWidgetLines(state, 13_000, { colorize });
+
+    expect(lines[1]).toContain("\x1b[36mexplore\x1b[39m");
+    expect(visibleWidth(lines[1])).toBe(WIDGET_LINE_BUDGET);
+  });
+
+  it("truncates a long agent name instead of dropping the whole row", () => {
+    let state = admit(
+      createState(),
+      {
+        runId: "a1",
+        agent: "x".repeat(60),
+        task: "任务",
+        background: true,
+      },
+      4,
+      1000,
+    ).state;
+    state = setStep(
+      state,
+      "a1",
+      "mcp__some_server__long_tool_name".repeat(3),
+      5000,
+    );
+    const lines = renderWidgetLines(state, 13_000);
+
+    expect(visibleWidth(lines[1])).toBe(WIDGET_LINE_BUDGET);
+    expect(lines[1]).toContain("a1");
+    expect(lines[1]).toContain("…");
+  });
+
+  it("keeps only the header when the host can expand zero rows", () => {
+    const state = admitMany(["a1"]);
+
+    expect(renderWidgetLines(state, 2000, { maxRows: 0 })).toEqual([
+      "Subagents · 1 running, 0 queued · +1 more",
+    ]);
   });
 
   it("caps the rows a host will auto-expand and folds the rest into the header", () => {
     const state = admitMany(["a1", "a2", "a3", "a4"]);
-    const lines = renderWidgetLines(state, 2000, 2);
+    const lines = renderWidgetLines(state, 2000, { maxRows: 2 });
 
     expect(lines).toHaveLength(3);
     expect(lines[0]).toBe("Subagents · 4 running, 0 queued · +2 more");
@@ -243,6 +371,32 @@ describe("renderWidgetLines", () => {
     const state = admitMany(["a1", "a2", "a3", "a4"]);
 
     expect(renderWidgetLines(state, 2000)).toHaveLength(5);
+  });
+});
+
+describe("truncateToColumns", () => {
+  it("returns nothing when there is no room", () => {
+    expect(truncateToColumns("abc", 0)).toBe("");
+  });
+
+  it("keeps the ellipsis when it is the whole budget", () => {
+    expect(truncateToColumns("abc", 1)).toBe("…");
+  });
+
+  it("counts wide characters as two columns", () => {
+    expect(truncateToColumns("中文中文", 5)).toBe("中文…");
+  });
+
+  it("never exceeds the column budget for emoji sequences", () => {
+    expect(
+      visibleWidth(truncateToColumns("⚠️".repeat(20), 10)),
+    ).toBeLessThanOrEqual(10);
+  });
+});
+
+describe("summarizeTask", () => {
+  it("keeps the first non-empty line and collapses inner spaces", () => {
+    expect(summarizeTask("\n  找   widget\n第二行")).toBe("找 widget");
   });
 });
 

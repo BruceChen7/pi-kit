@@ -55,6 +55,7 @@ import {
   statusLine,
   stop,
   type TerminalStatus,
+  type Tone,
 } from "./core.ts";
 import {
   buildRunEvent,
@@ -273,11 +274,18 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     const ctx = lastContext;
     const now = Date.now();
     if (ctx) {
-      const lines = renderWidgetLines(state, now, widgetRowLimit(ctx));
+      const theme = ctx.ui.theme;
+      const colorize = uiHostProfile(ctx).themeColors
+        ? (tone: Tone, text: string) => theme.fg(tone, text)
+        : undefined;
       try {
+        const lines = renderWidgetLines(state, now, {
+          maxRows: widgetRowLimit(ctx),
+          colorize,
+        });
         ctx.ui.setWidget(WIDGET_KEY, lines.length > 0 ? lines : undefined);
       } catch {
-        // widget 在非交互宿主里可能不可用，不影响运行本身。
+        // widget 在非交互宿主里可能不可用；theme.fg 遇到未知 token 也会抛。
       }
     }
     setFooterStatus(statusLine(state, now));

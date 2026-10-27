@@ -27,6 +27,12 @@ export type SessionRuntimeState = {
   pendingPlanReviewTargetsByCwd: Map<string, Map<string, PendingPlanReview>>;
   /** Manual verdicts awaiting collection by the auto submit tool, keyed by cwd then path. */
   manualReviewVerdictsByCwd: Map<string, Map<string, ManualReviewVerdict>>;
+  /**
+   * Documents reviewed by hand this session, keyed by cwd. A manual review
+   * covers the whole `.pi/` tree, so it also makes an unconventional document
+   * (e.g. `.pi/research/…`) a review target that later writes re-queue.
+   */
+  manuallyReviewedPathsByCwd: Map<string, Set<string>>;
   toolArgsByCallId: Map<string, unknown>;
   reviewDocumentsByCwd: Map<string, Map<string, SessionReviewDocument>>;
   /** Markdown review hosting: regular browser (default) or Herdr panel (temporary toggle). */
@@ -41,6 +47,7 @@ const createSessionRuntimeState = (): SessionRuntimeState => ({
   pendingPlanReviewGateKeysByCwd: new Map(),
   pendingPlanReviewTargetsByCwd: new Map(),
   manualReviewVerdictsByCwd: new Map(),
+  manuallyReviewedPathsByCwd: new Map(),
   toolArgsByCallId: new Map<string, unknown>(),
   reviewDocumentsByCwd: new Map(),
   activePlanReviewByCwd: new Map(),

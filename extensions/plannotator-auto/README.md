@@ -11,8 +11,10 @@ Auto review (pending-gate → `plannotator_auto_submit_review`) accepts only fil
 - HTML artifacts: `.pi/html/<repo>/YYYY-MM-DD-<slug>.html`
 
 Everything else under `.pi/` (teach workspaces, `issues/`, `shaping/`, notes, …) never
-queues an auto review. Review those files manually with the picker (`Ctrl+Shift+R`) or
-`Ctrl+Alt+L`, which scan all of `.pi/`.
+queues an auto review on write. Review those files manually with the picker
+(`Ctrl+Shift+R`) or `Ctrl+Alt+L`, which scan all of `.pi/`. A document you review by hand
+becomes an auto review target for the rest of the session, so its next write queues and
+can be auto-submitted like a plan — that is how a `.pi/research/…` document joins the loop.
 
 All review locations are convention-based and NOT configurable: any directory named
 `plan` / `specs` under `.pi/` (covering every repo slug and worktree alias), and
@@ -45,9 +47,11 @@ session (settled → silent) is re-armed as soon as you review it by hand:
 | no verdict (CLI error / abort / empty output) | kept           | unchanged                                                   |
 
 "Cleared" means the revision you just reviewed leaves the pending queue, so the agent is not
-asked to auto-submit that same revision again. Only auto-review targets (`plan` / `specs`
-directories and `.pi/html/<repo>/`) are affected: manually reviewing any other `.pi/`
-document (teach notes, `issues/`, `SKILL.md`, …) leaves the auto review queue untouched.
+asked to auto-submit that same revision again. The reviewed document also becomes a review
+target for the rest of the session, so later writes to it queue again until you approve it:
+that holds for the auto-review conventions and for any other `.pi/` document you pick by hand
+(teach notes, `issues/`, `.pi/research/…`). A manual review of a file outside `.pi/` changes
+nothing about the queue.
 
 A manual verdict stays claimable by `plannotator_auto_submit_review`: with no pending target
 left, calling the tool for that path reports it once (`details.status` = `approved` / `denied`)

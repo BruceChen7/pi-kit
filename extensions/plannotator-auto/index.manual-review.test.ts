@@ -415,6 +415,94 @@ describe("manual review re-arms the auto review gate", () => {
     }
   });
 
+  it("queues later edits of a document reviewed by hand outside plan/specs", async () => {
+    vi.resetModules();
+    mockPlannotatorSpawnSequence([
+      {
+        status: 0,
+        stdout: cliPlanDeniedStdout("Add the numbers behind the claim."),
+      },
+      { status: 0, stdout: cliPlanApprovedStdout },
+    ]);
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runShortcut, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    repoRoot = await createTempRepo("plannotator-manual-outsider-");
+    const docRelative = ".pi/research/2026-04-16-widget-display.md";
+    const docPath = await writeTestFile(
+      repoRoot,
+      docRelative,
+      PLAN_DRAFT_CONTENT,
+    );
+    const ctx = createTestContext(repoRoot, {
+      uiCustom: vi.fn().mockResolvedValue(docPath),
+    });
+
+    try {
+      await emit("session_start", {}, ctx);
+      // The picker scans all of .pi, so a research document can be reviewed
+      // by hand even though the auto flow never queues it.
+      await runShortcut("ctrl+shift+r", ctx);
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Add the numbers behind the claim."),
+        { deliverAs: "followUp" },
+      );
+
+      // The reviewed document became a review target for this session, so
+      // the revision re-queues and the agent can auto-submit it.
+      await emitToolWrite(emit, ctx, docRelative);
+      expect(await gateMessage(emit, ctx)).toContain(
+        "plannotator_auto_submit_review",
+      );
+      expect(await submitReview(runTool, ctx, docRelative)).toBe("approved");
+
+      // Approved → settled: the loop ends instead of re-gating every write.
+      await emitToolWrite(emit, ctx, docRelative);
+      expect(await gateMessage(emit, ctx)).toBeUndefined();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+    }
+  });
+
+  it("does not make a source file queue for review after a manual review", async () => {
+    vi.resetModules();
+    mockPlannotatorSpawnSequence([
+      {
+        status: 0,
+        stdout: cliPlanDeniedStdout("Tighten the wording."),
+      },
+    ]);
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runShortcut, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    repoRoot = await createTempRepo("plannotator-manual-source-");
+    const docRelative = "extensions/demo/README.md";
+    const docPath = await writeTestFile(
+      repoRoot,
+      docRelative,
+      PLAN_DRAFT_CONTENT,
+    );
+    const ctx = createTestContext(repoRoot, {
+      uiCustom: vi.fn().mockResolvedValue(docPath),
+    });
+
+    try {
+      await emit("session_start", {}, ctx);
+      // Ctrl+Alt+L can annotate any document in the session, including source
+      // docs. Reviewing one must not turn its later edits into review gates.
+      await runShortcut("ctrl+shift+r", ctx);
+
+      await emitToolWrite(emit, ctx, docRelative);
+      expect(await gateMessage(emit, ctx)).toBeUndefined();
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+    }
+  });
+
   it("re-arms HTML artifacts reviewed manually", async () => {
     vi.resetModules();
     mockPlannotatorSpawnSequence([

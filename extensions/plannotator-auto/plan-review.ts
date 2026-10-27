@@ -19,7 +19,6 @@ import {
   PLANNOTATOR_REVIEW_VERDICT_CHANNEL,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
-import { resolveHtmlReviewDirs } from "../shared/review-targets.ts";
 import { pathsFromToolArgs } from "../shared/tool-targets.ts";
 import {
   type CliReviewDecision,
@@ -32,8 +31,8 @@ import {
   runPlanMermaidValidation,
 } from "./mermaid-validator.ts";
 import {
-  isAutoReviewTarget,
   isHtmlPath,
+  isRepoReviewDocument,
   resolveReviewTargetMatch,
   toRepoRelativePath,
 } from "./paths.ts";
@@ -374,6 +373,28 @@ export const isPlanReviewSettled = (
   !state.activePlanReviewByCwd.has(cwd) &&
   (findPendingPlanReviewTargets(state, cwd)?.size ?? 0) === 0;
 
+/**
+ * Session-scoped set of documents the user reviewed by hand. A manual review
+ * is how an unconventional document (`.pi/research/…`, a hand-picked note)
+ * enters the review loop: its next write queues instead of dead-ending.
+ */
+const isManuallyReviewedPath = (
+  state: SessionRuntimeState,
+  cwd: string,
+  resolvedPath: string,
+): boolean =>
+  state.manuallyReviewedPathsByCwd.get(cwd)?.has(resolvedPath) ?? false;
+
+const markManuallyReviewedPath = (
+  state: SessionRuntimeState,
+  cwd: string,
+  resolvedPath: string,
+): void => {
+  const paths = state.manuallyReviewedPathsByCwd.get(cwd) ?? new Set<string>();
+  paths.add(resolvedPath);
+  state.manuallyReviewedPathsByCwd.set(cwd, paths);
+};
+
 const queuePlanReviewForToolPath = (
   ctx: ExtensionContext,
   htmlDirs: readonly string[],
@@ -385,7 +406,9 @@ const queuePlanReviewForToolPath = (
     return false;
   }
 
-  const reviewTarget = resolveReviewTargetMatch(ctx, htmlDirs, targetPath);
+  const reviewTarget = resolveReviewTargetMatch(ctx, htmlDirs, targetPath, {
+    manuallyReviewed: isManuallyReviewedPath(state, ctx.cwd, targetPath),
+  });
   if (!reviewTarget) {
     return false;
   }
@@ -719,8 +742,10 @@ const MANUAL_VERDICT_STATUS_BY_OUTCOME: Partial<
  * approval through the auto submit tool result, which a manual review never
  * produces on its own.
  *
- * Only auto-review targets (plan / specs / `.pi/html`) are affected; manual
- * review of any other `.pi/` document leaves the queue untouched.
+ * The reviewed document also becomes a review target for the rest of the
+ * session. Manual review covers the whole `.pi/` tree, wider than the
+ * auto-review conventions, so this is what lets a revised `.pi/research/…`
+ * document re-queue for auto submit instead of staying unreviewable forever.
  */
 const applyManualReviewDecision = (
   pi: ExtensionAPI,
@@ -729,14 +754,20 @@ const applyManualReviewDecision = (
   decision: CliReviewDecision,
 ): void => {
   const targetPath = path.resolve(ctx.cwd, reviewedPath);
-  if (
-    !isAutoReviewTarget(resolveHtmlReviewDirs(ctx.cwd), ctx.cwd, targetPath)
-  ) {
+  // Only `.pi/` documents take part in the review loop; a manual review of a
+  // source file must not make its later writes queue a review.
+  if (!isRepoReviewDocument(ctx.cwd, targetPath)) {
     return;
   }
 
   const state = getSessionState(ctx);
   const transition = decideReviewStateTransition(decision, "manual");
+  if (transition.outcome === "no-verdict") {
+    // Nothing was decided (CLI error / abort / empty output): the document
+    // does not join the review loop and the queue stays untouched.
+    return;
+  }
+  markManuallyReviewedPath(state, ctx.cwd, targetPath);
   applyReviewStateTransition(state, ctx.cwd, targetPath, transition);
   setManualReviewVerdict(
     state,
@@ -748,7 +779,8 @@ const applyManualReviewDecision = (
 
   const status = MANUAL_VERDICT_STATUS_BY_OUTCOME[transition.outcome];
   if (status === undefined) {
-    // No verdict (dismissed / interrupted): no decision, no state transition.
+    // Dismissed: the queue was already released and re-armed above, but there
+    // is no verdict to report to other extensions.
     return;
   }
   pi.events.emit(PLANNOTATOR_REVIEW_VERDICT_CHANNEL, {

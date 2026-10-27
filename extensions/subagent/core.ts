@@ -5,6 +5,7 @@
  * 没有 session、没有 timer、没有 IO —— 时间由调用方作为 `now` 传入。
  */
 
+import { visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentProfile } from "./agents.ts";
 
 export type RunStatus = "queued" | "running" | "done" | "failed" | "stopped";
@@ -38,6 +39,17 @@ export type SubagentRun = {
 
 export type SubagentState = {
   runs: SubagentRun[];
+};
+
+/** widget 只用这三个 tone：accent 强调、muted 弱化、dim 最弱。 */
+export type Tone = "accent" | "muted" | "dim";
+export type Colorize = (tone: Tone, text: string) => string;
+
+export type WidgetOptions = {
+  /** 宿主能自动展开的行数上限（不含 header）。不传 = 全列。 */
+  maxRows?: number;
+  /** 宿主不认颜色时别传，输出保持纯文本。 */
+  colorize?: Colorize;
 };
 
 export type AdmitRequest = {
@@ -254,6 +266,10 @@ const STATUS_GLYPH: Record<RunStatus, string> = {
 /** 静默多久之后开始在进度行里标注 `quiet`。 */
 export const QUIET_AFTER_MS = 30_000;
 
+/** 距上一次子会话事件过了多久。静默判定只在这里算一次。 */
+const quietMsFor = (run: SubagentRun, now: number): number =>
+  Math.max(0, now - run.lastEventAt);
+
 /**
  * 一行运行期进度：`explore a1b2c3d4 · running 4m10s · grep subagent · quiet 38s`。
  * 终态返回 undefined，调用方据此撤掉进度展示。
@@ -269,7 +285,7 @@ export function progressLine(
   if (run.status === "queued") return `${head} · waiting for slot`;
 
   const step = run.step ? ` · ${run.step}` : " · no tool yet";
-  const quietMs = Math.max(0, now - run.lastEventAt);
+  const quietMs = quietMsFor(run, now);
   const quiet =
     quietMs >= QUIET_AFTER_MS ? ` · quiet ${formatElapsed(quietMs)}` : "";
   return `${head}${step}${quiet}`;
@@ -294,30 +310,129 @@ export function statusLine(
 }
 
 /**
+ * widget 单行预算（显示列）。字符串数组拿不到终端宽度，按 80 列终端减两侧
+ * 内边距再留 2 列余量算；超了 TUI 会换行，把 widget 顶高。
+ */
+export const WIDGET_LINE_BUDGET = 76;
+
+const WIDGET_GAP = 2;
+
+/** 右列最多占的列数。MCP 工具名可能很长，不设上限会把整行顶出预算。 */
+const WIDGET_RIGHT_MAX = 40;
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/**
+ * 按显示列截断。不用 pi-tui 的 truncateToWidth：那个连纯文本也会插 ANSI reset，
+ * 无色宿主会看到转义码。按 grapheme 累加，否则 `⚠️` 这种序列会被当成 1 列。
+ */
+export function truncateToColumns(
+  text: string,
+  maxCols: number,
+  ellipsis = "…",
+): string {
+  if (maxCols <= 0) return "";
+  if (visibleWidth(text) <= maxCols) return text;
+
+  const ellipsisWidth = visibleWidth(ellipsis);
+  if (ellipsisWidth >= maxCols)
+    return ellipsisWidth === maxCols ? ellipsis : "";
+
+  const budget = maxCols - ellipsisWidth;
+  let kept = "";
+  let used = 0;
+  for (const { segment } of graphemes.segment(text)) {
+    const width = visibleWidth(segment);
+    if (used + width > budget) break;
+    kept += segment;
+    used += width;
+  }
+  return `${kept}${ellipsis}`;
+}
+
+/** 任务摘要：第一条非空行，压掉行内多余空白。 */
+export function summarizeTask(task: string): string {
+  const line = task
+    .split("\n")
+    .map((part) => part.trim())
+    .find((part) => part.length > 0);
+  return (line ?? "").replace(/\s+/g, " ");
+}
+
+/** 右列：排队只报排队；静默时报静默，不报已经过期的工具名。 */
+function widgetRight(run: SubagentRun, now: number): string {
+  const elapsed = formatElapsed((run.endedAt ?? now) - run.startedAt);
+  const quietMs = quietMsFor(run, now);
+  const text =
+    run.status === "queued"
+      ? `queued ${elapsed}`
+      : quietMs >= QUIET_AFTER_MS
+        ? `${elapsed}  quiet ${formatElapsed(quietMs)}`
+        : `${elapsed}  ${run.step ?? "no tool yet"}`;
+  return truncateToColumns(text, WIDGET_RIGHT_MAX);
+}
+
+/** 左列：`  ▸ explore a1b2c3d4  找 widget 渲染路径`。agent 名太长时先截名字，颜色照旧。 */
+function widgetLeft(
+  run: SubagentRun,
+  maxCols: number,
+  colorize?: Colorize,
+): string {
+  const glyph = STATUS_GLYPH[run.status];
+  // 缩进 + glyph + 两个空格 + runId + 段间空格，剩下的才是 agent 名的额度。
+  const fixed = 2 + 1 + 1 + 1 + run.runId.length + WIDGET_GAP;
+  const agent = truncateToColumns(run.agent, Math.max(1, maxCols - fixed));
+  const head = colorize
+    ? `  ${colorize(run.status === "queued" ? "muted" : "accent", glyph)} ${colorize("accent", agent)} ${run.runId}`
+    : `  ${glyph} ${agent} ${run.runId}`;
+
+  const task = summarizeTask(run.task);
+  const budget = maxCols - visibleWidth(head) - WIDGET_GAP;
+  if (!task || budget <= 0) return head;
+  return `${head}  ${truncateToColumns(task, budget)}`;
+}
+
+/**
  * widget 行。没有任何活跃 run 时返回空数组，让宿主把 widget 撤掉。
  *
  * `maxRows` 是宿主能自动展开的行数上限（不含 header）：pi-web 只在 widget
  * 由空变非空那一刻展开 2..3 行的 widget，超过就永远只剩一个 chip。不传
- * （TUI）就全列。
+ * （TUI）就全列。右列贴到 `WIDGET_LINE_BUDGET`，所以多行时左列长短不影响对齐。
  */
 export function renderWidgetLines(
   state: SubagentState,
   now: number = Date.now(),
-  maxRows?: number,
+  options: WidgetOptions = {},
 ): string[] {
   const live = activeRuns(state);
   if (live.length === 0) return [];
 
   const running = live.filter((run) => run.status === "running").length;
   const shown =
-    maxRows === undefined ? live : live.slice(0, Math.max(0, maxRows));
+    options.maxRows === undefined
+      ? live
+      : live.slice(0, Math.max(0, options.maxRows));
   const hidden = live.length - shown.length;
   const more = hidden > 0 ? ` · +${hidden} more` : "";
   const header = `Subagents · ${running} running, ${live.length - running} queued${more}`;
+  if (shown.length === 0) return [header];
 
-  const rows = shown.map((run) => {
-    const glyph = STATUS_GLYPH[run.status];
-    return `  ${glyph} ${progressLine(run, now) ?? `${run.agent} ${run.runId}`}`;
+  const rights = shown.map((run) => widgetRight(run, now));
+  const rightMax = Math.max(...rights.map((right) => visibleWidth(right)));
+  const leftCap = WIDGET_LINE_BUDGET - rightMax - WIDGET_GAP;
+
+  const rows = shown.map((run, index) => {
+    const left = widgetLeft(run, leftCap, options.colorize);
+    const right = options.colorize
+      ? options.colorize("dim", rights[index])
+      : rights[index];
+    const gap = " ".repeat(
+      Math.max(
+        WIDGET_GAP,
+        WIDGET_LINE_BUDGET - visibleWidth(left) - visibleWidth(right),
+      ),
+    );
+    return `${left}${gap}${right}`;
   });
 
   return [header, ...rows];

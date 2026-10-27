@@ -1,6 +1,7 @@
 import path from "node:path";
 import {
   defaultAutoReviewTargetKindFromAbsolutePath,
+  defaultReviewTargetKindFromAbsolutePath,
   HTML_REVIEW_FILE_PATTERN,
 } from "../shared/review-targets.ts";
 import type { ReviewTargetKind } from "./plan-review/types.ts";
@@ -46,6 +47,25 @@ type ReviewTargetMatch = {
   reviewFile: string;
 };
 
+type ReviewTargetOptions = {
+  /**
+   * The user reviewed this document by hand this session. Manual review
+   * covers the whole `.pi/` tree, so it also makes a document outside the
+   * auto-review conventions (`.pi/research/…`) queueable.
+   */
+  manuallyReviewed?: boolean;
+};
+
+/**
+ * Pure: is this a `.pi/` document at all? The broad rule — any `.md`/`.html`
+ * under `.pi/` — is the manual review scope, wider than the auto-review
+ * conventions (`plan` / `specs` / `.pi/html`).
+ */
+export const isRepoReviewDocument = (
+  cwd: string,
+  targetPath: string,
+): boolean => defaultReviewTargetKindFromAbsolutePath(cwd, targetPath) !== null;
+
 const getReviewTargetKind = (
   htmlDirs: readonly string[],
   targetPath: string,
@@ -73,16 +93,28 @@ export const resolveReviewTargetMatch = (
   ctx: { cwd: string },
   htmlDirs: readonly string[],
   targetPath: string,
+  options: ReviewTargetOptions = {},
 ): ReviewTargetMatch | null => {
   const kind = getReviewTargetKind(htmlDirs, targetPath, ctx.cwd);
-  if (!kind) {
-    return null;
+  if (kind) {
+    return {
+      kind,
+      reviewFile: toRepoRelativePath(ctx, targetPath),
+    };
   }
 
-  return {
-    kind,
-    reviewFile: toRepoRelativePath(ctx, targetPath),
-  };
+  // A document the user reviewed by hand keeps taking part in the review
+  // loop for the rest of the session: its next write queues again, so the
+  // revision can be auto-submitted instead of dead-ending at "no pending
+  // review draft".
+  if (options.manuallyReviewed && isRepoReviewDocument(ctx.cwd, targetPath)) {
+    return {
+      kind: isHtmlPath(targetPath) ? "html" : "plan",
+      reviewFile: toRepoRelativePath(ctx, targetPath),
+    };
+  }
+
+  return null;
 };
 
 /**

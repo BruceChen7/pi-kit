@@ -153,6 +153,7 @@ export const buildHarness = () => {
     ),
     appendEntry: vi.fn(),
     sendUserMessage: vi.fn(),
+    sendMessage: vi.fn(),
     setActiveTools: vi.fn((names: string[]) => {
       activeTools = names;
     }),

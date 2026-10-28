@@ -117,6 +117,25 @@ The host decides where the same facts go (`controller.updateUi` reads
   click on the TODO chip opens the list. Fixing that would need a change in
   pi-web itself, which this extension deliberately avoids.
 
+### Other extensions' status text (badges)
+
+Another extension can put one short line on the same surface instead of writing
+a second footer segment. The protocol is two channels in
+`shared/internal-events.ts`:
+- the producer publishes `{type: "plan-mode.badge", cwd, key, text, ctx}`; `text:
+  null` retracts it. plan-mode appends the text to the mode widget headline and
+  to the pi-web status row (separated by ` · `), and ignores a badge whose `cwd`
+  is not this session's.
+- plan-mode publishes `{type: "plan-mode.status-owner", active}` whenever its
+  claim on a visible surface flips. A producer that writes its own `setStatus`
+  segment clears it while `active` is true, so the same count never shows twice.
+  The claim is re-announced on `session_start`, and badges are render state only:
+  they are never persisted and the producer re-publishes them.
+
+With no plan context, the status row stays empty (a badge alone does not create
+one); in the TUI the badge still rides on the always-visible mode widget. Today
+`subagent` is the only producer.
+
 ## Extension reloading and tool schema constraints
 
 Two operational constraints learned from the Console Go / DeepSeek regression

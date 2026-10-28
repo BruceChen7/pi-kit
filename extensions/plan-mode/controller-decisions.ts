@@ -114,6 +114,32 @@ export const parseReviewVerdictEvent = (raw: unknown): ReviewVerdict | null => {
   return { cwd, path: reviewedPath, approved: raw.approved };
 };
 
+/** 另一扩展挂到 plan-mode 状态面上的一段文字；null 表示撤下。 */
+export type PlanModeBadge = {
+  cwd: string;
+  key: string;
+  text: string | null;
+};
+
+/**
+ * Parse a badge event. Pure: unknown input in, DTO or null out. A malformed
+ * payload is dropped whole rather than partially applied.
+ */
+export const parsePlanModeBadgeEvent = (raw: unknown): PlanModeBadge | null => {
+  if (!isRecord(raw) || raw.type !== "plan-mode.badge") {
+    return null;
+  }
+  const cwd = stringProperty(raw, "cwd");
+  const key = stringProperty(raw, "key");
+  if (cwd === null || key === null) {
+    return null;
+  }
+  if (raw.text !== null && typeof raw.text !== "string") {
+    return null;
+  }
+  return { cwd, key, text: raw.text };
+};
+
 export type ApprovedReviewQueueInput = {
   reviewArtifactPath: string | null;
   latestReviewArtifactPath: string | null;

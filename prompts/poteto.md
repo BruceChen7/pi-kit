@@ -99,12 +99,13 @@ playbook 索引在 `/skill:poteto-playbooks`，按上面第 0 节的查找顺序
 
 任务能一句自包含地说清，才委派。说不清，先自己拆。
 
-| 场景               | 用什么                               | 怎么收                        |
-| ------------------ | ------------------------------------ | ----------------------------- |
-| 读多写少、独立评审 | `subagent` 的 `reviewer` / `explore` | `status <runId>`，贴 findings |
-| 写任务、文件不重叠 | `subagent` 的 `general`              | `status <runId>`，再跑测试    |
-| 要人看着、可插话   | `/skill:herdr-squad`                 | 收 report                     |
-| 同一文件并发写     | 不委派，串行                         | 无需                          |
+| 场景               | 用什么                               | 怎么收                    |
+| ------------------ | ------------------------------------ | ------------------------- |
+| 读多写少、独立评审 | `subagent` 的 `reviewer` / `explore` | `wait`，贴 findings       |
+| 写任务、文件不重叠 | `subagent` 的 `general`              | `wait`，再跑测试          |
+| 要人看着、可插话   | `/skill:herdr-squad`                 | 收 report                 |
+| 同一文件并发写     | 不委派，串行                         | 无需                      |
+- 等后台 subagent 用 `subagent` 的 `wait` action，不要用 bash `sleep` 轮询。
 - 写任务按文件或输出目录分区。同一文件不并发。
 - 子会话看不到本对话，`task` 必须自包含：目标、范围、验收、报告格式。
 - 需要不同模型交叉评审时，用 `.pi/agents/` 里 pin 了 `model` 的 profile；没有就同模型多跑几份，并写明。

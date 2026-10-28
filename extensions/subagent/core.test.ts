@@ -7,6 +7,7 @@ import {
   appendTranscript,
   type Colorize,
   clipResult,
+  collectWaitResult,
   createState,
   DEFAULT_MAX_CONCURRENT,
   eventToTranscriptLine,
@@ -16,8 +17,10 @@ import {
   progressLine,
   renderDoctor,
   renderTranscript,
+  renderWaitResult,
   renderWidgetLines,
   type SubagentState,
+  selectWaitTargets,
   setStep,
   settle,
   start,
@@ -621,5 +624,102 @@ describe("eventToTranscriptLine", () => {
 
   it("ignores unrelated events", () => {
     expect(eventToTranscriptLine({ type: "agent_end" }, 1)).toBeNull();
+  });
+});
+
+describe("selectWaitTargets", () => {
+  const twoActive = () => {
+    let state = admit(createState(), request("a"), 4, 1).state;
+    state = admit(state, request("b"), 4, 2).state;
+    return state;
+  };
+
+  it("waits for every non-terminal run when no ids are given", () => {
+    const state = settle(twoActive(), { runId: "a", status: "done" }, 4, 3);
+    expect(selectWaitTargets(state).targets.map((run) => run.runId)).toEqual([
+      "b",
+    ]);
+  });
+
+  it("keeps the requested order and drops duplicate ids", () => {
+    const state = twoActive();
+    expect(
+      selectWaitTargets(state, ["b", "a", "b"]).targets.map((run) => run.runId),
+    ).toEqual(["b", "a"]);
+  });
+
+  it("reports unknown ids instead of throwing", () => {
+    const state = twoActive();
+    expect(selectWaitTargets(state, ["a", "nope"])).toEqual({
+      targets: [runOf(state, "a")],
+      unknown: ["nope"],
+    });
+  });
+
+  it("treats an explicit id list as authoritative even when empty", () => {
+    expect(selectWaitTargets(twoActive(), []).targets).toEqual([]);
+  });
+});
+
+describe("collectWaitResult", () => {
+  it("reads the result text of a settled run", () => {
+    const state = settle(
+      admit(createState(), request("a"), 4, 1).state,
+      { runId: "a", status: "done", resultText: "found it" },
+      4,
+      2,
+    );
+    expect(collectWaitResult(state, ["a"], false)).toEqual({
+      runs: [
+        { runId: "a", agent: "explore", status: "done", text: "found it" },
+      ],
+      timedOut: false,
+    });
+  });
+
+  it("reports a still-running run as non-terminal on timeout", () => {
+    const state = admit(createState(), request("a"), 4, 1).state;
+    expect(collectWaitResult(state, ["a"], true)).toEqual({
+      runs: [{ runId: "a", agent: "explore", status: "running", text: "" }],
+      timedOut: true,
+    });
+  });
+
+  it("reads a vanished run as stopped rather than dropping it", () => {
+    expect(collectWaitResult(createState(), ["gone"], false).runs).toEqual([
+      { runId: "gone", agent: "unknown", status: "stopped", text: "" },
+    ]);
+  });
+});
+
+describe("renderWaitResult", () => {
+  it("returns the child text without a timeout banner", () => {
+    const text = renderWaitResult({
+      runs: [
+        { runId: "a", agent: "explore", status: "done", text: "found it" },
+      ],
+      timedOut: false,
+    });
+    expect(text).toContain("found it");
+    expect(text).not.toContain("timed out");
+  });
+
+  it("says how many runs settled before a timeout", () => {
+    const text = renderWaitResult({
+      runs: [
+        { runId: "a", agent: "explore", status: "done", text: "found it" },
+        { runId: "b", agent: "explore", status: "running", text: "" },
+      ],
+      timedOut: true,
+    });
+    expect(text).toContain("1/2 settled");
+    expect(text).toContain("1 still running");
+    expect(text).toContain("found it");
+  });
+
+  it("says so when there was nothing to wait for", () => {
+    expect(renderWaitResult({ runs: [], timedOut: false })).toBe(
+      "no subagent runs to wait for",
+    );
   });
 });

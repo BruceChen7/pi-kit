@@ -94,24 +94,41 @@ describe("toProfile", () => {
     expect(profile.prompt).toBe("only a description");
   });
 
-  it("defaults to inheriting codemode and mcp from the parent", () => {
+  it("defaults to no MCP while leaving codemode to the parent", () => {
     const profile = toProfile(
       source("plain", `${frontmatter(["name: plain"])}body`),
     );
 
     expect(profile.codemode).toBeUndefined();
-    expect(profile.mcp).toBe("inherit");
+    expect(profile.mcp).toBe("none");
   });
 
-  it("reads an explicit codemode switch and mcp opt-out", () => {
+  it("reads an explicit codemode switch", () => {
     const profile = toProfile(
-      source(
-        "off",
-        `${frontmatter(["name: off", "codemode: false", "mcp: none"])}body`,
-      ),
+      source("off", `${frontmatter(["name: off", "codemode: false"])}body`),
     );
 
     expect(profile.codemode).toBe(false);
+  });
+
+  it("inherits MCP only when the profile asks for it", () => {
+    for (const value of ["inherit", "on", "true"]) {
+      const profile = toProfile(
+        source(
+          "inheriting",
+          `${frontmatter(["name: inheriting", `mcp: ${value}`])}body`,
+        ),
+      );
+
+      expect(profile.mcp).toBe("inherit");
+    }
+  });
+
+  it("treats an unrecognised mcp value as off", () => {
+    const profile = toProfile(
+      source("odd", `${frontmatter(["name: odd", "mcp: maybe"])}body`),
+    );
+
     expect(profile.mcp).toBe("none");
   });
 

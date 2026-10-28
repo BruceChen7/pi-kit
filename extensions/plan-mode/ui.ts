@@ -153,9 +153,15 @@ const formatPlanModeHeadline = (
     : `Plan Mode: ${mode} · ${runStatus}`;
 };
 
-export const formatModeWidgetLines = (state: PlanModeState): string[] => [
-  `${formatPlanModeHeadline(state, false)} · ` +
-    `${PLAN_MODE_TOGGLE_SHORTCUT_LABEL} toggles`,
+export const formatModeWidgetLines = (
+  state: PlanModeState,
+  badges: readonly string[] = [],
+): string[] => [
+  [
+    `${formatPlanModeHeadline(state, false)} · ` +
+      `${PLAN_MODE_TOGGLE_SHORTCUT_LABEL} toggles`,
+    ...badges,
+  ].join(" · "),
 ];
 
 /**
@@ -165,9 +171,11 @@ export const formatModeWidgetLines = (state: PlanModeState): string[] => [
  * 模式/阶段与当前 TODO 步骤，面板折叠或页面刷新后用户仍知道进行到哪一步。
  *
  * 返回 undefined 表示普通 act 直聊：调用方应清空 status，不要在 shelf 上留噪音。
+ * badges 只在本来就有输出时追加，不靠一段 badge 造出一行状态。
  */
 export const formatPlanModeStatusLine = (
   state: PlanModeState,
+  badges: readonly string[] = [],
 ): string | undefined => {
   const hasPlanContext =
     state.mode === PLAN_MODE_PLAN ||
@@ -187,6 +195,7 @@ export const formatPlanModeStatusLine = (
   if (total > 0) {
     parts.push(`${done}/${total} 已完成`);
   }
+  parts.push(...badges);
   return parts.join(" · ");
 };
 

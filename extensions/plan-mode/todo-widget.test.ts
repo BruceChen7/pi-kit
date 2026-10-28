@@ -1,5 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  PLAN_MODE_BADGE_CHANNEL,
+  PLAN_MODE_STATUS_OWNER_CHANNEL,
+} from "../shared/internal-events.js";
 import { profileForHostKind } from "../shared/ui-host.js";
 import {
   ACT_MODE_TODO_TOOL,
@@ -726,5 +730,153 @@ describe("plan-mode extension: pi-web widget contract", () => {
     expect(calls.filter((call) => call.call === "setStatus")).toEqual([
       { call: "setStatus", key: "plan-mode", text: undefined },
     ]);
+  });
+});
+
+/**
+ * 别的扩展（目前是 subagent）把自己的一段状态挂到 plan-mode 的可见面上。
+ * 这里钉住三件事：badge 进 mode widget / 状态行、cwd 过滤、没有可见面时不接管。
+ */
+describe("plan-mode extension: 外部状态 badge", () => {
+  afterEach(clearPiWebHost);
+
+  const emitBadge = (
+    harness: ReturnType<typeof buildHarness>,
+    ctx: ReturnType<typeof buildCtx>,
+    text: string | null,
+    overrides: Record<string, unknown> = {},
+  ): void => {
+    harness.api.events.emit(PLAN_MODE_BADGE_CHANNEL, {
+      type: "plan-mode.badge",
+      cwd: ctx.cwd,
+      key: "subagent",
+      text,
+      ctx,
+      ...overrides,
+    });
+  };
+
+  const ownerEmits = (harness: ReturnType<typeof buildHarness>) =>
+    harness.api.events.emit.mock.calls
+      .filter(([channel]) => channel === PLAN_MODE_STATUS_OWNER_CHANNEL)
+      .map(([, payload]) => payload);
+
+  const modeWidgetText = (ctx: ReturnType<typeof buildCtx>): string =>
+    (lastModeWidgetCall(ctx)[1] as string[]).join("\n");
+
+  it("TUI：badge 拼进 mode widget 首行，接管只广播一次", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+    // 内容一直可见的宿主：一挂上 widget 就接管，不等 badge。
+    expect(ownerEmits(harness)).toEqual([
+      { type: "plan-mode.status-owner", active: true },
+    ]);
+
+    emitBadge(harness, ctx, "subagent 2 running, 0 queued");
+
+    expect(modeWidgetText(ctx)).toContain(
+      "Plan Mode: Act · Act · Alt+0 toggles · subagent 2 running, 0 queued",
+    );
+    expect(ownerEmits(harness)).toHaveLength(1);
+  });
+
+  it("TUI：badge 撤下后首行恢复原样", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    emitBadge(harness, ctx, "subagent 2 running, 0 queued");
+    emitBadge(harness, ctx, null);
+
+    expect(modeWidgetText(ctx)).toContain(
+      "Plan Mode: Act · Act · Alt+0 toggles",
+    );
+    expect(modeWidgetText(ctx)).not.toContain("subagent");
+  });
+
+  it("cwd 不匹配的 badge 不渲染", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    emitBadge(harness, ctx, "subagent 9 running, 0 queued", {
+      cwd: "/another-repo",
+    });
+
+    expect(modeWidgetText(ctx)).not.toContain("subagent");
+  });
+
+  it("pi-web：有计划上下文时 badge 进状态行并接管", async () => {
+    markPiWebHost();
+    const harness = buildHarness();
+    const ctx = buildPiWebCtx();
+    const calls = recordUiCalls(ctx);
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+    await harness.runCommand("plan-mode", "plan", ctx);
+
+    emitBadge(harness, ctx, "subagent 2 running, 0 queued");
+
+    expect(calls.filter((call) => call.call === "setStatus").at(-1)).toEqual({
+      call: "setStatus",
+      key: "plan-mode",
+      text: "Plan Mode: Plan · Planning · subagent 2 running, 0 queued",
+    });
+    expect(ownerEmits(harness)).toEqual([
+      { type: "plan-mode.status-owner", active: true },
+    ]);
+  });
+
+  it("pi-web 纯 act：badge 不造状态行，也不接管", async () => {
+    markPiWebHost();
+    const harness = buildHarness();
+    const ctx = buildPiWebCtx();
+    const calls = recordUiCalls(ctx);
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+
+    emitBadge(harness, ctx, "subagent 2 running, 0 queued");
+
+    expect(calls.filter((call) => call.call === "setStatus").at(-1)).toEqual({
+      call: "setStatus",
+      key: "plan-mode",
+      text: undefined,
+    });
+    expect(ownerEmits(harness)).toEqual([]);
+  });
+
+  it("shutdown 之后迟到的撤下通知不再画一帧", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    const calls = recordUiCalls(ctx);
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+    emitBadge(harness, ctx, "subagent 2 running, 0 queued");
+
+    await harness.emit("session_shutdown", {}, ctx);
+    const afterShutdown = calls.length;
+    // 生产方 shutdown 时会补发一次 null；清场之后它不能再触发重画。
+    emitBadge(harness, ctx, null);
+
+    expect(calls.length).toBe(afterShutdown);
+  });
+
+  it("session_start 重新声明接管，生产方重启后仍能让位", async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+    await harness.emit("session_shutdown", {}, ctx);
+
+    await harness.emit("session_start", {}, ctx);
+
+    expect(ownerEmits(harness).at(-1)).toEqual({
+      type: "plan-mode.status-owner",
+      active: true,
+    });
   });
 });

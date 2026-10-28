@@ -18,6 +18,10 @@ import type {
   ExtensionToolContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import {
+  PLAN_MODE_BADGE_CHANNEL,
+  PLAN_MODE_STATUS_OWNER_CHANNEL,
+} from "../shared/internal-events.ts";
 import { createLogger, resolveMinLogLevel } from "../shared/logger.ts";
 import { uiHostProfile } from "../shared/rich-ui.ts";
 import {
@@ -39,6 +43,7 @@ import {
   activeRuns,
   admit,
   appendTranscript,
+  collectWaitResult,
   createState,
   DEFAULT_MAX_CONCURRENT,
   eventToTranscriptLine,
@@ -48,8 +53,10 @@ import {
   progressLine,
   type RunStatus,
   renderDoctor,
+  renderWaitResult,
   renderWidgetLines,
   type SubagentState,
+  selectWaitTargets,
   setStep,
   settle,
   statusLine,
@@ -78,9 +85,11 @@ const WIDGET_KEY = "subagent";
 const STATUS_KEY = "subagent";
 /** 进度刷新周期。1s 太吵，5s 又看不出在动；2s 是肉眼连续与重绘量的折中。 */
 const TICK_MS = 2_000;
+/** 与 herdr-squad 的 DEFAULT_WAIT_MS 对齐：两个等待工具不能有两个默认值。 */
+const DEFAULT_WAIT_MS = 5 * 60_000;
 const log = createLogger("subagent", { stderr: null });
 
-type SubagentAction = "run" | "list" | "status" | "stop" | "doctor";
+type SubagentAction = "run" | "list" | "status" | "stop" | "doctor" | "wait";
 
 const SUBAGENT_ACTIONS: readonly SubagentAction[] = [
   "run",
@@ -88,6 +97,7 @@ const SUBAGENT_ACTIONS: readonly SubagentAction[] = [
   "status",
   "stop",
   "doctor",
+  "wait",
 ];
 
 /** 未知 action 直接报错，而不是静默落到 `run` 上把参数字典当任务跑。 */
@@ -173,12 +183,25 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   let lastContext: ExtensionToolContext | undefined;
   const sessions = new Map<string, AgentSession>();
   const inflight = new Set<string>();
-  const pending = new Map<string, (outcome: SettledOutcome) => void>();
+  /** 等待方只关心「有 run 终态了」，不关心是哪一条；醒来自己查 state。 */
+  const settleWaiters = new Set<() => void>();
   /** 已经投递过终态的 runId，防止 launch 与 stop 两路各自 deliver 一次。 */
   const delivered = new Set<string>();
+  /**
+   * 已经有 `wait` 调用在盯的 runId。它们的终态结果会随 wait 的返回值送达，
+   * 再发一次 `subagent:result` 只会多烧一轮 `triggerTurn`。
+   */
+  const awaited = new Set<string>();
   /** foreground 调用的 onUpdate：键是 runId，调用返回后立刻移除。 */
   const liveUpdates = new Map<string, AgentToolUpdateCallback>();
   let ticker: ReturnType<typeof setInterval> | undefined;
+  /**
+   * plan-mode 声明接管可见面后，本扩展只广播那段文字，不再写自己的 footer 段，
+   * 否则同一个计数会在 widget 与 footer 上各出现一次。
+   */
+  let statusOwnedByPlanMode = false;
+  /** refreshWidget 正在执行：期间收到的接管通知交给这次刷新收尾，避免同步回环。 */
+  let refreshing = false;
   const maxConcurrent = DEFAULT_MAX_CONCURRENT;
 
   const projectDir = (cwd: string): string => join(cwd, ".pi", "agents");
@@ -199,15 +222,50 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     };
   };
 
-  const setFooterStatus = (text: string | undefined): void => {
-    const ui = lastContext?.ui as
-      | { setStatus?: (key: string, text: string | undefined) => void }
-      | undefined;
-    if (typeof ui?.setStatus !== "function") return;
+  /**
+   * 宿主 ctx 在会话结束后会 stale，读它的任何字段（cwd / mode / hasUI / ui）都会抛
+   * `assertActive()`。所有异步路径都从这里取 ctx，读不到就当作「没有宿主 UI」。
+   *
+   * pi 没有暴露 staleness 查询，所以只能探一个字段把它收敛成 undefined。
+   */
+  const liveContext = (): ExtensionToolContext | undefined => {
+    const ctx = lastContext;
+    if (!ctx) return undefined;
     try {
+      return ctx.cwd === undefined ? undefined : ctx;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const setFooterStatus = (text: string | undefined): void => {
+    try {
+      const ui = liveContext()?.ui as
+        | { setStatus?: (key: string, text: string | undefined) => void }
+        | undefined;
+      if (typeof ui?.setStatus !== "function") return;
       ui.setStatus(STATUS_KEY, text);
     } catch {
       // 非交互宿主没有 footer，忽略。
+    }
+  };
+
+  /**
+   * 把这段文字广播给 plan-mode：它会把内容并进自己的 widget / 状态行。
+   * 广播同步返回，plan-mode 可能在本调用内就翻转接管状态。
+   */
+  const publishBadge = (text: string | undefined): void => {
+    const ctx = liveContext();
+    try {
+      pi.events.emit(PLAN_MODE_BADGE_CHANNEL, {
+        type: "plan-mode.badge",
+        cwd: ctx?.cwd ?? process.cwd(),
+        key: STATUS_KEY,
+        text: text ?? null,
+        ctx,
+      });
+    } catch {
+      // 没有订阅者不影响本会话。
     }
   };
 
@@ -217,22 +275,29 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       ticker = undefined;
     }
     setFooterStatus(undefined);
+    publishBadge(undefined);
   };
 
-  /** 把当前进度推给 foreground 调用方，父会话的工具行据此刷新。 */
+  /** 一个 onUpdate 可能同时盯着多条 run，一次推送合成一行，别把工具行刷屏。 */
   const pushProgress = (now: number): void => {
+    const byUpdate = new Map<AgentToolUpdateCallback, string[]>();
     for (const [runId, update] of liveUpdates) {
       const run = findRun(state, runId);
       const line = run ? progressLine(run, now) : undefined;
       if (!line) continue;
+      const lines = byUpdate.get(update);
+      if (lines) lines.push(line);
+      else byUpdate.set(update, [line]);
+    }
+    for (const [update, lines] of byUpdate) {
       try {
         update({
-          content: [{ type: "text", text: line }],
+          content: [{ type: "text", text: lines.join("  ·  ") }],
           details: { action: "run", progress: true },
         });
       } catch (error) {
         log.debug("progress update failed", {
-          runId,
+          runs: lines.length,
           reason: error instanceof Error ? error.message : String(error),
         });
       }
@@ -269,34 +334,55 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     return window ? Math.max(0, window.max - 1) : undefined;
   };
 
-  /** widget 与 footer 状态总是同一时刻、同一份状态，避免两处各写一套。 */
+  /**
+   * widget、badge 与 footer 状态总是同一时刻、同一份状态，避免三处各写一套。
+   *
+   * 顺序有讲究：先广播（plan-mode 可能同步接管），再按最新的接管标记决定自己的
+   * footer 要不要让位。
+   */
   const refreshWidget = (): void => {
-    const ctx = lastContext;
+    const ctx = liveContext();
     const now = Date.now();
-    if (ctx) {
-      const theme = ctx.ui.theme;
-      const colorize = uiHostProfile(ctx).themeColors
-        ? (tone: Tone, text: string) => theme.fg(tone, text)
-        : undefined;
-      try {
+    // widget 刷新是 best-effort：非交互宿主没有 widget，theme.fg 遇到未知 token
+    // 会抛，stale ctx 同理。不能让它从 launch 的 finally 里逃出去。
+    try {
+      if (ctx) {
+        const theme = ctx.ui.theme;
+        const colorize = uiHostProfile(ctx).themeColors
+          ? (tone: Tone, text: string) => theme.fg(tone, text)
+          : undefined;
         const lines = renderWidgetLines(state, now, {
           maxRows: widgetRowLimit(ctx),
           colorize,
         });
         ctx.ui.setWidget(WIDGET_KEY, lines.length > 0 ? lines : undefined);
-      } catch {
-        // widget 在非交互宿主里可能不可用；theme.fg 遇到未知 token 也会抛。
       }
+    } catch {
+      // 同上。
     }
-    setFooterStatus(statusLine(state, now));
+    const status = statusLine(state, now);
+    refreshing = true;
+    try {
+      publishBadge(status);
+      setFooterStatus(statusOwnedByPlanMode ? undefined : status);
+    } finally {
+      refreshing = false;
+    }
     syncTicker();
   };
 
-  const resolveWait = (runId: string, outcome: SettledOutcome): void => {
-    const resolve = pending.get(runId);
-    if (!resolve) return;
-    pending.delete(runId);
-    resolve(outcome);
+  /** plan-mode 接管/释放可见面；翻转才重画，避免广播回环。 */
+  const onStatusOwner = (payload: unknown): void => {
+    if (typeof payload !== "object" || payload === null) return;
+    const active = (payload as { active?: unknown }).active;
+    if (typeof active !== "boolean" || active === statusOwnedByPlanMode) return;
+    statusOwnedByPlanMode = active;
+    if (refreshing) return;
+    refreshWidget();
+  };
+
+  const notifySettled = (): void => {
+    for (const wake of settleWaiters) wake();
   };
 
   /** 只对真正终态的 run 出结果；非终态返回 undefined，让调用方继续等。 */
@@ -312,19 +398,67 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     };
   };
 
-  /** 会话边界：先把还在等的调用方收敛掉，否则 foreground 调用会永远挂着。 */
-  const abortPending = (): void => {
-    for (const [runId, resolve] of pending) {
-      resolve({
-        kind: "settled",
-        runId,
-        agent: findRun(state, runId)?.agent ?? "unknown",
-        status: "stopped",
-        text: "",
-      });
-    }
-    pending.clear();
-  };
+  /** 等待结束后的读法：run 还在就读终态，消失就按 stopped 收敛（会话重置）。 */
+  const outcomeAfterWait = (runId: string): SettledOutcome =>
+    settledOutcome(runId) ?? {
+      kind: "settled",
+      runId,
+      agent: findRun(state, runId)?.agent ?? "unknown",
+      status: "stopped",
+      text: "",
+    };
+
+  /**
+   * 等这些 run 全部终态或消失（会话重置会让 run 消失）。
+   * 返回是否超时；abort 抛错，与 herdr-squad 的 wait 一致。
+   * 超时与 abort 都在 cleanup 里摘掉唤醒器，不会留在 settleWaiters 里泄漏。
+   */
+  const waitUntilSettled = (
+    runIds: readonly string[],
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<boolean> =>
+    new Promise<boolean>((resolve, reject) => {
+      const allSettled = (): boolean =>
+        runIds.every((runId) => {
+          const run = findRun(state, runId);
+          return !run || isTerminal(run.status);
+        });
+
+      if (allSettled()) {
+        resolve(false);
+        return;
+      }
+      if (options.signal?.aborted) {
+        reject(new Error("subagent wait cancelled"));
+        return;
+      }
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const cleanup = (): void => {
+        settleWaiters.delete(wake);
+        if (timer !== undefined) clearTimeout(timer);
+        options.signal?.removeEventListener("abort", onAbort);
+      };
+      const wake = (): void => {
+        if (!allSettled()) return;
+        cleanup();
+        resolve(false);
+      };
+      const onAbort = (): void => {
+        cleanup();
+        reject(new Error("subagent wait cancelled"));
+      };
+
+      settleWaiters.add(wake);
+      if (options.timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          cleanup();
+          resolve(true);
+        }, options.timeoutMs);
+        (timer as { unref?: () => void }).unref?.();
+      }
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+    });
 
   const deliver = (runId: string): void => {
     if (delivered.has(runId)) return;
@@ -333,9 +467,9 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     if (!run || !outcome) return;
 
     delivered.add(runId);
-    resolveWait(runId, outcome);
+    notifySettled();
     emitEvent("settled", run);
-    if (!run.background) return;
+    if (!run.background || awaited.has(runId)) return;
 
     const header =
       run.status === "done"
@@ -445,14 +579,18 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
    * 跟随父会话：codemode 看父会话有没有激活它，MCP 看父会话有没有连上服务器。
    * profile 的 `codemode:` / `mcp: none` 可以显式覆盖。
    */
+  /**
+   * codemode 跟随父会话；MCP 默认不给子会话，profile 写 `mcp: inherit` 才跟随。
+   */
   const resolveCapabilities = (profile: AgentProfile): ChildCapabilities => {
     const parentCodemode = readParentCodemode();
-    const parentMcp = readParentMcp();
+    // 只有真要继承时才去读父会话的 mcp__ 工具。
+    const mcp = profile.mcp === "inherit" && readParentMcp();
     return {
-      // MCP 工具的默认 exposure 是 codemode，没有 codemode 就摸不到；父会话有 MCP
-      // 时子会话也必须有 codemode，否则连上的服务器等于白连。
-      codemode: profile.codemode ?? (parentCodemode || parentMcp),
-      mcp: profile.mcp === "none" ? false : parentMcp,
+      // MCP 工具的默认 exposure 是 codemode，没有 codemode 就摸不到；子会话真的
+      // 连了服务器才需要它，否则 codemode 只跟父会话自己的激活状态走。
+      codemode: profile.codemode ?? (parentCodemode || mcp),
+      mcp,
     };
   };
 
@@ -476,7 +614,8 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     const run = findRun(state, runId);
     if (!run) return;
 
-    const cwd = lastContext?.cwd ?? process.cwd();
+    const ctx = liveContext();
+    const cwd = ctx?.cwd ?? process.cwd();
     const { profiles } = await loadProfiles(cwd);
     const profile =
       findProfile(profiles, run.agent) ?? findProfile(profiles, "general");
@@ -512,10 +651,10 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       const boot = await bootChildSession({
         profile,
         cwd,
-        parentModel: lastContext?.model,
-        parentThinking: lastContext?.thinkingLevel,
+        parentModel: ctx?.model,
+        parentThinking: ctx?.thinkingLevel,
         capabilities,
-        modelRegistry: lastContext?.modelRegistry,
+        modelRegistry: ctx?.modelRegistry,
       });
       session = boot.session;
       if (boot.modelWarning) {
@@ -582,15 +721,10 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     }
   };
 
-  const waitFor = (runId: string): Promise<SettledOutcome> =>
-    new Promise<SettledOutcome>((resolve) => {
-      const settledNow = settledOutcome(runId);
-      if (settledNow) {
-        resolve(settledNow);
-        return;
-      }
-      pending.set(runId, resolve);
-    });
+  const waitFor = async (runId: string): Promise<SettledOutcome> => {
+    await waitUntilSettled([runId]);
+    return outcomeAfterWait(runId);
+  };
 
   const runTask = async (input: {
     agent?: string;
@@ -694,14 +828,18 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     description: [
       "Delegate work to a focused child agent with its own isolated context.",
       "Use it when a task would flood this conversation with intermediate reads, or when an independent review is worth more than your own second look.",
-      "Actions: run (default) starts an agent; list shows active runs; status shows one run; stop cancels one; doctor prints the resolved agent profiles and config.",
+      "Actions: run (default) starts an agent; wait blocks until background runs finish; list shows active runs; status shows one run; stop cancels one; doctor prints the resolved agent profiles and config.",
       "Children cannot see this conversation, so put the whole task in `task`.",
       "Background runs (default) return immediately and report back when finished.",
     ].join(" "),
+    promptGuidelines: [
+      'To wait for background runs, call subagent with action "wait". Never sleep or poll in bash to wait for a subagent; one wait call returns every requested result.',
+    ],
     parameters: Type.Object({
       action: Type.Optional(
         Type.String({
-          description: "run | list | status | stop | doctor (default: run)",
+          description:
+            "run | wait | list | status | stop | doctor (default: run)",
         }),
       ),
       agent: Type.Optional(
@@ -721,11 +859,22 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       runId: Type.Optional(
         Type.String({ description: "Run id, for status and stop." }),
       ),
+      runIds: Type.Optional(
+        Type.Array(Type.String(), {
+          description: "Run ids for wait. Omit to wait for every active run.",
+        }),
+      ),
+      timeoutMs: Type.Optional(
+        Type.Number({
+          description:
+            "How long wait blocks before reporting partial progress. Default 300000.",
+        }),
+      ),
     }),
     execute: async (
       _toolCallId,
       params,
-      _signal,
+      signal,
       onUpdate,
       ctx,
     ): Promise<AgentToolResult<StructuredPayload>> => {
@@ -774,6 +923,53 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
             status: run.status,
             resultText: run.resultText ?? null,
             error: run.error ?? null,
+          });
+        }
+
+        case "wait": {
+          const requested = params.runIds?.length ? params.runIds : undefined;
+          const { targets, unknown } = selectWaitTargets(state, requested);
+          if (unknown.length > 0) {
+            throw new Error(
+              `unknown run "${unknown.join('", "')}". Available: ${
+                state.runs.map((run) => run.runId).join(", ") || "(none)"
+              }`,
+            );
+          }
+
+          const runIds = targets.map((run) => run.runId);
+          if (runIds.length === 0) {
+            return structuredResult("no subagent runs to wait for", {
+              action,
+              runs: [],
+              timedOut: false,
+            });
+          }
+
+          for (const runId of runIds) {
+            awaited.add(runId);
+            if (onUpdate) liveUpdates.set(runId, onUpdate);
+          }
+          let timedOut: boolean;
+          try {
+            timedOut = await waitUntilSettled(runIds, {
+              timeoutMs: params.timeoutMs ?? DEFAULT_WAIT_MS,
+              signal,
+            });
+          } finally {
+            for (const runId of runIds) {
+              liveUpdates.delete(runId);
+              // 超时没等到终态的，交回后台投递；已终态的留着，避免重复触发。
+              const run = findRun(state, runId);
+              if (!run || !isTerminal(run.status)) awaited.delete(runId);
+            }
+          }
+
+          const result = collectWaitResult(state, runIds, timedOut);
+          return structuredResult(renderWaitResult(result), {
+            action,
+            runs: result.runs,
+            timedOut,
           });
         }
 
@@ -841,23 +1037,32 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   });
 
   pi.on("session_start", () => {
-    abortPending();
+    state = createState();
     stopTicker();
     liveUpdates.clear();
     delivered.clear();
-    state = createState();
+    awaited.clear();
     sessions.clear();
     inflight.clear();
+    // 放在重置 state 之后：等待方醒来会查到 run 已消失，按 stopped 收敛。
+    notifySettled();
   });
 
   pi.on("session_shutdown", () => {
-    abortPending();
     stopTicker();
     liveUpdates.clear();
+    // 会话没了，run 就是停了；先落成 stopped 再唤醒，等待方拿到的结论和以前一致。
+    for (const run of activeRuns(state)) {
+      state = stop(state, run.runId, maxConcurrent, Date.now());
+    }
+    notifySettled();
+    // 之后的 ctx 已经 stale，读它的任何字段都会抛；widget 刷新直接跳过。
+    lastContext = undefined;
   });
 
   try {
     pi.events.on(RPC_REQUEST_CHANNEL, onRpcRequest);
+    pi.events.on(PLAN_MODE_STATUS_OWNER_CHANNEL, onStatusOwner);
   } catch (error) {
     log.warn("rpc subscription failed", {
       reason: error instanceof Error ? error.message : String(error),

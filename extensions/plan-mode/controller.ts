@@ -17,6 +17,7 @@ interface ToolResultEventResult {
   isError?: boolean;
 }
 
+import { PLAN_MODE_STATUS_OWNER_CHANNEL } from "../shared/internal-events.ts";
 import { uiHostProfile } from "../shared/rich-ui.ts";
 import {
   classifyToolCall,
@@ -101,7 +102,11 @@ import {
   formatTodoWidgetLines,
   getModeLabel,
 } from "./ui.ts";
-import { decidePlanModeUi } from "./widget-plan.ts";
+import {
+  claimsStatusSurface,
+  decidePlanModeUi,
+  type PlanModeUiInput,
+} from "./widget-plan.ts";
 
 /** widget 观感留在 Shell（Core 只给未上色的内容）：mode widget 整行 accent，TODO 只染标题行。 */
 const colorWidgetLines = (
@@ -210,6 +215,10 @@ export class PlanModeController {
   private htmlArtifactDirsCache: string[] | null = null;
   // pi-web 只在 widget 挂载时判定默认展开，所以“首次出现”要先发短帧（见 widget-plan.ts）。
   private todoWidgetPresent = false;
+  // 别的扩展挂上来的一段状态文字（key → text），渲染态，不持久化。
+  private badges = new Map<string, string>();
+  // 上一次广播出去的接管状态；只在翻转时通知生产方。
+  private claimedStatusSurface = false;
   constructor(private readonly pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext): void {
@@ -226,6 +235,11 @@ export class PlanModeController {
     this.policyReminderSentFor = null;
     this.todoReconcileReminderPending = null;
     this.todoWidgetPresent = false;
+    // badge 是渲染态：换会话/换分支后由生产方下一 tick 重新挂上来。
+    this.badges.clear();
+    // 复位成「未声明」，下一次 updateUi 会重新广播接管状态。生产方若已经记着
+    // 接管，收到重复通知会忽略；生产方重启过则会在这里补上。
+    this.claimedStatusSurface = false;
   }
 
   private get htmlArtifactDirs(): string[] {
@@ -286,7 +300,8 @@ export class PlanModeController {
     }
 
     const profile = uiHostProfile(ctx);
-    const decision = decidePlanModeUi({
+    const badges = [...this.badges.values()];
+    const input: PlanModeUiInput = {
       host: {
         contentVisibleWithoutInteraction:
           profile.widgets.contentVisibleWithoutInteraction,
@@ -295,10 +310,11 @@ export class PlanModeController {
       todoWidgetPresent: this.todoWidgetPresent,
       content: {
         todoLines: formatTodoWidgetLines(this.state),
-        modeLines: formatModeWidgetLines(this.state),
-        statusText: formatPlanModeStatusLine(this.state),
+        modeLines: formatModeWidgetLines(this.state, badges),
+        statusText: formatPlanModeStatusLine(this.state, badges),
       },
-    });
+    };
+    const decision = decidePlanModeUi(input);
 
     for (const emission of decision.emissions) {
       switch (emission.kind) {
@@ -318,15 +334,60 @@ export class PlanModeController {
       }
     }
     this.todoWidgetPresent = decision.todoWidgetPresent;
+    this.syncStatusOwner(claimsStatusSurface(input));
   }
 
   /**
-   * 撤销本扩展在宿主上的 UI，并复位 widget 跟踪状态（session_shutdown 用）。
+   * 只有翻转时广播：生产方收到后会重画自己的 UI，广播方再重画就会形成同步回环。
+   */
+  private syncStatusOwner(claimed: boolean): void {
+    if (claimed === this.claimedStatusSurface) {
+      return;
+    }
+    this.claimedStatusSurface = claimed;
+    try {
+      this.pi.events.emit(PLAN_MODE_STATUS_OWNER_CHANNEL, {
+        type: "plan-mode.status-owner",
+        active: claimed,
+      });
+    } catch {
+      // 没有订阅者不影响本次渲染。
+    }
+  }
+
+  /**
+   * 另一扩展挂上来的一段状态文字（目前是 subagent 的运行计数）。
+   * 文本不变就不重画：每次 tick 都会重复广播同一份内容。
+   */
+  setBadge(key: string, text: string | null, ctx: ExtensionContext): void {
+    if ((this.badges.get(key) ?? null) === text) {
+      return;
+    }
+    if (text === null) {
+      this.badges.delete(key);
+    } else {
+      this.badges.set(key, text);
+    }
+    this.updateUi(ctx);
+  }
+
+  /**
+   * badge 只接受本会话的：总线按会话隔离，cwd 不一致说明是上一个会话的残留。
+   */
+  acceptsBadgeFrom(cwd: string): boolean {
+    return this.sessionCwd === null || this.sessionCwd === cwd;
+  }
+
+  /**
+   * 撤销本扩展在宿主上的 UI，并复位渲染态（session_shutdown 用）。
    *
-   * 与 updateUi 分开：这不是「按当前状态再算一遍」，而是一次性清场。
+   * 与 updateUi 分开：这不是「按当前状态再算一遍」，而是一次性清场。badge 必须先清，
+   * 否则生产方 shutdown 时补发的 null 会被当成变化，在清场之后再画一帧。
    */
   clearUi(ctx: ExtensionContext): void {
     this.todoWidgetPresent = false;
+    this.badges.clear();
+    this.claimedStatusSurface = false;
     if (!ctx.hasUI) {
       return;
     }

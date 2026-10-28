@@ -25,9 +25,13 @@ export type AgentSource = {
 };
 
 /**
- * 子会话的额外能力。默认跟随父会话（`inherit`），profile 可以显式关掉。
+ * 子会话的额外能力。**默认不连 MCP**，profile 写 `mcp: inherit` 才跟随父会话。
+ *
+ * 默认关是因为每个 child 都新建一份 MCP 客户端，而 `session.dispose()` 不关它的
+ * transport socket：N 个 child 漏 2N 条空闲 TLS 连接，`pi --print` 下进程永不退出。
+ *
  * 之所以不做 server 子集：`loadMcpConfig` 没有从包根导出，自己读 mcp.json
- * 会变成第二份配置解析。先做继承，需要子集时再单独加。
+ * 会变成第二份配置解析。先做全有/全无，需要子集时再单独加。
  */
 export type McpMode = "inherit" | "none";
 
@@ -146,12 +150,17 @@ function parseBoolean(raw: string | undefined): boolean | undefined {
   return undefined;
 }
 
+/** 只有显式要才继承；缺省与认不出来的值都落到 `none`。 */
 function parseMcpMode(raw: string | undefined): McpMode {
   const normalized = raw?.trim().toLowerCase();
-  if (normalized === "none" || normalized === "false" || normalized === "off") {
-    return "none";
+  if (
+    normalized === "inherit" ||
+    normalized === "on" ||
+    normalized === "true"
+  ) {
+    return "inherit";
   }
-  return "inherit";
+  return "none";
 }
 
 function parseThinking(raw: string | undefined): AgentThinking | undefined {

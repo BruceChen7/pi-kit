@@ -80,6 +80,24 @@ export type DoctorInput = {
   logConfigPath?: string;
 };
 
+/** `wait` 要等谁：目标 run 与调用方给错的 id 分开返回，让 Shell 决定抛不抛。 */
+export type WaitTargets = {
+  targets: SubagentRun[];
+  unknown: string[];
+};
+
+export type WaitedRun = {
+  runId: string;
+  agent: string;
+  status: RunStatus;
+  text: string;
+};
+
+export type WaitResult = {
+  runs: WaitedRun[];
+  timedOut: boolean;
+};
+
 export const DEFAULT_MAX_CONCURRENT = 4;
 export const MAX_RESULT_CHARS = 8000;
 export const MAX_TRANSCRIPT_LINES = 40;
@@ -98,6 +116,71 @@ export const findRun = (
 
 export const activeRuns = (state: SubagentState): SubagentRun[] =>
   state.runs.filter((run) => !isTerminal(run.status));
+
+/**
+ * 显式 runIds 按给定顺序去重；不给就取所有非终态 run。
+ * 未知 id 单独返回 —— 纯函数不抛，抛不抛是 Shell 的调用方契约。
+ */
+export function selectWaitTargets(
+  state: SubagentState,
+  runIds?: readonly string[],
+): WaitTargets {
+  if (runIds === undefined) return { targets: activeRuns(state), unknown: [] };
+
+  const targets: SubagentRun[] = [];
+  const unknown: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of runIds) {
+    const runId = raw.trim();
+    if (!runId || seen.has(runId)) continue;
+    seen.add(runId);
+    const run = findRun(state, runId);
+    if (run) targets.push(run);
+    else unknown.push(runId);
+  }
+  return { targets, unknown };
+}
+
+/**
+ * 按 id 从当前 state 读结论。超时时非终态条目的 status 原样保留，text 为空。
+ * 会话重置会让 run 消失，这类 id 读成 stopped，与等待方拿到的结论一致。
+ */
+export function collectWaitResult(
+  state: SubagentState,
+  runIds: readonly string[],
+  timedOut: boolean,
+): WaitResult {
+  const runs = runIds.map((runId): WaitedRun => {
+    const run = findRun(state, runId);
+    if (!run) return { runId, agent: "unknown", status: "stopped", text: "" };
+    return {
+      runId: run.runId,
+      agent: run.agent,
+      status: run.status,
+      text: run.resultText ?? run.error ?? "",
+    };
+  });
+  return { runs, timedOut };
+}
+
+/** 超时必须写清楚没等完，否则调用方会把部分结果读成全部完成。 */
+export function renderWaitResult(result: WaitResult): string {
+  if (result.runs.length === 0) return "no subagent runs to wait for";
+
+  const lines = result.runs.map((run) => {
+    const head = `${run.runId} ${run.agent} ${run.status}`;
+    return run.text ? `${head}\n${run.text}` : head;
+  });
+  if (!result.timedOut) return lines.join("\n\n");
+
+  const settled = result.runs.filter((run) => isTerminal(run.status)).length;
+  const running = result.runs.length - settled;
+  return [
+    `timed out with ${settled}/${result.runs.length} settled; ${running} still running`,
+    "",
+    ...lines,
+  ].join("\n");
+}
 
 const countRunning = (state: SubagentState): number =>
   state.runs.filter((run) => run.status === "running").length;

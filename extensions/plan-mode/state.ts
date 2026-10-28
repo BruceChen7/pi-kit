@@ -662,11 +662,20 @@ export class PlanModeState {
     );
   }
 
-  getUnfinishedRunPlanPath(): string | null {
-    if (this.activeRun?.status === PLAN_RUN_STATUS_COMPLETED) {
+  /**
+   * The plan a brand-new run may inherit. Only a run that is still executing
+   * under a live approval hands its binding on: a draft run (approval withdrawn
+   * by ESC or by an edited artifact) belongs to the task that lost its review,
+   * not to whatever task the user starts next.
+   */
+  getApprovedUnfinishedRunPlanPath(): string | null {
+    const run = this.activeRun;
+    if (run?.status !== PLAN_RUN_STATUS_EXECUTING) {
       return null;
     }
-    return this.activeRun?.planPath ?? null;
+    return this.isApprovedReviewArtifactPath(run.planPath)
+      ? run.planPath
+      : null;
   }
 
   isApprovedCompletedPlanActRun(): boolean {
@@ -679,15 +688,43 @@ export class PlanModeState {
     );
   }
 
-  replaceTodos(items: TodoInput[], newRunPlanPath: string | null = null): void {
-    this.archiveCompletedActiveRun();
-    this.activeRun = createPlanRun(
+  /**
+   * Owns the "new run" boundary. A run that carries no plan must not inherit the
+   * review gate of the run it replaced: otherwise agent_end reads the previous
+   * run's artifact and asks to re-review work this run never approved. A draft
+   * written before any run existed is left alone — the user may still approve it.
+   */
+  private startRun(
+    planPath: string | null,
+    nextTodoId: number,
+    hasItems: boolean,
+    previousPlanPath: string | null,
+  ): PlanRun {
+    const run = createPlanRun(
       [],
-      1,
-      this.getNewRunStatus(items.length > 0, newRunPlanPath),
-      newRunPlanPath,
+      nextTodoId,
+      this.getNewRunStatus(hasItems, planPath),
+      planPath,
     );
-    this.todos = this.activeRun.todos;
+    this.activeRun = run;
+    this.todos = run.todos;
+    if (planPath !== null || this.mode !== PLAN_MODE_ACT) {
+      return run;
+    }
+    if (
+      previousPlanPath !== null &&
+      this.latestReviewArtifactPath === previousPlanPath
+    ) {
+      this.latestReviewArtifactPath = null;
+    }
+    this.phase = PLAN_MODE_ACT;
+    return run;
+  }
+
+  replaceTodos(items: TodoInput[], newRunPlanPath: string | null = null): void {
+    const previousPlanPath = this.activeRun?.planPath ?? null;
+    this.archiveCompletedActiveRun();
+    this.startRun(newRunPlanPath, 1, items.length > 0, previousPlanPath);
     this.nextTodoId = 1;
     for (const item of items) {
       this.addTodo(item.text, item.status ?? TODO_STATUS_TODO, item.notes);
@@ -707,18 +744,18 @@ export class PlanModeState {
       status: normalizeTodoStatus(status),
       ...(notes ? { notes } : {}),
     };
-    if (!this.activeRun || this.activeRun.status === PLAN_RUN_STATUS_ARCHIVED) {
-      this.activeRun = createPlanRun(
-        [],
-        this.nextTodoId,
-        this.getNewRunStatus(true, newRunPlanPath),
+    let run = this.activeRun;
+    if (!run || run.status === PLAN_RUN_STATUS_ARCHIVED) {
+      run = this.startRun(
         newRunPlanPath,
+        this.nextTodoId,
+        true,
+        run?.planPath ?? null,
       );
-      this.todos = this.activeRun.todos;
     }
     this.nextTodoId += 1;
     this.todos.push(todo);
-    this.activeRun.nextTodoId = this.nextTodoId;
+    run.nextTodoId = this.nextTodoId;
     this.touchTodoUpdate();
     this.syncActiveRunStatus();
     return todo;

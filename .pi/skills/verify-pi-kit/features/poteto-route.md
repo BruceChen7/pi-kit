@@ -5,13 +5,15 @@ Poteto route keeps the `/poteto` routing table as data (`skills/poteto-playbooks
 ## Sub-features
 
 - `route-task-tool`: registers `route_task`, which takes the route id the model judged and returns steps, absolute `SKILL.md` paths, playbook text, and gates.
-- `route-status-command`: `/poteto-route status` reports `idle` or `armed`, plus the catalog route ids.
-- `route-edit-gate`: after `/poteto` arms the session, `edit` and `write` are blocked until `route_task` succeeds.
+- `route-status-command`: `/poteto-route status` reports one of `idle`, `armed, waiting for route_task`, `armed, routed=<id|?>`, plus the catalog route ids.
+- `route-reset-command`: `/poteto-route reset` clears the session's route state and reopens the edit gate.
+- `route-edit-gate`: after `/poteto` arms the session, `edit` and `write` are blocked until `route_task` is called. Any call opens the gate, including one that resolves no route.
 
 ## How to get to it (user POV)
 
 - Type `/poteto <task>` in any Pi session. The expansion arms the gate; the model then calls `route_task`.
 - Type `/poteto-route status` to read back whether the session is armed, routed, and which route ids the catalog holds.
+- Type `/poteto-route reset` to drop that state and unblock `edit` / `write` without calling `route_task`.
 - The model reaches `route_task` directly; it is also usable without `/poteto`, in which case nothing is gated.
 
 ## Driving it with verify-plugin
@@ -27,6 +29,9 @@ Preconditions: repository root, `npm install` done, `pi` on `PATH`.
 - Prove the command is handled and the catalog resolves:
   `node scripts/verify-plugin.mjs command --plugin poteto-route --command "/poteto-route status" --expect "routes: research,bugfix,refactor,feature,perf,ship"`
   Observable: `PASS`, one notify containing `poteto-route: idle` and the route list.
+- Prove reset is handled:
+  `node scripts/verify-plugin.mjs command --plugin poteto-route --command "/poteto-route reset" --expect "poteto-route: reset"`
+  Observable: `PASS`, one notify containing `poteto-route: reset`.
 
 ## Gotchas
 
@@ -35,4 +40,4 @@ Preconditions: repository root, `npm install` done, `pi` on `PATH`.
 - `route_task`'s returned payload is also vitest-owned. Tool mode only proves registration.
 - Chatting with the model to confirm the whole chain is not deterministic; if you run it, keep the transcript and say so, otherwise write `Skipped:`.
 - `/poteto` arrives through the `input` event, so the template must be installed (`make install-skills`) for the human path; the command recipe above works without it.
-- `routes.json` is resolved at call time from `<cwd>/.pi/skills`, `<cwd>/.agents/skills`, then `~/.agents/me-skills`. A cwd outside the repo without installed skills makes `status` report the missing roots instead of `routes:`.
+- `routes.json` is resolved once at extension load, from the process cwd: `<cwd>/.pi/skills`, `<cwd>/.agents/skills`, then `~/.agents/me-skills`. It is cached; only a failed load retries, and a session whose cwd differs from the process cwd keeps using the cached catalog. A cwd outside the repo without installed skills makes `status` report the missing roots instead of `routes:`.

@@ -23,8 +23,9 @@ Preconditions: repository root, `npm install` done.
 - Prove a switch takes effect in the same process:
   `node scripts/verify-plugin.mjs command --plugin plan-mode --command "/plan-mode plan" --command "/plan-mode status" --expect "Plan Mode: Plan"`
   Observable: both commands `handled`, notify reads `Plan Mode: Plan`.
-- Prove the switch back:
+- Prove `act` is handled and the mode reads back as `Act`:
   `node scripts/verify-plugin.mjs command --plugin plan-mode --command "/plan-mode act" --command "/plan-mode status" --expect "Plan Mode: Act"`
+  Observable: both commands `handled`, notify reads `Plan Mode: Act`. A fresh process already starts in `Act`, so this proves the command is handled, not that it changed anything; the recipe above proves the switch direction.
 - Prove the act-phase TODO tool is registered:
   `node scripts/verify-plugin.mjs tool --plugin plan-mode --tool act_mode_todo`
   Observable: `PASS`, `act_mode_todo` present in `active-tools.json`.
@@ -40,3 +41,5 @@ Preconditions: repository root, `npm install` done.
 - Expectations apply to the whole run, not per command. To assert different text per step, run the steps separately.
 - Run the helper from a session in `act`. Plan mode blocks `bash` for the agent, so every `node scripts/verify-plugin.mjs …` call fails before it spawns anything. The `pi` process the helper starts restores its own default, so the caller's mode does not leak in.
 - The TODO reminder added in `todo-reminder.ts` has no recipe here by design: it appends a transient `<system-reminder>` to a model request and emits no `notify`, so the helper cannot observe it. `npx vitest run extensions/plan-mode` owns that behavior.
+- The two TODO tools are both registered, but a live session activates only the current phase's tool. `tool --tool plan_mode_todo` passes because the helper's SDK path never emits `session_start`, so `applyMode` never prunes the tool list; a helper that binds extensions would report only `act_mode_todo`.
+- The plan-mode status line and TODO widget are not observable here: the helper counts `notify` records only. `npx vitest run extensions/plan-mode` owns the widget/status contract.

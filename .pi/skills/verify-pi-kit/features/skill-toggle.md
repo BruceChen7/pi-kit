@@ -1,6 +1,6 @@
 # Skill toggle
 
-The skill-toggle plugin enables and disables managed skills. `/disabled-skills` prints the managed skills that are currently enabled. The readout has one write side effect: its handler calls `loadToggleState`, which best-effort creates missing symlinks under `<cwd>/.pi/skills` before it formats the list.
+The skill-toggle plugin enables and disables managed skills. `/disabled-skills` prints the managed skills that are currently enabled. The readout has one write side effect: its handler calls `loadToggleState`, which best-effort creates missing symlinks under `.pi/skills` in the primary checkout (a linked worktree resolves to the primary root) before it formats the list.
 
 ## Sub-features
 
@@ -20,6 +20,7 @@ Preconditions: repository root, `npm install` done, and `$HOME/.agents/git-skill
 ## Gotchas
 
 - The names come from the home skill library intersected with the enabled set. Five names are always excluded and `<cwd>/.pi/disabled-skills` markers exclude more, so assert the prefix, never the count.
-- `--reject "No enabled managed skills"` turns the empty branch into a named failure instead of a bare missing expectation. A library skill with no frontmatter `description` is silently dropped, which produces the same empty branch as an empty install.
-- The repo-level symlink write is why this command must stay in a repo-scoped map: it needs no isolated `HOME`, but it does mutate `<cwd>/.pi/skills`.
-- `/toggle-skill` writes repo-level state (`<cwd>/.pi/disabled-skills` markers and symlinks) and needs an interactive TUI, so it stays out of the map.
+- `--reject "No enabled managed skills"` names the empty branch as an unexpected text, in addition to the missing expectation. A library skill with no frontmatter `description` is silently dropped, which produces the same empty branch as an empty install.
+- The repo-level symlink write is why this command must stay in a repo-scoped map: it needs no isolated `HOME`, but it does mutate `.pi/skills` in the primary checkout.
+- `/toggle-skill` writes repo-level state (`.pi/disabled-skills` markers and symlinks), so it stays out of the map. In the helper's headless host it only notifies `toggle-skill requires interactive TUI mode`, which proves nothing about the toggle.
+- `/cleanup-skills` is registered and notifies `Nothing to clean up. Run /reload to apply.` when there is nothing to remove, but it deletes orphaned `.pi/skills` symlinks. It stays out of the map for the same mutation reason.

@@ -6,6 +6,7 @@ The confluence plugin exposes `confluence_page`, a tool that reads an internal C
 
 - `read-by-url`: read a page through its URL.
 - `read-by-id`: read a page through its numeric page id.
+- `read-by-display-url`: read a page through a `/display/<SPACE>/<Title>` URL, which the plugin resolves to an id through the REST search endpoint first.
 
 ## How to get to it (user POV)
 
@@ -14,7 +15,7 @@ The confluence plugin exposes `confluence_page`, a tool that reads an internal C
 
 ## Driving it with verify-plugin
 
-Preconditions: repository root, `npm install` done, and `ATLASSIAN_CONFLUENCE_BASE_URL` exported (this repo's shell sets `https://confluence.shopee.io`).
+Preconditions: repository root, `npm install` done, and `ATLASSIAN_CONFLUENCE_BASE_URL` exported by the operator. Nothing in this repo sets it.
 - Prove the tool is registered:
   `node scripts/verify-plugin.mjs tool --plugin confluence --tool confluence_page`
   Observable: `PASS`, `confluence_page` present in the active tool names.

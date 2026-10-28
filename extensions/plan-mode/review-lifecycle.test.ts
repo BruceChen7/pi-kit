@@ -1157,6 +1157,41 @@ describe("plan-mode extension: review lifecycle", () => {
     });
   });
 
+  it("does not carry a withdrawn plan into the next act-mode task", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      // Direct act mode is how a real session reaches approval while the
+      // user is already in act: ESC then forces phase back to plan.
+      await harness.runCommand("plan-mode", "act", ctx);
+      await startApprovedDemoRun(harness, ctx);
+      await emitAbortedAgentEnd(harness, ctx);
+      harness.api.sendUserMessage.mockClear();
+
+      await harness.runTool(
+        ACT_MODE_TODO_TOOL,
+        {
+          action: "set",
+          items: [{ text: "另一个任务", status: "in_progress" }],
+        },
+        ctx,
+      );
+
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        phase: "act",
+        latestReviewArtifactPath: null,
+        activeRun: { planPath: null },
+      });
+
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      expectNoApprovedArtifactChangedFollowUp(harness);
+      expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
+    });
+  });
+
   describe("abort notification for plain ESC (no approved execution to cancel)", () => {
     it("notifies the user when hasUI is true", async () => {
       const testCtx = buildCtx();

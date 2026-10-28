@@ -5,7 +5,7 @@ import {
   plainWidgetText,
   startPlanModeSession,
 } from "./test-harness.js";
-import type { TodoStatus } from "./types.js";
+import type { PlanRunStatus, TodoStatus } from "./types.js";
 import { formatRelativeTime } from "./ui.js";
 
 // ── state: statuses are written only by the tool ──────────────
@@ -106,6 +106,73 @@ describe("todo state: todoListSignature", () => {
     expect(todoListSignature(swapped)).not.toBe(todoListSignature(first));
     expect(todoListSignature(first)).toBe(todoListSignature(first));
     expect(todoListSignature([])).toBe("[]");
+  });
+});
+
+// ── plan binding: only a live approval is inheritable ────────
+
+describe("todo state: a run lends its plan only while that approval is live", () => {
+  const plan = ".pi/plans/pi-kit/plan/2026-10-28-demo.md";
+
+  const boundRun = (
+    status: PlanRunStatus,
+    approved: boolean,
+  ): PlanModeState => {
+    const state = new PlanModeState("act");
+    state.replaceTodos([{ text: "a" }], plan);
+    const run = state.activeRun;
+    if (!run) {
+      throw new Error("replaceTodos must create a run");
+    }
+    run.status = status;
+    if (approved) {
+      state.reviewApprovedPlanPaths.add(plan);
+    }
+    return state;
+  };
+
+  it.each([
+    { status: "executing" as const, approved: true, expected: plan },
+    { status: "executing" as const, approved: false, expected: null },
+    { status: "draft" as const, approved: true, expected: null },
+    { status: "draft" as const, approved: false, expected: null },
+    { status: "completed" as const, approved: true, expected: null },
+  ])(
+    "run=$status approved=$approved lends $expected",
+    ({ status, approved, expected }) => {
+      expect(
+        boundRun(status, approved).getApprovedUnfinishedRunPlanPath(),
+      ).toBe(expected);
+    },
+  );
+
+  it("drops the previous review artifact when an act run starts without a plan", () => {
+    const state = boundRun("executing", true);
+    state.latestReviewArtifactPath = plan;
+
+    state.replaceTodos([{ text: "另一个任务" }], null);
+
+    expect(state.latestReviewArtifactPath).toBeNull();
+    expect(state.phase).toBe("act");
+    expect(state.activeRun?.planPath).toBeNull();
+  });
+
+  it("keeps a draft written before any run existed, which the user may still approve", () => {
+    const state = new PlanModeState("act");
+    state.latestReviewArtifactPath = plan;
+
+    state.replaceTodos([{ text: "新任务" }], null);
+
+    expect(state.latestReviewArtifactPath).toBe(plan);
+  });
+
+  it("keeps the review artifact in plan mode, where a plan is still required", () => {
+    const state = new PlanModeState("plan");
+    state.latestReviewArtifactPath = plan;
+
+    state.replaceTodos([{ text: "重写清单" }], null);
+
+    expect(state.latestReviewArtifactPath).toBe(plan);
   });
 });
 

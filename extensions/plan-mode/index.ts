@@ -2,7 +2,10 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { PLANNOTATOR_REVIEW_VERDICT_CHANNEL } from "../shared/internal-events.ts";
+import {
+  PLAN_MODE_BADGE_CHANNEL,
+  PLANNOTATOR_REVIEW_VERDICT_CHANNEL,
+} from "../shared/internal-events.ts";
 import {
   ACT_TODO_TOOL_NAME,
   PLAN_MODE_COMMAND_OPTIONS,
@@ -10,6 +13,7 @@ import {
   TODO_TOOL_NAME,
 } from "./constants.ts";
 import { PlanModeController } from "./controller.ts";
+import { parsePlanModeBadgeEvent } from "./controller-decisions.ts";
 import { isPlanMode, isRecord } from "./state.ts";
 import {
   buildTodoReminder,
@@ -161,6 +165,19 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       payload,
       payload.ctx as unknown as ExtensionContext,
     );
+  });
+
+  // 别的扩展把自己的一段状态挂到 plan-mode 的可见面上（目前是 subagent 的运行计数）。
+  pi.events.on(PLAN_MODE_BADGE_CHANNEL, (payload) => {
+    if (!isRecord(payload) || !isRecord(payload.ctx)) {
+      return;
+    }
+    const badge = parsePlanModeBadgeEvent(payload);
+    const ctx = payload.ctx as unknown as ExtensionContext;
+    if (!badge || !controller.acceptsBadgeFrom(badge.cwd)) {
+      return;
+    }
+    controller.setBadge(badge.key, badge.text, ctx);
   });
 
   pi.on("input", async (event) => {

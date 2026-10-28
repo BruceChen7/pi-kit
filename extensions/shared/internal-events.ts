@@ -4,6 +4,8 @@ export const PLANNOTATOR_PENDING_REVIEW_CHANNEL =
   "pi-kit:plannotator-auto:pending-review";
 export const PLANNOTATOR_REVIEW_VERDICT_CHANNEL =
   "pi-kit:plannotator-auto:review-verdict";
+export const PLAN_MODE_BADGE_CHANNEL = "pi-kit:plan-mode:badge";
+export const PLAN_MODE_STATUS_OWNER_CHANNEL = "pi-kit:plan-mode:status-owner";
 
 export type HandledState = {
   isHandled: () => boolean;
@@ -75,4 +77,26 @@ export type PiKitPlannotatorPendingReviewEvent = {
   continueEnabled: boolean;
   handled: HandledState;
   ctx: unknown;
+};
+
+/**
+ * One line another extension wants plan-mode to render next to its own status.
+ * plan-mode owns the visible surface; producers only describe the text.
+ */
+export type PiKitPlanModeBadgeEvent = {
+  type: "plan-mode.badge";
+  cwd: string;
+  key: string;
+  /** null 表示撤下这一段。 */
+  text: string | null;
+  ctx: unknown;
+};
+
+/**
+ * plan-mode 声明自己正在渲染一块用户可见的状态面。生产方据此清掉自己的
+ * footer 段，避免同一个计数在 footer 与 widget 上各出现一次。
+ */
+export type PiKitPlanModeStatusOwnerEvent = {
+  type: "plan-mode.status-owner";
+  active: boolean;
 };

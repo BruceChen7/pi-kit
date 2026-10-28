@@ -26,6 +26,8 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 const { createAgentSession } = await import("@earendil-works/pi-coding-agent");
 const { registerSubagent } = await import("./index.js");
 const { PI_WEB_HOST_SYMBOL } = await import("../shared/ui-host.ts");
+const { PLAN_MODE_BADGE_CHANNEL, PLAN_MODE_STATUS_OWNER_CHANNEL } =
+  await import("../shared/internal-events.ts");
 
 type FakeSession = {
   messages: unknown[];
@@ -316,6 +318,107 @@ describe("widget shape per host", () => {
   });
 });
 
+/**
+ * plan-mode 会把自己渲染成唯一的状态面：subagent 广播文本，然后在被接管时
+ * 清掉自己的 footer 段，避免同一个计数出现两次。
+ */
+describe("plan-mode 接管 footer", () => {
+  const admitThree = async () => {
+    vi.mocked(createAgentSession).mockImplementation((async () => ({
+      session: makeSession("never", { hang: true }),
+    })) as never);
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+    const ui = { setWidget: vi.fn(), setStatus: vi.fn(), theme: testTheme };
+    const ctx = { cwd: "/repo", mode: "rpc", hasUI: true, ui };
+    for (const id of ["a1", "a2", "a3"]) {
+      await call(tools[0], { action: "run", agent: "explore", task: id }, ctx);
+    }
+    return { pi, ui };
+  };
+
+  const badgePayloads = (pi: ReturnType<typeof makePi>["pi"]) =>
+    pi.events.emit.mock.calls
+      .filter(([channel]) => channel === PLAN_MODE_BADGE_CHANNEL)
+      .map(([, payload]) => payload as Record<string, unknown>);
+
+  const ownerHandler = (pi: ReturnType<typeof makePi>["pi"]) =>
+    pi.events.on.mock.calls.find(
+      ([channel]) => channel === PLAN_MODE_STATUS_OWNER_CHANNEL,
+    )?.[1] as (payload: unknown) => void;
+
+  it("broadcasts the run count for plan-mode to render", async () => {
+    const { pi } = await admitThree();
+
+    expect(badgePayloads(pi).at(-1)).toMatchObject({
+      type: "plan-mode.badge",
+      cwd: "/repo",
+      key: "subagent",
+      text: "subagent 3 running, 0 queued",
+    });
+  });
+
+  it("yields its footer while plan-mode owns the surface and restores it on release", async () => {
+    const { pi, ui } = await admitThree();
+    expect(ui.setStatus).toHaveBeenLastCalledWith(
+      "subagent",
+      "subagent 3 running, 0 queued",
+    );
+
+    ownerHandler(pi)({ type: "plan-mode.status-owner", active: true });
+    expect(ui.setStatus).toHaveBeenLastCalledWith("subagent", undefined);
+
+    ownerHandler(pi)({ type: "plan-mode.status-owner", active: false });
+    expect(ui.setStatus).toHaveBeenLastCalledWith(
+      "subagent",
+      "subagent 3 running, 0 queued",
+    );
+  });
+
+  it("ignores repeated ownership notices", async () => {
+    const { pi, ui } = await admitThree();
+    ownerHandler(pi)({ type: "plan-mode.status-owner", active: true });
+    const afterClaim = ui.setStatus.mock.calls.length;
+
+    ownerHandler(pi)({ type: "plan-mode.status-owner", active: true });
+
+    expect(ui.setStatus.mock.calls.length).toBe(afterClaim);
+  });
+
+  it("yields the footer on the same publish when plan-mode claims synchronously", async () => {
+    vi.mocked(createAgentSession).mockImplementation((async () => ({
+      session: makeSession("never", { hang: true }),
+    })) as never);
+    const { pi, tools } = makePi();
+    // 真事件总线：plan-mode 的接管发生在 subagent 正在刷新的那一刻（同步回环）。
+    const handlers = new Map<string, Array<(payload: unknown) => void>>();
+    const bus = {
+      emit: (channel: string, payload: unknown) => {
+        for (const handler of handlers.get(channel) ?? []) handler(payload);
+      },
+      on: (channel: string, handler: (payload: unknown) => void) => {
+        handlers.set(channel, [...(handlers.get(channel) ?? []), handler]);
+        return () => {};
+      },
+    };
+    (pi as any).events = bus;
+    bus.on(PLAN_MODE_BADGE_CHANNEL, (payload) => {
+      const text = (payload as { text: string | null }).text;
+      bus.emit(PLAN_MODE_STATUS_OWNER_CHANNEL, {
+        type: "plan-mode.status-owner",
+        active: text !== null,
+      });
+    });
+    registerSubagent(pi as never);
+    const ui = { setWidget: vi.fn(), setStatus: vi.fn(), theme: testTheme };
+    const ctx = { cwd: "/repo", mode: "rpc", hasUI: true, ui };
+
+    await call(tools[0], { action: "run", agent: "explore", task: "a1" }, ctx);
+
+    expect(ui.setStatus).toHaveBeenLastCalledWith("subagent", undefined);
+  });
+});
+
 describe("background run", () => {
   it("delivers the result once with triggerTurn", async () => {
     vi.mocked(createAgentSession).mockResolvedValue({
@@ -339,6 +442,187 @@ describe("background run", () => {
     expect(options).toEqual({ triggerTurn: true });
     expect(message.content[0].text).toContain("3 directories");
     expect(message.details).toMatchObject({ agent: "explore", status: "done" });
+  });
+});
+
+describe("wait", () => {
+  /** 手动放行的子会话：wait 的契约是「什么时候终态」，必须由测试控制。 */
+  const gated = (text: string) => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const session = makeSession(text);
+    session.prompt = vi.fn(async () => {
+      await gate;
+      session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text }],
+      });
+    });
+    return { session, release: () => release() };
+  };
+
+  const callWithSignal = (
+    tool: any,
+    params: Record<string, unknown>,
+    ctx: Record<string, unknown>,
+    signal: AbortSignal,
+  ) => tool.execute("call-1", params, signal, undefined, ctx);
+
+  const startBackground = async (text: string) => {
+    const gate = gated(text);
+    vi.mocked(createAgentSession).mockImplementation((async () => ({
+      session: gate.session,
+    })) as never);
+    const { pi, tools } = makePi();
+    const runtime = registerSubagent(pi as never);
+
+    const started = await call(
+      tools[0],
+      { action: "run", agent: "explore", task: "count dirs" },
+      makeCtx(),
+    );
+    // 等 launch 真拿到会话再返回，否则未完成的 launch 会把这次调用算进下一个测试。
+    await vi.waitFor(() =>
+      expect(vi.mocked(createAgentSession)).toHaveBeenCalledTimes(1),
+    );
+    return {
+      pi,
+      runtime,
+      tool: tools[0],
+      runId: started.structuredContent.runId as string,
+      release: gate.release,
+    };
+  };
+
+  it("returns the child's text instead of making the caller poll", async () => {
+    const { tool, runId, release } = await startBackground("3 directories");
+
+    const waiting = call(tool, { action: "wait", runIds: [runId] }, makeCtx());
+    release();
+    const result = await waiting;
+
+    expect(result.content[0].text).toContain("3 directories");
+    expect(result.structuredContent).toMatchObject({
+      timedOut: false,
+      runs: [
+        { runId, agent: "explore", status: "done", text: "3 directories" },
+      ],
+    });
+  });
+
+  it("waits for every active run when no ids are given", async () => {
+    const gate = gated("both done");
+    vi.mocked(createAgentSession).mockImplementation((async () => ({
+      session: gate.session,
+    })) as never);
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    await call(tools[0], { action: "run", task: "a" }, makeCtx());
+    await call(tools[0], { action: "run", task: "b" }, makeCtx());
+    await vi.waitFor(() =>
+      expect(vi.mocked(createAgentSession)).toHaveBeenCalledTimes(2),
+    );
+
+    const waiting = call(tools[0], { action: "wait" }, makeCtx());
+    gate.release();
+    const result = await waiting;
+
+    expect(result.structuredContent.runs).toHaveLength(2);
+    expect(
+      result.structuredContent.runs.every(
+        (run: { status: string }) => run.status === "done",
+      ),
+    ).toBe(true);
+  });
+
+  it("returns immediately when there is nothing active", async () => {
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    const result = await call(tools[0], { action: "wait" }, makeCtx());
+
+    expect(result.content[0].text).toBe("no subagent runs to wait for");
+    expect(result.structuredContent.runs).toEqual([]);
+  });
+
+  it("returns the same result when called twice on one run", async () => {
+    const { tool, runId, release } = await startBackground("settled once");
+    release();
+
+    const first = await call(
+      tool,
+      { action: "wait", runIds: [runId] },
+      makeCtx(),
+    );
+    const second = await call(
+      tool,
+      { action: "wait", runIds: [runId] },
+      makeCtx(),
+    );
+
+    expect(second.structuredContent).toEqual(first.structuredContent);
+  });
+
+  it("names the unknown id instead of hanging on it", async () => {
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    await expect(
+      call(tools[0], { action: "wait", runIds: ["nope"] }, makeCtx()),
+    ).rejects.toThrow('unknown run "nope"');
+  });
+
+  it("reports partial progress when the timeout fires first", async () => {
+    const { tool, runId, release } = await startBackground("too late");
+
+    const result = await call(
+      tool,
+      { action: "wait", runIds: [runId], timeoutMs: 5 },
+      makeCtx(),
+    );
+
+    expect(result.structuredContent.timedOut).toBe(true);
+    expect(result.structuredContent.runs[0]).toMatchObject({
+      runId,
+      status: "running",
+      text: "",
+    });
+    expect(result.content[0].text).toContain("0/1 settled");
+    release();
+  });
+
+  it("does not re-trigger a turn after wait returned the result", async () => {
+    const { pi, runtime, tool, runId, release } =
+      await startBackground("3 directories");
+
+    const waiting = call(tool, { action: "wait", runIds: [runId] }, makeCtx());
+    release();
+    await waiting;
+
+    // wait 已经把结果交给调用方，再发一条 subagent:result 会多烧一轮模型调用。
+    await vi.waitFor(() =>
+      expect(runtime.readState().runs[0]?.status).toBe("done"),
+    );
+    expect(pi.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("stops waiting when the host cancels the tool call", async () => {
+    const { tool, runId, release } = await startBackground("cancelled");
+
+    const controller = new AbortController();
+    const waiting = callWithSignal(
+      tool,
+      { action: "wait", runIds: [runId] },
+      makeCtx(),
+      controller.signal,
+    );
+    controller.abort();
+
+    await expect(waiting).rejects.toThrow("cancelled");
+    release();
   });
 });
 
@@ -400,6 +684,36 @@ describe("session reset", () => {
   });
 });
 
+describe("stale host context", () => {
+  it("settles a run even when the host context throws on read", async () => {
+    vi.mocked(createAgentSession).mockResolvedValue({
+      session: makeSession("ok"),
+    } as never);
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    // 会话结束后宿主 ctx 会 stale，读 ui / mode / hasUI 都抛。widget 刷新是
+    // best-effort，不能让它从 launch 的 finally 里逃出去把进程打死。
+    const ctx = makeCtx();
+    for (const key of ["ui", "mode", "hasUI"]) {
+      Object.defineProperty(ctx, key, {
+        get() {
+          throw new Error("This extension ctx is stale");
+        },
+      });
+    }
+
+    const result = await call(
+      tools[0],
+      { action: "run", task: "x", background: false },
+      ctx,
+    );
+
+    expect(result.structuredContent.status).toBe("done");
+    expect(result.content[0].text).toBe("ok");
+  });
+});
+
 describe("capability inheritance", () => {
   const tempDirs: string[] = [];
 
@@ -448,7 +762,7 @@ describe("capability inheritance", () => {
     expect(options.extensionFactories).toHaveLength(1);
   });
 
-  it("follows the parent's MCP by looking for mcp__ tools", async () => {
+  it("does not hand the child the parent's MCP", async () => {
     const { pi, tools } = makePi();
     pi.getAllTools.mockReturnValue([
       { name: "read" },
@@ -458,22 +772,37 @@ describe("capability inheritance", () => {
 
     const options = await runOnce(tools);
 
-    expect(options.extensionFactories).toHaveLength(2);
+    // 每个 child 都新建一份 MCP 客户端，dispose 不关它的 socket；默认不连。
+    expect(options.extensionFactories).toEqual([]);
   });
 
-  it("lets a project agent opt out with mcp: none", async () => {
+  it("lets a project agent opt in with mcp: inherit", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "subagent-caps-"));
     tempDirs.push(cwd);
-    writeAgent(cwd, "explore", "---\nname: explore\nmcp: none\n---\nbody\n");
+    writeAgent(cwd, "explore", "---\nname: explore\nmcp: inherit\n---\nbody\n");
 
     const { pi, tools } = makePi();
-    pi.getActiveTools.mockReturnValue(["read", "codemode"]);
     pi.getAllTools.mockReturnValue([{ name: "mcp__toolverse__search" }]);
     registerSubagent(pi as never);
 
     const options = await runOnce(tools, cwd);
 
-    expect(options.extensionFactories).toHaveLength(1);
+    // MCP + 它需要的 codemode。
+    expect(options.extensionFactories).toHaveLength(2);
+  });
+
+  it("keeps MCP off when the parent has none", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "subagent-caps-"));
+    tempDirs.push(cwd);
+    writeAgent(cwd, "explore", "---\nname: explore\nmcp: inherit\n---\nbody\n");
+
+    const { pi, tools } = makePi();
+    pi.getAllTools.mockReturnValue([{ name: "read" }]);
+    registerSubagent(pi as never);
+
+    const options = await runOnce(tools, cwd);
+
+    expect(options.extensionFactories).toEqual([]);
   });
 
   it("lets a project agent force codemode on when the parent had it off", async () => {
@@ -503,7 +832,7 @@ describe("capability inheritance", () => {
     const result = await call(tools[0], { action: "doctor" }, makeCtx());
     const text = result.content[0].text as string;
 
-    expect(text).toContain("codemode=inherit mcp=inherit");
+    expect(text).toContain("codemode=inherit mcp=none");
   });
 });
 

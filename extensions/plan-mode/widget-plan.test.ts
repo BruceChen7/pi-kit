@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MODE_WIDGET_KEY, STATUS_KEY, TODO_WIDGET_KEY } from "./constants.js";
 import {
+  claimsStatusSurface,
   decidePlanModeUi,
   type PlanModeHostCapabilities,
   type PlanModeUiContent,
@@ -295,5 +296,27 @@ describe("decidePlanModeUi: 内容可见的宿主（与改造前的调用序列�
       key: STATUS_KEY,
       text: undefined,
     });
+  });
+});
+
+describe("claimsStatusSurface: 谁渲染那块可见面", () => {
+  it("内容一直可见的宿主：有 mode widget 就是接管", () => {
+    expect(claimsStatusSurface(tuiInput())).toBe(true);
+  });
+
+  it("mode widget 没有行时不接管", () => {
+    expect(claimsStatusSurface(tuiInput({ content: { modeLines: [] } }))).toBe(
+      false,
+    );
+  });
+
+  it("内容要点开才可见的宿主：有状态文本才接管", () => {
+    expect(claimsStatusSurface(piWebInput())).toBe(true);
+  });
+
+  it("pi-web 纯 act 会话没有状态行，不接管", () => {
+    expect(
+      claimsStatusSurface(piWebInput({ content: { statusText: undefined } })),
+    ).toBe(false);
   });
 });

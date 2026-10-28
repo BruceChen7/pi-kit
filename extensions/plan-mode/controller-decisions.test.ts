@@ -5,6 +5,7 @@ import {
   decidePlanReviewObligation,
   decideTodoReconcileDelivery,
   getApprovedReviewPathToQueue,
+  parsePlanModeBadgeEvent,
   parseReviewVerdictEvent,
   shouldRemindTodoReconciliation,
 } from "./controller-decisions.js";
@@ -96,6 +97,60 @@ describe("plan-mode controller decisions", () => {
     },
   ])("$name", ({ raw, expected }) => {
     expect(parseReviewVerdictEvent(raw)).toEqual(expected);
+  });
+
+  it.each([
+    {
+      name: "accepts a badge with text",
+      raw: {
+        type: "plan-mode.badge",
+        cwd: "/repo",
+        key: "subagent",
+        text: "subagent 2 running, 0 queued",
+      },
+      expected: {
+        cwd: "/repo",
+        key: "subagent",
+        text: "subagent 2 running, 0 queued",
+      },
+    },
+    {
+      name: "accepts null as the retraction signal",
+      raw: {
+        type: "plan-mode.badge",
+        cwd: "/repo",
+        key: "subagent",
+        text: null,
+      },
+      expected: { cwd: "/repo", key: "subagent", text: null },
+    },
+    {
+      name: "ignores a badge without cwd",
+      raw: { type: "plan-mode.badge", key: "subagent", text: "x" },
+      expected: null,
+    },
+    {
+      name: "ignores a badge without key",
+      raw: { type: "plan-mode.badge", cwd: "/repo", text: "x" },
+      expected: null,
+    },
+    {
+      name: "ignores a non-string, non-null text",
+      raw: { type: "plan-mode.badge", cwd: "/repo", key: "subagent", text: 3 },
+      expected: null,
+    },
+    {
+      name: "ignores the wrong event type",
+      raw: {
+        type: "plan-mode.other",
+        cwd: "/repo",
+        key: "subagent",
+        text: "x",
+      },
+      expected: null,
+    },
+  ])("$name", ({ raw, expected }) => {
+    expect(parsePlanModeBadgeEvent(raw)).toEqual(expected);
   });
 
   it.each([

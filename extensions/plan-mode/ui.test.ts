@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PlanModeState } from "./state.js";
-import { formatPlanModeStatusLine } from "./ui.js";
+import { formatModeWidgetLines, formatPlanModeStatusLine } from "./ui.js";
 
 /**
  * `formatPlanModeStatusLine` 是 pi-web 常驻状态行的唯一来源（纯函数）。
@@ -50,5 +50,42 @@ describe("formatPlanModeStatusLine", () => {
     expect(formatPlanModeStatusLine(state)).toBe(
       "Plan Mode: Plan · Waiting for review · #1/1 等待评审 · 0/1 已完成",
     );
+  });
+
+  it("appends an external badge to the status line", () => {
+    const state = new PlanModeState("act");
+    state.replaceTodos([{ text: "实现状态机", status: "in_progress" }]);
+
+    expect(
+      formatPlanModeStatusLine(state, ["subagent 2 running, 0 queued"]),
+    ).toBe(
+      "Plan Mode: Act · #1/1 实现状态机 · 0/1 已完成 · subagent 2 running, 0 queued",
+    );
+  });
+
+  it("does not invent a status line for a badge alone", () => {
+    expect(
+      formatPlanModeStatusLine(new PlanModeState("act"), [
+        "subagent 2 running, 0 queued",
+      ]),
+    ).toBeUndefined();
+  });
+});
+
+describe("formatModeWidgetLines", () => {
+  it("keeps the frozen headline when there are no badges", () => {
+    expect(formatModeWidgetLines(new PlanModeState("act"))).toEqual([
+      "Plan Mode: Act · Act · Alt+0 toggles",
+    ]);
+  });
+
+  it("appends badges to the headline instead of taking a second row", () => {
+    expect(
+      formatModeWidgetLines(new PlanModeState("act"), [
+        "subagent 2 running, 0 queued",
+      ]),
+    ).toEqual([
+      "Plan Mode: Act · Act · Alt+0 toggles · subagent 2 running, 0 queued",
+    ]);
   });
 });

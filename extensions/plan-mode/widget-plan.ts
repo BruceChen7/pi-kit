@@ -77,6 +77,18 @@ const autoExpandSeedLines = (
 };
 
 /**
+ * plan-mode 是否正在渲染一块用户可见的状态面。
+ *
+ * 与 badge 内容无关：只要宿主能看到 mode widget（TUI），或状态行有文本
+ * （pi-web 有计划上下文），plan-mode 就是唯一渲染方。生产方据此清掉自己的
+ * footer 段。判据与 `decidePlanModeUi` 共用同一份宿主能力与内容。
+ */
+export const claimsStatusSurface = (input: PlanModeUiInput): boolean =>
+  modeTextSurface(input.host) === "modeWidget"
+    ? input.content.modeLines.length > 0
+    : input.content.statusText !== undefined;
+
+/**
  * 决定这一次同步要发的调用序列。
  *
  * 顺序：status → mode widget（仅“内容一直可见”的宿主）→ TODO widget。

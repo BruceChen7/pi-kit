@@ -40,4 +40,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Skill toggle](./skill-toggle.md) covers the enabled managed skills readout.
 - [Subagent runs](./subagent.md) covers the empty run listing in a fresh session.
 - [Confluence page tool](./confluence.md) covers registration of the `confluence_page` tool.
-- [Poteto route](./poteto-route.md) covers the `route_task` tool, the `/poteto-route status` readout, and the armed edit gate.
+- [Poteto route](./poteto-route.md) covers the `route_task` tool, the `/poteto-route status` and `reset` readouts, and the gate's scope. The gate itself is vitest-owned.

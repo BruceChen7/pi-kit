@@ -568,7 +568,7 @@ export class PlanModeController {
       return approvedPlanPath;
     }
 
-    return this.state.getUnfinishedRunPlanPath();
+    return this.state.getApprovedUnfinishedRunPlanPath();
   }
 
   hasPlanReviewObligation(): boolean {

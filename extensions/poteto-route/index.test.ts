@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 import {
   armForNewTask,
   type Catalog,
+  carryClosing,
+  carryGates,
   decideGate,
   findRoute,
   isHiddenSkill,
@@ -20,7 +22,7 @@ import {
   todoSeed,
   validateCatalog,
 } from "./catalog.js";
-import {
+import potetoRoute, {
   buildModeParam,
   buildRouteParam,
   isPotetoInput,
@@ -354,5 +356,127 @@ describe("prompt drift", () => {
     const prompt = readFileSync(join(repoRoot, "prompts/poteto.md"), "utf8");
     expect(prompt).toContain("route_task");
     expect(prompt).not.toContain("| 类型     | 先做");
+  });
+});
+
+describe("carrying gates across a route switch", () => {
+  const catalog = loadCatalog();
+  const perf = findRoute(catalog, "perf");
+  const feature = findRoute(catalog, "feature");
+  const refactor = findRoute(catalog, "refactor");
+  if (!perf || !feature || !refactor) throw new Error("missing routes");
+
+  it("opens the session with nothing to carry", () => {
+    const first = carryGates([], perf);
+
+    expect(first.carried).toEqual([]);
+    expect(first.next.map((gate) => gate.key)).toEqual([...perf.gates]);
+  });
+
+  it("carries a previous route's gates into the next answer", () => {
+    const second = carryGates(carryGates([], perf).next, feature);
+
+    expect(second.carried.map((gate) => gate.key)).toEqual([...perf.gates]);
+    expect(second.carried.map((gate) => gate.routeId)).toEqual([
+      "perf",
+      "perf",
+    ]);
+  });
+
+  it("keeps the new route's own gates in the seed, not in the carried list", () => {
+    const second = carryGates(carryGates([], perf).next, feature);
+
+    expect(second.carried.map((gate) => gate.key)).not.toContain(
+      feature.gates[0],
+    );
+    expect(second.next.map((gate) => gate.key)).toEqual([
+      ...perf.gates,
+      ...feature.gates,
+    ]);
+  });
+
+  it("does not repeat an item two routes share", () => {
+    const afterRefactor = carryGates(carryGates([], refactor).next, perf);
+
+    const keys = afterRefactor.next.map((gate) => gate.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("carries closing steps the same way", () => {
+    const afterPerf = carryClosing([], perf);
+    const afterFeature = carryClosing(afterPerf.next, feature);
+
+    expect(afterFeature.carried.map((item) => item.key)).toEqual([
+      "blast-radius",
+      "benchmark-checklist",
+    ]);
+    expect(afterFeature.next.map((item) => item.key)).toContain("review");
+  });
+
+  it("renders the carried items so a route switch cannot silently drop them", () => {
+    const text = renderRouteResult({
+      route: feature,
+      mode: null,
+      firstSteps: [],
+      optionalSteps: [],
+      closingSteps: [],
+      playbooks: [],
+      warnings: [],
+      carried: {
+        gates: carryGates(carryGates([], perf).next, feature).carried,
+        closingSteps: [],
+      },
+    });
+
+    expect(text).toContain("前序 route 的闸门");
+    expect(text).toContain("来自 perf");
+    expect(text).toContain(perf.gates[0] ?? "");
+  });
+});
+
+describe("route_task session memory", () => {
+  type Call = (params: Record<string, unknown>) => Promise<{
+    content: Array<{ text: string }>;
+  }>;
+
+  const bootTool = (): Call => {
+    const tools: Array<{
+      name: string;
+      execute: (
+        id: string,
+        params: Record<string, unknown>,
+        signal: AbortSignal,
+        update: () => void,
+        ctx: unknown,
+      ) => Promise<{ content: Array<{ text: string }> }>;
+    }> = [];
+    const pi = {
+      registerTool: (tool: (typeof tools)[number]) => tools.push(tool),
+      registerCommand: () => {},
+      on: () => {},
+      registerShortcut: () => {},
+      setActiveTools: () => {},
+      getAllTools: () => [],
+    };
+    potetoRoute(pi as unknown as Parameters<typeof potetoRoute>[0]);
+    const tool = tools.find((entry) => entry.name === "route_task");
+    if (!tool) throw new Error("route_task not registered");
+    const ctx = {
+      cwd: repoRoot,
+      sessionManager: { getSessionId: () => "session-under-test" },
+    };
+    return (params) =>
+      tool.execute("call", params, new AbortController().signal, () => {}, ctx);
+  };
+
+  it("keeps the perf gate visible after switching to feature", async () => {
+    const call = bootTool();
+
+    const first = await call({ route: "perf" });
+    expect(first.content[0]?.text).toContain("先跑基线再改");
+
+    const second = await call({ route: "feature" });
+    expect(second.content[0]?.text).toContain("前序 route 的闸门");
+    expect(second.content[0]?.text).toContain("先跑基线再改");
   });
 });

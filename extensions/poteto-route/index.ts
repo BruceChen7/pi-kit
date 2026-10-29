@@ -9,6 +9,8 @@ import { Type } from "@sinclair/typebox";
 import {
   armForNewTask,
   type Catalog,
+  carryClosing,
+  carryGates,
   decideGate,
   findMode,
   findRoute,
@@ -295,6 +297,24 @@ export default function potetoRoute(pi: ExtensionAPI): void {
         ...playbooks.problems,
       ];
 
+      const session = stateFor(sessionId);
+      const gateCarry = carryGates(session.gates ?? [], route);
+      const closingCarry = carryClosing(session.closing ?? [], route);
+      const carriedClosing = [
+        ...new Map(
+          closingCarry.carried
+            .map((item) => resolveStep({ id: item.key, roots, readText }))
+            .flatMap((resolved) =>
+              resolved.ok ? [[resolved.step.path, resolved.step] as const] : [],
+            ),
+        ).values(),
+      ];
+      sessions.set(sessionId, {
+        ...session,
+        gates: gateCarry.next,
+        closing: closingCarry.next,
+      });
+
       if (first.problems.length > 0) {
         return {
           content: [
@@ -325,6 +345,10 @@ export default function potetoRoute(pi: ExtensionAPI): void {
               closingSteps: closing.steps,
               playbooks: playbooks.playbooks,
               warnings,
+              carried: {
+                gates: gateCarry.carried,
+                closingSteps: carriedClosing,
+              },
             }),
           },
         ],

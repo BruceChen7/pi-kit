@@ -33,6 +33,12 @@ For a quick ballpark the user asked for, one run is enough. Still check question
 - Call the verdict inconclusive when you claim a difference but cannot name the limiter, when a side ran untuned, or when you could not check questions 4 and 7. Name the gap.
 - Keep a PR body to one primary number, per the **Opening a PR** playbook. Put the runs, range, and limiter evidence in a linked artifact or notes file.
 
+## A table you choose from
+
+A report that ranks options is a selection claim, so every row carries its own evidence level, not the table's: `runs=3`, `runs=1`, or `未测`. Once one-run estimates and measured rows sit in the same columns, the reader cannot tell them apart, which is how a ballpark turns into a pick.
+
+Say which rows the choice rests on. Rows at `未测` still earn a place, as the list of what to measure next, but the sentence that picks an option should cite only rows that were run.
+
 ## Other perf material
 
 - Vet the **Perf issue** playbook's baseline before the playbook plans from it, and every number after that.

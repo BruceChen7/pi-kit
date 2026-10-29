@@ -30,6 +30,7 @@ Save to `.pi/research/YYYY-MM-DD-<slug>.md` by default. If the repo already keep
 - Every non-obvious claim has a citation (URL, file path, version, or command output).
 - Version/date sensitivity is recorded: which version of the docs, package, or API the finding applies to.
 - Contradictions between sources are surfaced, not averaged away.
+- Derived numbers are computed, not written by hand: a total, share, or delta in the prose comes from a command whose output you paste, and an upper bound is labelled as one instead of being stated as a measurement. Two places in one document disagreeing about the same number (a table row and the prose that summarises it) is the failure this prevents.
 - Open questions are listed rather than guessed at.
 
 ## Attribution

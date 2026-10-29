@@ -189,6 +189,11 @@ export type RenderRouteInput = {
   playbooks: PlaybookText[];
   /** Steps the catalog names but disk does not have; reported, not fatal. */
   warnings: string[];
+  /** Obligations still open from routes answered earlier in this session. */
+  carried?: {
+    gates: CarriedItem[];
+    closingSteps: ResolvedStep[];
+  };
 };
 
 /** The model-facing payload: todo seed first, then paths, then playbook bodies. */
@@ -237,6 +242,21 @@ export function renderRouteResult(input: RenderRouteInput): string {
     lines.push("");
   }
 
+  const carried = input.carried;
+  if (
+    carried &&
+    (carried.gates.length > 0 || carried.closingSteps.length > 0)
+  ) {
+    lines.push("前序 route 的闸门与收尾（换 route 不撤销，做完才算闭合）：");
+    for (const gate of carried.gates) {
+      lines.push(`- ${gate.key}（来自 ${gate.routeId}）`);
+    }
+    for (const step of carried.closingSteps) {
+      lines.push(`- ${step.id} → ${step.path}（收尾，来自前序 route）`);
+    }
+    lines.push("");
+  }
+
   if (input.warnings.length > 0) {
     lines.push("警告（不影响本次 route，但要自己去盘上确认）：");
     for (const warning of input.warnings) lines.push(`- ${warning}`);
@@ -269,6 +289,46 @@ export function todoSeed(route: Route, mode: Mode | null): string[] {
   return seed;
 }
 
+/**
+ * An obligation a route handed out, remembered for the rest of the session.
+ * Switching routes does not retire work that is still open, so the next
+ * answer has to say what it is still on the hook for.
+ */
+export type CarriedItem = { routeId: string; key: string };
+
+export type CarriedResult = {
+  /** Items from earlier routes that this route does not state itself. */
+  carried: CarriedItem[];
+  /** What the session should remember after answering with this route. */
+  next: CarriedItem[];
+};
+
+const carry = (
+  issued: readonly CarriedItem[],
+  routeId: string,
+  currentKeys: readonly string[],
+): CarriedResult => {
+  const current = new Set(currentKeys);
+  const known = new Set(issued.map((item) => item.key));
+  const carried = issued.filter(
+    (item) => !current.has(item.key) && item.routeId !== routeId,
+  );
+  const fresh = currentKeys
+    .filter((key) => !known.has(key))
+    .map((key) => ({ routeId, key }));
+  return { carried, next: [...issued, ...fresh] };
+};
+
+export const carryGates = (
+  issued: readonly CarriedItem[],
+  route: Route,
+): CarriedResult => carry(issued, route.id, route.gates);
+
+export const carryClosing = (
+  issued: readonly CarriedItem[],
+  route: Route,
+): CarriedResult => carry(issued, route.id, route.closingSteps);
+
 export type GateInput = {
   armed: boolean;
   routed: boolean;
@@ -280,6 +340,10 @@ export type RouteState = {
   armed: boolean;
   routed: boolean;
   routeId?: string;
+  /** Gates handed out earlier in this session; carried across route switches. */
+  gates?: CarriedItem[];
+  /** Closing steps handed out earlier in this session. */
+  closing?: CarriedItem[];
 };
 
 /**

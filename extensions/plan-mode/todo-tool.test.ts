@@ -174,17 +174,51 @@ describe("act_mode_todo: batch update", () => {
     expect(result.details?.todos?.[1]?.text).toBe("第二步");
   });
 
-  it("refuses a call that passes both id and updates", async () => {
+  it("prefers the batch when a filling model also sends the single-item fields", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+    await seed(harness, ctx);
+
+    // 实录形状：cc-switch-gateway/gpt-5.6-sol 把 schema 里声明的字段全填了。
+    const result = await callTodo(harness, ctx, {
+      action: "update",
+      id: 0,
+      items: [],
+      notes: "",
+      status: "todo",
+      text: "unused",
+      updates: [
+        { id: 1, status: "done", text: "第一步" },
+        { id: 2, status: "in_progress", text: "第二步" },
+      ],
+    });
+
+    expect(statuses(result)).toEqual(["1:done", "2:in_progress", "3:todo"]);
+    expect(result.content[0]?.text).not.toContain("Error");
+  });
+
+  it("accepts a single-id update next to an empty updates array", async () => {
     const { harness, ctx } = await startPlanModeSession("act");
     await seed(harness, ctx);
 
     const result = await callTodo(harness, ctx, {
       action: "update",
-      id: 1,
-      updates: [{ id: 2, status: "done" }],
+      id: 2,
+      status: "done",
+      updates: [],
     });
 
-    expect(result.content[0]?.text).toContain("not both");
+    expect(statuses(result)).toEqual(["1:todo", "2:done", "3:todo"]);
+  });
+
+  it("reports an unknown id on remove instead of a silent success", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+    await seed(harness, ctx);
+
+    const result = await callTodo(harness, ctx, { action: "remove", id: 0 });
+
+    expect(result.content[0]?.text).toContain("TODO #0 not found");
+    const after = await callTodo(harness, ctx, { action: "list" });
+    expect(statuses(after)).toEqual(["1:todo", "2:todo", "3:todo"]);
   });
 });
 

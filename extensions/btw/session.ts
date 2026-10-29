@@ -19,6 +19,11 @@ import {
   type ResourceLoader,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import {
+  collectProviderRegistrations,
+  createProviderForwardingExtension,
+  type ProviderRegistration,
+} from "../shared/child-session-providers.ts";
 
 /** btw role 系统提示：临时、只读、不承诺任何操作。 */
 export const BTW_SYSTEM_PROMPT = [
@@ -48,6 +53,7 @@ export function btwResourceLoaderOptions(input: {
   agentDir: string;
   customPrompt?: string;
   appendSystemPrompt?: string;
+  providerRegistrations: readonly ProviderRegistration[];
 }): ConstructorParameters<typeof DefaultResourceLoader>[0] {
   return {
     cwd: input.cwd,
@@ -56,6 +62,11 @@ export function btwResourceLoaderOptions(input: {
     noPromptTemplates: true,
     noThemes: true,
     disabledBuiltinExtensions: ["mcp", "codemode"],
+    extensionFactories: [
+      ...(input.providerRegistrations.length > 0
+        ? [createProviderForwardingExtension(input.providerRegistrations)]
+        : []),
+    ],
     systemPrompt: input.customPrompt,
     appendSystemPrompt: [
       ...(input.appendSystemPrompt ? [input.appendSystemPrompt] : []),
@@ -78,6 +89,11 @@ export async function createBtwResourceLoader(
       agentDir: getAgentDir(),
       customPrompt: promptOptions.customPrompt,
       appendSystemPrompt: promptOptions.appendSystemPrompt,
+      providerRegistrations: collectProviderRegistrations({
+        providers: [ctx.model?.provider],
+        getConfig: (provider) =>
+          ctx.modelRegistry?.getRegisteredProviderConfig?.(provider),
+      }),
     }),
   );
   await loader.reload();

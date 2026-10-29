@@ -655,6 +655,8 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
         parentThinking: ctx?.thinkingLevel,
         capabilities,
         modelRegistry: ctx?.modelRegistry,
+        resolveProviderConfig: (provider) =>
+          ctx?.modelRegistry?.getRegisteredProviderConfig?.(provider),
       });
       session = boot.session;
       if (boot.modelWarning) {

@@ -32,12 +32,14 @@ describe("btwResourceLoaderOptions", () => {
       agentDir: "/tmp/agent-dir",
       customPrompt: "custom prompt",
       appendSystemPrompt: "appended prompt",
+      providerRegistrations: [],
     });
 
     expect(options.disabledBuiltinExtensions).toEqual(["mcp", "codemode"]);
     expect(options.noExtensions).toBe(true);
     expect(options.noPromptTemplates).toBe(true);
     expect(options.noThemes).toBe(true);
+    expect(options.extensionFactories).toEqual([]);
     expect(options.cwd).toBe("/repo");
     expect(options.agentDir).toBe("/tmp/agent-dir");
     expect(options.systemPrompt).toBe("custom prompt");
@@ -51,10 +53,26 @@ describe("btwResourceLoaderOptions", () => {
     const options = btwResourceLoaderOptions({
       cwd: "/repo",
       agentDir: "/tmp/agent-dir",
+      providerRegistrations: [],
     });
 
     expect(options.appendSystemPrompt).toEqual([BTW_SYSTEM_PROMPT]);
     expect(options.systemPrompt).toBeUndefined();
+  });
+
+  it("forwards a parent-registered provider the side session inherits", () => {
+    const config = { apiKey: "PROXY_MANAGED" };
+    const options = btwResourceLoaderOptions({
+      cwd: "/repo",
+      agentDir: "/tmp/agent-dir",
+      providerRegistrations: [{ name: "cc-switch-gateway", config }],
+    });
+    const registerProvider = vi.fn();
+    for (const factory of options.extensionFactories ?? []) {
+      (factory as (pi: unknown) => void)({ registerProvider });
+    }
+
+    expect(registerProvider).toHaveBeenCalledWith("cc-switch-gateway", config);
   });
 });
 
@@ -66,6 +84,13 @@ describe("createBtwResourceLoader", () => {
   it("wires the isolation flags into the loader it constructs", async () => {
     const ctx = {
       cwd: "/repo",
+      model: { provider: "cc-switch-gateway" },
+      modelRegistry: {
+        getRegisteredProviderConfig: (provider: string) =>
+          provider === "cc-switch-gateway"
+            ? { apiKey: "PROXY_MANAGED" }
+            : undefined,
+      },
       getSystemPromptOptions: () => ({
         cwd: "/repo",
         customPrompt: "custom prompt",
@@ -82,6 +107,14 @@ describe("createBtwResourceLoader", () => {
       disabledBuiltinExtensions: ["mcp", "codemode"],
       noExtensions: true,
       systemPrompt: "custom prompt",
+    });
+    const registerProvider = vi.fn();
+    for (const factory of (loaderInstances[0]?.options.extensionFactories ??
+      []) as Array<(pi: unknown) => void>) {
+      factory({ registerProvider });
+    }
+    expect(registerProvider).toHaveBeenCalledWith("cc-switch-gateway", {
+      apiKey: "PROXY_MANAGED",
     });
   });
 });

@@ -17,8 +17,14 @@ import {
   createMcpExtension,
   DefaultResourceLoader,
   getAgentDir,
+  type ProviderConfig,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
+import {
+  collectProviderRegistrations,
+  createProviderForwardingExtension,
+  type ProviderRegistration,
+} from "../shared/child-session-providers.ts";
 import type { AgentProfile, AgentThinking } from "./agents.ts";
 
 export type ModelRegistryLike = {
@@ -41,6 +47,13 @@ export type BootChildInput = {
   parentThinking: AgentThinking | undefined;
   capabilities: ChildCapabilities;
   modelRegistry?: ModelRegistryLike;
+  /**
+   * 父会话里由扩展注册的 provider 配置（cc-switch 这类本地网关就在其中）。
+   * 子会话不加载扩展，拿不到这些注册，模型认证会以
+   * `No API key found for "<provider>"` 失败，所以由 Shell 从父会话的
+   * ModelRegistry 取出来传进来。
+   */
+  resolveProviderConfig?: (provider: string) => ProviderConfig | undefined;
   agentDir?: string;
 };
 
@@ -97,14 +110,21 @@ export function resolveAgentModel(input: {
  * `REJECTED: tools.bash does not exist`。MCP 不一样 —— 它的默认 exposure 是
  * `codemode`，注册即可调用，不受 tools 白名单约束，所以 MCP 只有开/关两档，
  * 由 profile 的 `mcp:` 决定，缺省跟随父会话。
+ *
+ * provider 注册是这条隔离的一个例外：子会话要用的模型如果由扩展注册，扩展不加载就
+ * 认证不了，所以父会话把该 provider 的注册单独转交进来。
  */
 export function childResourceLoaderOptions(input: {
   cwd: string;
   agentDir: string;
   profile: AgentProfile;
   capabilities: ChildCapabilities;
+  providerRegistrations: readonly ProviderRegistration[];
 }): ConstructorParameters<typeof DefaultResourceLoader>[0] {
   const extensionFactories = [
+    ...(input.providerRegistrations.length > 0
+      ? [createProviderForwardingExtension(input.providerRegistrations)]
+      : []),
     ...(input.capabilities.codemode ? [createCodemodeExtension()] : []),
     ...(input.capabilities.mcp ? [createMcpExtension()] : []),
   ];
@@ -130,21 +150,29 @@ export async function bootChildSession(
   input: BootChildInput,
 ): Promise<BootChildResult> {
   const agentDir = input.agentDir ?? getAgentDir();
-  const loader = new DefaultResourceLoader(
-    childResourceLoaderOptions({
-      cwd: input.cwd,
-      agentDir,
-      profile: input.profile,
-      capabilities: input.capabilities,
-    }),
-  );
-  await loader.reload();
 
   const { model, warning } = resolveAgentModel({
     ref: input.profile.model,
     parentModel: input.parentModel,
     modelRegistry: input.modelRegistry,
   });
+
+  // 先定模型再建 loader：要带进子会话的 provider 就是这些模型会用到的 provider。
+  const providerRegistrations = collectProviderRegistrations({
+    providers: [model?.provider, input.parentModel?.provider],
+    getConfig: (provider) => input.resolveProviderConfig?.(provider),
+  });
+
+  const loader = new DefaultResourceLoader(
+    childResourceLoaderOptions({
+      cwd: input.cwd,
+      agentDir,
+      profile: input.profile,
+      capabilities: input.capabilities,
+      providerRegistrations,
+    }),
+  );
+  await loader.reload();
 
   const { session } = await createAgentSession({
     cwd: input.cwd,

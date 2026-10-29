@@ -4,7 +4,12 @@ import type { PlanModeController } from "./controller.ts";
 import { todoDisciplineGuidance } from "./guidance.ts";
 import type { PlanModeState } from "./state.ts";
 import { clonePlanRun } from "./state.ts";
-import type { TodoItem, TodoPatch } from "./types.ts";
+import type {
+  TodoInput,
+  TodoItem,
+  TodoPatch,
+  TodoStatusInput,
+} from "./types.ts";
 import { symbolForStatus } from "./ui.ts";
 
 type TodoPatchInput = TodoPatch & { id: number };
@@ -127,6 +132,75 @@ const todoToolError = (text: string) => ({
   details: undefined,
 });
 
+/**
+ * 每条命令只认自己那几个字段，别处传来的字段一律忽略。
+ *
+ * 带 strict schema 的网关模型会把参数里声明的字段全填一遍 —— 实测 gpt-5.6-sol 给批量
+ * 更新同时塞了 `id: 0` 与 `updates: [...]`，给单条更新塞了 `updates: []`。字段归属判断
+ * 收在这里（纯函数），execute 只负责副作用。
+ */
+export type TodoCommand =
+  | { kind: "list" }
+  | { kind: "set"; items: TodoInput[] }
+  | { kind: "add"; text: string; status: TodoStatusInput; notes?: string }
+  | { kind: "update"; patches: readonly TodoPatchInput[] }
+  | { kind: "remove"; id: number }
+  | { kind: "clear" }
+  | { kind: "error"; text: string };
+
+export const planTodoCommand = (params: TodoParams): TodoCommand => {
+  switch (params.action) {
+    case "set":
+      return { kind: "set", items: params.items ?? [] };
+    case "add":
+      if (!params.text) {
+        return { kind: "error", text: "Error: text is required for add." };
+      }
+      return {
+        kind: "add",
+        text: params.text,
+        status: params.status ?? "todo",
+        ...(params.notes !== undefined ? { notes: params.notes } : {}),
+      };
+    case "update": {
+      const patches: TodoPatchInput[] =
+        params.updates && params.updates.length > 0
+          ? params.updates
+          : params.id === undefined
+            ? []
+            : [
+                {
+                  id: params.id,
+                  ...(params.text?.trim() ? { text: params.text } : {}),
+                  ...(params.status !== undefined
+                    ? { status: params.status }
+                    : {}),
+                  ...(params.notes !== undefined
+                    ? { notes: params.notes }
+                    : {}),
+                },
+              ];
+      if (patches.length === 0) {
+        return {
+          kind: "error",
+          text: "Error: id or updates is required for update.",
+        };
+      }
+      return { kind: "update", patches };
+    }
+    case "remove":
+      return params.id === undefined
+        ? { kind: "error", text: "Error: id is required for remove." }
+        : { kind: "remove", id: params.id };
+    case "clear":
+      return { kind: "clear" };
+    case "list":
+      return { kind: "list" };
+  }
+};
+
+const missingTodoError = (id: number) => `Error: TODO #${id} not found.`;
+
 export const registerTodoTool = (
   pi: ExtensionAPI,
   controller: PlanModeController,
@@ -152,60 +226,30 @@ export const registerTodoTool = (
     ],
     parameters: todoParamsSchema,
     async execute(_toolCallId, params: TodoParams, _signal, _onUpdate, ctx) {
+      const command = planTodoCommand(params);
       let updatedPatches: readonly TodoPatchInput[] | undefined;
-      switch (params.action) {
-        case "set": {
-          const items = params.items ?? [];
+      switch (command.kind) {
+        case "set":
           controller.state.replaceTodos(
-            items,
+            command.items,
             controller.getPlanPathForNewRun(),
           );
           break;
-        }
         case "add":
-          if (!params.text) {
-            return todoToolError("Error: text is required for add.");
-          }
           controller.state.addTodo(
-            params.text,
-            params.status ?? "todo",
-            params.notes,
+            command.text,
+            command.status,
+            command.notes,
             controller.getPlanPathForNewRun(),
           );
           break;
         case "update": {
-          if (params.id !== undefined && params.updates !== undefined) {
-            return todoToolError(
-              "Error: pass either id or updates for update, not both.",
-            );
-          }
-          const patches: TodoPatchInput[] =
-            params.updates ??
-            (params.id === undefined
-              ? []
-              : [
-                  {
-                    id: params.id,
-                    ...(params.text?.trim() ? { text: params.text } : {}),
-                    ...(params.status !== undefined
-                      ? { status: params.status }
-                      : {}),
-                    ...(params.notes !== undefined
-                      ? { notes: params.notes }
-                      : {}),
-                  },
-                ]);
-          if (patches.length === 0) {
-            return todoToolError(
-              "Error: id or updates is required for update.",
-            );
-          }
           const plan = planTodoPatchApplication(
             controller.state.todos.map((todo) => todo.id),
-            patches,
+            command.patches,
           );
           if (plan.kind === "missing") {
-            return todoToolError(`Error: TODO #${plan.id} not found.`);
+            return todoToolError(missingTodoError(plan.id));
           }
           for (const patch of plan.patches) {
             controller.state.updateTodo(patch.id, {
@@ -217,18 +261,25 @@ export const registerTodoTool = (
           updatedPatches = plan.patches;
           break;
         }
-        case "remove":
-          if (params.id === undefined) {
-            return todoToolError("Error: id is required for remove.");
+        case "remove": {
+          const plan = planTodoPatchApplication(
+            controller.state.todos.map((todo) => todo.id),
+            [{ id: command.id }],
+          );
+          if (plan.kind === "missing") {
+            return todoToolError(missingTodoError(plan.id));
           }
-          controller.state.removeTodo(params.id);
+          controller.state.removeTodo(command.id);
           break;
+        }
         case "clear":
           controller.state.clearTodos();
           break;
         case "list":
           // Read-only.
           break;
+        case "error":
+          return todoToolError(command.text);
       }
 
       controller.updateUi(ctx);

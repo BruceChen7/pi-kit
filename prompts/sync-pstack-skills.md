@@ -29,9 +29,9 @@ pstack 值钱的是一套判断，不是目录结构。左列是内核，右列�
 | 同一个错犯两遍就改结构：架构 → 类型 → lint → 测试 → 文档 | `correct/`                                                   | 已本地化：规则表落 `AGENTS.md`                                      |
 | 删在加之前：注释、死代码、一次性兼容层                   | `no-comments/`                                               | 已 vendor：评审合成两遍走，keep list 逐字保留                       |
 | 改动前证影响面：证明那一个事实，不写说明文               | `blast-radius/`                                              | 已 vendor：forge 命令按 remote 选 `gh` / `glab`                     |
-| 独立对抗评审：一个 reviewer 一份，父会话裁               | `interrogate/`                                               | 已本地化：`subagent reviewer`                                       |
+| 独立对抗评审：一个 reviewer 一份，父会话裁               | `interrogate/`                                               | 已本地化：对抗者落 `/tmp/interrogate-<slug>/`，按 run 复现裁定      |
 | 并行分片覆盖：写作任务落不相交目录                       | `swarm/`                                                     | 已本地化：≤4 波次，去 cloud / worktree                              |
-| 候选竞争：N 个候选选一作基底，嫁落选者强项               | `arena/`                                                     | 已本地化：候选落 `/tmp` 或 patch                                    |
+| 候选竞争：N 个候选选一作基底，嫁落选者强项               | `arena/`                                                     | 已本地化：候选落 `/tmp` 或 patch；缺座补满，judge 可同模型          |
 | 验证流程可生成、可审计、可复跑                           | `create-verification-skill/`、`maintain-verification-skill/` | 已本地化：`.pi/skills/verify-<app>/`                                |
 | 测试盖不到的用例交给形式化：选最强那条承诺，让问题挑工具，必须见过它失败 | `create-formal-verification-skill/`、`maintain-formal-verification-skill/` | 已本地化：`.pi/skills/verify-<area>-formal/`，反例讲成代码里的最短路径，画图走 Mermaid |
 | 人读文字两把刀：分层写作标准 + 去 AI 腔                  | `technical-writing/`、`unslop/`                              | 已 vendor，各带中文补充段                                           |

@@ -1,6 +1,6 @@
 # pstack 进口组
 
-来源：[`cursor/plugins`](https://github.com/cursor/plugins) 的 `harness/pstack`，插件版本 `0.15.32`，commit [`e73df47`](https://github.com/cursor/plugins/commit/e73df471cd4bd918367e99f3dd9c51bd53ddf5f0)，2026-10-22 vendored；2026-10-27 复核 `0.15.32` 无内核差异，同日按用户点名进口形式化验证一对。
+来源：[`cursor/plugins`](https://github.com/cursor/plugins) 的 `harness/pstack`，插件版本 `0.15.36`，commit [`1ba91fc`](https://github.com/cursor/plugins/commit/1ba91fc25c0977741dd0e267849e6234b037ed0a)，2026-10-22 vendored；2026-10-27 复核 `0.15.32` 无内核差异，同日按用户点名进口形式化验证一对；2026-10-29 同步到 `0.15.36`：`explain-the-number` 补「跑之前先写下会改变决策的结果」，`arena` 补座位与 judge 两条规则（跨族判据本地不要），`interrogate` 按上游重写成「run 证伪」并删掉那 4 份 references。
 
 逐条适配见下表。升级判据不是上游文件本身，是 [`prompts/sync-pstack-skills.md`](../../prompts/sync-pstack-skills.md) 的「内核清单」：内核必须在本仓有落点，harness 绑定不进口。2026-10-21 的适配更新（`subagent`、C′）见 [`.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md`](../../.pi/plans/pi-kit/specs/2026-10-21-pstack-adoption-adaptation.md)。
 
@@ -16,9 +16,9 @@
 | `show-me-your-work/` | 改过一次：transcript 路径改 pi session，跨模型复核改只读 squad 可选，日志默认中文；`scripts/log.sh` 与 TSV 模板一并搬入 |
 | `technical-writing/` | 改过一次：去 adapter，PR/MR 措辞，开头写清与 `unslop`、`writing-for-agents` 的边界 |
 | `unslop/` | 正文未改，只是搬进本组 |
-| `interrogate/` | 改过一次：评审改 `subagent reviewer`，删 Task 参数名、上游模型规则与 slug 回退；references 原样搬入 |
+| `interrogate/` | 2026-10-29 按上游重写：一条 finding 要用一次 run 证伪、父会话复现后才留下，fan-out 复用 `arena` 的 A 阶段 3/4 步与 B 阶段，跳过 arena 的 C/D/E；对抗者改 `subagent general` 跑在 `/tmp/interrogate-<slug>/adversary-<n>/`（只读 profile 没有 bash，跑不了 repro），未提交改动只进副本；上游删掉的 4 份 references 本地一并删除 |
 | `swarm/` | 改过一次：去 cloud / worktree，改 ≤4 波次；写任务只落不相交目录 |
-| `arena/` | 改过一次：候选写 `/tmp` 或 patch，去 worktree 与 per-model runners |
+| `arena/` | 改过两次：候选写 `/tmp` 或 patch，去 worktree 与 per-model runners；2026-10-29 按上游补两条——座位派不出去要补满候选，judge 有别的模型就换、派不出就跳过（不强制跨族，本地模型少） |
 | `create-verification-skill/` | 改过两次：`.pi/skills/verify-<app>/`；drive 先找仓库已有 harness，再用 pi 工具；references 一并搬入；生成物不加 `disable-model-invocation`，生成后要求 `/reload` |
 | `maintain-verification-skill/` | 改过一次：源波改 `subagent explore`，4 个一波；PR 按 remote 选 `gh` / `glab` |
 | `create-formal-verification-skill/` | 2026-10-27 进口。改过：生成物落 `.pi/skills/verify-<area>-formal/`，不加 `disable-model-invocation`，要求 `/reload`；去 adapter 段；`/statechart` 换成「反例讲成代码里的最短路径，画图用 `validate_mermaid` / `render_mermaid`」 |
@@ -39,7 +39,7 @@
 
    ```bash
    git clone --filter=blob:none --sparse https://github.com/cursor/plugins /tmp/cursor-plugins
-   git -C /tmp/cursor-plugins checkout e73df471cd4bd918367e99f3dd9c51bd53ddf5f0
+   git -C /tmp/cursor-plugins checkout 1ba91fc25c0977741dd0e267849e6234b037ed0a
    git -C /tmp/cursor-plugins sparse-checkout set harness/pstack/claude-code/skills
    ```
 
@@ -49,7 +49,7 @@
 ## 删掉整组
 
 ```bash
-# 1. 去掉 skills/skills.txt 里本组十六行
+# 1. 去掉 skills/skills.txt 里本组十八行
 # 2. 重建链接，清掉 me-skills 中不再被引用的条目
 ./skills/migrate.sh import
 # 3. 删源码与入口

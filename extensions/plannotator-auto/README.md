@@ -31,6 +31,7 @@ All review locations are convention-based and NOT configurable: any directory na
 - `/plannotator-review` opens an interactive plan/spec file picker and submits the selected file for Plannotator review.
 - `Ctrl+Shift+R` opens the same plan/spec file picker.
 - `Ctrl+Alt+L` annotates the latest Markdown or HTML file modified in the current session.
+- With nothing pending, `plannotator_auto_submit_review` returns an error that tells the agent to stop retrying and ask you for a manual submit (`Ctrl+Alt+L`, or `Ctrl+Shift+R` to pick the file).
 
 ### Manual review re-arms the gate (until approval)
 

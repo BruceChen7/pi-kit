@@ -157,6 +157,38 @@ describe("submit review tool", () => {
     }
   });
 
+  it("points at Ctrl+Alt+L when no review draft is pending", async () => {
+    vi.resetModules();
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    const repoRoot = await createTempRepo("plannotator-auto-no-pending-");
+    const ctx = createTestContext(repoRoot);
+
+    try {
+      await emit("session_start", {}, ctx);
+
+      const result = (await runTool(
+        "plannotator_auto_submit_review",
+        { path: getPlanFileRelative(repoRoot) },
+        ctx,
+      )) as {
+        content?: Array<{ text?: string }>;
+        details?: { status?: string };
+      };
+
+      expect(result.details?.status).toBe("error");
+      const text = result.content?.[0]?.text ?? "";
+      expect(text).toContain("no pending Plannotator review draft");
+      expect(text).toContain("Ctrl+Alt+L");
+      expect(text).toContain("Ctrl+Shift+R");
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+      await removeTempRepo(repoRoot);
+    }
+  });
+
   it("blocks invalid standard plan artifacts before starting review", async () => {
     vi.resetModules();
     const spawn = mockSpawn({ status: 0, stdout: "", stderr: "" });

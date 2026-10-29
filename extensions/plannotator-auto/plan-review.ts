@@ -1001,7 +1001,11 @@ export const registerPlanReviewSubmitTool = (
             content: [
               {
                 type: "text",
-                text: "Error: there is no pending Plannotator review draft in this session.",
+                text:
+                  "Error: there is no pending Plannotator review draft in this session. " +
+                  "Do not retry this tool. Ask the user to submit the review manually: " +
+                  "Ctrl+Alt+L annotates the latest Markdown/HTML document in this session; " +
+                  "Ctrl+Shift+R opens the plan/spec picker.",
               },
             ],
             details: { status: "error" },

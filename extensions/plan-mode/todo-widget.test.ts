@@ -473,7 +473,15 @@ describe("plan-mode extension: todo state and widgets", () => {
       ctx,
     )) as { content: Array<{ text: string }> };
 
-    expect(result.content[0]?.text).toContain("#1 [✓] 保留这个任务文本");
+    // Update answers with a one-line summary now; the item text itself is
+    // still there, which is what this regression is about.
+    expect(result.content[0]?.text).toContain("#1 → done");
+    const listed = (await harness.runTool(
+      ACT_MODE_TODO_TOOL,
+      { action: "list" },
+      ctx,
+    )) as { content: Array<{ text: string }> };
+    expect(listed.content[0]?.text).toContain("#1 [✓] 保留这个任务文本");
     expect(plainWidgetText(ctx)).toContain("#1 保留这个任务文本");
   });
 

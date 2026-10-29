@@ -112,7 +112,18 @@ describe("plan-mode extension: commands and prompt basics", () => {
     expect(result.systemPrompt).not.toContain("flow tree");
     expect(result.systemPrompt).not.toContain("sequenceDiagram");
     expect(result.systemPrompt).not.toContain("关键数据结构");
-    expect(result.systemPrompt).not.toContain("pre-submit checklist");
+  });
+
+  it("gives act prompts the submit-time content-form contract", async () => {
+    // The artifact policy blocks a submit in act mode too, so act mode has to
+    // state the content forms before the write, not after a bounced submit.
+    const { harness, ctx } = await startPlanModeSession("act");
+
+    const result = await sendAgentPrompt(harness, ctx, "implement this change");
+
+    expect(result.systemPrompt).toContain("pre-submit checklist");
+    expect(result.systemPrompt).toContain("```mermaid");
+    expect(result.systemPrompt).toContain("ASCII 调用树");
   });
 
   it("tells the agent where to write HTML review artifacts", async () => {

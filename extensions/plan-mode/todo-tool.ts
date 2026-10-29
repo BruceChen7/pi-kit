@@ -4,7 +4,10 @@ import type { PlanModeController } from "./controller.ts";
 import { todoDisciplineGuidance } from "./guidance.ts";
 import type { PlanModeState } from "./state.ts";
 import { clonePlanRun } from "./state.ts";
+import type { TodoItem, TodoPatch } from "./types.ts";
 import { symbolForStatus } from "./ui.ts";
+
+type TodoPatchInput = TodoPatch & { id: number };
 
 const todoStatusSchema = Type.Union([
   Type.Literal("todo"),
@@ -19,6 +22,61 @@ const todoInputSchema = Type.Object({
   status: Type.Optional(todoStatusSchema),
   notes: Type.Optional(Type.String({ description: "Optional note" })),
 });
+
+/**
+ * One patch in a batch update. `text` is optional here, unlike `set` items,
+ * because a status-only change must not have to restate the item text.
+ */
+const todoPatchSchema = Type.Object({
+  id: Type.Number(),
+  text: Type.Optional(Type.String()),
+  status: Type.Optional(todoStatusSchema),
+  notes: Type.Optional(Type.String()),
+});
+
+/**
+ * Decides whether a batch of patches may land, without touching state. All or
+ * nothing: one unknown id rejects the batch, so a half-applied status change
+ * cannot leave the list describing work that did not happen.
+ */
+export const planTodoPatchApplication = (
+  existingIds: readonly number[],
+  patches: readonly TodoPatchInput[],
+):
+  | { kind: "apply"; patches: readonly TodoPatchInput[] }
+  | { kind: "missing"; id: number } => {
+  const known = new Set(existingIds);
+  const missing = patches.find((patch) => !known.has(patch.id));
+  if (missing) {
+    return { kind: "missing", id: missing.id };
+  }
+  return { kind: "apply", patches };
+};
+
+const describePatch = (patch: TodoPatchInput): string =>
+  patch.status !== undefined
+    ? `#${patch.id} → ${patch.status}`
+    : `#${patch.id} → edited`;
+
+/**
+ * One-line confirmation for a status change. The full list stays behind
+ * `list` / `set`: repeating it on every update was the bulk of this tool's
+ * output in the sessions that motivated batching.
+ */
+export const formatTodoUpdateSummary = (
+  patches: readonly TodoPatchInput[],
+  todos: readonly TodoItem[],
+): string => {
+  const open = todos.filter((todo) => todo.status !== "done");
+  const inProgress = open.filter((todo) => todo.status === "in_progress");
+  const changed =
+    patches.length > 0 ? patches.map(describePatch).join(", ") : "nothing";
+  const inProgressLabel =
+    inProgress.length > 0
+      ? `in_progress: ${inProgress.map((todo) => `#${todo.id}`).join(", ")}`
+      : "in_progress: none";
+  return `Updated ${changed}. Open: ${open.length} (${inProgressLabel}).`;
+};
 
 // Console Go (DeepSeek) requires top-level `type: "object"` for function parameters.
 // Type.Union of objects yields top-level `anyOf` without `type`, which fails strict validation
@@ -35,6 +93,7 @@ const todoParamsSchema = Type.Object(
       Type.Literal("clear"),
     ]),
     items: Type.Optional(Type.Array(todoInputSchema)),
+    updates: Type.Optional(Type.Array(todoPatchSchema)),
     text: Type.Optional(Type.String({ minLength: 1 })),
     id: Type.Optional(Type.Number()),
     status: Type.Optional(todoStatusSchema),
@@ -86,12 +145,14 @@ export const registerTodoTool = (
         `${phaseName} phase before implementation.`,
       'Use action "set" to replace the TODO list, or action "add" to append ' +
         'one TODO. Do not use action "create"; it is not supported.',
-      `For action "update", pass only id plus the fields to patch; do not pass ` +
-        'items. Use action "set" when replacing the whole list.',
+      `For action "update", pass id plus the fields to patch, or updates: ` +
+        `[{id, status}] to change several items in one call. Do not send one ` +
+        `update per item; keep the list itself on "set".`,
       todoDisciplineGuidance(name),
     ],
     parameters: todoParamsSchema,
     async execute(_toolCallId, params: TodoParams, _signal, _onUpdate, ctx) {
+      let updatedPatches: readonly TodoPatchInput[] | undefined;
       switch (params.action) {
         case "set": {
           const items = params.items ?? [];
@@ -112,20 +173,50 @@ export const registerTodoTool = (
             controller.getPlanPathForNewRun(),
           );
           break;
-        case "update":
-          if (params.id === undefined) {
-            return todoToolError("Error: id is required for update.");
+        case "update": {
+          if (params.id !== undefined && params.updates !== undefined) {
+            return todoToolError(
+              "Error: pass either id or updates for update, not both.",
+            );
           }
-          if (
-            !controller.state.updateTodo(params.id, {
-              ...(params.text?.trim() ? { text: params.text } : {}),
-              ...(params.status !== undefined ? { status: params.status } : {}),
-              ...(params.notes !== undefined ? { notes: params.notes } : {}),
-            })
-          ) {
-            return todoToolError(`Error: TODO #${params.id} not found.`);
+          const patches: TodoPatchInput[] =
+            params.updates ??
+            (params.id === undefined
+              ? []
+              : [
+                  {
+                    id: params.id,
+                    ...(params.text?.trim() ? { text: params.text } : {}),
+                    ...(params.status !== undefined
+                      ? { status: params.status }
+                      : {}),
+                    ...(params.notes !== undefined
+                      ? { notes: params.notes }
+                      : {}),
+                  },
+                ]);
+          if (patches.length === 0) {
+            return todoToolError(
+              "Error: id or updates is required for update.",
+            );
           }
+          const plan = planTodoPatchApplication(
+            controller.state.todos.map((todo) => todo.id),
+            patches,
+          );
+          if (plan.kind === "missing") {
+            return todoToolError(`Error: TODO #${plan.id} not found.`);
+          }
+          for (const patch of plan.patches) {
+            controller.state.updateTodo(patch.id, {
+              ...(patch.text?.trim() ? { text: patch.text } : {}),
+              ...(patch.status !== undefined ? { status: patch.status } : {}),
+              ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
+            });
+          }
+          updatedPatches = plan.patches;
           break;
+        }
         case "remove":
           if (params.id === undefined) {
             return todoToolError("Error: id is required for remove.");
@@ -146,7 +237,13 @@ export const registerTodoTool = (
         content: [
           {
             type: "text",
-            text: formatTodoResult(controller.state, displayName),
+            text:
+              updatedPatches === undefined
+                ? formatTodoResult(controller.state, displayName)
+                : formatTodoUpdateSummary(
+                    updatedPatches,
+                    controller.state.todos,
+                  ),
           },
         ],
         details: {

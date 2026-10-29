@@ -44,6 +44,7 @@ import {
   PLAN_INSPECTION_TOOL_SLASH_LIST,
   PLAN_MODE_TOOL_NAMES,
   PLAN_REVIEW_ARTIFACT_GUIDANCE,
+  PLAN_SUBMIT_CHECKLIST,
   PLANNOTATOR_SUBMIT_TOOL_NAME,
   REVIEW_ARTIFACT_LOCATION,
   REVIEW_ARTIFACT_WRITE_HINT,
@@ -431,6 +432,15 @@ export class PlanModeController {
 
     if (effectivePhase === "plan") {
       lines.push(...PLAN_REVIEW_ARTIFACT_GUIDANCE);
+    }
+
+    if (effectivePhase === "act") {
+      // The artifact policy enforces the same content forms on an act-mode
+      // submit, so act mode states the contract before the write instead of
+      // bouncing the submission with a format-fix round-trip. Only the
+      // checklist goes in: the plan-phase design guidance above it is
+      // methodology, and every act turn would pay for it.
+      lines.push(...PLAN_SUBMIT_CHECKLIST);
     }
 
     if (effectivePhase === "act" || this.state.mode === "act") {

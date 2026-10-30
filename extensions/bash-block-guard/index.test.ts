@@ -193,6 +193,38 @@ describe("decideBashGuard: long timeout", () => {
     expect(decision.reason).toContain("900");
     expect(decision.reason).toContain("PI_BASH_GUARD_MAX_SECONDS");
   });
+
+  it("writes the caller's own command into the background rewrite", () => {
+    const decision = decide({
+      command: "npx vitest run extensions/plan-mode",
+      timeoutSeconds: 1800,
+    });
+
+    if (decision.action !== "block") {
+      throw new Error("expected a block");
+    }
+    // 实录：11 次拦截里 agent 都要自己把 <cmd> / <slug> 填出来，多花一轮。
+    expect(decision.reason).toContain(
+      "npx vitest run extensions/plan-mode > /tmp/",
+    );
+    expect(decision.reason).toContain("2>&1 &");
+    expect(decision.reason).toContain("vitest-run");
+    expect(decision.reason).not.toContain("<cmd>");
+  });
+
+  it("turns a sleep loop into one concrete query", () => {
+    const decision = decide({
+      command:
+        "for i in 1 2 3; do glab ci status --branch main | head -5; sleep 30; done",
+    });
+
+    if (decision.action !== "block") {
+      throw new Error("expected a block");
+    }
+    expect(decision.reason).toContain(
+      "timeout 30 glab ci status --branch main | head -5",
+    );
+  });
 });
 
 // ── limits ───────────────────────────────────────────────────

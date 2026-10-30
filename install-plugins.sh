@@ -162,6 +162,33 @@ remove_stale_shape_symlink() {
     echo -e "${YELLOW}−${NC} Removed abandoned symlink: $(basename "$stale_path") => $(dirname "$stale_path")"
 }
 
+# Drop symlinks whose plugin no longer exists in the source tree. The install
+# loop only walks existing `extensions/*/` entries, so a plugin removed from the
+# repo leaves a dangling link behind that nothing would ever revisit. Only links
+# pointing into a plugin source are touched; a broken link to anywhere else is
+# left alone.
+prune_broken_plugin_symlinks() {
+    local target_dir="$1"
+
+    [ -d "$target_dir" ] || return 0
+
+    local link link_target resolved
+    for link in "$target_dir"/*; do
+        [ -L "$link" ] || continue
+        [ -e "$link" ] && continue
+
+        link_target="$(readlink "$link")"
+        resolved="$(cd "$(dirname "$link")" 2>/dev/null && realpath "$link_target" 2>/dev/null || true)"
+        case "$link_target $resolved" in
+            "$EXTENSIONS_DIR"/*|"$LIBRARY_DIR"/*|*" $EXTENSIONS_DIR"/*|*" $LIBRARY_DIR"/*)
+                rm -f "$link"
+                mark_removed_item "$(basename "$link") => $target_dir"
+                echo -e "${YELLOW}−${NC} Removed broken symlink: $(basename "$link") => $link_target"
+                ;;
+        esac
+    done
+}
+
 install_shared_symlink() {
     local target_dir="$1"
     local item_name="shared => $target_dir"
@@ -371,6 +398,7 @@ echo ""
 
 if [ "$SCOPE" = "library" ]; then
     install_plugin_sources "$LIBRARY_DIR"
+    prune_broken_plugin_symlinks "$LIBRARY_DIR"
     echo ""
     echo "Bootstrapping global extensions..."
     install_symlink "$EXTENSIONS_DIR/plugin-toggle" "plugin-toggle" "$GLOBAL_EXTENSION_DIR"
@@ -385,10 +413,12 @@ if [ "$SCOPE" = "library" ]; then
     migrate_old_global_autoload
 elif [ "$SCOPE" = "project" ]; then
     install_plugin_sources "$TARGET_DIR"
+    prune_broken_plugin_symlinks "$TARGET_DIR"
     install_shared_symlink "$PWD/.pi"
     install_shared_symlink "$TARGET_DIR"
 else
     install_plugin_sources "$TARGET_DIR"
+    prune_broken_plugin_symlinks "$TARGET_DIR"
     install_shared_symlink "$HOME/.pi/agent"
     install_shared_symlink "$TARGET_DIR"
 fi

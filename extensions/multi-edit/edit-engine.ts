@@ -67,6 +67,7 @@ export type PatchOperation =
 export interface PatchOpResult {
   path: string;
   message: string;
+  success: boolean;
   diff?: string;
   firstChangedLine?: number;
 }
@@ -123,37 +124,36 @@ export function getEditModeForRender(
   return "none";
 }
 
-export function formatResults(
-  results: EditResult[],
-  totalEdits: number,
-  mode: "preflight" | "apply" = "apply",
-): string {
-  const lines: string[] = [];
+export type EditResultsReport = {
+  text: string;
+  isError: boolean;
+};
 
-  for (let i = 0; i < results.length; i++) {
-    const r = results[i];
-    if (mode === "preflight" && r.success) {
-      // Preflight runs on a virtual workspace: a passing edit was simulated
-      // only, never written. Report it with ⊘ (not done) instead of the
-      // "✓ ... Edited" wording used for real writes, so the batch-abort
-      // report can never be read as "applied then reverted".
-      lines.push(
-        `⊘ Edit ${i + 1}/${totalEdits} (${r.path}): preflight OK — not applied (batch aborted).`,
-      );
-      continue;
-    }
-    const status = r.success ? "✓" : "✗";
-    lines.push(
-      `${status} Edit ${i + 1}/${totalEdits} (${r.path}): ${r.message}`,
-    );
+/**
+ * What the model reads after a batch. Batch edits are not atomic: every edit
+ * that matched was written, so the report names each one's outcome and the
+ * whole call is an error when any of them did not land.
+ */
+export function formatEditResults(results: EditResult[]): EditResultsReport {
+  if (results.length === 1) {
+    const only = results[0];
+    return { text: only.message, isError: !only.success };
   }
 
-  const remaining = totalEdits - results.length;
-  if (remaining > 0) {
-    lines.push(`⊘ ${remaining} remaining edit(s) skipped due to error.`);
-  }
+  const failed = results.filter((result) => !result.success).length;
+  const headline =
+    failed === 0
+      ? `Applied ${results.length} edit(s) successfully.`
+      : `Applied ${results.length - failed} of ${results.length} edit(s).`;
+  // Markers only earn their space when the batch is mixed: on an all-green
+  // batch the headline already says everything landed.
+  const lines = results.map((result, index) =>
+    failed === 0
+      ? `${index + 1}. ${result.message}`
+      : `${index + 1}. ${result.success ? "✓" : "✗"} ${result.message}`,
+  );
 
-  return lines.join("\n");
+  return { text: `${headline}\n${lines.join("\n")}`, isError: failed > 0 };
 }
 
 export function generateDiffString(

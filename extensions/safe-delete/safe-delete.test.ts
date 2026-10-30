@@ -313,4 +313,72 @@ describe("safe-delete MCP calls", () => {
     expect(ctx.ui.confirm).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
   });
+
+  it("does not read prose inside a heredoc as a deletion", async () => {
+    // 实录（2026-10-27 07:58:03）：agent 往测试文件里追加用例，正文明写了
+    // 「重定向 / tee / sed -i / rm / mv」这句测试标题，被读成 `rm /`。
+    const handlers = new Map<
+      string,
+      (event: unknown, ctx: unknown) => unknown
+    >();
+    const events = { emit: vi.fn(), on: vi.fn() };
+    const safeDelete = await loadSafeDelete();
+    safeDelete({
+      on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+        handlers.set(name, handler);
+      },
+      events,
+    } as unknown as ExtensionAPI);
+
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: { confirm: vi.fn(async () => true) },
+      sessionManager: { getEntries: () => [] },
+    };
+
+    const heredoc = [
+      "cat >> notes-core.test.ts <<'EOF'",
+      "",
+      'it("重定向 / tee / sed -i / rm / mv 指到章节文件：拦", () => {',
+      '  expect(find("rm 06-控制面.md")).toBe("06-控制面.md");',
+      "});",
+      "EOF",
+      "",
+    ].join("\n");
+
+    const heredocResult = await handlers.get("tool_call")?.(
+      { toolName: "bash", input: { command: heredoc } },
+      ctx,
+    );
+    expect(heredocResult).toBeUndefined();
+
+    const quotedProse = await handlers.get("tool_call")?.(
+      {
+        toolName: "bash",
+        input: {
+          command: 'echo "重定向 / tee / sed -i / rm / mv 指到章节文件"',
+        },
+      },
+      ctx,
+    );
+    expect(quotedProse).toBeUndefined();
+
+    expect(ctx.ui.confirm).not.toHaveBeenCalled();
+
+    // The detector still fires on a real deletion command.
+    const deleteCtx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: { confirm: vi.fn(async () => false) },
+      sessionManager: { getEntries: () => [] },
+    };
+    const blocked = (await handlers.get("tool_call")?.(
+      { toolName: "bash", input: { command: "rm -rf /" } },
+      deleteCtx,
+    )) as { block?: boolean; reason?: string } | undefined;
+
+    expect(blocked?.block).toBe(true);
+    expect(blocked?.reason ?? "").toContain("Deletion targets protected path");
+  });
 });

@@ -500,6 +500,8 @@ export type ReviewStateTransition = {
 type ReviewToolResult = {
   content: Array<{ type: "text"; text: string }>;
   details: Record<string, unknown>;
+  /** Set on failures so pi reports an error result, not a successful one. */
+  isError?: boolean;
 };
 
 const SETTLED_STATE_BY_OUTCOME: Record<ReviewOutcome, ReviewSettledState> = {
@@ -903,6 +905,7 @@ const runPlannotatorHtmlReviewFlow = async (
     return {
       content: [{ type: "text", text: cliResult.error }],
       details: { status: "error" },
+      isError: true,
     };
   }
   if (cliResult.status === "aborted") {
@@ -1009,6 +1012,7 @@ export const registerPlanReviewSubmitTool = (
               },
             ],
             details: { status: "error" },
+            isError: true,
           };
         }
 
@@ -1024,6 +1028,7 @@ export const registerPlanReviewSubmitTool = (
             },
           ],
           details: { status: "error" },
+          isError: true,
         };
       }
 
@@ -1036,6 +1041,7 @@ export const registerPlanReviewSubmitTool = (
             },
           ],
           details: { status: "error" },
+          isError: true,
         };
       }
 
@@ -1079,6 +1085,7 @@ export const registerPlanReviewSubmitTool = (
             },
           ],
           details: { status: "error" },
+          isError: true,
         };
       }
 
@@ -1095,6 +1102,7 @@ export const registerPlanReviewSubmitTool = (
             },
           ],
           details: { status: "error", reason: "artifact-policy" },
+          isError: true,
         };
       }
 
@@ -1114,6 +1122,7 @@ export const registerPlanReviewSubmitTool = (
             },
           ],
           details: { status: "error", reason: "mermaid-validation" },
+          isError: true,
         };
       }
 
@@ -1145,6 +1154,7 @@ export const registerPlanReviewSubmitTool = (
               },
             ],
             details: { status: "error" },
+            isError: true,
           };
         }
         if (cliResult.status === "aborted") {

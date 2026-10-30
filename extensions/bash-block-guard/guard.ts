@@ -6,6 +6,8 @@
  * limits from the environment, and turns the decision into a tool_call result.
  */
 
+import { stripHeredocBodies } from "../shared/shell-text.ts";
+
 export type BashCall = {
   command: string;
   timeoutSeconds?: number;
@@ -38,7 +40,6 @@ const FOR_LOOP = /\bfor\b[\s\S]*?\bdo\b/;
 const WHILE_OR_UNTIL = /\b(?:while|until)\b/;
 /** `sleep 30`, `sleep 1m`. A bare `sleep` with no amount is not a real call. */
 const SLEEP_WITH_AMOUNT = /\bsleep\s+(\d+(?:\.\d+)?)([smhd]?)\b/g;
-const HEREDOC_START = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/;
 const COMMENT_START_BEFORE = /[\s;|&(]/;
 
 const UNIT_SECONDS: Record<string, number> = {
@@ -47,32 +48,6 @@ const UNIT_SECONDS: Record<string, number> = {
   m: 60,
   h: 3600,
   d: 86400,
-};
-
-/**
- * Drops heredoc bodies. A script written by `cat > f <<'EOF'` mentions sleep
- * without any of it running, so the body is not part of what this call does.
- */
-const stripHeredocs = (command: string): string => {
-  const lines = command.split("\n");
-  const kept: string[] = [];
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    kept.push(line);
-    const start = HEREDOC_START.exec(line);
-    if (!start) {
-      continue;
-    }
-    const delimiter = start[2] ?? "";
-    let end = index + 1;
-    while (end < lines.length && (lines[end] ?? "").trim() !== delimiter) {
-      end += 1;
-    }
-    index = end;
-  }
-
-  return kept.join("\n");
 };
 
 /**
@@ -140,12 +115,73 @@ const sleepSeconds = (command: string): number[] =>
  * the replacement move. Examples stay labelled as examples, because the same
  * text fires for any repository and any command.
  */
-const sleepLoopReason = (seconds: number | undefined): string => {
+/** Commands worth rerunning in the background: the first line that is not a bare wait. */
+const rerunnableCommand = (command: string): string | undefined => {
+  const line = command
+    .split("\n")
+    .map((candidate) => candidate.trim())
+    .find((candidate) => candidate !== "" && !/^sleep\b/.test(candidate));
+  if (line === undefined) return undefined;
+  return line.length > 120 ? `${line.slice(0, 117)}...` : line;
+};
+
+const RUNNER_WORDS = new Set([
+  "npx",
+  "pnpm",
+  "yarn",
+  "npm",
+  "bun",
+  "make",
+  "time",
+  "sudo",
+  "env",
+  "timeout",
+  "bash",
+  "sh",
+]);
+
+/** `/tmp/<slug>.log` name for the background rewrite. */
+const backgroundSlug = (command: string): string => {
+  const words = (command.match(/[A-Za-z0-9]+/g) ?? []).filter(
+    (word) => !RUNNER_WORDS.has(word.toLowerCase()),
+  );
+  const slug = words.slice(0, 2).join("-").toLowerCase();
+  return slug === "" ? "pi-bg" : slug;
+};
+
+/**
+ * The query a sleep loop repeats, so the rewrite can name it. Segments that
+ * only set the loop up or wait are not queries.
+ */
+const commandInsideLoop = (command: string): string | undefined => {
+  const segments = command
+    .split(/[;\n]/)
+    .map((segment) => segment.trim().replace(/^(?:do|then|else)\s+/, ""))
+    .filter(
+      (segment) =>
+        segment !== "" &&
+        !/^(?:for|while|until|sleep|do|then|else|done|fi)\b/.test(segment),
+    );
+  return segments[0];
+};
+
+const sleepLoopReason = (
+  seconds: number | undefined,
+  command: string,
+): string => {
   const longest =
     seconds === undefined ? [] : [`这次循环里最长的一次等待是 ${seconds} 秒。`];
+  const query = commandInsideLoop(command);
+  const concrete =
+    query === undefined || seconds === undefined
+      ? []
+      : [
+          `改法（具体到你这条命令）：把整轮循环换成 timeout ${seconds} ${query}。`,
+        ];
   return [
     "拦住原因：命令里有 for / while / until 加 sleep，整轮没有任何进度输出。",
     ...longest,
+    ...concrete,
     "替代写法，按优先级：",
     "1. 先单次查询一次当前状态，拿到结果就结束这一轮。",
     "2. 还需要等，就把等待交还给用户，说明下次什么时候再看。",
@@ -164,14 +200,27 @@ const sleepReason = (seconds: number): string =>
     "示例（示意）：timeout 90 glab ci status --branch <branch> | head -5。",
   ].join("\n");
 
-const longTimeoutReason = (asked: number, limit: number): string =>
-  [
+const longTimeoutReason = (
+  asked: number,
+  limit: number,
+  command: string,
+): string => {
+  const rerunnable = rerunnableCommand(command);
+  const background =
+    rerunnable === undefined
+      ? []
+      : [
+          "1. 把这条命令改成后台加日志，然后单次 read 或 grep 检查：",
+          `   ${rerunnable} > /tmp/${backgroundSlug(command)}.log 2>&1 &`,
+        ];
+  return [
     `拦住原因：这次调用要求 pi 等 ${asked} 秒，上限 ${limit} 秒，期间没有中途输出。`,
     "替代写法：",
-    "1. 长命令走后台加日志：<cmd> > /tmp/<slug>.log 2>&1 & ，然后单次 read 或 grep 检查。",
-    "2. 或拆成几条更小的调用，每条都自带输出。",
-    `3. 真要突破上限，显式设 PI_BASH_GUARD_MAX_SECONDS=<秒数>，当前上限 ${limit}。`,
+    ...background,
+    `${background.length === 0 ? "1" : "2"}. 或拆成几条更小的调用，每条都自带输出。`,
+    `${background.length === 0 ? "2" : "3"}. 真要突破上限，显式设 PI_BASH_GUARD_MAX_SECONDS=<秒数>，当前上限 ${limit}。`,
   ].join("\n");
+};
 
 export const decideBashGuard = (
   call: BashCall,
@@ -181,7 +230,7 @@ export const decideBashGuard = (
     return ALLOW;
   }
 
-  const scanned = stripQuotedAndComments(stripHeredocs(call.command));
+  const scanned = stripQuotedAndComments(stripHeredocBodies(call.command));
   const sleeps = sleepSeconds(scanned);
   const longestSleep = sleeps.length > 0 ? Math.max(...sleeps) : undefined;
 
@@ -189,7 +238,7 @@ export const decideBashGuard = (
     return {
       action: "block",
       rule: "sleep-loop",
-      reason: sleepLoopReason(longestSleep),
+      reason: sleepLoopReason(longestSleep, call.command),
     };
   }
 
@@ -208,7 +257,11 @@ export const decideBashGuard = (
     return {
       action: "block",
       rule: "long-timeout",
-      reason: longTimeoutReason(call.timeoutSeconds, limits.maxSeconds),
+      reason: longTimeoutReason(
+        call.timeoutSeconds,
+        limits.maxSeconds,
+        call.command,
+      ),
     };
   }
 

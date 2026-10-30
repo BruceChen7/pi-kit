@@ -176,9 +176,11 @@ describe("submit review tool", () => {
       )) as {
         content?: Array<{ text?: string }>;
         details?: { status?: string };
+        isError?: boolean;
       };
 
       expect(result.details?.status).toBe("error");
+      expect(result.isError).toBe(true);
       const text = result.content?.[0]?.text ?? "";
       expect(text).toContain("no pending Plannotator review draft");
       expect(text).toContain("Ctrl+Alt+L");
@@ -222,12 +224,14 @@ describe("submit review tool", () => {
       )) as {
         content?: Array<{ type?: string; text?: string }>;
         details?: { status?: string };
+        isError?: boolean;
       };
       const gateResult = (await emit("before_agent_start", {}, ctx)) as {
         message?: { content?: string };
       };
 
       expect(result.details?.status).toBe("error");
+      expect(result.isError).toBe(true);
       expect(result.content?.[0]?.text ?? "").toContain(
         "Plan Mode artifact policy blocked review submission",
       );

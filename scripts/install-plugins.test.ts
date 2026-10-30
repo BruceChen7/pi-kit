@@ -163,6 +163,38 @@ describe("install-plugins.sh", () => {
     expect(output).toContain("Removed abandoned symlink: notify.ts");
   });
 
+  it("removes a symlink whose plugin disappeared from the repo", () => {
+    const home = createTempDir();
+    const fixture = createTempDir();
+    const extensionsDir = path.join(fixture, "extensions");
+    createPluginDir(extensionsDir, "notify");
+
+    runInstall(home, [], { PI_KIT_EXTENSIONS_DIR: extensionsDir });
+
+    const libraryDir = path.join(home, ".agents", "pi-plugins");
+    const link = path.join(libraryDir, "notify");
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+
+    // The plugin is dropped from the repo. The install loop only walks
+    // `extensions/*/`, so nothing revisits this link: it dangles forever
+    // (17 of them on the author's machine on 2026-10-30).
+    fs.rmSync(path.join(extensionsDir, "notify"), {
+      force: true,
+      recursive: true,
+    });
+    const foreignBroken = path.join(libraryDir, "keep-me");
+    fs.symlinkSync("/nonexistent/elsewhere", foreignBroken);
+
+    const output = runInstall(home, [], {
+      PI_KIT_EXTENSIONS_DIR: extensionsDir,
+    });
+
+    expect(() => fs.readlinkSync(link)).toThrow();
+    expect(output).toContain("Removed broken symlink: notify");
+    // A broken link that does not point into the plugin source stays put.
+    expect(fs.readlinkSync(foreignBroken)).toBe("/nonexistent/elsewhere");
+  });
+
   it("removes the abandoned directory symlink when a plugin becomes a single file", () => {
     const home = createTempDir();
     const fixture = createTempDir();

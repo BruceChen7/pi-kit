@@ -21,6 +21,7 @@ type RegisteredTool = {
   ) => Promise<{
     content: Array<{ text: string }>;
     details?: Record<string, unknown>;
+    isError?: boolean;
   }>;
 };
 
@@ -139,7 +140,7 @@ describe("multi-edit tool", () => {
     );
   });
 
-  it("applies multi edits across files after a successful preflight", async () => {
+  it("applies multi edits across files", async () => {
     const cwd = await createTempDir();
     await writeFile(join(cwd, "a.txt"), "alpha one\n", "utf8");
     await writeFile(join(cwd, "b.txt"), "beta two\n", "utf8");
@@ -302,27 +303,50 @@ describe("multi-edit tool", () => {
     expect(await readFile(join(cwd, "note.txt"), "utf8")).toBe("1\n2\n");
   });
 
-  it("does not mutate real files when preflight fails", async () => {
+  it("applies the edits that match and reports the ones that do not", async () => {
+    // 用户改动（2026-10-30）：去掉原子性。能改的先落地，改不动的报出来。
     const cwd = await createTempDir();
     await writeFile(join(cwd, "a.txt"), "old\n", "utf8");
 
-    await expect(
-      executeEdit(registerToolForTest(), cwd, {
-        multi: [
-          { path: "a.txt", oldText: "old", newText: "new" },
-          { path: "a.txt", oldText: "missing", newText: "x" },
-        ],
-      }),
-    ).rejects.toThrow("Preflight failed before mutating files");
+    const result = await executeEdit(registerToolForTest(), cwd, {
+      multi: [
+        { path: "a.txt", oldText: "old", newText: "new" },
+        { path: "a.txt", oldText: "missing", newText: "x" },
+      ],
+    });
 
-    expect(await readFile(join(cwd, "a.txt"), "utf8")).toBe("old\n");
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("Applied 1 of 2 edit(s)");
+    expect(text).toContain("Edited a.txt");
+    expect(text).toContain("Could not find the exact text");
+    expect(await readFile(join(cwd, "a.txt"), "utf8")).toBe("new\n");
   });
 
-  it("does not report unapplied edits as 'Edited' when preflight fails", async () => {
-    // Regression: the preflight failure report used to print
-    // "✓ Edit N/M (...): Edited ..." for edits that only passed the virtual
-    // simulation, implying they were written. The model then saw the file
-    // unchanged and concluded the batch had been "silently reverted".
+  it("keeps applying later files after one file's edit does not match", async () => {
+    const cwd = await createTempDir();
+    await writeFile(join(cwd, "a.txt"), "one\n", "utf8");
+    await writeFile(join(cwd, "b.txt"), "two\n", "utf8");
+    await writeFile(join(cwd, "c.txt"), "three\n", "utf8");
+
+    const result = await executeEdit(registerToolForTest(), cwd, {
+      multi: [
+        { path: "a.txt", oldText: "one", newText: "1" },
+        { path: "b.txt", oldText: "stale", newText: "2" },
+        { path: "c.txt", oldText: "three", newText: "3" },
+      ],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(await readFile(join(cwd, "a.txt"), "utf8")).toBe("1\n");
+    expect(await readFile(join(cwd, "b.txt"), "utf8")).toBe("two\n");
+    expect(await readFile(join(cwd, "c.txt"), "utf8")).toBe("3\n");
+  });
+
+  it("reports each edit truthfully when one of them fails", async () => {
+    // Regression: the preflight-failure report used to print "✓ ... Edited" for
+    // edits that were only simulated, then abort the batch. Now that matching
+    // edits really land, every line has to say what actually happened.
     const cwd = await createTempDir();
     await writeFile(
       join(cwd, "plan.md"),
@@ -330,31 +354,42 @@ describe("multi-edit tool", () => {
       "utf8",
     );
 
-    let error: Error | undefined;
-    try {
-      await executeEdit(registerToolForTest(), cwd, {
-        multi: [
-          { path: "plan.md", oldText: "line one", newText: "ONE" },
-          { path: "plan.md", oldText: "missing line", newText: "X" },
-        ],
-      });
-    } catch (err) {
-      error = err as Error;
-    }
+    const result = await executeEdit(registerToolForTest(), cwd, {
+      multi: [
+        { path: "plan.md", oldText: "line one", newText: "ONE" },
+        { path: "plan.md", oldText: "missing line", newText: "X" },
+      ],
+    });
 
-    expect(error).toBeDefined();
-    const message = error?.message ?? "";
-    expect(message).toContain("Preflight failed before mutating files");
-    // The preflight-passing edit was simulated only — never written. It must
-    // not carry the "✓ ... Edited" wording of a real write.
-    expect(message).not.toMatch(/✓ Edit \d+\/\d+ .*: Edited/);
-    // ... and must be explicitly marked as not applied.
-    expect(message).toContain("not applied");
-    // The failing edit still reports the reason.
-    expect(message).toContain("Could not find the exact text");
-    // Nothing was written.
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/✓ Edited plan\.md/);
+    expect(text).toMatch(/✗ Could not find the exact text/);
     expect(await readFile(join(cwd, "plan.md"), "utf8")).toBe(
-      "line one\nline two\nline three\n",
+      "ONE\nline two\nline three\n",
     );
+  });
+
+  it("applies the patch operations that land and reports the rest", async () => {
+    const cwd = await createTempDir();
+    await writeFile(join(cwd, "note.txt"), "one\ntwo\n", "utf8");
+
+    const result = await executeEdit(registerToolForTest(), cwd, {
+      patch: `*** Begin Patch
+*** Update File: note.txt
+-one
++1
+*** Delete File: missing.txt
+*** Update File: note.txt
+-two
++2
+*** End Patch`,
+    });
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("Updated note.txt");
+    expect(text).toContain("missing.txt");
+    expect(await readFile(join(cwd, "note.txt"), "utf8")).toBe("1\n2\n");
   });
 });

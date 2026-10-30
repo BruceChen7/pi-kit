@@ -12,6 +12,7 @@ import {
 type ToolResult = {
   content: Array<{ text: string }>;
   details?: { todos?: Array<{ id: number; status: string; text: string }> };
+  isError?: boolean;
 };
 
 const callTodo = async (
@@ -155,8 +156,22 @@ describe("act_mode_todo: batch update", () => {
     });
 
     expect(result.content[0]?.text).toContain("TODO #9 not found");
+    expect(result.isError).toBe(true);
     const after = await callTodo(harness, ctx, { action: "list" });
     expect(statuses(after)).toEqual(["1:todo", "2:todo", "3:todo"]);
+  });
+
+  it("marks a rejected call as an error result, not a success", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+    await seed(harness, ctx);
+
+    const missingText = await callTodo(harness, ctx, { action: "add" });
+    expect(missingText.content[0]?.text).toContain("text is required");
+    expect(missingText.isError).toBe(true);
+
+    const missingId = await callTodo(harness, ctx, { action: "update" });
+    expect(missingId.content[0]?.text).toContain("id or updates is required");
+    expect(missingId.isError).toBe(true);
   });
 
   it("still accepts a single id and keeps an empty text from erasing it", async () => {

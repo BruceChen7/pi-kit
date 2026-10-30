@@ -33,6 +33,7 @@ import {
   SAFE_DELETE_APPROVAL_CHANNEL,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
+import { stripHeredocBodies } from "../shared/shell-text.ts";
 
 // --- Configuration ---
 
@@ -276,8 +277,10 @@ function detectRmThreats({
 }): Threat[] {
   const threats: Threat[] = [];
 
-  // Match rm/rmdir with various flag patterns
-  const rmPattern = /\b(rm|rmdir)\s+((?:-[a-zA-Z]+\s+)*)(.*)/;
+  // `rm` only counts where a command can start: not in prose after `echo "…`
+  // and not inside a quoted argument.
+  const rmPattern =
+    /(?:^|[;&|()\n]|\$\()\s*(rm|rmdir)\s+((?:-[a-zA-Z]+\s+)*)(.*)/;
   const match = command.match(rmPattern);
   if (!match) return threats;
 
@@ -596,11 +599,15 @@ function analyzeCommand({
 
   log?.debug("analyzing command", { command, cwd });
 
+  // A heredoc body is *written*, not run: prose that mentions `rm` inside
+  // `cat >> f <<'EOF' … EOF` is not a deletion.
+  const scanned = stripHeredocBodies(command);
+
   // Pipe-aware detectors must run on the full command before splitting,
   // since splitCommands breaks on | and the pipe context is lost.
-  allThreats.push(...detectPipedDeletionThreats({ command }));
+  allThreats.push(...detectPipedDeletionThreats({ command: scanned }));
 
-  const subcommands = splitCommands({ command });
+  const subcommands = splitCommands({ command: scanned });
 
   for (const sub of subcommands) {
     const { command: stripped, hasSudo } = stripSudo({ command: sub });

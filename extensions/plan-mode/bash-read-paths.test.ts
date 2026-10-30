@@ -82,4 +82,36 @@ describe("readPathsFromBashCommand", () => {
       readPathsFromBashCommand("cat src/a.ts && tail -n 5 src/a.ts"),
     ).toEqual(["src/a.ts"]);
   });
+
+  it("resolves a for-loop variable to the literals in its header", () => {
+    // 实录（2026-10-30 03:49 会话）：agent 这样读过 review/SKILL.md，
+    // 门禁没登记，随后 edit 被拦。
+    expect(
+      readPathsFromBashCommand(
+        'for f in skills/review/SKILL.md skills/research/SKILL.md; do echo "##### $f"; cat -n "$f"; done',
+      ),
+    ).toEqual(["skills/review/SKILL.md", "skills/research/SKILL.md"]);
+    expect(
+      readPathsFromBashCommand(
+        'for f in prompts/article-read.md prompts/article-buddy.md; do echo "=== $f"; head -c 600 "$f" | cat -A; done',
+      ),
+    ).toEqual(["prompts/article-read.md", "prompts/article-buddy.md"]);
+  });
+
+  it("keeps a loop variable unexpanded when its header is not literals", () => {
+    expect(
+      readPathsFromBashCommand('for f in $(ls); do cat "$f"; done'),
+    ).toEqual([]);
+    expect(readPathsFromBashCommand("for f in *.md; do cat $f; done")).toEqual(
+      [],
+    );
+  });
+
+  it("leaves a cd into a loop variable unresolved", () => {
+    expect(
+      readPathsFromBashCommand(
+        'for d in src lib; do cd "$d" && cat a.ts; done',
+      ),
+    ).toEqual([]);
+  });
 });

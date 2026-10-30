@@ -130,6 +130,9 @@ const formatTodoResult = (
 const todoToolError = (text: string) => ({
   content: [{ type: "text" as const, text }],
   details: undefined,
+  // `isError` is what pi turns into an error tool result; without it the model
+  // reads a rejected call as a success and any count of failures misses it.
+  isError: true,
 });
 
 /**

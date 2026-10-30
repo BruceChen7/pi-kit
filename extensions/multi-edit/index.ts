@@ -47,7 +47,7 @@ import {
   type EditItem,
   type EditResult,
   ensureTrailingNewline,
-  formatResults,
+  formatEditResults,
   generateDiffString,
   getEditModeForRender,
   normalizeEditParams,
@@ -106,7 +106,7 @@ interface Workspace {
   writeText: (absolutePath: string, content: string) => Promise<void>;
   deleteFile: (absolutePath: string) => Promise<void>;
   exists: (absolutePath: string) => Promise<boolean>;
-  /** Check that the file is writable. Rejects if not. No-op on virtual workspaces. */
+  /** Check that the file is writable. Rejects if it is not. */
   checkWriteAccess: (absolutePath: string) => Promise<void>;
 }
 
@@ -129,52 +129,6 @@ function createRealWorkspace(): Workspace {
   };
 }
 
-function createVirtualWorkspace(cwd: string): Workspace {
-  const state = new Map<string, string | null>();
-
-  async function ensureLoaded(absolutePath: string): Promise<void> {
-    if (state.has(absolutePath)) return;
-    try {
-      const content = await fsReadFile(absolutePath, "utf-8");
-      state.set(absolutePath, content);
-    } catch {
-      state.set(absolutePath, null);
-    }
-  }
-
-  return {
-    readText: async (absolutePath) => {
-      await ensureLoaded(absolutePath);
-      const content = state.get(absolutePath);
-      if (content === null || content === undefined) {
-        throw new Error(
-          `File not found: ${absolutePath.replace(`${cwd}/`, "")}`,
-        );
-      }
-      return content;
-    },
-    writeText: async (absolutePath, content) => {
-      state.set(absolutePath, content);
-    },
-    deleteFile: async (absolutePath) => {
-      await ensureLoaded(absolutePath);
-      if (state.get(absolutePath) === null) {
-        throw new Error(
-          `File not found: ${absolutePath.replace(`${cwd}/`, "")}`,
-        );
-      }
-      state.set(absolutePath, null);
-    },
-    exists: async (absolutePath) => {
-      await ensureLoaded(absolutePath);
-      return state.get(absolutePath) !== null;
-    },
-    checkWriteAccess: async () => {
-      // No-op for virtual workspace — permission checks happen on the real pass.
-    },
-  };
-}
-
 async function applyPatchOperations(
   ops: PatchOperation[],
   workspace: Workspace,
@@ -194,72 +148,88 @@ async function applyPatchOperations(
       throw new Error("Operation aborted");
     }
 
-    if (op.kind === "add") {
-      const abs = resolvePatchPath(cwd, op.path);
-      await withFileMutationQueue(abs, async () => {
-        let oldText = "";
-        if (collectDiff && (await workspace.exists(abs))) {
-          oldText = await workspace.readText(abs);
-        }
-        const newText = ensureTrailingNewline(op.contents);
-        await workspace.writeText(abs, newText);
-        const result: PatchOpResult = {
-          path: op.path,
-          message: `Added file ${op.path}.`,
-        };
-        if (collectDiff) {
-          const diffResult = generateDiffString(oldText, newText);
-          result.diff = diffResult.diff;
-          result.firstChangedLine = diffResult.firstChangedLine;
-        }
-        results.push(result);
-      });
-      continue;
-    }
-
-    if (op.kind === "delete") {
-      const abs = resolvePatchPath(cwd, op.path);
-      await withFileMutationQueue(abs, async () => {
-        const exists = await workspace.exists(abs);
-        if (!exists) {
-          throw new Error(`Failed to delete ${op.path}: file does not exist`);
-        }
-        let oldText = "";
-        if (collectDiff) {
-          oldText = await workspace.readText(abs);
-        }
-        await workspace.deleteFile(abs);
-        const result: PatchOpResult = {
-          path: op.path,
-          message: `Deleted file ${op.path}.`,
-        };
-        if (collectDiff) {
-          const diffResult = generateDiffString(oldText, "");
-          result.diff = diffResult.diff;
-          result.firstChangedLine = diffResult.firstChangedLine;
-        }
-        results.push(result);
-      });
-      continue;
-    }
-
-    const sourceAbs = resolvePatchPath(cwd, op.path);
-    await withFileMutationQueue(sourceAbs, async () => {
-      const sourceText = await workspace.readText(sourceAbs);
-      const updated = deriveUpdatedContent(op.path, sourceText, op.chunks);
-
-      await workspace.writeText(sourceAbs, updated);
-      const result: PatchOpResult = {
-        path: op.path,
-        message: `Updated ${op.path}.`,
-      };
-      if (collectDiff) {
-        const diffResult = generateDiffString(sourceText, updated);
-        result.diff = diffResult.diff;
-        result.firstChangedLine = diffResult.firstChangedLine;
+    // One operation failing does not cancel the rest: the patch is reported
+    // operation by operation, and the call is an error if any of them failed.
+    try {
+      if (op.kind === "add") {
+        const abs = resolvePatchPath(cwd, op.path);
+        await withFileMutationQueue(abs, async () => {
+          let oldText = "";
+          if (collectDiff && (await workspace.exists(abs))) {
+            oldText = await workspace.readText(abs);
+          }
+          const newText = ensureTrailingNewline(op.contents);
+          await workspace.writeText(abs, newText);
+          const result: PatchOpResult = {
+            path: op.path,
+            success: true,
+            message: `Added file ${op.path}.`,
+          };
+          if (collectDiff) {
+            const diffResult = generateDiffString(oldText, newText);
+            result.diff = diffResult.diff;
+            result.firstChangedLine = diffResult.firstChangedLine;
+          }
+          results.push(result);
+        });
+        continue;
       }
-      results.push(result);
-    });
+
+      if (op.kind === "delete") {
+        const abs = resolvePatchPath(cwd, op.path);
+        await withFileMutationQueue(abs, async () => {
+          const exists = await workspace.exists(abs);
+          if (!exists) {
+            throw new Error(`Failed to delete ${op.path}: file does not exist`);
+          }
+          let oldText = "";
+          if (collectDiff) {
+            oldText = await workspace.readText(abs);
+          }
+          await workspace.deleteFile(abs);
+          const result: PatchOpResult = {
+            path: op.path,
+            success: true,
+            message: `Deleted file ${op.path}.`,
+          };
+          if (collectDiff) {
+            const diffResult = generateDiffString(oldText, "");
+            result.diff = diffResult.diff;
+            result.firstChangedLine = diffResult.firstChangedLine;
+          }
+          results.push(result);
+        });
+        continue;
+      }
+
+      const sourceAbs = resolvePatchPath(cwd, op.path);
+      await withFileMutationQueue(sourceAbs, async () => {
+        const sourceText = await workspace.readText(sourceAbs);
+        const updated = deriveUpdatedContent(op.path, sourceText, op.chunks);
+
+        await workspace.writeText(sourceAbs, updated);
+        const result: PatchOpResult = {
+          path: op.path,
+          success: true,
+          message: `Updated ${op.path}.`,
+        };
+        if (collectDiff) {
+          const diffResult = generateDiffString(sourceText, updated);
+          result.diff = diffResult.diff;
+          result.firstChangedLine = diffResult.firstChangedLine;
+        }
+        results.push(result);
+      });
+    } catch (error) {
+      if (signal?.aborted) {
+        throw error;
+      }
+      results.push({
+        path: op.path,
+        success: false,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   return results;
@@ -282,11 +252,9 @@ async function applyClassicEdits(
   signal?: AbortSignal,
   options?: {
     collectDiff?: boolean;
-    formatMode?: "preflight" | "apply";
   },
 ): Promise<EditResult[]> {
   const collectDiff = options?.collectDiff ?? false;
-  const formatMode = options?.formatMode ?? "apply";
 
   // Group edits by resolved absolute path, preserving order.
   const fileGroups = new Map<string, { index: number; edit: EditItem }[]>();
@@ -385,12 +353,10 @@ async function applyClassicEdits(
             success: false,
             message: `Could not find the exact text in ${edit.path}. The old text must match exactly including all whitespace and newlines.`,
           };
-          // Fill remaining edits in this group as skipped.
-          const filled = Array.from(
-            { length: edits.length },
-            (_, i) => results[i],
-          ).filter(Boolean);
-          throw new Error(formatResults(filled, edits.length, formatMode));
+          // Keep going: the edits that do match are already written, and the
+          // model is told which ones did not land. Aborting here would throw
+          // away every edit after this one.
+          continue;
         }
 
         content =
@@ -482,7 +448,18 @@ function buildClassicEdits({
 }
 
 function formatPatchResult(applied: PatchOpResult[]) {
-  const summary = applied.map((r, i) => `${i + 1}. ${r.message}`).join("\n");
+  const failed = applied.filter((result) => !result.success).length;
+  const headline =
+    failed === 0
+      ? `Applied patch with ${applied.length} operation(s).`
+      : `Applied ${applied.length - failed} of ${applied.length} patch operation(s).`;
+  const summary = applied
+    .map((r, i) =>
+      failed === 0
+        ? `${i + 1}. ${r.message}`
+        : `${i + 1}. ${r.success ? "✓" : "✗"} ${r.message}`,
+    )
+    .join("\n");
   const combinedDiff = applied
     .filter((r) => r.diff)
     .map((r) => `File: ${r.path}\n${r.diff}`)
@@ -495,13 +472,14 @@ function formatPatchResult(applied: PatchOpResult[]) {
     content: [
       {
         type: "text" as const,
-        text: `Applied patch with ${applied.length} operation(s).\n${summary}`,
+        text: `${headline}\n${summary}`,
       },
     ],
     details: {
       diff: combinedDiff,
       firstChangedLine,
     },
+    isError: failed > 0,
   };
 }
 
@@ -557,6 +535,7 @@ function formatClassicResult(results: EditResult[]) {
         diff: r.diff ?? "",
         firstChangedLine: r.firstChangedLine,
       },
+      isError: !r.success,
     };
   }
 
@@ -567,19 +546,15 @@ function formatClassicResult(results: EditResult[]) {
   const firstChangedLine = results.find(
     (r) => r.firstChangedLine !== undefined,
   )?.firstChangedLine;
-  const summary = results.map((r, i) => `${i + 1}. ${r.message}`).join("\n");
+  const report = formatEditResults(results);
 
   return {
-    content: [
-      {
-        type: "text" as const,
-        text: `Applied ${results.length} edit(s) successfully.\n${summary}`,
-      },
-    ],
+    content: [{ type: "text" as const, text: report.text }],
     details: {
       diff: combinedDiff,
       firstChangedLine,
     },
+    isError: report.isError,
   };
 }
 
@@ -595,6 +570,7 @@ export default function (pi: ExtensionAPI) {
       "Use edit for precise changes (old text must match exactly)",
       "Use the `multi` parameter to apply multiple edits in a single tool call",
       "Use the `patch` parameter for Codex-style multi-file / hunk-based edits",
+      "A batch edit is not atomic: edits that match are applied, and any that do not are reported back as errors",
     ],
     parameters: multiEditSchema,
 
@@ -607,24 +583,6 @@ export default function (pi: ExtensionAPI) {
 
       if (plan.mode === "patch") {
         const ops = parsePatch(plan.patch);
-
-        // Preflight on virtual filesystem before mutating real files.
-        try {
-          await applyPatchOperations(
-            ops,
-            createVirtualWorkspace(ctx.cwd),
-            ctx.cwd,
-            signal,
-            { collectDiff: false },
-          );
-        } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err);
-          throw new Error(
-            `Preflight failed before mutating files.\n${message}`,
-          );
-        }
-
-        // Apply for real.
         const applied = await applyPatchOperations(
           ops,
           createRealWorkspace(),
@@ -637,24 +595,8 @@ export default function (pi: ExtensionAPI) {
 
       const edits = buildClassicEdits(plan);
 
-      // Preflight pass on virtual workspace before mutating real files.
-      // Uses sequential occurrence matching so same-file edits are resolved
-      // in file order (positional ordering). Failures report preflight-mode
-      // results: passing edits are marked "not applied", never "Edited".
-      try {
-        await applyClassicEdits(
-          edits,
-          createVirtualWorkspace(ctx.cwd),
-          ctx.cwd,
-          signal,
-          { collectDiff: false, formatMode: "preflight" },
-        );
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new Error(`Preflight failed before mutating files.\n${message}`);
-      }
-
-      // Apply for real.
+      // Every edit that matches is written; the ones that do not are reported
+      // back instead of aborting the batch (see formatEditResults).
       const results = await applyClassicEdits(
         edits,
         createRealWorkspace(),

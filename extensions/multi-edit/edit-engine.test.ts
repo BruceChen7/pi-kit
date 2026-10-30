@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   deriveUpdatedContent,
-  formatResults,
+  formatEditResults,
   generateDiffString,
   getEditModeForRender,
   normalizeEditParams,
@@ -319,40 +319,43 @@ describe("generateDiffString", () => {
   });
 });
 
-describe("formatResults", () => {
-  it("summarizes mixed success/failure with remaining count", () => {
+describe("formatEditResults", () => {
+  it("lists every edit when the whole batch lands", () => {
     expect(
-      formatResults(
-        [
-          { path: "a.ts", success: true, message: "Edited a.ts." },
-          { path: "b.ts", success: false, message: "Could not find text." },
-        ],
-        3,
-      ),
-    ).toBe(
-      "✓ Edit 1/3 (a.ts): Edited a.ts.\n" +
-        "✗ Edit 2/3 (b.ts): Could not find text.\n" +
-        "⊘ 1 remaining edit(s) skipped due to error.",
-    );
+      formatEditResults([
+        { path: "a.ts", success: true, message: "Edited a.ts." },
+        { path: "b.ts", success: true, message: "Edited b.ts." },
+      ]),
+    ).toEqual({
+      text: "Applied 2 edit(s) successfully.\n1. Edited a.ts.\n2. Edited b.ts.",
+      isError: false,
+    });
   });
 
-  it("marks preflight-passing edits as not applied in preflight mode", () => {
-    // Preflight failures abort the batch before any file is written. Edits
-    // that passed the preflight simulation must not be reported with the
-    // same "✓ ... Edited" wording as real writes — that phrasing made the
-    // model believe edits were applied and then silently reverted.
+  it("still reports what landed when one edit does not match", () => {
+    // 用户改动（2026-10-30）：去掉原子性 —— 能改的先改，改不动的报出来并标错。
     expect(
-      formatResults(
-        [
-          { path: "a.ts", success: true, message: "Edited a.ts." },
-          { path: "b.ts", success: false, message: "Could not find text." },
-        ],
-        2,
-        "preflight",
-      ),
-    ).toBe(
-      "⊘ Edit 1/2 (a.ts): preflight OK — not applied (batch aborted).\n" +
-        "✗ Edit 2/2 (b.ts): Could not find text.",
-    );
+      formatEditResults([
+        { path: "a.ts", success: true, message: "Edited a.ts." },
+        { path: "b.ts", success: false, message: "Could not find text." },
+        { path: "c.ts", success: true, message: "Edited c.ts." },
+      ]),
+    ).toEqual({
+      text:
+        "Applied 2 of 3 edit(s).\n" +
+        "1. ✓ Edited a.ts.\n" +
+        "2. ✗ Could not find text.\n" +
+        "3. ✓ Edited c.ts.",
+      isError: true,
+    });
+  });
+
+  it("keeps a single failure message identical to the old throw", () => {
+    const message =
+      "Could not find the exact text in a.ts. The old text must match exactly including all whitespace and newlines.";
+
+    expect(
+      formatEditResults([{ path: "a.ts", success: false, message }]),
+    ).toEqual({ text: message, isError: true });
   });
 });

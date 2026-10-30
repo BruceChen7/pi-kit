@@ -174,6 +174,50 @@ describe("manual review re-arms the auto review gate", () => {
     }
   });
 
+  it("queues later edits again through the /plannotator-review command", async () => {
+    vi.resetModules();
+    mockPlannotatorSpawnSequence([
+      { status: 0, stdout: cliPlanApprovedStdout },
+      {
+        status: 0,
+        stdout: cliPlanDeniedStdout("Revise the approved plan."),
+      },
+    ]);
+
+    const plannotatorAuto = await importPlannotatorAuto();
+    const { emit, runCommand, runTool, api } = createFakePi();
+    plannotatorAuto(api as never);
+
+    repoRoot = await createTempRepo("plannotator-manual-command-rearm-");
+    const planFileRelative = getPlanFileRelative(repoRoot);
+    const planFilePath = await writeTestFile(
+      repoRoot,
+      planFileRelative,
+      PLAN_DRAFT_CONTENT,
+    );
+    const ctx = createTestContext(repoRoot, {
+      uiCustom: vi.fn().mockResolvedValue(planFilePath),
+    });
+
+    try {
+      await emit("session_start", {}, ctx);
+      await settlePlanThroughAutoReview(emit, runTool, ctx, planFileRelative);
+
+      await runCommand("plannotator-review", "", ctx);
+      expect(api.sendUserMessage).toHaveBeenCalledWith(
+        expect.stringContaining("Revise the approved plan."),
+        { deliverAs: "followUp" },
+      );
+
+      await emitToolWrite(emit, ctx, planFileRelative);
+      expect(await gateMessage(emit, ctx)).toContain(
+        "plannotator_auto_submit_review",
+      );
+    } finally {
+      await emit("session_shutdown", {}, ctx);
+    }
+  });
+
   it("queues later edits again after Ctrl+Alt+L annotate feedback", async () => {
     vi.resetModules();
     mockPlannotatorSpawnSequence([

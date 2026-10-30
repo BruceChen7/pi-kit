@@ -601,7 +601,7 @@ export class PlanModeState {
     this.latestReviewArtifactPath = planPath;
     // Approval is an execution permission, not a content hash lock. Once a
     // plan/spec is approved, later execution notes and checkbox updates should
-    // not force another review; only an explicit user abort does that.
+    // not force another review; interruption alone does not revoke approval.
     if (this.isApprovedReviewArtifactPath(planPath)) {
       return;
     }
@@ -638,21 +638,6 @@ export class PlanModeState {
     delete this.activeRun.approvedAt;
   }
 
-  abortApprovedExecution(planPath: string | null): boolean {
-    if (
-      !planPath ||
-      this.phase !== PLAN_MODE_ACT ||
-      this.activeRun?.status !== PLAN_RUN_STATUS_EXECUTING ||
-      this.activeRun.planPath !== planPath ||
-      !this.isApprovedReviewArtifactPath(planPath)
-    ) {
-      return false;
-    }
-
-    this.clearApprovalForPlanPath(planPath);
-    return true;
-  }
-
   canStartFirstRunForApprovedPlan(): boolean {
     return (
       !this.activeRun &&
@@ -663,10 +648,9 @@ export class PlanModeState {
   }
 
   /**
-   * The plan a brand-new run may inherit. Only a run that is still executing
-   * under a live approval hands its binding on: a draft run (approval withdrawn
-   * by ESC or by an edited artifact) belongs to the task that lost its review,
-   * not to whatever task the user starts next.
+   * The plan a brand-new run may inherit. Only a run still executing under a
+   * live approval hands its binding on; an unapproved or non-executing run
+   * remains attached to its original task.
    */
   getApprovedUnfinishedRunPlanPath(): string | null {
     const run = this.activeRun;

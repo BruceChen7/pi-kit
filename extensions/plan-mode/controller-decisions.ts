@@ -222,8 +222,9 @@ export type TodoReconcileDeliveryInput = {
  * list *predated* the plan; between approval and delivery the world can
  * change, so the premise is re-checked here and the reminder is dropped
  * when it no longer holds: the run completed (or cleared its todos), the
- * approval was withdrawn (e.g. ESC abort) — the message claims the plan is
- * approved — or the list was rewritten after approval, i.e. the agent
+ * approval was cleared by a separate state transition (for example, a rejected
+ * review) — the message claims the plan is approved — or the list was rewritten
+ * after approval, i.e. the agent
  * already reconciled it and its "not created for this plan" claim is false.
  */
 export const decideTodoReconcileDelivery = ({

@@ -561,13 +561,18 @@ export const expectNoApprovedContinuationFollowUp = (
   );
 };
 
-export const expectNoApprovedArtifactChangedFollowUp = (
+export const expectNoReviewApprovalFollowUp = (
   harness: ReturnType<typeof buildHarness>,
 ): void => {
-  expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
-    expect.stringContaining("approved artifact changed"),
-    expect.anything(),
-  );
+  for (const message of [
+    "approved artifact changed",
+    "Plan approval is no longer active.",
+  ]) {
+    expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining(message),
+      expect.anything(),
+    );
+  }
 };
 
 export const actCompletedDemoSummary = `【completed, back to Act】${demoCompletedSummary}`;

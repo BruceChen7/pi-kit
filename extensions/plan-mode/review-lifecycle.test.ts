@@ -12,8 +12,8 @@ import {
   emitApprovedReview,
   emitReviewArtifactWrite,
   emitReviewVerdict,
-  expectNoApprovedArtifactChangedFollowUp,
   expectNoApprovedContinuationFollowUp,
+  expectNoReviewApprovalFollowUp,
   expectToolAllowed,
   expectToolBlocked,
   fs,
@@ -611,34 +611,45 @@ describe("plan-mode extension: review lifecycle", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("requires review again after an approved run is aborted without edits", async () => {
+  it("keeps approval when an approved run is interrupted without edits", async () => {
     await withTempCtx(async (ctx) => {
       writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
       const harness = buildHarness();
       planModeExtension(harness.api as unknown as ExtensionAPI);
       await harness.emit("session_start", {}, ctx);
       await startApprovedDemoRun(harness, ctx);
+      const todosBefore = lastPersistedPlanModeSnapshot(harness).todos;
 
       await emitAbortedAgentEnd(harness, ctx);
 
       expect(ctx.ui.notify).toHaveBeenCalledWith(
-        expect.stringContaining("Execution aborted"),
+        expect.stringContaining(
+          "Execution interrupted. The approved plan remains available.",
+        ),
         "info",
       );
-      expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
-        expect.stringContaining("approved execution was aborted"),
-        { deliverAs: "followUp" },
-      );
+      expectNoReviewApprovalFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
         mode: "act",
-        phase: "plan",
-        activePlanPath: null,
+        phase: "act",
+        activePlanPath: demoPlanPath,
         latestReviewArtifactPath: demoPlanPath,
-        reviewApprovedPlanPaths: [],
+        reviewApprovedPlanPaths: [demoPlanPath],
         activeRun: {
-          status: "draft",
+          status: "executing",
           planPath: demoPlanPath,
         },
+        todos: todosBefore,
+      });
+
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      expectNoReviewApprovalFollowUp(harness);
+      expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
+        phase: "act",
+        activePlanPath: demoPlanPath,
+        reviewApprovedPlanPaths: [demoPlanPath],
+        activeRun: { status: "executing", planPath: demoPlanPath },
       });
     });
   });
@@ -654,7 +665,7 @@ describe("plan-mode extension: review lifecycle", () => {
 
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      expectNoApprovedArtifactChangedFollowUp(harness);
+      expectNoReviewApprovalFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
         mode: "act",
         phase: "act",
@@ -680,7 +691,7 @@ describe("plan-mode extension: review lifecycle", () => {
 
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      expectNoApprovedArtifactChangedFollowUp(harness);
+      expectNoReviewApprovalFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
         mode: "act",
         phase: "act",
@@ -695,7 +706,7 @@ describe("plan-mode extension: review lifecycle", () => {
     });
   });
 
-  it("requires review again after an aborted run even if it rewrites an approved artifact", async () => {
+  it("keeps approval when an approved artifact is written before the run is interrupted", async () => {
     await withTempCtx(async (ctx) => {
       writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
       const harness = buildHarness();
@@ -707,28 +718,24 @@ describe("plan-mode extension: review lifecycle", () => {
       await emitAbortedAgentEnd(harness, ctx);
 
       expect(ctx.ui.notify).toHaveBeenCalledWith(
-        expect.stringContaining("Execution aborted"),
+        expect.stringContaining(
+          "Execution interrupted. The approved plan remains available.",
+        ),
         "info",
       );
-      expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
-        expect.stringContaining("approved execution was aborted"),
-        { deliverAs: "followUp" },
-      );
+      expectNoReviewApprovalFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
         mode: "act",
-        phase: "plan",
-        activePlanPath: null,
+        phase: "act",
+        activePlanPath: demoPlanPath,
         latestReviewArtifactPath: demoPlanPath,
-        reviewApprovedPlanPaths: [],
-        activeRun: {
-          status: "draft",
-          planPath: demoPlanPath,
-        },
+        reviewApprovedPlanPaths: [demoPlanPath],
+        activeRun: { status: "executing", planPath: demoPlanPath },
       });
     });
   });
 
-  it("queues the re-review reminder at most once per unapproved episode", async () => {
+  it("queues the neutral re-review reminder at most once after a real rejection", async () => {
     await withTempCtx(async (ctx) => {
       writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
       const harness = buildHarness();
@@ -736,43 +743,36 @@ describe("plan-mode extension: review lifecycle", () => {
       await harness.emit("session_start", {}, ctx);
       await startApprovedDemoRun(harness, ctx);
 
-      // ESC abort: notify only, no follow-up queued, agent stops.
-      await emitAbortedAgentEnd(harness, ctx);
-      // Clear any setup-phase sendUserMessage calls (currently none —
-      // abort uses notify — but guarded so a future implementation
-      // change doesn't silently inflate the count below).
+      emitReviewVerdict(harness, ctx, { path: demoPlanPath, approved: false });
       harness.api.sendUserMessage.mockClear();
 
-      // Next user turn ends normally: the re-review reminder is queued once.
       await harness.emit("agent_end", { messages: [] }, ctx);
       expect(harness.api.sendUserMessage).toHaveBeenCalledTimes(1);
       expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining("approved artifact changed"),
+        expect.stringContaining("Plan approval is no longer active."),
         { deliverAs: "followUp" },
       );
+      expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
+        expect.stringContaining("approved artifact changed"),
+        expect.anything(),
+      );
 
-      // The continuation turn also ends without re-approval: no second
-      // reminder — the post-run loop must stop instead of self-continuing.
       await harness.emit("agent_end", { messages: [] }, ctx);
       expect(harness.api.sendUserMessage).toHaveBeenCalledTimes(1);
 
-      // After the plan is approved again, a new abort episode may remind
-      // once more.
       await emitApprovedReview(harness, ctx, demoPlanPath);
-      // Clear pre-episode noise so the one allowed re-review message is
-      // the only sendUserMessage in this block.
       harness.api.sendUserMessage.mockClear();
-      await emitAbortedAgentEnd(harness, ctx);
+      emitReviewVerdict(harness, ctx, { path: demoPlanPath, approved: false });
       await harness.emit("agent_end", { messages: [] }, ctx);
       expect(harness.api.sendUserMessage).toHaveBeenCalledTimes(1);
       expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining("approved artifact changed"),
+        expect.stringContaining("Plan approval is no longer active."),
         { deliverAs: "followUp" },
       );
     });
   });
 
-  it("does not require review again after a manual approval following an abort", async () => {
+  it("keeps the approved execution after ESC and a manual approval verdict", async () => {
     await withTempCtx(async (ctx) => {
       writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
       const harness = buildHarness();
@@ -780,11 +780,10 @@ describe("plan-mode extension: review lifecycle", () => {
       await harness.emit("session_start", {}, ctx);
       await startApprovedDemoRun(harness, ctx);
 
-      // ESC abort withdraws the approval; the run stays bound to the plan.
       await emitAbortedAgentEnd(harness, ctx);
       harness.api.sendUserMessage.mockClear();
 
-      // The user re-reviews by hand (picker / annotate-latest) and approves.
+      // A command or shortcut-driven manual review reports through this event.
       emitReviewVerdict(harness, ctx, {
         path: demoPlanPath,
         approved: true,
@@ -792,7 +791,7 @@ describe("plan-mode extension: review lifecycle", () => {
 
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      expectNoApprovedArtifactChangedFollowUp(harness);
+      expectNoReviewApprovalFollowUp(harness);
       expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
         expect.stringContaining("waiting for an approved Plannotator"),
         expect.anything(),
@@ -829,7 +828,7 @@ describe("plan-mode extension: review lifecycle", () => {
         expect.stringContaining("waiting for an approved Plannotator"),
         expect.anything(),
       );
-      expectNoApprovedArtifactChangedFollowUp(harness);
+      expectNoReviewApprovalFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
         phase: "act",
         reviewApprovedPlanPaths: [demoPlanPath],
@@ -862,7 +861,7 @@ describe("plan-mode extension: review lifecycle", () => {
     });
   });
 
-  it("ignores manual verdicts for another artifact", async () => {
+  it("ignores manual verdicts for another artifact after ESC", async () => {
     await withTempCtx(async (ctx) => {
       writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
       const harness = buildHarness();
@@ -877,9 +876,9 @@ describe("plan-mode extension: review lifecycle", () => {
       });
 
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
-        phase: "plan",
-        reviewApprovedPlanPaths: [],
-        activeRun: { status: "draft", planPath: demoPlanPath },
+        phase: "act",
+        reviewApprovedPlanPaths: [demoPlanPath],
+        activeRun: { status: "executing", planPath: demoPlanPath },
       });
     });
   });
@@ -933,7 +932,7 @@ describe("plan-mode extension: review lifecycle", () => {
 
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      expectNoApprovedArtifactChangedFollowUp(harness);
+      expectNoReviewApprovalFollowUp(harness);
       expect(lastPersistedPlanModeSnapshot(harness)).toMatchObject({
         mode: "act",
         phase: "act",
@@ -1157,19 +1156,21 @@ describe("plan-mode extension: review lifecycle", () => {
     });
   });
 
-  it("does not carry a withdrawn plan into the next act-mode task", async () => {
+  it("does not carry an approved plan into a new task after an explicit reset", async () => {
     await withTempCtx(async (ctx) => {
       writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
       const harness = buildHarness();
       planModeExtension(harness.api as unknown as ExtensionAPI);
       await harness.emit("session_start", {}, ctx);
       // Direct act mode is how a real session reaches approval while the
-      // user is already in act: ESC then forces phase back to plan.
+      // user is already in act mode.
       await harness.runCommand("plan-mode", "act", ctx);
       await startApprovedDemoRun(harness, ctx);
       await emitAbortedAgentEnd(harness, ctx);
       harness.api.sendUserMessage.mockClear();
 
+      // ESC preserves the approved task. Explicitly abandon it before a new one.
+      await harness.runCommand("plan-mode", "act", ctx);
       await harness.runTool(
         ACT_MODE_TODO_TOOL,
         {
@@ -1187,7 +1188,7 @@ describe("plan-mode extension: review lifecycle", () => {
 
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      expectNoApprovedArtifactChangedFollowUp(harness);
+      expectNoReviewApprovalFollowUp(harness);
       expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
     });
   });

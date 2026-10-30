@@ -129,10 +129,9 @@ const PLAN_HEADING_REVIEW_GUIDANCE =
   "Keep the plan's first # heading unchanged across denied revisions unless " +
   "the reviewer explicitly asks for a rename; Plannotator uses that heading " +
   "to group version diffs.";
-const APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE =
-  "Plan Mode is waiting for an approved Plannotator plan/spec. The " +
-  "approved artifact changed and must be reviewed again before " +
-  "continuing approved execution.";
+const REVIEW_APPROVAL_REQUIRED_MESSAGE =
+  "Plan approval is no longer active. Review the current plan/spec, make any " +
+  "requested changes, and submit it for review before continuing approved execution.";
 // Todo-reconciliation reminder. Decided at approval time (run not bound to
 // the approved plan, todos unfinished), but delivered only at the next
 // agent_end — the followUp queue drains at turn boundaries, so an
@@ -143,10 +142,6 @@ const APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE =
 // spec→plan approval pair collapses into one reminder.
 const TODO_RECONCILE_AFTER_APPROVAL_MESSAGE =
   "Plan approved. Reconcile the act_mode_todo list with the approved plan: ";
-// APPROVED_EXECUTION_ABORTED_REVIEW_MESSAGE removed - no longer used.
-// The abort path now uses ctx.ui.notify() instead of sendUserMessage()
-// to avoid restarting the agent (which caused an infinite retry loop).
-
 // ── Date helpers ──────────────────────────────────────────────
 
 /** Regular file on disk, so a shell argument that merely looks like a path
@@ -197,8 +192,7 @@ export class PlanModeController {
   //
   // Reset strategy (applied consistently to both markers):
   //   · restore()       — fresh session, no episode in progress.
-  //   · abort-approved  — abort ends the current episode; next normal
-  //                       turn-end may remind once for the new episode.
+  //   · review verdict  — a real rejection starts a new unapproved episode.
   //   · approval        — run recovered; future unapproved episodes may
   //                       remind once.
   //   · policy pass     — artifact fixed; a new failure text queues again.
@@ -728,39 +722,30 @@ export class PlanModeController {
     const latestReviewArtifactApproved =
       this.state.isApprovedReviewArtifactPath(latestArtifactPath);
     if (turnWasAborted(event, ctx)) {
-      if (this.state.abortApprovedExecution(latestArtifactPath)) {
-        // Allow one re-review reminder in the next (non-abort) episode.
-        this.reReviewReminderSentFor = null;
-        // Do NOT sendUserMessage() here. During agent_end the session still
-        // counts as streaming (_isAgentRunActive), so the message is queued
-        // as a follow-up and the post-run loop continues the agent with
-        // agent.continue(). Every following turn-end would hit
-        // approvedExecutionNeedsReReview() and queue another follow-up —
-        // an infinite self-continuation loop (the "keeps retrying after
-        // ESC" bug). Notify via UI instead and let the agent actually stop.
+      const approvedExecution =
+        this.state.getApprovedUnfinishedRunPlanPath() !== null;
+      if (approvedExecution) {
+        // ESC ends this agent run, not the user's approval of its plan.
+        // Notify via UI rather than follow-up so the agent actually stops.
         if (ctx.hasUI) {
           ctx.ui.notify(
-            "Execution aborted. Submit the plan for re-review.",
+            "Execution interrupted. The approved plan remains available.",
             "info",
           );
         }
         this.finishTurn(ctx);
         return;
       }
-      // Aborted turns skip generic plan reminders; still surface this review
-      // gate so the next turn does not appear idle while execution is blocked.
-      // Use notify() for the same reason — a queued follow-up would keep
-      // the agent loop self-continuing.
+      // If this active artifact has no live approval, keep its review gate
+      // visible even though this turn is stopping.
       if (this.approvedExecutionNeedsReReview(latestArtifactPath)) {
         if (ctx.hasUI) {
-          ctx.ui.notify("Plan artifact changed. Submit for re-review.", "info");
+          ctx.ui.notify(REVIEW_APPROVAL_REQUIRED_MESSAGE, "info");
         }
         this.finishTurn(ctx);
         return;
       }
-      // No approved execution to abort and no artifact to re-review —
-      // this is a plain abort in act mode (e.g. user pressed ESC during
-      // a tool-calling turn). Notify the user so they know ESC was handled.
+      // No live approved execution and no review obligation: plain cancel.
       if (ctx.hasUI) {
         ctx.ui.notify("Operation cancelled.", "info");
       }
@@ -815,12 +800,11 @@ export class PlanModeController {
       // Remind at most once per unapproved episode. Without this guard,
       // every turn-end queues the same follow-up and the post-run loop
       // keeps continuing the agent (agent.continue()) — an infinite
-      // self-continuation loop. This is the same "keeps retrying" bug,
-      // triggered when the user sends a new message after an ESC abort
-      // cleared the plan approval.
+      // self-continuation loop. This branch is for a real approval loss,
+      // not an interrupted run whose approval remains live.
       if (this.reReviewReminderSentFor !== latestArtifactPath) {
         this.reReviewReminderSentFor = latestArtifactPath;
-        this.sendReviewWaitMessage(APPROVED_ARTIFACT_CHANGED_REVIEW_MESSAGE);
+        this.sendReviewWaitMessage(REVIEW_APPROVAL_REQUIRED_MESSAGE);
       }
       this.finishTurn(ctx);
       return;
@@ -1030,10 +1014,10 @@ export class PlanModeController {
     }
     // Dropped when the run completed (or cleared its todos) before the
     // reminder could be delivered — "reconcile before starting
-    // execution" is noise after the work is done — when the approval was
-    // cleared (e.g. ESC abort), because the message claims the plan is
-    // approved — or when the list was rewritten after approval, because
-    // then it *was* created for this plan.
+    // execution" is noise after the work is done — when a separate state
+    // transition cleared approval (for example, a rejected review), because
+    // the message claims the plan is approved — or when the list was rewritten
+    // after approval, because then it *was* created for this plan.
     if (
       !decideTodoReconcileDelivery({
         pending,

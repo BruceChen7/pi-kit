@@ -63,7 +63,7 @@ Read:
 - relevant ADRs under `.pi/contexts/adr/` or `.pi/contexts/<context-id>/adr/`
 - `/codebase-design` for the architecture vocabulary and deepening guidance
 
-Then inspect the code organically. Note where you experience friction:
+Then inspect the code organically. For a large codebase, or a scan covering more than one file group, hand the walk to a `subagent` (`agent: "explore"`, read-only, fresh context, `background: true`, collected with `subagent action: "wait"`): the self-contained `task` carries this friction checklist and the scope, and only the reduced findings come back here. Note where you experience friction:
 
 - understanding one concept requires bouncing between many small modules
 - modules are **shallow**: their interface is nearly as complex as their implementation
@@ -119,9 +119,7 @@ If the user rejects a candidate with a load-bearing reason, ask whether to recor
 
 ### 4. Interface exploration
 
-If the user wants alternative interfaces for a deepened module, run the `/codebase-design` skill and follow its design-it-twice pattern from `DESIGN-IT-TWICE.md`.
-
-Pi adaptation: if no subagent facility is available, run 3 distinct design passes yourself and clearly label them as described in `/codebase-design`.
+If the user wants alternative interfaces for a deepened module, run the `/codebase-design` skill and follow its design-it-twice pattern from `DESIGN-IT-TWICE.md`: 3+ `subagent` design passes in parallel, each from a fresh context window, compared on depth, locality, and seam placement.
 
 ### 5. Handoff artifact
 
@@ -149,10 +147,9 @@ This skill depends on:
 - `HTML-REPORT.md` — HTML review report scaffold
 - `LANGUAGE.md` — local convenience copy of the architecture glossary
 - `DEEPENING.md` — local convenience copy of deepening guidance
-- `INTERFACE-DESIGN.md` — local convenience copy of interface exploration guidance
 
 For shared architecture vocabulary, you can also invoke `/codebase-design` directly when deeper guidance on module design principles is needed.
 
 ## Attribution
 
-Adapted from the `improve-codebase-architecture` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License. Pi 适配：`HTML-REPORT.md` 等本地文件、Plannotator 评审、`.pi/` 路径。
+Adapted from the `improve-codebase-architecture` skill in https://github.com/mattpocock/skills (v1.3.2) under the MIT License. Pi 适配：`HTML-REPORT.md` 等本地文件、Plannotator 评审、`.pi/` 路径。

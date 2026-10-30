@@ -9,6 +9,7 @@ import {
   namingFindings,
   parseFrontmatter,
   type RepoDoc,
+  removedFeatureFindings,
   type SkillGroupInput,
 } from "./pstack-skills-rules.ts";
 
@@ -158,7 +159,6 @@ describe("repo skill naming", () => {
 
     expect(namingFindings(flatSkillDocs)).toEqual([]);
   });
-
   it("flags an upstream sync that rewrites the name", () => {
     const findings = namingFindings([
       {
@@ -177,6 +177,73 @@ describe("repo skill naming", () => {
         detail: 'name="plan-code-review" dir="review"',
       },
     ]);
+  });
+});
+
+describe("removed feature mentions", () => {
+  // Prose that names a deleted feature was caught twice by hand and missed by
+  // the literal `herdr-squad` grep both times, so the scan is repo-wide.
+  const proseDocs = (): RepoDoc[] =>
+    [
+      ...listFiles("skills").filter((file) => /\.(md|json|txt)$/.test(file)),
+      ...listFiles("prompts").filter((file) => file.endsWith(".md")),
+    ].map(readDoc);
+
+  it("keeps skills and prompts free of deleted feature names", () => {
+    expect(proseDocs().length).toBeGreaterThan(60);
+    expect(removedFeatureFindings(proseDocs())).toEqual([]);
+  });
+
+  it("flags the real strings that survived the literal grep", () => {
+    const historical = [
+      "| 要人看着、可插话   | `/skill:herdr-squad` | 收 report |",
+      'description: "...或一次长跑、后台任务、squad 结束后要交付。"',
+      "`reviewed by <model>` when a squad reviewer ran, or `self-review` when it did not.",
+      "fire off independent research sub-sessions",
+      "- `subagent explore` or `herdr-squad` — available for research tickets",
+    ];
+
+    expect(
+      removedFeatureFindings(
+        historical.map((content, index) => ({
+          path: `probe/${index}.md`,
+          content,
+        })),
+      ),
+    ).toEqual([
+      {
+        path: "probe/0.md",
+        rule: "removed-feature-mention",
+        detail: '"squad" names a deleted feature',
+      },
+      {
+        path: "probe/1.md",
+        rule: "removed-feature-mention",
+        detail: '"squad" names a deleted feature',
+      },
+      {
+        path: "probe/2.md",
+        rule: "removed-feature-mention",
+        detail: '"squad" names a deleted feature',
+      },
+      {
+        path: "probe/4.md",
+        rule: "removed-feature-mention",
+        detail: '"squad" names a deleted feature',
+      },
+    ]);
+  });
+
+  it("leaves ordinary delegation prose alone", () => {
+    const findings = removedFeatureFindings([
+      {
+        path: "probe/ok.md",
+        content:
+          'Dispatch a `subagent` (`agent: "explore"`, `background: true`) and collect it with `subagent action: "wait"`.',
+      },
+    ]);
+
+    expect(findings).toEqual([]);
   });
 });
 

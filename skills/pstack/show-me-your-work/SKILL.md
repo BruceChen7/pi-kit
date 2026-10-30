@@ -77,9 +77,9 @@ Correct the log, not the story. The audit never edits or removes a row, even an 
 
 ## Cross-model review of the trail
 
-Self-review is not a substitute. In pi the available cross-model check is a read-only Herdr squad: `/skill:herdr-squad` can run 1 to 4 agents on another model, but they cannot edit files. When the user wants it, launch one reviewer with a different model, give it the log path and this run's transcript path, and ask only for flags, not a redo of the work.
+Self-review is not a substitute. In pi the cross-model check is a read-only `subagent` (`agent: "reviewer"`) started from a `.pi/agents/` profile that pins another `model`; the child cannot edit files. When the user wants it, launch one reviewer that way, give it the log path and this run's transcript path, and ask only for flags, not a redo of the work.
 
-When no squad is used, run the same check yourself and label the result `self-review`.
+When no model-pinned profile exists, run the same check yourself a second time on the same model and say so, or label the single pass `self-review`.
 
 Ask the reviewer for the things a casual skim misses:
 
@@ -88,7 +88,7 @@ Ask the reviewer for the things a casual skim misses:
 - Choices that look risky in hindsight (premature, scope-creeping, papering over a symptom).
 - Gaps the user would otherwise miss on a casual skim.
 
-Every reply for a run that produced a trail ends with an "Attention" section. Lead with the reviewer on its own line, `reviewed by <model>` when a squad reviewer ran, or `self-review` when it did not. Then list each flag pointing to specific rows or moments. "No flags" is a valid value. The reviewer label is not optional.
+Every reply for a run that produced a trail ends with an "Attention" section. Lead with the reviewer on its own line, `reviewed by <model>` when a model-pinned reviewer ran, or `self-review` when it did not. Then list each flag pointing to specific rows or moments. "No flags" is a valid value. The reviewer label is not optional.
 
 ## Reviewing the trail
 

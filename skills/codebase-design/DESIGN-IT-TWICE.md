@@ -18,9 +18,9 @@ Show this to the user, then immediately proceed to Step 2. The user reads and th
 
 ### 2. Spawn sub-agents
 
-Spawn 3+ sub-agents in parallel using the Agent tool. Each must produce a **radically different** interface for the deepened module.
+Spawn 3+ `subagent` runs in parallel — `agent: "general"`, `background: true`, issued in the same round — then collect them with one `subagent action: "wait"`, calling it again if it returns partial progress. Every run starts from a fresh context window.
 
-Prompt each sub-agent with a separate technical brief (file paths, coupling details, dependency category from [DEEPENING.md](DEEPENING.md), what sits behind the seam). The brief is independent of the user-facing problem-space explanation in Step 1. Give each agent a different design constraint:
+Prompt each sub-agent with a separate technical brief (file paths, coupling details, dependency category from [DEEPENING.md](DEEPENING.md), what sits behind the seam). A child cannot see this conversation or the Step 1 problem-space explanation, so each brief has to stand alone. Give each agent a different design constraint:
 
 - Agent 1: "Minimize the interface — aim for 1–3 entry points max. Maximise leverage per entry point."
 - Agent 2: "Maximise flexibility — support many use cases and extension."
@@ -42,14 +42,3 @@ Each sub-agent outputs:
 Present designs sequentially so the user can absorb each one, then compare them in prose. Contrast by **depth** (leverage at the interface), **locality** (where change concentrates), and **seam placement**.
 
 After comparing, give your own recommendation: which design you think is strongest and why. If elements from different designs would combine well, propose a hybrid. Be opinionated — the user wants a strong read, not a menu.
-
-## Pi adaptation
-
-If no sub-agent facility is available, run 3 distinct design passes yourself and clearly label them:
-
-1. minimal interface, 1–3 entry points
-2. flexible interface for many use cases
-3. default-case-optimized interface
-4. ports-and-adapters variant when cross-seam dependencies require it
-
-Compare by **depth**, **locality**, and **seam** placement, then give a strong recommendation.

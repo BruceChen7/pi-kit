@@ -26,6 +26,15 @@ const STALE_CAPABILITY_CLAIMS = [
   "不按角色切模型",
 ];
 
+/**
+ * Names of features this repo deleted. A skill or prompt that still names one
+ * tells the next agent to use something that is not there (or to skip work
+ * because a capability is "missing") — the exact defect that survived a literal
+ * `herdr-squad` grep twice. Add the token when you delete a feature; remove it
+ * only if the name comes back for a different feature with the same word.
+ */
+export const REMOVED_FEATURE_MARKERS: readonly string[] = ["squad"];
+
 /** Upstream-only model ids. Pi model ids look like `provider/model`. */
 const UPSTREAM_MODEL_SLUG =
   /\b(?:claude|grok|composer)-[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?/gi;
@@ -193,6 +202,21 @@ export const staleCapabilityClaimFindings = (doc: RepoDoc): Finding[] =>
       rule: "stale-capability-claim",
       detail: claim,
     }),
+  );
+
+/**
+ * Repo-wide: prose must not name a deleted feature. Case-insensitive because the
+ * same name shows up capitalised at the start of a sentence.
+ */
+export const removedFeatureFindings = (docs: readonly RepoDoc[]): Finding[] =>
+  docs.flatMap((doc) =>
+    REMOVED_FEATURE_MARKERS.filter((marker) =>
+      doc.content.toLowerCase().includes(marker),
+    ).map((marker) => ({
+      path: doc.path,
+      rule: "removed-feature-mention",
+      detail: `"${marker}" names a deleted feature`,
+    })),
   );
 
 export const upstreamModelSlugFindings = (doc: RepoDoc): Finding[] => {

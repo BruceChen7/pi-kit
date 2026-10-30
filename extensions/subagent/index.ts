@@ -85,7 +85,7 @@ const WIDGET_KEY = "subagent";
 const STATUS_KEY = "subagent";
 /** 进度刷新周期。1s 太吵，5s 又看不出在动；2s 是肉眼连续与重绘量的折中。 */
 const TICK_MS = 2_000;
-/** 与 herdr-squad 的 DEFAULT_WAIT_MS 对齐：两个等待工具不能有两个默认值。 */
+/** `wait` 的默认上限：工具描述里的 timeoutMs 默认值写着 300000，两边同值。 */
 const DEFAULT_WAIT_MS = 5 * 60_000;
 const log = createLogger("subagent", { stderr: null });
 
@@ -410,7 +410,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
 
   /**
    * 等这些 run 全部终态或消失（会话重置会让 run 消失）。
-   * 返回是否超时；abort 抛错，与 herdr-squad 的 wait 一致。
+   * 返回是否超时；abort 抛错。
    * 超时与 abort 都在 cleanup 里摘掉唤醒器，不会留在 settleWaiters 里泄漏。
    */
   const waitUntilSettled = (

@@ -123,4 +123,4 @@ Good interfaces make testing natural:
 
 ## Attribution
 
-Adapted from the `codebase-design` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License.
+Adapted from the `codebase-design` skill in https://github.com/mattpocock/skills (v1.3.2) under the MIT License.

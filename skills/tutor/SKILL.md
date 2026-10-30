@@ -486,9 +486,10 @@ dictionary, not a second copy of the lesson. The table is not indexed into any s
 
 ## Boundaries
 
-- **No subagents.** There is no researcher or diagram-maker to delegate to; research with
-  `web_search` (and `qmd_search` over the notes vault) inline. For a genuinely large
-  multi-source dig, the read-only herdr squad is available.
+- **Research inline, don't delegate the teaching loop.** The loop stays in this session because it
+  moves back and forth with the learner: research with `web_search` (and `qmd_search` over the notes
+  vault) here. For a genuinely large multi-source dig, `subagent explore` (read-only, fresh context)
+  is available.
 - **No bulk retrofit.** Do not sweep the vault rewriting chapters that lack background: a
   chapter gets its 开篇 when it is next taught (a new chapter), or a 补课 when the learner
   reports the gap (§Background). Never reorder or rewrite a chapter that is already written —

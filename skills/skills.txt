@@ -84,9 +84,10 @@ knowledge-wiki-cluster|local|skills/knowledge-wiki/cluster
 knowledge-wiki-lint|local|skills/knowledge-wiki/lint
 knowledge-wiki-state|local|skills/knowledge-wiki/state
 knowledge-wiki-enrich|local|skills/knowledge-wiki/enrich
-# https://github.com/jillesme/pi-herdr-squad (v0.1.3)
-herdr-squad|local|skills/herdr-squad
-# https://github.com/mattpocock/skills (v1.3.1+)
+# https://github.com/mattpocock/skills (v1.3.2+)
+# 2026-10-30 同步的是 subagent 相关 delta：review / research / codebase-design /
+# improve-codebase-architecture / wayfinder / grill-me；其余 v1.3.2 项未同步，清单见
+# .pi/plans/pi-kit/plan/2026-10-30-sync-mattpocock-subagent-content.md
 research|local|skills/research
 retro|local|skills/retro
 # learn 教学系统（probe→plan→teach + quiz/笔记/图表）

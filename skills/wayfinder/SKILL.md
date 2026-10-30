@@ -125,7 +125,7 @@ Every ticket is **HITL** (human-in-the-loop, requires working with the human) or
 HITL tickets can only be resolved through live conversation; an agent can never substitute for the human side (a grilling that answers its own questions is broken).
 
 - **Research (AFK)**: Read docs, third-party APIs, or local knowledge bases to surface facts a decision depends on.
-  Resolved through independent research sub-agents or dedicated research sessions.
+  Resolved by `subagent` runs (`agent: "general"`, fresh context) or dedicated research sessions.
   Use when knowledge outside the current working directory is needed.
 
 - **Prototype (HITL)**: Raise the fidelity of a discussion by building a cheap, rough, concrete artifact —
@@ -206,7 +206,7 @@ The user invokes with a vague idea.
    Everything not yet determinable stays in the fog — the **Not yet specified** section.
 
 5. **Trigger research subtasks.**
-   For each `research` ticket just created, fire off independent research sub-sessions to resolve in parallel, storing results in `.pi/plans/<repo>/wayfinder/assets/` and linking from the ticket.
+   For each `research` ticket just created, fire off one `subagent` run (`agent: "general"` — the child writes the notes file; `background: true`, all issued in the same round, collected later with `subagent action: "wait"`) to resolve it in parallel, storing results in `.pi/plans/<repo>/wayfinder/assets/` and linking from the ticket. Each child starts from a fresh context and cannot see this conversation, so its `task` carries the ticket path, the question, and the output path.
 
 6. **Stop.**
    Drawing is a single-session job; it doesn't resolve any tickets itself.
@@ -268,7 +268,7 @@ This skill depends on the following locally available skills:
 - `/grill-me` — core interview loop
 - `/domain-modeling` — domain terminology and ADR maintenance
 - `/prototype` — needed for prototype tickets
-- `herdr-squad` or independent sub-agents — available for research tickets
+- `subagent` (`agent: "general"`) — available for research tickets
 
 ## Quick Reference
 
@@ -296,4 +296,4 @@ This skill depends on the following locally available skills:
 
 ## Attribution
 
-Adapted from the `wayfinder` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License. Pi 适配：map 与 ticket 落在 `.pi/plans/<repo>/wayfinder/`，替代上游的 issue tracker 标签与依赖关系。
+Adapted from the `wayfinder` skill in https://github.com/mattpocock/skills (v1.3.2) under the MIT License. Pi 适配：map 与 ticket 落在 `.pi/plans/<repo>/wayfinder/`，替代上游的 issue tracker 标签与依赖关系。

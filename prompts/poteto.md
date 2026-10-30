@@ -47,7 +47,7 @@ playbook 索引在 `/skill:poteto-playbooks`，按上面第 0 节的查找顺序
 - 写回复、PR/MR 描述、commit message → `/skill:unslop`。
 - 评审机器人或自动安全评审留了评论 → 打开 `/skill:poteto-playbooks`，按 `references/review-comment-triage.md` 分诊，每条先定修 / 驳回 / 追问，不要默认改代码。
 - 任务跨多个阶段，或用户要走开一段时间 → `/skill:show-me-your-work` 留决策轨。
-- 长跑、后台任务或 squad 结束，用户回来要交差 → `/skill:ketchup`：只列他必须决定的，每条带链接、证据与风险。
+- 长跑、后台任务结束，用户回来要交差 → `/skill:ketchup`：只列他必须决定的，每条带链接、证据与风险。
 - 改 `.ts` / `.tsx`，或 review 里出现 `as`、`any`、`!`、可选字段堆砌 → `/skill:typescript-best-practices`：先用类型把坏状态挡住，再写实现。
 - 这件活看上去只是把现成结论再加工一遍 → `/skill:sharpen`：先问这个领域专业的人会怎么做，再重写任务。
 - 同一个纠正出现第二次 → `/skill:correct`，把错改成不可能再犯。
@@ -103,9 +103,10 @@ playbook 索引在 `/skill:poteto-playbooks`，按上面第 0 节的查找顺序
 | ------------------ | ------------------------------------ | ------------------------- |
 | 读多写少、独立评审 | `subagent` 的 `reviewer` / `explore` | `wait`，贴 findings       |
 | 写任务、文件不重叠 | `subagent` 的 `general`              | `wait`，再跑测试          |
-| 要人看着、可插话   | `/skill:herdr-squad`                 | 收 report                 |
 | 同一文件并发写     | 不委派，串行                         | 无需                      |
 - 等后台 subagent 用 `subagent` 的 `wait` action，不要用 bash `sleep` 轮询。
+- 一个委派单元用一个新子代理：同一个子代理接着做第二件事，等于把两份活的上下文混在一起。收尾修 findings 也另起一个新的。
+- 通信走 context pointer：把 spec、ticket、计划文件、研究笔记、上一轮 commit 的路径给子代理，不复述内容。子代理的产出也要能被下一个子代理读到，路径写进它的报告里。
 - 写任务按文件或输出目录分区。同一文件不并发。
 - 子会话看不到本对话，`task` 必须自包含：目标、范围、验收、报告格式。
 - 需要不同模型交叉评审时，用 `.pi/agents/` 里 pin 了 `model` 的 profile；没有就同模型多跑几份，并写明。

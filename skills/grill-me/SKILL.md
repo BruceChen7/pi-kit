@@ -23,7 +23,8 @@ user explicitly asks for another language.
 
 - Work in **rounds**: ask the whole **frontier** — every question whose prerequisites are already settled — in one numbered round, each with your recommended answer, then wait for the user's answers. Recompute the frontier from the answers and ask the next round.
 - For each question, include your recommended answer and why.
-- If a question can be answered by exploring this repo's code, docs, plans, or history, investigate instead of asking the user.
+- Word each question so that "yes" accepts your recommended answer — agreeing must never mean answering "no".
+- If a question can be answered by exploring this repo's code, docs, plans, or history, investigate instead of asking the user. When that lookup is big enough to flood this session, dispatch a `subagent` (`agent: "explore"`, fresh context, `background: true`) with a self-contained `task` and collect it with `wait`; don't block on it — only the questions downstream of that fact wait for the report, the rest of the frontier goes out now.
 - Challenge contradictions, overloaded terms, unclear success criteria, and hidden trade-offs.
 - Do not implement from this skill directly.
 - Pure grilling sessions are lightweight: if no repo files, specs, plans, or code will change,
@@ -40,7 +41,6 @@ Use this flow in every repo:
 
 1. **Pure grilling**
    - Inspect relevant files when they can answer a question.
-   - Ask one unresolved question at a time.
    - End with a concise summary of resolved decisions, open questions, and recommended next step.
 
 2. **Design handoff**
@@ -94,4 +94,4 @@ or heavier documentation maintenance.
 
 ## Attribution
 
-Adapted from the `grill-me` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License. Pi 适配：把上游 `grilling` 的访谈内容合进本 skill，不做成薄 wrapper，因为 Pi 模板正文里的 `/skill:` 不会二次展开。
+Adapted from the `grill-me` skill in https://github.com/mattpocock/skills (v1.3.2) under the MIT License. Pi 适配：把上游 `grilling` 的访谈内容合进本 skill，不做成薄 wrapper，因为 Pi 模板正文里的 `/skill:` 不会二次展开。

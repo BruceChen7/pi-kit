@@ -3,13 +3,17 @@ name: review
 description: >
   Review changes since a fixed point along two axes — Standards (does the diff follow this
   repo's documented standards?) and Spec (does the diff implement the originating plan, issue,
-  or user request?). Use when the user wants to review a branch, PR, work-in-progress
-  changes, or asks to "review since X".
+  or user request?). Runs both axes as parallel read-only subagents and reports them side by
+  side. Use when the user wants to review a branch, PR, work-in-progress changes, or asks to
+  "review since X".
 ---
 
 # Plan Code Review
 
 Run a Pi-native two-axis review of the diff between `HEAD` and a fixed point.
+
+Each axis runs as its own `subagent` (`agent: "reviewer"`, read-only, fresh context) so the two
+don't pollute each other's context, and this session aggregates the reports they return.
 
 This skill reports findings; it does **not** auto-fix code.
 
@@ -50,6 +54,9 @@ git log <fixed-point>..HEAD --oneline
 Use the three-dot diff so the comparison is against the merge base, not merely the current
 branch tip. Always include `--no-ext-diff`. Do not silently change the user's fixed point.
 
+Confirm the fixed point resolves (`git rev-parse <fixed-point>`) and the diff is non-empty before
+dispatching subagents. A bad ref or an empty diff must fail here, not inside two children.
+
 ### 2. Identify the spec source
 
 Look for the originating requirements in this order:
@@ -77,6 +84,9 @@ Collect documented standards and conventions before reading the diff deeply. Com
 
 For machine-enforced standards, note the source but do not duplicate what tooling already checks
 unless the diff obviously bypasses or contradicts it.
+
+When `CODING_STANDARDS.md` or `CONTRIBUTING.md` exists, it must be on the list and passed to the
+Standards task.
 
 #### Smell baseline
 
@@ -114,7 +124,44 @@ Read the full diff first. Then read related files outside the diff only when nee
 - tests that define expected behavior
 - nearby patterns the diff claims to follow
 
-### 5. Report separately
+### 5. Dispatch both axes
+
+Issue both `subagent` calls in the same round, `agent: "reviewer"`, `background: true` (the
+default), then collect them with one `subagent action: "wait"`. One fresh context each; do not
+poll with a shell loop.
+
+Each `task` must stand alone: a child cannot see this conversation, and the `reviewer` whitelist
+(`read`, `grep`, `find`, `ls`) has no `bash`, so neither child can run `git diff` itself.
+
+**Standards task** carries:
+
+- the diff text (the child cannot run git, so pass the output, not the command), plus the
+`git log --oneline` output;
+- the standards-source paths found in step 3;
+- the smell baseline from step 3;
+- the brief: report, per file or hunk, every place the diff violates a documented standard (cite
+the standard) and any baseline smell you spot (name it, quote the hunk). Distinguish hard
+violations from judgement calls: a documented standard can be hard, a baseline smell never is,
+and the repo overrides the baseline. Skip anything tooling enforces.
+
+**Spec task** carries:
+
+- the diff text and the `git log --oneline` output;
+- the path to the spec, or its fetched contents;
+- the brief: report requirements the spec asked for that are missing or partial, behaviour in the
+diff that wasn't asked for, and requirements that look implemented but wrong. Quote the spec line
+for each finding.
+
+For a large diff, narrow it before dispatching (`-- <paths>` or `-U1`) instead of passing only a
+list of changed files: without the diff the child cannot tell which lines are new.
+
+If the spec is missing, skip the Spec subagent and note it in the report. If `wait` comes back with
+partial progress, call it again for the runs still listed as running.
+
+### 6. Report separately
+
+Present the two reports you collected under the two headings, verbatim or lightly cleaned. Do not
+merge, average, or rerank them.
 
 Use this final format:
 
@@ -129,8 +176,11 @@ Use this final format:
 
 ## Summary
 
-Standards: <count> findings. Spec: <count> findings. Worst issue: <one line or none>.
+Standards: <count> findings, worst: <one line or none>. Spec: <count> findings, worst: <one line or none>.
 ```
+
+Worst is per axis on purpose: picking one winner across axes is the reranking the separation exists
+to prevent.
 
 Severity values:
 

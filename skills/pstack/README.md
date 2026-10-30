@@ -13,7 +13,7 @@
 | `correct/` | 改过一次：规则表落到 `AGENTS.md`，forge 命令按 remote 选 |
 | `no-comments/` | 改过一次：评审合成单文件两遍走（先出表再改），keep list 与抑制判断逐字保留，补 Go / shell 的抑制写法 |
 | `benchmark-checklist/` | 正文未改，逐字进口 |
-| `show-me-your-work/` | 改过一次：transcript 路径改 pi session，跨模型复核改只读 squad 可选，日志默认中文；`scripts/log.sh` 与 TSV 模板一并搬入 |
+| `show-me-your-work/` | 改过一次：transcript 路径改 pi session，跨模型复核改 `subagent` + `.pi/agents/` 里 pin 了 `model` 的 profile（没有该 profile 就同模型再跑一遍并写明），日志默认中文；`scripts/log.sh` 与 TSV 模板一并搬入 |
 | `technical-writing/` | 改过一次：去 adapter，PR/MR 措辞，开头写清与 `unslop`、`writing-for-agents` 的边界 |
 | `unslop/` | 正文未改，只是搬进本组 |
 | `interrogate/` | 2026-10-29 按上游重写：一条 finding 要用一次 run 证伪、父会话复现后才留下，fan-out 复用 `arena` 的 A 阶段 3/4 步与 B 阶段，跳过 arena 的 C/D/E；对抗者改 `subagent general` 跑在 `/tmp/interrogate-<slug>/adversary-<n>/`（只读 profile 没有 bash，跑不了 repro），未提交改动只进副本；上游删掉的 4 份 references 本地一并删除 |

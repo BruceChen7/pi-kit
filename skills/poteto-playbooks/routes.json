@@ -8,7 +8,7 @@
       "useWhen": "只读地把事情搞清楚：现状、根因、某个行为为什么发生。交付带引用的结论，不改码。",
       "phase": false,
       "firstSteps": ["research"],
-      "optionalSteps": ["wayfinder", "herdr-squad", "swarm"],
+      "optionalSteps": ["wayfinder", "swarm"],
       "playbookHints": [
         {
           "when": "症状来自活进程（泄漏、空转、抖动）",
@@ -20,7 +20,7 @@
         }
       ],
       "steps": [
-        "只读且可切分时，用 herdr-squad（要人看着）或 subagent explore（后台）并行",
+        "只读且可切分时，用 subagent explore（后台）并行",
         "覆盖矩阵类调查用 swarm",
         "给带引用的结论，不改码"
       ],

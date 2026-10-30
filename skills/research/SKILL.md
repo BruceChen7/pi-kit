@@ -13,7 +13,7 @@ Default to Chinese for the deliverable unless the user explicitly asks for anoth
 
 1. **Scope the question.** State what is being investigated and what would make the answer actionable. If the question is too broad to resolve in one pass, split it into the concrete sub-questions that actually need answers.
 
-2. **Dispatch a background sub-agent** (or a `herdr-squad` investigation squad when the question has several non-overlapping scopes) so the main session keeps working while the reading happens.
+2. **Dispatch `subagent` runs** — one per non-overlapping scope, issued in the same round — so the main session keeps working while the reading happens. Use `agent: "explore"` for read-only digging, `general` when the child also has to write notes into the repo; background is the default, and you collect with `subagent action: "wait"` rather than polling. Each child starts from a fresh, empty context and cannot see this conversation, so the `task` carries the question, the source leads, the output path, and the report format.
 
 3. **Investigate against primary sources** — official docs, source code, specs, RFCs, first-party APIs — not a secondary write-up of them. Follow every claim back to the source that owns it. When sources disagree, say so and state which one wins and why.
 
@@ -35,4 +35,4 @@ Save to `.pi/research/YYYY-MM-DD-<slug>.md` by default. If the repo already keep
 
 ## Attribution
 
-Adapted from the `research` skill in https://github.com/mattpocock/skills (v1.3.1) under the MIT License.
+Adapted from the `research` skill in https://github.com/mattpocock/skills (v1.3.2) under the MIT License.

@@ -195,17 +195,12 @@ export const TUI_CALL_BASELINE: Record<string, UiCall[]> = {
       "call": "setWidget",
       "key": "plan-mode-current-mode",
       "lines": [
-        "<accent>Plan Mode: Act · Act · Alt+0 toggles</accent>"
+        "<accent>Plan Mode: Act · Approved, executing · Alt+0 toggles</accent>"
       ]
     },
     {
       "call": "setWidget",
-      "key": "plan-mode-todos",
-      "lines": [
-        "<accent>【Act】下一步 #1/1：实现已批准任务 · 更新于 刚刚</accent>",
-        "已完成 0/1 · 剩余 1 项",
-        "→ #1 [ ] 实现已批准任务"
-      ]
+      "key": "plan-mode-todos"
     },
     {
       "call": "setStatus",
@@ -220,12 +215,7 @@ export const TUI_CALL_BASELINE: Record<string, UiCall[]> = {
     },
     {
       "call": "setWidget",
-      "key": "plan-mode-todos",
-      "lines": [
-        "<accent>【Approved, executing】下一步 #1/1：实现已批准任务 · 更新于 刚刚</accent>",
-        "已完成 0/1 · 剩余 1 项",
-        "→ #1 [ ] 实现已批准任务"
-      ]
+      "key": "plan-mode-todos"
     },
     {
       "call": "setStatus",

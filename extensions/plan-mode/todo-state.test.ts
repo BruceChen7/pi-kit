@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { PlanModeState, todoListSignature } from "./state.js";
+import { PlanModeState } from "./state.js";
 import {
   ACT_MODE_TODO_TOOL,
   plainWidgetText,
   startPlanModeSession,
 } from "./test-harness.js";
-import type { PlanRunStatus, TodoStatus } from "./types.js";
+import type { PlanRunStatus } from "./types.js";
 import { formatRelativeTime } from "./ui.js";
 
 // ── state: statuses are written only by the tool ──────────────
@@ -62,50 +62,6 @@ describe("todo state: no implicit status writes", () => {
     expect(state.activeRun?.lastTodoUpdateAt).toBeDefined();
     state.removeTodo(3);
     expect(state.activeRun?.lastTodoUpdateAt).toBeDefined();
-  });
-});
-
-// ── pure decision: todoListSignature ──────────────────────────
-
-describe("todo state: todoListSignature", () => {
-  const item = (
-    id: number,
-    text: string,
-    status: TodoStatus = "todo",
-    notes?: string,
-  ) => ({ id, text, status, ...(notes ? { notes } : {}) });
-
-  it("ignores status and notes changes", () => {
-    const before = [item(1, "第一步", "todo"), item(2, "第二步", "todo")];
-    const after = [
-      item(1, "第一步", "in_progress", "正在做"),
-      item(2, "第二步", "blocked"),
-    ];
-    expect(todoListSignature(after)).toBe(todoListSignature(before));
-  });
-
-  it("changes when items are replaced (reconcile to a new plan)", () => {
-    const before = [item(1, "写移植 spec")];
-    const after = [item(1, "移植 picker 纯核"), item(2, "移植 quiz")];
-    expect(todoListSignature(after)).not.toBe(todoListSignature(before));
-  });
-
-  it("changes when item text or id changes", () => {
-    const base = [item(1, "第一步")];
-    expect(todoListSignature([item(1, "改写后的第一步")])).not.toBe(
-      todoListSignature(base),
-    );
-    expect(todoListSignature([item(2, "第一步")])).not.toBe(
-      todoListSignature(base),
-    );
-  });
-
-  it("is order sensitive and stable for repeated calls", () => {
-    const first = [item(1, "a"), item(2, "b")];
-    const swapped = [item(2, "b"), item(1, "a")];
-    expect(todoListSignature(swapped)).not.toBe(todoListSignature(first));
-    expect(todoListSignature(first)).toBe(todoListSignature(first));
-    expect(todoListSignature([])).toBe("[]");
   });
 });
 
@@ -200,5 +156,64 @@ describe("todo state: widget last-update hint", () => {
     // No item was started, so the heading must not claim progress.
     expect(widget).toContain("下一步 #1/2");
     expect(widget).not.toContain("进行中");
+  });
+});
+
+describe("todo state: approval switches runs", () => {
+  it("archives the list that produced the plan and starts an empty bound run", () => {
+    const state = new PlanModeState("plan");
+    state.replaceTodos([
+      { text: "写方案" },
+      { text: "提交评审", status: "in_progress" },
+    ]);
+
+    state.beginApprovedExecutionRun("plan.md");
+
+    expect(state.todos).toEqual([]);
+    expect(state.activeRun?.planPath).toBe("plan.md");
+    expect(state.activeRun?.status).toBe("executing");
+    expect(state.recentRuns).toHaveLength(1);
+    expect(state.recentRuns[0].status).toBe("archived");
+    expect(state.recentRuns[0].todos.map((todo) => todo.text)).toEqual([
+      "写方案",
+      "提交评审",
+    ]);
+  });
+
+  it("drops a run that never carried a list instead of archiving it", () => {
+    const state = new PlanModeState("plan");
+    state.replaceTodos([]);
+
+    state.beginApprovedExecutionRun("plan.md");
+
+    expect(state.recentRuns).toHaveLength(0);
+    expect(state.activeRun?.planPath).toBe("plan.md");
+  });
+
+  it("leaves the list alone when the run already follows the plan", () => {
+    const state = new PlanModeState("plan");
+    state.beginApprovedExecutionRun("plan.md");
+    state.addTodo("执行第一步");
+
+    state.beginApprovedExecutionRun("plan.md");
+
+    expect(state.todos.map((todo) => todo.text)).toEqual(["执行第一步"]);
+    expect(state.recentRuns).toHaveLength(0);
+  });
+
+  it("restores the approval when the same plan is approved again after a rejection", () => {
+    const state = new PlanModeState("plan");
+    state.switchApprovedPlanToAct();
+    state.beginApprovedExecutionRun("plan.md");
+    state.addTodo("执行第一步");
+    // A rejected review returns the run to draft with its list intact.
+    state.returnApprovedRunToDraftForEditedArtifact("plan.md");
+
+    state.beginApprovedExecutionRun("plan.md");
+
+    expect(state.todos.map((todo) => todo.text)).toEqual(["执行第一步"]);
+    expect(state.activeRun?.status).toBe("executing");
+    expect(state.activeRun?.approvedAt).toBeDefined();
+    expect(state.recentRuns).toHaveLength(0);
   });
 });

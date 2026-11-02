@@ -100,19 +100,6 @@ export const phaseForMode = (mode: PlanMode): PlanPhase =>
 export const hasCompletedAllTodos = (todos: TodoItem[]): boolean =>
   todos.length > 0 && todos.every((todo) => todo.status === TODO_STATUS_DONE);
 
-/**
- * Identity signature of a TODO list: ids plus texts, in order.
- *
- * Status and notes are deliberately excluded. The signature answers one
- * question — "is this still the same list?" — for the deferred
- * todo-reconcile reminder: a list that was rewritten after approval is a
- * list the agent created for the approved plan, while flipping a stale
- * item to in_progress is *starting execution* on the old list and must
- * keep the reminder eligible.
- */
-export const todoListSignature = (todos: readonly TodoItem[]): string =>
-  JSON.stringify(todos.map((todo) => [todo.id, todo.text]));
-
 export const isPlanRunStatus = (value: unknown): value is PlanRunStatus =>
   isStringValue(PLAN_RUN_STATUS_VALUES, value);
 
@@ -511,10 +498,13 @@ export class PlanModeState {
   }
 
   shouldReturnPlanActToPlan(): boolean {
+    // Only a finished run hands the workflow back to planning. An empty or
+    // cleared list is "nothing executed yet", and returning here would clear
+    // the approval before the agent could execute it.
     return (
       this.mode === PLAN_MODE_PLAN &&
       this.phase === PLAN_MODE_ACT &&
-      !this.hasUnfinishedTodos()
+      this.activeRun?.status === PLAN_RUN_STATUS_COMPLETED
     );
   }
 
@@ -534,10 +524,6 @@ export class PlanModeState {
 
   isPlanPhase(): boolean {
     return this.mode === PLAN_MODE_PLAN && this.phase === PLAN_MODE_PLAN;
-  }
-
-  hasUnfinishedTodos(): boolean {
-    return this.todos.some((todo) => todo.status !== TODO_STATUS_DONE);
   }
 
   getNewRunStatus(hasTodos: boolean, planPath: string | null): PlanRunStatus {
@@ -705,6 +691,29 @@ export class PlanModeState {
     return run;
   }
 
+  /**
+   * Approval supersedes the list that produced the plan: keep it in
+   * recentRuns and start an empty run bound to the approved plan. Re-approving
+   * a plan the run already follows leaves the list alone.
+   */
+  beginApprovedExecutionRun(planPath: string): void {
+    if (this.activeRun?.planPath !== planPath) {
+      this.archiveActiveRun();
+      this.replaceTodos([], planPath);
+    }
+    const run = this.activeRun;
+    if (!run) {
+      return;
+    }
+    // A re-approval after a rejected edit lands here with the same plan path:
+    // the run is still bound, so only its approval state is restored.
+    run.planPath = planPath;
+    run.status = hasCompletedAllTodos(this.todos)
+      ? PLAN_RUN_STATUS_COMPLETED
+      : PLAN_RUN_STATUS_EXECUTING;
+    run.approvedAt = new Date().toISOString();
+  }
+
   replaceTodos(items: TodoInput[], newRunPlanPath: string | null = null): void {
     const previousPlanPath = this.activeRun?.planPath ?? null;
     this.archiveCompletedActiveRun();
@@ -789,6 +798,20 @@ export class PlanModeState {
 
   archiveCompletedActiveRun(): void {
     if (this.activeRun?.status !== PLAN_RUN_STATUS_COMPLETED) {
+      return;
+    }
+    this.archiveActiveRun();
+  }
+
+  /** Archive the active run whatever its status: approval supersedes it. */
+  private archiveActiveRun(): void {
+    if (!this.activeRun) {
+      return;
+    }
+    // A run that never carried a list is not history worth keeping: it would
+    // show up as an empty entry and push real runs out of RECENT_RUN_LIMIT.
+    if (this.activeRun.todos.length === 0) {
+      this.activeRun = null;
       return;
     }
     const archived = clonePlanRun({

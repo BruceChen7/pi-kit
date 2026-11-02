@@ -47,61 +47,46 @@ describe("plan-mode extension: review lifecycle", () => {
     await expectToolAllowed(harness, ctx, "write", { path: "x.ts" });
   });
 
-  it("reminds to reconcile todos when approval arrives for a run not bound to the plan", async () => {
+  it("switches to an empty run bound to the approved plan", async () => {
     await withTempCtx(async (ctx) => {
       writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
       const harness = buildHarness();
       planModeExtension(harness.api as unknown as ExtensionAPI);
       await harness.emit("session_start", {}, ctx);
       await harness.runCommand("plan-mode", "plan", ctx);
-      // Todos created before any plan was approved: the run is not yet
-      // bound to the plan that gets approved afterwards.
+      // The list that produced the plan: bound to no plan, unfinished.
       await harness.runTool(
         PLAN_MODE_TODO_TOOL,
         {
           action: "set",
           items: [
-            { text: "first task", status: "todo" },
-            { text: "second task", status: "todo" },
+            { text: "写方案", status: "done" },
+            { text: "提交评审", status: "in_progress" },
           ],
         },
         ctx,
       );
 
       await approveDemoPlan(harness, ctx);
-
-      // The reminder is deferred to the next turn boundary: the followUp
-      // queue only drains at agent_end, so the send happens there with a
-      // fresh todo-completion check.
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(
-          `Reconcile the act_mode_todo list with the approved plan: ${demoPlanPath}`,
+      const snapshot = lastPersistedPlanModeSnapshot(harness);
+      expect(snapshot.todos).toEqual([]);
+      const run = snapshot.activeRun as Record<string, unknown>;
+      expect(run.planPath).toBe(demoPlanPath);
+      expect(run.status).toBe("executing");
+      const recent = snapshot.recentRuns as Array<Record<string, unknown>>;
+      expect(recent).toHaveLength(1);
+      expect(recent[0].status).toBe("archived");
+      expect(
+        (recent[0].todos as Array<Record<string, unknown>>).map(
+          (todo) => todo.text,
         ),
-        expect.objectContaining({ deliverAs: "followUp" }),
-      );
+      ).toEqual(["写方案", "提交评审"]);
     });
   });
 
-  it("does not remind to reconcile todos when approval arrives without a run", async () => {
-    await withTempCtx(async (ctx) => {
-      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
-      const harness = buildHarness();
-      planModeExtension(harness.api as unknown as ExtensionAPI);
-      await harness.emit("session_start", {}, ctx);
-      await harness.runCommand("plan-mode", "plan", ctx);
-
-      await approveDemoPlan(harness, ctx);
-
-      expect(harness.api.sendUserMessage).not.toHaveBeenCalledWith(
-        expect.stringContaining("Reconcile the act_mode_todo list"),
-        expect.anything(),
-      );
-    });
-  });
-
-  it("reminds to reconcile todos only once for repeated approvals of the same plan", async () => {
+  it("keeps the list when the same plan is approved again", async () => {
     await withTempCtx(async (ctx) => {
       writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
       const harness = buildHarness();
@@ -110,112 +95,27 @@ describe("plan-mode extension: review lifecycle", () => {
       await harness.runCommand("plan-mode", "plan", ctx);
       await harness.runTool(
         PLAN_MODE_TODO_TOOL,
-        {
-          action: "set",
-          items: [{ text: "first task", status: "todo" }],
-        },
+        { action: "set", items: [{ text: "写方案", status: "done" }] },
         ctx,
       );
-
-      await approveDemoPlan(harness, ctx);
       await approveDemoPlan(harness, ctx);
       await harness.emit("agent_end", { messages: [] }, ctx);
-
-      const reconcileCalls = harness.api.sendUserMessage.mock.calls.filter(
-        ([message]) =>
-          typeof message === "string" &&
-          message.includes("Reconcile the act_mode_todo list"),
-      );
-      expect(reconcileCalls).toHaveLength(1);
-    });
-  });
-
-  it("drops the todo-reconcile reminder when the run completes before the next turn boundary", async () => {
-    // Regression: an approval queued a followUp while todos were
-    // unfinished, but by the time the followUp is delivered (next
-    // agent_end) the run is already complete. The reminder must be
-    // dropped — "reconcile before starting execution" is pure noise
-    // after the work is done.
-    await withTempCtx(async (ctx) => {
-      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
-      const harness = buildHarness();
-      planModeExtension(harness.api as unknown as ExtensionAPI);
-      await harness.emit("session_start", {}, ctx);
-      await harness.runCommand("plan-mode", "plan", ctx);
-      await harness.runTool(
-        PLAN_MODE_TODO_TOOL,
-        {
-          action: "set",
-          items: [{ text: "first task", status: "todo" }],
-        },
-        ctx,
-      );
-
-      await approveDemoPlan(harness, ctx);
-      // Run completes before the queued followUp would be delivered.
-      await harness.runTool(
-        PLAN_MODE_TODO_TOOL,
-        { action: "update", id: 1, status: "done" },
-        ctx,
-      );
-      await harness.emit("agent_end", { messages: [] }, ctx);
-
-      const reconcileCalls = harness.api.sendUserMessage.mock.calls.filter(
-        ([message]) =>
-          typeof message === "string" &&
-          message.includes("Reconcile the act_mode_todo list"),
-      );
-      expect(reconcileCalls).toHaveLength(0);
-    });
-  });
-
-  it("drops the todo-reconcile reminder when the list was rewritten after approval", async () => {
-    // Regression: the agent reads the approval result in the same turn,
-    // rewrites the TODO list for the approved plan, and only then yields.
-    // The deferred reminder must not fire — by delivery time its claim
-    // ("the current list was not created for this plan") is false: the
-    // list *was* created for this plan, after approval.
-    await withTempCtx(async (ctx) => {
-      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
-      const harness = buildHarness();
-      planModeExtension(harness.api as unknown as ExtensionAPI);
-      await harness.emit("session_start", {}, ctx);
-      await harness.runCommand("plan-mode", "plan", ctx);
-      // The list predates the plan: it was created for the earlier spec run.
-      await harness.runTool(
-        PLAN_MODE_TODO_TOOL,
-        { action: "set", items: [{ text: "spec task", status: "todo" }] },
-        ctx,
-      );
-
-      await approveDemoPlan(harness, ctx);
-      // Same turn, right after the approval: align the list to the plan.
       await harness.runTool(
         ACT_MODE_TODO_TOOL,
-        {
-          action: "set",
-          items: [
-            { text: "plan step 1", status: "todo" },
-            { text: "plan step 2", status: "todo" },
-          ],
-        },
+        { action: "set", items: [{ text: "执行第一步" }] },
         ctx,
       );
+
+      await approveDemoPlan(harness, ctx);
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      const reconcileCalls = harness.api.sendUserMessage.mock.calls.filter(
-        ([message]) =>
-          typeof message === "string" &&
-          message.includes("Reconcile the act_mode_todo list"),
-      );
-      expect(reconcileCalls).toHaveLength(0);
+      const snapshot = lastPersistedPlanModeSnapshot(harness);
+      expect(snapshot.todos).toHaveLength(1);
+      expect(snapshot.recentRuns).toHaveLength(1);
     });
   });
 
-  it("still reminds when approval is followed by a status-only todo update", async () => {
-    // The reminder's premise is about the list's *identity*, not its
-    // progress: marking a stale item in_progress is starting execution,
-    // which is exactly what the reminder must still gate.
+  it("sends no todo-reconcile follow-up after approval", async () => {
     await withTempCtx(async (ctx) => {
       writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
       const harness = buildHarness();
@@ -224,67 +124,64 @@ describe("plan-mode extension: review lifecycle", () => {
       await harness.runCommand("plan-mode", "plan", ctx);
       await harness.runTool(
         PLAN_MODE_TODO_TOOL,
-        { action: "set", items: [{ text: "spec task", status: "todo" }] },
+        { action: "set", items: [{ text: "提交评审", status: "in_progress" }] },
         ctx,
       );
 
+      await approveDemoPlan(harness, ctx);
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      // Approval switches runs instead of asking the agent to rewrite the
+      // list: no follow-up of any kind leaves this turn.
+      expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  it("keeps the approval when the approved run starts with an empty list", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await harness.runCommand("plan-mode", "plan", ctx);
+      await harness.runTool(
+        PLAN_MODE_TODO_TOOL,
+        { action: "set", items: [{ text: "提交评审", status: "in_progress" }] },
+        ctx,
+      );
+      await approveDemoPlan(harness, ctx);
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
+      const result = await sendAgentPrompt(harness, ctx, "start");
+
+      // An empty list is "not started", not "finished": the run must stay in
+      // the act phase with its approval intact.
+      expect(result.systemPrompt).toContain("Use act_mode_todo");
+      await expectToolAllowed(harness, ctx, "write", { path: "x.ts" });
+    });
+  });
+
+  it("keeps the approval when the approved list is cleared", async () => {
+    await withTempCtx(async (ctx) => {
+      writePlanArtifact(ctx.cwd, demoPlanPath, validPlanContent);
+      const harness = buildHarness();
+      planModeExtension(harness.api as unknown as ExtensionAPI);
+      await harness.emit("session_start", {}, ctx);
+      await harness.runCommand("plan-mode", "plan", ctx);
       await approveDemoPlan(harness, ctx);
       await harness.runTool(
         ACT_MODE_TODO_TOOL,
-        { action: "update", id: 1, status: "in_progress" },
+        { action: "set", items: [{ text: "执行第一步" }] },
         ctx,
       );
+      await harness.runTool(ACT_MODE_TODO_TOOL, { action: "clear" }, ctx);
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(
-          `Reconcile the act_mode_todo list with the approved plan: ${demoPlanPath}`,
-        ),
-        expect.objectContaining({ deliverAs: "followUp" }),
-      );
-    });
-  });
+      const result = await sendAgentPrompt(harness, ctx, "start");
 
-  it("sends a single todo-reconcile reminder for a spec-then-plan approval sequence", async () => {
-    // Regression: the normal spec→plan→execute flow approves two
-    // artifacts before the agent yields. Both approvals match the
-    // "run not bound to the approved plan" condition, but the second
-    // supersedes the first — one reminder (for the latest approval),
-    // not one per approval.
-    await withTempCtx(async (ctx) => {
-      // Paths must carry today's date: validatePathDate rejects artifacts
-      // whose date prefix is not *today* (a hard time-bomb if hard-coded).
-      const today = new Date().toISOString().slice(0, 10);
-      const specPath = `.pi/plans/pi-kit/specs/${today}-demo-design.md`;
-      const planPath = `.pi/plans/pi-kit/plan/${today}-demo.md`;
-      writePlanArtifact(ctx.cwd, specPath, validPlanContent);
-      writePlanArtifact(ctx.cwd, planPath, validPlanContent);
-      const harness = buildHarness();
-      planModeExtension(harness.api as unknown as ExtensionAPI);
-      await harness.emit("session_start", {}, ctx);
-      await harness.runCommand("plan-mode", "plan", ctx);
-      await harness.runTool(
-        PLAN_MODE_TODO_TOOL,
-        {
-          action: "set",
-          items: [{ text: "first task", status: "todo" }],
-        },
-        ctx,
-      );
-
-      await emitReviewArtifactWrite(harness, ctx, specPath);
-      await emitApprovedReview(harness, ctx, specPath);
-      await emitReviewArtifactWrite(harness, ctx, planPath);
-      await emitApprovedReview(harness, ctx, planPath);
-      await harness.emit("agent_end", { messages: [] }, ctx);
-
-      const reconcileCalls = harness.api.sendUserMessage.mock.calls.filter(
-        ([message]) =>
-          typeof message === "string" &&
-          message.includes("Reconcile the act_mode_todo list"),
-      );
-      expect(reconcileCalls).toHaveLength(1);
-      expect(String(reconcileCalls[0][0])).toContain(planPath);
+      // Clearing the list must not read as "the approved run finished".
+      expect(result.systemPrompt).toContain("Use act_mode_todo");
+      await expectToolAllowed(harness, ctx, "write", { path: "x.ts" });
     });
   });
 
@@ -1134,8 +1031,8 @@ describe("plan-mode extension: review lifecycle", () => {
       await harness.emit("agent_end", { messages: [] }, ctx);
 
       // The approved-invalid-artifact policy fix is still the only
-      // resubmission-related message; the approval also queues the
-      // todo-reconciliation reminder for the run created before approval.
+      // resubmission-related message: approval no longer queues a
+      // todo-reconciliation reminder.
       const policyCalls = harness.api.sendUserMessage.mock.calls.filter(
         ([message]) =>
           typeof message === "string" &&
@@ -1147,12 +1044,6 @@ describe("plan-mode extension: review lifecycle", () => {
       );
       expect(message).not.toContain("plannotator_auto_submit_review");
       expect(options).toEqual({ deliverAs: "followUp" });
-      expect(harness.api.sendUserMessage).toHaveBeenCalledWith(
-        expect.stringContaining(
-          `Reconcile the act_mode_todo list with the approved plan: ${planPath}`,
-        ),
-        expect.anything(),
-      );
     });
   });
 

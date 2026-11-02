@@ -48,12 +48,12 @@ Internally, the extension may still track lower-level state to enforce guards an
 `plan` mode is intentionally strict. Pi writes a reviewable plan/spec, submits it to Plannotator, and waits for approval before implementation.
 
 The normal flow is:
-1. Pi creates a concrete TODO list.
+1. Pi creates a concrete TODO list for the planning work.
 2. Pi writes a plan or spec under `.pi/plans/<repo>/...`.
 3. Pi submits it for review.
 4. If review is denied, Pi revises the same file and submits again.
    Keep the first `#` heading unchanged across denied revisions unless the reviewer explicitly asks for a rename so Plannotator can show version diffs.
-5. After approval, Pi executes the approved work automatically.
+5. Approval archives that planning list into `recentRuns` and starts an empty run bound to the approved plan. Pi writes the execution TODO list against that run, then executes the approved work.
 6. After completion, the workflow returns to `act`.
 
 If an already approved plan/spec is edited after interruption or revision, the previous approval no longer authorizes that content. Submit the edited artifact for review again before continuing from it.
@@ -66,6 +66,10 @@ Plan Mode uses TODO tools to show the active run in the below-editor widget:
 - `act_mode_todo` in `act`
 - `plan_mode_todo` while planning or waiting for review
 - `act_mode_todo` during approved execution
+
+A list written before approval belongs to the planning run. Approving a plan
+that the run is not bound to archives that list and starts an empty run, so the
+TODO panel clears until Pi writes the execution steps.
 
 During implementation, Pi should:
 - mark a task `in_progress` before starting it

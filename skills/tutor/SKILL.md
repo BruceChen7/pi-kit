@@ -144,6 +144,24 @@ the mechanism, because a part with no home gets forgotten.
    怎么校验，见 §Diagrams。
 3. **Quiz（验证）** — 用 `quiz` 确认落地。答错、选「不知道」、或学习者说「没懂」，
    就停在这节换角度重讲（格式见下）；答对再往下。
+4. **答疑（Questions）** — quiz 落地（含重讲收尾那一题）之后，进下一个节点之前，**问到学习者说
+   「没有」为止**。这是一个循环，不是问一句：
+
+   - **怎么开口**：用**散文句**——写在你回复正文里的一句普通话，落进笔记就是
+     `> [!abstract] PI` 块的一部分。**不新开标题、不用 callout、不调工具**。点名这一节
+     **最可能没落地的 1-2 处**（刚考的那道题背后的机制、这节零件最多的那一步），
+     问哪处还是软的。泛泛问「有问题吗」永远得到「没有」，所以必须点名具体位置。
+   - **为什么不用 `> [!question]` 块**：那个块是判定计数的输入，题面后面没跟判定就永远记成
+     `unanswered`，等于把一个假问题钉进每次续做（实测：散文句 `unanswered 0`，
+     question 块后跟学习者的话仍 `unanswered 1` 且把续做钉死）。
+   - **一轮一处**：他指出一处，你答一处（分类见下），末尾收**一条新 quiz**。
+     那一题答对了，回到开头**再问一次**「还有别处是软的吗」；答错或选「不知道」，
+     就按既有规则在同这一处换入口重讲，仍算这一轮。
+   - **怎么退出**：他说「没有」/「继续」/「下一个」，**立即往下走**，不追问、不勉强、
+     不为凑一轮而自问自答、也不为这一拍补一句小结。退出只由他给——不要因为「你觉得差不多
+     了」而收口。
+   - **三遍还在这**：同一处连答三遍（含换角度）仍不通，别再换入口了——那是更底下的东西
+     （底图 / 前置缺口），按 §Background 补底图或回头补前置，然后退出这一拍。
 
 **每节开头用二级标题标注它在备课图中的位置**，格式：`## 本节对应备课图节点 N：标题`。这能让笔记生成目录、支持导航，让学习者知道「我们在哪、为什么在这里」。
 
@@ -154,6 +172,24 @@ the mechanism, because a part with no home gets forgotten.
 本节没有节点号就用标题简称。**换的必须是入口**（换证据、换图、换反例、从源码反推），复述不算
 重讲；重讲以一条**新** `quiz` 收尾，本节过没过看的是重讲后那一题。图不重画——本节那张仍然
 算数；入口本身就是图的（接线缺口、底图缺格）才补一张，照 §Diagrams 先验证。
+
+**答疑：一轮一处，先分类再答。** 学习者说「没懂」、答错、选「不知道」，或者在答疑那一拍里指出
+一处，先按原则 iv 分类——**接线缺口和零件缺口的答法不同**：
+
+| 学习者的话 | 缺的是什么 | 怎么答 |
+|---|---|---|
+| 「知道 X，但它挂在哪 / 跟谁相邻」「这句挂不上」 | 接线缺口：图 | 本节内 `### <节点号> · 换角度：…`，换的入口是图；收尾一条**新** `quiz` |
+| 「X 到底是什么」「这个字段是什么意思」 | 零件缺口：事实 | `## 补课 · 本节对应备课图节点 <章号>-0-<序号>：…`（§Background），形状同节点 |
+| 问到的是一个术语 | 概念没落地 | 先按上面两条之一讲，再用 `note_concept` 登记或改状态 |
+
+**先在本节修，反复出现才升级。** 一处疑问先按上面第一行在本节内解决——不要一遇到「挂不上」
+就开 `## 补课`；只有**同一处反复出现**（见上「三遍还在这」）、或整章的零件都指不出落点时，
+才是缺底图，才升级成 `## 补课`（§Background）。
+
+**答在笔记里，不只答在聊天里。** 他提问那句话已经由镜像留成他自己的 `> [!quote] YOU` 块——
+不要复述第二遍题面；答案照节点 / 补课的形状写全，图先过 `validate_mermaid`。
+**一次只处理一处，答完就用一句散文把他请回来**（「还有别处是软的吗」）——
+答疑不是在收尾时一次性复盘的清单，是**讲到哪儿问到哪儿**。
 
 **标题总共三档：** 节点（上）· 重讲（上）· 补课
 `## 补课 · 本节对应备课图节点 <章号>-0-<序号>：…`（§Background）——别的一律不新开标题。
@@ -366,8 +402,9 @@ so the concept table does not take them (§Concepts) — the 名片 is where the
 meets an unknown name mid-chapter finds it at the chapter's end instead of re-reading the chapter;
 this is also what lets the chapter be read again six months later.
 
-**补底图 — retrofitting a chapter that has none.** 「读过但串不起来 / 这句挂不上 / 缺背景」 means
-that chapter has no 底图. Do not rewrite the chapter: teach a **补课** inside it — an extra node
+**补底图 — retrofitting a chapter that has none.** 「读过但串不起来 / 这句挂不上 / 缺背景」——或在
+答疑里指着某个字段问「它落在哪儿」，或同一处连答三遍仍不通（§Teach）—— means that chapter has
+no 底图. Do not rewrite the chapter: teach a **补课** inside it — an extra node
 numbered `C<章号>-0-<序号>`，标题按 §Teach 的三档写. The 补课's diagram *is* the chapter's missing 底图, and the
 chapter's other sections point at it from then on. Log one line in the index's `## 已知边界` when it
 lands. **One 补课 per missing picture** — if every chapter needs one, what is actually missing is
@@ -477,7 +514,8 @@ dictionary, not a second copy of the lesson. The table is not indexed into any s
 **收尾前先回读开篇。** 把这一章的 开篇（定位 / 底图 / 前置）单独读一遍，问三句：一个不记得
 本章正文的人，能不能说出「这章解决什么问题、零件挂在哪儿、得先会什么」？不能就把开篇补上。
 然后把检验交给学习者——他才是这件事的唯一权威：「回读这一章的第一节，如果还有『这句挂在
-哪』的感觉，把那句话指出来」。
+哪』的感觉，把那句话指出来」——收到之后按 §Teach 的分类答法处理（一轮一处，答完收一条新
+`quiz`），不另立一套。
 
 **顺手数一遍本章的重讲。** 每一遍都该有自己的 `### … · 换角度：…` 三级标题。发现哪一遍摊平在
 正文里，**只允许补那一行标题**——这是已写章节唯一允许的编辑；章节的其他毛病（缺口、错说法）

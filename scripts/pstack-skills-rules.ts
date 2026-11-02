@@ -234,6 +234,92 @@ export const upstreamModelSlugFindings = (doc: RepoDoc): Finding[] => {
     }));
 };
 
+/**
+ * 「本机没有这个源」和「有这个源但查了没有」必须是两种不同说法。
+ *
+ * `why` 的价值全在这条区分上：把前者写成后者，等于宣称做过一次没做过的检索。
+ * 反过来说，缺了任一种表述，那份 playbook 就没法把两种状态分开写。
+ */
+export const GAP_UNAVAILABLE_PHRASE = "not available in this environment";
+export const GAP_EMPTY_PHRASE = "searched, nothing found";
+
+export const gapDistinctionFindings = (doc: RepoDoc): Finding[] => {
+  const findings: Finding[] = [];
+  for (const phrase of [GAP_UNAVAILABLE_PHRASE, GAP_EMPTY_PHRASE]) {
+    if (!doc.content.includes(phrase)) {
+      findings.push({
+        path: doc.path,
+        rule: "gap-phrase-missing",
+        detail: phrase,
+      });
+    }
+  }
+  return findings;
+};
+
+/**
+ * 探源只探目录会漏掉「装了但没配凭据」——那时脚本直接报鉴权失败，属于「本机没有」，
+ * 而不是「查了没有」。所以探源块必须同时出现目录与凭据两类探测。
+ */
+export const probeCoverageFindings = (doc: RepoDoc): Finding[] => {
+  const probesDirectory = doc.content.includes(".agents/skills/$s");
+  const probesCredential =
+    doc.content.includes("credential:") && doc.content.includes("have()");
+  if (probesDirectory && probesCredential) return [];
+  return [
+    {
+      path: doc.path,
+      rule: "probe-misses-credentials",
+      detail: probesDirectory ? "探源只探目录，没探凭据" : "探源块缺少目录探测",
+    },
+  ];
+};
+
+/**
+ * 每个来源都必须在两条路里选一条：本机没有（降级），或者查了没有。
+ * 只写其中一种的 playbook 会让调查者静默地把一种当成另一种。
+ */
+export const sourceDegradationFindings = (
+  docs: readonly RepoDoc[],
+): Finding[] =>
+  docs.flatMap((doc) => {
+    const hasDegradation =
+      doc.content.includes(GAP_UNAVAILABLE_PHRASE) ||
+      doc.content.includes("本机没有");
+    if (hasDegradation) return [];
+    return [
+      {
+        path: doc.path,
+        rule: "source-without-degradation",
+        detail: "可选来源必须写明本机没有时怎么办",
+      },
+    ];
+  });
+
+/**
+ * 一份判断清单只有被别处引用才有用。孤儿文件等于没写：没人会读它。
+ * 入边可以是 markdown 链接，也可以是 `/skill:` 路由。
+ */
+export const orphanJudgmentListFindings = (
+  target: RepoDoc,
+  referencingDocs: readonly RepoDoc[],
+): Finding[] => {
+  const fileName = target.path.split("/").pop() ?? target.path;
+  const skillName =
+    target.path.split("/").find((part) => part !== "skills") ?? "";
+  const referenced = referencingDocs.some(
+    (doc) => doc.path !== target.path && doc.content.includes(fileName),
+  );
+  if (referenced) return [];
+  return [
+    {
+      path: target.path,
+      rule: "orphan-judgment-list",
+      detail: `没有入边：${fileName} 没被任何文件引用（${skillName}）`,
+    },
+  ];
+};
+
 export const delegationTargetFindings = (
   promptDocs: readonly RepoDoc[],
   hasSubagentExtension: boolean,

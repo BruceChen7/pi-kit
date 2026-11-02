@@ -51,6 +51,10 @@ playbook 索引在 `/skill:poteto-playbooks`，按上面第 0 节的查找顺序
 - 改 `.ts` / `.tsx`，或 review 里出现 `as`、`any`、`!`、可选字段堆砌 → `/skill:typescript-best-practices`：先用类型把坏状态挡住，再写实现。
 - 这件活看上去只是把现成结论再加工一遍 → `/skill:sharpen`：先问这个领域专业的人会怎么做，再重写任务。
 - 同一个纠正出现第二次 → `/skill:correct`，把错改成不可能再犯。
+- 问「这段为什么这么写 / 为什么选 Y / 这个数字哪来的」→ `/skill:why`：查动机，结论按置信分层，本机没有的来源照实说。
+- 问「这段怎么工作 / 该放哪一层 / 哪个包拥有它」→ `/skill:how`：先按复杂度分档，复杂子系统再 2 到 4 路并行探查。
+- 问「我上次在 X 做到哪了 / 追平一下 / 我最近在忙什么」→ `/skill:recall`：重建上下文，别只翻会话史。
+- 任务匹配不上任何 route、或大迁移这类跨阶段长活 → `/skill:figure-it-out`：先把流程设计出来，按可逆性定严谨度。
 - 读多写少或要独立评审 → `subagent reviewer` / `explore`；写任务按文件分区 → `subagent general`。
 
 ## 3. 原则引用纪律

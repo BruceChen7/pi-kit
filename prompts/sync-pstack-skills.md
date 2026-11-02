@@ -10,7 +10,7 @@ argument-hint: "[all|<skill ...>] [--report]"
 
 进口图的是内核，不是文件名：哪条判断值得成为本仓自己的东西，看下一节的清单。
 
-默认中文。作用域是 18 个进口 skill：`principles`（索引 + 24 条叶子）、`blast-radius`、`correct`、`no-comments`、`benchmark-checklist`、`show-me-your-work`、`technical-writing`、`unslop`、`interrogate`、`swarm`、`arena`、`create-verification-skill`、`maintain-verification-skill`、`create-formal-verification-skill`、`maintain-formal-verification-skill`、`ketchup`、`typescript-best-practices`、`sharpen`。参数可以只点名其中几个；`--report` 只出报告，不改文件。
+默认中文。作用域是 22 个进口 skill：`principles`（索引 + 24 条叶子）、`blast-radius`、`correct`、`no-comments`、`benchmark-checklist`、`show-me-your-work`、`technical-writing`、`unslop`、`interrogate`、`swarm`、`arena`、`create-verification-skill`、`maintain-verification-skill`、`create-formal-verification-skill`、`maintain-formal-verification-skill`、`ketchup`、`typescript-best-practices`、`sharpen`、`why`、`how`、`recall`、`figure-it-out`。参数可以只点名其中几个；`--report` 只出报告，不改文件。
 
 ## 真相源
 
@@ -39,6 +39,11 @@ pstack 值钱的是一套判断，不是目录结构。左列是内核，右列�
 | 报进度给不在场的人：只列他必须决定的，每条带证据与风险   | `ketchup/`                                                   | 已本地化：对话里的图指 `/show-me`，通知与 subagent 结果不算用户消息 |
 | 类型挡在运行时之前：坏状态写不出来                       | `typescript-best-practices/`                                 | 已 vendor：去 `paths:`，接 `type-system-discipline` 原则            |
 | 做深不做大：先问专业做法与原始材料，再重写任务           | `sharpen/`                                                   | 已 vendor，正文未改                                                 |
+| 设计候选先过红旗：八条红旗是改形状或否掉的理由，架构错了就推倒 | `architect/`（无独立目录） | 已本地化：两份判断清单落 `skills/codebase-design/DESIGN-RED-FLAGS.md`，候选探索用已有的 `DESIGN-IT-TWICE.md` |
+| 查动机要分层：五档置信、竞争假设、两种 gap 分开写 | `why/` | 已本地化：来源 playbook 换成本机工具，探源在派活之前 |
+| 讲清楚怎么工作：按复杂度分档，复杂子系统先探查再综合 | `how/` | 已本地化：探查者改 builtin `explore` |
+| 重建上下文：自己的会话史加共享记录 | `recall/` | 已本地化：transcript 走 pi session，共享记录复用 `why` 的调查者 |
+| 匹配不上现成流程时先把流程设计出来：严谨度随可逆性 | `figure-it-out/` | 已本地化：去 cloud / worktree，设计决定走 `codebase-design` |
 | 复盘落在环境上：三镜头、三桶、逐条落点                   | `reflect/`（未进口）                                         | 已并入 `skills/retro/SKILL.md`，不单独进口                          |
 
 **不 vendor** 的是上游 harness，不是内核：Task 参数名、`pstack-models` 规则与 model slug、`AskUserQuestion`、`TodoWrite`、`.cursor` 路径、playbook 内的 harness 段（playbook 内容本身已进口到 `skills/poteto-playbooks/`，逐文件判定见 `scripts/poteto-kernel-map.json`）、Claude Code adapter 段、`poteto-mode`（本地入口是 `prompts/poteto.md`）、云端隔离与 worktree 并发写。
@@ -88,7 +93,7 @@ for f in skills/pstack/principles/references/*.md; do
 done
 ```
 
-其余 14 个 `SKILL.md` 用整文件 diff 起手，再读两边全文：
+其余 18 个 `SKILL.md` 用整文件 diff 起手，再读两边全文：
 
 ```bash
 for s in blast-radius correct no-comments benchmark-checklist show-me-your-work technical-writing unslop interrogate swarm arena create-verification-skill maintain-verification-skill create-formal-verification-skill maintain-formal-verification-skill ketchup typescript-best-practices sharpen; do
@@ -97,7 +102,7 @@ for s in blast-radius correct no-comments benchmark-checklist show-me-your-work 
 done
 ```
 
-带 `references/` 的三个（`interrogate`、`create-verification-skill`、`typescript-best-practices`）再 `diff -rq` 一遍，确认子文件没漏。
+带 `references/` 的五个（`why`、`how`、`interrogate`、`create-verification-skill`、`typescript-best-practices`）再 `diff -rq` 一遍，确认子文件没漏。（`show-me-your-work` 另有 `references/` 与 `scripts/`，一并 `diff -rq`。）
 
 整文件 diff 会带上已知适配，这是预期。只判断一件事：diff 里有没有**内核清单之外**的上游新规则。
 
@@ -154,7 +159,7 @@ done
 npx vitest run scripts/pstack-skills.test.ts
 ```
 
-门禁必须全绿（当前 18 passed）。增删原则时，索引 bullet、`references/` 文件、测试里的 `24` 要一起改。
+门禁必须全绿（当前 22 passed）。增删原则时，索引 bullet、`references/` 文件、测试里的 `24` 要一起改。
 
 只有 skill 集合变了（新增、删除、改名）才需要重装：
 

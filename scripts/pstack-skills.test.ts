@@ -5,12 +5,18 @@ import { describe, expect, it } from "vitest";
 import {
   extractIndexedPrincipleIds,
   type Finding,
+  GAP_EMPTY_PHRASE,
+  GAP_UNAVAILABLE_PHRASE,
+  gapDistinctionFindings,
   lintSkillGroup,
   namingFindings,
+  orphanJudgmentListFindings,
   parseFrontmatter,
+  probeCoverageFindings,
   type RepoDoc,
   removedFeatureFindings,
   type SkillGroupInput,
+  sourceDegradationFindings,
 } from "./pstack-skills-rules.ts";
 
 const REPO_ROOT = path.resolve(
@@ -118,6 +124,10 @@ describe("pstack skill group", () => {
     "ketchup",
     "typescript-best-practices",
     "sharpen",
+    "why",
+    "how",
+    "recall",
+    "figure-it-out",
   ];
 
   it("scans the vendored group, not an empty set", () => {
@@ -464,6 +474,118 @@ describe("extractIndexedPrincipleIds", () => {
     expect(extractIndexedPrincipleIds(text)).toEqual([
       "prove-it-works",
       "fix-root-causes",
+    ]);
+  });
+});
+
+// 「本机没有这个源」与「查了没有」是两种结论。合成时把它们写混，等于宣称做过
+// 一次没做过的检索。这三条门禁盯住那个区分不被改动压平。
+describe("gap distinction", () => {
+  it("keeps both gap phrasings in the why source index", () => {
+    const doc = readDoc("skills/pstack/why/references/source-playbook.md");
+
+    expect(gapDistinctionFindings(doc)).toEqual([]);
+  });
+
+  it("flags a playbook that only knows how to say one of them", () => {
+    const findings = gapDistinctionFindings({
+      path: "skills/pstack/why/references/source-playbook.md",
+      content: `写 ${GAP_UNAVAILABLE_PHRASE} 就够了。`,
+    });
+
+    expect(findings).toEqual([
+      {
+        path: "skills/pstack/why/references/source-playbook.md",
+        rule: "gap-phrase-missing",
+        detail: GAP_EMPTY_PHRASE,
+      },
+    ]);
+  });
+
+  it("keeps the two phrasings distinct, not aliases of each other", () => {
+    // 同一句话里同时出现两种时，读者无法判断哪个是环境事实、哪个是检索结果。
+    expect(GAP_UNAVAILABLE_PHRASE).not.toBe(GAP_EMPTY_PHRASE);
+  });
+});
+
+describe("optional sources degrade", () => {
+  const sourceDocs = (): RepoDoc[] =>
+    listFiles("skills/pstack/why/references/sources")
+      .filter((file) => file.endsWith(".md"))
+      .map(readDoc);
+
+  it("ships optional source playbooks to check", () => {
+    expect(sourceDocs().length).toBeGreaterThan(5);
+  });
+
+  it("tells every source what to do when it is absent", () => {
+    const findings = sourceDegradationFindings(sourceDocs()).filter(
+      // 事故口味那份不是独立来源，是叠加在别的源上的查询口味。
+      (finding) => !finding.path.endsWith("incident-postmortem.md"),
+    );
+
+    expect(findings).toEqual([]);
+  });
+
+  it("flags a source that assumes it is always there", () => {
+    const findings = sourceDegradationFindings([
+      { path: "probe/source.md", content: "直接查这个源就行。" },
+    ]);
+
+    expect(findings).toEqual([
+      {
+        path: "probe/source.md",
+        rule: "source-without-degradation",
+        detail: "可选来源必须写明本机没有时怎么办",
+      },
+    ]);
+  });
+});
+
+describe("judgment lists have an edge in", () => {
+  it("reaches the design red flags from codebase-design", () => {
+    const target = readDoc("skills/codebase-design/DESIGN-RED-FLAGS.md");
+    const referrers = ["skills/codebase-design/SKILL.md"].map(readDoc);
+
+    expect(orphanJudgmentListFindings(target, referrers)).toEqual([]);
+  });
+
+  it("flags a judgment list nobody links to", () => {
+    const findings = orphanJudgmentListFindings(
+      { path: "skills/codebase-design/ORPHAN.md", content: "# x" },
+      [{ path: "skills/codebase-design/SKILL.md", content: "没有引用。" }],
+    );
+
+    expect(findings).toEqual([
+      {
+        path: "skills/codebase-design/ORPHAN.md",
+        rule: "orphan-judgment-list",
+        detail: "没有入边：ORPHAN.md 没被任何文件引用（codebase-design）",
+      },
+    ]);
+  });
+});
+
+describe("probe covers credentials, not just directories", () => {
+  it("probes both the skill directory and its credential", () => {
+    const doc = readDoc("skills/pstack/why/SKILL.md");
+
+    expect(probeCoverageFindings(doc)).toEqual([]);
+  });
+
+  it("flags a probe that stops at the directory check", () => {
+    const findings = probeCoverageFindings({
+      path: "skills/pstack/why/SKILL.md",
+      content:
+        'for s in a b; do [ -d "$HOME/.agents/skills/$s" ] && echo "$s"; done',
+    });
+
+    expect(findings).toEqual([
+      {
+        path: "skills/pstack/why/SKILL.md",
+        rule: "probe-misses-credentials",
+        detail: "探源只探目录，没探凭据",
+      },
     ]);
   });
 });

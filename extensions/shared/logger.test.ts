@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Writable } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearLoggerCache,
   createLogger,
@@ -247,6 +247,38 @@ describe("createLogger", () => {
 
     const logPath = path.join(home, ".pi", "agent", "pi-debug.log");
     expect(fs.existsSync(logPath)).toBe(false);
+  });
+
+  it("never writes to the default log file from a test run", async () => {
+    const home = createTempSettingsHome("{}");
+    process.env.HOME = home;
+
+    const logger = createLogger("deferred-queue", { stderr: null });
+    logger.warn("must not reach the default log file", { reason: "test run" });
+
+    // The file append is queued, so give it a chance to land before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const defaultLogPath = path.join(home, ".pi", "agent", "pi-debug.log");
+    expect(fs.existsSync(defaultLogPath)).toBe(false);
+  });
+
+  it("still writes when a log file path is configured explicitly", async () => {
+    const home = createTempSettingsHome("{}");
+    process.env.HOME = home;
+    const customLogPath = path.join(home, "custom-log.txt");
+
+    const logger = createLogger("deferred-queue", {
+      logFilePath: customLogPath,
+      stderr: null,
+    });
+    logger.warn("explicit destinations win");
+
+    await vi.waitFor(() => {
+      expect(fs.readFileSync(customLogPath, "utf8")).toContain(
+        "explicit destinations win",
+      );
+    });
   });
 
   it("handles unserializable data payloads", () => {

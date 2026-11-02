@@ -23,6 +23,7 @@ import { type HtmlChunk, prepareChunks, splitEntries } from "./chunking.ts";
 import { defineTask } from "./deferred-queue/define-task.ts";
 import { log } from "./deferred-queue/logger.ts";
 import type { Duration } from "./deferred-queue/types.ts";
+import { parseOpencliArray } from "./opencli-output.ts";
 import { escapeHtml, sendTelegramNotification } from "./telegram.ts";
 
 // ── JSON parsing ───────────────────────────────────────
@@ -30,15 +31,14 @@ import { escapeHtml, sendTelegramNotification } from "./telegram.ts";
 /**
  * Parse the JSON output from an opencli bookmarks command.
  *
+ * Handles both the opencli 2.x result envelope (`{ok, data}`) and the bare
+ * array opencli 1.x printed. See {@link parseOpencliArray}.
+ *
  * @template T - The expected bookmark item type.
- * @throws {Error} If the input is not a valid JSON array.
+ * @throws {Error} If the payload carries no array of bookmarks.
  */
 export function parseBookmarkItems<T>(jsonString: string): T[] {
-  const parsed: unknown = JSON.parse(jsonString);
-  if (!Array.isArray(parsed)) {
-    throw new Error(`Expected JSON array from opencli, got ${typeof parsed}`);
-  }
-  return parsed as T[];
+  return parseOpencliArray<T>(jsonString);
 }
 
 // ── Telegram chunking (delegates to chunking.ts) ────────

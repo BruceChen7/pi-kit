@@ -7,6 +7,7 @@ import {
   buildSummaryPrompt,
   buildTelegramMessageLink,
   checkRelevanceFromSummary,
+  classifyTgExportFailure,
   loadFilterCheckpoint,
   matchKeywords,
   parseLlmResponse,
@@ -265,6 +266,51 @@ describe("buildForwardMessageHtml", () => {
     expect(result.html).toContain("https://t.me/TheB1ackParade/1082");
     expect(result.html).toContain("…");
     expect(result.truncated).toBe(true);
+  });
+});
+
+describe("classifyTgExportFailure", () => {
+  it("treats an empty channel as a benign outcome, not a failure", () => {
+    const stdout = JSON.stringify({
+      ok: false,
+      schema_version: "1",
+      error: {
+        code: "no_messages",
+        message: "No messages found for 'Welcome to the Black Parade'.",
+      },
+    });
+
+    expect(classifyTgExportFailure(stdout)).toEqual({
+      kind: "empty",
+      detail: "no_messages",
+    });
+  });
+
+  it("treats a missing chat as a real failure and names the code", () => {
+    const stdout = JSON.stringify({
+      ok: false,
+      error: {
+        code: "chat_not_found",
+        message: "Chat 'x' not found in database.",
+      },
+    });
+
+    const outcome = classifyTgExportFailure(stdout);
+
+    expect(outcome.kind).toBe("error");
+    expect(outcome.detail).toContain("chat_not_found");
+    expect(outcome.detail).toContain("not found in database");
+  });
+
+  it("falls back to the raw output when the payload is not JSON", () => {
+    const outcome = classifyTgExportFailure("tg exploded");
+
+    expect(outcome.kind).toBe("error");
+    expect(outcome.detail).toContain("tg exploded");
+  });
+
+  it("treats an empty payload as a real failure, not as an empty channel", () => {
+    expect(classifyTgExportFailure("").kind).toBe("error");
   });
 });
 

@@ -4,6 +4,7 @@ import { loadCheckpoint, saveCheckpoint } from "../../shared/checkpoint.ts";
 import { prepareChunks, splitEntries } from "../../shared/chunking.ts";
 import { defineTask } from "../../shared/deferred-queue/define-task.ts";
 import { log } from "../../shared/deferred-queue/logger.ts";
+import { parseOpencliArray } from "../../shared/opencli-output.ts";
 import { sendTelegramNotification } from "../../shared/telegram.ts";
 
 const TELEGRAM_MAX_LENGTH = 4096;
@@ -150,14 +151,11 @@ export function formatSavedPosts(items: SavedPost[], warning?: string): string {
 /**
  * Parse the JSON output from `opencli reddit saved -f json`.
  *
- * Pure function (throws on malformed input).
+ * Handles both the opencli 2.x result envelope (`{ok, data}`) and a bare
+ * array. Throws when the command reports an error, naming its code.
  */
 export function parseSavedItems(jsonString: string): SavedPost[] {
-  const parsed: unknown = JSON.parse(jsonString);
-  if (!Array.isArray(parsed)) {
-    throw new Error(`Expected JSON array from opencli, got ${typeof parsed}`);
-  }
-  return parsed as SavedPost[];
+  return parseOpencliArray<SavedPost>(jsonString);
 }
 
 // ── Chunking (delegates to shared chunking.ts) ─────────

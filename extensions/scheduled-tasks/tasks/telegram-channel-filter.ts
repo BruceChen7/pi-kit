@@ -420,6 +420,55 @@ export function parseTgFilterOutput(jsonString: string): TelegramMessage[] {
   }));
 }
 
+/**
+ * What a non-zero `tg export` exit actually means.
+ *
+ * `tg export` exits non-zero both when the channel genuinely has no recent
+ * messages and when the command really failed. The payload carries an
+ * `error.code` that separates them; the exit code alone does not:
+ *
+ *   {"ok":false,"error":{"code":"no_messages",   ...}}  → routine, try again next run
+ *   {"ok":false,"error":{"code":"chat_not_found",...}}  → the channel is misconfigured
+ *
+ * Treating both as failure logs a daily warning for a healthy channel and
+ * hides the day the channel actually breaks.
+ */
+export type TgExportFailure =
+  | { kind: "empty"; detail: string }
+  | { kind: "error"; detail: string };
+
+export function classifyTgExportFailure(stdout: string): TgExportFailure {
+  const trimmed = stdout.trim();
+  if (trimmed.length === 0) {
+    return { kind: "error", detail: "tg export produced no output" };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = parseTgJson(trimmed);
+  } catch {
+    return { kind: "error", detail: trimmed.slice(0, 200) };
+  }
+
+  if (parsed && typeof parsed === "object") {
+    const error = (parsed as { error?: unknown }).error;
+    if (error && typeof error === "object") {
+      const { code, message } = error as { code?: unknown; message?: unknown };
+      if (code === "no_messages") {
+        return { kind: "empty", detail: "no_messages" };
+      }
+      const named = typeof code === "string" ? code : "unknown_error";
+      const detail = typeof message === "string" ? message : "";
+      return {
+        kind: "error",
+        detail: detail ? `${named}: ${detail}` : named,
+      };
+    }
+  }
+
+  return { kind: "error", detail: trimmed.slice(0, 200) };
+}
+
 // ── Task handler ───────────────────────────────────────
 
 export default defineTask({
@@ -459,10 +508,19 @@ export default defineTask({
       ]);
 
       if (historyResult.code !== 0) {
-        log.warn("tg export failed", {
-          channel,
-          stderr: historyResult.stderr.slice(0, 500),
-        });
+        const outcome = classifyTgExportFailure(historyResult.stdout);
+        if (outcome.kind === "empty") {
+          log.info("no messages in last 24h", {
+            channel,
+            reason: outcome.detail,
+          });
+        } else {
+          log.warn("tg export failed", {
+            channel,
+            reason: outcome.detail,
+            stderr: historyResult.stderr.slice(0, 500),
+          });
+        }
         continue;
       }
 

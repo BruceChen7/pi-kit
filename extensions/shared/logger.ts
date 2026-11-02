@@ -11,6 +11,18 @@ const getDefaultLogFilePath = (): string =>
   path.join(os.homedir(), ".pi", "agent", "pi-debug.log");
 
 /**
+ * Whether this process is a test run.
+ *
+ * The default destination is the *runtime's* log — the record a running Pi
+ * process leaves behind. A test that constructs a logger would append its
+ * fixtures to that same file and bury real incidents, so under test the
+ * default resolves to nothing. An explicitly configured `logFilePath` still
+ * wins, which keeps the logger itself testable.
+ */
+const isTestRun = (): boolean =>
+  Boolean(process.env.VITEST) || process.env.NODE_ENV === "test";
+
+/**
  * Resolve environment variable - support $VAR or ${VAR} syntax
  */
 export const resolveEnvVar = (
@@ -111,6 +123,8 @@ const getLogConfig = (settings: unknown): ExtensionsLogConfig => {
 
 const resolveLogFilePath = (settings: unknown): string | null => {
   const logConfig = getLogConfig(settings);
+  const defaultPath = isTestRun() ? null : getDefaultLogFilePath();
+
   if (logConfig.logFilePath === null) {
     return null;
   }
@@ -120,9 +134,9 @@ const resolveLogFilePath = (settings: unknown): string | null => {
       return null;
     }
     const resolved = resolveEnvVar(trimmed);
-    return resolved ?? getDefaultLogFilePath();
+    return resolved ?? defaultPath;
   }
-  return getDefaultLogFilePath();
+  return defaultPath;
 };
 
 export const resolveMinLogLevel = (

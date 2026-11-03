@@ -28,7 +28,7 @@ Preconditions: repository root, `npm install` done, `pi` on `PATH`, and the pote
   Observable: `PASS`, `route_task` present in `active-tools.json`.
 - Prove the command is handled and the catalog resolves:
   `node scripts/verify-plugin.mjs command --plugin poteto-route --command "/poteto-route status" --expect "poteto-route: idle" --expect "routes: research,bugfix,refactor,feature,perf,ship"`
-  Observable: `PASS`, one notify containing both `poteto-route: idle` and the route list. Assert both segments: the route list alone still passes on a non-idle phase, and `idle` alone still passes when the catalog is missing.
+  Observable: `PASS`, one notify containing both `poteto-route: idle` and the route list. Assert both segments: the route list alone still passes on a non-idle phase, and a missing catalog replaces the whole notify with the missing-roots message, so `routes:` is the segment that fails there.
 - Prove reset is handled:
   `node scripts/verify-plugin.mjs command --plugin poteto-route --command "/poteto-route reset" --expect "poteto-route: reset"`
   Observable: `PASS`, one notify containing `poteto-route: reset`.

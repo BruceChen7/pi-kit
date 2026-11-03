@@ -38,7 +38,8 @@
       "./extensions/prompt-clarify",
       "./extensions/query-notes-log",
       "./extensions/subagent",
-      "./extensions/poteto-route"
+      "./extensions/poteto-route",
+      "./extensions/doop"
     ]
   },
   "scripts": {

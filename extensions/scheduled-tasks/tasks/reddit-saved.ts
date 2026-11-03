@@ -148,12 +148,6 @@ export function formatSavedPosts(items: SavedPost[], warning?: string): string {
 
 // ── JSON parsing ───────────────────────────────────────
 
-/**
- * Parse the JSON output from `opencli reddit saved -f json`.
- *
- * Handles both the opencli 2.x result envelope (`{ok, data}`) and a bare
- * array. Throws when the command reports an error, naming its code.
- */
 export function parseSavedItems(jsonString: string): SavedPost[] {
   return parseOpencliArray<SavedPost>(jsonString);
 }

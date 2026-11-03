@@ -1,11 +1,4 @@
 /**
- * ansi-segments — 把扩展 widget / custom 面板吐出的 ANSI 行切成结构化样式片段。
- *
- * Functional Core：value in / value out，不碰 DOM、不碰 TSX、不知道宿主是谁。
- * 两个宿主各自把片段映射成自己的画法：
- * - pi-web：`ansi_up` → HTML（它已有的路径，本项目不改）
- * - nsh（Android / iOS / 桌面）：片段 → 嵌套 `<Text>` span
- *
  * 语义逐条对齐实测过的参考实现：
  * - 样式位与重置码对齐 `pi-tui/dist/utils.js` 的 `AnsiCodeTracker`
  * - 颜色覆盖 16 / 256 / truecolor，hex 换算对齐 pi 的 `ansi-to-html.js`
@@ -13,14 +6,12 @@
  *   Android 必须与它一致，否则同一份扩展输出两端长得不一样。
  */
 
-/** 宿主无关的颜色表示：基础 16 色 / 256 索引 / truecolor。 */
 export type AnsiColor =
   | { type: "basic"; index: number }
   | { type: "indexed"; index: number }
   | { type: "rgb"; r: number; g: number; b: number };
 
 /**
- * 片段的样式。只记录「开了」的位（缺省 = 关），颜色缺省 = 宿主默认前景/背景。
  * `inverse` 由宿主自己换色（nsh 的 Text 没有 inverse，见 designs B02 的高亮用法）。
  */
 export type AnsiStyle = {
@@ -34,7 +25,6 @@ export type AnsiStyle = {
   inverse?: true;
   blink?: true;
   hidden?: true;
-  /** OSC 8 超链接目标；宿主不支持就忽略，不丢文本。 */
   link?: string;
 };
 
@@ -42,7 +32,6 @@ export type AnsiSegment = { text: string; style: AnsiStyle };
 
 const ESC = "\x1B";
 const BEL = "\x07";
-/** TUI 光标占位标记：`ESC _ pi:c BEL`。 */
 const CURSOR_MARKER_RE = new RegExp(`${ESC}_pi:c${BEL}`, "g");
 /** 通用 ANSI 转义（stripping 用）。OSC 必须排在两字符转义之前，否则 `ESC ]` 会先被吃掉。 */
 const ANSI_ESCAPE_RE = new RegExp(
@@ -173,7 +162,6 @@ const colorFromBackgroundBasic = (code: number): AnsiColor => ({
   index: code >= 100 ? code - 100 + 8 : code - 40,
 });
 
-/** 把 SGR 参数串作用到样式上。参数为空串按 0（reset）处理，与 ECMA-48 一致。 */
 const applySgr = (params: string, style: MutableStyle): void => {
   const parts = params.split(";");
   let i = 0;
@@ -221,7 +209,6 @@ const applySgr = (params: string, style: MutableStyle): void => {
         }
         continue;
       }
-      // 38/48 后面不是 5|2：只吃掉自身，后续参数按独立码处理。
       i += 1;
       continue;
     }
@@ -301,7 +288,6 @@ const findTerminator = (
   line: string,
   from: number,
 ): { end: number; next: number } => {
-  // OSC/APC/DCS 以 BEL 或 ST(ESC \) 结束；找不到就吃到行尾。
   const bel = line.indexOf(BEL, from);
   const st = line.indexOf(`${ESC}\\`, from);
   const candidates = [bel, st].filter((value) => value >= 0);
@@ -321,11 +307,9 @@ const applyEscape = (
 ): number => {
   const next = line[index + 1];
 
-  // OSC: ESC ] ...
   if (next === "]") {
     const { end, next: after } = findTerminator(line, index + 2);
     const body = line.slice(index + 2, end);
-    // OSC 8: 8 ; params ; URI
     if (body.startsWith("8;")) {
       const uri = body.slice(body.indexOf(";", 2) + 1);
       if (uri) style.link = uri;
@@ -334,23 +318,20 @@ const applyEscape = (
     return Math.max(1, after - index);
   }
 
-  // APC / DCS / PM / SOS: ESC _ P ^ X ...
   if (next === "_" || next === "P" || next === "^" || next === "X") {
     const { next: after } = findTerminator(line, index + 2);
     return Math.max(1, after - index);
   }
 
-  // CSI: ESC [ params intermediates final
   if (next === "[") {
     // biome-ignore lint/suspicious/noControlCharactersInRegex: 终端转义序列本来就以 ESC 开头
     const match = /^\x1B\[([0-?]*)[ -/]*([@-~])/.exec(line.slice(index));
-    if (!match) return line.length - index; // 残缺序列：吃到行尾
+    if (!match) return line.length - index;
     const [, params = "", final = ""] = match;
     if (final === "m") applySgr(params, style);
     return match[0].length;
   }
 
-  // 其余两字符转义：ESC 7 / ESC ( B 之类
   if (next === undefined) return 1;
   return 2;
 };
@@ -379,7 +360,6 @@ export const parseAnsiLine = (line: string): AnsiSegment[] => {
 export const parseAnsiLines = (lines: string[]): AnsiSegment[][] =>
   lines.map(parseAnsiLine);
 
-/** 去掉转义序列与光标占位标记，只留可见文本（量宽、比文案用）。 */
 export const stripAnsi = (text: string): string =>
   text.replace(CURSOR_MARKER_RE, "").replace(ANSI_ESCAPE_RE, "");
 
@@ -391,7 +371,6 @@ const clampByte = (value: number): number => {
 const toHex = (value: number): string =>
   clampByte(value).toString(16).padStart(2, "0");
 
-/** 片段颜色 → `#rrggbb`。宿主自己决定要不要用这个值（nsh 的 Text 接受 hex）。 */
 export const ansiColorToHex = (color: AnsiColor): string => {
   if (color.type === "rgb") {
     return `#${toHex(color.r)}${toHex(color.g)}${toHex(color.b)}`;

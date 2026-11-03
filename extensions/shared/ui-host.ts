@@ -154,7 +154,6 @@ const ANDROID_HOST: UiHostProfile = {
     // 第一版不跑 render() 工厂：需要宿主反向反复调 render，且带点击/键盘语义。
     factory: false,
     placements: "both",
-    // 折叠态只露标题行，展开靠长按（见 designs/android-agent-ui B02）。
     contentVisibleWithoutInteraction: false,
     autoExpandedLines: null,
   },

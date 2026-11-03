@@ -14,7 +14,6 @@
  * not ours to trust. Everything downstream receives typed data.
  */
 
-/** The `error` object opencli puts in a failed envelope. */
 interface OpencliError {
   code?: unknown;
   message?: unknown;

@@ -1,13 +1,5 @@
 /**
- * custom-panel-lines — 把扩展 `render(width)` 画出来的「带框」面板，规整成宿主可直接
- * 摆进自己容器里的文本行（Functional Core：value in / value out）。
- *
- * 逐条对齐 pi-web `lib/ansi.ts:58-88` 的语义：
- * - 整行都是横框（`┌───┐`）⇒ 丢掉
- * - 行首/行尾的竖线（`│` `┃`）⇒ 剥掉；行首竖线后紧跟的一个空格也剥掉
- * - TUI 光标标记（`ESC _ pi:c BEL`）⇒ 删掉
- * - 行尾可见空格 ⇒ 删掉（转义序列保留）
- * - 首尾空行 ⇒ 删掉；全被删光时回退成原行
+ * 逐条对齐 pi-web `lib/ansi.ts:58-88` 的语义。
  *
  * 为什么要共享：pi-web 与 nsh 宿主拿到的是同一份 `string[]`，两边必须剥得一样，
  * 否则同一个面板在两个宿主上的缩进和留白不同。宿主只负责排版，不负责二次清洗。
@@ -19,13 +11,11 @@ const ESC = "\x1B";
 const BEL = "\x07";
 
 const CURSOR_MARKER_RE = new RegExp(`${ESC}_pi:c${BEL}`, "g");
-/** 锚定在行首的转义序列（与 ansi-segments 的扫描规则一致）。 */
 const ANSI_AT_RE = new RegExp(
   `^${ESC}(?:\\](?:[^${BEL}${ESC}]|${ESC}(?!\\\\))*(?:${BEL}|${ESC}\\\\)|\\[[0-?]*[ -/]*[@-~]|[@-Z\\\\-_])`,
 );
 const HORIZONTAL_FRAME_LINE = /^[┌├└╭╰][─┬┴┼]+[┐┤┘╮╯]$/;
 
-/** 可见字符及其在原串里的位置（跳过转义序列）。 */
 const visibleChars = (text: string): Array<{ char: string; at: number }> => {
   const chars: Array<{ char: string; at: number }> = [];
   let index = 0;

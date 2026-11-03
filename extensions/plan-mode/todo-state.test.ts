@@ -206,7 +206,6 @@ describe("todo state: approval switches runs", () => {
     state.switchApprovedPlanToAct();
     state.beginApprovedExecutionRun("plan.md");
     state.addTodo("执行第一步");
-    // A rejected review returns the run to draft with its list intact.
     state.returnApprovedRunToDraftForEditedArtifact("plan.md");
 
     state.beginApprovedExecutionRun("plan.md");

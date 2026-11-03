@@ -22,7 +22,6 @@ import { createJiti } from "jiti";
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const LOAD_TIMEOUT_MS = 20_000;
 
-/** 递归排序 key：只归一化顺序，不动值。 */
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value === null || typeof value !== "object") return value;
@@ -33,7 +32,6 @@ function canonicalize(value) {
   return sorted;
 }
 
-/** 未知成员一律给出可调用的空实现，让 factory 能跑到 registerTool 那一行。 */
 function makeStub() {
   const target = function stub() {};
   return new Proxy(target, {
@@ -76,7 +74,6 @@ function makeRecorder() {
   return { pi: makeStubWith(pi), tools };
 }
 
-/** 已知成员用真实实现，其余走 stub。 */
 function makeStubWith(known) {
   return new Proxy(known, {
     get(obj, key) {

@@ -900,9 +900,6 @@ export class PlanModeController {
    * the callers only decide that this path is approved.
    */
   private recordApprovedPlan(ctx: ExtensionContext, planPath: string): void {
-    // Approval supersedes the list that produced the plan: archive it and
-    // start an empty run bound to this plan, so execution begins from a list
-    // the agent builds for the approved steps.
     this.state.beginApprovedExecutionRun(planPath);
 
     this.state.activePlanPath = planPath;

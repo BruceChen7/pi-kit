@@ -62,7 +62,6 @@ describe("pele runtime", () => {
     const parser = await getPeleParser();
     const error = parseError(parser, "\n\nflowchart LR\n  A --> B(");
 
-    // 没有 frontmatter 时相对行等于绝对行；前导空行不会被剥掉。
     expect(peleErrorLine(error)).toBe(4);
   });
 

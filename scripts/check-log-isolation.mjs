@@ -17,7 +17,6 @@ import { join } from "node:path";
 
 const LOG_PATH = join(homedir(), ".pi", "agent", "pi-debug.log");
 
-/** Test files that construct the shared logger without an explicit sink. */
 const POLLUTING_SUITE = [
   "extensions/scheduled-tasks/task-discovery.test.ts",
   "extensions/scheduled-tasks/tasks/knowledge-wiki-daily.test.ts",

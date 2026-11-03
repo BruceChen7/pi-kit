@@ -256,7 +256,6 @@ describe("createLogger", () => {
     const logger = createLogger("deferred-queue", { stderr: null });
     logger.warn("must not reach the default log file", { reason: "test run" });
 
-    // The file append is queued, so give it a chance to land before asserting.
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     const defaultLogPath = path.join(home, ".pi", "agent", "pi-debug.log");

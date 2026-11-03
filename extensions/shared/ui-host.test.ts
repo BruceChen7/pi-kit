@@ -88,29 +88,21 @@ describe("resolveUiHostProfile", () => {
   it("gives android pi-web's contract without the terminal chrome", () => {
     const profile = resolveUiHostProfile({ envOverride: "android" });
     expect(profile.kind).toBe("android");
-    // 面板真的画：custom() 走 TSX，回传 done() 的值。
     expect(profile.customPanels).toBe(true);
     expect(profile.dialogs).toBe(true);
-    // 只支持 string[] widget，第一版不跑工厂。
     expect(profile.widgets).toEqual({
       lines: true,
       factory: false,
       placements: "both",
-      // 折叠态只露一行，展开靠长按。
       contentVisibleWithoutInteraction: false,
       autoExpandedLines: null,
     });
-    // 手机视口换算出来的列数，不是终端的 92。
     expect(profile.panelWidth).toBe(48);
     expect(profile.terminal).toEqual({ columns: 48, rows: 40 });
-    // 宿主自己套弹层，所以面板仍然去框、不画盒子。
     expect(profile.panelChrome).toBe("borderless");
     expect(profile.panelNormalizesFrame).toBe(true);
-    // 能画 ANSI 颜色，所以主题是有色的。
     expect(profile.themeColors).toBe(true);
-    // MVP 不接编辑器草稿回写。
     expect(profile.editorText).toEqual({ read: false, write: false });
-    // nsh 侧没有落点的能力一律按没有处理。
     expect(profile.editorComponent).toBe(false);
     expect(profile.autocomplete).toBe(false);
     expect(profile.footerHeader).toBe(false);

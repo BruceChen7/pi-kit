@@ -28,15 +28,6 @@ import { escapeHtml, sendTelegramNotification } from "./telegram.ts";
 
 // ── JSON parsing ───────────────────────────────────────
 
-/**
- * Parse the JSON output from an opencli bookmarks command.
- *
- * Handles both the opencli 2.x result envelope (`{ok, data}`) and the bare
- * array opencli 1.x printed. See {@link parseOpencliArray}.
- *
- * @template T - The expected bookmark item type.
- * @throws {Error} If the payload carries no array of bookmarks.
- */
 export function parseBookmarkItems<T>(jsonString: string): T[] {
   return parseOpencliArray<T>(jsonString);
 }

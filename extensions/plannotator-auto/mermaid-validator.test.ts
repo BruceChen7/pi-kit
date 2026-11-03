@@ -195,8 +195,6 @@ describe("validatePlanMermaidBlocks", () => {
       "  A[bad (label] --> B",
     ].join("\n");
 
-    // pele 1.13.0 报的是 block body 里的绝对行号（frontmatter 计入），
-    // 出错的那行是 body 的第 6 行 → 文件第 1 (fence) + 6 = 7 行。
     const errors = validatePlanMermaidBlocks(
       markdown,
       failingParser([body], parseErrorAt(6)),

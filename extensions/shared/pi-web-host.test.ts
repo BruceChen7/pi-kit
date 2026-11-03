@@ -43,7 +43,6 @@ const expectChromeSafe = (lines: string[]): void => {
     const before = stripAnsi(lines[index] ?? "");
     const after = stripAnsi(normalized[index] ?? "");
     expect(after.trimEnd()).toBe(before.trimEnd());
-    // 行首缩进不能被吃（borderless 没有框可剥）；全空白的分隔行不适用。
     if (before.trim() !== "") {
       expect(after.match(/^ */)?.[0] ?? "").toBe(
         before.match(/^ */)?.[0] ?? "",

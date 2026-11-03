@@ -633,8 +633,6 @@ export const startApprovedDemoRun = async (
   ctx: TestCtx,
   todoText = "实现已批准任务",
 ): Promise<void> => {
-  // Approval starts an empty run bound to the plan; the list that gets
-  // executed is written after it, like a real approved run.
   await approveDemoPlan(harness, ctx);
   await harness.runTool(
     ACT_MODE_TODO_TOOL,

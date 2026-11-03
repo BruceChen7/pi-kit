@@ -478,8 +478,6 @@ describe("extractIndexedPrincipleIds", () => {
   });
 });
 
-// 「本机没有这个源」与「查了没有」是两种结论。合成时把它们写混，等于宣称做过
-// 一次没做过的检索。这三条门禁盯住那个区分不被改动压平。
 describe("gap distinction", () => {
   it("keeps both gap phrasings in the why source index", () => {
     const doc = readDoc("skills/pstack/why/references/source-playbook.md");
@@ -503,7 +501,6 @@ describe("gap distinction", () => {
   });
 
   it("keeps the two phrasings distinct, not aliases of each other", () => {
-    // 同一句话里同时出现两种时，读者无法判断哪个是环境事实、哪个是检索结果。
     expect(GAP_UNAVAILABLE_PHRASE).not.toBe(GAP_EMPTY_PHRASE);
   });
 });

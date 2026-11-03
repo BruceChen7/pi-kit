@@ -100,7 +100,6 @@ describe("parseAnsiLine", () => {
           color: { type: "basic", index: 1 },
           backgroundColor: { type: "basic", index: 4 },
         }),
-        // 39 只清前景，背景还在。
         seg("b", { backgroundColor: { type: "basic", index: 4 } }),
         seg("c"),
       ],

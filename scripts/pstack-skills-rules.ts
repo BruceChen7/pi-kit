@@ -296,10 +296,6 @@ export const sourceDegradationFindings = (
     ];
   });
 
-/**
- * 一份判断清单只有被别处引用才有用。孤儿文件等于没写：没人会读它。
- * 入边可以是 markdown 链接，也可以是 `/skill:` 路由。
- */
 export const orphanJudgmentListFindings = (
   target: RepoDoc,
   referencingDocs: readonly RepoDoc[],

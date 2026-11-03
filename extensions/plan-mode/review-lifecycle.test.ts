@@ -54,7 +54,6 @@ describe("plan-mode extension: review lifecycle", () => {
       planModeExtension(harness.api as unknown as ExtensionAPI);
       await harness.emit("session_start", {}, ctx);
       await harness.runCommand("plan-mode", "plan", ctx);
-      // The list that produced the plan: bound to no plan, unfinished.
       await harness.runTool(
         PLAN_MODE_TODO_TOOL,
         {
@@ -131,8 +130,6 @@ describe("plan-mode extension: review lifecycle", () => {
       await approveDemoPlan(harness, ctx);
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      // Approval switches runs instead of asking the agent to rewrite the
-      // list: no follow-up of any kind leaves this turn.
       expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
     });
   });
@@ -154,8 +151,6 @@ describe("plan-mode extension: review lifecycle", () => {
 
       const result = await sendAgentPrompt(harness, ctx, "start");
 
-      // An empty list is "not started", not "finished": the run must stay in
-      // the act phase with its approval intact.
       expect(result.systemPrompt).toContain("Use act_mode_todo");
       await expectToolAllowed(harness, ctx, "write", { path: "x.ts" });
     });
@@ -179,7 +174,6 @@ describe("plan-mode extension: review lifecycle", () => {
 
       const result = await sendAgentPrompt(harness, ctx, "start");
 
-      // Clearing the list must not read as "the approved run finished".
       expect(result.systemPrompt).toContain("Use act_mode_todo");
       await expectToolAllowed(harness, ctx, "write", { path: "x.ts" });
     });
@@ -1030,9 +1024,6 @@ describe("plan-mode extension: review lifecycle", () => {
 
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      // The approved-invalid-artifact policy fix is still the only
-      // resubmission-related message: approval no longer queues a
-      // todo-reconciliation reminder.
       const policyCalls = harness.api.sendUserMessage.mock.calls.filter(
         ([message]) =>
           typeof message === "string" &&

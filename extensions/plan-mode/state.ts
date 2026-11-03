@@ -705,8 +705,6 @@ export class PlanModeState {
     if (!run) {
       return;
     }
-    // A re-approval after a rejected edit lands here with the same plan path:
-    // the run is still bound, so only its approval state is restored.
     run.planPath = planPath;
     run.status = hasCompletedAllTodos(this.todos)
       ? PLAN_RUN_STATUS_COMPLETED
@@ -803,7 +801,6 @@ export class PlanModeState {
     this.archiveActiveRun();
   }
 
-  /** Archive the active run whatever its status: approval supersedes it. */
   private archiveActiveRun(): void {
     if (!this.activeRun) {
       return;

@@ -23,6 +23,8 @@ The 42 doop design tools are **not** re-implemented here. They stay in the doop 
 
 Mint the key in doop under **Settings → Agent keys**. `baseUrl` defaults to `http://localhost:4300`; `agentName` defaults to `pi` and is the identity used for presence, attribution and "this comment is my own".
 
+Pointing `baseUrl` at a self-hosted instance over HTTPS works unchanged; better-auth then names the cookie `__Secure-better-auth.session_token` and the extension accepts and echoes either spelling.
+
 Environment overrides, useful for a one-off run without touching the file: `DOOP_BASE_URL`, `DOOP_AGENT_KEY`, `DOOP_CANVAS_ID`, `DOOP_AGENT_NAME`, `DOOP_CONFIG_PATH`.
 
 The file holds a bearer credential. It is written with mode 0600; do not commit it.

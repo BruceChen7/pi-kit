@@ -53,6 +53,14 @@ describe("parseSessionCookie", () => {
     ).toBe("better-auth.session_token=abc.def");
   });
 
+  it("keeps the __Secure- prefix an https instance sets", () => {
+    expect(
+      parseSessionCookie([
+        "__Secure-better-auth.session_token=abc.def; Path=/; HttpOnly; Secure",
+      ]),
+    ).toBe("__Secure-better-auth.session_token=abc.def");
+  });
+
   it("skips other cookies", () => {
     expect(
       parseSessionCookie([
@@ -81,6 +89,21 @@ describe("parseAuthRecord", () => {
     expect(parsed).toMatchObject({ kind: "invalid" });
     if (!("kind" in parsed)) return;
     expect(parsed.message).toContain("/doop login");
+  });
+
+  it("accepts a __Secure- session cookie and echoes its name", () => {
+    const parsed = parseAuthRecord(
+      {
+        email: "a@b",
+        cookie: "__Secure-better-auth.session_token=abc.def",
+        obtainedAt: 1,
+      },
+      "file",
+    );
+    if ("kind" in parsed) throw new Error("unexpected");
+    expect(authCookieHeader(parsed)).toBe(
+      "__Secure-better-auth.session_token=abc.def",
+    );
   });
 
   it("rejects a cookie that is not the session cookie", () => {

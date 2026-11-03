@@ -10,7 +10,15 @@ import os from "node:os";
 import path from "node:path";
 import type { DoopConfig } from "./config.js";
 
-const COOKIE_NAME = "better-auth.session_token";
+/**
+ * better-auth prefixes `__Secure-` when it sets the cookie over HTTPS, and the
+ * name is part of the header, so both spellings have to be recognised and
+ * echoed back exactly as received.
+ */
+const SESSION_COOKIE_NAMES = [
+  "better-auth.session_token",
+  "__Secure-better-auth.session_token",
+];
 const KEYCHAIN_SERVICE = "pi-kit-doop";
 
 export type AuthRecord = {
@@ -60,7 +68,9 @@ export function parseSessionCookie(
     if (eq <= 0) continue;
     const name = pair.slice(0, eq);
     const value = pair.slice(eq + 1);
-    if (name === COOKIE_NAME && value !== "") return `${name}=${value}`;
+    if (SESSION_COOKIE_NAMES.includes(name) && value !== "") {
+      return `${name}=${value}`;
+    }
   }
   return undefined;
 }
@@ -83,10 +93,10 @@ export function parseAuthRecord(
       message: `doop auth ${source}: ${email ? "cookie" : "email"} is missing — run /doop login`,
     };
   }
-  if (!cookie.startsWith(`${COOKIE_NAME}=`)) {
+  if (!SESSION_COOKIE_NAMES.some((name) => cookie.startsWith(`${name}=`))) {
     return {
       kind: "invalid",
-      message: `doop auth ${source}: cookie is not a ${COOKIE_NAME} value — run /doop login`,
+      message: `doop auth ${source}: cookie is not a better-auth session cookie — run /doop login`,
     };
   }
   const obtainedAt =

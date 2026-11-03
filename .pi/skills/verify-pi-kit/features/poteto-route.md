@@ -18,7 +18,7 @@ Poteto route keeps the `/poteto` routing table as data (`skills/poteto-playbooks
 
 ## Driving it with verify-plugin
 
-Preconditions: repository root, `npm install` done, `pi` on `PATH`.
+Preconditions: repository root, `npm install` done, `pi` on `PATH`, and the poteto playbooks installed (`make install-skills`). `status` only prints `routes: …` when a `poteto-playbooks/routes.json` exists under one of the three skill roots; the repo's `skills/poteto-playbooks/` source is not one of them.
 
 - Prove the extension loads:
   `node scripts/verify-plugin.mjs doctor --plugin poteto-route`
@@ -27,8 +27,8 @@ Preconditions: repository root, `npm install` done, `pi` on `PATH`.
   `node scripts/verify-plugin.mjs tool --plugin poteto-route --tool route_task`
   Observable: `PASS`, `route_task` present in `active-tools.json`.
 - Prove the command is handled and the catalog resolves:
-  `node scripts/verify-plugin.mjs command --plugin poteto-route --command "/poteto-route status" --expect "routes: research,bugfix,refactor,feature,perf,ship"`
-  Observable: `PASS`, one notify containing `poteto-route: idle` and the route list.
+  `node scripts/verify-plugin.mjs command --plugin poteto-route --command "/poteto-route status" --expect "poteto-route: idle" --expect "routes: research,bugfix,refactor,feature,perf,ship"`
+  Observable: `PASS`, one notify containing both `poteto-route: idle` and the route list. Assert both segments: the route list alone still passes on a non-idle phase, and `idle` alone still passes when the catalog is missing.
 - Prove reset is handled:
   `node scripts/verify-plugin.mjs command --plugin poteto-route --command "/poteto-route reset" --expect "poteto-route: reset"`
   Observable: `PASS`, one notify containing `poteto-route: reset`.
@@ -39,5 +39,5 @@ Preconditions: repository root, `npm install` done, `pi` on `PATH`.
 - The `edit` / `write` gate is not observable here: `tool_call` blocking produces a tool result for the model and no `notify`, and command mode does not run model tool calls. `npx vitest run extensions/poteto-route` owns `decideGate`.
 - `route_task`'s returned payload is also vitest-owned. Tool mode only proves registration.
 - Chatting with the model to confirm the whole chain is not deterministic; if you run it, keep the transcript and say so, otherwise write `Skipped:`.
-- `/poteto` arrives through the `input` event, so the template must be installed (`make install-skills`) for the human path; the command recipe above works without it.
+- `/poteto` arrives through the `input` event, so the template must be installed (`make install-skills`) for the human path. The command recipe above does not send `/poteto`, but its `status` output still needs the playbooks installed for the catalog to resolve.
 - `routes.json` is resolved once at extension load, from the process cwd: `<cwd>/.pi/skills`, `<cwd>/.agents/skills`, then `~/.agents/me-skills`. It is cached; only a failed load retries, and a session whose cwd differs from the process cwd keeps using the cached catalog. A cwd outside the repo without installed skills makes `status` report the missing roots instead of `routes:`.

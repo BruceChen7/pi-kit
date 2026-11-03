@@ -18,7 +18,7 @@ The confluence plugin exposes `confluence_page`, a tool that reads an internal C
 Preconditions: repository root, `npm install` done, and `ATLASSIAN_CONFLUENCE_BASE_URL` exported by the operator. Nothing in this repo sets it.
 - Prove the tool is registered:
   `node scripts/verify-plugin.mjs tool --plugin confluence --tool confluence_page`
-  Observable: `PASS`, `confluence_page` present in the active tool names.
+  Observable: `PASS`. stdout prints the PASS header, the tool flag, an active-tool count, and the evidence path; the tool name list itself is in `active-tools.json` under the evidence directory.
 - Prove the extension loads without errors:
   `node scripts/verify-plugin.mjs doctor --plugin confluence`
 

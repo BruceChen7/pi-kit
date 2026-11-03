@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
 import { structuredResult } from "../shared/structured-result.js";
 import { type ClientOptions, getComments } from "./client.js";
 import {
@@ -50,6 +50,15 @@ export function defaultConfigPath(): string {
   );
 }
 
+function isMissingFile(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
+}
+
 /**
  * File first, environment second. A missing file is not an error: a one-off
  * `DOOP_AGENT_KEY=... pi` run should work without writing anything.
@@ -61,7 +70,10 @@ export function readConfig(
   let raw: string;
   try {
     raw = fs.readFileSync(configPath, "utf8");
-  } catch {
+  } catch (error) {
+    /* Only a missing file falls back to the environment. A permission or IO
+       error must surface: silently reading a different config hides it. */
+    if (!isMissingFile(error)) throw error;
     const fromEnv = configFromEnv(env);
     return isConfigError(fromEnv)
       ? { ok: false, message: configErrorText(fromEnv) }
@@ -99,6 +111,9 @@ export function writeConfig(configPath: string, config: DoopConfig): void {
   fs.writeFileSync(configPath, `${JSON.stringify(body, null, 2)}\n`, {
     mode: 0o600,
   });
+  /* `mode` above only applies when the file is created; an existing config
+     keeps whatever mode it already had. */
+  fs.chmodSync(configPath, 0o600);
 }
 
 /** "doop U43rjP-JxT · 3 open" — the canvas always, the count only when we just paid for it. */
@@ -110,22 +125,30 @@ export function statusLine(
   return list ? `doop ${canvasId} · ${summarize(list)}` : `doop ${canvasId}`;
 }
 
-const commentAnchorSchema = Type.Object({
-  kind: Type.Union([
-    Type.Literal("element"),
-    Type.Literal("frame"),
-    Type.Literal("canvas"),
-  ]),
-  frameId: Type.Optional(Type.String()),
-  elementId: Type.Optional(Type.String()),
-  html: Type.Optional(Type.String()),
-  pageId: Type.Optional(Type.String()),
-  x: Type.Optional(Type.Number()),
-  y: Type.Optional(Type.Number()),
-});
+const commentAnchorSchema = Type.Union([
+  Type.Object({
+    kind: Type.Literal("element"),
+    frameId: Type.String(),
+    elementId: Type.String(),
+    html: Type.String(),
+  }),
+  Type.Object({
+    kind: Type.Literal("frame"),
+    frameId: Type.String(),
+    x: Type.Number(),
+    y: Type.Number(),
+  }),
+  Type.Object({
+    kind: Type.Literal("canvas"),
+    pageId: Type.String(),
+    x: Type.Number(),
+    y: Type.Number(),
+  }),
+]);
 
 export const doopCommentsOutputSchema = Type.Object({
-  canvasId: Type.String(),
+  /** omitted on failure: there is no canvas to name */
+  canvasId: Type.Optional(Type.String()),
   items: Type.Array(
     Type.Object({
       id: Type.String(),
@@ -143,12 +166,7 @@ export const doopCommentsOutputSchema = Type.Object({
   error: Type.Optional(Type.String()),
 });
 
-type DoopCommentsOutput = {
-  canvasId: string;
-  items: Worklist["items"];
-  skipped: number;
-  error?: string;
-};
+type DoopCommentsOutput = Static<typeof doopCommentsOutputSchema>;
 
 const NO_CANVAS_MESSAGE =
   "no canvas bound: every call needs one. Run /doop bind <canvasId> (the id in the canvas URL) or pass canvas_id.";
@@ -201,9 +219,12 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
       }),
       outputSchema: doopCommentsOutputSchema,
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-        const failed = (message: string, canvasId = ""): DoopCommentsOutput => {
-          ctx.ui.setStatus(STATUS_KEY, statusLine(canvasId || undefined));
-          return { canvasId, items: [], skipped: 0, error: message };
+        const failed = (
+          message: string,
+          canvasId?: string,
+        ): DoopCommentsOutput => {
+          ctx.ui.setStatus(STATUS_KEY, statusLine(canvasId));
+          return { items: [], skipped: 0, error: message };
         };
         const loaded = load();
         if (!loaded.ok) {
@@ -273,6 +294,13 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
         }
         if (sub === "review" || sub === "status") {
           if (!config.canvasId) {
+            if (sub === "status") {
+              ctx.ui.notify(
+                `doop ${config.baseUrl} · canvas unbound · key ok`,
+                "info",
+              );
+              return;
+            }
             ctx.ui.notify(
               "no canvas bound: run /doop bind <canvasId> first",
               "warning",
@@ -287,11 +315,7 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
           ctx.ui.setStatus(STATUS_KEY, statusLine(config.canvasId, read.list));
           if (sub === "status") {
             ctx.ui.notify(
-              `doop ${config.baseUrl} · canvas ${config.canvasId} · agent ${config.agentName}`,
-              "info",
-            );
-            ctx.ui.notify(
-              `canvas ${config.canvasId}: ${summarize(read.list)}`,
+              `doop ${config.baseUrl} · canvas ${config.canvasId} · ${summarize(read.list)} · key ok`,
               "info",
             );
             return;

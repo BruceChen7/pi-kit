@@ -128,7 +128,7 @@ describe("callTool", () => {
     expect(result.error.message).toContain("Settings -> Agent keys");
   });
 
-  it("retries a 5xx once and keeps the second answer", async () => {
+  it("retries a 5xx once for a read-only call and keeps the second answer", async () => {
     const server = await stubServer([
       { status: 503, body: "busy" },
       toolResult([COMMENT]),
@@ -137,10 +137,25 @@ describe("callTool", () => {
       config(server.baseUrl),
       "get_comments",
       {},
-      { retryDelayMs: 0 },
+      { retryDelayMs: 0, retryable: true },
     );
     expect(result.ok).toBe(true);
     expect(server.requests).toHaveLength(2);
+  });
+
+  it("does not retry unless the caller opted in", async () => {
+    const server = await stubServer([
+      { status: 503, body: "busy" },
+      toolResult([COMMENT]),
+    ]);
+    const result = await callTool(
+      config(server.baseUrl),
+      "reply_to_comment",
+      {},
+      { retryDelayMs: 0 },
+    );
+    expect(result.ok).toBe(false);
+    expect(server.requests).toHaveLength(1);
   });
 
   it("gives up after the retry and says how to start doop", async () => {
@@ -152,7 +167,7 @@ describe("callTool", () => {
       config(server.baseUrl),
       "get_comments",
       {},
-      { retryDelayMs: 0, timeoutMs: 2000 },
+      { retryDelayMs: 0, retryable: true, timeoutMs: 2000 },
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -215,11 +230,22 @@ describe("getComments", () => {
         name: "get_comments",
         arguments: {
           canvas_id: "U43rjP-JxT",
-          include_resolved: false,
           agent_name: "pi",
         },
       },
     });
+  });
+
+  it("retries, because a read-only call can be repeated", async () => {
+    const server = await stubServer([
+      { status: 503, body: "busy" },
+      toolResult([COMMENT]),
+    ]);
+    const result = await getComments(config(server.baseUrl), "U43rjP-JxT", {
+      retryDelayMs: 0,
+    });
+    expect(result.ok).toBe(true);
+    expect(server.requests).toHaveLength(2);
   });
 
   it("parses the payload into comments", async () => {

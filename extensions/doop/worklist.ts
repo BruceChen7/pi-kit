@@ -229,7 +229,7 @@ function anchorLabel(anchor: CommentAnchor): string {
   }
 }
 
-export function formatWorkItem(item: WorkItem, index: number): string {
+function formatWorkItem(item: WorkItem, index: number): string {
   const lines = [
     `${index + 1}. comment ${item.id} — ${anchorLabel(item.anchor)} — ${item.author}${item.forAgent ? ` (@${item.targetAgent ?? "resident"})` : ""}`,
     `   ${clip(item.text, TEXT_LIMIT)}`,

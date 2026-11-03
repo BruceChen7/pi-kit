@@ -20,6 +20,11 @@ export type ClientOptions = {
   fetchImpl?: typeof fetch;
   /** tests pass 0 to keep a retry from costing wall time */
   retryDelayMs?: number;
+  /**
+   * Off by default, because a retried write would land twice: only read-only
+   * calls may set this. One retry, on a transport failure or a 5xx.
+   */
+  retryable?: boolean;
   timeoutMs?: number;
 };
 
@@ -77,8 +82,8 @@ async function post(
 }
 
 /**
- * One call, retried once on transport failure and 5xx. The doop server is
- * stateless per request, so a retry cannot duplicate a write.
+ * One call. A read-only caller opts into one retry on transport failure and
+ * 5xx; a write must not retry, because the retried write would land twice.
  */
 export async function callTool(
   config: DoopConfig,
@@ -88,6 +93,7 @@ export async function callTool(
 ): Promise<RawCall> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const attempts = options.retryable === true ? 2 : 1;
   requestId += 1;
   const body = JSON.stringify({
     jsonrpc: "2.0",
@@ -97,7 +103,8 @@ export async function callTool(
   });
 
   let lastDetail = "";
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const canRetry = attempt + 1 < attempts;
     let response: { status: number; text: string };
     try {
       response = await post(config, body, {
@@ -106,7 +113,7 @@ export async function callTool(
       });
     } catch (error) {
       lastDetail = error instanceof Error ? error.message : String(error);
-      if (attempt === 0) await sleep(retryDelayMs);
+      if (canRetry) await sleep(retryDelayMs);
       continue;
     }
     const { status, text } = response;
@@ -115,7 +122,7 @@ export async function callTool(
     }
     if (status >= 500) {
       lastDetail = `HTTP ${status}`;
-      if (attempt === 0) await sleep(retryDelayMs);
+      if (canRetry) await sleep(retryDelayMs);
       continue;
     }
     if (status < 200 || status >= 300) {
@@ -197,12 +204,8 @@ export async function getComments(
   const call = await callTool(
     config,
     "get_comments",
-    {
-      canvas_id: canvasId,
-      include_resolved: false,
-      agent_name: config.agentName,
-    },
-    options,
+    { canvas_id: canvasId, agent_name: config.agentName },
+    { ...options, retryable: true },
   );
   if (!call.ok) return call;
   if (typeof call.payload === "string") {

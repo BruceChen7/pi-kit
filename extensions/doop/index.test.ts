@@ -3,9 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createDoopExtension,
+  doopCommentsOutputSchema,
   readConfig,
   statusLine,
   writeConfig,
@@ -64,7 +66,9 @@ function harness(options: { reply?: () => Response } = {}) {
   } as unknown as ExtensionAPI;
   const ui = { notify, setStatus };
   const ctx = { ui, isIdle: () => true, cwd: process.cwd() };
-  const fetchImpl = vi.fn(async () => options.reply?.() ?? mcpReply([COMMENT]));
+  const fetchImpl = vi.fn<typeof fetch>(
+    async () => options.reply?.() ?? mcpReply([COMMENT]),
+  );
   return {
     api,
     ui,
@@ -107,6 +111,20 @@ describe("config file", () => {
     expect(loaded.config.agentName).toBe("pi");
   });
 
+  it("converges an existing file's mode to 0600", () => {
+    const file = tempConfigPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "{}\n");
+    fs.chmodSync(file, 0o644);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o644);
+    writeConfig(file, {
+      baseUrl: "http://127.0.0.1:4300",
+      agentKey: "dpk_test",
+      agentName: "pi",
+    });
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
   it("falls back to the environment when there is no file", () => {
     const loaded = readConfig(path.join(tempConfigPath(), "missing.json"), {
       DOOP_AGENT_KEY: "dpk_env",
@@ -133,9 +151,10 @@ describe("extension wiring", () => {
     writeKey(file, { canvasId: "U43rjP-JxT" });
     createDoopExtension({
       configPath: () => file,
-      fetchImpl: h.fetchImpl as any,
+      fetchImpl: h.fetchImpl,
     })(h.api);
     expect(h.tools.map((tool) => tool.name)).toEqual(["doop_comments"]);
+    expect(h.tools[0].outputSchema).toBe(doopCommentsOutputSchema);
     expect([...h.commands.keys()]).toEqual(["doop"]);
     expect(h.events.has("session_start")).toBe(true);
   });
@@ -146,7 +165,7 @@ describe("extension wiring", () => {
     writeKey(file, { canvasId: "U43rjP-JxT" });
     createDoopExtension({
       configPath: () => file,
-      fetchImpl: h.fetchImpl as any,
+      fetchImpl: h.fetchImpl,
     })(h.api);
     h.events.get("session_start")?.({}, h.ctx);
     expect(h.ui.setStatus).toHaveBeenCalledWith("doop", "doop U43rjP-JxT");
@@ -158,7 +177,7 @@ describe("extension wiring", () => {
     writeKey(file);
     createDoopExtension({
       configPath: () => file,
-      fetchImpl: h.fetchImpl as any,
+      fetchImpl: h.fetchImpl,
     })(h.api);
     await h.commands.get("doop").handler("bind U43rjP-JxT", h.ctx);
     const loaded = readConfig(file, {});
@@ -177,7 +196,7 @@ describe("extension wiring", () => {
     writeKey(file, { canvasId: "U43rjP-JxT" });
     createDoopExtension({
       configPath: () => file,
-      fetchImpl: h.fetchImpl as any,
+      fetchImpl: h.fetchImpl,
     })(h.api);
     await h.commands.get("doop").handler("off", h.ctx);
     const loaded = readConfig(file, {});
@@ -193,7 +212,7 @@ describe("extension wiring", () => {
     writeKey(file);
     createDoopExtension({
       configPath: () => file,
-      fetchImpl: h.fetchImpl as any,
+      fetchImpl: h.fetchImpl,
     })(h.api);
     await h.commands.get("doop").handler("review", h.ctx);
     expect(h.notify).toHaveBeenCalledWith(
@@ -209,7 +228,7 @@ describe("extension wiring", () => {
     writeKey(file, { canvasId: "U43rjP-JxT" });
     createDoopExtension({
       configPath: () => file,
-      fetchImpl: h.fetchImpl as any,
+      fetchImpl: h.fetchImpl,
     })(h.api);
     await h.commands.get("doop").handler("review", h.ctx);
     expect(h.sendUserMessage).toHaveBeenCalledTimes(1);
@@ -228,14 +247,35 @@ describe("extension wiring", () => {
     writeKey(file, { canvasId: "U43rjP-JxT" });
     createDoopExtension({
       configPath: () => file,
-      fetchImpl: h.fetchImpl as any,
+      fetchImpl: h.fetchImpl,
     })(h.api);
     await h.commands.get("doop").handler("status", h.ctx);
+    expect(h.notify).toHaveBeenCalledTimes(1);
     expect(h.notify).toHaveBeenCalledWith(
-      "doop http://127.0.0.1:4300 · canvas U43rjP-JxT · agent pi",
+      "doop http://127.0.0.1:4300 · canvas U43rjP-JxT · 1 open · key ok",
       "info",
     );
-    expect(h.notify).toHaveBeenCalledWith("canvas U43rjP-JxT: 1 open", "info");
+    expect(h.ui.setStatus).toHaveBeenCalledWith(
+      "doop",
+      "doop U43rjP-JxT · 1 open",
+    );
+  });
+
+  it("says the canvas is unbound on /doop status without counting", async () => {
+    const h = harness();
+    const file = tempConfigPath();
+    writeKey(file);
+    createDoopExtension({
+      configPath: () => file,
+      fetchImpl: h.fetchImpl,
+    })(h.api);
+    await h.commands.get("doop").handler("status", h.ctx);
+    expect(h.notify).toHaveBeenCalledTimes(1);
+    expect(h.notify).toHaveBeenCalledWith(
+      "doop http://127.0.0.1:4300 · canvas unbound · key ok",
+      "info",
+    );
+    expect(h.fetchImpl).not.toHaveBeenCalled();
   });
 });
 
@@ -246,7 +286,7 @@ describe("doop_comments tool", () => {
     writeKey(file, { canvasId: "U43rjP-JxT" });
     createDoopExtension({
       configPath: () => file,
-      fetchImpl: h.fetchImpl as any,
+      fetchImpl: h.fetchImpl,
     })(h.api);
     const result = await h.tools[0].execute(
       "call-1",
@@ -260,6 +300,9 @@ describe("doop_comments tool", () => {
       skipped: 0,
     });
     expect(result.structuredContent.items).toHaveLength(1);
+    expect(
+      Value.Check(doopCommentsOutputSchema, result.structuredContent),
+    ).toBe(true);
     expect(result.content[0].text).toContain("comment c1");
   });
 
@@ -269,7 +312,7 @@ describe("doop_comments tool", () => {
     writeKey(file, { canvasId: "bound" });
     createDoopExtension({
       configPath: () => file,
-      fetchImpl: h.fetchImpl as any,
+      fetchImpl: h.fetchImpl,
     })(h.api);
     const result = await h.tools[0].execute(
       "call-1",
@@ -287,7 +330,7 @@ describe("doop_comments tool", () => {
     writeKey(file);
     createDoopExtension({
       configPath: () => file,
-      fetchImpl: h.fetchImpl as any,
+      fetchImpl: h.fetchImpl,
     })(h.api);
     const result = await h.tools[0].execute(
       "call-1",
@@ -297,6 +340,10 @@ describe("doop_comments tool", () => {
       h.ctx,
     );
     expect(result.structuredContent.error).toContain("no canvas bound");
+    expect(result.structuredContent.canvasId).toBeUndefined();
+    expect(
+      Value.Check(doopCommentsOutputSchema, result.structuredContent),
+    ).toBe(true);
     expect(h.fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -324,7 +371,7 @@ describe("doop_comments tool", () => {
     writeKey(file, { canvasId: "nope" });
     createDoopExtension({
       configPath: () => file,
-      fetchImpl: h.fetchImpl as any,
+      fetchImpl: h.fetchImpl,
     })(h.api);
     const result = await h.tools[0].execute(
       "call-1",

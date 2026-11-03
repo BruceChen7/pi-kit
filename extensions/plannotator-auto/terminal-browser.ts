@@ -182,8 +182,9 @@ const spawnCheck = (timeoutMs = 1000): Promise<boolean> =>
 export const isTerminalBrowserAvailable = async (
   sessionKey?: string,
 ): Promise<boolean> => {
-  if (sessionKey && availabilityCache.has(sessionKey)) {
-    return availabilityCache.get(sessionKey)!;
+  const cached = sessionKey ? availabilityCache.get(sessionKey) : undefined;
+  if (cached !== undefined) {
+    return cached;
   }
   let available = false;
   if (whichCheck()) {

@@ -206,6 +206,24 @@ export function buildLibrarianSubagentArgs(input: {
   ];
 }
 
+/**
+ * 去掉子进程启动时的 `enabledModels` 校验噪音。
+ *
+ * 子进程跑在 `--no-extensions` 下，settings 里的模型所属 provider 由父会话的扩展
+ * 注册（cc-switch 这类），子进程看不到，于是每次 spawn 都会打一行
+ * `Warning: No models match pattern "..."`。这些行会把真正的 `Error:` 埋掉，
+ * 实测一次失败里 1426 字全是这种警告。
+ */
+export function stripStartupWarnings(stderr: string): string {
+  return stderr
+    .split("\n")
+    .filter(
+      (line) => !line.trim().startsWith("Warning: No models match pattern "),
+    )
+    .join("\n")
+    .trim();
+}
+
 export async function runLibrarianSubagent(
   cwd: string,
   prompt: string,
@@ -420,7 +438,11 @@ export async function runLibrarianSubagent(
     });
 
     if (exitCode !== 0) {
-      throw new Error(stderr.trim() || `subagent exited with code ${exitCode}`);
+      const diagnostic = stripStartupWarnings(stderr);
+      throw new Error(
+        diagnostic ||
+          `librarian subagent exited with code ${exitCode} with no diagnostic output`,
+      );
     }
 
     const finalText = sanitizeDisplayText(

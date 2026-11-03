@@ -122,9 +122,9 @@ export const formatMatrix = (rows) => {
   lines.push(
     [
       "# 合计",
-      `已有替代=${counts["已有替代"]}`,
-      `缺=${counts["缺"]}`,
-      `不搬=${counts["不搬"]}`,
+      `已有替代=${counts.已有替代}`,
+      `缺=${counts.缺}`,
+      `不搬=${counts.不搬}`,
       `P0=${byTier.P0} P1=${byTier.P1} P2=${byTier.P2}`,
     ].join("\t"),
   );

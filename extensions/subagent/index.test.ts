@@ -25,6 +25,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 
 const { createAgentSession } = await import("@earendil-works/pi-coding-agent");
 const { registerSubagent } = await import("./index.js");
+const { FOREGROUND_DETACH_MS } = await import("./core.ts");
 const { PI_WEB_HOST_SYMBOL } = await import("../shared/ui-host.ts");
 const { PLAN_MODE_BADGE_CHANNEL, PLAN_MODE_STATUS_OWNER_CHANNEL } =
   await import("../shared/internal-events.ts");
@@ -265,6 +266,48 @@ describe("progress while a foreground child is silent", () => {
 
     expect(onUpdate).toHaveBeenCalled();
     runtime.stopRun(runtime.readState().runs[0].runId);
+  });
+
+  it("detaches a foreground run after the budget and hands the turn back", async () => {
+    vi.useFakeTimers();
+    vi.mocked(createAgentSession).mockResolvedValue({
+      session: makeSession("unreachable", { hang: true }),
+    } as never);
+    const { pi, tools } = makePi();
+    const runtime = registerSubagent(pi as never);
+    const ui = {
+      setWidget: vi.fn(),
+      setStatus: vi.fn(),
+      notify: vi.fn(),
+      theme: testTheme,
+    };
+
+    const pending = tools[0].execute(
+      "call-1",
+      { action: "run", agent: "explore", task: "slow", background: false },
+      undefined,
+      undefined,
+      makeCtx({ ui }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.waitFor(() => expect(runtime.readState().runs).toHaveLength(1));
+
+    await vi.advanceTimersByTimeAsync(FOREGROUND_DETACH_MS + 1_000);
+    const result = await pending;
+
+    expect(result.structuredContent.detached).toBe(true);
+    expect(result.structuredContent.elapsedMs).toBeGreaterThanOrEqual(
+      FOREGROUND_DETACH_MS,
+    );
+    expect(result.content[0].text).toContain("still running after");
+    expect(result.content[0].text).toContain("Do not re-run");
+    expect(runtime.readState().runs[0].background).toBe(true);
+    expect(ui.notify).toHaveBeenCalled();
+
+    // 结果不能丢：停掉之后仍走后台投递。
+    runtime.stopRun(runtime.readState().runs[0].runId);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(pi.sendMessage).toHaveBeenCalled();
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildLibrarianSubagentArgs,
   librarianSubagentTools,
+  stripStartupWarnings,
 } from "./librarian-runner.js";
 
 const PROVIDER_TOOLS = [
@@ -118,5 +119,29 @@ describe("buildLibrarianSubagentArgs", () => {
 
     expect(args).toContain("--no-mcp");
     expect(args).toContain("--no-extensions");
+  });
+});
+
+describe("stripStartupWarnings", () => {
+  it("drops the enabledModels noise a --no-extensions child prints", () => {
+    const stderr = [
+      'Warning: No models match pattern "cc-switch-gateway/llm-gateway--kimi-k3"',
+      'Warning: No models match pattern "opencode/longcat-2.5-preview-free"',
+      'Error: Model "x" not found.',
+    ].join("\n");
+
+    expect(stripStartupWarnings(stderr)).toBe('Error: Model "x" not found.');
+  });
+
+  it("returns an empty string when the child only printed noise", () => {
+    expect(
+      stripStartupWarnings(
+        'Warning: No models match pattern "a"\nWarning: No models match pattern "b"\n',
+      ),
+    ).toBe("");
+  });
+
+  it("leaves an ordinary stderr untouched", () => {
+    expect(stripStartupWarnings("boom")).toBe("boom");
   });
 });

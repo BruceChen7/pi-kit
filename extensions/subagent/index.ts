@@ -46,12 +46,16 @@ import {
   collectWaitResult,
   createState,
   DEFAULT_MAX_CONCURRENT,
+  detachToBackground,
   eventToTranscriptLine,
   extractAssistantText,
+  FOREGROUND_DETACH_MS,
   findRun,
+  formatElapsed,
   isTerminal,
   progressLine,
   type RunStatus,
+  recentTranscriptLines,
   renderDoctor,
   renderWaitResult,
   renderWidgetLines,
@@ -116,10 +120,24 @@ export type SettledOutcome = {
   text: string;
 };
 
-/** `accepted` 只表示已受理（开跑或排队），不是终态；foreground 调用等到的永远是 `settled`。 */
+/**
+ * 前台 run 跑满 `FOREGROUND_DETACH_MS` 还没结束：run 改走后台投递，
+ * 主会话拿回控制权。tail 是最近几行 transcript，用来判断是继续等还是 stop。
+ */
+export type DetachedOutcome = {
+  kind: "detached";
+  runId: string;
+  agent: string;
+  elapsedMs: number;
+  step: string | null;
+  tail: string[];
+};
+
+/** `accepted` 只表示已受理（开跑或排队），不是终态；foreground 调用等到的可能是 `settled` 或 `detached`。 */
 export type RunOutcome =
   | { kind: "accepted"; runId: string; agent: string }
-  | SettledOutcome;
+  | SettledOutcome
+  | DetachedOutcome;
 
 export type SubagentRuntime = {
   readState: () => SubagentState;
@@ -773,7 +791,36 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     if (input.background) {
       return { kind: "accepted", runId, agent: profile.name };
     }
-    return waitFor(runId);
+
+    // 前台不是「等到死」：跑满 FOREGROUND_DETACH_MS 就转后台，把控制权交回主会话。
+    // 子会话不中断，settle 时走 deliver() → sendMessage({triggerTurn:true})。
+    const timedOut = await waitUntilSettled([runId], {
+      timeoutMs: FOREGROUND_DETACH_MS,
+    });
+    if (!timedOut) return outcomeAfterWait(runId);
+
+    // 超时这一拍 run 可能刚 settle：先复查。终态就按正常结论返回，
+    // 否则标了 background 的那条结果会被 deliver 再投递一次。
+    const live = findRun(state, runId);
+    if (!live || isTerminal(live.status)) return outcomeAfterWait(runId);
+
+    state = detachToBackground(state, runId);
+    refreshWidget();
+    const elapsedMs = Date.now() - live.startedAt;
+    const tail = recentTranscriptLines(live);
+    lastContext?.ui.notify?.(
+      `subagent ${profile.name} (${runId}) 已跑 ${formatElapsed(elapsedMs)}，已转后台；结果会作为消息送达。`,
+      "info",
+    );
+    log.info("foreground run detached", { runId, elapsedMs });
+    return {
+      kind: "detached",
+      runId,
+      agent: profile.name,
+      elapsedMs,
+      step: live.step,
+      tail,
+    };
   };
 
   const steer = async (runId: string, text: string): Promise<boolean> => {
@@ -833,9 +880,12 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       "Actions: run (default) starts an agent; wait blocks until background runs finish; list shows active runs; status shows one run; stop cancels one; doctor prints the resolved agent profiles and config.",
       "Children cannot see this conversation, so put the whole task in `task`.",
       "Background runs (default) return immediately and report back when finished.",
+      `A foreground run (background:false) holds this session until the child settles or ${FOREGROUND_DETACH_MS / 60_000} minutes pass; after that it is moved to the background and its result arrives as a message. Use foreground only for a task that finishes in a couple of minutes.`,
+      "Give the child a budget in `task`: which files to read, what to produce, and how long the answer should be. An unbounded task is what turns a 5-minute delegation into a 45-minute one.",
     ].join(" "),
     promptGuidelines: [
       'To wait for background runs, call subagent with action "wait". Never sleep or poll in bash to wait for a subagent; one wait call returns every requested result.',
+      'A wait that times out means the child is slow, not that it finished. Report the elapsed time, do other work or end the turn, and wait again only when you have nothing else to do; use action "status" or "stop" on a run that shows `quiet`.',
     ],
     parameters: Type.Object({
       action: Type.Optional(
@@ -967,7 +1017,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
             }
           }
 
-          const result = collectWaitResult(state, runIds, timedOut);
+          const result = collectWaitResult(state, runIds, timedOut, Date.now());
           return structuredResult(renderWaitResult(result), {
             action,
             runs: result.runs,
@@ -1013,6 +1063,30 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
 
           if (outcome.kind === "settled" && outcome.status === "failed") {
             throw new Error(outcome.text || `subagent ${outcome.runId} failed`);
+          }
+
+          if (outcome.kind === "detached") {
+            const head =
+              `subagent ${outcome.agent} (${outcome.runId}) still running after ` +
+              `${formatElapsed(outcome.elapsedMs)} (last: ${outcome.step ?? "no tool yet"}).`;
+            const activity =
+              outcome.tail.length > 0
+                ? `\n\nRecent activity:\n${outcome.tail.join("\n")}`
+                : "";
+            const advice =
+              `\n\nMoved to the background; the result will arrive as a message. ` +
+              `Do not re-run the same task — use action "status" or "wait" on ${outcome.runId}.`;
+            return structuredResult(`${head}${activity}${advice}`, {
+              action,
+              runId: outcome.runId,
+              agent: outcome.agent,
+              status: null,
+              detached: true,
+              elapsedMs: outcome.elapsedMs,
+              step: outcome.step,
+              tail: outcome.tail,
+              resultText: "",
+            });
           }
 
           const text =

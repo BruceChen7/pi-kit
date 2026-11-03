@@ -10,11 +10,13 @@ import {
   collectWaitResult,
   createState,
   DEFAULT_MAX_CONCURRENT,
+  detachToBackground,
   eventToTranscriptLine,
   findRun,
   isTerminal,
   MAX_RESULT_CHARS,
   progressLine,
+  recentTranscriptLines,
   renderDoctor,
   renderTranscript,
   renderWaitResult,
@@ -679,8 +681,16 @@ describe("collectWaitResult", () => {
 
   it("reports a still-running run as non-terminal on timeout", () => {
     const state = admit(createState(), request("a"), 4, 1).state;
-    expect(collectWaitResult(state, ["a"], true)).toEqual({
-      runs: [{ runId: "a", agent: "explore", status: "running", text: "" }],
+    expect(collectWaitResult(state, ["a"], true, 1_000)).toEqual({
+      runs: [
+        {
+          runId: "a",
+          agent: "explore",
+          status: "running",
+          text: "",
+          progress: "explore a · running 1s · no tool yet",
+        },
+      ],
       timedOut: true,
     });
   });
@@ -689,6 +699,86 @@ describe("collectWaitResult", () => {
     expect(collectWaitResult(createState(), ["gone"], false).runs).toEqual([
       { runId: "gone", agent: "unknown", status: "stopped", text: "" },
     ]);
+  });
+
+  it("attaches live progress to a run that is still going", () => {
+    const state = setStep(
+      admit(createState(), request("a"), 4, 1_000).state,
+      "a",
+      "grep f.ts",
+      1_000,
+    );
+    const [run] = collectWaitResult(
+      state,
+      ["a"],
+      true,
+      1_000 + 11 * 60_000,
+    ).runs;
+    expect(run.progress).toContain("running 11m00s");
+    expect(run.progress).toContain("grep f.ts");
+    expect(run.progress).toContain("quiet");
+  });
+
+  it("leaves progress off a settled run", () => {
+    const state = settle(
+      admit(createState(), request("a"), 4, 1).state,
+      { runId: "a", status: "done", resultText: "found it" },
+      4,
+      2,
+    );
+    expect(collectWaitResult(state, ["a"], false).runs[0]?.progress).toBe(
+      undefined,
+    );
+  });
+});
+
+describe("detachToBackground", () => {
+  it("flips a live foreground run to the background", () => {
+    const state = admit(
+      createState(),
+      { ...request("a"), background: false },
+      4,
+      1,
+    ).state;
+    expect(runOf(detachToBackground(state, "a"), "a").background).toBe(true);
+  });
+
+  it("leaves a settled run alone", () => {
+    const state = settle(
+      admit(createState(), { ...request("a"), background: false }, 4, 1).state,
+      { runId: "a", status: "done", resultText: "found it" },
+      4,
+      2,
+    );
+    expect(runOf(detachToBackground(state, "a"), "a").background).toBe(false);
+  });
+
+  it("only touches the requested run", () => {
+    const state = ["a", "b"].reduce(
+      (acc, id) =>
+        admit(acc, { ...request(id), background: false }, 4, 1).state,
+      createState(),
+    );
+    const next = detachToBackground(state, "a");
+    expect(runOf(next, "a").background).toBe(true);
+    expect(runOf(next, "b").background).toBe(false);
+  });
+});
+
+describe("recentTranscriptLines", () => {
+  it("keeps the last lines and clips long ones", () => {
+    let state = admit(createState(), request("a"), 4, 1).state;
+    for (const text of ["one", "two", "three", "four"]) {
+      state = appendTranscript(state, "a", {
+        role: "assistant",
+        text: `${text} ${"x".repeat(200)}`,
+        at: 1,
+      });
+    }
+    const lines = recentTranscriptLines(runOf(state, "a"), 3, 40);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain("two");
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(40);
   });
 });
 
@@ -721,5 +811,23 @@ describe("renderWaitResult", () => {
     expect(renderWaitResult({ runs: [], timedOut: false })).toBe(
       "no subagent runs to wait for",
     );
+  });
+
+  it("shows live progress and tells the caller the run keeps going", () => {
+    const text = renderWaitResult({
+      runs: [
+        {
+          runId: "b",
+          agent: "explore",
+          status: "running",
+          text: "",
+          progress: "explore b · running 12m00s · grep x.ts · quiet 38s",
+        },
+      ],
+      timedOut: true,
+    });
+    expect(text).toContain("running 12m00s");
+    expect(text).toContain("quiet 38s");
+    expect(text).toContain("keep going in the background");
   });
 });

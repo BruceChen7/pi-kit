@@ -91,6 +91,8 @@ export type WaitedRun = {
   agent: string;
   status: RunStatus;
   text: string;
+  /** 非终态 run 的实时进度（elapsed / step / quiet）；终态为 undefined。 */
+  progress?: string;
 };
 
 export type WaitResult = {
@@ -101,6 +103,13 @@ export type WaitResult = {
 export const DEFAULT_MAX_CONCURRENT = 4;
 export const MAX_RESULT_CHARS = 8000;
 export const MAX_TRANSCRIPT_LINES = 40;
+/**
+ * 前台 `run` 最多占用主会话这么久，到点转后台。
+ *
+ * 实测（2026-11-02）：一次只读调查的前台 run 跑了 23.5 分钟，另一次 45.6 分钟，
+ * 期间用户以为 agent 卡死。转后台保住子会话的成果，同时把控制权交回主会话。
+ */
+export const FOREGROUND_DETACH_MS = 10 * 60_000;
 
 const TERMINAL: readonly RunStatus[] = ["done", "failed", "stopped"];
 
@@ -149,6 +158,7 @@ export function collectWaitResult(
   state: SubagentState,
   runIds: readonly string[],
   timedOut: boolean,
+  now: number = Date.now(),
 ): WaitResult {
   const runs = runIds.map((runId): WaitedRun => {
     const run = findRun(state, runId);
@@ -158,6 +168,7 @@ export function collectWaitResult(
       agent: run.agent,
       status: run.status,
       text: run.resultText ?? run.error ?? "",
+      progress: progressLine(run, now),
     };
   });
   return { runs, timedOut };
@@ -168,7 +179,9 @@ export function renderWaitResult(result: WaitResult): string {
   if (result.runs.length === 0) return "no subagent runs to wait for";
 
   const lines = result.runs.map((run) => {
-    const head = `${run.runId} ${run.agent} ${run.status}`;
+    // 非终态行直接用进度行（agent · runId · running 12m · step · quiet 38s）：
+    // 超时结果只有 status 一个词时，调用方看不出「在跑」还是「卡住」。
+    const head = run.progress ?? `${run.runId} ${run.agent} ${run.status}`;
     return run.text ? `${head}\n${run.text}` : head;
   });
   if (!result.timedOut) return lines.join("\n\n");
@@ -179,6 +192,9 @@ export function renderWaitResult(result: WaitResult): string {
     `timed out with ${settled}/${result.runs.length} settled; ${running} still running`,
     "",
     ...lines,
+    "",
+    "Still-running agents keep going in the background. Do other work or end the turn; " +
+      "wait again only when you have nothing else to do, and use `status`/`stop` on a run that shows `quiet`.",
   ].join("\n");
 }
 
@@ -253,6 +269,42 @@ export function setStep(
       run.runId === runId ? { ...run, step, lastEventAt: now } : run,
     ),
   };
+}
+
+/**
+ * 前台 run 到点转后台：主会话不再等它，settle 时走已有的后台投递路径。
+ *
+ * 终态 run 原样返回。调用方在超时后要先复查终态——先 settle 的 run
+ * 结果已经在返回值里，不能再标成后台，否则那条结果会丢。
+ */
+export function detachToBackground(
+  state: SubagentState,
+  runId: string,
+): SubagentState {
+  return {
+    runs: state.runs.map((run) =>
+      run.runId === runId && !isTerminal(run.status)
+        ? { ...run, background: true }
+        : run,
+    ),
+  };
+}
+
+/** detached 结果里的现场：最近 N 行 transcript，每行截到一个屏幕宽。 */
+export function recentTranscriptLines(
+  run: SubagentRun,
+  count = 3,
+  width = 120,
+): string[] {
+  return run.transcript.slice(-count).map((line) => {
+    const prefix = `[${line.role}] `;
+    const budget = Math.max(0, width - prefix.length);
+    const text =
+      line.text.length > budget
+        ? `${line.text.slice(0, Math.max(0, budget - 1))}…`
+        : line.text;
+    return `${prefix}${text}`;
+  });
 }
 
 export function appendTranscript(

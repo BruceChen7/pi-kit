@@ -26,6 +26,9 @@ const config = loaded.ok
     };
 const email = process.env.DOOP_EMAIL?.trim() || "pi-probe@local.test";
 const canvasId = process.env.DOOP_CANVAS_ID?.trim() || config.canvasId || "";
+/* Distinct from `config.agentName`: the socket drops comments whose `from` is
+   this name, so the probe must not look like the account posting them. */
+const NAME = "pi-e2e";
 
 type McpPayload = Record<string, unknown>;
 
@@ -97,7 +100,7 @@ describe("live doop push", () => {
         canvas_id: canvasId,
         name: "e2e push",
         html: "<div style='padding:16px'>e2e</div>",
-        agent_name: config.agentName,
+        agent_name: NAME,
       });
       const summary =
         typeof frame.frame === "object" && frame.frame !== null
@@ -112,7 +115,7 @@ describe("live doop push", () => {
         baseUrl: config.baseUrl,
         canvasId,
         cookie: signedIn.record.cookie,
-        agentName: config.agentName,
+        agentName: NAME,
         onPending: (item) => pending.push(item),
         onState: (state) => states.push(state),
       });
@@ -134,13 +137,13 @@ describe("live doop push", () => {
         await mcpTool("resolve_comment", {
           canvas_id: canvasId,
           comment_id: commentId,
-          agent_name: config.agentName,
+          agent_name: NAME,
         });
       } finally {
         watch.stop();
         await mcpTool("delete_frame", {
           frame_id: frameId,
-          agent_name: config.agentName,
+          agent_name: NAME,
         }).catch(() => undefined);
       }
     },

@@ -83,6 +83,10 @@ export function defaultConfigPath(): string {
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function isMissingFile(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -217,17 +221,15 @@ const USAGE =
 
 /** Last assistant text, so a finished card can report what it did. */
 function assistantText(message: unknown): string | undefined {
-  if (typeof message !== "object" || message === null) return undefined;
-  const record = message as { role?: unknown; content?: unknown };
-  if (record.role !== "assistant") return undefined;
-  if (typeof record.content === "string")
-    return record.content.trim() || undefined;
-  if (!Array.isArray(record.content)) return undefined;
-  const parts = record.content.flatMap((block: unknown) => {
-    if (typeof block !== "object" || block === null) return [];
-    const typed = block as { type?: unknown; text?: unknown };
-    return typed.type === "text" && typeof typed.text === "string"
-      ? [typed.text]
+  if (!isRecord(message)) return undefined;
+  if (message.role !== "assistant") return undefined;
+  const content = message.content;
+  if (typeof content === "string") return content.trim() || undefined;
+  if (!Array.isArray(content)) return undefined;
+  const parts = content.flatMap((block: unknown): string[] => {
+    if (!isRecord(block)) return [];
+    return block.type === "text" && typeof block.text === "string"
+      ? [block.text]
       : [];
   });
   const joined = parts.join("\n").trim();
@@ -265,10 +267,12 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
       watchState: WatchState;
       pending: PendingQueue;
       cardsTimer?: Timer;
-      cardJob?: CardJob;
-      cardDeviceId?: string;
+      /** true while a poll is in flight, so a slow tick cannot claim twice */
+      polling: boolean;
+      /** the card this session is running, plus the device that claimed it */
+      card?: { job: CardJob; deviceId: string };
       lastAssistantText?: string;
-    } = { watchState: "off", pending: [] };
+    } = { watchState: "off", pending: [], polling: false };
 
     const saveConfig = (next: DoopConfig): void =>
       writeConfig(configPath(), next);
@@ -377,8 +381,7 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
     ): Promise<void> => {
       runtime.cardsTimer?.cancel();
       runtime.cardsTimer = undefined;
-      runtime.cardJob = undefined;
-      runtime.cardDeviceId = undefined;
+      runtime.card = undefined;
       if (!disableRemote) return;
       const auth = loadAuth();
       if (!auth.ok) return;
@@ -398,6 +401,9 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
         isIdle?: () => boolean;
       },
     ): Promise<void> => {
+      /* idempotent: a second `/doop cards on` must replace the first poll loop,
+         not run beside it */
+      await stopCards(config, false);
       const auth = loadAuth();
       if (!auth.ok) {
         ctx.ui.notify(auth.error.message, "warning");
@@ -414,7 +420,6 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
         return;
       }
       const deviceId = randomUUID();
-      runtime.cardDeviceId = deviceId;
       const every =
         options.every ??
         ((fn, ms) => {
@@ -422,36 +427,43 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
           return { cancel: () => clearInterval(handle) };
         });
       const poll = async (): Promise<void> => {
-        if (runtime.cardJob) return;
-        const result = await pollJob(
-          config,
-          auth.record,
-          deviceId,
-          options.fetchImpl,
-        );
-        if (!result.ok) {
-          ctx.ui.notify(result.error.message, "error");
-          await stopCards(config, false);
-          return;
-        }
-        if (!result.value.enabled) {
-          ctx.ui.notify(
-            "doop turned the local agent off — /doop cards on",
-            "warning",
+        if (runtime.card) return;
+        /* a poll slower than the tick would otherwise start a second one and
+           claim the same job again */
+        if (runtime.polling) return;
+        runtime.polling = true;
+        try {
+          const result = await pollJob(
+            config,
+            auth.record,
+            deviceId,
+            options.fetchImpl,
           );
-          await stopCards(config, false);
-          return;
-        }
-        const job = result.value.job;
-        if (!job) return;
-        runtime.cardJob = job;
-        runtime.lastAssistantText = undefined;
-        const message = cardMessage(job, config.agentName);
-        if (typeof pi.sendUserMessage !== "function") return;
-        if (typeof ctx.isIdle === "function" && ctx.isIdle()) {
-          pi.sendUserMessage(message);
-        } else {
-          pi.sendUserMessage(message, { deliverAs: "followUp" });
+          if (!result.ok) {
+            ctx.ui.notify(result.error.message, "error");
+            await stopCards(config, false);
+            return;
+          }
+          if (!result.value.enabled) {
+            ctx.ui.notify(
+              "doop turned the local agent off — /doop cards on",
+              "warning",
+            );
+            await stopCards(config, false);
+            return;
+          }
+          const job = result.value.job;
+          if (!job) return;
+          runtime.card = { job, deviceId };
+          runtime.lastAssistantText = undefined;
+          const message = cardMessage(job, config.agentName);
+          if (typeof ctx.isIdle === "function" && ctx.isIdle()) {
+            pi.sendUserMessage(message);
+          } else {
+            pi.sendUserMessage(message, { deliverAs: "followUp" });
+          }
+        } finally {
+          runtime.polling = false;
         }
       };
       void poll();
@@ -475,9 +487,9 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
       config: DoopConfig,
       aborted: boolean,
     ): Promise<void> => {
-      const job = runtime.cardJob;
-      if (!job) return;
-      runtime.cardJob = undefined;
+      const card = runtime.card;
+      if (!card) return;
+      runtime.card = undefined;
       const auth = loadAuth();
       if (!auth.ok) {
         ctx.ui.notify(auth.error.message, "warning");
@@ -486,8 +498,8 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
       const result = await finishJob(
         config,
         auth.record,
-        runtime.cardDeviceId ?? "",
-        job.id,
+        card.deviceId,
+        card.job.id,
         {
           success: !aborted,
           text:
@@ -705,10 +717,6 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
             );
             return;
           }
-          if (typeof pi.sendUserMessage !== "function") {
-            ctx.ui.notify(formatWorklist(read.list, config.agentName), "info");
-            return;
-          }
           const message = formatWorklist(read.list, config.agentName);
           if (typeof ctx.isIdle === "function" && ctx.isIdle()) {
             pi.sendUserMessage(message);
@@ -731,12 +739,11 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
       const loaded = load();
       if (!loaded.ok) return;
       const config = loaded.config;
-      if (runtime.cardJob) void finishCard(ctx, config, event.aborted);
+      if (runtime.card) void finishCard(ctx, config, event.aborted);
       if (runtime.pending.length === 0) return;
       const { items } = drainPending(runtime.pending);
       runtime.pending = [];
       footer(ctx, config);
-      if (typeof pi.sendUserMessage !== "function") return;
       pi.sendUserMessage(formatWake(items, config.canvasId ?? "unknown"));
     });
 
@@ -744,15 +751,25 @@ export function createDoopExtension(options: DoopExtensionOptions = {}) {
       const loaded = load();
       if (!loaded.ok) return;
       footer(ctx, loaded.config);
-      if (!loaded.config.canvasId) return;
-      if (loaded.config.watch) startWatch(loaded.config, ctx);
+      if (loaded.config.canvasId && loaded.config.watch) {
+        startWatch(loaded.config, ctx);
+      }
+      /* `cards` is persisted, so a restart has to honour it: otherwise the
+         footer claims cards on while nothing polls */
+      if (loaded.config.cards) void startCards(loaded.config, ctx);
     });
 
     pi.on("session_shutdown", async () => {
+      /* cancel before reading the config: a corrupt or missing doop.json must
+         not leave the interval running into a dead session */
+      const wasPolling = runtime.cardsTimer !== undefined;
+      runtime.cardsTimer?.cancel();
+      runtime.cardsTimer = undefined;
+      runtime.card = undefined;
       stopWatch();
       const loaded = load();
-      if (!loaded.ok) return;
-      if (runtime.cardsTimer) await stopCards(loaded.config, true);
+      if (!loaded.ok || !wasPolling) return;
+      await stopCards(loaded.config, true);
     });
   };
 }

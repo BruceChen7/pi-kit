@@ -39,29 +39,35 @@ describe("parseJob", () => {
     expect(
       parseJob({
         id: "job-1",
-        token: "tok",
         prompt: "Sketch a login screen",
         system: "you are a designer",
         maxTurns: 12,
       }),
     ).toEqual({
       id: "job-1",
-      token: "tok",
       prompt: "Sketch a login screen",
       system: "you are a designer",
       maxTurns: 12,
     });
   });
 
-  it("refuses a job without an id, token or prompt", () => {
-    expect(parseJob({ token: "t", prompt: "p" })).toBeUndefined();
-    expect(parseJob({ id: "1", prompt: "p" })).toBeUndefined();
-    expect(parseJob({ id: "1", token: "t" })).toBeUndefined();
+  it("ignores a run token: the card runs on this session's MCP credential", () => {
+    expect(parseJob({ id: "job-1", token: "tok", prompt: "p" })).toEqual({
+      id: "job-1",
+      prompt: "p",
+      system: "",
+      maxTurns: 0,
+    });
+  });
+
+  it("refuses a job without an id or a prompt", () => {
+    expect(parseJob({ prompt: "p" })).toBeUndefined();
+    expect(parseJob({ id: "1" })).toBeUndefined();
     expect(parseJob(null)).toBeUndefined();
   });
 
   it("defaults the system prompt and turn budget", () => {
-    const job = parseJob({ id: "1", token: "t", prompt: "p" });
+    const job = parseJob({ id: "1", prompt: "p" });
     expect(job?.system).toBe("");
     expect(job?.maxTurns).toBe(0);
   });
@@ -112,7 +118,6 @@ describe("pollJob", () => {
       enabled: true,
       job: {
         id: "job-1",
-        token: "tok",
         prompt: "design",
         system: "s",
         maxTurns: 3,

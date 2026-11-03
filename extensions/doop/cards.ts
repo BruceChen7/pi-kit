@@ -4,7 +4,8 @@
  *
  * They authenticate with the browser session cookie, not the agent key: the
  * server answers them from `req.user`, and a run token (not the cookie) is what
- * the card's own MCP calls use.
+ * the card's own MCP calls use. That run token is not used here: the card runs
+ * on this session's own MCP credential, so job parsing ignores it.
  */
 
 import type { AuthRecord } from "./auth.js";
@@ -15,7 +16,6 @@ export const PREFERENCE_MODEL = "sonnet";
 
 export type CardJob = {
   id: string;
-  token: string;
   prompt: string;
   system: string;
   maxTurns: number;
@@ -38,12 +38,10 @@ function text(value: unknown): string | undefined {
 export function parseJob(raw: unknown): CardJob | undefined {
   if (!isRecord(raw)) return undefined;
   const id = text(raw.id);
-  const token = text(raw.token);
   const prompt = text(raw.prompt);
-  if (!id || !token || !prompt) return undefined;
+  if (!id || !prompt) return undefined;
   return {
     id,
-    token,
     prompt,
     system: text(raw.system) ?? "",
     maxTurns:

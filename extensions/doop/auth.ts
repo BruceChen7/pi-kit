@@ -231,7 +231,7 @@ export async function signIn(
       ok: false,
       error: {
         kind: "login",
-        message: `doop answered HTTP ${response.status} for sign-in: ${text.slice(0, 200)}`,
+        message: `doop ${config.baseUrl} answered HTTP ${response.status} for sign-in: ${text.slice(0, 200)}`,
       },
     };
   }

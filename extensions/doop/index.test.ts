@@ -453,6 +453,34 @@ describe("v2 wiring", () => {
     );
   }
 
+  /** Records every `every` registration so a test can fire a tick by hand. */
+  function fakeEvery() {
+    const timers: { fn: () => void; cancel: ReturnType<typeof vi.fn> }[] = [];
+    const every = (fn: () => void) => {
+      const cancel = vi.fn();
+      timers.push({ fn, cancel });
+      return { cancel };
+    };
+    return { timers, every };
+  }
+
+  /**
+   * PUT turns the preference on. Every poll answers with the same `job`: the
+   * server keeps it claimed until it is finished, so a poll this extension
+   * should have skipped would hand the card out twice.
+   */
+  function cardsFetch(job: Record<string, unknown> | null) {
+    return vi.fn<typeof fetch>(async (_input, init) => {
+      const json = (body: unknown) =>
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      if (init?.method === "PUT") return json({ enabled: true });
+      return json({ enabled: true, job });
+    });
+  }
+
   it("/doop watch on persists the flag and opens a socket", async () => {
     const h = harness();
     const file = tempConfigPath();
@@ -597,5 +625,122 @@ describe("v2 wiring", () => {
     expect(fs.existsSync(authFile)).toBe(false);
     expect(sockets[0]?.closed).toBe(true);
     expect(h.notify).toHaveBeenCalledWith("doop signed out", "info");
+  });
+
+  it("/doop cards on polls and hands the card prompt to the model", async () => {
+    const h = harness();
+    const file = tempConfigPath();
+    const authFile = path.join(path.dirname(file), "doop-auth.json");
+    writeKey(file, { canvasId: "U43rjP-JxT" });
+    writeAuthFile(authFile);
+    const { timers, every } = fakeEvery();
+    createDoopExtension({
+      configPath: () => file,
+      authPath: () => authFile,
+      fetchImpl: cardsFetch({
+        id: "job-1",
+        prompt: "sketch login",
+        system: "s",
+        maxTurns: 3,
+      }),
+      every,
+    })(h.api);
+
+    await h.commands.get("doop").handler("cards on", h.ctx);
+    timers[0]?.fn();
+    /* the immediate poll is still in flight; the tick above must not start a
+       second one. One macrotask lets both settle. */
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(h.sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(String(h.sendUserMessage.mock.calls[0]?.[0])).toContain(
+      "sketch login",
+    );
+  });
+
+  it("/doop cards on twice replaces the first poll loop", async () => {
+    const h = harness();
+    const file = tempConfigPath();
+    const authFile = path.join(path.dirname(file), "doop-auth.json");
+    writeKey(file, { canvasId: "U43rjP-JxT" });
+    writeAuthFile(authFile);
+    const { timers, every } = fakeEvery();
+    createDoopExtension({
+      configPath: () => file,
+      authPath: () => authFile,
+      fetchImpl: cardsFetch(null),
+      every,
+    })(h.api);
+
+    await h.commands.get("doop").handler("cards on", h.ctx);
+    await h.commands.get("doop").handler("cards on", h.ctx);
+
+    expect(timers).toHaveLength(2);
+    expect(timers[0]?.cancel).toHaveBeenCalled();
+    expect(timers[1]?.cancel).not.toHaveBeenCalled();
+  });
+
+  it("session_shutdown cancels the card timer", async () => {
+    const h = harness();
+    const file = tempConfigPath();
+    const authFile = path.join(path.dirname(file), "doop-auth.json");
+    writeKey(file, { canvasId: "U43rjP-JxT" });
+    writeAuthFile(authFile);
+    const { timers, every } = fakeEvery();
+    createDoopExtension({
+      configPath: () => file,
+      authPath: () => authFile,
+      fetchImpl: cardsFetch(null),
+      every,
+    })(h.api);
+
+    await h.commands.get("doop").handler("cards on", h.ctx);
+    await h.events.get("session_shutdown")?.();
+
+    expect(timers).toHaveLength(1);
+    expect(timers[0]?.cancel).toHaveBeenCalled();
+  });
+
+  it("session_shutdown cancels the card timer even when the config is gone", async () => {
+    const h = harness();
+    const file = tempConfigPath();
+    const authFile = path.join(path.dirname(file), "doop-auth.json");
+    writeKey(file, { canvasId: "U43rjP-JxT" });
+    writeAuthFile(authFile);
+    const { timers, every } = fakeEvery();
+    createDoopExtension({
+      configPath: () => file,
+      authPath: () => authFile,
+      fetchImpl: cardsFetch(null),
+      every,
+    })(h.api);
+
+    await h.commands.get("doop").handler("cards on", h.ctx);
+    fs.rmSync(file);
+    await h.events.get("session_shutdown")?.();
+
+    expect(timers[0]?.cancel).toHaveBeenCalled();
+  });
+
+  it("/doop status reports a live watch", async () => {
+    const h = harness();
+    const file = tempConfigPath();
+    const authFile = path.join(path.dirname(file), "doop-auth.json");
+    writeKey(file, { canvasId: "U43rjP-JxT", watch: true });
+    writeAuthFile(authFile);
+    const { sockets, factory } = fakeSockets();
+    createDoopExtension({
+      configPath: () => file,
+      authPath: () => authFile,
+      fetchImpl: h.fetchImpl,
+      socketFactory: factory,
+    })(h.api);
+
+    h.events.get("session_start")?.({}, h.ctx);
+    sockets[0]?.emit("open");
+    await h.commands.get("doop").handler("status", h.ctx);
+
+    expect(h.notify).toHaveBeenCalledTimes(1);
+    expect(String(h.notify.mock.calls[0]?.[0])).toContain("watch live");
   });
 });

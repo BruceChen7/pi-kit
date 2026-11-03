@@ -176,7 +176,7 @@ export const selectReminderTodos = (
   return { shown, hidden: open.length - shown.length };
 };
 
-const sanitizeTodoText = (text: string): string =>
+export const sanitizeTodoText = (text: string): string =>
   text
     .replace(/[\r\n]+/gu, " ")
     .replace(/<\/?system-reminder>/giu, "")

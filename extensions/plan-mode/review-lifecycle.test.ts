@@ -1071,6 +1071,22 @@ describe("plan-mode extension: review lifecycle", () => {
       await harness.emit("agent_end", { messages: [] }, ctx);
 
       expectNoReviewApprovalFollowUp(harness);
+      // The leave-abandoned list behind is what the closeout gate exists for:
+      // it asks once instead of letting the list rot silently.
+      expect(harness.api.sendUserMessage).toHaveBeenCalledTimes(1);
+      expect(String(harness.api.sendUserMessage.mock.calls[0]?.[0])).toContain(
+        "open TODO item",
+      );
+
+      // Once the list is settled, the gate stops asking.
+      await harness.runTool(
+        ACT_MODE_TODO_TOOL,
+        { action: "update", updates: [{ id: 1, status: "done" }] },
+        ctx,
+      );
+      harness.api.sendUserMessage.mockClear();
+      await harness.emit("agent_end", { messages: [] }, ctx);
+
       expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
     });
   });

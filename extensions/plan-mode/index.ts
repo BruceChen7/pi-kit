@@ -263,6 +263,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("agent_end", async (event, ctx) => {
-    await controller.handleAgentEnd(event, ctx);
+    const outcome = await controller.handleAgentEnd(event, ctx);
+    if (outcome?.kind === "todo-closeout-ask") {
+      // The closeout round just said it; let the in-run reminder restart its
+      // window instead of stacking a second copy of the same list on the next
+      // request.
+      resetTodoReminderCadence(reminderCadence);
+    }
   });
 }

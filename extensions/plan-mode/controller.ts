@@ -83,6 +83,12 @@ import {
   PlanModeState,
   stringProperty,
 } from "./state.ts";
+import {
+  createTodoCloseoutLedger,
+  decideTodoCloseout,
+  lastAssistantTextFromMessages,
+  type TodoCloseoutLedger,
+} from "./todo-closeout.ts";
 import type {
   InputSource,
   PlanMode,
@@ -103,6 +109,9 @@ import {
   decidePlanModeUi,
   type PlanModeUiInput,
 } from "./widget-plan.ts";
+
+/** What `handleAgentEnd` did that the caller must react to. */
+export type AgentEndOutcome = { kind: "todo-closeout-ask" };
 
 /** widget 观感留在 Shell（Core 只给未上色的内容）：mode widget 整行 accent，TODO 只染标题行。 */
 const colorWidgetLines = (
@@ -183,6 +192,8 @@ export class PlanModeController {
   //   · policy pass     — artifact fixed; a new failure text queues again.
   private reReviewReminderSentFor: string | null = null;
   private policyReminderSentFor: string | null = null;
+  // 收尾闸账本：会话内内存态，不进 snapshot（resume 后重新拿一次预算是期望行为）。
+  private todoCloseoutLedger: TodoCloseoutLedger = createTodoCloseoutLedger();
   // Session-scoped values, resolved in restore() (no IO at construction).
   // HTML artifact dirs need a `git rev-parse` (repo slug), so they resolve on
   // first use instead of on session_start; only the write guard and the mode
@@ -209,6 +220,7 @@ export class PlanModeController {
     this.approvedPlanContinuationForTurn = false;
     this.reReviewReminderSentFor = null;
     this.policyReminderSentFor = null;
+    this.todoCloseoutLedger = createTodoCloseoutLedger();
     this.todoWidgetPresent = false;
     // badge 是渲染态：换会话/换分支后由生产方下一 tick 重新挂上来。
     this.badges.clear();
@@ -696,7 +708,7 @@ export class PlanModeController {
   async handleAgentEnd(
     event: { messages?: readonly unknown[] },
     ctx: ExtensionContext,
-  ): Promise<void> {
+  ): Promise<AgentEndOutcome | undefined> {
     this.updateUi(ctx);
     const latestArtifactPath = this.state.getLatestReviewArtifactPath();
     const latestReviewArtifactApproved =
@@ -809,6 +821,32 @@ export class PlanModeController {
         { deliverAs: "followUp" },
       );
     }
+
+    // The gate lives last so every review/abort branch above keeps its
+    // priority. `phase !== "act"` is an explicit criterion, not an accident of
+    // branch order: the plan-phase review branch above returns no value and
+    // falls through to here.
+    const closeout = decideTodoCloseout({
+      phase: this.state.phase,
+      todos: this.state.todos,
+      ledger: this.todoCloseoutLedger,
+      runKey: this.state.activeRun?.id ?? null,
+      lastAssistantText: lastAssistantTextFromMessages(event.messages ?? []),
+      todoToolName: this.getTodoToolNameForCurrentMode(),
+    });
+    this.todoCloseoutLedger = closeout.ledger;
+
+    if (closeout.kind === "ask") {
+      this.pi.sendUserMessage(closeout.message, { deliverAs: "followUp" });
+      this.finishTurn(ctx);
+      return { kind: "todo-closeout-ask" };
+    }
+    // A UI note, not a follow-up: the gate has stopped asking and must not
+    // open another LLM turn.
+    if (closeout.kind === "give-up" && ctx.hasUI) {
+      ctx.ui.notify(closeout.note, "info");
+    }
+
     this.finishTurn(ctx);
   }
 

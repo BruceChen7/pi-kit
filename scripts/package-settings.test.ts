@@ -192,6 +192,19 @@ describe("renderInstallDoc", () => {
     expect(withoutQmd).not.toContain("config/qmd");
   });
 
+  it("documents the doop config restore only when it is in the zip", () => {
+    const withDoop = renderInstallDoc({ hasGlobal: true, hasDoopConfig: true });
+    expect(withDoop).toContain("`agent/doop.json`");
+    expect(withDoop).toContain(
+      "cp pi-kit-settings/agent/doop.json ~/.pi/agent/doop.json",
+    );
+    expect(withDoop).toContain("doop.json ~/.pi/agent/doop.json.bak");
+    expect(withDoop).toContain("dpk_");
+
+    const withoutDoop = renderInstallDoc({ hasGlobal: true });
+    expect(withoutDoop).not.toContain("doop.json");
+  });
+
   it("adds a copyable teach restore section when teach projects exist", () => {
     const text = renderInstallDoc({
       hasGlobal: true,
@@ -380,6 +393,45 @@ describe("package-settings.mjs (shell)", () => {
     expect(listing).not.toContain("config/qmd");
     expect(zipEntry(outZip, "pi-kit-settings/INSTALL.md")).not.toContain(
       "config/qmd",
+    );
+  });
+
+  it("packages the doop config and warns about the agent key inside it", () => {
+    const dir = createTempDir();
+    const agentDir = path.join(dir, "agent");
+    const outZip = path.join(dir, "out.zip");
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(agentDir, "doop.json"),
+      '{"baseUrl":"http://localhost:4300","canvasId":"U43rjP-JxT","agentKey":"dpk_fixture"}\n',
+      "utf-8",
+    );
+
+    runPackage(agentDir, outZip);
+
+    const listing = zipListing(outZip);
+    expect(listing).toContain("pi-kit-settings/agent/doop.json");
+    expect(zipEntry(outZip, "pi-kit-settings/MANIFEST.txt")).toContain(
+      "agent/doop.json",
+    );
+    const installDoc = zipEntry(outZip, "pi-kit-settings/INSTALL.md");
+    expect(installDoc).toContain(
+      "cp pi-kit-settings/agent/doop.json ~/.pi/agent/doop.json",
+    );
+    expect(installDoc).toContain("dpk_");
+  });
+
+  it("skips the doop config when it does not exist", () => {
+    const dir = createTempDir();
+    const agentDir = path.join(dir, "agent");
+    const outZip = path.join(dir, "out.zip");
+    createAgentFixture(agentDir);
+
+    runPackage(agentDir, outZip);
+
+    expect(zipListing(outZip)).not.toContain("agent/doop.json");
+    expect(zipEntry(outZip, "pi-kit-settings/INSTALL.md")).not.toContain(
+      "doop.json",
     );
   });
 

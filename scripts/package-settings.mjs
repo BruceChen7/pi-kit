@@ -18,6 +18,7 @@
  * Layout in the zip (prefix `pi-kit-settings/`):
  *   agent/third_extension_settings.json
  *   agent/query-notes-log/...
+ *   agent/doop.json               (doop canvas binding + agent key, mode 0600)
  *   agent/<extra>/...
  *   config/qmd/index.yml
  *   teach/<project>/...            (each ~/work/<project>/.pi/teach with files)
@@ -39,6 +40,7 @@ import { pathToFileURL } from "node:url";
 const DEFAULT_REGISTRY = [
   { base: "agent", rel: "third_extension_settings.json" },
   { base: "agent", rel: "query-notes-log" },
+  { base: "agent", rel: "doop.json" },
   { base: "config", rel: "qmd/index.yml" },
 ];
 
@@ -86,22 +88,26 @@ export const teachZipRel = (project, zipRel) => `teach/${project}/${zipRel}`;
 
 export const renderInstallDoc = ({
   hasGlobal,
+  hasDoopConfig = false,
   hasQmdConfig = false,
   teachProjects = [],
 }) => {
   const contents = [
-    "- `agent/third_extension_settings.json`：全局扩展配置",
+    hasGlobal
+      ? "- `agent/third_extension_settings.json`：全局扩展配置"
+      : "- （全局扩展配置在本 zip 中不存在，仅含插件数据）",
     "- `agent/query-notes-log/...`：query_my_notes 插件数据（查询历史）",
+    ...(hasDoopConfig
+      ? [
+          "- `agent/doop.json`：doop 画布扩展配置（baseUrl / canvasId / agentName / agent key）",
+        ]
+      : []),
+    ...(hasQmdConfig
+      ? ["- `config/qmd/index.yml`：qmd 索引配置（collections / models）"]
+      : []),
     "- `teach/<project>/...`：各项目 .pi/teach 学习数据（课程/学习记录/测验）",
     "- `MANIFEST.txt`：完整文件清单（zip 内路径 | 源路径 | 大小）",
   ];
-  if (hasQmdConfig) {
-    contents.splice(
-      2,
-      0,
-      "- `config/qmd/index.yml`：qmd 索引配置（collections / models）",
-    );
-  }
   const lines = [
     "# pi-kit 扩展配置与插件数据还原说明 (INSTALL)",
     "",
@@ -111,9 +117,17 @@ export const renderInstallDoc = ({
     "## 还原步骤",
     "1. 备份现有文件：",
     "   cp ~/.pi/agent/third_extension_settings.json ~/.pi/agent/third_extension_settings.json.bak.$(date +%s)",
+    ...(hasDoopConfig
+      ? ["   cp ~/.pi/agent/doop.json ~/.pi/agent/doop.json.bak.$(date +%s)"]
+      : []),
     "2. 解压后按 MANIFEST.txt 对照还原（zip 内前缀为 `pi-kit-settings/`）：",
     "   cp pi-kit-settings/agent/third_extension_settings.json ~/.pi/agent/third_extension_settings.json",
     "   cp -R pi-kit-settings/agent/query-notes-log ~/.pi/agent/",
+    ...(hasDoopConfig
+      ? [
+          "   cp pi-kit-settings/agent/doop.json ~/.pi/agent/doop.json && chmod 600 ~/.pi/agent/doop.json",
+        ]
+      : []),
   ];
   if (hasQmdConfig) {
     lines.push(
@@ -131,8 +145,10 @@ export const renderInstallDoc = ({
       "- qmd 配置中的 collection path 是按机器写入的绝对路径，换机器还原时请按实际路径调整。",
     );
   }
-  if (!hasGlobal) {
-    lines.splice(3, 1, "- （全局扩展配置在本 zip 中不存在，仅含插件数据）");
+  if (hasDoopConfig) {
+    lines.push(
+      "- doop.json 里的 agent key（`dpk_…`）等于账号在 `/mcp` 上的全权凭据。换机器后建议在 doop 的 Settings → Agent keys 撤旧铸新，并保持该文件 0600；这个 zip 不要公开。",
+    );
   }
   if (teachProjects.length > 0) {
     lines.push(
@@ -278,12 +294,16 @@ const main = () => {
   const hasGlobal = specs.some((s) =>
     s.zipPath.includes("third_extension_settings.json"),
   );
+  const hasDoopConfig = specs.some((s) =>
+    s.zipPath.endsWith("agent/doop.json"),
+  );
   const hasQmdConfig = specs.some((s) =>
     s.zipPath.endsWith("config/qmd/index.yml"),
   );
   const manifest = renderManifest(specs);
   const installDoc = renderInstallDoc({
     hasGlobal,
+    hasDoopConfig,
     hasQmdConfig,
     teachProjects: teachDirs.map(({ project }) => project),
   });
@@ -326,6 +346,12 @@ const main = () => {
     console.log(
       "⚠  agent/third_extension_settings.json may contain sensitive data " +
         "(e.g. remoteApproval botToken/chatId) — keep the zip private.",
+    );
+  }
+  if (hasDoopConfig) {
+    console.log(
+      "⚠  agent/doop.json holds a doop agent key (dpk_…), i.e. account-wide " +
+        "access to /mcp — keep the zip private and consider rotating it.",
     );
   }
 };

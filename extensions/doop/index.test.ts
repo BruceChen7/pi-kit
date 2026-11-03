@@ -102,6 +102,8 @@ describe("config file", () => {
       agentKey: "dpk_test",
       canvasId: "U43rjP-JxT",
       agentName: "pi",
+      watch: false,
+      cards: false,
     });
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     const loaded = readConfig(file, {});
@@ -121,6 +123,8 @@ describe("config file", () => {
       baseUrl: "http://127.0.0.1:4300",
       agentKey: "dpk_test",
       agentName: "pi",
+      watch: false,
+      cards: false,
     });
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   });
@@ -252,7 +256,7 @@ describe("extension wiring", () => {
     await h.commands.get("doop").handler("status", h.ctx);
     expect(h.notify).toHaveBeenCalledTimes(1);
     expect(h.notify).toHaveBeenCalledWith(
-      "doop http://127.0.0.1:4300 · canvas U43rjP-JxT · 1 open · key ok",
+      "doop http://127.0.0.1:4300 · canvas U43rjP-JxT · 1 open · key ok · no cookie · watch off · cards off",
       "info",
     );
     expect(h.ui.setStatus).toHaveBeenCalledWith(
@@ -272,7 +276,7 @@ describe("extension wiring", () => {
     await h.commands.get("doop").handler("status", h.ctx);
     expect(h.notify).toHaveBeenCalledTimes(1);
     expect(h.notify).toHaveBeenCalledWith(
-      "doop http://127.0.0.1:4300 · canvas unbound · key ok",
+      "doop http://127.0.0.1:4300 · canvas unbound · key ok · no cookie · watch off · cards off",
       "info",
     );
     expect(h.fetchImpl).not.toHaveBeenCalled();
@@ -399,5 +403,199 @@ describe("statusLine", () => {
         skipped: 2,
       }),
     ).toBe("doop U43rjP-JxT · 0 open · 2 skipped");
+  });
+});
+
+describe("v2 wiring", () => {
+  function fakeSockets() {
+    const sockets: {
+      url: string;
+      headers: Record<string, string>;
+      sent: string[];
+      closed: boolean;
+      emit: (type: string, event?: { data?: unknown; code?: number }) => void;
+    }[] = [];
+    const factory = (url: string, headers: Record<string, string>) => {
+      const listeners = new Map<string, ((event: any) => void)[]>();
+      const socket = {
+        url,
+        headers,
+        sent: [] as string[],
+        closed: false,
+        send(data: string) {
+          socket.sent.push(data);
+        },
+        close() {
+          socket.closed = true;
+        },
+        addEventListener(type: string, listener: (event: any) => void) {
+          listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+        },
+        emit(type: string, event: any = {}) {
+          for (const listener of listeners.get(type) ?? []) listener(event);
+        },
+      };
+      sockets.push(socket);
+      return socket;
+    };
+    return { sockets, factory };
+  }
+
+  function writeAuthFile(file: string): void {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        email: "rich@example.com",
+        cookie: "better-auth.session_token=abc.def",
+        obtainedAt: 1,
+      }),
+    );
+  }
+
+  it("/doop watch on persists the flag and opens a socket", async () => {
+    const h = harness();
+    const file = tempConfigPath();
+    const authFile = path.join(path.dirname(file), "doop-auth.json");
+    writeKey(file, { canvasId: "U43rjP-JxT" });
+    writeAuthFile(authFile);
+    const { sockets, factory } = fakeSockets();
+    createDoopExtension({
+      configPath: () => file,
+      authPath: () => authFile,
+      fetchImpl: h.fetchImpl as any,
+      socketFactory: factory,
+    })(h.api);
+
+    await h.commands.get("doop").handler("watch on", h.ctx);
+
+    const loaded = readConfig(file, {});
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    expect(loaded.config.watch).toBe(true);
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]?.headers).toEqual({
+      Cookie: "better-auth.session_token=abc.def",
+    });
+  });
+
+  it("session_start connects when watch is on and the cookie exists", () => {
+    const h = harness();
+    const file = tempConfigPath();
+    const authFile = path.join(path.dirname(file), "doop-auth.json");
+    writeKey(file, { canvasId: "U43rjP-JxT", watch: true });
+    writeAuthFile(authFile);
+    const { sockets, factory } = fakeSockets();
+    createDoopExtension({
+      configPath: () => file,
+      authPath: () => authFile,
+      fetchImpl: h.fetchImpl as any,
+      socketFactory: factory,
+    })(h.api);
+
+    h.events.get("session_start")?.({}, h.ctx);
+
+    expect(sockets).toHaveLength(1);
+    sockets[0]?.emit("open");
+    expect(h.ui.setStatus).toHaveBeenLastCalledWith(
+      "doop",
+      "doop U43rjP-JxT · watch live",
+    );
+  });
+
+  it("agent_settled hands the pushed queue to the model exactly once", () => {
+    const h = harness();
+    const file = tempConfigPath();
+    const authFile = path.join(path.dirname(file), "doop-auth.json");
+    writeKey(file, { canvasId: "U43rjP-JxT", watch: true });
+    writeAuthFile(authFile);
+    const { sockets, factory } = fakeSockets();
+    createDoopExtension({
+      configPath: () => file,
+      authPath: () => authFile,
+      fetchImpl: h.fetchImpl as any,
+      socketFactory: factory,
+    })(h.api);
+
+    h.events.get("session_start")?.({}, h.ctx);
+    sockets[0]?.emit("open");
+    sockets[0]?.emit("message", {
+      data: JSON.stringify({
+        type: "comment",
+        comment: {
+          id: "c1",
+          text: "solid CTA",
+          from: "rich",
+          at: 1,
+          frameId: "f1",
+        },
+      }),
+    });
+
+    h.events.get("agent_settled")?.({ aborted: false }, h.ctx);
+    expect(h.sendUserMessage).toHaveBeenCalledTimes(1);
+    expect(String(h.sendUserMessage.mock.calls[0]?.[0])).toContain(
+      "comment c1",
+    );
+
+    h.events.get("agent_settled")?.({ aborted: false }, h.ctx);
+    expect(h.sendUserMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("/doop login stores the session cookie and never the password", async () => {
+    const h = harness({
+      reply: () =>
+        new Response("{}", {
+          status: 200,
+          headers: {
+            "set-cookie": "better-auth.session_token=abc.def; Path=/; HttpOnly",
+          },
+        }),
+    });
+    const file = tempConfigPath();
+    const authFile = path.join(path.dirname(file), "doop-auth.json");
+    writeKey(file, { canvasId: "U43rjP-JxT" });
+    createDoopExtension({
+      configPath: () => file,
+      authPath: () => authFile,
+      fetchImpl: h.fetchImpl as any,
+    })(h.api);
+    vi.stubEnv("DOOP_EMAIL", "rich@example.com");
+    vi.stubEnv("DOOP_PASSWORD", "hunter2");
+
+    await h.commands.get("doop").handler("login", h.ctx);
+
+    const written = fs.readFileSync(authFile, "utf8");
+    expect(written).toContain("better-auth.session_token=abc.def");
+    expect(written).not.toContain("hunter2");
+    expect(fs.statSync(authFile).mode & 0o777).toBe(0o600);
+    expect(h.notify).toHaveBeenCalledWith(
+      "doop signed in as rich@example.com",
+      "info",
+    );
+    vi.unstubAllEnvs();
+  });
+
+  it("logout removes the cookie file and closes the socket", async () => {
+    const h = harness();
+    const file = tempConfigPath();
+    const authFile = path.join(path.dirname(file), "doop-auth.json");
+    writeKey(file, { canvasId: "U43rjP-JxT", watch: true });
+    writeAuthFile(authFile);
+    const { sockets, factory } = fakeSockets();
+    createDoopExtension({
+      configPath: () => file,
+      authPath: () => authFile,
+      fetchImpl: h.fetchImpl as any,
+      socketFactory: factory,
+    })(h.api);
+
+    h.events.get("session_start")?.({}, h.ctx);
+    sockets[0]?.emit("open");
+    await h.commands.get("doop").handler("logout", h.ctx);
+
+    expect(fs.existsSync(authFile)).toBe(false);
+    expect(sockets[0]?.closed).toBe(true);
+    expect(h.notify).toHaveBeenCalledWith("doop signed out", "info");
   });
 });

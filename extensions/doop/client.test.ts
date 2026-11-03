@@ -61,6 +61,8 @@ function config(baseUrl: string): DoopConfig {
     agentKey: "dpk_test_key",
     canvasId: "U43rjP-JxT",
     agentName: "pi",
+    watch: false,
+    cards: false,
   };
 }
 

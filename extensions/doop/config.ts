@@ -10,6 +10,10 @@ export type DoopConfig = {
   canvasId?: string;
   /** the identity this session designs under; also what `toWorklist` treats as "my own comment" */
   agentName: string;
+  /** subscribe to the canvas WebSocket on session start */
+  watch: boolean;
+  /** take resident cards from /api/local-agent while this session is open */
+  cards: boolean;
 };
 
 export type ConfigError = {
@@ -83,6 +87,9 @@ export function parseDoopConfig(
     agentKey,
     canvasId,
     agentName,
+    /* opt-in only: upgrading must not start a socket or spend model quota */
+    watch: raw.watch === true,
+    cards: raw.cards === true,
   };
 }
 
@@ -118,6 +125,8 @@ export function configFromEnv(
       agentKey: env.DOOP_AGENT_KEY,
       canvasId: env.DOOP_CANVAS_ID,
       agentName: env.DOOP_AGENT_NAME,
+      watch: env.DOOP_WATCH === "1" || env.DOOP_WATCH === "true",
+      cards: env.DOOP_CARDS === "1" || env.DOOP_CARDS === "true",
     },
     "environment",
   );

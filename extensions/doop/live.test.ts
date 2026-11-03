@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getComments } from "./client.js";
+import type { DoopConfig } from "./config.js";
 import { defaultConfigPath, readConfig } from "./index.js";
 import { toWorklist } from "./worklist.js";
 
@@ -10,9 +11,15 @@ import { toWorklist } from "./worklist.js";
  */
 const envKey = process.env.DOOP_AGENT_KEY?.trim();
 const loaded = readConfig(defaultConfigPath());
-const base = loaded.ok
+const base: DoopConfig = loaded.ok
   ? loaded.config
-  : { baseUrl: "http://localhost:4300", agentKey: "", agentName: "pi" };
+  : {
+      baseUrl: "http://localhost:4300",
+      agentKey: "",
+      agentName: "pi",
+      watch: false,
+      cards: false,
+    };
 const canvasId = process.env.DOOP_CANVAS_ID?.trim() || base.canvasId || "";
 const config = {
   ...base,

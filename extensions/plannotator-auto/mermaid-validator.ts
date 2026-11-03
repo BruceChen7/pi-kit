@@ -100,57 +100,15 @@ export function scanMermaidBlocks(markdown: string): MermaidBlockScan {
 }
 
 /**
- * Count leading lines that the parser strips before parsing a block body.
- *
- * Pele, like Mermaid, drops a well-formed leading YAML frontmatter block
- * (`---` … `---`) AND any blank lines directly after it (plus leading blank
- * lines when there is no frontmatter) before parsing — its "Parse error on
- * line N" is relative to the stripped code, so absolute file lines must add
- * this count back.
- *
- * Returns the number of stripped lines: 0 when there is no frontmatter and no
- * leading blank lines, 0 for an unclosed leading delimiter (the parser then
- * reports no line number for such bodies, so nothing needs compensating).
- */
-export function countLeadingStrippedLines(body: string): number {
-  const lines = body.split(/\r?\n/u);
-
-  let stripped = 0;
-
-  // Leading blank lines are stripped even without frontmatter.
-  while (stripped < lines.length && !lines[stripped]?.trim()) {
-    stripped += 1;
-  }
-
-  if ((lines[stripped]?.trim() ?? "") !== "---") return stripped;
-
-  let closedAt = -1;
-  for (let i = stripped + 1; i < lines.length; i += 1) {
-    if ((lines[i]?.trim() ?? "") === "---") {
-      closedAt = i;
-      break;
-    }
-  }
-  if (closedAt === -1) return stripped;
-
-  stripped = closedAt + 1;
-
-  // Blank lines directly after the frontmatter are stripped too.
-  while (stripped < lines.length && !lines[stripped]?.trim()) {
-    stripped += 1;
-  }
-
-  return stripped;
-}
-
-/**
  * Validate every mermaid block against the injected parser.
  *
  * Pure core: no IO, no configuration — the caller injects the parser.
  * Returns fence-structure errors AND all parse failures (no fail-fast).
  * Block-internal parse error lines are mapped to absolute file lines using
  * the fence start line (the body begins on `startLine + 1`, so body line N is
- * file line `startLine + N`), plus any frontmatter lines the parser strips.
+ * file line `startLine + N`). pele 1.13.0 numbers lines against the whole
+ * block body — frontmatter and leading blank lines included — so no offset
+ * correction is needed.
  */
 export function validatePlanMermaidBlocks(
   markdown: string,
@@ -171,9 +129,7 @@ export function validatePlanMermaidBlocks(
         startLine: block.startLine,
         errorLine:
           blockErrorLine !== undefined
-            ? block.startLine +
-              countLeadingStrippedLines(block.body) +
-              blockErrorLine
+            ? block.startLine + blockErrorLine
             : undefined,
         diagramType: block.diagramType,
         message: formatPeleError(error),

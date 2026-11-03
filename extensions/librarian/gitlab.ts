@@ -1,7 +1,7 @@
 /* biome-ignore-all lint/suspicious/noControlCharactersInRegex: sanitizer intentionally detects control characters. */
 /* biome-ignore-all lint/suspicious/noExplicitAny: GitLab API and pi JSON event payloads are intentionally dynamic at this adapter boundary. */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import {
   codeSearchOutputSchema,
   commitListOutputSchema,

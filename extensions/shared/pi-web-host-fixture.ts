@@ -29,9 +29,9 @@ const CURSOR_MARKER_RE = new RegExp(
 );
 // biome-ignore lint/suspicious/noControlCharactersInRegex: 终端转义序列本来就以 ESC 开头
 const ANSI_RE = /\x1B(?:\[[0-9;?]*[ -/]*[@-~]|_[^\x07]*\x07|[@-Z\\-_])/g;
-const FIRST_VISIBLE_CHAR_RE =
+const ANSI_AT_RE =
   // biome-ignore lint/suspicious/noControlCharactersInRegex: 同上
-  /^(?:\x1B(?:\[[0-9;?]*[ -/]*[@-~]|_[^\x07]*\x07|[@-Z\\-_])*)([\s\S])/;
+  /^\x1B(?:\[[0-9;?]*[ -/]*[@-~]|_[^\x07]*\x07|[@-Z\\-_])/;
 const HORIZONTAL_FRAME_LINE = /^[┌├└╭╰][─┬┴┼]+[┐┤┘╮╯]$/;
 
 /** pi-web 的无色主题：所有修饰原样返回。 */
@@ -62,22 +62,23 @@ const visibleCharPositions = (text: string): VisibleChar[] => {
   let index = 0;
   while (index < text.length) {
     if (text[index] === "\x1b") {
-      const match = text.slice(index).match(FIRST_VISIBLE_CHAR_RE);
-      const head = match?.[0] ?? "";
-      const consumed = head.length - (match?.[1]?.length ?? 1);
-      if (consumed > 0) {
-        index += consumed;
+      const match = ANSI_AT_RE.exec(text.slice(index));
+      if (match) {
+        index += match[0].length;
         continue;
       }
     }
-    positions.push({ char: text[index] ?? "", start: index, end: index + 1 });
-    index += 1;
+    const codePoint = text.codePointAt(index);
+    if (codePoint === undefined) break;
+    const char = String.fromCodePoint(codePoint);
+    positions.push({ char, start: index, end: index + char.length });
+    index += char.length;
   }
   return positions;
 };
 
 const firstVisibleChar = (text: string): string | undefined =>
-  FIRST_VISIBLE_CHAR_RE.exec(text)?.[1];
+  visibleCharPositions(text)[0]?.char;
 
 const removeVisibleCharAt = (text: string, index: number): string => {
   const target = visibleCharPositions(text)[index];

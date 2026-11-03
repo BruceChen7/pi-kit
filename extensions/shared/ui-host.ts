@@ -15,7 +15,12 @@ export const PI_WEB_HOST_SYMBOL = Symbol.for(
   "@agegr/pi-web/session-liveness/v1",
 );
 
-export type UiHostKind = "tui" | "pi-web" | "generic-rpc" | "headless";
+export type UiHostKind =
+  | "tui"
+  | "pi-web"
+  | "android"
+  | "generic-rpc"
+  | "headless";
 
 /** 面板外框策略：boxed = 自绘盒子（TUI）；borderless = 宿主自带外框（pi-web）。 */
 export type PanelChrome = "boxed" | "borderless";
@@ -131,6 +136,44 @@ const PI_WEB_HOST: UiHostProfile = {
 };
 
 /**
+ * Android 宿主（nsh TSX 应用）：复用 pi-web 的传输与 DTO，自己画。
+ *
+ * 与 pi-web 的差别只有观感层：手机没有固定 92 列的终端，按 390pt 视口、20pt 边距、
+ * 12pt 等宽字换算成 48 列；面板由宿主自己套底部弹层，所以仍然 borderless + 去框。
+ *
+ * 尚未接的能力按「没有」处理，不假装支持：
+ * - `setEditorText/pasteToEditor`（编辑器草稿回写）第一版不接 ⇒ editorText.write = false
+ * - 自动补全、替换输入组件、footer/header、终端挂起，nsh 侧都没有落点
+ * - 系统通知不在 nsh 能力内（要 Kotlin 外壳补），`notify` 只画应用内 toast
+ */
+const ANDROID_HOST: UiHostProfile = {
+  kind: "android",
+  customPanels: true,
+  widgets: {
+    lines: true,
+    // 第一版不跑 render() 工厂：需要宿主反向反复调 render，且带点击/键盘语义。
+    factory: false,
+    placements: "both",
+    // 折叠态只露标题行，展开靠长按（见 designs/android-agent-ui B02）。
+    contentVisibleWithoutInteraction: false,
+    autoExpandedLines: null,
+  },
+  dialogs: true,
+  panelChrome: "borderless",
+  panelWidth: 48,
+  callsInvalidate: false,
+  setsFocused: false,
+  themeColors: true,
+  editorText: { read: false, write: false },
+  editorComponent: false,
+  autocomplete: false,
+  footerHeader: false,
+  terminalSuspend: false,
+  terminal: { columns: 48, rows: 40 },
+  panelNormalizesFrame: true,
+};
+
+/**
  * 其余原生 RPC 宿主：`custom()` 存在但不问宿主就 resolve `undefined`，所以只能信
  * 对话框与字符串 widget。
  */
@@ -189,6 +232,7 @@ const HEADLESS_HOST: UiHostProfile = {
 const HOST_PROFILES: Record<UiHostKind, UiHostProfile> = {
   tui: TUI_HOST,
   "pi-web": PI_WEB_HOST,
+  android: ANDROID_HOST,
   "generic-rpc": GENERIC_RPC_HOST,
   headless: HEADLESS_HOST,
 };
@@ -207,6 +251,8 @@ export const parseUiHostOverride = (
     case "pi-web":
     case "piweb":
       return "pi-web";
+    case "android":
+      return "android";
     case "rpc":
     case "generic-rpc":
       return "generic-rpc";

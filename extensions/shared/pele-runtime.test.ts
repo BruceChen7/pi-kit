@@ -50,7 +50,7 @@ describe("pele runtime", () => {
     }
   });
 
-  it("reports the body-relative line for broken syntax", async () => {
+  it("reports the line of the offending token for broken syntax", async () => {
     const parser = await getPeleParser();
     const error = parseError(parser, brokenFlowchart);
 
@@ -58,15 +58,25 @@ describe("pele runtime", () => {
     expect(formatPeleError(error)).toContain("Expecting");
   });
 
-  it("strips leading frontmatter before numbering lines", async () => {
+  it("counts leading blank lines into the reported line", async () => {
+    const parser = await getPeleParser();
+    const error = parseError(parser, "\n\nflowchart LR\n  A --> B(");
+
+    // 没有 frontmatter 时相对行等于绝对行；前导空行不会被剥掉。
+    expect(peleErrorLine(error)).toBe(4);
+  });
+
+  it("numbers lines against the whole block body, frontmatter included", async () => {
     const parser = await getPeleParser();
     const error = parseError(
       parser,
       "---\nconfig:\n  theme: base\n---\nflowchart LR\n  A --> B(",
     );
 
-    // pele drops the 4 frontmatter lines, so the EOF error is body line 3.
-    expect(peleErrorLine(error)).toBe(3);
+    // pele 1.13.0 不再把行号算成「抽掉 frontmatter 之后」的相对值：它报的是
+    // 整个 block body 里的绝对行号。这里 dangling `(` 在 body 的第 6 行，所以就是 6。
+    // （1.7.0 报的是抽掉 4 行 frontmatter 之后的 EOF 行 3。）
+    expect(peleErrorLine(error)).toBe(6);
   });
 
   it("keeps window/document untouched when the host already has them", async () => {

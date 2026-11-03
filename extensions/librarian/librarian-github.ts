@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { summarizeGithubToolCall } from "./github.js";
 import { runLibrarianSubagent } from "./librarian-runner.js";
 import {

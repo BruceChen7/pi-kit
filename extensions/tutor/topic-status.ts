@@ -16,7 +16,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { conceptLineFor } from "./concepts-store.ts";
 import { detectTutorSkill } from "./mode-core.ts";
 import { TOPIC_STATUS_TOOL_NAME } from "./names.ts";

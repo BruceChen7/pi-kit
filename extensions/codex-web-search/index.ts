@@ -1,4 +1,3 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import {
   type ExtensionAPI,
   type ExtensionCommandContext,
@@ -6,6 +5,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { stringEnum } from "../shared/string-enum.ts";
 import { createWebSearchFallbackRequester } from "../shared/web-search-fallback.ts";
 import {
   MAX_ALLOWED_SOURCES,
@@ -88,13 +88,13 @@ export default function codexWebSearchExtension(pi: ExtensionAPI) {
         }),
       ),
       mode: Type.Optional(
-        StringEnum(["fast", "deep"] as const, {
+        stringEnum(["fast", "deep"] as const, {
           description:
             "Search depth. Use fast for simple lookups. Use deep only when the user explicitly asks for broader research.",
         }),
       ),
       freshness: Type.Optional(
-        StringEnum(["cached", "live"] as const, {
+        stringEnum(["cached", "live"] as const, {
           description:
             "Freshness override. Use live for time-sensitive questions like today, latest, score, result, or weather.",
         }),

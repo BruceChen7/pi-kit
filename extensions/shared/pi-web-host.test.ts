@@ -30,20 +30,26 @@ const plugin = (name: string): PluginEntry => ({
 /**
  * pi-web 的 chrome 契约：它自带外框，还会撕掉自绘的框。所以 borderless 输出必须
  * “过一遍去框逻辑后原样不变” —— 没有整行被丢、没有行首缩进被吃、没有残留竖线。
+ *
+ * 注意这里比的是**可见文本与缩进**，不是整串字节：pi-web 自己会删行尾可见空格
+ * （哪怕后面还跟着 reset 转义），所以 `"  title   \x1b[0m"` 规整成 `"  title\x1b[0m"`
+ * 是正确行为。早先这里拿「只删字面行尾空白」的串去对拍，等于把 pi-web 的行尾归一
+ * 当成差异 —— 那个期望值是错的。
  */
 const expectChromeSafe = (lines: string[]): void => {
   const normalized = normalizeCustomPanelLines(lines);
-  const trimmed = lines.map((line) => line.replace(/\s+$/, ""));
-  while (trimmed.length > 0 && stripAnsi(trimmed[0] ?? "").trim() === "") {
-    trimmed.shift();
+  expect(normalized.length).toBe(lines.length);
+  for (let index = 0; index < lines.length; index += 1) {
+    const before = stripAnsi(lines[index] ?? "");
+    const after = stripAnsi(normalized[index] ?? "");
+    expect(after.trimEnd()).toBe(before.trimEnd());
+    // 行首缩进不能被吃（borderless 没有框可剥）；全空白的分隔行不适用。
+    if (before.trim() !== "") {
+      expect(after.match(/^ */)?.[0] ?? "").toBe(
+        before.match(/^ */)?.[0] ?? "",
+      );
+    }
   }
-  while (
-    trimmed.length > 0 &&
-    stripAnsi(trimmed[trimmed.length - 1] ?? "").trim() === ""
-  ) {
-    trimmed.pop();
-  }
-  expect(normalized).toEqual(trimmed);
 
   for (const line of lines) {
     expect(stripAnsi(line)).not.toContain(TUI_CURSOR_MARKER);

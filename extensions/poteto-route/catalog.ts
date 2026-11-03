@@ -1,5 +1,5 @@
-import { type Static, type TSchema, Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { type Static, type TSchema, Type } from "typebox";
+import { Value } from "typebox/value";
 
 /**
  * Functional core for the poteto router.
@@ -52,7 +52,7 @@ export function validateCatalog(raw: unknown): CatalogValidation {
   if (!Value.Check(catalogSchema as TSchema, raw)) {
     const problems = [...Value.Errors(catalogSchema as TSchema, raw)]
       .slice(0, 20)
-      .map((error) => `${error.path || "/"} ${error.message}`);
+      .map((error) => `${error.instancePath || "/"} ${error.message}`);
     return { ok: false, problems };
   }
 

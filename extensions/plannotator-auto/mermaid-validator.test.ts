@@ -1,29 +1,33 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PeleParser } from "../shared/pele-runtime.ts";
 import {
-  countLeadingStrippedLines,
   formatPlanMermaidErrors,
   runPlanMermaidValidation,
   scanMermaidBlocks,
   validatePlanMermaidBlocks,
 } from "./mermaid-validator.ts";
 
-const PARSE_ERROR_LINE_2 = Object.assign(
-  new Error(
-    "Parse error on line 2:\n" +
-      "...lowchart TD  A[bad (label] --> B\n" +
-      "----------------------^\n" +
-      "Expecting 'PS', got 'TEXT'",
-  ),
-  { code: "syntax", line: 2, column: 1 },
-);
+/** pele 报的是 block body 里的绝对行号（frontmatter 计入）。 */
+const parseErrorAt = (line: number) =>
+  Object.assign(
+    new Error(
+      `Parse error on line ${line}:\n` +
+        "...lowchart TD  A[bad (label] --> B\n" +
+        "----------------------^\n" +
+        "Expecting 'PS', got 'TEXT'",
+    ),
+    { code: "syntax", line, column: 1 },
+  );
 
 /** Parse-only stub for the pure core (validatePlanMermaidBlocks). */
-const failingParser = (failBodies: string[]): PeleParser => {
+const failingParser = (
+  failBodies: string[],
+  error: Error = parseErrorAt(2),
+): PeleParser => {
   const fails = new Set(failBodies);
   return {
     parse: vi.fn((code: string) => {
-      if (fails.has(code)) throw PARSE_ERROR_LINE_2;
+      if (fails.has(code)) throw error;
       return undefined;
     }),
   };
@@ -130,57 +134,6 @@ describe("scanMermaidBlocks", () => {
   });
 });
 
-describe("countLeadingStrippedLines", () => {
-  it("returns 0 for bodies without frontmatter", () => {
-    expect(countLeadingStrippedLines("flowchart TD\n  A --> B")).toBe(0);
-  });
-
-  it("counts a complete leading frontmatter block including delimiters", () => {
-    expect(
-      countLeadingStrippedLines(
-        "---\nconfig:\n  theme: base\n---\nflowchart TD\n  A --> B",
-      ),
-    ).toBe(4);
-  });
-
-  it("counts blank lines inside the frontmatter block", () => {
-    expect(
-      countLeadingStrippedLines("---\nconfig:\n\n\n---\nflowchart TD"),
-    ).toBe(5);
-  });
-
-  it("returns 0 for an unclosed leading delimiter", () => {
-    expect(countLeadingStrippedLines("---\nflowchart TD\n  A --> B")).toBe(0);
-  });
-
-  it("returns 0 when frontmatter does not start the body", () => {
-    expect(countLeadingStrippedLines("flowchart TD\n---\nconfig:\n---")).toBe(
-      0,
-    );
-  });
-
-  it("counts leading blank lines even without frontmatter", () => {
-    expect(countLeadingStrippedLines("\n\nsequenceDiagram\n  A->>B: x")).toBe(
-      2,
-    );
-  });
-
-  it("counts blank lines directly after the frontmatter", () => {
-    // mermaid strips frontmatter AND the blank line(s) after it before
-    // parsing, so the error-line offset must include them.
-    expect(
-      countLeadingStrippedLines(
-        "---\nconfig:\n  theme: base\n---\n\nsequenceDiagram\n  A->>B: x",
-      ),
-    ).toBe(5);
-  });
-
-  it("counts blank lines before and after an unclosed delimiter only once", () => {
-    // Leading blank lines are stripped even when the frontmatter is unclosed.
-    expect(countLeadingStrippedLines("\n---\nflowchart TD\n  A --> B")).toBe(1);
-  });
-});
-
 describe("validatePlanMermaidBlocks", () => {
   it("returns no errors when every block parses", () => {
     const markdown = [
@@ -242,10 +195,12 @@ describe("validatePlanMermaidBlocks", () => {
       "  A[bad (label] --> B",
     ].join("\n");
 
-    // Mermaid strips the 4 frontmatter lines before parsing, so the reported
-    // line 2 refers to the stripped code — the absolute file line must add
-    // the frontmatter height back: 1 (fence) + 4 (frontmatter) + 2.
-    const errors = validatePlanMermaidBlocks(markdown, failingParser([body]));
+    // pele 1.13.0 报的是 block body 里的绝对行号（frontmatter 计入），
+    // 出错的那行是 body 的第 6 行 → 文件第 1 (fence) + 6 = 7 行。
+    const errors = validatePlanMermaidBlocks(
+      markdown,
+      failingParser([body], parseErrorAt(6)),
+    );
 
     expect(errors).toHaveLength(1);
     expect(errors[0]?.errorLine).toBe(7);

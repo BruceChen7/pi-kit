@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, Type } from "typebox";
 import type { PlanModeController } from "./controller.ts";
 import { todoDisciplineGuidance } from "./guidance.ts";
 import type { PlanModeState } from "./state.ts";

@@ -2,8 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -78,6 +78,22 @@ describe("catalog integrity", () => {
     expect(new Set(routeIds).size).toBe(routeIds.length);
     for (const mode of catalog.modes) {
       expect(routeIds).not.toContain(mode.id);
+    }
+  });
+
+  it("names the offending path when routes.json is malformed", () => {
+    const validated = validateCatalog({ routes: [{ id: 1 }], modes: [] });
+    expect(validated.ok).toBe(false);
+    if (validated.ok) throw new Error("expected a rejection");
+
+    // typebox 1.x 的 Value.Errors 用 instancePath（0.34 叫 path），措辞则是 typebox 自己的。
+    // 钉住格式：`<path 或 /> <message>`，且 path 落在出错的那个路由上。
+    expect(validated.problems.length).toBeGreaterThan(0);
+    expect(validated.problems.some((p) => p.startsWith("/routes/0"))).toBe(
+      true,
+    );
+    for (const problem of validated.problems) {
+      expect(problem).toMatch(/^\/\S* /);
     }
   });
 

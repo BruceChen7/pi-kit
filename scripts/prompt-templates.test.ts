@@ -50,6 +50,8 @@ describe("findPromptFrontmatterProblems", () => {
       "",
       "# Title",
       "",
+      "url: $1",
+      "",
     ].join("\n");
 
     expect(rulesOf(text)).toEqual([]);
@@ -84,5 +86,48 @@ describe("findPromptFrontmatterProblems", () => {
 
   it("flags a prompt without a description", () => {
     expect(rulesOf("# Just a body\n")).toEqual(["description-missing"]);
+  });
+
+  it("flags a prompt whose argument-hint promises args the body never reads", () => {
+    const text = [
+      "---",
+      "description: build a ticket from the chat",
+      'argument-hint: "<topic> [--parent <KEY>]"',
+      "---",
+      "",
+      "把这次对话里围绕 `<topic>` 的那一段建成单。",
+      "",
+    ].join("\n");
+
+    expect(rulesOf(text)).toContain("args-never-substituted");
+  });
+
+  it("accepts every substitution form pi expands", () => {
+    for (const token of ["$ARGUMENTS", "$@", "$1", `\${1:-all}`, `\${@:2}`]) {
+      const text = [
+        "---",
+        "description: probe",
+        'argument-hint: "<topic>"',
+        "---",
+        "",
+        `topic: ${token}`,
+        "",
+      ].join("\n");
+
+      expect(rulesOf(text)).not.toContain("args-never-substituted");
+    }
+  });
+
+  it("stays quiet when there is no argument-hint", () => {
+    const text = [
+      "---",
+      "description: probe",
+      "---",
+      "",
+      "no arguments here",
+      "",
+    ].join("\n");
+
+    expect(rulesOf(text)).toEqual([]);
   });
 });

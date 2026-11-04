@@ -6,9 +6,11 @@ argument-hint: "[topic]"
 
 Resume learning this repo by opening previously created lessons. Detect `.pi/teach/` and `~/learning/` for teach workspaces.
 
+命令行给的主题：$1
+
 ## Topic detection
 
-- **With argument**: use the given topic name directly (e.g. `repo-learn`, `pi-agent-design`)
+- **With argument** (`$1` non-empty): use it directly as the topic name (e.g. `repo-learn`, `pi-agent-design`)
 - **No argument**: scan for available topics and present options
 
 ## Topic scanning

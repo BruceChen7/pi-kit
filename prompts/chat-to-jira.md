@@ -3,6 +3,10 @@ description: 把这次对话里某个话题的那一段，变成 Jira 子任务 
 argument-hint: "<topic> [--parent <KEY>] [--reuse <KEY>] [--dry-run]"
 ---
 
+命令行给的东西：$@
+
+这一行是用户敲的全部参数。它非空就按它走，不要重问里面已经有的值。只有它为空时才回一句「这次要建哪件事？父单是哪个？」然后停。
+
 把**这次对话**里围绕 `<topic>` 的那一段，落成一条交付链：
 
 ```
@@ -15,9 +19,11 @@ argument-hint: "<topic> [--parent <KEY>] [--reuse <KEY>] [--dry-run]"
 
 ## 参数
 
-- `<topic>` 必填，位置参数。多个词用逗号分隔，也可以直接写边界，例如
+从上面「命令行给的东西」那一行解析。第一处 `--` 之前的所有词拼成 `<topic>`，之后再解析下面这些开关。
+
+- `<topic>` 必填，位置参数。取第一个 `--` 之前的所有词。多个词用逗号分隔，也可以直接写边界，例如
   `去掉放量开关` / `hooksPath 被覆盖,从我发现它开始` / `只看最近讨论的单元测试改动`。
-- `--parent <KEY>` 新建单时必填。**没给就停下来问用户要哪个父单**，不要从别的单猜。
+- `--parent <KEY>` 新建单时必填。这一行里有就用它，不要再问一遍；只在整行没有 `--parent` 时才停下来问用户要哪个父单，不要从别的单猜。
 - `--reuse <KEY>` 不建单，直接用这个单号往下走。
 - `--dry-run` 停在 Step 2 之后，只打印选中的轮次与拟建的单，不写 Jira、不动 git。
 
@@ -37,11 +43,21 @@ argument-hint: "<topic> [--parent <KEY>] [--reuse <KEY>] [--dry-run]"
 
 范围跑偏时用户一句话就能改。**等用户点头再往下走。**
 
+锚点之下紧跟一行**涉及仓库**。Step 4 要按仓建分支，这一行漏了就得回头再问一轮：
+
+```
+涉及仓库：
+- ecommerce      ~/work/video/ecommerce      go.mod 停在 v0.9.0-beta.16
+- unisearchbff   ~/work/video/unisearchbff   go.mod 停在 v0.9.0-beta.16
+```
+
+仓库从对话里认：用户点名的、被 grep/read 到的、被改的。用户给的范围就一仓就写一仓，不凑数。看不出是哪个仓就当场问，不要猜路径；路径用对话里实际跑过的那个。
+
 用户在 `<topic>` 里给了边界就按他的边界，不要扩。找不到可交付的改动（纯问答、只是查了个状态）就停在这里说明，不建单。
 
 ## Step 2 归纳 WorkItem
 
-把选中的内容压成五个字段。每个字段只能来自对话里已经查实的东西；没查实的写「未验证」，不编。
+把选中的内容压成六个字段。每个字段只能来自对话里已经查实的东西；没查实的写「未验证」，不编。
 
 | 字段 | 内容 | 落到 Jira |
 | --- | --- | --- |
@@ -49,6 +65,7 @@ argument-hint: "<topic> [--parent <KEY>] [--reuse <KEY>] [--dry-run]"
 | `code_location` | `file:line` + 符号名，至少一条 | `h3. 代码位置` |
 | `repro` | 最小复现命令或步骤 | `h3. 复现` |
 | `change_scope` | 要改哪些文件/模块，不做什么 | `h3. 改动内容` |
+| `repos` | Step 1 那一行仓库，每仓一行 `仓名 + 分支起点 + 现在为什么不对` | `h3. 改动内容`，按仓分小节 |
 | `acceptance` | 怎么算完成，跑什么命令 | `h3. 验证` |
 
 `summary` 用父单下已有子任务的命名风格，通常是 `【BE】<一句话中文>`，不加空格。
@@ -75,10 +92,11 @@ const names = t.structuredContent?.issue?._field_names ?? {};
 
 产出一张对照表：要填的字段、从哪条子任务抄的值。抄不到的字段不填。
 
-两条硬约束：
+三条硬约束：
 
 - **不要调 `get_create_jira_meta`**。它返回 16MB 被网关拒掉（`MCP SSE event exceeds 16777216 bytes`），必失败。
 - **codemode 里用 `r.structuredContent`，不要 `JSON.parse(r)`**。工具返回的是对象，`JSON.parse` 会报 `SyntaxError: unexpected token: 'object'`。
+- **建单时不要带 `security`**。SPV 的创建屏不接收它，HTTP 400 `Field 'security' cannot be set. It is not on the appropriate screen, or unknown.` 要设就在拿到 key 之后单独 update。`priority`、`labels`、`components` 不受这条限制。
 
 `parent` 字段没给就现在问用户，不要推测。
 
@@ -104,23 +122,31 @@ const names = t.structuredContent?.issue?._field_names ?? {};
 - `type` 取 `feature|hotfix|bugfix|doc|tech`，跟这次改动的性质一致。
 - `slug` 全小写、`-` 分隔、不加下划线。
 
-动手之前先报给用户，一起给 `git log -1 --oneline` 当起点：
+动手之前先报给用户，逐仓列起点。列完还缺哪仓的 base，就在这一步问完，不要建到一半才发现：
 
 ```
-拟建分支：ming.chen/bugfix/SPV-52370/respect-existing-hookspath
-起点：    e577118 Merge branch 'sen.xie/feature/SPV-52081/...' into 'master'
+拟建分支（每仓同名）：ming.chen/bugfix/SPV-52370/respect-existing-hookspath
+  common_biz  base=origin/release e577118 Merge '...SPV-52081...' into 'master'
+  ecommerce   base=origin/release 1863dc0 Merge '...SPV-52271...' into 'release'
 ```
 
-**等用户确认**，再执行：
+**等用户确认**，再执行。一个仓一个分支，分支名全同，base 各取本仓的：
 
 ```bash
 KEY=<KEY>; b=<拟建分支>
-git fetch origin
-git branch -a --list "*$KEY*"     # 已有同名分支先问要不要切过去，别重复建
 [[ "$b" =~ ^[A-Za-z0-9._-]+/(feature|hotfix|bugfix|doc|tech)/[A-Za-z]+-[0-9]+/[A-Za-z0-9_-]+$ ]] \
   && echo "PASS $b" || echo "FAIL $b"
-git switch -c "$b"
+for r in <Step 1 列过的仓>; do          # 一个不漏，多一仓也算漏
+  git -C "$r" fetch origin
+  git -C "$r" branch -a --list "*$KEY*"  # 已有同名分支先问要不要切过去，别重复建
+  git -C "$r" switch -c "$b" --no-track origin/<本仓的 base>
+  git -C "$r" log -1 --oneline            # 建完回读，确认起点就是报给用户的那个
+done
 ```
+
+某一仓没有 base（仓不存在、没权限、本地没 clone）就先把这一仓报出来定怎么处理，不要跳过它建其余的。
+
+仓路径用 Step 1 写的那个。`git -C "~/work/x"` 不会展开 `~`（报 `cannot change to '~/work/x'`），写成 `$HOME/work/x` 或绝对路径。
 
 正则不过就改名字重报，不要硬建。分支名过不了 pre-push，push 时才炸。
 
@@ -150,7 +176,9 @@ git push -u origin "$(git branch --show-current)"
 
 push 完回到 Jira，把 `description` 改成实际发生的事：`h3. 改动内容` 按模块列、`h3. 验证` 贴真跑过的命令与输出、`h3. 备注` 放遗留项与回滚方式。描述里能对上的 commit hash 要写上。
 
-最后回报四件事：单号与链接、分支名、commit 列表、跑过的验证命令。
+跨多仓时 `h3. 改动内容` 按仓分小节，每节一个 commit hash；某仓没改就在 `h3. 备注` 里写「本仓未动」并给理由。
+
+最后回报四件事：单号与链接、分支名（注明建在几个仓上）、按仓分组的 commit 列表、跑过的验证命令。
 
 ## 硬约束
 

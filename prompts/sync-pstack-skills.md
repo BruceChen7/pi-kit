@@ -6,6 +6,8 @@ argument-hint: "[all|<skill ...>] [--report]"
 
 # Sync pstack skills
 
+命令行给的参数：$@
+
 `skills/pstack/` 是从 [cursor/plugins](https://github.com/cursor/plugins) 的 `harness/pstack` vendored 进来的，本地改过，所以升级靠手工比对。
 
 进口图的是内核，不是文件名：哪条判断值得成为本仓自己的东西，看下一节的清单。

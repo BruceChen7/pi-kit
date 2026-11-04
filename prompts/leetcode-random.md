@@ -6,6 +6,8 @@ argument-hint: "[count] [--tag <slug>] [--difficulty easy|medium|hard|all] [--la
 
 从力扣（LeetCode.cn）随机抽取题目，展示完整信息用于刷题。
 
+命令行给的参数：$@
+
 ## 用法
 
 ```bash

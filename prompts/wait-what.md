@@ -10,3 +10,5 @@ talk in ASD-STE100 Simplified Technical English, and use the ubiquitous language
 keeps more than one context.
 
 默认中文；术语保留 `.pi/contexts/**/GLOSSARY.md` 里的原文。
+
+没讲通的那句或那个概念：$@

@@ -1,11 +1,17 @@
 /**
  * widget-plan — 「这一次同步往宿主发什么」的纯决策（Functional Core）。
  *
- * 两条宿主事实驱动整个决策（编码在 `shared/ui-host.ts` 的 `WidgetSurfaces`）：
+ * 宿主事实驱动整个决策（编码在 `shared/ui-host.ts` 的 `WidgetSurfaces`）：
  * pi-web 只在 widget **挂载**那一刻默认展开首个 2..3 行的 widget，之后不再重判；
  * 它的 widget 内容要点开才看得见，`setStatus` 的文本才常驻。于是「让 TODO widget
  * 默认展开」的杠杆是第一次出现时先发 2..3 行、紧接着发完整列表；内容不可见时模式
- * 文案改走状态行。判断都在这里，调用方只传宿主能力，不写宿主身份。
+ * 文案改走状态行。
+ *
+ * 第三条宿主事实是数组截断：TUI 只画 `string[]` 的前 10 条，补一行
+ * `... (widget truncated)`。超过上限的列表改走组件工厂（`transport: "component"`），
+ * 宿主的数组裁剪就碰不到它 —— 这也是 TODO 列表不再被砍到 10 行的原因。
+ *
+ * 判断都在这里，调用方只传宿主能力，不写宿主身份。
  */
 
 import { MODE_WIDGET_KEY, STATUS_KEY, TODO_WIDGET_KEY } from "./constants.ts";
@@ -16,7 +22,14 @@ export type PlanModeHostCapabilities = {
   contentVisibleWithoutInteraction: boolean;
   /** 宿主在 widget 挂载时自动展开的行数区间；null = 宿主没有这个行为。 */
   autoExpandedLines: { min: number; max: number } | null;
+  /** 宿主对 `string[]` widget 的条数上限；null = 不截断。 */
+  lineLimit: number | null;
+  /** 宿主能渲染 `setWidget(key, factory)`；false 时只能用 `string[]`。 */
+  factory: boolean;
 };
+
+/** 一次 widget 内容走哪条宿主通道：数组（可能被截断）还是组件工厂（不截断）。 */
+export type PlanModeWidgetTransport = "lines" | "component";
 
 /** 一次同步里要执行的一次调用（普通数据，Shell 负责翻译成 `ctx.ui.*`）。 */
 export type PlanModeUiEmission =
@@ -26,6 +39,7 @@ export type PlanModeUiEmission =
       key: string;
       /** 未上色的内容行，Shell 执行时按 key 上色。 */
       lines: string[];
+      transport: PlanModeWidgetTransport;
       placement: "aboveEditor" | "belowEditor";
     }
   | { kind: "widget-clear"; key: string };
@@ -77,6 +91,20 @@ const autoExpandSeedLines = (
 };
 
 /**
+ * 超过宿主对数组的条数上限时改走组件工厂：宿主只截 `string[]`，`render()` 的结果
+ * 全画（超出的部分原本会变成一行 `... (widget truncated)`）。
+ *
+ * 宿主没有工厂就不换路：自己砍行等于悄悄丢内容，宿主的截断标记至少说了实话。
+ */
+const widgetTransport = (
+  host: PlanModeHostCapabilities,
+  lines: readonly string[],
+): PlanModeWidgetTransport =>
+  host.factory && host.lineLimit !== null && lines.length > host.lineLimit
+    ? "component"
+    : "lines";
+
+/**
  * plan-mode 是否正在渲染一块用户可见的状态面。
  *
  * 与 badge 内容无关：只要宿主能看到 mode widget（TUI），或状态行有文本
@@ -111,6 +139,7 @@ export const decidePlanModeUi = (
       kind: "widget",
       key: MODE_WIDGET_KEY,
       lines: content.modeLines,
+      transport: widgetTransport(host, content.modeLines),
       placement: "aboveEditor",
     });
   }
@@ -120,6 +149,7 @@ export const decidePlanModeUi = (
     return { emissions, todoWidgetPresent: false };
   }
 
+  const todoTransport = widgetTransport(host, content.todoLines);
   const seed = autoExpandSeedLines(
     content.todoLines,
     host.autoExpandedLines,
@@ -130,6 +160,7 @@ export const decidePlanModeUi = (
       kind: "widget",
       key: TODO_WIDGET_KEY,
       lines: content.todoLines,
+      transport: todoTransport,
       placement: "belowEditor",
     });
     return { emissions, todoWidgetPresent: true };
@@ -140,6 +171,7 @@ export const decidePlanModeUi = (
     kind: "widget",
     key: TODO_WIDGET_KEY,
     lines: seed,
+    transport: widgetTransport(host, seed),
     placement: "belowEditor",
   });
   if (content.todoLines.length > seed.length) {
@@ -147,6 +179,7 @@ export const decidePlanModeUi = (
       kind: "widget",
       key: TODO_WIDGET_KEY,
       lines: content.todoLines,
+      transport: todoTransport,
       placement: "belowEditor",
     });
   }

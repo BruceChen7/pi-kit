@@ -229,6 +229,69 @@ describe("decideBashGuard: long timeout", () => {
 
 // ── limits ───────────────────────────────────────────────────
 
+describe("decideBashGuard: tail follow", () => {
+  it("blocks a follow-mode tail", () => {
+    expect(decide({ command: "tail -f /tmp/nsh-all.log" })).toMatchObject({
+      action: "block",
+      rule: "tail-follow",
+    });
+  });
+
+  it("blocks grep -m1 over a follow-mode tail from the session that motivated this", () => {
+    expect(
+      decide({
+        command:
+          '(nsh test . > /tmp/nsh-all.log 2>&1) & timeout 240 tail -f /tmp/nsh-all.log | grep -m1 "^exit="',
+      }),
+    ).toMatchObject({ action: "block", rule: "tail-follow" });
+  });
+
+  it("blocks every spelling of follow mode", () => {
+    for (const command of [
+      "tail -F --pid=1 log",
+      "tail -n 40 -f log",
+      "tail -20f log",
+    ]) {
+      expect(decide({ command })).toMatchObject({ rule: "tail-follow" });
+    }
+  });
+
+  it("allows a bounded tail", () => {
+    expect(decide({ command: "tail -n 40 /tmp/nsh-all.log" })).toEqual({
+      action: "allow",
+    });
+  });
+
+  it("allows a follow-mode tail whose output already goes to a file", () => {
+    expect(decide({ command: "tail -f a.log > /tmp/b.log" })).toEqual({
+      action: "allow",
+    });
+  });
+
+  it("still blocks when only stderr is redirected", () => {
+    expect(decide({ command: "tail -f a.log 2>/dev/null" })).toMatchObject({
+      rule: "tail-follow",
+    });
+  });
+
+  it("ignores tail -f inside quotes, comments and heredoc bodies", () => {
+    expect(decide({ command: 'echo "tail -f log"' })).toEqual({
+      action: "allow",
+    });
+    expect(decide({ command: "# tail -f log" })).toEqual({ action: "allow" });
+    expect(
+      decide({ command: "cat > watch.sh <<'EOF'\ntail -f log\nEOF" }),
+    ).toEqual({ action: "allow" });
+  });
+
+  it("carries the replacement move into the reason", () => {
+    const result = decide({ command: "tail -f /tmp/nsh-all.log" });
+
+    expect(result.action === "block" && result.reason).toContain("替代写法");
+    expect(result.action === "block" && result.reason).toContain("grep -m1");
+  });
+});
+
 describe("limits", () => {
   it("defaults to 300 seconds and enabled", () => {
     expect(resolveLimits({})).toEqual({

@@ -253,7 +253,13 @@ export const buildCtx = (
  */
 export type UiCall =
   | { call: "setStatus"; key: string; text?: string | undefined }
-  | { call: "setWidget"; key: string; lines?: string[] | undefined };
+  | {
+      call: "setWidget";
+      key: string;
+      lines?: string[] | undefined;
+      /** 走的是组件工厂 `setWidget(key, factory)`，不是字符串数组。 */
+      component?: true;
+    };
 
 /** pi-web 的同进程标记（与 pi-web 真实行为一致：`mode: "rpc"` + marker）。 */
 export const markPiWebHost = (): void => {
@@ -275,6 +281,31 @@ export const buildPiWebCtx = (
   mode: "rpc",
 });
 
+/** `setWidget` 收到的两种内容形态（断言只看内容，不看通道）。 */
+export type WidgetContent =
+  | string[]
+  | undefined
+  | ((tui: unknown, theme: unknown) => { render(width: number): string[] });
+
+/** 解一次组件渲染用的宽度：足够宽，行不会因为折行而变多。 */
+const WIDGET_RENDER_WIDTH = 400;
+
+/**
+ * 组件工厂渲染成行，交给同一套内容断言。
+ *
+ * 去掉 `Text` 的 paddingX=1 与行尾填充，结果就等于数组路径收到的那些行。
+ */
+export const renderWidgetContent = (
+  content: WidgetContent,
+): string[] | undefined => {
+  if (typeof content !== "function") {
+    return content;
+  }
+  return content({}, {})
+    .render(WIDGET_RENDER_WIDTH)
+    .map((line) => line.replace(/^ /u, "").trimEnd());
+};
+
 /**
  * Records `ctx.ui.setStatus` / `ctx.ui.setWidget` in call order: TUI 基线逐条比对，
  * pi-web 契约用例看 seed 与完整列表的先后、行数与状态文本。
@@ -286,11 +317,14 @@ export const recordUiCalls = (ctx: TestCtx): UiCall[] => {
       calls.push({ call: "setStatus", key, text });
     },
   );
-  ctx.ui.setWidget.mockImplementation(
-    (key: string, lines: string[] | undefined) => {
-      calls.push({ call: "setWidget", key, lines });
-    },
-  );
+  ctx.ui.setWidget.mockImplementation((key: string, content: WidgetContent) => {
+    calls.push({
+      call: "setWidget",
+      key,
+      lines: renderWidgetContent(content),
+      ...(typeof content === "function" ? { component: true as const } : {}),
+    });
+  });
   return calls;
 };
 
@@ -311,7 +345,7 @@ export const lastModeWidgetCall = (ctx: TestCtx) => {
 };
 
 export const lastWidgetLines = (ctx: TestCtx): string[] =>
-  lastTodoWidgetCall(ctx)[1] as string[];
+  renderWidgetContent(lastTodoWidgetCall(ctx)[1] as WidgetContent) ?? [];
 
 export const expectPromptContract = (prompt: string, terms: string[]): void => {
   for (const term of terms) {

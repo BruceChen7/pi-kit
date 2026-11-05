@@ -56,7 +56,8 @@
       "closingSteps": ["blast-radius", "review"],
       "gates": [
         "先有刻画测试、快照或等价性 harness，再动结构",
-        "类型检查与 lint 不算钉住行为"
+        "类型检查与 lint 不算钉住行为",
+        "review 后台派、本会话不同步 wait：派完把 diff 入口写进回复，findings 回来再派新的子代理修"
       ]
     },
     {
@@ -80,7 +81,8 @@
       "closingSteps": ["review"],
       "gates": [
         "计划里必须有一条可判定的完成条件",
-        "仓库没有可跑路径时用 create-verification-skill"
+        "仓库没有可跑路径时用 create-verification-skill",
+        "review 后台派、本会话不同步 wait：派完把 diff 入口写进回复，findings 回来再派新的子代理修"
       ]
     },
     {

@@ -13,7 +13,11 @@ export type BashCall = {
   timeoutSeconds?: number;
 };
 
-export type BashGuardRule = "sleep-loop" | "sleep" | "long-timeout";
+export type BashGuardRule =
+  | "sleep-loop"
+  | "sleep"
+  | "long-timeout"
+  | "tail-follow";
 
 export type BashGuardDecision =
   | { action: "allow" }
@@ -41,6 +45,16 @@ const WHILE_OR_UNTIL = /\b(?:while|until)\b/;
 /** `sleep 30`, `sleep 1m`. A bare `sleep` with no amount is not a real call. */
 const SLEEP_WITH_AMOUNT = /\bsleep\s+(\d+(?:\.\d+)?)([smhd]?)\b/g;
 const COMMENT_START_BEFORE = /[\s;|&(]/;
+/**
+ * `tail -f`, `tail -F`, `tail -n 40 -f`, `tail -20f`: follow mode never exits on its own,
+ * so the call blocks until pi kills it.
+ */
+const TAIL_FOLLOW = /\btail\b[^|;&\n]*\s-[A-Za-z0-9]*[fF]/;
+/**
+ * A redirect that captures stdout (`> /tmp/x.log`). A stderr-only redirect (`2>/dev/null`)
+ * does not help, so the `(?<![0-9])` guard excludes it.
+ */
+const REDIRECTED_TO_FILE = /(?:^|[^0-9])>>?\s*[^\s|&;>]+/;
 
 const UNIT_SECONDS: Record<string, number> = {
   "": 1,
@@ -102,6 +116,10 @@ const stripQuotedAndComments = (command: string): string => {
 
 const hasLoop = (command: string): boolean =>
   FOR_LOOP.test(command) || WHILE_OR_UNTIL.test(command);
+
+/** The `|`/`;`/`&`-separated pieces that actually carry follow mode. */
+const followSegments = (command: string): string[] =>
+  command.split(/[|;&\n]+/).filter((segment) => TAIL_FOLLOW.test(segment));
 
 const sleepSeconds = (command: string): number[] =>
   [...command.matchAll(SLEEP_WITH_AMOUNT)].map((match) => {
@@ -200,6 +218,20 @@ const sleepReason = (seconds: number): string =>
     "示例（示意）：timeout 90 glab ci status --branch <branch> | head -5。",
   ].join("\n");
 
+const tailFollowReason = (command: string): string => {
+  const slug = backgroundSlug(command);
+  return [
+    "拦住原因：命令里有 tail -f / -F，跟随模式不会自己退出，这一轮会一直被占住直到 pi 把它杀掉。",
+    "注意 grep -m1 不会救它：那只是让下游退出，上游 tail -f 还活着，整轮照样卡满。",
+    "替代写法，按优先级：",
+    '1. 要看某个后台任务的结果：先一次性跑 `grep -c "exit=" /tmp/' +
+      `${slug}.log` +
+      "` 判断结束，再 `read` 那个日志的尾部。",
+    `2. 命令还没起：\`${rerunnableCommand(command) ?? "<cmd>"} > /tmp/${slug}.log 2>&1 &\`，下一轮单次 read 或 grep 那个日志。`,
+    "3. 只是想要最后几行：去掉 -f，用 tail -n 40 <log>。",
+  ].join("\n");
+};
+
 const longTimeoutReason = (
   asked: number,
   limit: number,
@@ -262,6 +294,16 @@ export const decideBashGuard = (
         limits.maxSeconds,
         call.command,
       ),
+    };
+  }
+
+  if (
+    followSegments(scanned).some((segment) => !REDIRECTED_TO_FILE.test(segment))
+  ) {
+    return {
+      action: "block",
+      rule: "tail-follow",
+      reason: tailFollowReason(call.command),
     };
   }
 

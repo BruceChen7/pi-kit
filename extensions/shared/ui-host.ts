@@ -33,6 +33,13 @@ export type WidgetSurfaces = {
   lines: boolean;
   /** `setWidget(key, factory)`。 */
   factory: boolean;
+  /**
+   * `setWidget(key, string[])` 的条数上限；null = 宿主不截断。
+   *
+   * 超上限的宿主不会丢内容，而是补一行 `... (widget truncated)`。想让长列表整份
+   * 显示，只能改走 `factory`（宿主只截数组，不截组件的 render 结果）。
+   */
+  lineLimit: number | null;
   placements: "both" | "above" | "none";
   /** widget 内容在**不互动**时是否已经可见。 */
   contentVisibleWithoutInteraction: boolean;
@@ -91,6 +98,8 @@ const TUI_HOST: UiHostProfile = {
   widgets: {
     lines: true,
     factory: true,
+    // InteractiveMode.MAX_WIDGET_LINES（pi-coding-agent 1.5.0）：数组只画前 10 条。
+    lineLimit: 10,
     placements: "both",
     contentVisibleWithoutInteraction: true,
     autoExpandedLines: null,
@@ -116,6 +125,8 @@ const PI_WEB_HOST: UiHostProfile = {
   widgets: {
     lines: true,
     factory: true,
+    // 没有文档化的条数上限：chip 点开后自渲染，不由数组长度截断。
+    lineLimit: null,
     placements: "both",
     contentVisibleWithoutInteraction: false,
     autoExpandedLines: { min: 2, max: 3 },
@@ -153,6 +164,8 @@ const ANDROID_HOST: UiHostProfile = {
     lines: true,
     // 第一版不跑 render() 工厂：需要宿主反向反复调 render，且带点击/键盘语义。
     factory: false,
+    // 没有实测依据的条数上限按“不截断”处理。
+    lineLimit: null,
     placements: "both",
     contentVisibleWithoutInteraction: false,
     autoExpandedLines: null,
@@ -182,6 +195,8 @@ const GENERIC_RPC_HOST: UiHostProfile = {
   widgets: {
     lines: true,
     factory: false,
+    // 没有实测依据的条数上限按“不截断”处理。
+    lineLimit: null,
     placements: "both",
     contentVisibleWithoutInteraction: true,
     autoExpandedLines: null,
@@ -209,6 +224,8 @@ const HEADLESS_HOST: UiHostProfile = {
   widgets: {
     lines: false,
     factory: false,
+    // 没有实测依据的条数上限按“不截断”处理。
+    lineLimit: null,
     placements: "none",
     contentVisibleWithoutInteraction: false,
     autoExpandedLines: null,

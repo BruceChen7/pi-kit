@@ -14,6 +14,8 @@ describe("resolveUiHostProfile", () => {
     expect(profile.widgets).toEqual({
       lines: true,
       factory: true,
+      // TUI 的数组路径只画前 10 条（InteractiveMode.MAX_WIDGET_LINES）。
+      lineLimit: 10,
       placements: "both",
       // 终端自己画 widget，终端里内容一直可见。
       contentVisibleWithoutInteraction: true,
@@ -52,6 +54,8 @@ describe("resolveUiHostProfile", () => {
     expect(profile.widgets).toEqual({
       lines: true,
       factory: true,
+      // 没有文档化的条数上限。
+      lineLimit: null,
       placements: "both",
       // shelf 上只有 chip：内容要点开才看到。
       contentVisibleWithoutInteraction: false,
@@ -93,6 +97,7 @@ describe("resolveUiHostProfile", () => {
     expect(profile.widgets).toEqual({
       lines: true,
       factory: false,
+      lineLimit: null,
       placements: "both",
       contentVisibleWithoutInteraction: false,
       autoExpandedLines: null,
@@ -136,6 +141,8 @@ describe("resolveUiHostProfile", () => {
     expect(profile.customPanels).toBe(false);
     expect(profile.dialogs).toBe(true);
     expect(profile.widgets.factory).toBe(false);
+    // 未知宿主也没有条数上限的依据 ⇒ 不换渲染路径。
+    expect(profile.widgets.lineLimit).toBeNull();
     // 未知宿主没有实测依据 ⇒ 按现状处理。
     expect(profile.widgets.contentVisibleWithoutInteraction).toBe(true);
     // 没有文档化的自动展开行为 ⇒ 不撒 seed。

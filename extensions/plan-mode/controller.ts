@@ -25,6 +25,7 @@ import {
   type ToolCallPolicy,
 } from "../shared/tool-policy.ts";
 import { pathsFromToolArgs } from "../shared/tool-targets.ts";
+import { createLinesWidget } from "../shared/widget-lines.ts";
 import {
   formatApprovedArtifactPolicyFailure,
   formatArtifactPolicyFailure,
@@ -293,6 +294,8 @@ export class PlanModeController {
         contentVisibleWithoutInteraction:
           profile.widgets.contentVisibleWithoutInteraction,
         autoExpandedLines: profile.widgets.autoExpandedLines,
+        lineLimit: profile.widgets.lineLimit,
+        factory: profile.widgets.factory,
       },
       todoWidgetPresent: this.todoWidgetPresent,
       content: {
@@ -308,13 +311,20 @@ export class PlanModeController {
         case "status":
           ctx.ui.setStatus(emission.key, emission.text);
           break;
-        case "widget":
-          ctx.ui.setWidget(
-            emission.key,
-            colorWidgetLines(emission.key, emission.lines, ctx),
-            { placement: emission.placement },
-          );
+        case "widget": {
+          const lines = colorWidgetLines(emission.key, emission.lines, ctx);
+          if (emission.transport === "component") {
+            // 组件工厂绕开宿主对 string[] 的条数裁剪（长 TODO 列表不再被砍）。
+            ctx.ui.setWidget(emission.key, createLinesWidget(lines), {
+              placement: emission.placement,
+            });
+          } else {
+            ctx.ui.setWidget(emission.key, lines, {
+              placement: emission.placement,
+            });
+          }
           break;
+        }
         case "widget-clear":
           ctx.ui.setWidget(emission.key, undefined);
           break;

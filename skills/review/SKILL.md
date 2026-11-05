@@ -127,8 +127,18 @@ Read the full diff first. Then read related files outside the diff only when nee
 ### 5. Dispatch both axes
 
 Issue both `subagent` calls in the same round, `agent: "reviewer"`, `background: true` (the
-default), then collect them with one `subagent action: "wait"`. One fresh context each; do not
-poll with a shell loop.
+default), and **do not wait by default**: report the diff entry point and that the review is
+running, then continue with other work or end the turn. Findings arrive as the children finish.
+
+Only `wait` when the user asked for the verdict in this turn: first `wait` uses `timeoutMs: 180000`.
+If it returns partial progress, report what you have and wait at most once more. Never start a third
+wait — a child that produced nothing in 6 minutes will not finish this session.
+
+The findings come back as a `subagent:result` message that triggers a new turn in this session
+(`triggerTurn: true`): triage them (`references/review-comment-triage.md`), dispatch a fresh
+`general` child to fix, re-run the repo's verification, then report. A background run dies with
+the pi process — if the user is about to leave or shut down, do not dispatch; leave
+`/skill:review --since <base>` as the next command instead.
 
 Each `task` must stand alone: a child cannot see this conversation, and the `reviewer` whitelist
 (`read`, `grep`, `find`, `ls`) has no `bash`, so neither child can run `git diff` itself.
@@ -155,8 +165,7 @@ for each finding.
 For a large diff, narrow it before dispatching (`-- <paths>` or `-U1`) instead of passing only a
 list of changed files: without the diff the child cannot tell which lines are new.
 
-If the spec is missing, skip the Spec subagent and note it in the report. If `wait` comes back with
-partial progress, call it again for the runs still listed as running.
+If the spec is missing, skip the Spec subagent and note it in the report.
 
 ### 6. Report separately
 

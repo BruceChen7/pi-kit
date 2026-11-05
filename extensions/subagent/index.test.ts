@@ -879,6 +879,91 @@ describe("capability inheritance", () => {
   });
 });
 
+describe("cancel salvage", () => {
+  /** 挂起的后台 run：子会话已经读了一堆，但还没交出报告。 */
+  const startHanging = async () => {
+    const session = makeSession("unreachable", { hang: true });
+    vi.mocked(createAgentSession).mockResolvedValue({ session } as never);
+    const { pi, tools } = makePi();
+    const runtime = registerSubagent(pi as never);
+
+    const started = await call(
+      tools[0],
+      { action: "run", agent: "explore", task: "explore voucher" },
+      makeCtx(),
+    );
+    await vi.waitFor(() => expect(session.subscribe).toHaveBeenCalled());
+    const runId = started.structuredContent.runId as string;
+
+    session.messages.push(
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", name: "read", arguments: { path: "a.go" } },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "读完了 a.go，handler 还差一半" }],
+      },
+    );
+    return { pi, runtime, tool: tools[0], runId };
+  };
+
+  it("returns the child's partial findings in the stop result", async () => {
+    const { pi, tool, runId } = await startHanging();
+
+    const result = await call(tool, { action: "stop", runId }, makeCtx());
+
+    expect(result.content[0].text).toContain("读完了 a.go，handler 还差一半");
+    expect(result.content[0].text).toContain("salvaged: 1 tool calls");
+    expect(result.structuredContent).toMatchObject({
+      status: "stopped",
+      findings: expect.stringContaining("salvaged"),
+    });
+    // 父自己调 stop：正文已经在 tool result 里，不再触发新一轮。
+    expect(pi.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("delivers the salvage when the stop comes from RPC", async () => {
+    const { pi, runtime, runId } = await startHanging();
+
+    runtime.stopRun(runId);
+    await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalledTimes(1));
+
+    const [message] = pi.sendMessage.mock.calls[0];
+    expect(message.content[0].text).toContain("读完了 a.go，handler 还差一半");
+    expect(message.details).toMatchObject({ status: "stopped" });
+  });
+
+  it("returns the salvage from a later wait too", async () => {
+    const { tool, runId } = await startHanging();
+
+    await call(tool, { action: "stop", runId }, makeCtx());
+    const waited = await call(
+      tool,
+      { action: "wait", runIds: [runId] },
+      makeCtx(),
+    );
+
+    expect(waited.structuredContent.runs[0].text).toContain("读完了 a.go");
+  });
+
+  it("stops a run that never reached a session", async () => {
+    const { pi, runtime, tool } = await startHanging();
+
+    const result = await call(
+      tool,
+      { action: "stop", runId: "ghost" },
+      makeCtx(),
+    );
+
+    expect(result.structuredContent.findings).toBe("");
+    expect(pi.sendMessage).not.toHaveBeenCalled();
+    runtime.stopRun("ghost");
+  });
+});
+
 describe("steer and stop", () => {
   it("refuses to steer a run that has no live session", async () => {
     const { pi, tools } = makePi();

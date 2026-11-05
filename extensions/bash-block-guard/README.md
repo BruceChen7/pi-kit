@@ -7,14 +7,17 @@
 | `sleep-loop` | 命令里有 `for` / `while` / `until`，且出现 `sleep` | 轮询循环在等外部状态，整轮零输出 |
 | `sleep` | `sleep N`，N ≥ 20 | 不产出进度，只占住这一轮 |
 | `long-timeout` | 工具参数 `timeout` > 300 秒 | pi 会被要求静默等几分钟 |
+| `tail-follow` | 命令里有 `tail -f` / `-F`（含 `-n 40 -f`、`-20f`），且那一段的 stdout 没有重定向到文件 | 跟随模式永不自己退出；`grep -m1` 只杀下游，上游照样活 |
 
-放行：`sleep 5`、`sleep 10s`、引号里的 `sleep 30`、`#` 注释里的 `sleep`、`timeout` 200、heredoc 正文里的 `sleep`（`cat > poll.sh <<'EOF' … EOF` 只写文件不等待）。
+放行：`sleep 5`、`sleep 10s`、引号里的 `sleep 30`、`#` 注释里的 `sleep`、`timeout` 200、heredoc 正文里的 `sleep`（`cat > poll.sh <<'EOF' … EOF` 只写文件不等待）、`tail -n 40 <log>`、`tail -f a.log > /tmp/b.log`（输出已入文件）。
 
 `sleep` 的后缀按 GNU sleep 换算：`s`、`m`、`h`、`d`。`sleep 1m` 等于 60 秒，照样拦。
 
 ## 已知盲区
 
 把等待藏进引号字符串的调用会放行，例如 `sh -c "sleep 30"`。扫描前会剥掉引号内容，否则 `echo "sleep 30"` 会被误拦；两者取舍后选了不误拦。这条盲区有测试固定住（`accepts the documented blind spot of a wait inside sh -c`），不是意外。
+
+`tail-follow` 只看 stdout 重定向：`tail -f a.log 2>/dev/null` 仍然拦，因为进程照样不退出；`nsh test . > /tmp/a.log 2>&1 & timeout 200 tail -f /tmp/a.log | grep -m1 x` 也仍然拦——那个 `>` 属于前半段，不是 tail 这一段。
 
 ## 环境变量
 

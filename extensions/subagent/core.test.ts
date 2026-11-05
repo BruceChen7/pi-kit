@@ -22,6 +22,7 @@ import {
   renderWaitResult,
   renderWidgetLines,
   type SubagentState,
+  salvageFindings,
   selectWaitTargets,
   setStep,
   settle,
@@ -159,6 +160,112 @@ describe("stop", () => {
     const done = settle(state, { runId: "a1", status: "done" }, 4, 2000);
 
     expect(stop(done, "a1", 4, 3000)).toBe(done);
+  });
+
+  it("keeps the salvaged findings as the run's result", () => {
+    const state = admit(createState(), request("a1"), 4, 1000).state;
+
+    const next = stop(state, "a1", 4, 2000, "last words: 读了 A，还差 B");
+
+    expect(findRun(next, "a1")?.resultText).toContain("读了 A，还差 B");
+  });
+
+  it("leaves a stopped run without findings as before", () => {
+    const state = admit(createState(), request("a1"), 4, 1000).state;
+
+    expect(
+      findRun(stop(state, "a1", 4, 2000), "a1")?.resultText,
+    ).toBeUndefined();
+  });
+
+  it("clips salvaged findings like any other result", () => {
+    const state = admit(createState(), request("a1"), 4, 1000).state;
+
+    const next = stop(state, "a1", 4, 2000, "x".repeat(MAX_RESULT_CHARS + 10));
+
+    expect(findRun(next, "a1")?.resultText).toContain("[truncated 10 chars]");
+  });
+});
+
+describe("salvageFindings", () => {
+  const assistant = (...parts: unknown[]) => ({
+    role: "assistant",
+    content: parts,
+  });
+  const call = (name: string, args: Record<string, unknown> = {}) => ({
+    type: "toolCall",
+    name,
+    arguments: args,
+  });
+  const text = (value: string) => ({ type: "text", text: value });
+
+  it("returns the last words plus the tool trail of a stopped child", () => {
+    const salvaged = salvageFindings({
+      messages: [
+        assistant(call("read", { path: "a.go" })),
+        assistant(call("bash", { command: "go test ./..." })),
+        assistant(text("读了 a.go，还差 handler 没写完")),
+      ],
+      elapsedMs: 90_000,
+      step: "read",
+    });
+
+    expect(salvaged).toContain("[stopped after 1m30s; last tool: `read`]");
+    expect(salvaged).toContain("读了 a.go，还差 handler 没写完");
+    expect(salvaged).toContain("salvaged: 2 tool calls (bash 1, read 1)");
+    expect(salvaged).toContain("no write/edit calls");
+    expect(salvaged).toContain("paths: a.go");
+  });
+
+  it("says plainly when the child never emitted text", () => {
+    const salvaged = salvageFindings({
+      messages: [assistant(call("read", { path: "a.go" }))],
+      elapsedMs: 21 * 60_000,
+      step: "read",
+    });
+
+    expect(salvaged).toContain("last words: none");
+    expect(salvaged).toContain("never emitted assistant text");
+  });
+
+  it("counts write/edit calls as landed work", () => {
+    const salvaged = salvageFindings({
+      messages: [
+        assistant(call("write", { path: "x.go" })),
+        assistant(call("edit", { path: "y.go" })),
+      ],
+      elapsedMs: 1000,
+      step: "edit",
+    });
+
+    expect(salvaged).toContain("2 write/edit calls");
+    expect(salvaged).not.toContain("no write/edit calls");
+  });
+
+  it("reports a run that never called a tool", () => {
+    const salvaged = salvageFindings({
+      messages: [],
+      elapsedMs: 1000,
+      step: null,
+    });
+
+    expect(salvaged).toContain("no tool yet");
+    expect(salvaged).toContain("salvaged: 0 tool calls");
+  });
+
+  it("keeps the most recent paths and drops the rest", () => {
+    const messages = Array.from({ length: 9 }, (_, index) =>
+      assistant(call("read", { path: `f${index}.go` })),
+    );
+
+    const salvaged = salvageFindings({
+      messages,
+      elapsedMs: 1000,
+      step: "read",
+    });
+
+    expect(salvaged).toContain("f8.go, f7.go, f6.go");
+    expect(salvaged).not.toContain("f2.go");
   });
 });
 

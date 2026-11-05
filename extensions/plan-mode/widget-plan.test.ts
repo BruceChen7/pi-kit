@@ -19,10 +19,14 @@ const PI_WEB_RANGE = { min: 2, max: 3 };
 const PI_WEB_HOST: PlanModeHostCapabilities = {
   contentVisibleWithoutInteraction: false,
   autoExpandedLines: PI_WEB_RANGE,
+  lineLimit: null,
+  factory: true,
 };
 const TUI_HOST: PlanModeHostCapabilities = {
   contentVisibleWithoutInteraction: true,
   autoExpandedLines: null,
+  lineLimit: 10,
+  factory: true,
 };
 
 const modeLines = ["Plan Mode: Act · Act · Alt+0 toggles"];
@@ -76,6 +80,7 @@ describe("decidePlanModeUi: 表达方式由宿主能力决定", () => {
         kind: "widget",
         key: MODE_WIDGET_KEY,
         lines: modeLines,
+        transport: "lines",
         placement: "aboveEditor",
       },
       { kind: "widget-clear", key: TODO_WIDGET_KEY },
@@ -84,7 +89,7 @@ describe("decidePlanModeUi: 表达方式由宿主能力决定", () => {
 
   it("判据是能力而不是宿主身份：同样“内容不可见”的未知宿主也走状态行", () => {
     const unknownHost = input(
-      { contentVisibleWithoutInteraction: false, autoExpandedLines: null },
+      { ...PI_WEB_HOST, autoExpandedLines: null },
       { content: { todoLines: todoLines(6), statusText } },
     );
     const decision = decidePlanModeUi(unknownHost);
@@ -97,6 +102,7 @@ describe("decidePlanModeUi: 表达方式由宿主能力决定", () => {
         kind: "widget",
         key: TODO_WIDGET_KEY,
         lines: todoLines(6),
+        transport: "lines",
         placement: "belowEditor",
       },
     ]);
@@ -131,6 +137,7 @@ describe("decidePlanModeUi: pi-web（内容不可见 + 2..3 行自动展开）",
         kind: "widget",
         key: TODO_WIDGET_KEY,
         lines: full,
+        transport: "lines",
         placement: "belowEditor",
       },
     ]);
@@ -149,12 +156,14 @@ describe("decidePlanModeUi: pi-web（内容不可见 + 2..3 行自动展开）",
         kind: "widget",
         key: TODO_WIDGET_KEY,
         lines: full.slice(0, 3),
+        transport: "lines",
         placement: "belowEditor",
       },
       {
         kind: "widget",
         key: TODO_WIDGET_KEY,
         lines: full,
+        transport: "lines",
         placement: "belowEditor",
       },
     ]);
@@ -173,6 +182,7 @@ describe("decidePlanModeUi: pi-web（内容不可见 + 2..3 行自动展开）",
         kind: "widget",
         key: TODO_WIDGET_KEY,
         lines: full,
+        transport: "lines",
         placement: "belowEditor",
       },
     ]);
@@ -196,12 +206,14 @@ describe("decidePlanModeUi: pi-web（内容不可见 + 2..3 行自动展开）",
         kind: "widget",
         key: TODO_WIDGET_KEY,
         lines: full.slice(0, 3),
+        transport: "lines",
         placement: "belowEditor",
       },
       {
         kind: "widget",
         key: TODO_WIDGET_KEY,
         lines: full,
+        transport: "lines",
         placement: "belowEditor",
       },
     ]);
@@ -218,6 +230,7 @@ describe("decidePlanModeUi: pi-web（内容不可见 + 2..3 行自动展开）",
         kind: "widget",
         key: TODO_WIDGET_KEY,
         lines: ["只有一行"],
+        transport: "lines",
         placement: "belowEditor",
       },
     ]);
@@ -238,6 +251,7 @@ describe("decidePlanModeUi: pi-web（内容不可见 + 2..3 行自动展开）",
         kind: "widget",
         key: TODO_WIDGET_KEY,
         lines: full,
+        transport: "lines",
         placement: "belowEditor",
       },
     ]);
@@ -253,6 +267,7 @@ describe("decidePlanModeUi: 内容可见的宿主（与改造前的调用序列�
           kind: "widget",
           key: MODE_WIDGET_KEY,
           lines: modeLines,
+          transport: "lines",
           placement: "aboveEditor",
         },
         { kind: "widget-clear", key: TODO_WIDGET_KEY },
@@ -272,12 +287,14 @@ describe("decidePlanModeUi: 内容可见的宿主（与改造前的调用序列�
           kind: "widget",
           key: MODE_WIDGET_KEY,
           lines: modeLines,
+          transport: "lines",
           placement: "aboveEditor",
         },
         {
           kind: "widget",
           key: TODO_WIDGET_KEY,
           lines: full,
+          transport: "lines",
           placement: "belowEditor",
         },
       ],
@@ -296,6 +313,96 @@ describe("decidePlanModeUi: 内容可见的宿主（与改造前的调用序列�
       key: STATUS_KEY,
       text: undefined,
     });
+  });
+});
+
+describe("decidePlanModeUi: TODO widget 的传输通道", () => {
+  const todoEmissions = (decision: ReturnType<typeof decidePlanModeUi>) =>
+    decision.emissions.filter(
+      (emission) =>
+        emission.kind === "widget" && emission.key === TODO_WIDGET_KEY,
+    );
+
+  it("行数在宿主上限内：仍然发数组（行为不变）", () => {
+    const decision = decidePlanModeUi(
+      tuiInput({ content: { todoLines: todoLines(8) } }),
+    );
+
+    expect(todoEmissions(decision)).toEqual([
+      expect.objectContaining({
+        key: TODO_WIDGET_KEY,
+        transport: "lines",
+      }),
+    ]);
+  });
+
+  it("行数超过宿主上限：改走组件工厂，不交给宿主截断", () => {
+    const full = todoLines(12);
+    const decision = decidePlanModeUi(
+      tuiInput({ content: { todoLines: full } }),
+    );
+
+    expect(todoEmissions(decision)).toEqual([
+      {
+        kind: "widget",
+        key: TODO_WIDGET_KEY,
+        lines: full,
+        transport: "component",
+        placement: "belowEditor",
+      },
+    ]);
+  });
+
+  it("宿主没有组件工厂时不换路：宁可让宿主补截断标记，也不自己丢行", () => {
+    const full = todoLines(12);
+    const decision = decidePlanModeUi(
+      tuiInput({
+        host: { factory: false },
+        content: { todoLines: full },
+      }),
+    );
+
+    expect(todoEmissions(decision)).toEqual([
+      {
+        kind: "widget",
+        key: TODO_WIDGET_KEY,
+        lines: full,
+        transport: "lines",
+        placement: "belowEditor",
+      },
+    ]);
+  });
+
+  it("宿主没有条数上限时不换路", () => {
+    const full = todoLines(12);
+    const decision = decidePlanModeUi(
+      piWebInput({ content: { todoLines: full } }),
+    );
+
+    expect(
+      todoEmissions(decision).every(
+        (emission) =>
+          emission.kind === "widget" && emission.transport === "lines",
+      ),
+    ).toBe(true);
+  });
+
+  it("seed 帧按自己的行数选通道，完整列表按自己的行数选", () => {
+    const full = todoLines(6);
+    const decision = decidePlanModeUi(
+      piWebInput({
+        host: { lineLimit: 2 },
+        content: { todoLines: full },
+      }),
+    );
+
+    expect(todoEmissions(decision)).toEqual([
+      expect.objectContaining({
+        lines: full.slice(0, 3),
+        transport: "component",
+      }),
+      expect.objectContaining({ lines: full, transport: "component" }),
+    ]);
   });
 });
 

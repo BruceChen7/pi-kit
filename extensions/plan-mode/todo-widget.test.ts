@@ -888,3 +888,64 @@ describe("plan-mode extension: 外部状态 badge", () => {
     });
   });
 });
+
+/**
+ * 宿主对 `string[]` widget 有条数上限（TUI 是 MAX_WIDGET_LINES = 10，超出补一行
+ * `... (widget truncated)`）。TODO 列表不该被砍，所以超过上限时改走组件工厂。
+ */
+describe("plan-mode extension: 长 TODO 列表不被宿主截断", () => {
+  const todoCount = profileForHostKind("tui").widgets.lineLimit ?? 0;
+
+  const twelveTodos = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      text: `任务${index + 1}`,
+      status: index === 0 ? ("in_progress" as const) : ("todo" as const),
+    }));
+
+  const startTuiSession = async () => {
+    const harness = buildHarness();
+    const ctx = buildCtx();
+    const calls = recordUiCalls(ctx);
+    planModeExtension(harness.api as unknown as ExtensionAPI);
+    await harness.emit("session_start", {}, ctx);
+    return { harness, ctx, calls };
+  };
+
+  const todoWidgetSets = (calls: UiCall[]) =>
+    calls.filter(
+      (call): call is Extract<UiCall, { call: "setWidget" }> =>
+        call.call === "setWidget" &&
+        call.key === PLAN_MODE_TODOS_WIDGET &&
+        call.lines !== undefined,
+    );
+
+  it("上限内的列表仍然发数组（不改变常见路径）", async () => {
+    const { harness, ctx, calls } = await startTuiSession();
+    await harness.runTool(
+      PLAN_MODE_TODO_TOOL,
+      { action: "set", items: twelveTodos(4) },
+      ctx,
+    );
+
+    const [only] = todoWidgetSets(calls);
+    expect(only?.component).toBeUndefined();
+    expect(only?.lines).toHaveLength(6);
+  });
+
+  it("超过上限的列表改走组件工厂，整份内容都交给宿主", async () => {
+    const count = todoCount + 4;
+    const { harness, ctx, calls } = await startTuiSession();
+    await harness.runTool(
+      PLAN_MODE_TODO_TOOL,
+      { action: "set", items: twelveTodos(count) },
+      ctx,
+    );
+
+    const [only] = todoWidgetSets(calls);
+    expect(only?.component).toBe(true);
+    // heading + 进度行 + 每项一行，一行都不少。
+    expect(only?.lines).toHaveLength(count + 2);
+    expect(only?.lines?.at(-1)).toContain(`#${count} [ ] 任务${count}`);
+    expect(only?.lines?.join("\n")).not.toContain("widget truncated");
+  });
+});

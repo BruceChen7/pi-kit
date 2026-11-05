@@ -354,11 +354,19 @@ export function settle(
   return promote(settled, maxConcurrent);
 }
 
+/**
+ * 停掉一个 run，并把打捞到的现场（`findings`）留在 `resultText` 上。
+ *
+ * 停掉的 run 以前只有 `(no output)`，主会话拿不到子会话 29 分钟里看到的任何东西。
+ * findings 由 Shell 在 abort 之前从子会话里打捞（`salvageFindings`），这里只负责
+ * 落地：终态的 run 不会被覆盖，重复调用幂等。
+ */
 export function stop(
   state: SubagentState,
   runId: string,
   maxConcurrent: number = DEFAULT_MAX_CONCURRENT,
   now: number = Date.now(),
+  findings = "",
 ): SubagentState {
   const target = findRun(state, runId);
   if (!target || isTerminal(target.status)) return state;
@@ -366,7 +374,13 @@ export function stop(
   const stopped: SubagentState = {
     runs: state.runs.map((run) =>
       run.runId === runId
-        ? { ...run, status: "stopped", endedAt: now, step: null }
+        ? {
+            ...run,
+            status: "stopped",
+            endedAt: now,
+            step: null,
+            resultText: findings ? clipResult(findings) : run.resultText,
+          }
         : run,
     ),
   };
@@ -637,6 +651,141 @@ export type LooseAgentEvent = {
   toolName?: string;
   message?: { role?: string; content?: unknown };
 };
+
+/** 子会话消息的窄视图：打捞只读 role / content，不引 pi 自己的类型。 */
+export type ChildMessage = {
+  role?: string;
+  content?: unknown;
+};
+
+export type SalvageInput = {
+  messages: readonly ChildMessage[];
+  elapsedMs: number;
+  /** 停下时最后一个工具名，用来说明它卡在哪一步。 */
+  step: string | null;
+};
+
+/** 打捞摘要里最多列几个路径：再多也没人看，路径本身也只是线索。 */
+const SALVAGE_MAX_PATHS = 6;
+
+/** 会落盘的调用。codemode 里包的写入看不到，只数直接调用。 */
+const WRITE_TOOLS = new Set(["write", "edit"]);
+
+/** 参数里带路径、能说明「它读到哪了」的调用。 */
+const PATH_ARG_TOOLS = new Set(["read", "write", "edit", "grep", "ls"]);
+
+type ToolCallView = { name: string; path?: string };
+
+const contentParts = (content: unknown): unknown[] =>
+  Array.isArray(content) ? content : [];
+
+const argumentsOf = (part: unknown): Record<string, unknown> => {
+  if (!part || typeof part !== "object") return {};
+  const args = (part as { arguments?: unknown }).arguments;
+  return args && typeof args === "object"
+    ? (args as Record<string, unknown>)
+    : {};
+};
+
+const pathOf = (
+  name: string,
+  args: Record<string, unknown>,
+): string | undefined => {
+  if (!PATH_ARG_TOOLS.has(name)) return undefined;
+  // 只认真正的路径：grep 的 pattern 是检索表达式，列进 paths 会误导。
+  const raw = args.path ?? args.glob;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+};
+
+/** 子会话里的每一次工具调用，按发生顺序。 */
+export function toolCallsOf(messages: readonly ChildMessage[]): ToolCallView[] {
+  const calls: ToolCallView[] = [];
+  for (const message of messages) {
+    if (message?.role !== "assistant") continue;
+    for (const part of contentParts(message.content)) {
+      if (!part || typeof part !== "object") continue;
+      const record = part as { type?: unknown; name?: unknown };
+      if (record.type !== "toolCall" || typeof record.name !== "string") {
+        continue;
+      }
+      calls.push({
+        name: record.name,
+        path: pathOf(record.name, argumentsOf(part)),
+      });
+    }
+  }
+  return calls;
+}
+
+/** 子会话最后一条有正文的 assistant 发言；没有就返回空串。 */
+export function lastAssistantWords(messages: readonly ChildMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message?.role !== "assistant") continue;
+    const text = extractAssistantText(message.content).trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+const countBy = (calls: readonly ToolCallView[]): string[] => {
+  const counts = new Map<string, number>();
+  for (const call of calls) {
+    counts.set(call.name, (counts.get(call.name) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort(
+      (left, right) => right[1] - left[1] || left[0].localeCompare(right[0]),
+    )
+    .map(([name, count]) => `${name} ${count}`);
+};
+
+/**
+ * 打捞：把一个被停掉的子会话折成主会话能读的一段正文（纯函数）。
+ *
+ * 停掉的 run 以前只交回 `(no output)`。可子会话的真实产出不只有最后那句报告——
+ * 它读过的文件、调过什么、有没有落过盘，都还在 messages 里。这里只做两件事：
+ * 取它最后一句人话，和统计它的调用轨迹。**不取 thinking**：那是过程，不是结论，
+ * 混进结果会让父会话把独白当发现。
+ */
+export function salvageFindings(input: SalvageInput): string {
+  const calls = toolCallsOf(input.messages);
+  const words = lastAssistantWords(input.messages);
+  const writes = calls.filter((call) => WRITE_TOOLS.has(call.name)).length;
+
+  const elapsed = formatElapsed(input.elapsedMs);
+  const where = input.step ? `last tool: \`${input.step}\`` : "no tool yet";
+  const lines = [`[stopped after ${elapsed}; ${where}]`];
+
+  lines.push(
+    words
+      ? `last words:\n${words}`
+      : "last words: none — the child never emitted assistant text.",
+  );
+
+  const breakdown = countBy(calls);
+  lines.push(
+    calls.length === 0
+      ? "salvaged: 0 tool calls; no write/edit calls."
+      : `salvaged: ${calls.length} tool calls (${breakdown.join(", ")}); ${
+          writes === 0
+            ? "no write/edit calls"
+            : `${writes} write/edit call${writes === 1 ? "" : "s"}`
+        }.`,
+  );
+
+  const paths: string[] = [];
+  for (const call of [...calls].reverse()) {
+    if (!call.path || paths.includes(call.path)) continue;
+    paths.push(call.path);
+    if (paths.length >= SALVAGE_MAX_PATHS) break;
+  }
+  if (paths.length > 0) {
+    lines.push(`paths: ${paths.join(", ")}`);
+  }
+
+  return lines.join("\n");
+}
 
 /** 从 assistant message 的 content 里取纯文本，取不到返回空串。 */
 export function extractAssistantText(content: unknown): string {

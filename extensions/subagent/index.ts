@@ -60,6 +60,7 @@ import {
   renderWaitResult,
   renderWidgetLines,
   type SubagentState,
+  salvageFindings,
   selectWaitTargets,
   setStep,
   settle,
@@ -152,7 +153,7 @@ export type SubagentRuntime = {
     background: boolean;
   }) => Promise<RunOutcome>;
   steer: (runId: string, text: string) => Promise<boolean>;
-  stopRun: (runId: string) => void;
+  stopRun: (runId: string, options?: { notify?: boolean }) => string;
   doctor: () => Promise<string[]>;
   waitFor: (runId: string) => Promise<SettledOutcome>;
 };
@@ -478,15 +479,26 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       options.signal?.addEventListener("abort", onAbort, { once: true });
     });
 
-  const deliver = (runId: string): void => {
-    if (delivered.has(runId)) return;
+  /** 终态的广播：唤醒 waiter、发事件。同一个 run 只做一次。 */
+  const publishSettled = (runId: string): boolean => {
+    if (delivered.has(runId)) return false;
     const run = findRun(state, runId);
-    const outcome = settledOutcome(runId);
-    if (!run || !outcome) return;
+    if (!run || !isTerminal(run.status)) return false;
 
     delivered.add(runId);
     notifySettled();
     emitEvent("settled", run);
+    return true;
+  };
+
+  /**
+   * 后台 run 的正文送回主会话。
+   * 父自己调 `stop` 时不走这条路：正文已经在 tool result 里，再发一条就是重复。
+   */
+  const sendResult = (runId: string): void => {
+    const run = findRun(state, runId);
+    const outcome = settledOutcome(runId);
+    if (!run || !outcome) return;
     if (!run.background || awaited.has(runId)) return;
 
     const header =
@@ -511,6 +523,11 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
         reason: error instanceof Error ? error.message : String(error),
       });
     }
+  };
+
+  const deliver = (runId: string): void => {
+    if (!publishSettled(runId)) return;
+    sendResult(runId);
   };
 
   const emitEvent = (
@@ -838,13 +855,41 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     return steerChild(session, text);
   };
 
-  const stopRun = (runId: string): void => {
+  /**
+   * 停掉一个 run，并把子会话里已经攒下的现场打捞出来交回主会话。
+   *
+   * 打捞必须在 abort 之前：abort 之后 messages 虽然还在，但最后一步工具已经断了，
+   * 从这里读更接近它停下时的真实状态。`notify: false` 给父级自己调 stop 的场景用——
+   * 正文直接进 tool result，不再另发一条 `subagent:result` 消息。
+   */
+  const stopRun = (
+    runId: string,
+    options: { notify?: boolean } = {},
+  ): string => {
+    const run = findRun(state, runId);
+    if (!run) return "";
+
+    if (isTerminal(run.status)) {
+      // 已经收敛的 run 只补一次广播；结果保持它自己那份，别用打捞覆盖。
+      if (publishSettled(runId) && options.notify !== false) sendResult(runId);
+      return run.resultText ?? "";
+    }
+
     const session = sessions.get(runId);
+    const findings = session
+      ? salvageFindings({
+          messages: session.messages,
+          elapsedMs: Date.now() - run.startedAt,
+          step: run.step,
+        })
+      : "";
+
     if (session) void session.abort().catch(() => undefined);
-    state = stop(state, runId, maxConcurrent, Date.now());
+    state = stop(state, runId, maxConcurrent, Date.now(), findings);
     refreshWidget();
-    deliver(runId);
+    if (publishSettled(runId) && options.notify !== false) sendResult(runId);
     pump();
+    return findings;
   };
 
   const doctor = async (): Promise<string[]> => {
@@ -877,7 +922,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     description: [
       "Delegate work to a focused child agent with its own isolated context.",
       "Use it when a task would flood this conversation with intermediate reads, or when an independent review is worth more than your own second look.",
-      "Actions: run (default) starts an agent; wait blocks until background runs finish; list shows active runs; status shows one run; stop cancels one; doctor prints the resolved agent profiles and config.",
+      "Actions: run (default) starts an agent; wait blocks until background runs finish; list shows active runs; status shows one run; stop cancels one and hands back what the child had already found (its last words, tool trail, files touched); doctor prints the resolved agent profiles and config.",
       "Children cannot see this conversation, so put the whole task in `task`.",
       "Background runs (default) return immediately and report back when finished.",
       `A foreground run (background:false) holds this session until the child settles or ${FOREGROUND_DETACH_MS / 60_000} minutes pass; after that it is moved to the background and its result arrives as a message. Use foreground only for a task that finishes in a couple of minutes.`,
@@ -1028,16 +1073,15 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
         case "stop": {
           const runId = params.runId?.trim();
           if (!runId) throw new Error("stop requires runId");
-          stopRun(runId);
+          const findings = stopRun(runId, { notify: false });
           const run = findRun(state, runId);
-          return structuredResult(
-            `stopped ${runId} (${run?.status ?? "unknown"})`,
-            {
-              action,
-              runId,
-              status: run?.status ?? null,
-            },
-          );
+          const head = `stopped ${runId} (${run?.status ?? "unknown"})`;
+          return structuredResult(findings ? `${head}\n\n${findings}` : head, {
+            action,
+            runId,
+            status: run?.status ?? null,
+            findings,
+          });
         }
 
         case "run": {

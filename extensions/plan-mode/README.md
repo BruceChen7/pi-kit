@@ -120,6 +120,13 @@ The host decides where the same facts go (`controller.updateUi` reads
   collapsed. In both cases the status row still shows the current step and one
   click on the TODO chip opens the list. Fixing that would need a change in
   pi-web itself, which this extension deliberately avoids.
+- **Long lists**: the TUI draws only the first `widgets.lineLimit` entries of a
+  `string[]` widget (10 in pi-coding-agent 1.5.0) and appends
+  `... (widget truncated)`. A TODO list longer than that goes out as
+  `setWidget(key, factory)` instead (`transport: "component"` from
+  `widget-plan.ts`), because the host only truncates the array form. The
+  factory lives in `shared/widget-lines.ts` and renders one padded `Text` per
+  line, so the widget looks the same — it just stops at the end of the list.
 
 ### Other extensions' status text (badges)
 

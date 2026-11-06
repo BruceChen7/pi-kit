@@ -128,6 +128,35 @@ The host decides where the same facts go (`controller.updateUi` reads
   factory lives in `shared/widget-lines.ts` and renders one padded `Text` per
   line, so the widget looks the same — it just stops at the end of the list.
 
+### The TODO widget's line grammar is a contract
+
+pi-clients (`~/work/pi-clients`) does not render the widget as text: it parses
+these lines into a plan strip (`app/widget/plan-todos.ts`). The grammar is
+pinned in `widget-grammar.ts` and checked against every recorded frame in
+`widget-grammar.test.ts`, so an out-of-contract line turns the suite red at the
+moment the baseline is re-recorded — not later, on a user's screen, where
+parsing failure only degrades to the raw lines.
+
+The three shapes in the wild (`【…】` = a status phrase, at most 40 characters):
+
+```
+【Act】进行中 #2/4：补测试 · 更新于 刚刚        ← 头部
+已完成 1/4 · 剩余 3 项                          ← 进度
+  #1 [✓] 实现状态机                             ← 条目（[✓]/[~]/[!]/[ ]）
+→ #2 [~] 补测试
+
+【completed, back to Act】✅ 计划「x」已完成 · 1/1 项任务已交付
+已交付：                                        ← 完成态分段标签
+  #1 实现已批准任务                             ← 完成态条目（没有状态括号）
+```
+
+Rules when changing any of this:
+- adding a status phrase is safe as long as it stays ≤ 40 characters; renaming
+  the `已交付：` label or dropping the `#N` numbering is **breaking** for the
+  plan strip;
+- the old `Plan Mode · Act` + `[x] 1 …` shape is history: pi-clients still
+  parses it for sessions recorded before the switch, but nothing emits it.
+
 ### Other extensions' status text (badges)
 
 Another extension can put one short line on the same surface instead of writing

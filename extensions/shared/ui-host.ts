@@ -52,6 +52,9 @@ export type WidgetSurfaces = {
   autoExpandedLines: { min: number; max: number } | null;
 };
 
+/** 通知落点：见 `UiHostProfile.notifications`。 */
+export type NotificationSurface = "terminal" | "host-ui" | "none";
+
 export type UiHostProfile = {
   kind: UiHostKind;
   /** `ctx.ui.custom()` 会真的把组件画出来并回传 `done()` 的值。 */
@@ -59,6 +62,14 @@ export type UiHostProfile = {
   widgets: WidgetSurfaces;
   /** `select` / `confirm` / `input` / `editor` / `notify` / `setStatus`。 */
   dialogs: boolean;
+  /**
+   * notify 往哪里送：`terminal` = 自己往终端写 OSC 777；`host-ui` = 交给宿主的
+   * `ctx.ui.notify`，由它渲染（pi-web 的 NoticeShelf / nsh 客户端的 toast）；
+   * `none` = 没有能送达的落点。
+   *
+   * 不能只看 `terminal`：原生 RPC 宿主的 stdout 是协议流，写 OSC 777 会污染帧。
+   */
+  notifications: NotificationSurface;
   panelChrome: PanelChrome;
   panelWidth: PanelWidth;
   /** 宿主渲染前会调用 `component.invalidate()`。 */
@@ -105,6 +116,7 @@ const TUI_HOST: UiHostProfile = {
     autoExpandedLines: null,
   },
   dialogs: true,
+  notifications: "terminal",
   panelChrome: "boxed",
   panelWidth: "dynamic",
   callsInvalidate: true,
@@ -132,6 +144,7 @@ const PI_WEB_HOST: UiHostProfile = {
     autoExpandedLines: { min: 2, max: 3 },
   },
   dialogs: true,
+  notifications: "host-ui",
   panelChrome: "borderless",
   panelWidth: 92,
   callsInvalidate: false,
@@ -171,6 +184,8 @@ const ANDROID_HOST: UiHostProfile = {
     autoExpandedLines: null,
   },
   dialogs: true,
+  // 系统通知不在 nsh 能力内（要 Kotlin 外壳补），第一版只画应用内 toast。
+  notifications: "host-ui",
   panelChrome: "borderless",
   panelWidth: 48,
   callsInvalidate: false,
@@ -202,6 +217,8 @@ const GENERIC_RPC_HOST: UiHostProfile = {
     autoExpandedLines: null,
   },
   dialogs: true,
+  // 原生 RPC 客户端的 stdout 是协议流：notify 走帧，不走终端转义。
+  notifications: "host-ui",
   panelChrome: "boxed",
   panelWidth: "dynamic",
   callsInvalidate: true,
@@ -231,6 +248,7 @@ const HEADLESS_HOST: UiHostProfile = {
     autoExpandedLines: null,
   },
   dialogs: false,
+  notifications: "none",
   panelChrome: "boxed",
   panelWidth: "dynamic",
   callsInvalidate: false,

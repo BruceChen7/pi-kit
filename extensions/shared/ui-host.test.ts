@@ -24,6 +24,8 @@ describe("resolveUiHostProfile", () => {
     });
     expect(profile.panelChrome).toBe("boxed");
     expect(profile.panelWidth).toBe("dynamic");
+    // 真终端：OSC 777 直接由这个进程写出去。
+    expect(profile.notifications).toBe("terminal");
     expect(profile.terminal).toBe("dynamic");
     expect(profile.themeColors).toBe(true);
     expect(profile.editorText).toEqual({ read: true, write: true });
@@ -63,6 +65,8 @@ describe("resolveUiHostProfile", () => {
       autoExpandedLines: { min: 2, max: 3 },
     });
     expect(profile.dialogs).toBe(true);
+    // 没有终端可写：通知交给宿主的 NoticeShelf。
+    expect(profile.notifications).toBe("host-ui");
     // 但它的面板会自己去框、且从不 invalidate / 从不设 focused。
     expect(profile.panelChrome).toBe("borderless");
     expect(profile.panelWidth).toBe(92);
@@ -94,6 +98,8 @@ describe("resolveUiHostProfile", () => {
     expect(profile.kind).toBe("android");
     expect(profile.customPanels).toBe(true);
     expect(profile.dialogs).toBe(true);
+    // 手机侧同样是宿主 toast（系统通知要 Kotlin 外壳补）。
+    expect(profile.notifications).toBe("host-ui");
     expect(profile.widgets).toEqual({
       lines: true,
       factory: false,
@@ -143,6 +149,8 @@ describe("resolveUiHostProfile", () => {
     expect(profile.widgets.factory).toBe(false);
     // 未知宿主也没有条数上限的依据 ⇒ 不换渲染路径。
     expect(profile.widgets.lineLimit).toBeNull();
+    // 原生 RPC 宿主的 stdout 是协议流：通知走 notify 帧，不能写 OSC 777。
+    expect(profile.notifications).toBe("host-ui");
     // 未知宿主没有实测依据 ⇒ 按现状处理。
     expect(profile.widgets.contentVisibleWithoutInteraction).toBe(true);
     // 没有文档化的自动展开行为 ⇒ 不撒 seed。
@@ -161,6 +169,7 @@ describe("resolveUiHostProfile", () => {
       expect(profile.kind).toBe("headless");
       expect(profile.customPanels).toBe(false);
       expect(profile.dialogs).toBe(false);
+      expect(profile.notifications).toBe("none");
       expect(profile.widgets.placements).toBe("none");
       expect(profile.widgets.contentVisibleWithoutInteraction).toBe(false);
       expect(profile.widgets.autoExpandedLines).toBeNull();
@@ -169,6 +178,7 @@ describe("resolveUiHostProfile", () => {
     expect(noUi.kind).toBe("headless");
     expect(noUi.customPanels).toBe(false);
     expect(noUi.dialogs).toBe(false);
+    expect(noUi.notifications).toBe("none");
   });
 
   it("lets PI_KIT_UI_HOST override everything", () => {

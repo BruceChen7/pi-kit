@@ -67,43 +67,70 @@ const buildNotifyHarness = async (
   return { handlers, events, write };
 };
 
+const messageEntries = (messages: unknown[]): unknown[] =>
+  messages.map((message) => ({ type: "message", message }));
+
 const buildDispatchContext = (
   cwd: string,
-  ctxOverrides: Record<string, unknown> = {},
-): unknown => ({
-  cwd,
-  sessionManager: {
-    getEntries: () => [],
-  },
-  ...ctxOverrides,
-});
+  options: {
+    messages?: unknown[];
+    ctxOverrides?: Record<string, unknown>;
+  } = {},
+): unknown => {
+  const entries = messageEntries(options.messages ?? []);
+  return {
+    cwd,
+    sessionManager: {
+      getEntries: () => entries,
+      getBranch: () => entries,
+    },
+    ...options.ctxOverrides,
+  };
+};
 
-const dispatchAgentEnd = async (
+const dispatchSettled = async (
   harness: NotifyHarness,
   event: unknown,
   ctx: unknown,
 ): Promise<void> => {
-  await harness.handlers.get("agent_end")?.(event, ctx);
+  await harness.handlers.get("agent_settled")?.(event, ctx);
 };
 
-const emitAgentEnd = async (
+/**
+ * `agent_settled` 只带 `aborted`，正文来自会话记录，所以这里把消息塞进
+ * sessionManager 条目里，而不是事件里。
+ */
+const emitSettled = async (
   harness: NotifyHarness,
-  event: unknown,
+  event: { messages?: unknown[]; aborted?: boolean } = {},
   cwd = process.cwd(),
   ctxOverrides: Record<string, unknown> = {},
 ): Promise<void> => {
-  await dispatchAgentEnd(
+  await dispatchSettled(
     harness,
-    event,
-    buildDispatchContext(cwd, ctxOverrides),
+    { aborted: event.aborted ?? false },
+    buildDispatchContext(cwd, {
+      messages: event.messages ?? [],
+      ctxOverrides,
+    }),
   );
 };
+
+/**
+ * 宿主档案必须由用例自己决定。运行者的 shell 里可能带着 PI_KIT_UI_HOST
+ * （在 pi-clients 的 worker 里跑测试时一定有 android），漏清就会让整个套件的
+ * 默认通道从 OSC 777 变成宿主 toast —— 判据随环境漂移。
+ */
+beforeEach(() => {
+  delete process.env.PI_KIT_UI_HOST;
+});
 
 afterEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
   delete process.env.HERDR_PANE_ID;
   delete process.env.HERDR_BIN_PATH;
+  delete process.env.PI_KIT_UI_HOST;
   clearSettingsCache();
 });
 
@@ -161,7 +188,7 @@ describe("notify idle events", () => {
   it("emits an internal idle event after local desktop notification", async () => {
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(harness, {
+    await emitSettled(harness, {
       messages: [
         {
           role: "assistant",
@@ -180,6 +207,84 @@ describe("notify idle events", () => {
         body: "Finished the work.",
       }),
     });
+  });
+});
+
+describe("settle trigger", () => {
+  it("notifies on agent_settled and registers no agent_end handler", async () => {
+    const harness = await buildNotifyHarness();
+
+    expect(harness.handlers.has("agent_settled")).toBe(true);
+    expect(harness.handlers.has("agent_end")).toBe(false);
+  });
+
+  it("takes the body from the settled turn, not an earlier one", async () => {
+    const harness = await buildNotifyHarness();
+
+    await emitSettled(harness, {
+      messages: [
+        { role: "assistant", content: "Previous turn answer." },
+        { role: "user", content: "next question" },
+        { role: "assistant", content: "Settled turn answer." },
+      ],
+    });
+
+    const payload = String(harness.write.mock.calls.at(-1)?.[0]);
+    expect(payload).toContain(";Settled turn answer.");
+    expect(payload).not.toContain("Previous turn answer.");
+  });
+
+  it("says ready for input when the settled run produced no assistant text", async () => {
+    const harness = await buildNotifyHarness();
+
+    await emitSettled(harness, {
+      messages: [
+        { role: "assistant", content: "Previous turn answer." },
+        { role: "user", content: "aborted before any output" },
+      ],
+    });
+
+    expect(harness.write).toHaveBeenCalledWith(
+      expect.stringContaining("777;notify;Ready for input;"),
+    );
+    expect(harness.events.emitted).toHaveLength(1);
+  });
+});
+
+describe("runMessagesFromEntries", () => {
+  it("keeps only messages after the last user message", async () => {
+    const { runMessagesFromEntries } = await loadNotify();
+
+    expect(
+      runMessagesFromEntries([
+        { type: "message", message: { role: "assistant", content: "old" } },
+        { type: "message", message: { role: "user", content: "q" } },
+        { type: "message", message: { role: "assistant", content: "new" } },
+      ]),
+    ).toEqual([{ role: "assistant", content: "new" }]);
+  });
+
+  it("ignores session entries that carry no message", async () => {
+    const { runMessagesFromEntries } = await loadNotify();
+
+    expect(
+      runMessagesFromEntries([
+        { type: "compaction", summary: "…" },
+        { type: "label", label: "x" },
+        { type: "message", message: { role: "assistant", content: "only" } },
+        "not-an-entry",
+      ]),
+    ).toEqual([{ role: "assistant", content: "only" }]);
+  });
+
+  it("returns every message when the branch has no user entry", async () => {
+    const { runMessagesFromEntries } = await loadNotify();
+
+    expect(
+      runMessagesFromEntries([
+        { type: "message", message: { role: "assistant", content: "a" } },
+      ]),
+    ).toEqual([{ role: "assistant", content: "a" }]);
   });
 });
 
@@ -204,19 +309,19 @@ describe("duplicate notify loads", () => {
     expect(claimDispatch(claims, undefined)).toBe(true);
   });
 
-  it("handles one agent_end dispatch once when notify is loaded twice", async () => {
+  it("handles one agent_settled dispatch once when notify is loaded twice", async () => {
     const write = installStdoutSpy();
     const primary = await buildNotifyHarness({ write });
     const duplicate = await buildNotifyHarness({ write });
     // pi hands the same ctx object to every handler of one dispatch, even when
     // two extension paths loaded the same file.
-    const ctx = buildDispatchContext(process.cwd());
-    const event = {
+    const ctx = buildDispatchContext(process.cwd(), {
       messages: [{ role: "assistant", content: "Finished the work." }],
-    };
+    });
+    const event = { aborted: false };
 
-    await dispatchAgentEnd(primary, event, ctx);
-    await dispatchAgentEnd(duplicate, event, ctx);
+    await dispatchSettled(primary, event, ctx);
+    await dispatchSettled(duplicate, event, ctx);
 
     expect(write).toHaveBeenCalledTimes(1);
     expect(primary.events.emitted).toHaveLength(1);
@@ -227,10 +332,10 @@ describe("duplicate notify loads", () => {
     const write = installStdoutSpy();
     const harness = await buildNotifyHarness({ write });
 
-    await emitAgentEnd(harness, {
+    await emitSettled(harness, {
       messages: [{ role: "assistant", content: "First turn." }],
     });
-    await emitAgentEnd(harness, {
+    await emitSettled(harness, {
       messages: [{ role: "assistant", content: "Second turn." }],
     });
 
@@ -243,7 +348,7 @@ describe("notify failure scenarios", () => {
   it("labels error turns as failed notifications", async () => {
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(harness, {
+    await emitSettled(harness, {
       messages: [
         {
           role: "assistant",
@@ -262,9 +367,7 @@ describe("notify failure scenarios", () => {
   it("skips aborted turn notifications by default", async () => {
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(harness, {
-      messages: [{ role: "assistant", stopReason: "aborted" }],
-    });
+    await emitSettled(harness, { aborted: true });
 
     expect(harness.write).not.toHaveBeenCalled();
     expect(harness.events.emitted).toHaveLength(0);
@@ -275,11 +378,7 @@ describe("notify failure scenarios", () => {
     writeNotifySettings(cwd, { notifyOnAbort: true });
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(
-      harness,
-      { messages: [{ role: "assistant", stopReason: "aborted" }] },
-      cwd,
-    );
+    await emitSettled(harness, { aborted: true }, cwd);
 
     expect(harness.write).toHaveBeenCalledWith(
       expect.stringContaining("777;notify;π stopped;Agent run was stopped."),
@@ -290,7 +389,7 @@ describe("notify failure scenarios", () => {
   it("labels truncated turns as needing attention", async () => {
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(harness, {
+    await emitSettled(harness, {
       messages: [
         {
           role: "assistant",
@@ -313,7 +412,7 @@ describe("notify failure scenarios", () => {
     });
 
     await expect(
-      emitAgentEnd(harness, {
+      emitSettled(harness, {
         messages: [{ role: "assistant", content: "Finished." }],
       }),
     ).resolves.toBeUndefined();
@@ -323,7 +422,7 @@ describe("notify failure scenarios", () => {
   it("sanitizes OSC control characters from notification fields", async () => {
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(harness, {
+    await emitSettled(harness, {
       messages: [{ role: "assistant", content: "ok\u001b]bad\u0007 done" }],
     });
 
@@ -348,13 +447,99 @@ const mockHerdrExec = async (error?: Error) => {
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
+describe("panel transport", () => {
+  // pi-clients 的 worker 跑在 macOS 终端里，所以子进程继承了 HERDR_PANE_ID /
+  // TMUX / TERM_PROGRAM：终端判据在这里都会误判成“有终端”。唯一的可信事实是
+  // 宿主档案（PI_KIT_UI_HOST=android）与 ctx.ui.notify 这条通道。
+  beforeEach(() => {
+    process.env.PI_KIT_UI_HOST = "android";
+    process.env.HERDR_PANE_ID = "inherited-pane";
+    process.env.HERDR_BIN_PATH = "/nonexistent/herdr";
+  });
+
+  afterEach(() => {
+    delete process.env.PI_KIT_UI_HOST;
+  });
+
+  it("routes the notification to the host toast and never to a terminal", async () => {
+    const execFile = await mockHerdrExec();
+    const harness = await buildNotifyHarness();
+    const toast = vi.fn();
+
+    await emitSettled(
+      harness,
+      { messages: [{ role: "assistant", content: "Finished the work." }] },
+      process.cwd(),
+      { hasUI: true, mode: "rpc", ui: { notify: toast } },
+    );
+
+    expect(toast).toHaveBeenCalledWith("π: Finished the work.", "info");
+    expect(harness.write).not.toHaveBeenCalled();
+    expect(execFile).not.toHaveBeenCalled();
+  });
+
+  it("keeps emitting the idle event for a successful run", async () => {
+    const harness = await buildNotifyHarness();
+
+    await emitSettled(
+      harness,
+      { messages: [{ role: "assistant", content: "Finished the work." }] },
+      process.cwd(),
+      { hasUI: true, mode: "rpc", ui: { notify: vi.fn() } },
+    );
+
+    expect(harness.events.emitted).toHaveLength(1);
+  });
+
+  it("still writes OSC 777 on a terminal host", async () => {
+    delete process.env.PI_KIT_UI_HOST;
+    delete process.env.HERDR_PANE_ID;
+    const harness = await buildNotifyHarness();
+    const toast = vi.fn();
+
+    await emitSettled(
+      harness,
+      { messages: [{ role: "assistant", content: "Finished the work." }] },
+      process.cwd(),
+      {
+        hasUI: true,
+        mode: "tui",
+        // 终端宿主的 ctx 上也有 notify（画应用内提示），但它不是 OSC 777 的替代品。
+        ui: { notify: toast },
+      },
+    );
+
+    expect(harness.write).toHaveBeenCalledWith(
+      expect.stringContaining("777;notify;π;Finished the work."),
+    );
+    expect(toast).not.toHaveBeenCalled();
+  });
+
+  it("keeps the herdr CLI on a terminal host that has a herdr pane", async () => {
+    delete process.env.PI_KIT_UI_HOST;
+    process.env.HERDR_PANE_ID = "pane-terminal";
+    const execFile = await mockHerdrExec();
+    const harness = await buildNotifyHarness();
+
+    await emitSettled(
+      harness,
+      { messages: [{ role: "assistant", content: "Finished the work." }] },
+      process.cwd(),
+      { hasUI: true, mode: "tui", ui: { notify: vi.fn() } },
+    );
+
+    expect(execFile).toHaveBeenCalledTimes(1);
+    expect(harness.write).not.toHaveBeenCalled();
+  });
+});
+
 describe("herdr transport", () => {
   it("sends notification via herdr CLI when HERDR_PANE_ID is set", async () => {
     process.env.HERDR_PANE_ID = "pane-123";
     const execFile = await mockHerdrExec();
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(harness, {
+    await emitSettled(harness, {
       messages: [{ role: "assistant", content: "Done." }],
     });
 
@@ -376,7 +561,7 @@ describe("herdr transport", () => {
     const execFile = await mockHerdrExec();
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(harness, {
+    await emitSettled(harness, {
       messages: [{ role: "assistant", content: "Done." }],
     });
 
@@ -404,7 +589,7 @@ describe("herdr transport", () => {
     const execFile = await mockHerdrExec();
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(harness, {
+    await emitSettled(harness, {
       messages: [{ role: "assistant", content: "Done." }],
     });
 
@@ -421,7 +606,7 @@ describe("herdr transport", () => {
     const _execFile = await mockHerdrExec(new Error("herdr not found"));
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(harness, {
+    await emitSettled(harness, {
       messages: [{ role: "assistant", content: "Done." }],
     });
 
@@ -436,7 +621,7 @@ describe("herdr transport", () => {
     const execFile = await mockHerdrExec();
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(harness, {
+    await emitSettled(harness, {
       messages: [{ role: "assistant", content: "ok\u001b]bad\u0007 done" }],
     });
 
@@ -471,7 +656,7 @@ describe("notify config", () => {
     writeNotifySettings(cwd, { enabled: false });
     const harness = await buildNotifyHarness();
 
-    await emitAgentEnd(
+    await emitSettled(
       harness,
       { messages: [{ role: "assistant", content: "Finished." }] },
       cwd,

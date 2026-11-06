@@ -1,8 +1,14 @@
 /**
  * Desktop Notification Extension
  *
- * Sends a native desktop notification when the agent finishes and is waiting for input.
- * Uses OSC 777 escape sequence - no external dependencies.
+ * Sends a native desktop notification once the run settles (`agent_settled`) and Pi is
+ * waiting for input. `agent_end` is not the idle signal: retries, compaction recovery,
+ * and queued follow-ups keep running after it.
+ *
+ * The channel follows the host profile (`shared/ui-host.ts` → `notifications`), never the
+ * environment: a terminal host writes OSC 777 (no external dependencies); a host-ui host
+ * (pi-web, the nsh clients) gets `ctx.ui.notify` instead, because its stdout is not a
+ * terminal anyone reads. Headless hosts get nothing.
  *
  * Supported terminals: Ghostty, iTerm2, WezTerm, rxvt-unicode
  * Not supported: Kitty (uses OSC 99), Terminal.app, Windows Terminal, Alacritty
@@ -43,22 +49,38 @@ export const DEFAULT_CONFIG: NotifyConfig = {
 };
 
 type NotifySettings = Partial<Record<keyof NotifyConfig, unknown>>;
-type AgentEndMessage = {
+type RunMessage = {
   role?: string;
   content?: unknown;
   stopReason?: unknown;
 };
-type AgentEndEvent = { messages?: AgentEndMessage[] };
+type AgentSettledEvent = { aborted?: boolean };
 type NotifyTurnStatus = "success" | "aborted" | "error" | "length";
 type NotifyTransportStatus = "sent" | "write-failed" | "failed" | "no-terminal";
 
 /**
- * 浏览器宿主（pi-web）：没有终端可写 OSC 777，改用宿主自己的 toast。
- * 写入 stdout 在这里只会进 server 日志，用户看不到。
+ * 通知往哪送：宿主档案说了算（`ctx.ui.notify` = 宿主 toast；`terminal` = OSC 777）。
+ *
+ * 不能嗅探终端：pi-clients 的 worker 跑在 macOS 终端里，子进程继承了
+ * `HERDR_PANE_ID` / `TMUX` / `TERM_PROGRAM`，而且它的 stdout 并不是用户看的终端
+ * —— 写进去只会落到 worker 日志。同理 "android" / "generic-rpc" 这些宿主也不该
+ * 被当成 pi-web 的别名。
  */
-const isWebHostContext = (ctx: NotifyRuntimeContext): boolean =>
-  typeof ctx.ui?.notify === "function" &&
-  uiHostProfile({ hasUI: ctx.hasUI, mode: ctx.mode }).kind === "pi-web";
+const resolveNotificationTransport = (
+  ctx: NotifyRuntimeContext,
+): "panel" | "herdr" | "osc" | "none" => {
+  const surface = uiHostProfile({
+    hasUI: ctx.hasUI,
+    mode: ctx.mode,
+  }).notifications;
+  if (surface === "host-ui") {
+    return typeof ctx.ui?.notify === "function" ? "panel" : "none";
+  }
+  if (surface === "none") {
+    return "none";
+  }
+  return process.env.HERDR_PANE_ID ? "herdr" : "osc";
+};
 
 type NotificationDecision = {
   shouldNotify: boolean;
@@ -71,10 +93,13 @@ type NotificationDecision = {
 
 type NotifyRuntimeContext = {
   cwd?: string;
-  signal?: { aborted?: boolean };
   /** 宿主是否愿意对话、跑在哪个模式（`uiHostProfile` 需要这两项）。 */
   hasUI?: boolean;
   mode?: string;
+  sessionManager?: {
+    getBranch?: () => readonly unknown[];
+    getEntries?: () => readonly unknown[];
+  };
   /** 浏览器宿主（pi-web）的 toast 通道；终端宿主不填。 */
   ui?: {
     notify?: (message: string, level?: "info" | "warning" | "error") => void;
@@ -292,8 +317,8 @@ const isTextPart = (part: unknown): part is { type: "text"; text: string } =>
   );
 
 const findLastAssistantMessage = (
-  messages: AgentEndMessage[],
-): AgentEndMessage | null => {
+  messages: RunMessage[],
+): RunMessage | null => {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     if (message?.role === "assistant") {
@@ -303,9 +328,7 @@ const findLastAssistantMessage = (
   return null;
 };
 
-const extractLastAssistantText = (
-  messages: AgentEndMessage[],
-): string | null => {
+const extractLastAssistantText = (messages: RunMessage[]): string | null => {
   const message = findLastAssistantMessage(messages);
   const content = message?.content;
   if (typeof content === "string") {
@@ -325,24 +348,73 @@ const extractLastAssistantText = (
 };
 
 const extractLastAssistantStopReason = (
-  messages: AgentEndMessage[],
+  messages: RunMessage[],
 ): string | null => {
   const stopReason = findLastAssistantMessage(messages)?.stopReason;
   return typeof stopReason === "string" ? stopReason : null;
 };
 
-const resolveTurnStatus = (
-  event: AgentEndEvent,
-  ctx: NotifyRuntimeContext,
-): NotifyTurnStatus => {
-  const stopReason = extractLastAssistantStopReason(event.messages ?? []);
-  if (ctx.signal?.aborted || stopReason === "aborted") {
+const messageOfEntry = (entry: unknown): RunMessage | null => {
+  if (!isRecord(entry) || entry.type !== "message") {
+    return null;
+  }
+  return isRecord(entry.message) ? (entry.message as RunMessage) : null;
+};
+
+/**
+ * 本轮（一次 settle 覆盖的所有低层 run）产生的消息：从最后一条 user 消息之后
+ * 开始。自动重试、压缩重试、排队 follow-up 都不会再插一条 user 消息，所以这段
+ * 就是用户正在等的那一轮；更早的轮次不会混进通知正文。
+ */
+export const runMessagesFromEntries = (
+  entries: readonly unknown[],
+): RunMessage[] => {
+  const messages: RunMessage[] = [];
+  for (const entry of entries) {
+    const message = messageOfEntry(entry);
+    if (message) {
+      messages.push(message);
+    }
+  }
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "user") {
+      return messages.slice(i + 1);
+    }
+  }
+  return messages;
+};
+
+const sessionEntries = (ctx: NotifyRuntimeContext): readonly unknown[] => {
+  const manager = ctx.sessionManager;
+  if (!manager) {
+    return [];
+  }
+  try {
+    const entries =
+      typeof manager.getBranch === "function"
+        ? manager.getBranch()
+        : manager.getEntries?.();
+    return Array.isArray(entries) ? entries : [];
+  } catch (error) {
+    log?.warn("session entries read failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+};
+
+const resolveTurnStatus = (input: {
+  aborted: boolean;
+  stopReason: string | null;
+}): NotifyTurnStatus => {
+  if (input.aborted || input.stopReason === "aborted") {
     return "aborted";
   }
-  if (stopReason === "error") {
+  if (input.stopReason === "error") {
     return "error";
   }
-  if (stopReason === "length") {
+  if (input.stopReason === "length") {
     return "length";
   }
   return "success";
@@ -427,12 +499,15 @@ const shouldNotifyStatus = (
 };
 
 const buildNotificationDecision = (input: {
-  event: AgentEndEvent;
-  ctx: NotifyRuntimeContext;
+  aborted: boolean;
+  stopReason: string | null;
   config: NotifyConfig;
   lastText: string | null;
 }): NotificationDecision => {
-  const status = resolveTurnStatus(input.event, input.ctx);
+  const status = resolveTurnStatus({
+    aborted: input.aborted,
+    stopReason: input.stopReason,
+  });
   const body =
     normalizeNotificationBody(input.lastText, input.config.maxBodyChars) ||
     fallbackBodyForStatus(status);
@@ -504,7 +579,7 @@ const panelNotify = async (
 };
 
 /**
- * 同一个 `agent_end` dispatch 只处理一次：同一个扩展文件被两条入口路径加载时
+ * 同一个 `agent_settled` dispatch 只处理一次：同一个扩展文件被两条入口路径加载时
  * （`foo.ts` 与 `foo/index.ts` 软链并存），工厂跑两次、模块作用域各一份，通知
  * 会发两遍。pi 每次 dispatch 只 `createContext()` 一次并把同一个 ctx 交给所有
  * handler，所以"这个 ctx 已被认领"等于"这次 dispatch 已被另一个实例处理过"；
@@ -542,11 +617,11 @@ let warnedDuplicateDispatch = false;
 
 const warnDuplicateDispatch = (): void => {
   if (warnedDuplicateDispatch) {
-    log?.debug("duplicate agent_end dispatch suppressed");
+    log?.debug("duplicate agent_settled dispatch suppressed");
     return;
   }
   warnedDuplicateDispatch = true;
-  log?.warn("duplicate agent_end dispatch suppressed", {
+  log?.warn("duplicate agent_settled dispatch suppressed", {
     hint: "notify is loaded twice: two extension paths point at the same file. Remove the abandoned `notify.ts` (or `notify/`) symlink from the extensions directory (install-plugins.sh prunes it from now on).",
   });
 };
@@ -561,13 +636,14 @@ export default async function (pi: ExtensionAPI) {
     tty: Boolean(process.stdout.isTTY),
   });
 
-  pi.on("agent_end", async (event: AgentEndEvent, ctx: unknown) => {
+  pi.on("agent_settled", async (event: AgentSettledEvent, ctx: unknown) => {
     if (!claimDispatch(dispatchClaims(), ctx)) {
       warnDuplicateDispatch();
       return;
     }
 
-    const messages = event.messages ?? [];
+    const runtimeCtx = isRecord(ctx) ? (ctx as NotifyRuntimeContext) : {};
+    const messages = runMessagesFromEntries(sessionEntries(runtimeCtx));
     const last = messages.at(-1);
     const lastContentType =
       last && "content" in last
@@ -575,7 +651,8 @@ export default async function (pi: ExtensionAPI) {
           ? "array"
           : typeof last.content
         : null;
-    log?.debug("agent_end received", {
+    log?.debug("agent_settled received", {
+      aborted: Boolean(event.aborted),
       messageCount: messages.length,
       lastRole: last?.role ?? null,
       lastContentType,
@@ -587,11 +664,10 @@ export default async function (pi: ExtensionAPI) {
       preview: lastText ? lastText.slice(0, 120) : null,
     });
 
-    const runtimeCtx = isRecord(ctx) ? (ctx as NotifyRuntimeContext) : {};
     const config = loadNotifyConfig(runtimeCtx.cwd ?? process.cwd());
     const decision = buildNotificationDecision({
-      event,
-      ctx: runtimeCtx,
+      aborted: Boolean(event.aborted),
+      stopReason: extractLastAssistantStopReason(messages),
       config,
       lastText,
     });
@@ -618,12 +694,15 @@ export default async function (pi: ExtensionAPI) {
 
     const safeTitle = sanitizeOscField(resolvedTitle);
     const safeBody = sanitizeOscField(decision.body);
-    const inHerdr = Boolean(process.env.HERDR_PANE_ID);
-    const transportStatus = isWebHostContext(runtimeCtx)
-      ? await panelNotify(runtimeCtx, safeTitle, safeBody)
-      : inHerdr
-        ? await herdrNotify(safeTitle, safeBody)
-        : await notify(safeTitle, safeBody);
+    const transport = resolveNotificationTransport(runtimeCtx);
+    const transportStatus =
+      transport === "panel"
+        ? await panelNotify(runtimeCtx, safeTitle, safeBody)
+        : transport === "herdr"
+          ? await herdrNotify(safeTitle, safeBody)
+          : transport === "osc"
+            ? await notify(safeTitle, safeBody)
+            : ("no-terminal" as const);
     // 只有“写失败”才终止：没有终端（no-terminal）不算失败，否则会连带
     // 吞掉下面的 notify-idle 事件。
     if (transportStatus === "write-failed" || transportStatus === "failed") {

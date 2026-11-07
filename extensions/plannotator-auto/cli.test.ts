@@ -157,3 +157,159 @@ describe("runCli Herdr panel lifecycle", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Remote/phone hosting: the review page is on the reviewer's device, not the
+// agent's machine. runCli hands the URL from READY_FILE to the client (via
+// ctx.ui.notify, or the caller's onReadyUrl) and never opens a browser.
+// ---------------------------------------------------------------------------
+
+const REMOTE_ENV_KEYS = [
+  "VITEST",
+  "NODE_ENV",
+  "PLANNOTATOR_REMOTE",
+  "PLANNOTATOR_URL_HOST",
+  "PLANNOTATOR_PUBLIC_URL",
+  "PLANNOTATOR_SKIP_BROWSER_OPEN",
+  "PLANNOTATOR_READY_FILE",
+] as const;
+
+const REVIEW_URL = "http://mingchendeMac-mini.local:19432";
+
+const mockReadyUrl = (url: string | null) => {
+  const openUrl = vi.fn(async () => {});
+  vi.doMock("./terminal-browser.ts", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("./terminal-browser.ts")>()),
+    createTempReadyFile: vi.fn(async () => "/tmp/plannotator-remote.ready"),
+    waitForReadyFile: vi.fn(async () => url),
+    openUrlInHerdrTerminalBrowser: openUrl,
+    removeTempReadyFile: vi.fn(),
+  }));
+  return { openUrl };
+};
+
+describe("runCli remote review URL", () => {
+  let savedEnv: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    savedEnv = Object.fromEntries(
+      REMOTE_ENV_KEYS.map((key) => [key, process.env[key]]),
+    );
+    // Not a test run as far as the module is concerned: the ready-file path
+    // must arm exactly like it does in production.
+    delete process.env.VITEST;
+    delete process.env.NODE_ENV;
+    delete process.env.HERDR_ENV;
+    delete process.env.HERDR_PANE_ID;
+    process.env.PLANNOTATOR_URL_HOST = "mingchendeMac-mini.local";
+  });
+
+  afterEach(() => {
+    for (const key of REMOTE_ENV_KEYS) {
+      if (savedEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = savedEnv[key];
+      }
+    }
+  });
+
+  it("notifies the client with the URL and asks the CLI to bind remotely", async () => {
+    vi.resetModules();
+    const spawn = mockPlannotatorSpawn({
+      status: 0,
+      stdout: JSON.stringify({ decision: "approved" }),
+    });
+    const { openUrl } = mockReadyUrl(REVIEW_URL);
+    const notify = vi.fn();
+    const repoRoot = await createTempRepo("cli-remote-url-");
+
+    try {
+      const cli = await import("./cli.ts");
+      const result = await cli.runPlannotatorAnnotateCli(
+        { ...ctxFor(repoRoot), ui: { notify } },
+        `${repoRoot}/artifact.html`,
+        { gate: true, timeoutMs: 1000 },
+      );
+
+      expect(result.status).toBe("handled");
+      await flushMicrotasks();
+
+      // The person holding the phone gets the link...
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining(REVIEW_URL),
+        "info",
+      );
+      // ...and nothing opens on the server.
+      expect(openUrl).not.toHaveBeenCalled();
+
+      // A URL host alone does not put the CLI in remote mode: runCli asks for
+      // it, and suppresses the server-side browser while it waits.
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const spawnOptions = (spawn.mock.calls[0] as unknown[])[2] as {
+        env: Record<string, string | undefined>;
+      };
+      expect(spawnOptions.env).toMatchObject({
+        PLANNOTATOR_READY_FILE: "/tmp/plannotator-remote.ready",
+        PLANNOTATOR_SKIP_BROWSER_OPEN: "1",
+        PLANNOTATOR_REMOTE: "1",
+        PLANNOTATOR_CWD: repoRoot,
+      });
+    } finally {
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("lets the caller take the URL instead of notifying", async () => {
+    vi.resetModules();
+    mockPlannotatorSpawn({
+      status: 0,
+      stdout: JSON.stringify({ decision: "approved" }),
+    });
+    mockReadyUrl(REVIEW_URL);
+    const notify = vi.fn();
+    const onReadyUrl = vi.fn();
+    const repoRoot = await createTempRepo("cli-remote-onready-");
+
+    try {
+      const cli = await import("./cli.ts");
+      await cli.runPlannotatorAnnotateCli(
+        { ...ctxFor(repoRoot), ui: { notify } },
+        `${repoRoot}/artifact.html`,
+        { gate: true, timeoutMs: 1000, onReadyUrl },
+      );
+
+      await flushMicrotasks();
+      expect(onReadyUrl).toHaveBeenCalledWith(REVIEW_URL);
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      await removeTempRepo(repoRoot);
+    }
+  });
+
+  it("stays silent when the CLI never announces a URL", async () => {
+    vi.resetModules();
+    mockPlannotatorSpawn({
+      status: 0,
+      stdout: JSON.stringify({ decision: "approved" }),
+    });
+    mockReadyUrl(null);
+    const notify = vi.fn();
+    const repoRoot = await createTempRepo("cli-remote-no-url-");
+
+    try {
+      const cli = await import("./cli.ts");
+      await cli.runPlannotatorAnnotateCli(
+        { ...ctxFor(repoRoot), ui: { notify } },
+        `${repoRoot}/artifact.html`,
+        { gate: true, timeoutMs: 1000 },
+      );
+
+      await flushMicrotasks();
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      await removeTempRepo(repoRoot);
+    }
+  });
+});

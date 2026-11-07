@@ -73,6 +73,38 @@ auto approval does, and the plan gate is not left waiting for a review that can 
 
 HTML artifacts always use the regular browser, regardless of the toggle. The toggle is session-scoped: a new session resets to `browser`. Switching to `herdr-panel` when the runtime cannot support it (not a Herdr environment, or `terminal-browser` not on `PATH`) is rejected with a warning and the mode stays `browser`.
 
+### Remote / phone hosting (`PLANNOTATOR_REMOTE`, `PLANNOTATOR_URL_HOST`)
+
+When the agent runs somewhere the reviewer is not — a server reached from a phone
+(the pi-clients Android app), a headless box over SSH, a container — a browser
+opened on the agent's machine is a browser nobody can see. Set either of the
+CLI's own knobs:
+
+```sh
+PLANNOTATOR_REMOTE=1                 # fixed port, bind 0.0.0.0, no browser
+PLANNOTATOR_URL_HOST=auto            # advertise the tailnet (MagicDNS) name
+# or a LAN name / address the phone can reach:
+PLANNOTATOR_URL_HOST=my-mac.local
+PLANNOTATOR_PORT=19432
+```
+
+With either variable set, plannotator-auto:
+1. spawns the CLI with `PLANNOTATOR_READY_FILE` + `PLANNOTATOR_SKIP_BROWSER_OPEN=1`
+   (and `PLANNOTATOR_REMOTE=1` when only a URL host was given), so nothing opens on
+   the server;
+2. reads the URL the CLI announces on the ready file (the same side channel the
+   Herdr panel uses) and delivers it with `ctx.ui.notify("评审已就绪，点击打开: <url>")`.
+
+The pi-clients client draws that notice as a tappable bubble that does **not**
+expire on its own — a notice carrying an `http(s)` link is an entry point, not a
+heads-up — and tapping it opens the review page in the device's browser. The
+review widget also reports `host: remote` so "no browser opened here" never reads
+as "the review never started".
+
+Requirements: the device must reach the advertised host:port (same Wi-Fi for a
+LAN name, the tailnet for `auto`, a forwarded/reverse-proxied origin for
+`PLANNOTATOR_PUBLIC_URL`). The port has to be fixed, which remote mode gives you.
+
 ## Configuration
 
 None. All review locations are convention-based (`plan` / `specs` directories under

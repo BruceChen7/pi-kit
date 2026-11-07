@@ -42,6 +42,7 @@ import type {
   PendingPlanReview,
 } from "./plan-review/types.ts";
 import { getSessionState, type SessionRuntimeState } from "./session.ts";
+import { wantsRemoteReviewUrl } from "./terminal-browser.ts";
 
 const KEEP_PLAN_HEADING_GUIDANCE =
   "Keep the first # heading unchanged unless the reviewer explicitly asks you " +
@@ -136,11 +137,20 @@ const getReviewWidgetMessage = (
     return null;
   }
 
+  // Remote hosting is where the reviewer's screen is not this machine (a phone
+  // on the same Wi-Fi, a tailnet name, an SSH box): the URL is delivered to the
+  // client instead of a browser opening here. Says so, so "no browser opened"
+  // never reads as "the review never started".
+  const host =
+    state.reviewHostMode === "herdr-panel"
+      ? "herdr-panel"
+      : wantsRemoteReviewUrl(process.env)
+        ? "remote"
+        : "browser";
+
   return isHtmlPath(planReviewActive.resolvedPlanPath)
-    ? "HTML review is active"
-    : `Plan/Spec review is active · host: ${
-        state.reviewHostMode === "herdr-panel" ? "herdr-panel" : "browser"
-      }`;
+    ? `HTML review is active · host: ${host}`
+    : `Plan/Spec review is active · host: ${host}`;
 };
 
 export const setReviewWidget = (ctx: ExtensionContext): void => {

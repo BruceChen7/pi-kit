@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { ReviewHostMode } from "./terminal-browser.ts";
+import { wantsRemoteReviewUrl } from "./terminal-browser.ts";
 
 export type CliReviewDecision = {
   approved: boolean;
@@ -27,10 +28,17 @@ export type CliReviewResult =
 
 import { getSessionKey } from "./session.ts";
 
-/** Minimal ctx shape required to derive a session key. */
+/** Minimal ctx shape required to derive a session key, plus the one way out to the client. */
 type CliCtx = {
   cwd: string;
   sessionManager: { getSessionFile: () => string | null | undefined };
+  /**
+   * pi's extension UI context — only `notify` is read, and only for the
+   * remote/phone path (`deliverReadyUrl`). Typed `unknown` on purpose: pi's
+   * `ExtensionUIContext` and the tests' mocks both have to fit, and the one
+   * method used is narrowed at the call site.
+   */
+  ui?: unknown;
 };
 
 type TrackedChild = {
@@ -116,6 +124,54 @@ type RunCliOptions<T> = {
    * regular browser instead of splitting a Herdr pane.
    */
   hostMode?: ReviewHostMode;
+  /**
+   * Shell hook for a caller that wants the review URL itself (tests, future
+   * hosts). When omitted, a remote/phone run delivers the URL through
+   * `ctx.ui.notify` — see `deliverReadyUrl`.
+   */
+  onReadyUrl?: (url: string) => void;
+};
+
+/**
+ * Shell: hand a remote review URL to the reviewer's own screen.
+ *
+ * The agent runs on the server; when the review is hosted remotely the page is
+ * only reachable from the device the reviewer is actually holding (a phone on
+ * the same Wi-Fi, a laptop over SSH). `ctx.ui.notify` is the one channel pi
+ * gives an extension for "say something the person must see": the client draws
+ * a bubble, and a bubble carrying an `http(s)` link is tappable there (it opens
+ * the review page) and does not expire on its own.
+ *
+ * No UI (headless / `hasUI === false`) means there is nobody to tell: the CLI
+ * still printed the URL on stderr and wrote it to READY_FILE, so nothing is
+ * lost — it just is not surfaced here.
+ */
+const deliverReadyUrl = (
+  ctx: CliCtx,
+  url: string,
+  onReadyUrl?: (url: string) => void,
+): void => {
+  if (onReadyUrl) {
+    try {
+      onReadyUrl(url);
+    } catch {
+      // A throwing caller must not take the review run down with it.
+    }
+    return;
+  }
+  const ui = ctx.ui as
+    | {
+        notify?: (message: string, type?: "info" | "warning" | "error") => void;
+      }
+    | undefined;
+  if (typeof ui?.notify !== "function") {
+    return;
+  }
+  try {
+    ui.notify(`评审已就绪，点击打开: ${url}`, "info");
+  } catch {
+    // Notifying is best effort; the review itself keeps waiting.
+  }
 };
 
 type RunCliResult<T> =
@@ -146,13 +202,24 @@ const runCli = async <T extends CliReviewDecision>(
   const isHerdrEnv =
     process.env.HERDR_ENV === "1" && !!process.env.HERDR_PANE_ID;
   const hostMode = options.hostMode ?? "browser";
+  // Remote/phone runtime (a LAN name, a tailnet name, an SSH box): the review
+  // page belongs on the reviewer's own screen, so the URL is delivered to the
+  // client instead of opened on the server. READY_FILE is the only channel the
+  // CLI offers for it, and it needs SKIP_BROWSER_OPEN so nothing pops up on
+  // the server while the reviewer waits on their phone.
+  const remoteUrl = !isTestEnv && wantsRemoteReviewUrl(process.env);
   // Probe the panel path only when the caller opted into herdr-panel AND the
   // runtime looks like Herdr — browser mode never spawns terminal-browser.
-  if (!isTestEnv && hostMode === "herdr-panel" && isHerdrEnv) {
+  const wantsReadyFile =
+    (!isTestEnv && hostMode === "herdr-panel" && isHerdrEnv) || remoteUrl;
+  if (wantsReadyFile) {
     try {
       tb = await import("./terminal-browser.ts");
-      useTerminalBrowser = await tb.shouldUseTerminalBrowser(ctx, hostMode);
-      if (useTerminalBrowser) {
+      useTerminalBrowser =
+        !isTestEnv && hostMode === "herdr-panel" && isHerdrEnv
+          ? await tb.shouldUseTerminalBrowser(ctx, hostMode)
+          : false;
+      if (useTerminalBrowser || remoteUrl) {
         try {
           readyFile = await tb.createTempReadyFile();
           effectiveEnv = {
@@ -161,6 +228,13 @@ const runCli = async <T extends CliReviewDecision>(
             PLANNOTATOR_CWD: ctx.cwd,
             PLANNOTATOR_READY_FILE: readyFile,
             PLANNOTATOR_SKIP_BROWSER_OPEN: "1",
+            // A URL host alone does not switch the CLI into remote mode; ask
+            // for it so the session binds 0.0.0.0 on the fixed port the URL
+            // was built for. An explicit setting always wins.
+            ...(remoteUrl &&
+            !(options.env?.PLANNOTATOR_REMOTE ?? process.env.PLANNOTATOR_REMOTE)
+              ? { PLANNOTATOR_REMOTE: "1" }
+              : {}),
           };
         } catch {
           readyFile = null;
@@ -181,20 +255,27 @@ const runCli = async <T extends CliReviewDecision>(
       ...(detached ? { detached: true } : {}),
     });
 
-    // Shell: parallel open of terminal-browser via READY_FILE (fire-and-forget)
-    if (tb && useTerminalBrowser && readyFile) {
-      openedHerdrPanel = true;
+    // Shell: the review URL arrives on READY_FILE (fire-and-forget). Two
+    // destinations, never both: the Herdr panel (same machine) or the
+    // reviewer's own client (remote/phone).
+    if (tb && readyFile) {
+      openedHerdrPanel = useTerminalBrowser;
       const capturedReadyFile = readyFile;
       const capturedSignal = options.signal;
       const tbMod = tb;
       tbMod
         .waitForReadyFile(capturedReadyFile, capturedSignal, 8000)
         .then((url) => {
-          if (url) {
+          if (!url) {
+            return;
+          }
+          if (useTerminalBrowser) {
             return tbMod
               .openUrlInHerdrTerminalBrowser(url, ctx)
               .catch(() => {});
           }
+          deliverReadyUrl(ctx, url, options.onReadyUrl);
+          return;
         })
         .catch(() => {});
     }
@@ -365,6 +446,8 @@ export const runPlannotatorPlanReviewCli = async (
     timeoutMs: number;
     /** How to host the review UI: "browser" (default) or "herdr-panel". */
     hostMode?: ReviewHostMode;
+    /** Take the review URL instead of the default notify (see `deliverReadyUrl`). */
+    onReadyUrl?: (url: string) => void;
   },
 ): Promise<CliReviewResult> => {
   const hookEvent = {
@@ -379,6 +462,7 @@ export const runPlannotatorPlanReviewCli = async (
     signal: options.signal,
     timeoutMs: options.timeoutMs,
     hostMode: options.hostMode,
+    onReadyUrl: options.onReadyUrl,
   });
 };
 
@@ -391,6 +475,8 @@ export const runPlannotatorAnnotateCli = async (
     timeoutMs: number;
     /** HTML artifacts always host in the regular browser. */
     hostMode?: ReviewHostMode;
+    /** Take the review URL instead of the default notify (see `deliverReadyUrl`). */
+    onReadyUrl?: (url: string) => void;
   },
 ): Promise<CliReviewResult> => {
   const args = ["annotate", filePath];
@@ -404,5 +490,6 @@ export const runPlannotatorAnnotateCli = async (
     signal: options.signal,
     timeoutMs: options.timeoutMs,
     hostMode: options.hostMode,
+    onReadyUrl: options.onReadyUrl,
   });
 };

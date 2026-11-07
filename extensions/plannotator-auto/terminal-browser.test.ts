@@ -8,6 +8,7 @@ import {
   pickCloseTarget,
   resolveReviewHost,
   shouldCloseReviewPanel,
+  wantsRemoteReviewUrl,
 } from "./terminal-browser.ts";
 
 describe("terminal-browser Functional Core", () => {
@@ -150,5 +151,39 @@ describe("terminal-browser Functional Core", () => {
       next: "browser",
       ok: true,
     });
+  });
+});
+
+describe("wantsRemoteReviewUrl", () => {
+  const env = (pairs: Record<string, string>): NodeJS.ProcessEnv =>
+    pairs as NodeJS.ProcessEnv;
+
+  it("is true when the CLI is told to run remote", () => {
+    expect(wantsRemoteReviewUrl(env({ PLANNOTATOR_REMOTE: "1" }))).toBe(true);
+    expect(wantsRemoteReviewUrl(env({ PLANNOTATOR_REMOTE: "TRUE" }))).toBe(
+      true,
+    );
+  });
+
+  it("is true when an advertised host can reach this machine", () => {
+    expect(
+      wantsRemoteReviewUrl(env({ PLANNOTATOR_URL_HOST: "mini.local" })),
+    ).toBe(true);
+    expect(wantsRemoteReviewUrl(env({ PLANNOTATOR_URL_HOST: "auto" }))).toBe(
+      true,
+    );
+    expect(
+      wantsRemoteReviewUrl(
+        env({ PLANNOTATOR_PUBLIC_URL: "https://plans.example.com" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("is false on an ordinary desktop session", () => {
+    expect(wantsRemoteReviewUrl(env({}))).toBe(false);
+    expect(wantsRemoteReviewUrl(env({ PLANNOTATOR_REMOTE: "0" }))).toBe(false);
+    expect(wantsRemoteReviewUrl(env({ PLANNOTATOR_URL_HOST: "  " }))).toBe(
+      false,
+    );
   });
 });

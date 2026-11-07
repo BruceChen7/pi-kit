@@ -53,6 +53,32 @@ export const nextHostMode = (
   return { next: "browser", ok: false };
 };
 
+/**
+ * Pure: is this agent running where the reviewer's screen is NOT the agent's
+ * screen? Two signals, both owned by the Plannotator CLI itself:
+ *
+ *  - `PLANNOTATOR_REMOTE=1` — the CLI binds 0.0.0.0 on a fixed port and opens
+ *    no browser.
+ *  - `PLANNOTATOR_URL_HOST` / `PLANNOTATOR_PUBLIC_URL` — the CLI advertises a
+ *    URL other devices can reach (a LAN name, a tailnet MagicDNS name, a
+ *    reverse-proxy origin) instead of `localhost`.
+ *
+ * Either one means the review page is somewhere the agent's own screen cannot
+ * show it (a phone on the same Wi-Fi, an SSH box, a container), so the URL has
+ * to travel to the client instead of to a server-side browser.
+ */
+export const wantsRemoteReviewUrl = (
+  env: NodeJS.ProcessEnv = process.env,
+): boolean => {
+  const remote = env.PLANNOTATOR_REMOTE;
+  if (remote === "1" || remote?.toLowerCase() === "true") {
+    return true;
+  }
+  return Boolean(
+    env.PLANNOTATOR_URL_HOST?.trim() || env.PLANNOTATOR_PUBLIC_URL?.trim(),
+  );
+};
+
 /** Pure: parse one READY_FILE JSONL line → url | null. */
 export const parseReadyFileLine = (line: string): string | null => {
   const trimmed = line.trim();

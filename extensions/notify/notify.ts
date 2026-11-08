@@ -17,7 +17,11 @@
 
 import { execFile } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
+import {
+  Markdown,
+  type MarkdownTheme,
+  stripTerminalSequences,
+} from "@earendil-works/pi-tui";
 import {
   createHandledState,
   NOTIFY_IDLE_CHANNEL,
@@ -437,9 +441,18 @@ const plainMarkdownTheme: MarkdownTheme = {
   underline: (text) => text,
 };
 
+/**
+ * Markdown → **纯文本**：主题已经把所有装饰换成恒等函数，但 pi-tui 仍会给链接包一层
+ * OSC 8 超链接（`theme.link` 只改可见文字，管不到外面那层），粗体之类也留着 SGR。
+ *
+ * 那层转义必须整段剥掉，不能只靠后面的 `sanitizeOscField`：它只删 ESC 这一个字符，
+ * 序列的骨架会留在正文里 —— `]8;;https://…\`、`[1m`。客户端拿到的是「一句话」，
+ * 不是终端；它照着 `https?://` 抽链接时会把 `\` 和 `]8;;` 一起吞进 URL，点开就是
+ * 一个不存在的地址（真机症状，见 pi-clients #31）。
+ */
 const simpleMarkdown = (text: string, width = 80): string => {
   const markdown = new Markdown(text, 0, 0, plainMarkdownTheme);
-  return markdown.render(width).join("\n");
+  return stripTerminalSequences(markdown.render(width).join("\n"));
 };
 
 const normalizeNotificationBody = (

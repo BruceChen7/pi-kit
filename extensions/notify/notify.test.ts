@@ -430,7 +430,8 @@ describe("notify failure scenarios", () => {
     const prefix = "\u001b]777;notify;π;";
     expect(payload.startsWith(prefix)).toBe(true);
     const bodyPayload = payload.slice(prefix.length);
-    expect(bodyPayload.slice(0, -1)).toBe("ok]bad done");
+    // 整段 OSC 都算转义：以前只删 ESC 这个字符，`]bad` 会漏进正文。
+    expect(bodyPayload.slice(0, -1)).toBe("ok done");
   });
 });
 
@@ -476,6 +477,40 @@ describe("panel transport", () => {
     expect(toast).toHaveBeenCalledWith("π: Finished the work.", "info");
     expect(harness.write).not.toHaveBeenCalled();
     expect(execFile).not.toHaveBeenCalled();
+  });
+
+  it("hands the host plain text, never the escape skeleton of a rendered link", async () => {
+    // 真机事故（pi-clients #31）：正文里带一条链接，pi-tui 把链接包成 OSC 8，
+    // `sanitizeOscField` 只删 ESC 字符，于是 `]8;;…\` 与 `[1m` 留在了正文里；
+    // 客户端照着 https:// 抽链接，点开的是 `…/1\https://…/1]8;;\` 这种坏地址。
+    const harness = await buildNotifyHarness();
+    const toast = vi.fn();
+
+    await emitSettled(
+      harness,
+      {
+        messages: [
+          {
+            role: "assistant",
+            content:
+              "Issue 提好了：**https://github.com/jt-wang/tailpocket/issues/1** 看看吧",
+          },
+        ],
+      },
+      process.cwd(),
+      { hasUI: true, mode: "rpc", ui: { notify: toast } },
+    );
+
+    // 宿主 toast 只收一条「标题: 正文」。
+    const [line] = toast.mock.calls[0] ?? [];
+    const body = String(line);
+    expect(body).toBe(
+      "π: Issue 提好了：https://github.com/jt-wang/tailpocket/issues/1 看看吧",
+    );
+    // 一句话：ESC、OSC 8 骨架、SGR 残留一个都不许上屏。
+    expect(body).not.toContain("\x1b");
+    expect(body).not.toContain("]8;;");
+    expect(body).not.toMatch(/\[[0-9;]+m/);
   });
 
   it("keeps emitting the idle event for a successful run", async () => {
@@ -628,7 +663,7 @@ describe("herdr transport", () => {
     // Sanitized body passed to herdr CLI (control chars stripped)
     expect(execFile).toHaveBeenCalledWith(
       expect.any(String),
-      expect.arrayContaining(["--body", "ok]bad done"]),
+      expect.arrayContaining(["--body", "ok done"]),
       { timeout: 3000 },
       expect.any(Function),
     );

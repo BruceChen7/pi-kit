@@ -30,13 +30,9 @@ CLI 登录账号有对应权限。GitLab 支持 `gitlab.com` 以及 `glab` 已�
 }
 ```
 
-如果你是通过插件库按项目启用，先安装插件，然后在 Pi 中运行：
-
-```text
-/toggle-plugin
-```
-
-选择 `librarian` 后重载 Pi：
+默认运行 `./install-plugins.sh` 会把插件库里的有效插件 autoload 到
+`~/.pi/agent/extensions`，所有 repo（包括新 repo）都会自动加载。只想装到当前项目时用
+`./install-plugins.sh --project`。安装后重载 Pi：
 
 ```text
 /reload

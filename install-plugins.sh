@@ -3,10 +3,15 @@
 # Install pi-agent extensions as a shared plugin library.
 # Usage: ./install-plugins.sh [--library | --project | --autoload]
 #
-# Default behavior matches extensions/plugin-toggle:
+# Default behavior installs local plugins into a shared library and autoloads
+# them globally:
 #   - local plugins are symlinked into ~/.agents/pi-plugins
-#   - only plugin-toggle, shared helpers, auto-trust-work and cc-switch are bootstrapped globally
-#   - projects opt into plugins by running /toggle-plugin
+#   - every valid library plugin is linked into ~/.pi/agent/extensions
+#   - shared helpers, auto-trust-work and cc-switch are bootstrapped globally
+#   - use --project to install only for the current project
+#
+# Because library plugins are global, every repo (including a brand-new one)
+# loads them without project-level .pi/extensions symlinks.
 #
 # Supported plugin source patterns:
 #   extensions/foo/index.ts    -> creates foo/ symlink
@@ -50,7 +55,7 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [--library | --project | --autoload]"
             echo ""
             echo "Options:"
-            echo "  --library, -g    Install to ~/.agents/pi-plugins and bootstrap /toggle-plugin globally (default)"
+            echo "  --library, -g    Install to ~/.agents/pi-plugins and autoload globally (default)"
             echo "  --project, -p    Install directly to .pi/extensions in the current project"
             echo "  --autoload       Legacy mode: install all extensions to ~/.pi/agent/extensions"
             echo "  --help, -h       Show this help message"
@@ -75,7 +80,7 @@ case "$SCOPE" in
         ;;
     *)
         TARGET_DIR="$LIBRARY_DIR"
-        SCOPE_LABEL="Shared plugin library (~/.agents/pi-plugins; opt in with /toggle-plugin)"
+        SCOPE_LABEL="Shared plugin library (~/.agents/pi-plugins; autoloaded globally)"
         ;;
 esac
 
@@ -87,15 +92,11 @@ NC='\033[0m'
 newly_installed_items=()
 overwritten_items=()
 removed_items=()
-migrated_items=()
-manual_review_items=()
 failed_items=()
 
 mark_new_item() { newly_installed_items+=("$1"); }
 mark_overwritten_item() { overwritten_items+=("$1"); }
 mark_removed_item() { removed_items+=("$1"); }
-mark_migrated_item() { migrated_items+=("$1"); }
-mark_manual_review_item() { manual_review_items+=("$1"); }
 mark_failed_item() { failed_items+=("$1"); }
 
 print_summary_section() {
@@ -189,6 +190,24 @@ prune_broken_plugin_symlinks() {
     done
 }
 
+# plugin-toggle was removed from the repo. Drop its old global bootstrap symlink
+# so pi no longer tries to load a missing extension on every start.
+prune_legacy_plugin_toggle_symlink() {
+    local link="$GLOBAL_EXTENSION_DIR/plugin-toggle"
+
+    [ -L "$link" ] || return 0
+
+    local target
+    target="$(readlink "$link")"
+    case "$target" in
+        */extensions/plugin-toggle)
+            rm -f "$link"
+            mark_removed_item "plugin-toggle => $GLOBAL_EXTENSION_DIR"
+            echo -e "${YELLOW}−${NC} Removed legacy plugin-toggle symlink: $target"
+            ;;
+    esac
+}
+
 install_shared_symlink() {
     local target_dir="$1"
     local item_name="shared => $target_dir"
@@ -228,7 +247,17 @@ install_plugin_dependencies() {
 
 is_bootstrap_global_entry() {
     local name="$1"
-    [ "$name" = "plugin-toggle" ] || [ "$name" = "shared" ] || [ "$name" = "auto-trust-work" ] || [ "$name" = "cc-switch" ]
+    [ "$name" = "shared" ] || [ "$name" = "auto-trust-work" ] || [ "$name" = "cc-switch" ]
+}
+
+# Installed in the library but not autoloaded globally by default. This keeps
+# the old plugin-toggle default-disabled behavior without the toggle UI; link
+# one manually if you want it everywhere.
+is_default_disabled_library_plugin() {
+    case "$1" in
+        pi-autoresearch) return 0 ;;
+    esac
+    return 1
 }
 
 is_plugin_like_entry() {
@@ -244,6 +273,14 @@ is_plugin_like_entry() {
         return 0
     fi
 
+    # Packages declare their entry points in package.json instead of an
+    # index.ts at the root (e.g. ~/.agents/pi-plugins/pi-context).
+    if [ -d "$entry" ] && [ -f "$entry/package.json" ]; then
+        if node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.exit(p.pi && Array.isArray(p.pi.extensions) ? 0 : 1)' "$entry/package.json" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
     if [ -f "$entry" ] && [[ "$name" == *.ts ]] && [ "$name" != "index.ts" ]; then
         return 0
     fi
@@ -251,70 +288,24 @@ is_plugin_like_entry() {
     return 1
 }
 
-resolve_symlink_target() {
-    local symlink_path="$1"
-    local link_target
-    link_target="$(readlink "$symlink_path")"
+# The shared library is autoloaded: every valid library plugin is linked into
+# the global extension directory. A brand-new repo therefore loads the same
+# plugins without any project-level .pi/extensions symlinks.
+link_library_plugins_globally() {
+    [ -d "$LIBRARY_DIR" ] || return 0
 
-    if [[ "$link_target" = /* ]]; then
-        echo "$link_target"
-        return 0
-    fi
-
-    echo "$(cd "$(dirname "$symlink_path")" && pwd)/$link_target"
-}
-
-migrate_old_global_autoload() {
-    [ -d "$GLOBAL_EXTENSION_DIR" ] || return 0
-
-    local entry=""
-    for entry in "$GLOBAL_EXTENSION_DIR"/*; do
-        [ -e "$entry" ] || [ -L "$entry" ] || continue
-        local name
+    local entry name
+    for entry in "$LIBRARY_DIR"/*; do
+        [ -e "$entry" ] || continue
         name="$(basename "$entry")"
         if is_bootstrap_global_entry "$name"; then
             continue
         fi
-
-        if [ -L "$entry" ]; then
-            if ! is_plugin_like_entry "$entry"; then
-                continue
-            fi
-
-            local target_path="$LIBRARY_DIR/$name"
-            if [ -e "$target_path" ] || [ -L "$target_path" ]; then
-                local entry_real_path
-                local target_real_path
-                entry_real_path="$(realpath "$entry" 2>/dev/null || true)"
-                target_real_path="$(realpath "$target_path" 2>/dev/null || true)"
-                if [ -z "$entry_real_path" ] || [ "$entry_real_path" != "$target_real_path" ]; then
-                    mark_manual_review_item "$name"
-                    echo -e "${YELLOW}!${NC} Global plugin name conflict needs manual review: $name"
-                    continue
-                fi
-            else
-                mkdir -p "$LIBRARY_DIR"
-                local link_target
-                link_target="$(resolve_symlink_target "$entry")"
-                if ln -s "$link_target" "$target_path"; then
-                    mark_migrated_item "$name => $LIBRARY_DIR"
-                    echo -e "${GREEN}✓${NC} Migrated old global autoload symlink: $name"
-                else
-                    mark_failed_item "$name => $LIBRARY_DIR"
-                    echo -e "${RED}✗${NC} Failed to migrate old global autoload symlink: $name"
-                    continue
-                fi
-            fi
-
-            rm -rf "$entry"
-            mark_removed_item "$name"
-            echo -e "${YELLOW}−${NC} Removed old global autoload symlink: $name"
+        if is_default_disabled_library_plugin "$name"; then
             continue
         fi
-
         if is_plugin_like_entry "$entry"; then
-            mark_manual_review_item "$name"
-            echo -e "${YELLOW}!${NC} Real global plugin needs manual review: $name"
+            install_symlink "$entry" "$name" "$GLOBAL_EXTENSION_DIR"
         fi
     done
 }
@@ -359,6 +350,14 @@ install_plugin_sources() {
                 if install_symlink "$dir${dir_name}.ts" "${dir_name}.ts" "$target_dir"; then
                     mark_installed "${dir_name}.ts"
                 fi
+            elif is_plugin_like_entry "$dir"; then
+                # Package-style plugin: entry points come from package.json
+                # (pi.extensions), so the whole directory is the unit.
+                install_plugin_dependencies "$dir" "$dir_name"
+                remove_stale_shape_symlink "${dir}${dir_name}.ts" "$target_dir/${dir_name}.ts"
+                if install_symlink "$dir" "$dir_name" "$target_dir"; then
+                    mark_installed "$dir_name"
+                fi
             else
                 echo -e "${YELLOW}!${NC} Skipped (no index.ts or ${dir_name}.ts): $dir_name"
             fi
@@ -401,7 +400,7 @@ if [ "$SCOPE" = "library" ]; then
     prune_broken_plugin_symlinks "$LIBRARY_DIR"
     echo ""
     echo "Bootstrapping global extensions..."
-    install_symlink "$EXTENSIONS_DIR/plugin-toggle" "plugin-toggle" "$GLOBAL_EXTENSION_DIR"
+    prune_legacy_plugin_toggle_symlink
     install_symlink "$EXTENSIONS_DIR/auto-trust-work" "auto-trust-work" "$GLOBAL_EXTENSION_DIR"
     # cc-switch is a pure global resource (localhost proxy + global model
     # catalog) with no per-project state. Loading it globally keeps its
@@ -410,7 +409,8 @@ if [ "$SCOPE" = "library" ]; then
     install_symlink "$EXTENSIONS_DIR/cc-switch" "cc-switch" "$GLOBAL_EXTENSION_DIR"
     install_shared_symlink "$HOME/.pi/agent"
     install_shared_symlink "$GLOBAL_EXTENSION_DIR"
-    migrate_old_global_autoload
+    prune_broken_plugin_symlinks "$GLOBAL_EXTENSION_DIR"
+    link_library_plugins_globally
 elif [ "$SCOPE" = "project" ]; then
     install_plugin_sources "$TARGET_DIR"
     prune_broken_plugin_symlinks "$TARGET_DIR"
@@ -431,13 +431,13 @@ echo ""
 echo "Extensions installed to: $TARGET_DIR"
 case "$SCOPE" in
     library)
-        echo "Note: local plugins are shared from ~/.agents/pi-plugins. Run /toggle-plugin in a project to enable them."
+        echo "Note: library plugins are autoloaded from ~/.pi/agent/extensions, so every repo loads them."
         ;;
     project)
         echo "Note: project extensions load only when pi runs in this project."
         ;;
     autoload)
-        echo "Note: global autoload extensions load in every project. Prefer --library for plugin-toggle-managed installs."
+        echo "Note: global autoload extensions load in every project."
         ;;
 esac
 echo ""
@@ -445,11 +445,7 @@ print_summary_section "Overwritten items:" "${overwritten_items[@]}"
 echo ""
 print_summary_section "Newly installed items:" "${newly_installed_items[@]}"
 echo ""
-print_summary_section "Migrated old global autoload symlinks:" "${migrated_items[@]}"
-echo ""
 print_summary_section "Removed old global autoload symlinks:" "${removed_items[@]}"
-echo ""
-print_summary_section "Real global plugins needing manual review:" "${manual_review_items[@]}"
 
 if [ "${#failed_items[@]}" -gt 0 ]; then
     echo ""

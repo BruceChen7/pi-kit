@@ -2,8 +2,8 @@
 
 # Install third-party Pi plugins into the shared plugin library.
 #
-# Plugins are installed under ~/.agents/pi-plugins/<plugin-name>. Project opt-in is
-# handled by /toggle-plugin, which symlinks enabled plugins into .pi/extensions.
+# Plugins are installed under ~/.agents/pi-plugins/<plugin-name>. By default they are
+# linked into ~/.pi/agent/extensions so every repo autoloads them (see --enable-defaults).
 #
 # Usage: ./install-third-party-plugins.sh [--install-only | --enable-defaults]
 #
@@ -53,7 +53,7 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --install-only      Install plugins to ~/.agents/pi-plugins only (default)"
-      echo "  --enable-defaults   Install plugins and symlink them into .pi/extensions"
+      echo "  --enable-defaults   Install plugins and symlink them into ~/.pi/agent/extensions"
       echo "  --help, -h          Show this help message"
       exit 0
       ;;
@@ -214,16 +214,18 @@ fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
 JS
 }
 
+GLOBAL_EXTENSION_DIR="${PI_GLOBAL_EXTENSION_DIR:-$HOME/.pi/agent/extensions}"
+
 enable_plugin() {
   local name="$1"
   local target="$2"
-  local project_target=".pi/extensions/$name"
-  mkdir -p .pi/extensions
-  if [ -e "$project_target" ] || [ -L "$project_target" ]; then
-    echo -e "  ${YELLOW}Skipping enable, path exists:${NC} $project_target"
+  local global_target="$GLOBAL_EXTENSION_DIR/$name"
+  mkdir -p "$GLOBAL_EXTENSION_DIR"
+  if [ -e "$global_target" ] || [ -L "$global_target" ]; then
+    echo -e "  ${YELLOW}Skipping enable, path exists:${NC} $global_target"
     return
   fi
-  ln -s "$target" "$project_target"
+  ln -s "$target" "$global_target"
   echo -e "  ${GREEN}✓${NC} Enabled $name -> $target"
 }
 
@@ -253,5 +255,5 @@ for source in "${DEFAULT_PLUGINS[@]}"; do
   echo ""
 done
 
-echo "Installation complete. Use /toggle-plugin to enable or disable plugins per project."
+echo "Installation complete. Library plugins are linked into ~/.pi/agent/extensions and autoload in every repo."
 echo "Run pi /reload after changing enabled plugins."

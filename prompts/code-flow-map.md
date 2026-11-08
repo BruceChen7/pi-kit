@@ -147,12 +147,11 @@ For each optional node, use the same `heading` → `text` caption pair and keep 
 IO 边界/副作用用 ASCII 调用树呈现，取代平表。顶层是一个 `section` 节点（`title: "Boundary Map"`），内含一个 `code-block`，对齐 plan-mode 的 Implementation ASCII call tree 约定。根节点是入口函数或顶层模块调用，用 `├─/└─/│` 表达层级：
 
 ```text
-bootstrapDefaultManagedPlugins(cwd, plugins)
-├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）
-└─ 遍历库插件（排除全局 autoload: plugin-toggle, shared, cc-switch）
-     ├─ effective = (library − defaultDisabled − 差异) ∪ 差异enabled
-     └─ effective.has(name) ? enablePlugin()   ← 副作用: 写 symlink, extensions/plugin-toggle/project.ts:180
-          : removePluginSymlink()              ← 副作用: 删 symlink, extensions/plugin-toggle/project.ts:203
+bootstrapProjectSkills(cwd, skills)
+├─ 读 disabled markers（默认: 全部启用）
+└─ 遍历 skills
+     ├─ enabled ? symlinkSkill()      ← 副作用: 写 symlink, extensions/skill-toggle/index.ts:519
+     └─ disabled ? markDisabled()     ← 副作用: 写空 marker, extensions/skill-toggle/index.ts:540
 ```
 
 - **Side-effect/IO nodes must carry `file:line`**: `← side effect: <type>, <full-path>:<line>`,
@@ -342,7 +341,7 @@ const spec = {
           {
             type: "code-block",
             props: {
-              code: "bootstrapDefaultManagedPlugins(cwd, plugins)\n├─ 读 defaultDisabledPlugins（默认: copyx, pi-autoresearch）\n└─ plugins.filter(isDefaultBootstrapEntry)  ← 排除 plugin-toggle, shared\n     └─ bootstrapPlugins(...)\n          └─ 遍历: disabled.has(name) → skip\n               其余 → enablePlugin()  ← 副作用: 写 symlink, extensions/plugin-toggle/project.ts:142",
+              code: "bootstrapProjectSkills(cwd, skills)\n├─ 读 disabled markers（默认: 全部启用）\n└─ 遍历 skills\n     ├─ enabled ? symlinkSkill()      ← 副作用: 写 symlink, extensions/skill-toggle/index.ts:519\n     └─ disabled ? markDisabled()     ← 副作用: 写空 marker, extensions/skill-toggle/index.ts:540",
               language: "text",
             },
           },

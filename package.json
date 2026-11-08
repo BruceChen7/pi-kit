@@ -15,7 +15,6 @@
       "./extensions/tutor",
       "./extensions/multi-edit",
       "./extensions/skill-toggle",
-      "./extensions/plugin-toggle",
       "./extensions/bash-hook",
       "./extensions/env-guard",
       "./extensions/plannotator-auto",

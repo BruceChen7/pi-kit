@@ -1,6 +1,4 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { PluginTogglePicker } from "../plugin-toggle/picker.ts";
-import type { PluginEntry } from "../plugin-toggle/types.ts";
 import { SkillTogglePicker } from "../skill-toggle/index.ts";
 import {
   clearPiWebHost,
@@ -18,13 +16,6 @@ import { renderPickerLines } from "./picker-view.ts";
 
 afterEach(() => {
   clearPiWebHost();
-});
-
-const plugin = (name: string): PluginEntry => ({
-  name,
-  enabledName: name,
-  sourcePath: `/tmp/${name}`,
-  kind: "directory",
 });
 
 /**
@@ -107,39 +98,6 @@ describe("pi-web host fixture", () => {
     expectChromeSafe(lines);
     expect(lines.join("\n")).not.toContain(TUI_CURSOR_MARKER);
     expect(lines.map(stripAnsi).join("\n")).not.toContain("│");
-  });
-
-  it("keeps the plugin-toggle picker chrome-safe and still toggles", () => {
-    const toggled: string[] = [];
-    const picker = new PluginTogglePicker(
-      [plugin("alpha"), plugin("beta")],
-      new Set(["alpha"]),
-      (entry) => toggled.push(entry.name),
-      () => {},
-      () => {},
-      "borderless",
-    );
-    picker.handleInput(piWebKeys.down);
-    picker.handleInput(piWebKeys.enter);
-    expect(toggled).toEqual(["beta"]);
-    expectChromeSafe(picker.render(PI_WEB_COLUMNS));
-    expect(picker.render(PI_WEB_COLUMNS).map(stripAnsi).join("\n")).toContain(
-      "Plugin Picker",
-    );
-
-    // boxed 模式仍必须是改动前那套盒线（TUI 观感不许变）。
-    const boxedPicker = new PluginTogglePicker(
-      [plugin("alpha")],
-      new Set(["alpha"]),
-      () => {},
-      () => {},
-      () => {},
-      "boxed",
-    );
-    const boxedLines = boxedPicker.render(70);
-    const innerW = 70 - 2;
-    expect(boxedLines[2]).toBe(`\x1b[2m├${"─".repeat(innerW)}┤\x1b[0m`);
-    expect(boxedLines.at(-1)).toBe(`\x1b[2m╰${"─".repeat(innerW)}╯\x1b[0m`);
   });
 
   it("keeps the skill-toggle picker chrome-safe and filterable", () => {

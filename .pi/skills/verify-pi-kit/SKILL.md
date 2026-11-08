@@ -88,7 +88,7 @@ pgrep -fl "pi --mode rpc"
 - `disable-model-invocation: true` 会让 skill 从 system prompt 消失，只剩 `/skill:name` 点名可用。想让 agent 自己调用，就不要加这条。
 - `get_commands` 看不到工具；工具必须用 `tool` 模式。
 - 工具模式只证明注册，不证明调用。调用需要模型或外部账号，非确定性。
-- 有些插件在加载时就改状态（如 `plugin-toggle` 的 bootstrap）。收录前先看它的 `session_start`。
+- 有些插件在加载时就改状态（例如 bootstrap 类插件的 `session_start`）。收录前先看它的 `session_start`。
 - 只收只读命令。会写用户配置的命令不要进 map；helper 没有隔离 HOME。
 - 命令模式的 stderr 有 model pattern 警告，那不是失败信号。判定只看返回记录。
 - 改了扩展的命令名或 notify 文本后，用 `/skill:maintain-verification-skill` 让 map 跟上。

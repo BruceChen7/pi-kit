@@ -62,7 +62,7 @@ afterEach(() => {
 });
 
 describe("install-plugins.sh", () => {
-  it("installs local plugins into a shared library and only bootstraps plugin-toggle globally", () => {
+  it("installs local plugins into a shared library and autoloads them globally", () => {
     const home = createTempDir();
 
     runInstall(home);
@@ -77,14 +77,61 @@ describe("install-plugins.sh", () => {
       fs.lstatSync(path.join(libraryDir, "safe-delete.ts")).isSymbolicLink(),
     ).toBe(true);
     expect(
+      fs.lstatSync(path.join(globalExtensionsDir, "shared")).isSymbolicLink(),
+    ).toBe(true);
+    expect(
+      fs.lstatSync(path.join(globalExtensionsDir, "tutor")).isSymbolicLink(),
+    ).toBe(true);
+    expect(fs.realpathSync(path.join(globalExtensionsDir, "tutor"))).toBe(
+      fs.realpathSync(path.join(libraryDir, "tutor")),
+    );
+    expect(fs.existsSync(path.join(globalExtensionsDir, "plugin-toggle"))).toBe(
+      false,
+    );
+  });
+
+  it("autoloads library packages that declare pi.extensions in package.json", () => {
+    const home = createTempDir();
+    const fixture = createTempDir();
+    const extensionsDir = path.join(fixture, "extensions");
+    const packageDir = path.join(extensionsDir, "sample-package");
+    fs.mkdirSync(path.join(packageDir, "src"), { recursive: true });
+    fs.writeFileSync(
+      path.join(packageDir, "src", "index.ts"),
+      "export default function () {}\n",
+    );
+    fs.writeFileSync(
+      path.join(packageDir, "package.json"),
+      JSON.stringify({ pi: { extensions: ["./src/index.ts"] } }),
+    );
+
+    runInstall(home, [], { PI_KIT_EXTENSIONS_DIR: extensionsDir });
+
+    const globalExtensionsDir = path.join(home, ".pi", "agent", "extensions");
+    const libraryDir = path.join(home, ".agents", "pi-plugins");
+    expect(
       fs
-        .lstatSync(path.join(globalExtensionsDir, "plugin-toggle"))
+        .lstatSync(path.join(globalExtensionsDir, "sample-package"))
         .isSymbolicLink(),
     ).toBe(true);
     expect(
-      fs.lstatSync(path.join(globalExtensionsDir, "shared")).isSymbolicLink(),
-    ).toBe(true);
-    expect(fs.existsSync(path.join(globalExtensionsDir, "tutor"))).toBe(false);
+      fs.realpathSync(path.join(globalExtensionsDir, "sample-package")),
+    ).toBe(fs.realpathSync(path.join(libraryDir, "sample-package")));
+  });
+
+  it("removes the legacy plugin-toggle bootstrap symlink", () => {
+    const home = createTempDir();
+    const globalExtensionsDir = path.join(home, ".pi", "agent", "extensions");
+    const legacyLink = path.join(globalExtensionsDir, "plugin-toggle");
+    fs.mkdirSync(globalExtensionsDir, { recursive: true });
+    fs.symlinkSync(
+      path.join(repoRoot, "extensions", "plugin-toggle"),
+      legacyLink,
+    );
+
+    runInstall(home);
+
+    expect(fs.readdirSync(globalExtensionsDir)).not.toContain("plugin-toggle");
   });
 
   it("installs review as a directory symlink so sibling modules stay reachable", () => {
@@ -240,29 +287,38 @@ describe("install-plugins.sh", () => {
     expect(fs.realpathSync(foreignLink)).toBe(fs.realpathSync(foreignSource));
   });
 
-  it("migrates old global symlink plugins into the shared library by default", () => {
+  it("does not autoload broken library entries", () => {
     const home = createTempDir();
-    const oldSource = createTempDir();
-    const oldPlugin = createPluginDir(oldSource, "old-plugin");
+    const libraryDir = path.join(home, ".agents", "pi-plugins");
+    fs.mkdirSync(libraryDir, { recursive: true });
+    fs.symlinkSync(
+      path.join(home, "missing-plugin"),
+      path.join(libraryDir, "stale-plugin"),
+    );
+
+    runInstall(home);
 
     const globalExtensionsDir = path.join(home, ".pi", "agent", "extensions");
-    fs.mkdirSync(globalExtensionsDir, { recursive: true });
-    fs.symlinkSync(oldPlugin, path.join(globalExtensionsDir, "old-plugin"));
+    expect(fs.readdirSync(globalExtensionsDir)).not.toContain("stale-plugin");
+  });
 
-    const output = runInstall(home);
+  it("keeps default-disabled library plugins out of the global autoload", () => {
+    const home = createTempDir();
+    const pluginSource = createTempDir();
+    const pluginDir = createPluginDir(pluginSource, "pi-autoresearch");
+    const libraryDir = path.join(home, ".agents", "pi-plugins");
+    fs.mkdirSync(libraryDir, { recursive: true });
+    fs.symlinkSync(pluginDir, path.join(libraryDir, "pi-autoresearch"));
 
-    const migratedPath = path.join(home, ".agents", "pi-plugins", "old-plugin");
-    expect(fs.lstatSync(migratedPath).isSymbolicLink()).toBe(true);
-    expect(fs.realpathSync(migratedPath)).toBe(fs.realpathSync(oldPlugin));
-    expect(fs.existsSync(path.join(globalExtensionsDir, "old-plugin"))).toBe(
-      false,
-    );
-    expect(output).toContain(
-      "Migrated old global autoload symlink: old-plugin",
+    runInstall(home);
+
+    const globalExtensionsDir = path.join(home, ".pi", "agent", "extensions");
+    expect(fs.readdirSync(globalExtensionsDir)).not.toContain(
+      "pi-autoresearch",
     );
   });
 
-  it("leaves conflicting global symlink plugins untouched for manual review", () => {
+  it("overwrites an existing global symlink with the library plugin", () => {
     const home = createTempDir();
     const oldSource = createTempDir();
     const oldPlugin = createPluginDir(oldSource, "tutor");
@@ -271,13 +327,11 @@ describe("install-plugins.sh", () => {
     fs.mkdirSync(globalExtensionsDir, { recursive: true });
     fs.symlinkSync(oldPlugin, path.join(globalExtensionsDir, "tutor"));
 
-    const output = runInstall(home);
+    runInstall(home);
 
+    const libraryDir = path.join(home, ".agents", "pi-plugins");
     expect(fs.realpathSync(path.join(globalExtensionsDir, "tutor"))).toBe(
-      fs.realpathSync(oldPlugin),
-    );
-    expect(output).toContain(
-      "Global plugin name conflict needs manual review: tutor",
+      fs.realpathSync(path.join(libraryDir, "tutor")),
     );
   });
 
@@ -286,12 +340,9 @@ describe("install-plugins.sh", () => {
     const globalExtensionsDir = path.join(home, ".pi", "agent", "extensions");
     const realPlugin = createPluginDir(globalExtensionsDir, "real-plugin");
 
-    const output = runInstall(home);
+    runInstall(home);
 
     expect(fs.existsSync(realPlugin)).toBe(true);
-    expect(output).toContain(
-      "Real global plugin needs manual review: real-plugin",
-    );
   });
 
   it("still supports explicitly installing all plugins as global autoload extensions", () => {

@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const KIT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXT_DIR = path.join(KIT, ".pi/extensions");
-const DUPES = ["auto-trust-work", "cc-switch", "plugin-toggle"];
+const DUPES = ["auto-trust-work", "cc-switch"];
 const HOLD = path.join(KIT, ".pi/.startup-bench-hold");
 
 function runPi(args = ["--mode", "rpc"], env = {}) {

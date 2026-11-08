@@ -319,7 +319,7 @@ describe("install-third-party-plugins.sh", () => {
     }
   });
 
-  it("can enable default third-party plugins by symlinking them into the project", () => {
+  it("can enable default third-party plugins by symlinking them into the global extensions", () => {
     const home = createTempDir();
     const project = createTempDir();
     const binDir = path.join(createTempDir(), "bin");
@@ -335,7 +335,13 @@ describe("install-third-party-plugins.sh", () => {
       encoding: "utf8",
     });
 
-    const target = path.join(project, ".pi", "extensions", "pi-context-view");
+    const target = path.join(
+      home,
+      ".pi",
+      "agent",
+      "extensions",
+      "pi-context-view",
+    );
     expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(target)).toBe(
       fs.realpathSync(

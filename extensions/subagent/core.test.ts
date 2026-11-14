@@ -10,6 +10,7 @@ import {
   collectWaitResult,
   createState,
   DEFAULT_MAX_CONCURRENT,
+  deliveryFor,
   detachToBackground,
   eventToTranscriptLine,
   findRun,
@@ -21,6 +22,7 @@ import {
   renderTranscript,
   renderWaitResult,
   renderWidgetLines,
+  type SubagentRun,
   type SubagentState,
   salvageFindings,
   selectWaitTargets,
@@ -936,5 +938,83 @@ describe("renderWaitResult", () => {
     expect(text).toContain("running 12m00s");
     expect(text).toContain("quiet 38s");
     expect(text).toContain("keep going in the background");
+  });
+});
+
+describe("intermediate answers", () => {
+  const withIntermediate = () => {
+    let state = createState();
+    state = admit(state, {
+      runId: "run-1",
+      agent: "explore",
+      task: "count dirs",
+      background: true,
+    }).state;
+    return settle(state, {
+      runId: "run-1",
+      status: "intermediate",
+      resultText: "我先去查一下，稍后汇总",
+    });
+  };
+
+  it("is a terminal state", () => {
+    const run = findRun(withIntermediate(), "run-1");
+
+    expect(run?.status).toBe("intermediate");
+    expect(isTerminal("intermediate")).toBe(true);
+  });
+
+  it("does not hand the half answer back as a result", () => {
+    const result = collectWaitResult(withIntermediate(), ["run-1"], false);
+
+    expect(result.runs[0]).toMatchObject({ status: "intermediate", text: "" });
+  });
+
+  it("says why there is no result and what to do", () => {
+    const text = renderWaitResult(
+      collectWaitResult(withIntermediate(), ["run-1"], false),
+    );
+
+    expect(text).toContain("intermediate answer");
+    expect(text).toContain("run-1");
+    expect(text).not.toContain("我先去查一下");
+  });
+});
+
+describe("deliveryFor", () => {
+  const run = (over: Partial<SubagentRun> = {}): SubagentRun => ({
+    runId: "run-1",
+    agent: "explore",
+    task: "count dirs",
+    status: "done",
+    startedAt: 10,
+    step: null,
+    lastEventAt: 10,
+    transcript: [],
+    background: true,
+    ...over,
+  });
+
+  it("delivers a settled result", () => {
+    expect(deliveryFor(run({ resultText: "3 directories" }))).toEqual({
+      deliver: true,
+      body: "3 directories",
+    });
+  });
+
+  it("delivers the error when the run failed", () => {
+    expect(deliveryFor(run({ status: "failed", error: "boom" }))).toEqual({
+      deliver: true,
+      body: "boom",
+    });
+  });
+
+  it("does not deliver an intermediate answer", () => {
+    const delivery = deliveryFor(
+      run({ status: "intermediate", resultText: "我先去查一下" }),
+    );
+
+    expect(delivery.deliver).toBe(false);
+    expect(JSON.stringify(delivery)).not.toContain("我先去查一下");
   });
 });

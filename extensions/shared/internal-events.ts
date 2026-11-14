@@ -100,3 +100,9 @@ export type PiKitPlanModeStatusOwnerEvent = {
   type: "plan-mode.status-owner";
   active: boolean;
 };
+
+/**
+ * subagent 的运行状态快照。每次都是全量（完整替换上一份），只含元数据：
+ * id / 名字 / 状态 / 是否关闭。索取当前快照用 `pi-kit:subagent:state:request`。
+ */
+export const SUBAGENT_STATE_CHANNEL = "pi-kit:subagent:state";

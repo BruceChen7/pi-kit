@@ -764,10 +764,13 @@ describe("plan-mode extension: 外部状态 badge", () => {
     });
   };
 
+  /** status-owner 事件现在带信封（protocol/instanceId/sequence），断言看 payload。 */
   const ownerEmits = (harness: ReturnType<typeof buildHarness>) =>
     harness.api.events.emit.mock.calls
       .filter(([channel]) => channel === PLAN_MODE_STATUS_OWNER_CHANNEL)
-      .map(([, payload]) => payload);
+      .map(
+        ([, event]) => (event as { payload: Record<string, unknown> }).payload,
+      );
 
   const modeWidgetText = (ctx: ReturnType<typeof buildCtx>): string =>
     (lastModeWidgetCall(ctx)[1] as string[]).join("\n");

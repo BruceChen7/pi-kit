@@ -19,6 +19,10 @@ skills/*/reports/
 **/.pi/
 !/.pi/
 /.pi/*
+# ADR 是长期决策记录，跟代码一起走版本；.pi 的其余内容仍留在本地。
+!/.pi/contexts/
+/.pi/contexts/*
+!/.pi/contexts/adr/
 !/.pi/skills/
 /.pi/skills/*
 !/.pi/skills/verify-pi-kit/

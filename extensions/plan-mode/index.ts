@@ -2,6 +2,11 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { readEvent } from "../shared/event-protocol.ts";
+import {
+  installGuardPipeline,
+  registerGuard,
+} from "../shared/guard-pipeline.ts";
 import {
   PLAN_MODE_BADGE_CHANNEL,
   PLANNOTATOR_REVIEW_VERDICT_CHANNEL,
@@ -14,6 +19,7 @@ import {
 } from "./constants.ts";
 import { PlanModeController } from "./controller.ts";
 import { parsePlanModeBadgeEvent } from "./controller-decisions.ts";
+import { createPlanModeGuardStage } from "./guard-stage.ts";
 import { isPlanMode, isRecord } from "./state.ts";
 import {
   buildTodoReminder,
@@ -168,16 +174,24 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   // 别的扩展把自己的一段状态挂到 plan-mode 的可见面上（目前是 subagent 的运行计数）。
-  pi.events.on(PLAN_MODE_BADGE_CHANNEL, (payload) => {
-    if (!isRecord(payload) || !isRecord(payload.ctx)) {
+  pi.events.on(PLAN_MODE_BADGE_CHANNEL, (raw) => {
+    // 新格式是带 protocol/instanceId/sequence 的信封，旧格式是裸负载：
+    // 两者都读，但只有信封参与序号去重（ADR-0002 D5）。
+    const event = readEvent<Record<string, unknown>>(raw);
+    if (event === undefined || !isRecord(event.payload.ctx)) {
       return;
     }
+    const payload = event.payload;
     const badge = parsePlanModeBadgeEvent(payload);
     const ctx = payload.ctx as unknown as ExtensionContext;
     if (!badge || !controller.acceptsBadgeFrom(badge.cwd)) {
       return;
     }
-    controller.setBadge(badge.key, badge.text, ctx);
+    const accepted = controller.acceptBadgeEvent(raw);
+    if (accepted === undefined) {
+      return;
+    }
+    controller.setBadge(accepted.key, accepted.text, ctx);
   });
 
   pi.on("input", async (event) => {
@@ -192,9 +206,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     };
   });
 
-  pi.on("tool_call", async (event, ctx) =>
-    controller.maybeBlockTool(event, ctx),
-  );
+  // 计划阶段的写操作拦截走共享流水线：它和别的护栏一起按显式顺序判定，
+  // 而不是抢 tool_call 的注册先后。
+  registerGuard(createPlanModeGuardStage(controller));
+  installGuardPipeline(pi);
 
   pi.on("tool_result", async (event, ctx) => {
     const result = controller.handleToolResult(event, ctx);

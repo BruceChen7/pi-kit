@@ -8,9 +8,23 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentProfile } from "./agents.ts";
 
-export type RunStatus = "queued" | "running" | "done" | "failed" | "stopped";
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "stopped"
+  /**
+   * 它还有结果没等到就先给了答案（"我去查一下"）。
+   *
+   * 这里的"终态"只表示**这一轮结束了**（调度上不再等它），不表示结果已交付：
+   * `deliveryFor` 不会投递它的正文。账本里的"终态"另有一个意思 —— 结果已交付，
+   * 所以 `ledger.ts` 的 TERMINAL_EVENTS 不含 intermediate，下次会话会把它报成
+   * 没结算的 run（ADR-0002 D1/D4）。
+   */
+  | "intermediate";
 
-export type TerminalStatus = "done" | "failed" | "stopped";
+export type TerminalStatus = "done" | "failed" | "stopped" | "intermediate";
 
 export type TranscriptRole = "user" | "assistant" | "tool";
 
@@ -61,7 +75,7 @@ export type AdmitRequest = {
 
 export type SettleInput = {
   runId: string;
-  status: "done" | "failed";
+  status: "done" | "failed" | "intermediate";
   resultText?: string;
   error?: string;
 };
@@ -111,7 +125,12 @@ export const MAX_TRANSCRIPT_LINES = 40;
  */
 export const FOREGROUND_DETACH_MS = 10 * 60_000;
 
-const TERMINAL: readonly RunStatus[] = ["done", "failed", "stopped"];
+const TERMINAL: readonly RunStatus[] = [
+  "done",
+  "failed",
+  "stopped",
+  "intermediate",
+];
 
 export const isTerminal = (status: RunStatus): status is TerminalStatus =>
   TERMINAL.includes(status);
@@ -167,12 +186,37 @@ export function collectWaitResult(
       runId: run.runId,
       agent: run.agent,
       status: run.status,
-      text: run.resultText ?? run.error ?? "",
+      // intermediate 的正文是"我还没做完"，不能当结果交给调用方。
+      text:
+        run.status === "intermediate"
+          ? ""
+          : (run.resultText ?? run.error ?? ""),
       progress: progressLine(run, now),
     };
   });
   return { runs, timedOut };
 }
+
+/**
+ * 一次结算该不该投递给父会话（ADR-0002 D1）。
+ *
+ * `intermediate` 是终态 —— 这一轮结束了 —— 但那句"我还在推进"不是结果，
+ * 所以不投递。后台消息、前台工具结果、`status` 展示都从这里取口径，避免
+ * "wait 拦住了、别的路径照旧交出去"。
+ */
+export type Delivery =
+  | { deliver: true; body: string }
+  | { deliver: false; reason: string };
+
+export const deliveryFor = (run: SubagentRun): Delivery => {
+  if (run.status === "intermediate") {
+    return {
+      deliver: false,
+      reason: "intermediate answer; its work did not settle",
+    };
+  }
+  return { deliver: true, body: run.resultText ?? run.error ?? "(no output)" };
+};
 
 /** 超时必须写清楚没等完，否则调用方会把部分结果读成全部完成。 */
 export function renderWaitResult(result: WaitResult): string {
@@ -184,7 +228,22 @@ export function renderWaitResult(result: WaitResult): string {
     const head = run.progress ?? `${run.runId} ${run.agent} ${run.status}`;
     return run.text ? `${head}\n${run.text}` : head;
   });
-  if (!result.timedOut) return lines.join("\n\n");
+  const intermediate = result.runs.filter(
+    (run) => run.status === "intermediate",
+  );
+  const intermediateNote =
+    intermediate.length === 0
+      ? []
+      : [
+          "",
+          `${intermediate.length} run(s) stopped with an intermediate answer; ` +
+            "that text is not a result. Re-run or steer the agent if you need one: " +
+            intermediate.map((run) => run.runId).join(", "),
+        ];
+
+  if (!result.timedOut) {
+    return [...lines, ...intermediateNote].join("\n\n");
+  }
 
   const settled = result.runs.filter((run) => isTerminal(run.status)).length;
   const running = result.runs.length - settled;
@@ -192,6 +251,7 @@ export function renderWaitResult(result: WaitResult): string {
     `timed out with ${settled}/${result.runs.length} settled; ${running} still running`,
     "",
     ...lines,
+    ...intermediateNote,
     "",
     "Still-running agents keep going in the background. Do other work or end the turn; " +
       "wait again only when you have nothing else to do, and use `status`/`stop` on a run that shows `quiet`.",
@@ -410,6 +470,8 @@ const STATUS_GLYPH: Record<RunStatus, string> = {
   done: "✓",
   failed: "✗",
   stopped: "■",
+  // 半成品：有答案但不是结果
+  intermediate: "…",
 };
 
 /** 静默多久之后开始在进度行里标注 `quiet`。 */

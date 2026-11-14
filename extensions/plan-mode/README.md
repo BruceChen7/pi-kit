@@ -164,7 +164,7 @@ a second footer segment. The protocol is two channels in
 `shared/internal-events.ts`:
 - the producer publishes `{type: "plan-mode.badge", cwd, key, text, ctx}`; `text:
   null` retracts it. plan-mode appends the text to the mode widget headline and
-  to the pi-web status row (separated by ` · `), and ignores a badge whose `cwd`
+  to the pi-web status row (separated by `·`), and ignores a badge whose `cwd`
   is not this session's.
 - plan-mode publishes `{type: "plan-mode.status-owner", active}` whenever its
   claim on a visible surface flips. A producer that writes its own `setStatus`

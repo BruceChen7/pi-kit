@@ -1,6 +1,6 @@
 # ADR-0002: 子 agent 的结算、持久化与跨扩展事件协议
 
-**Status:** accepted — T0 已实现（2026-11-14），T1 待做
+**Status:** accepted — T0、T1-D4 已实现（2026-11-14），T1 其余待做
 **Date:** 2026-11-14
 **Scope:** `extensions/subagent`、`extensions/shared/internal-events.ts`
 **参考:** [mavam/pi-agents](https://github.com/mavam/pi-agents) — `docs/design.md`（Obligations / Delivery / Recovery）、`docs/hooks.md`、`docs/architecture.md#state-snapshots`、`src/agents/obligations.ts`、`src/agents/receipts.ts`
@@ -80,4 +80,7 @@
 | D2 枚举校验         | 主工具 `action` 改用 `StringEnum`，`parseAction` 只做第二道运行时校验                                                  | 同上                                             |
 | D3 诊断移出工具面   | `doctor` 从工具参数移除，改走 `/subagent doctor`；`doctor(ctx)` 显式接上下文而不是共享 `lastContext`                   | 同上                                             |
 
-未做：T1 的四项（run 账本 `appendEntry`、恢复语义、跨扩展事件协议 `protocol/instanceId/sequence`、视图从记录派生）。
+| D4 run 账本 | `extensions/subagent/ledger.ts`：`toLedgerEntry` / `ledgerEntriesOf` / `unsettledRuns` / `renderUnsettled`；接线在 `index.ts` 的 `recordRun`（start / settled / intermediate / failed / stopped，存任务摘要与结果字符数，不存正文） | `ledger.test.ts`（15 条）、`index.test.ts` 的 `run ledger`（4 条） |
+| D4 恢复语义 | `session_start` 读记录，把上次没结算的 run 报成一条 warning：会话内容已没了，只能重跑或放弃 | 同上 |
+
+未做：T1 剩余三项（跨扩展事件协议 `protocol/instanceId/sequence`、视图从已提交记录派生、receipt 只装不变量）。

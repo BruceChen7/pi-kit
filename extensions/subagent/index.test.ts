@@ -64,6 +64,7 @@ const makeSession = (
 };
 
 type FakePi = {
+  appendEntry: ReturnType<typeof vi.fn>;
   registerTool: ReturnType<typeof vi.fn>;
   registerCommand: ReturnType<typeof vi.fn>;
   on: ReturnType<typeof vi.fn>;
@@ -76,6 +77,7 @@ type FakePi = {
 const makePi = (): { pi: FakePi; tools: any[] } => {
   const tools: any[] = [];
   const pi: FakePi = {
+    appendEntry: vi.fn(),
     registerTool: vi.fn((tool) => tools.push(tool)),
     registerCommand: vi.fn(),
     on: vi.fn(),
@@ -1122,5 +1124,121 @@ describe("package wiring", () => {
     const pkg = JSON.parse(raw) as { pi: { extensions: string[] } };
 
     expect(pkg.pi.extensions).toContain("./extensions/subagent");
+  });
+});
+
+describe("run ledger", () => {
+  const ledgerCalls = (pi: FakePi) =>
+    pi.appendEntry.mock.calls.filter(
+      ([customType]) => customType === "pi-kit-subagent-run",
+    );
+
+  it("records start and settled with the result size, not the text", async () => {
+    vi.mocked(createAgentSession).mockResolvedValue({
+      session: makeSession("3 directories"),
+    } as never);
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    await call(
+      tools[0],
+      { action: "run", agent: "explore", task: "count dirs" },
+      makeCtx(),
+    );
+
+    await vi.waitFor(() => expect(ledgerCalls(pi)).toHaveLength(2));
+    const events = ledgerCalls(pi).map(([, data]) => data as any);
+
+    expect(events.map((entry) => entry.event)).toEqual(["start", "settled"]);
+    expect(events[1].resultChars).toBe("3 directories".length);
+    expect(JSON.stringify(events)).not.toContain("3 directories");
+  });
+
+  it("records a stop", async () => {
+    const session = makeSession("never", { hang: true });
+    vi.mocked(createAgentSession).mockResolvedValue({ session } as never);
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    const started = await call(
+      tools[0],
+      { action: "run", agent: "explore", task: "count dirs" },
+      makeCtx(),
+    );
+    await call(
+      tools[0],
+      { action: "stop", runId: started.structuredContent.runId },
+      makeCtx(),
+    );
+
+    const events = ledgerCalls(pi).map(([, data]) => (data as any).event);
+    expect(events).toContain("stopped");
+  });
+
+  it("reports unsettled runs from the previous session on session_start", () => {
+    const { pi } = makePi();
+    registerSubagent(pi as never);
+    const notify = vi.fn();
+    const onSessionStart = pi.on.mock.calls.find(
+      ([event]) => event === "session_start",
+    )?.[1];
+
+    onSessionStart?.(
+      {},
+      makeCtx({
+        ui: { notify, theme: testTheme, setWidget: vi.fn() },
+        sessionManager: {
+          getEntries: () => [
+            {
+              type: "custom",
+              customType: "pi-kit-subagent-run",
+              data: {
+                runId: "run-7",
+                event: "start",
+                agent: "explore",
+                task: "count dirs",
+                at: 10,
+              },
+            },
+          ],
+        },
+      }),
+    );
+
+    const text = notify.mock.calls[0]?.[0] as string;
+    expect(text).toContain("run-7");
+    expect(text).toContain("Nothing was resumed");
+  });
+
+  it("stays quiet when the previous session settled everything", () => {
+    const { pi } = makePi();
+    registerSubagent(pi as never);
+    const notify = vi.fn();
+    const onSessionStart = pi.on.mock.calls.find(
+      ([event]) => event === "session_start",
+    )?.[1];
+
+    onSessionStart?.(
+      {},
+      makeCtx({
+        ui: { notify, theme: testTheme, setWidget: vi.fn() },
+        sessionManager: {
+          getEntries: () => [
+            {
+              type: "custom",
+              customType: "pi-kit-subagent-run",
+              data: { runId: "run-7", event: "start", at: 10 },
+            },
+            {
+              type: "custom",
+              customType: "pi-kit-subagent-run",
+              data: { runId: "run-7", event: "settled", at: 20 },
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(notify).not.toHaveBeenCalled();
   });
 });

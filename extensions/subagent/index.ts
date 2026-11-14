@@ -70,6 +70,14 @@ import {
   type Tone,
 } from "./core.ts";
 import {
+  ledgerEntriesOf,
+  RUN_LEDGER_ENTRY_TYPE,
+  type RunLedgerEvent,
+  renderUnsettled,
+  toLedgerEntry,
+  unsettledRuns,
+} from "./ledger.ts";
+import {
   buildRunEvent,
   handleRpc,
   parseRpcRequest,
@@ -669,6 +677,74 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     }
   };
 
+  /**
+   * 恢复只到"重跑或放弃"：`SessionManager.inMemory` 意味着子会话内容随进程没了，
+   * 假装续跑只会骗人。所以这里只把上次没结算的 run 报出来（ADR-0002 D4）。
+   */
+  const reportUnsettledRuns = (ctx: {
+    hasUI?: boolean;
+    ui?: {
+      notify: (text: string, level?: "info" | "warning" | "error") => void;
+    };
+    sessionManager?: unknown;
+  }): void => {
+    let entries: readonly unknown[] = [];
+    try {
+      const manager = ctx.sessionManager as
+        | { getBranch?: () => unknown[]; getEntries?: () => unknown[] }
+        | undefined;
+      entries =
+        typeof manager?.getBranch === "function"
+          ? manager.getBranch()
+          : (manager?.getEntries?.() ?? []);
+    } catch (error) {
+      log.warn("run ledger unreadable", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    const open = unsettledRuns(ledgerEntriesOf(entries));
+    if (open.length === 0) return;
+
+    const text = renderUnsettled(open);
+    log.warn("unsettled runs from a previous session", {
+      runIds: open.map((run) => run.runId),
+    });
+    if (ctx.hasUI) ctx.ui?.notify(text, "warning");
+  };
+
+  /**
+   * 往父会话记录里写一条 run 账本。崩了也不该影响跑 agent，所以写失败只记日志。
+   */
+  const recordRun = (
+    runId: string,
+    event: RunLedgerEvent,
+    extra: { resultChars?: number } = {},
+  ): void => {
+    const run = findRun(state, runId);
+    if (!run) return;
+    try {
+      pi.appendEntry(
+        RUN_LEDGER_ENTRY_TYPE,
+        toLedgerEntry({
+          runId,
+          event,
+          agent: run.agent,
+          task: run.task,
+          at: Date.now(),
+          ...extra,
+        }),
+      );
+    } catch (error) {
+      log.warn("run ledger append failed", {
+        runId,
+        event,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
   const launch = async (runId: string): Promise<void> => {
     const run = findRun(state, runId);
     if (!run) return;
@@ -687,6 +763,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
         maxConcurrent,
         Date.now(),
       );
+      recordRun(runId, "failed");
       refreshWidget();
       deliver(runId);
       return;
@@ -730,6 +807,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
         maxConcurrent,
         Date.now(),
       );
+      recordRun(runId, "failed");
       refreshWidget();
       deliver(runId);
       return;
@@ -767,6 +845,11 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
         maxConcurrent,
         Date.now(),
       );
+      recordRun(
+        runId,
+        settlement.status === "intermediate" ? "intermediate" : "settled",
+        { resultChars: settlement.text.length },
+      );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       log.error("child failed", { runId, agent: profile.name, reason });
@@ -776,6 +859,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
         maxConcurrent,
         Date.now(),
       );
+      recordRun(runId, "failed");
     } finally {
       sessions.delete(runId);
       disposeChild(session);
@@ -832,6 +916,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       Date.now(),
     );
     state = admitted.state;
+    recordRun(runId, "start");
     input.onRunId?.(runId);
     log.debug("admit", {
       runId,
@@ -922,6 +1007,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       : "";
 
     if (session) void session.abort().catch(() => undefined);
+    recordRun(runId, "stopped");
     state = stop(state, runId, maxConcurrent, Date.now(), findings);
     refreshWidget();
     if (publishSettled(runId) && options.notify !== false) sendResult(runId);
@@ -1251,7 +1337,9 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     },
   });
 
-  pi.on("session_start", () => {
+  pi.on("session_start", (_event, ctx) => {
+    // 上一个会话里没结算的 run：子会话内容已经没了，只能在这里说出来让人决定。
+    reportUnsettledRuns(ctx);
     state = createState();
     stopTicker();
     liveUpdates.clear();

@@ -104,11 +104,7 @@ import {
   disposeChild,
   steerChild,
 } from "./session.ts";
-import {
-  deriveSettlement,
-  type SettlementMessage,
-  textOfAssistantContent,
-} from "./settlement.ts";
+import { deriveSettlement, settlementMessagesFrom } from "./settlement.ts";
 import { sameSnapshot, snapshotOf } from "./state-snapshot.ts";
 import { registerAgentsCommand } from "./ui.ts";
 
@@ -220,28 +216,6 @@ async function readAgentDir(
     }
   }
   return sources;
-}
-
-/** 交给结算判据的 transcript：只留判据要看的字段（纯数据，不带会话）。 */
-function settlementMessages(session: AgentSession): SettlementMessage[] {
-  const messages: SettlementMessage[] = [];
-  for (const message of session.messages) {
-    if (message.role === "assistant") {
-      messages.push({
-        role: "assistant",
-        text: textOfAssistantContent(message.content),
-      });
-      continue;
-    }
-    if (message.role === "user") {
-      messages.push({ role: "user", text: "" });
-      continue;
-    }
-    if (message.role === "toolResult") {
-      messages.push({ role: "tool", text: "" });
-    }
-  }
-  return messages;
 }
 
 export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
@@ -880,7 +854,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     try {
       await session.prompt(run.task);
       const settlement = deriveSettlement({
-        messages: settlementMessages(session),
+        messages: settlementMessagesFrom(session.messages),
         // 今天子会话拿不到 subagent 工具，欠项恒为空；规则先到，见 ADR-0002 D1。
         obligations: [],
       });

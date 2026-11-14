@@ -18,6 +18,8 @@ export const EVENT_PROTOCOL = 1;
 
 export type EventEnvelope<T> = {
   protocol: number;
+  /** 知道就带上：同一宿主上多个会话并存时，消费方据此丢掉别的会话的事件。 */
+  sessionId?: string;
   instanceId: string;
   sequence: number;
   payload: T;
@@ -27,8 +29,10 @@ export const wrapEvent = <T>(
   instanceId: string,
   sequence: number,
   payload: T,
+  sessionId?: string,
 ): EventEnvelope<T> => ({
   protocol: EVENT_PROTOCOL,
+  ...(sessionId === undefined ? {} : { sessionId }),
   instanceId,
   sequence,
   payload,
@@ -38,6 +42,7 @@ export type ReadEvent<T> = {
   payload: T;
   /** 没有信封的旧负载：照常处理，但不参与序号去重。 */
   legacy: boolean;
+  sessionId?: string;
   instanceId?: string;
   sequence?: number;
 };
@@ -66,6 +71,9 @@ export const readEvent = <T>(value: unknown): ReadEvent<T> | undefined => {
   return {
     payload: value.payload as T,
     legacy: false,
+    ...(typeof value.sessionId === "string"
+      ? { sessionId: value.sessionId }
+      : {}),
     instanceId: value.instanceId,
     sequence: value.sequence,
   };
@@ -113,13 +121,16 @@ export type EventPublisher = {
   next: <T>(payload: T) => EventEnvelope<T>;
 };
 
-export const createPublisher = (instanceId: string): EventPublisher => {
+export const createPublisher = (
+  instanceId: string,
+  sessionId?: string,
+): EventPublisher => {
   let sequence = 0;
   return {
     instanceId,
     next: <T>(payload: T): EventEnvelope<T> => {
       sequence += 1;
-      return wrapEvent(instanceId, sequence, payload);
+      return wrapEvent(instanceId, sequence, payload, sessionId);
     },
   };
 };

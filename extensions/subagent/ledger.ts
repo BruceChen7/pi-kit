@@ -37,6 +37,12 @@ export type UnsettledRun = {
   lastIntermediateAt?: number;
 };
 
+/**
+ * 账本意义上的"这条 run 不用再管了"：结果已交付、失败或被人停掉。
+ *
+ * `intermediate` 故意**不**在这里：那一轮结束了，但它欠的结果没到，
+ * 所以下次会话要把它报成没结算的 run（见 core.ts 里 `intermediate` 的注释）。
+ */
 const TERMINAL_EVENTS: ReadonlySet<RunLedgerEvent> = new Set([
   "settled",
   "failed",

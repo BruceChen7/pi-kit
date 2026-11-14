@@ -77,3 +77,35 @@ export const textOfAssistantContent = (content: unknown): string => {
   });
   return texts.join("\n").trim();
 };
+
+/** 判据认识的输入形状：pi 的消息只需要 role 与 content。 */
+export type MessageLike = { role: string; content?: unknown };
+
+/**
+ * 把子会话的消息映射成判据的输入。
+ *
+ * 只保留 role 与文本：`intermediate` 的判据今天只看"有没有答案 + 欠项是否结清"，
+ * 不需要把工具调用展开；将来要判"无工具调用"时在这里加字段，而不是在 Shell 里。
+ */
+export const settlementMessagesFrom = (
+  messages: readonly MessageLike[],
+): SettlementMessage[] => {
+  const out: SettlementMessage[] = [];
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      out.push({
+        role: "assistant",
+        text: textOfAssistantContent(message.content),
+      });
+      continue;
+    }
+    if (message.role === "user") {
+      out.push({ role: "user", text: "" });
+      continue;
+    }
+    if (message.role === "toolResult") {
+      out.push({ role: "tool", text: "" });
+    }
+  }
+  return out;
+};

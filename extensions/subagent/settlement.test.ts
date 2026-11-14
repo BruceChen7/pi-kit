@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   deriveSettlement,
   type SettlementMessage,
+  settlementMessagesFrom,
   textOfAssistantContent,
 } from "./settlement.ts";
 
@@ -87,5 +88,36 @@ describe("textOfAssistantContent", () => {
   it("returns an empty string for anything unexpected", () => {
     expect(textOfAssistantContent(undefined)).toBe("");
     expect(textOfAssistantContent("plain")).toBe("");
+  });
+});
+
+describe("settlementMessagesFrom", () => {
+  it("maps roles and keeps only assistant text", () => {
+    const messages = settlementMessagesFrom([
+      { role: "user", content: [{ type: "text", text: "count dirs" }] },
+      { role: "toolResult", content: [{ type: "text", text: "read a.ts" }] },
+      { role: "assistant", content: [{ type: "text", text: "3 directories" }] },
+    ]);
+
+    expect(messages).toEqual([
+      { role: "user", text: "" },
+      { role: "tool", text: "" },
+      { role: "assistant", text: "3 directories" },
+    ]);
+  });
+
+  it("drops roles the判据 does not know", () => {
+    expect(settlementMessagesFrom([{ role: "system" }])).toEqual([]);
+  });
+
+  it("feeds deriveSettlement end to end", () => {
+    const settlement = deriveSettlement({
+      messages: settlementMessagesFrom([
+        { role: "user" },
+        { role: "assistant", content: [{ type: "text", text: "done" }] },
+      ]),
+    });
+
+    expect(settlement).toEqual({ status: "settled", text: "done" });
   });
 });

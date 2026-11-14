@@ -41,7 +41,7 @@
 ### D5（T1）跨扩展事件协议
 
 `shared/internal-events.ts` 从"字符串 channel + 任意负载"升级为一套带协议号的通知：
-- 载荷形状：`{ protocol: 1, sessionId, instanceId, sequence, type }`。`instanceId` 标识一次扩展生命周期（reload / 会话替换后变化），`sequence` 只在同一 `instanceId` 内递增，**跨 instanceId 不可比较**。
+- 载荷形状：`{ protocol: 1, sessionId?, instanceId, sequence, payload }`。`sessionId` 在发布方知道时带上（同一宿主上多会话并存时据此丢弃别人的事件）。`instanceId` 标识一次扩展生命周期（reload / 会话替换后变化），`sequence` 只在同一 `instanceId` 内递增，**跨 instanceId 不可比较**。
 - 快照语义：每次快照**完整替换**上一份，不做增量补丁；消费者可发 `…:state:request` 主动索取当前快照，解决加载顺序与中途 attach。
 - 隐私边界：载荷不含 prompt、任务正文、工具参数与结果，只含 id / name / state / closed 这类元数据。
 - `stopped` 事件只表示"本进程不再持有 live 状态"，**不表示 durable work 完成**。
@@ -50,7 +50,7 @@
 ### D6（T1）Core / Shell 与"从记录派生"
 
 - 视图与真相同源：run / agent 的展示状态、用量、活动行全部从"已提交的记录"派生（纯函数），内存里的可变 state 只做缓存。
-- 工具结果里给渲染器的部分（receipt）只装**永远为真**的东西：这次调用启动了什么结构、看那一刻各 agent 是什么状态、wait 怎么结束（`done` / `timeout` / `attention` / `cancelled`）。不装时钟、不装实时进度、不装"等待投递中"这类会变的状态。
+- 工具结果里给渲染器的部分（receipt）只装**永远为真**的东西：这次调用碰到哪些 run、看那一刻它们的身份与状态、任务与结果的**长度**、起止时间。不装渲染时算出来的时长、不装实时进度（`step`）、不装 transcript/正文/错误文本，也不装"等待投递中"这类会变的状态。
 
 ## Consequences
 
@@ -83,6 +83,8 @@
 | D4 run 账本 | `extensions/subagent/ledger.ts`：`toLedgerEntry` / `ledgerEntriesOf` / `unsettledRuns` / `renderUnsettled`；接线在 `index.ts` 的 `recordRun`（start / settled / intermediate / failed / stopped，存任务摘要与结果字符数，不存正文） | `ledger.test.ts`（15 条）、`index.test.ts` 的 `run ledger`（4 条） |
 | D4 恢复语义 | `session_start` 读记录，把上次没结算的 run 报成一条 warning：会话内容已没了，只能重跑或放弃 | 同上 |
 
+| D5 信封补 `sessionId` | 发布方知道就带上；不知道就不写字段（不写空串） | `event-protocol.test.ts` |
+| D1 交付口径统一 | `core.ts` 的 `deliveryFor`：后台投递、前台工具结果、`status`、`list` 四处同一口径，intermediate 的正文不再从任何一条路径当结果出去 | `core.test.ts`、`index.test.ts` |
 | D5 事件信封 | `extensions/shared/event-protocol.ts`：`wrapEvent` / `readEvent` / `isFreshEvent` / `createPublisher`；未知 protocol 显式拒绝，裸负载按 legacy 接受一版 | `event-protocol.test.ts`（11 条） |
 | D5 首个消费者 | plan-mode ↔ subagent 的两条 channel（badge、status-owner）改用信封，消费者按 instanceId + sequence 丢弃重放/乱序 | `todo-widget.test.ts`、`index.test.ts` 的断言改为读 `payload` |
 
@@ -93,3 +95,19 @@
 | D5 主动索取 | `pi-kit:subagent:state` + `pi-kit:subagent:state:request`：中途 attach 的消费者发一次索取即拿到当前快照；格式不对的索取被忽略；同一份快照不重发 | 同上 |
 
 视图层（`progressLine` / `renderRunOptions` / `renderWaitResult` / receipt）都已经是从 `SubagentRun` 派生的纯函数；`SubagentRun` 本身仍是内存结构，不是账本记录。把渲染输入换成"账本派生的快照类型"没有做 —— 收益是让恢复到一半的会话也能渲染，而恢复本身现在只到"重跑或放弃"，所以先不做。
+
+## 复核后修正（2026-11-14）
+
+一次两轴 review 找出 9 处与本文不一致的地方，已修并各自留下用例：
+
+| 问题                                                                                 | 修法                                             |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| `registerGuard` 按 id 保留首次注册 → reload 后用旧 controller/旧 pi                  | 改为同 id 覆盖                                   |
+| `GUARD_STAGE_RANK` key 是 stage id、排序却按 rule                                    | 阶段按 id 排序后再跑，reason 段落顺序随之确定    |
+| `intermediate` 只在 `wait` 一条路径被拦                                              | `deliveryFor` 统一四处口径                       |
+| 主工具仍留着 `runIds` / `timeoutMs`，`promptGuidelines` 还在教 `action "wait"`       | 参数与文案同步到 `subagent_wait`                 |
+| 事件信封缺 `sessionId`                                                               | 补可选字段                                       |
+| 收据里装时钟与"不装时钟"冲突                                                         | 正文改成"不装渲染时算的时长"，起止时间明说是事实 |
+| `settings` 浅合并会让项目无关键顶掉全局子树                                          | 改深合并                                         |
+| shell 结构层超深度静默放行、`-c` 只在独立成词时识别                                  | 报 `unresolved(too-deep)`；按"短选项含 c"识别    |
+| 三份死代码（`shell-text.ts`、safe-delete 三个扫描器、bash-block-guard 的旧 handler） | 删除；测试改走真实阶段                           |

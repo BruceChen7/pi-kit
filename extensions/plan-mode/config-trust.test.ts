@@ -15,10 +15,7 @@ import {
   writeSettingsFile,
 } from "../shared/settings.ts";
 import { DEFAULT_CONFIG, PLAN_MODE_PLAN } from "./constants.ts";
-import {
-  loadPlanModeConfig,
-  loadPlanModeConfigWithDiagnostics,
-} from "./state.ts";
+import { loadPlanModeConfigWithDiagnostics } from "./state.ts";
 
 const originalHome = process.env.HOME;
 const tempDirs: string[] = [];
@@ -98,7 +95,7 @@ describe("plan-mode config trust", () => {
       planMode: { defaultMode: PLAN_MODE_PLAN, preserveExternalTools: true },
     });
 
-    const config = loadPlanModeConfig(cwd);
+    const { config } = loadPlanModeConfigWithDiagnostics(cwd);
 
     expect(config.defaultMode).toBe(PLAN_MODE_PLAN);
     expect(config.preserveExternalTools).toBe(true);

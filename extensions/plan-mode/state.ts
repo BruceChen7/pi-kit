@@ -242,9 +242,6 @@ export const loadPlanModeConfigWithDiagnostics = (
   };
 };
 
-export const loadPlanModeConfig = (cwd: string): PlanModeConfig =>
-  loadPlanModeConfigWithDiagnostics(cwd).config;
-
 const buildPlanModeConfig = (
   merged: Record<string, unknown>,
 ): PlanModeConfig => {

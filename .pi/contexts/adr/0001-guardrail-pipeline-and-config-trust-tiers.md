@@ -26,17 +26,19 @@
 permission-deny → deterministic-hard-deny → path-deny → ask（人工确认） → allow-tier → 放行
 ```
 
-- 阶段顺序写在代码里的 `GUARD_STAGE_RANK` 里，不依赖扩展加载顺序。
+- 阶段顺序写在代码里的 `GUARD_STAGE_RANK` 里（key 是 **stage id**），不依赖扩展加载顺序；`registerGuard` 同 id 覆盖，reload 后必须用新闭包。
 - deny 阶段先全部跑完；只要有一个 deny，ask 阶段就不再打扰用户。多个 deny 命中时全部进 reason，段落顺序由 `GUARD_STAGE_RANK` 决定。
-- 判决必须带 `kind`（`deny` / `ask`）与 `rule`，禁止用"返回 undefined 表示放行"这种隐式语义。
+- 判决必须带 `kind`（`deny` / `ask`）与 `rule`；放行用 `action: "pass"`，不用"返回 undefined"或空串表达，避免把"没结论"读成"安全"。
 - 阶段自己抛错时 fail-closed：说不出"安全"就不放行。
 
 ### D2（T0）配置按来源分信任等级
 
 `settings.ts` 增加 `resolveTrustedSettings(global, project, rules)`：合并仍然是"项目覆盖全局"，但 `rules` 里列出的键只能加严 —— 项目值在放宽时保留全局值，全局也没有就删掉回到内置默认，并把被忽略的键报给调用方。
 - **user scope**（`~/.pi/agent/third_extension_settings.json`）可以设置弱化类键（阈值、`disabled` 开关）。
+- 只有**闭集**枚举参数用 `StringEnum`（如工具的 `action`）；名字由文件系统动态发现的参数（如 agent profile 名）不做闭集，运行时校验。
 - **project scope**（`.pi/third_extension_settings.json`）只能加严，不能加宽。
 - 键按"加严/加宽"显式分类（`TrustRule`），由知道语义的扩展提供，不通用推断。
+- 两层设置**深合并**：项目只写一个无关键时，全局的同级子树仍然保留（浅合并会让用户级设置静默消失）。
 - auto-trust 只表示"可以读取项目配置"，不表示"项目配置可以削弱护栏"。
 - 被忽略的项目键必须上报（plan-mode 在 `restore` 时 `ui.notify` 一次），不许静默吞掉。
 - 溢出与非法输入：deny 侧 fail-closed（`input-too-large` 直接拒），allow 侧 fail-open（视为不命中）。

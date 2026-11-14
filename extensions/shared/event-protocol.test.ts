@@ -3,8 +3,11 @@ import {
   createPublisher,
   EVENT_PROTOCOL,
   isFreshEvent,
+  isSnapshotRequest,
   readEvent,
   seenAfter,
+  snapshotRequest,
+  snapshotRequestChannel,
   wrapEvent,
 } from "./event-protocol.ts";
 
@@ -104,6 +107,38 @@ describe("createPublisher", () => {
   it("gives each lifecycle its own instance id", () => {
     expect(createPublisher("inst-1").instanceId).not.toBe(
       createPublisher("inst-2").instanceId,
+    );
+  });
+});
+
+describe("sessionId", () => {
+  it("rides along when the publisher knows it", () => {
+    const publisher = createPublisher("inst-1", "session-9");
+    const read = readEvent(publisher.next({ a: 1 }));
+
+    expect(read?.sessionId).toBe("session-9");
+  });
+
+  it("is absent when the publisher does not know it", () => {
+    const read = readEvent(createPublisher("inst-1").next({ a: 1 }));
+
+    expect(read).not.toHaveProperty("sessionId");
+  });
+});
+
+describe("snapshot request helpers", () => {
+  it("produces a request the reader accepts", () => {
+    const request = snapshotRequest();
+
+    expect(isSnapshotRequest(request)).toBe(true);
+    expect(isSnapshotRequest({ protocol: 2, type: "state-request" })).toBe(
+      false,
+    );
+  });
+
+  it("derives the request channel from the state channel", () => {
+    expect(snapshotRequestChannel("pi-kit:subagent:state")).toBe(
+      "pi-kit:subagent:state:request",
     );
   });
 });

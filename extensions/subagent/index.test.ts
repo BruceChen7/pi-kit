@@ -1288,3 +1288,66 @@ describe("receipt", () => {
     });
   });
 });
+
+describe("state snapshots", () => {
+  const snapshots = (pi: FakePi) =>
+    pi.events.emit.mock.calls
+      .filter(([channel]) => channel === "pi-kit:subagent:state")
+      .map(([, event]) => (event as any).payload as any);
+
+  const requestChannel = "pi-kit:subagent:state:request";
+  const requestHandler = (pi: FakePi) =>
+    pi.events.on.mock.calls.find(
+      ([channel]) => channel === requestChannel,
+    )?.[1];
+
+  it("publishes a metadata-only snapshot when a run starts", async () => {
+    vi.mocked(createAgentSession).mockResolvedValue({
+      session: makeSession("3 directories"),
+    } as never);
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    await call(
+      tools[0],
+      { action: "run", agent: "explore", task: "count dirs" },
+      makeCtx(),
+    );
+
+    await vi.waitFor(() => expect(snapshots(pi).length).toBeGreaterThan(0));
+    const last = snapshots(pi).at(-1);
+    expect(last.kind).toBe("snapshot");
+    expect(last.entries[0]).toMatchObject({
+      name: "explore",
+      state: "working",
+      closed: false,
+    });
+    expect(JSON.stringify(last)).not.toContain("count dirs");
+  });
+
+  it("answers a state request with the current snapshot", async () => {
+    const { pi } = makePi();
+    registerSubagent(pi as never);
+
+    const handler = requestHandler(pi);
+    expect(handler).toBeTypeOf("function");
+    handler({ protocol: 1, type: "state-request" });
+
+    await vi.waitFor(() => expect(snapshots(pi).length).toBe(1));
+    expect(snapshots(pi)[0]).toEqual({
+      kind: "snapshot",
+      empty: true,
+      entries: [],
+    });
+  });
+
+  it("ignores a malformed request", () => {
+    const { pi } = makePi();
+    registerSubagent(pi as never);
+
+    requestHandler(pi)({ protocol: 99, type: "state-request" });
+    requestHandler(pi)({ type: "state-request" });
+
+    expect(snapshots(pi)).toEqual([]);
+  });
+});

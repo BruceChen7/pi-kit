@@ -1,6 +1,6 @@
 # ADR-0002: 子 agent 的结算、持久化与跨扩展事件协议
 
-**Status:** accepted — T0 与 T1-D4/D5/D6 已实现（2026-11-14）
+**Status:** accepted — T0 与 T1 全部落地（2026-11-14）
 **Date:** 2026-11-14
 **Scope:** `extensions/subagent`、`extensions/shared/internal-events.ts`
 **参考:** [mavam/pi-agents](https://github.com/mavam/pi-agents) — `docs/design.md`（Obligations / Delivery / Recovery）、`docs/hooks.md`、`docs/architecture.md#state-snapshots`、`src/agents/obligations.ts`、`src/agents/receipts.ts`
@@ -89,4 +89,7 @@
 | D6 receipt | `extensions/subagent/receipt.ts`：`observeRun` / `observeRuns` 只装身份、观察到的状态、任务与结果长度、起止时间；不装 `step`、`lastEventAt`、transcript、结果正文与错误文本 | `receipt.test.ts`（7 条）、`index.test.ts` 的 `receipt`（2 条） |
 | D6 接线 | run / list / status / wait / stop 的结构化结果都带 `receipt`（`version: 1`） | 同上 |
 
-未做：D5 的"快照全量替换 + `:state:request` 主动索取"（现在仍是逐条 delta）。视图层已经在 `core.ts` 里是纯函数（`progressLine` / `renderRunOptions` / `renderWaitResult`），但输入仍是可变 `SubagentRun`，尚未换成"从账本记录派生的快照类型"。
+| D5 快照语义 | `extensions/shared/event-protocol.ts` 的 `snapshotRequest` / `isSnapshotRequest` / `snapshotRequestChannel` / `SnapshotEnvelope`；`extensions/subagent/state-snapshot.ts` 的 `snapshotOf`：每次发全量、完整替换上一份，只含 id/名字/状态/closed | `state-snapshot.test.ts`（7 条）、`index.test.ts` 的 `state snapshots`（3 条） |
+| D5 主动索取 | `pi-kit:subagent:state` + `pi-kit:subagent:state:request`：中途 attach 的消费者发一次索取即拿到当前快照；格式不对的索取被忽略；同一份快照不重发 | 同上 |
+
+视图层（`progressLine` / `renderRunOptions` / `renderWaitResult` / receipt）都已经是从 `SubagentRun` 派生的纯函数；`SubagentRun` 本身仍是内存结构，不是账本记录。把渲染输入换成"账本派生的快照类型"没有做 —— 收益是让恢复到一半的会话也能渲染，而恢复本身现在只到"重跑或放弃"，所以先不做。

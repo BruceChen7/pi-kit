@@ -22,13 +22,16 @@ import { Type } from "typebox";
 import {
   createPublisher,
   isFreshEvent,
+  isSnapshotRequest,
   readEvent,
   type SeenEvent,
   seenAfter,
+  snapshotRequestChannel,
 } from "../shared/event-protocol.ts";
 import {
   PLAN_MODE_BADGE_CHANNEL,
   PLAN_MODE_STATUS_OWNER_CHANNEL,
+  SUBAGENT_STATE_CHANNEL,
 } from "../shared/internal-events.ts";
 import { createLogger, resolveMinLogLevel } from "../shared/logger.ts";
 import { uiHostProfile } from "../shared/rich-ui.ts";
@@ -105,6 +108,7 @@ import {
   type SettlementMessage,
   textOfAssistantContent,
 } from "./settlement.ts";
+import { sameSnapshot, snapshotOf } from "./state-snapshot.ts";
 import { registerAgentsCommand } from "./ui.ts";
 
 const WIDGET_KEY = "subagent";
@@ -244,6 +248,8 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   const events = createPublisher(`subagent-${randomUUID()}`);
   /** plan-mode 广播的 status-owner 事件，只接受更新的序号。 */
   let seenStatusOwner: SeenEvent | undefined;
+  /** 上一次发出去的状态快照；一样就不重发。 */
+  let lastSnapshot: ReturnType<typeof snapshotOf> | undefined;
   const sessions = new Map<string, AgentSession>();
   const inflight = new Set<string>();
   /** 等待方只关心「有 run 终态了」，不关心是哪一条；醒来自己查 state。 */
@@ -435,6 +441,24 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       refreshing = false;
     }
     syncTicker();
+    publishSnapshot();
+  };
+
+  /**
+   * 发一份全量状态快照。消费者可随时索取，所以这里只负责"变化时推一次"。
+   * 快照里没有任务正文与结果（ADR-0002 D5）。
+   */
+  const publishSnapshot = (force = false): void => {
+    const snapshot = snapshotOf(state.runs);
+    if (!force && sameSnapshot(lastSnapshot, snapshot)) return;
+    lastSnapshot = snapshot;
+    try {
+      pi.events.emit(SUBAGENT_STATE_CHANNEL, events.next(snapshot));
+    } catch (error) {
+      log.warn("state snapshot publish failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   };
 
   /** plan-mode 接管/释放可见面；翻转才重画，避免广播回环。 */
@@ -1404,6 +1428,11 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   try {
     pi.events.on(RPC_REQUEST_CHANNEL, onRpcRequest);
     pi.events.on(PLAN_MODE_STATUS_OWNER_CHANNEL, onStatusOwner);
+    // 谁在中途 start 都能要一份全量：先订阅，再发索取。
+    pi.events.on(snapshotRequestChannel(SUBAGENT_STATE_CHANNEL), (raw) => {
+      if (!isSnapshotRequest(raw)) return;
+      publishSnapshot(true);
+    });
   } catch (error) {
     log.warn("rpc subscription failed", {
       reason: error instanceof Error ? error.message : String(error),

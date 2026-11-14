@@ -123,3 +123,39 @@ export const createPublisher = (instanceId: string): EventPublisher => {
     },
   };
 };
+
+// ── 快照与主动索取 ────────────────────────────────────────────────────────
+//
+// 逐条 delta 有两个问题：中途 attach 的消费者永远补不齐历史，重启后的第一条
+// delta 会被当成全量。所以状态类 channel 定成"快照"语义：每次发出的都是**全量**
+// （完整替换上一份），任何消费者先发一次索取，就能拿到当前状态。
+
+/** 索取当前快照的请求；比状态 channel 多一些约束，所以单独一份形状。 */
+export type SnapshotRequest = {
+  protocol: number;
+  type: "state-request";
+};
+
+export const snapshotRequest = (): SnapshotRequest => ({
+  protocol: EVENT_PROTOCOL,
+  type: "state-request",
+});
+
+export const isSnapshotRequest = (value: unknown): boolean => {
+  if (!isRecord(value)) return false;
+  return value.protocol === EVENT_PROTOCOL && value.type === "state-request";
+};
+
+/** 状态 channel 对应的索取 channel：`<channel>:request`。 */
+export const snapshotRequestChannel = (channel: string): string =>
+  `${channel}:request`;
+
+/**
+ * 快照内容的共同外壳：`kind: "snapshot"` 表示"这份替换上一份"，
+ * `empty` 表示"我现在不持有任何状态"（与"没消息"区分开）。
+ */
+export type SnapshotEnvelope<T> = {
+  kind: "snapshot";
+  empty: boolean;
+  entries: T[];
+};

@@ -3,6 +3,10 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
+  installGuardPipeline,
+  registerGuard,
+} from "../shared/guard-pipeline.ts";
+import {
   PLAN_MODE_BADGE_CHANNEL,
   PLANNOTATOR_REVIEW_VERDICT_CHANNEL,
 } from "../shared/internal-events.ts";
@@ -14,6 +18,7 @@ import {
 } from "./constants.ts";
 import { PlanModeController } from "./controller.ts";
 import { parsePlanModeBadgeEvent } from "./controller-decisions.ts";
+import { createPlanModeGuardStage } from "./guard-stage.ts";
 import { isPlanMode, isRecord } from "./state.ts";
 import {
   buildTodoReminder,
@@ -192,9 +197,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     };
   });
 
-  pi.on("tool_call", async (event, ctx) =>
-    controller.maybeBlockTool(event, ctx),
-  );
+  // 计划阶段的写操作拦截走共享流水线：它和别的护栏一起按显式顺序判定，
+  // 而不是抢 tool_call 的注册先后。
+  registerGuard(createPlanModeGuardStage(controller));
+  installGuardPipeline(pi);
 
   pi.on("tool_result", async (event, ctx) => {
     const result = controller.handleToolResult(event, ctx);

@@ -27,7 +27,13 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import {
+  ask,
+  type GuardStage,
+  installGuardPipeline,
+  PASS,
+  registerGuard,
+} from "../shared/guard-pipeline.ts";
 import {
   type PiKitSafeDeleteApprovalEvent,
   SAFE_DELETE_APPROVAL_CHANNEL,
@@ -802,16 +808,37 @@ async function confirmDestructiveBashCommand(
   return undefined;
 }
 
+/**
+ * 流水线阶段：毁数据的 bash 命令要人确认。这是 ask 阶段 —— 反过来，
+ * 任何 deny 阶段的结论都会让它不必再问用户。
+ */
+export const createSafeDeleteStage = (pi: ExtensionAPI): GuardStage => ({
+  id: "safe-delete",
+  kind: "ask",
+  evaluate: async (call, env) => {
+    // Only bash is gated. MCP calls are deliberately not confirmed here: the
+    // annotation hints are self-declared and unverified, so the gate was a
+    // prompt on every call rather than a real check.
+    if (call.toolName !== "bash" || !env.hasUI) return PASS;
+    const command = readBashCommand(call.input);
+    if (command === null) return PASS;
+    const blocked = await confirmDestructiveBashCommand(pi, env.ctx, {
+      input: { command },
+    });
+    return blocked ? ask("safe-delete", blocked.reason) : PASS;
+  },
+});
+
+const readBashCommand = (input: unknown): string | null => {
+  if (typeof input !== "object" || input === null) return null;
+  const command = (input as { command?: unknown }).command;
+  return typeof command === "string" && command.trim() !== "" ? command : null;
+};
+
 export default function (pi: ExtensionAPI) {
   log = createLogger("safe-delete", { stderr: null });
   log?.debug("extension initialized", { pid: process.pid });
 
-  // Only bash is gated. MCP calls are deliberately not confirmed here: the
-  // annotation hints are self-declared and unverified, so the gate was a
-  // prompt on every call rather than a real check.
-  pi.on("tool_call", async (event, ctx) => {
-    if (!isToolCallEventType("bash", event)) return;
-    if (!ctx.hasUI) return;
-    return await confirmDestructiveBashCommand(pi, ctx, event);
-  });
+  registerGuard(createSafeDeleteStage(pi));
+  installGuardPipeline(pi);
 }

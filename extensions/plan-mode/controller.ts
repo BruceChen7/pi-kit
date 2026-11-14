@@ -80,7 +80,7 @@ import { isHtmlArtifactPathIn, resolveHtmlArtifactDirs } from "./html-dirs.ts";
 import {
   getSessionStateEntries,
   latestSnapshot,
-  loadPlanModeConfig,
+  loadPlanModeConfigWithDiagnostics,
   PlanModeState,
   stringProperty,
 } from "./state.ts";
@@ -212,7 +212,15 @@ export class PlanModeController {
   restore(ctx: ExtensionContext): void {
     this.sessionCwd = ctx.cwd;
     this.htmlArtifactDirsCache = null;
-    this.config = loadPlanModeConfig(ctx.cwd);
+    const loaded = loadPlanModeConfigWithDiagnostics(ctx.cwd);
+    this.config = loaded.config;
+    // 被忽略的项目配置不能静默消失：放宽护栏的键要说出来，人才知道去看。
+    if (loaded.ignoredProjectKeys.length > 0 && ctx.hasUI) {
+      ctx.ui.notify(
+        `plan-mode 忽略了几项放宽护栏的项目配置：${loaded.ignoredProjectKeys.join("、")}`,
+        "warning",
+      );
+    }
     const entries = getSessionStateEntries(ctx);
     this.state.restore(latestSnapshot(entries), this.config.defaultMode);
     this.reviewRequiredForTurn = false;

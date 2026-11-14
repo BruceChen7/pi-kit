@@ -8,6 +8,7 @@ import {
   getSettingsPaths,
   loadGlobalSettings,
   loadSettings,
+  resolveTrustedSettings,
   writeSettingsFile,
 } from "./settings.js";
 
@@ -177,5 +178,78 @@ describe("loadGlobalSettings", () => {
     const refreshed = loadGlobalSettings({ forceReload: true });
     expect(refreshed.global).toEqual({ value: 2 });
     expect(first.global).toEqual({ value: 1 });
+  });
+});
+
+describe("resolveTrustedSettings", () => {
+  const rule = (
+    path: string,
+    isWidening: (value: unknown) => boolean = (value) => value === false,
+  ) => ({ path, isWidening });
+
+  it("behaves like the plain project-over-global merge without rules", () => {
+    const { effective, ignored } = resolveTrustedSettings(
+      { a: 1, b: 2 },
+      { b: 3 },
+    );
+
+    expect(effective).toEqual({ a: 1, b: 3 });
+    expect(ignored).toEqual([]);
+  });
+
+  it("ignores a project value that widens a guarded key", () => {
+    const { effective, ignored } = resolveTrustedSettings(
+      { planMode: { requireReview: true } },
+      { planMode: { requireReview: false } },
+      [rule("planMode.requireReview")],
+    );
+
+    expect(effective).toEqual({ planMode: { requireReview: true } });
+    expect(ignored).toEqual(["planMode.requireReview（项目值放宽护栏）"]);
+  });
+
+  it("keeps a project value that narrows", () => {
+    const { effective, ignored } = resolveTrustedSettings(
+      { planMode: { guards: { readBeforeWrite: false } } },
+      { planMode: { guards: { readBeforeWrite: true } } },
+      [rule("planMode.guards.readBeforeWrite")],
+    );
+
+    expect(effective).toEqual({
+      planMode: { guards: { readBeforeWrite: true } },
+    });
+    expect(ignored).toEqual([]);
+  });
+
+  it("drops the key when global has no value to fall back on", () => {
+    const { effective, ignored } = resolveTrustedSettings(
+      {},
+      { planMode: { requireReview: false, other: 1 } },
+      [rule("planMode.requireReview")],
+    );
+
+    expect(effective).toEqual({ planMode: { other: 1 } });
+    expect(ignored).toHaveLength(1);
+  });
+
+  it("leaves unrelated project keys alone", () => {
+    const { effective } = resolveTrustedSettings(
+      { planMode: { requireReview: true }, qmd: { a: 1 } },
+      { qmd: { a: 2 } },
+      [rule("planMode.requireReview")],
+    );
+
+    expect(effective.qmd).toEqual({ a: 2 });
+  });
+
+  it("matches a string preset rule", () => {
+    const { effective, ignored } = resolveTrustedSettings(
+      { planMode: { preset: "team" } },
+      { planMode: { preset: "solo" } },
+      [rule("planMode.preset", (value) => value === "solo")],
+    );
+
+    expect(effective.planMode).toEqual({ preset: "team" });
+    expect(ignored).toEqual(["planMode.preset（项目值放宽护栏）"]);
   });
 });

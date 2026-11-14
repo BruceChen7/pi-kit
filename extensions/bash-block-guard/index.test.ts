@@ -416,7 +416,7 @@ describe("tool_call hook", () => {
 describe("registration", () => {
   type Handler = (event: { toolName: string; input: unknown }) => unknown;
 
-  it("subscribes the guard to tool_call through pi.on", () => {
+  it("registers one tool_call handler that blocks through the guard pipeline", async () => {
     const handlers = new Map<string, Handler[]>();
     const pi = {
       on: (name: string, handler: Handler) => {
@@ -429,11 +429,11 @@ describe("registration", () => {
     const registered = handlers.get("tool_call") ?? [];
     expect(registered).toHaveLength(1);
     const [handler] = registered;
-    expect(
+    await expect(
       handler?.({ toolName: "bash", input: { command: "sleep 60" } }),
-    ).toMatchObject({ block: true });
-    expect(
+    ).resolves.toMatchObject({ block: true });
+    await expect(
       handler?.({ toolName: "bash", input: { command: "ls" } }),
-    ).toBeUndefined();
+    ).resolves.toBeUndefined();
   });
 });

@@ -87,7 +87,7 @@ import { isHtmlArtifactPathIn, resolveHtmlArtifactDirs } from "./html-dirs.ts";
 import {
   getSessionStateEntries,
   latestSnapshot,
-  loadPlanModeConfigWithDiagnostics,
+  loadPlanModeConfig,
   PlanModeState,
   stringProperty,
 } from "./state.ts";
@@ -225,15 +225,7 @@ export class PlanModeController {
   restore(ctx: ExtensionContext): void {
     this.sessionCwd = ctx.cwd;
     this.htmlArtifactDirsCache = null;
-    const loaded = loadPlanModeConfigWithDiagnostics(ctx.cwd);
-    this.config = loaded.config;
-    // 被忽略的项目配置不能静默消失：放宽护栏的键要说出来，人才知道去看。
-    if (loaded.ignoredProjectKeys.length > 0 && ctx.hasUI) {
-      ctx.ui.notify(
-        `plan-mode 忽略了几项放宽护栏的项目配置：${loaded.ignoredProjectKeys.join("、")}`,
-        "warning",
-      );
-    }
+    this.config = loadPlanModeConfig(ctx.cwd);
     const entries = getSessionStateEntries(ctx);
     this.state.restore(latestSnapshot(entries), this.config.defaultMode);
     this.reviewRequiredForTurn = false;
@@ -377,10 +369,6 @@ export class PlanModeController {
   }
 
   /**
-   * 另一扩展挂上来的一段状态文字（目前是 subagent 的运行计数）。
-   * 文本不变就不重画：每次 tick 都会重复广播同一份内容。
-   */
-  /**
    * 从一条原始事件里取出 badge 负载：新格式是带序号信封，旧格式是裸负载。
    * 返回 undefined 表示这条事件不该被处理（协议不符、重放、乱序）。
    */
@@ -399,6 +387,10 @@ export class PlanModeController {
     return { key, text: typeof text === "string" ? text : null };
   }
 
+  /**
+   * 另一扩展挂上来的一段状态文字（目前是 subagent 的运行计数）。
+   * 文本不变就不重画：每次 tick 都会重复广播同一份内容。
+   */
   setBadge(key: string, text: string | null, ctx: ExtensionContext): void {
     if ((this.badges.get(key) ?? null) === text) {
       return;

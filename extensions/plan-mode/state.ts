@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadTrustedSettings, type TrustRule } from "../shared/settings.ts";
+import { loadSettings } from "../shared/settings.ts";
 import {
   DEFAULT_CONFIG,
   EXPLICIT_PLAN_MODE_REQUEST_PATTERN,
@@ -194,57 +194,8 @@ const clearMatchingPath = (
   invalidatedPath: string,
 ): string | null => (currentPath === invalidatedPath ? null : currentPath);
 
-/**
- * 计划模式里"放宽就等于放弃一次人审"的键。项目里的这份设置只能加严：
- * 一个 clone 下来的仓库不该能替你把评审关掉（ADR-0001 D2）。
- */
-export const PLAN_MODE_TRUST_RULES: readonly TrustRule[] = [
-  { path: "planMode.preset", isWidening: (value) => value === "solo" },
-  { path: "planMode.requireReview", isWidening: (value) => value === false },
-  {
-    path: "planMode.guards.readBeforeWrite",
-    isWidening: (value) => value === false,
-  },
-  {
-    path: "planMode.artifactPolicy.enabled",
-    isWidening: (value) => value === false,
-  },
-  {
-    path: "planMode.artifactPolicy.allowExtraSections",
-    isWidening: (value) => value === true,
-  },
-  {
-    path: "planMode.artifactPolicy.requireSectionOrder",
-    isWidening: (value) => value === false,
-  },
-  {
-    path: "planMode.artifactPolicy.requireReviewDetails",
-    isWidening: (value) => value === false,
-  },
-];
-
-export type PlanModeConfigLoad = {
-  config: PlanModeConfig;
-  /** 被忽略的项目配置键，交给调用方上报。 */
-  ignoredProjectKeys: string[];
-};
-
-export const loadPlanModeConfigWithDiagnostics = (
-  cwd: string,
-): PlanModeConfigLoad => {
-  const { effective, ignored } = loadTrustedSettings(
-    cwd,
-    PLAN_MODE_TRUST_RULES,
-  );
-  return {
-    config: buildPlanModeConfig(effective),
-    ignoredProjectKeys: ignored,
-  };
-};
-
-const buildPlanModeConfig = (
-  merged: Record<string, unknown>,
-): PlanModeConfig => {
+export const loadPlanModeConfig = (cwd: string): PlanModeConfig => {
+  const { merged } = loadSettings(cwd);
   const raw = isRecord(merged.planMode) ? merged.planMode : {};
   const config: PlanModeConfig = {
     defaultMode: DEFAULT_CONFIG.defaultMode,

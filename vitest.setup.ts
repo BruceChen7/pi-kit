@@ -1,6 +1,3 @@
-import { beforeEach } from "vitest";
-import { resetGuardPipeline } from "./extensions/shared/guard-pipeline.ts";
-
 /**
  * 用例的宿主档案由用例自己决定，不由跑测试的那个 shell 决定。
  *
@@ -14,12 +11,3 @@ import { resetGuardPipeline } from "./extensions/shared/guard-pipeline.ts";
  * （见 `extensions/notify/notify.test.ts`），所以这里删掉不影响它们。
  */
 delete process.env.PI_KIT_UI_HOST;
-
-/**
- * 护栏阶段注册表是进程级单例（真机上一个进程只有一个 pi）。用例之间会互相
- * 污染：一个文件注册的 guard 会在另一个文件里照样生效。每条用例开始前清空，
- * 让每个文件只看得见自己注册的阶段。
- */
-beforeEach(() => {
-  resetGuardPipeline();
-});

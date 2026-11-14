@@ -1,28 +1,30 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-  deny,
-  type GuardStage,
-  installGuardPipeline,
-  PASS,
-  registerGuard,
-} from "../shared/guard-pipeline.ts";
 import { decideBashGuard, readBashCall, resolveLimits } from "./guard.ts";
 
-/** 流水线阶段：拦住会让会话静默等待的 bash 调用。 */
-export const bashBlockGuardStage: GuardStage = {
-  id: "bash-block-guard",
-  kind: "deny",
-  evaluate: (call, env) => {
-    const bash = readBashCall(call.toolName, call.input);
-    if (!bash) return PASS;
-    const decision = decideBashGuard(bash, resolveLimits(env.env));
-    return decision.action === "allow"
-      ? PASS
-      : deny(decision.rule, decision.reason);
-  },
-};
+type ToolCallHandler = (event: {
+  toolName: string;
+  input: unknown;
+}) => { block: true; reason: string } | undefined;
+
+/**
+ * The shell: read the call, resolve limits, hand the decision back to pi.
+ * Limits are read per call so a long-running session picks up an env change
+ * without a restart.
+ */
+export const createBashGuardHandler =
+  (env: Record<string, string | undefined>): ToolCallHandler =>
+  (event) => {
+    const call = readBashCall(event.toolName, event.input);
+    if (!call) {
+      return undefined;
+    }
+    const decision = decideBashGuard(call, resolveLimits(env));
+    if (decision.action === "allow") {
+      return undefined;
+    }
+    return { block: true, reason: decision.reason };
+  };
 
 export default function (pi: ExtensionAPI) {
-  registerGuard(bashBlockGuardStage);
-  installGuardPipeline(pi);
+  pi.on("tool_call", createBashGuardHandler(process.env));
 }

@@ -5,7 +5,6 @@ import type {
 import { registerBashHook } from "../shared/bash-hook.ts";
 import { createLogger } from "../shared/logger.ts";
 import { loadSettings } from "../shared/settings.ts";
-import { tokenizeShell } from "../shared/shell/index.ts";
 
 const DEFAULT_ENV: Record<string, string> = {
   GIT_EXTERNAL_DIFF: "",
@@ -35,11 +34,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-// ── git diff 定位 ──────────────────────────────────────────────────────
+// ── Single-pass tokenizer ──────────────────────────────────────────────
 //
-// 用共享结构层的 token 判断"git diff 是不是一个真正的命令"，而不是自己写一遍
-// 引号/分隔符状态机（ADR-0001 D3）。要改写的只是命令本身，所以拿的是 token 的
-// 原始偏移：prefix 原样保留，rest 是 diff 之后的参数。
+// Walk the command string character-by-character, tracking shell quote state
+// and command boundaries. Returns the "git diff" match only when it appears
+// as an actual command, not inside quotes or as an argument to another command.
+//
+// State machine:
+//   outside quotes → track (", ') → enter quoted state
+//                  → track (&&, ||, ;, |, () → new segment boundary
+//                  → at segment start:
+//                      VAR=value → skip value, stay in segment
+//                      git diff  → ✅ match
+//                      other     → mark segment consumed, continue
+//   inside quotes  → skip all logic until closing quote
 type GitDiffMatch = {
   /** Everything before "git diff" in the original command (preserved as-is) */
   prefix: string;
@@ -47,43 +55,87 @@ type GitDiffMatch = {
   rest: string;
 };
 
-const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-
 function findGitDiffCommand(command: string): GitDiffMatch | null {
-  const { tokens } = tokenizeShell(command);
-  let atSegmentStart = true;
+  let inSingle = false;
+  let inDouble = false;
+  let newSeg = true;
 
-  for (const [index, token] of tokens.entries()) {
-    if (token.kind === "newline") {
-      atSegmentStart = true;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+
+    // ── 1) Track quote state ──────────────────────────────────────────
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
       continue;
     }
-    if (token.kind === "operator") {
-      atSegmentStart = true;
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
       continue;
     }
-    if (token.kind !== "word") continue;
-    // heredoc token 不会出现在这里；引号里的词不是命令位置
-    if (!atSegmentStart) continue;
-    // VAR=value 前缀：同一条命令的一部分，跳过它继续找命令名
-    if (ENV_ASSIGNMENT.test(token.text) && !token.quoted) continue;
+    if (ch === "\\" && inDouble && i + 1 < command.length) {
+      i++; // skip escaped char inside double quotes (e.g. \")
+      continue;
+    }
+    if (inSingle || inDouble) continue;
 
-    atSegmentStart = false;
-    if (token.text !== "git") continue;
-
-    const next = tokens[index + 1];
-    const after = tokens[index + 2];
-    if (next?.kind !== "word" || next.text !== "diff") continue;
-    if (after !== undefined && after.kind === "operator" && after.raw === "-") {
+    // ── 2) Shell control operators → new segment ──────────────────────
+    if (ch === ";") {
+      newSeg = true;
+      continue;
+    }
+    if (ch === "|" || ch === "(") {
+      newSeg = true;
+      continue;
+    }
+    if (ch === "&" && command[i + 1] === "&") {
+      newSeg = true;
+      i++;
       continue;
     }
 
-    return {
-      prefix: command.slice(0, token.start),
-      rest: command.slice(next.end).trimStart(),
-    };
+    // ── 3) At the start of a command segment ──────────────────────────
+    if (newSeg) {
+      if (ch === " " || ch === "\t") continue; // skip leading whitespace
+      newSeg = false;
+
+      // ── 3a) VAR=value → skip env var assignment ────────────────────
+      const eqIdx = command.indexOf("=", i);
+      if (eqIdx > i && eqIdx - i < 256) {
+        let validId = true;
+        for (let j = i; j < eqIdx; j++) {
+          if (!/[a-zA-Z0-9_]/.test(command[j])) {
+            validId = false;
+            break;
+          }
+        }
+        if (validId) {
+          const valEnd = command.indexOf(" ", eqIdx + 1);
+          i = valEnd > 0 ? valEnd : command.length;
+          newSeg = true;
+          continue;
+        }
+      }
+
+      // ── 3b) Exact "git diff" or "git\tdiff" → match ─────────────────
+      if (
+        (command.startsWith("git diff", i) ||
+          command.startsWith("git\tdiff", i)) &&
+        (i + 8 >= command.length ||
+          command[i + 8] === " " ||
+          command[i + 8] === "\t" ||
+          command[i + 8] === "-" ||
+          command[i + 8] === "/")
+      ) {
+        return {
+          prefix: command.slice(0, i),
+          rest: command.slice(i + 8).trimStart(),
+        };
+      }
+
+      // Not git diff, not env var → current segment is a different command.
+      // Keep newSeg=false so we scan forward until the next control operator.
+    }
   }
-
   return null;
 }
 

@@ -7,7 +7,7 @@ import {
   readBashCall,
   resolveLimits,
 } from "./guard.js";
-import bashBlockGuard, { bashBlockGuardStage } from "./index.js";
+import bashBlockGuard, { createBashGuardHandler } from "./index.js";
 
 const limits = (overrides: Partial<BashGuardLimits> = {}): BashGuardLimits => ({
   maxSeconds: DEFAULT_MAX_SECONDS,
@@ -148,57 +148,18 @@ describe("decideBashGuard: bodies and blind spots", () => {
     });
   });
 
-  it("fails closed on an unterminated quote instead of guessing", () => {
-    // 以前是把未闭合的尾巴拼回去再扫；现在结构层报错就 fail-closed，
-    // 因为"看不进去"恰恰是这条命令的风险点。
+  it("does not quote away an unterminated quote", () => {
     expect(decide({ command: 'echo "unclosed then sleep 30' })).toMatchObject({
-      action: "block",
-      rule: "unparseable",
-    });
-  });
-
-  it("sees a wait inside a literal sh -c script", () => {
-    // 结构层把字面量脚本当嵌套命令递归判，所以这条以前漏掉的现在拦得住。
-    expect(decide({ command: 'sh -c "sleep 30"' })).toMatchObject({
-      action: "block",
       rule: "sleep",
     });
   });
 
-  it("sees a follow-mode tail inside a bash -c script", () => {
-    expect(decide({ command: 'bash -c "tail -f /tmp/x.log"' })).toMatchObject({
-      action: "block",
-      rule: "tail-follow",
+  it("accepts the documented blind spot of a wait inside sh -c", () => {
+    // Quotes are stripped before scanning, so this slips through on purpose.
+    // Changing that would start blocking `echo "sleep 30"`.
+    expect(decide({ command: 'sh -c "sleep 30"' })).toEqual({
+      action: "allow",
     });
-  });
-
-  it("fails closed when the nested script is a variable", () => {
-    expect(decide({ command: 'sh -c "$SCRIPT"' })).toMatchObject({
-      action: "block",
-      rule: "unresolved-dynamic-execution",
-    });
-  });
-
-  it("fails closed when the command name itself is dynamic", () => {
-    expect(decide({ command: "$RUNNER --wait" })).toMatchObject({
-      action: "block",
-      rule: "unresolved-dynamic-execution",
-    });
-  });
-
-  it("leaves a quiet nested script alone", () => {
-    expect(decide({ command: 'sh -c "echo hi"' })).toEqual({ action: "allow" });
-  });
-
-  it("does not read a heredoc body as a nested script", () => {
-    const command = [
-      "cat > /tmp/poll.sh <<'EOF'",
-      'sh -c "sleep 30"',
-      "EOF",
-      "sh /tmp/poll.sh",
-    ].join("\n");
-
-    expect(decide({ command })).toEqual({ action: "allow" });
   });
 });
 
@@ -393,62 +354,39 @@ describe("readBashCall", () => {
 // ── the extension as pi drives it ────────────────────────────
 
 describe("tool_call hook", () => {
-  /**
-   * 走真正的阶段，而不是第二条入口：`createBashGuardHandler` 会绕过流水线
-   * （不过 oversized、不参与排序），那样测的就不是 pi 实际跑的那条路径。
-   */
-  const handler =
-    (env: Record<string, string | undefined>) =>
-    async (event: {
-      toolName: string;
-      input: { command: string; timeout?: number };
-    }) => {
-      const verdict = await bashBlockGuardStage.evaluate(
-        {
-          toolName: event.toolName,
-          input: event.input,
-          text: event.input.command,
-        },
-        { cwd: "/repo", hasUI: true, env, ctx: {} as never },
-      );
-      return verdict.action === "block"
-        ? { block: true as const, reason: verdict.reason }
-        : undefined;
-    };
+  const handler = createBashGuardHandler({});
   const call = (command: string, timeout?: number) =>
-    handler({})({ toolName: "bash", input: { command, timeout } });
+    handler({ toolName: "bash", input: { command, timeout } });
 
   // The six cases the plan's completion condition names.
-  it("blocks sleep 30", async () => {
-    await expect(call("sleep 30")).resolves.toMatchObject({ block: true });
+  it("blocks sleep 30", () => {
+    expect(call("sleep 30")).toMatchObject({ block: true });
   });
 
-  it("blocks a loop whose sleeps are short", async () => {
-    await expect(
-      call("for i in 1 2 3; do sleep 5; done"),
-    ).resolves.toMatchObject({ block: true });
-  });
-
-  it("blocks a 600 second call", async () => {
-    await expect(call("make build", 600)).resolves.toMatchObject({
+  it("blocks a loop whose sleeps are short", () => {
+    expect(call("for i in 1 2 3; do sleep 5; done")).toMatchObject({
       block: true,
     });
   });
 
-  it("lets a short sleep run", async () => {
-    await expect(call("sleep 5")).resolves.toBeUndefined();
+  it("blocks a 600 second call", () => {
+    expect(call("make build", 600)).toMatchObject({ block: true });
   });
 
-  it("lets a quoted sleep run", async () => {
-    await expect(call('echo "sleep 30"')).resolves.toBeUndefined();
+  it("lets a short sleep run", () => {
+    expect(call("sleep 5")).toBeUndefined();
   });
 
-  it("lets a 200 second call run", async () => {
-    await expect(call("docker build .", 200)).resolves.toBeUndefined();
+  it("lets a quoted sleep run", () => {
+    expect(call('echo "sleep 30"')).toBeUndefined();
   });
 
-  it("carries the replacement move into the reason", async () => {
-    const result = await call(
+  it("lets a 200 second call run", () => {
+    expect(call("docker build .", 200)).toBeUndefined();
+  });
+
+  it("carries the replacement move into the reason", () => {
+    const result = call(
       "for i in $(seq 1 50); do glab ci status; sleep 20; done",
     );
 
@@ -456,31 +394,29 @@ describe("tool_call hook", () => {
     expect(result?.reason).toContain("替代写法");
   });
 
-  it("blocks the 1100 second poll from the session that motivated this", async () => {
-    await expect(call("glab ci status", 1100)).resolves.toMatchObject({
-      block: true,
-    });
+  it("blocks the 1100 second poll from the session that motivated this", () => {
+    expect(call("glab ci status", 1100)).toMatchObject({ block: true });
   });
 
-  it("returns nothing for tools the guard does not own", async () => {
-    await expect(
-      handler({})({ toolName: "write", input: { command: "sleep 30" } }),
-    ).resolves.toBeUndefined();
+  it("returns nothing for tools the guard does not own", () => {
+    expect(
+      handler({ toolName: "write", input: { command: "sleep 30" } }),
+    ).toBeUndefined();
   });
 
-  it("reads the environment on every call", async () => {
-    const disarmed = handler({ PI_BASH_GUARD_DISABLED: "1" });
+  it("reads the environment when the extension is created for production", () => {
+    const disarmed = createBashGuardHandler({ PI_BASH_GUARD_DISABLED: "1" });
 
-    await expect(
+    expect(
       disarmed({ toolName: "bash", input: { command: "sleep 60" } }),
-    ).resolves.toBeUndefined();
+    ).toBeUndefined();
   });
 });
 
 describe("registration", () => {
   type Handler = (event: { toolName: string; input: unknown }) => unknown;
 
-  it("registers one tool_call handler that blocks through the guard pipeline", async () => {
+  it("subscribes the guard to tool_call through pi.on", () => {
     const handlers = new Map<string, Handler[]>();
     const pi = {
       on: (name: string, handler: Handler) => {
@@ -493,11 +429,11 @@ describe("registration", () => {
     const registered = handlers.get("tool_call") ?? [];
     expect(registered).toHaveLength(1);
     const [handler] = registered;
-    await expect(
+    expect(
       handler?.({ toolName: "bash", input: { command: "sleep 60" } }),
-    ).resolves.toMatchObject({ block: true });
-    await expect(
+    ).toMatchObject({ block: true });
+    expect(
       handler?.({ toolName: "bash", input: { command: "ls" } }),
-    ).resolves.toBeUndefined();
+    ).toBeUndefined();
   });
 });

@@ -24,7 +24,7 @@ slidev|https://github.com/slidevjs/slidev.git|skills/slidev
 me-code-simplifier|local|skills/me-code-simplifier
 zero-tech-debt|local|skills/zero-tech-debt
 me-tdd|local|skills/me-tdd
-debug-pi-coding-agent|local|skills/debug-pi-coding-agent
+# debug-pi-coding-agent|local|skills/debug-pi-coding-agent（已删：skill 与指向它的 9 个链接一起清掉）
 chao-go-perf|local|skills/chao-go-perf
 review|local|skills/review
 handoff|local|skills/handoff

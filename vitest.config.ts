@@ -30,6 +30,8 @@ export default defineConfig({
     environment: "node",
     include: ["**/*.test.ts"],
     exclude: ["**/node_modules/**", "**/.git/**", "**/.pi/**", "**/dist/**"],
+    // 宿主档案不能被跑测试的 shell 带偏（`PI_KIT_UI_HOST`，见该文件的注释）。
+    setupFiles: ["./vitest.setup.ts"],
     clearMocks: true,
     restoreMocks: true,
   },

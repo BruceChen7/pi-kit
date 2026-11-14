@@ -7,7 +7,7 @@ import {
   readBashCall,
   resolveLimits,
 } from "./guard.js";
-import bashBlockGuard, { createBashGuardHandler } from "./index.js";
+import bashBlockGuard, { bashBlockGuardStage } from "./index.js";
 
 const limits = (overrides: Partial<BashGuardLimits> = {}): BashGuardLimits => ({
   maxSeconds: DEFAULT_MAX_SECONDS,
@@ -393,39 +393,62 @@ describe("readBashCall", () => {
 // ── the extension as pi drives it ────────────────────────────
 
 describe("tool_call hook", () => {
-  const handler = createBashGuardHandler({});
+  /**
+   * 走真正的阶段，而不是第二条入口：`createBashGuardHandler` 会绕过流水线
+   * （不过 oversized、不参与排序），那样测的就不是 pi 实际跑的那条路径。
+   */
+  const handler =
+    (env: Record<string, string | undefined>) =>
+    async (event: {
+      toolName: string;
+      input: { command: string; timeout?: number };
+    }) => {
+      const verdict = await bashBlockGuardStage.evaluate(
+        {
+          toolName: event.toolName,
+          input: event.input,
+          text: event.input.command,
+        },
+        { cwd: "/repo", hasUI: true, env, ctx: {} as never },
+      );
+      return verdict.action === "block"
+        ? { block: true as const, reason: verdict.reason }
+        : undefined;
+    };
   const call = (command: string, timeout?: number) =>
-    handler({ toolName: "bash", input: { command, timeout } });
+    handler({})({ toolName: "bash", input: { command, timeout } });
 
   // The six cases the plan's completion condition names.
-  it("blocks sleep 30", () => {
-    expect(call("sleep 30")).toMatchObject({ block: true });
+  it("blocks sleep 30", async () => {
+    await expect(call("sleep 30")).resolves.toMatchObject({ block: true });
   });
 
-  it("blocks a loop whose sleeps are short", () => {
-    expect(call("for i in 1 2 3; do sleep 5; done")).toMatchObject({
+  it("blocks a loop whose sleeps are short", async () => {
+    await expect(
+      call("for i in 1 2 3; do sleep 5; done"),
+    ).resolves.toMatchObject({ block: true });
+  });
+
+  it("blocks a 600 second call", async () => {
+    await expect(call("make build", 600)).resolves.toMatchObject({
       block: true,
     });
   });
 
-  it("blocks a 600 second call", () => {
-    expect(call("make build", 600)).toMatchObject({ block: true });
+  it("lets a short sleep run", async () => {
+    await expect(call("sleep 5")).resolves.toBeUndefined();
   });
 
-  it("lets a short sleep run", () => {
-    expect(call("sleep 5")).toBeUndefined();
+  it("lets a quoted sleep run", async () => {
+    await expect(call('echo "sleep 30"')).resolves.toBeUndefined();
   });
 
-  it("lets a quoted sleep run", () => {
-    expect(call('echo "sleep 30"')).toBeUndefined();
+  it("lets a 200 second call run", async () => {
+    await expect(call("docker build .", 200)).resolves.toBeUndefined();
   });
 
-  it("lets a 200 second call run", () => {
-    expect(call("docker build .", 200)).toBeUndefined();
-  });
-
-  it("carries the replacement move into the reason", () => {
-    const result = call(
+  it("carries the replacement move into the reason", async () => {
+    const result = await call(
       "for i in $(seq 1 50); do glab ci status; sleep 20; done",
     );
 
@@ -433,22 +456,24 @@ describe("tool_call hook", () => {
     expect(result?.reason).toContain("替代写法");
   });
 
-  it("blocks the 1100 second poll from the session that motivated this", () => {
-    expect(call("glab ci status", 1100)).toMatchObject({ block: true });
+  it("blocks the 1100 second poll from the session that motivated this", async () => {
+    await expect(call("glab ci status", 1100)).resolves.toMatchObject({
+      block: true,
+    });
   });
 
-  it("returns nothing for tools the guard does not own", () => {
-    expect(
-      handler({ toolName: "write", input: { command: "sleep 30" } }),
-    ).toBeUndefined();
+  it("returns nothing for tools the guard does not own", async () => {
+    await expect(
+      handler({})({ toolName: "write", input: { command: "sleep 30" } }),
+    ).resolves.toBeUndefined();
   });
 
-  it("reads the environment when the extension is created for production", () => {
-    const disarmed = createBashGuardHandler({ PI_BASH_GUARD_DISABLED: "1" });
+  it("reads the environment on every call", async () => {
+    const disarmed = handler({ PI_BASH_GUARD_DISABLED: "1" });
 
-    expect(
+    await expect(
       disarmed({ toolName: "bash", input: { command: "sleep 60" } }),
-    ).toBeUndefined();
+    ).resolves.toBeUndefined();
   });
 });
 

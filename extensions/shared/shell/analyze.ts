@@ -170,9 +170,6 @@ export const effectiveCommand = (segment: ShellSegment): EffectiveCommand => {
   };
 };
 
-const literalWords = (segment: ShellSegment): string[] =>
-  segment.words.map((word) => word.text);
-
 /** 这一段的 stdout 是否落到了文件（`> f`、`>> f`、`&> f`）。 */
 export const segmentWritesStdoutToFile = (segment: ShellSegment): boolean =>
   segment.redirects.some(
@@ -185,11 +182,6 @@ export const segmentWritesStdoutToFile = (segment: ShellSegment): boolean =>
       !redirect.targetDynamic &&
       redirect.target !== undefined,
   );
-
-export const segmentHeredocBodies = (segment: ShellSegment): string[] =>
-  segment.redirects
-    .map((redirect) => redirect.heredoc?.body)
-    .filter((body): body is string => body !== undefined);
 
 /**
  * `-c` / `-lc` / `-ec` 里的 `c`：短选项可能合并，所以判断"是短选项且含该字母"。
@@ -390,14 +382,8 @@ export const commandSegments = (analysis: ShellAnalysis): FlatSegment[] => {
   return [...own, ...children];
 };
 
-export const structureOf = (analysis: ShellAnalysis): string[] =>
-  analysis.structure;
-
 export const hasLoopStructure = (analysis: ShellAnalysis): boolean =>
   analysis.structure.some(
     (keyword) =>
       keyword === "for" || keyword === "while" || keyword === "until",
   );
-
-export const literalText = (segment: ShellSegment): string =>
-  literalWords(segment).join(" ");

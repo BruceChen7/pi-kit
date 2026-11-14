@@ -253,3 +253,48 @@ describe("resolveTrustedSettings", () => {
     expect(ignored).toEqual(["planMode.preset（项目值放宽护栏）"]);
   });
 });
+
+describe("resolveTrustedSettings: deep merge keeps global subtrees", () => {
+  it("keeps an unrelated global leaf when the project sets a sibling", () => {
+    const { effective } = resolveTrustedSettings(
+      { planMode: { requireReview: true, guards: { readBeforeWrite: true } } },
+      { planMode: { defaultMode: "plan" } },
+      [],
+    );
+
+    expect(effective).toEqual({
+      planMode: {
+        requireReview: true,
+        guards: { readBeforeWrite: true },
+        defaultMode: "plan",
+      },
+    });
+  });
+
+  it("still reports a widening project value deep inside a subtree", () => {
+    const { effective, ignored } = resolveTrustedSettings(
+      { planMode: { guards: { readBeforeWrite: true } } },
+      { planMode: { guards: { readBeforeWrite: false }, defaultMode: "plan" } },
+      [
+        {
+          path: "planMode.guards.readBeforeWrite",
+          isWidening: (value: unknown) => value === false,
+        },
+      ],
+    );
+
+    expect(effective.planMode).toEqual({
+      guards: { readBeforeWrite: true },
+      defaultMode: "plan",
+    });
+    expect(ignored).toEqual([
+      "planMode.guards.readBeforeWrite（项目值放宽护栏）",
+    ]);
+  });
+
+  it("replaces arrays instead of merging them", () => {
+    expect(
+      resolveTrustedSettings({ list: [1, 2] }, { list: [3] }).effective,
+    ).toEqual({ list: [3] });
+  });
+});

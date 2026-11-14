@@ -251,6 +251,27 @@ const deletePath = (
 };
 
 /**
+ * 深合并两层设置：普通对象递归合并，其他值（数组、标量）由上层覆盖。
+ *
+ * 浅合并会让"项目只写了一个无关键"把全局整棵子树顶掉 —— 用户级的设置
+ * 就这样静默消失（ADR-0001 D2 要求保留全局值）。
+ */
+const mergeRecords = (
+  base: SettingsRecord,
+  override: SettingsRecord,
+): SettingsRecord => {
+  const merged: SettingsRecord = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    const current = merged[key];
+    merged[key] =
+      isRecord(current) && isRecord(value)
+        ? mergeRecords(current, value)
+        : value;
+  }
+  return merged;
+};
+
+/**
  * 合并两层设置，并让 `rules` 里列出的键"只能加严"：项目值若在放宽，就保留
  * 全局值（全局也没有就删掉这个键，回到内置默认）。
  */
@@ -259,7 +280,7 @@ export const resolveTrustedSettings = (
   project: SettingsRecord,
   rules: readonly TrustRule[] = [],
 ): TrustedSettings => {
-  let effective: SettingsRecord = { ...global, ...project };
+  let effective: SettingsRecord = mergeRecords(global, project);
   const ignored: string[] = [];
 
   for (const rule of rules) {

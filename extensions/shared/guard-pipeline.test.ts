@@ -6,6 +6,7 @@ import {
   deny,
   evaluateGuards,
   formatBlockReason,
+  GUARD_STAGE_RANK,
   type GuardEnv,
   type GuardStage,
   installGuardPipeline,
@@ -103,7 +104,8 @@ describe("formatBlockReason / toToolCallResult", () => {
 
     expect(reason).toContain("bash");
     expect(reason).toContain("deny");
-    expect(reason).toContain("loop, sleep");
+    // 段落顺序跟着传进来的顺序（调用方按 GUARD_STAGE_RANK 排过阶段），不再二次排序
+    expect(reason).toContain("sleep, loop");
     expect(reason).toContain("等太久了");
     expect(reason).toContain("别循环");
   });
@@ -269,5 +271,68 @@ describe("installGuardPipeline", () => {
     );
 
     expect(result).toBeUndefined();
+  });
+});
+
+describe("stage order comes from GUARD_STAGE_RANK, not load order", () => {
+  beforeEach(() => {
+    resetGuardPipeline();
+  });
+
+  it("runs the lower-ranked ask stage first even when registered last", async () => {
+    const asked: string[] = [];
+    const askStage = (id: string, rule: string): GuardStage => ({
+      id,
+      kind: "ask",
+      evaluate: () => {
+        asked.push(id);
+        return ask(rule, rule);
+      },
+    });
+
+    // safe-delete 排在 rank 30，自定义阶段排在 100：先注册后者也不该先问
+    registerGuard(askStage("zz-custom", "custom"));
+    registerGuard(askStage("safe-delete", "safe-delete"));
+
+    await evaluateGuards(bashCall("cmd"), env());
+
+    expect(asked).toEqual(["safe-delete"]);
+  });
+
+  it("orders deny reasons by stage rank, not by rule name", () => {
+    const aggregate = aggregateVerdicts([]);
+    expect(aggregate).toEqual({ action: "pass" });
+
+    const stages: GuardStage[] = [
+      { id: "zz-custom", kind: "deny", evaluate: () => deny("zzz", "z") },
+      {
+        id: "bash-block-guard",
+        kind: "deny",
+        evaluate: () => deny("aaa", "a"),
+      },
+    ];
+    const ordered = [...stages].sort(
+      (left, right) =>
+        (GUARD_STAGE_RANK[left.id] ?? 100) -
+        (GUARD_STAGE_RANK[right.id] ?? 100),
+    );
+    expect(ordered.map((stage) => stage.id)).toEqual([
+      "bash-block-guard",
+      "zz-custom",
+    ]);
+  });
+
+  it("replaces a stage with the same id instead of keeping the stale one", async () => {
+    const first = stage("dup", "deny", () => deny("old", "old closure"));
+    const second = stage("dup", "deny", () => deny("new", "new closure"));
+
+    registerGuard(first);
+    registerGuard(second);
+
+    const aggregate = await evaluateGuards(bashCall("cmd"), env());
+    expect(aggregate.action === "block" && aggregate.blocks[0]?.rule).toBe(
+      "new",
+    );
+    expect(registeredGuards().filter((s) => s.id === "dup")).toHaveLength(1);
   });
 });

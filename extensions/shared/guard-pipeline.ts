@@ -93,8 +93,8 @@ const isBlock = (
   verdict.action === "block";
 
 /**
- * 阶段顺序的唯一来源。没列进来的规则排在后面、按名字排。
- * 这里的先后决定 reason 里的段落顺序，与扩展加载顺序无关。
+ * 阶段顺序的唯一来源，key 是 **stage id**。没列进来的阶段排在后面、按 id 排。
+ * 执行顺序与 reason 的段落顺序都由它决定，与扩展加载顺序无关（ADR-0001 D1）。
  */
 export const GUARD_STAGE_RANK: Record<string, number> = {
   "plan-mode": 10,
@@ -102,16 +102,17 @@ export const GUARD_STAGE_RANK: Record<string, number> = {
   "safe-delete": 30,
 };
 
-const rankOf = (rule: string): number => GUARD_STAGE_RANK[rule] ?? 100;
+const rankOfStage = (stage: GuardStage): number =>
+  GUARD_STAGE_RANK[stage.id] ?? 100;
 
-const byRank = (left: GuardBlock, right: GuardBlock): number => {
-  const delta = rankOf(left.rule) - rankOf(right.rule);
-  return delta !== 0 ? delta : left.rule.localeCompare(right.rule);
+const byStageRank = (left: GuardStage, right: GuardStage): number => {
+  const delta = rankOfStage(left) - rankOfStage(right);
+  return delta !== 0 ? delta : left.id.localeCompare(right.id);
 };
 
 /**
- * 聚合一次调用里所有护栏的判决：deny 恒胜 ask；同一规则只报一次；段落按
- * GUARD_STAGE_RANK 排序，所以同一份输入永远得到同一段 reason。
+ * 聚合一次调用里所有护栏的判决：deny 恒胜 ask；同一规则只报一次；段落保持
+ * 传入顺序 —— 调用方按 GUARD_STAGE_RANK 排过阶段，所以段落顺序同样是确定的。
  */
 export function aggregateVerdicts(
   verdicts: readonly GuardVerdict[],
@@ -132,17 +133,19 @@ export function aggregateVerdicts(
     seen.add(block.rule);
     merged.push({ rule: block.rule, reason: block.reason });
   }
-  merged.sort(byRank);
   return { action: "block", kind, blocks: merged };
 }
 
-/** 人读的拦下原因；多个护栏命中时每段之间空一行。 */
+/**
+ * 人读的拦下原因；多个护栏命中时每段之间空一行。
+ * 放行返回 undefined，不返回空串 —— 空串是一个合法的 reason，会掩盖判断错误。
+ */
 export function formatBlockReason(
   toolName: string,
   aggregate: GuardAggregate,
-): string {
+): string | undefined {
   if (aggregate.action === "pass") {
-    return "";
+    return undefined;
   }
   const rules = aggregate.blocks.map((block) => block.rule).join(", ");
   const body = aggregate.blocks.map((block) => block.reason).join("\n\n");
@@ -153,10 +156,10 @@ export function formatBlockReason(
 export const toToolCallResult = (
   toolName: string,
   aggregate: GuardAggregate,
-): { block: true; reason: string } | undefined =>
-  aggregate.action === "pass"
-    ? undefined
-    : { block: true, reason: formatBlockReason(toolName, aggregate) };
+): { block: true; reason: string } | undefined => {
+  const reason = formatBlockReason(toolName, aggregate);
+  return reason === undefined ? undefined : { block: true, reason };
+};
 
 /** 从工具名与参数里取这次调用；只有 bash 的 command 参与长度上限。 */
 export const readGuardCall = (toolName: string, input: unknown): GuardCall => {
@@ -190,14 +193,19 @@ const getRegistry = (): GuardRegistry => {
 };
 
 /**
- * 注册一个护栏。同一个 id 重复注册保留第一次：扩展被 reload 时不会叠出重复阶段。
+ * 注册一个护栏。同一个 id 重复注册**覆盖**旧阶段：扩展 reload 之后必须用新的
+ * 闭包（新 controller、新 pi），否则护栏会一直按上一次加载的状态判定。
  */
 export function registerGuard(stage: GuardStage): void {
   const registry = getRegistry();
-  if (registry.stages.some((existing) => existing.id === stage.id)) {
+  const index = registry.stages.findIndex(
+    (existing) => existing.id === stage.id,
+  );
+  if (index === -1) {
+    registry.stages.push(stage);
     return;
   }
-  registry.stages.push(stage);
+  registry.stages[index] = stage;
 }
 
 export const registeredGuards = (): readonly GuardStage[] =>
@@ -240,7 +248,7 @@ export async function evaluateGuards(
     return aggregateVerdicts([oversized]);
   }
 
-  const stages = getRegistry().stages;
+  const stages = [...getRegistry().stages].sort(byStageRank);
   const denyVerdicts: GuardVerdict[] = [];
   for (const stage of stages) {
     if (stage.kind !== "deny") continue;

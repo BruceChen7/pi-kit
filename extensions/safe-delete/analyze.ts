@@ -598,6 +598,26 @@ export function analyzeCommand(input: DetectorInput): Threat[] {
   ports.trace?.("debug", "analyzing command", { command, cwd });
 
   const analysis = analyzeShell(command);
+
+  // 看不进去的部分不能静默放行：动态执行与解析错误都变成一次确认
+  // （ADR-0001 D3）。以前这里只走命令段，`$TOOL -rf ~/Documents` 什么都不发生。
+  const unresolved = analysis.unresolved[0];
+  if (unresolved !== undefined) {
+    allThreats.push({
+      description: `Dynamic execution could not be inspected (${unresolved.kind}): ${unresolved.raw}`,
+      severity: "high",
+      paths: ["(unresolved)"],
+    });
+  }
+  const parseError = analysis.errors[0];
+  if (parseError !== undefined) {
+    allThreats.push({
+      description: `Command does not parse (${parseError}); what it would delete is unknown`,
+      severity: "high",
+      paths: ["(unparsed)"],
+    });
+  }
+
   for (const { segment } of commandSegments(analysis)) {
     const effective = effectiveCommand(segment);
     // sudo 让每条结论都更严重：它意味着没有二次确认的机会。

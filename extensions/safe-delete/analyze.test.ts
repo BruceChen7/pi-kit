@@ -207,3 +207,23 @@ describe("formatThreats", () => {
     ]);
   });
 });
+
+describe("analyzeCommand: 看不进去的部分要问", () => {
+  it("asks about a dynamic command name instead of ignoring it", () => {
+    expect(descriptions("$TOOL -rf /tmp/x")).toEqual([
+      expect.stringContaining("Dynamic execution"),
+    ]);
+  });
+
+  it("asks about a dynamic nested script", () => {
+    expect(descriptions('sh -c "$SCRIPT"')).toEqual([
+      expect.stringContaining("Dynamic execution"),
+    ]);
+  });
+
+  it("asks about a command that does not parse", () => {
+    expect(descriptions('rm -rf "$BROKEN')).toEqual([
+      expect.stringContaining("does not parse"),
+    ]);
+  });
+});

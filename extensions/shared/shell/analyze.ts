@@ -35,7 +35,12 @@ export type ShellSegment = {
 };
 
 export type ShellUnresolved = {
-  kind: "dynamic-command" | "nested-shell-dynamic" | "eval-dynamic";
+  kind:
+    | "dynamic-command"
+    | "nested-shell-dynamic"
+    | "eval-dynamic"
+    /** 嵌套层数超过上限：再往里看不进去，不能装作看懂了。 */
+    | "too-deep";
   segmentIndex: number;
   raw: string;
 };
@@ -186,6 +191,21 @@ export const segmentHeredocBodies = (segment: ShellSegment): string[] =>
     .map((redirect) => redirect.heredoc?.body)
     .filter((body): body is string => body !== undefined);
 
+/**
+ * `-c` / `-lc` / `-ec` 里的 `c`：短选项可能合并，所以判断"是短选项且含该字母"。
+ * 返回该选项在数组里的下标，没有就返回 undefined。
+ */
+const commandFlagIndex = (
+  args: readonly ShellWordToken[],
+  letter: string,
+): number | undefined => {
+  for (const [index, arg] of args.entries()) {
+    if (!arg.text.startsWith("-") || arg.text.startsWith("--")) continue;
+    if (arg.text.slice(1).includes(letter)) return index;
+  }
+  return undefined;
+};
+
 /** `2>` / `2>&1`：数字词与后面的重定向操作符之间没有空白。 */
 const isFdPrefix = (tokens: ShellToken[], index: number): boolean => {
   const token = tokens[index];
@@ -231,9 +251,17 @@ const buildAnalysis = (source: string, depth: number): ShellAnalysis => {
         segmentIndex: segments.length - 1,
         raw: segment.raw,
       });
-    } else if (depth < MAX_NESTING_DEPTH && command.name !== null) {
+    } else if (command.name !== null) {
       if (SHELL_NAMES.has(command.name)) {
-        collectNestedScript(segment, command.args);
+        const flag = commandFlagIndex(command.args, "c");
+        if (flag !== undefined) {
+          collectNestedScript(
+            segment,
+            command.args,
+            "nested-shell-dynamic",
+            flag + 1,
+          );
+        }
       } else if (command.name === "eval") {
         // eval 的脚本文本就是它的第一个参数
         collectNestedScript(segment, command.args, "eval-dynamic", 0);
@@ -250,19 +278,26 @@ const buildAnalysis = (source: string, depth: number): ShellAnalysis => {
   const collectNestedScript = (
     segment: ShellSegment,
     args: ShellWordToken[],
-    dynamicKind:
-      | "nested-shell-dynamic"
-      | "eval-dynamic" = "nested-shell-dynamic",
-    scriptIndex?: number,
+    dynamicKind: "nested-shell-dynamic" | "eval-dynamic",
+    /** 脚本文本在 args 里的下标（`-c` 的后一个词 / eval 的第一个词）。 */
+    index: number,
   ): void => {
-    const index = scriptIndex ?? args.findIndex((arg) => arg.text === "-c") + 1;
-    const script = index >= 0 ? args[index] : undefined;
+    const script = args[index];
     if (script === undefined) {
       return;
     }
     if (script.dynamic) {
       unresolved.push({
         kind: dynamicKind,
+        segmentIndex: segments.length - 1,
+        raw: segment.raw,
+      });
+      return;
+    }
+    if (depth >= MAX_NESTING_DEPTH) {
+      // 看不进去的一层：报 unresolved，交给护栏 fail-closed（ADR-0001 D3）
+      unresolved.push({
+        kind: "too-deep",
         segmentIndex: segments.length - 1,
         raw: segment.raw,
       });

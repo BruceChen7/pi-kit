@@ -71,15 +71,6 @@ const TAIL_FOLLOW_FLAG = /^(?:-[A-Za-z0-9]*[fF]|--follow(?:=|$))/;
  * 直接读结构层的结论，不再对原文跑正则：bash 命令是不可信输入，回溯匹配
  * 既可能爆炸也可能看错（ADR-0001 D5）。
  */
-const shellAnalysis = (command: string): ShellAnalysis | null => {
-  try {
-    return analyzeShell(command);
-  } catch {
-    // 结构层自己出错不该让护栏失声：当作"没有结构信息"。
-    return null;
-  }
-};
-
 /** 所有 sleep 的时长（秒），含嵌套字面量脚本里的。 */
 const sleepAmounts = (analysis: ShellAnalysis): number[] => {
   const amounts: number[] = [];
@@ -139,8 +130,10 @@ const unparseableVerdict = (
  * The reason strings are the whole product of a block: they name the rule and
  * the replacement move. Examples stay labelled as examples, because the same
  * text fires for any repository and any command.
+ *
+ * `rerunnableCommand`: the first line that is not a bare wait — the command
+ * worth moving to the background instead of blocking on.
  */
-/** Commands worth rerunning in the background: the first line that is not a bare wait. */
 const rerunnableCommand = (command: string): string | undefined => {
   const line = command
     .split("\n")
@@ -278,44 +271,27 @@ const unresolvedReason = (unresolved: ShellUnresolved): string => {
 };
 
 /**
- * 结构层再判一次：正则看不见"引号里面还有什么"。`sh -c "sleep 30"` 这种
- * 以前是 README 里承认的盲区，现在按嵌套脚本递归判；脚本本身是变量时
- * fail-closed，交给模型改写成字面量（ADR-0001 D3）。
+ * 读一次结构；解析器自己出错时 fail-closed —— 说不出"安全"就不放行，
+ * 与 safe-delete 侧一致（ADR-0001 D2 的 fail 方向）。
  */
-const decideStructuralGuard = (
-  call: BashCall,
-  limits: BashGuardLimits,
-): BashGuardDecision | null => {
-  let analysis: ReturnType<typeof analyzeShell>;
+const readShell = (
+  command: string,
+): { analysis: ShellAnalysis } | { failure: BashGuardDecision } => {
   try {
-    analysis = analyzeShell(call.command);
-  } catch {
-    // 结构层自己出错不该让护栏失声：交回正则路径。
-    return null;
-  }
-
-  const unparseable = unparseableVerdict(analysis);
-  if (unparseable !== null) {
-    return unparseable;
-  }
-
-  for (const nested of analysis.nested) {
-    const decision = decideBashGuard({ command: nested.source }, limits);
-    if (decision.action === "block") {
-      return decision;
-    }
-  }
-
-  const unresolved = analysis.unresolved[0];
-  if (unresolved !== undefined) {
+    return { analysis: analyzeShell(command) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     return {
-      action: "block",
-      rule: "unresolved-dynamic-execution",
-      reason: unresolvedReason(unresolved),
+      failure: {
+        action: "block",
+        rule: "unparseable",
+        reason: [
+          `拦住原因：护栏解析这条命令时出错（${message}），判定不了它会不会把这一轮占住。`,
+          "替代写法：拆成几条更小的调用，或把脚本写成文件再执行。",
+        ].join("\n"),
+      },
     };
   }
-
-  return null;
 };
 
 export const decideBashGuard = (
@@ -326,20 +302,28 @@ export const decideBashGuard = (
     return ALLOW;
   }
 
-  const analysis = decideStructuralGuard(call, limits);
-  // 结构层已经处理了嵌套脚本与动态执行；这里只按结构查询做判断。
-  if (analysis !== null) {
-    return analysis;
+  const read = readShell(call.command);
+  if ("failure" in read) {
+    return read.failure;
+  }
+  const shell = read.analysis;
+
+  // 引号没闭合之类：bash 自己会报错，但护栏也不能假装看懂了。
+  const unparseable = unparseableVerdict(shell);
+  if (unparseable !== null) {
+    return unparseable;
   }
 
-  const shell = shellAnalysis(call.command) ?? {
-    source: call.command,
-    segments: [],
-    nested: [],
-    unresolved: [],
-    errors: [],
-    structure: [],
-  };
+  // 嵌套字面量脚本已经被 commandSegments 摊平成命令段，下面四条规则一并覆盖；
+  // 不在这里再递归一次，否则同一条命令会被判两遍（理由文案也会指向内层）。
+  const unresolved = shell.unresolved[0];
+  if (unresolved !== undefined) {
+    return {
+      action: "block",
+      rule: "unresolved-dynamic-execution",
+      reason: unresolvedReason(unresolved),
+    };
+  }
 
   const longest = longestSleep(shell);
 

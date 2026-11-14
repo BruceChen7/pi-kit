@@ -186,10 +186,29 @@ describe("nested scripts", () => {
     expect(analysis.nested[0]?.source).toBe("sleep 30");
   });
 
-  it("stops recursing after a few levels", () => {
-    const deep =
-      'sh -c "sh -c \\"sh -c \\\\\\"sh -c \\\\\\\\\\\\\\"sh -c \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"echo hi\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\"\\"\\""';
-    const analysis = analyzeShell(deep);
-    expect(analysis).toBeDefined();
+  it("finds -c even when it is combined with other short flags", () => {
+    expect(analyzeShell('bash -lc "sleep 60"').nested[0]?.source).toBe(
+      "sleep 60",
+    );
+    expect(analyzeShell('sh -ec "tail -f x"').nested[0]?.source).toBe(
+      "tail -f x",
+    );
+  });
+
+  it("does not read a script path as a script body", () => {
+    // `sh /tmp/poll.sh` 执行的是文件，不是一段内联脚本文本
+    expect(analyzeShell("sh /tmp/poll.sh").nested).toEqual([]);
+  });
+
+  it("reports too-deep nesting instead of silently allowing it", () => {
+    // 5 层嵌套，超过 MAX_NESTING_DEPTH(4)
+    let command = "echo hi";
+    for (let depth = 0; depth < 5; depth += 1) {
+      command = `sh -c ${JSON.stringify(command)}`;
+    }
+
+    expect(
+      analyzeShell(command).unresolved.map((entry) => entry.kind),
+    ).toContain("too-deep");
   });
 });

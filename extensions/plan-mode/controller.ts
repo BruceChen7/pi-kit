@@ -17,6 +17,13 @@ interface ToolResultEventResult {
   isError?: boolean;
 }
 
+import {
+  createPublisher,
+  isFreshEvent,
+  readEvent,
+  type SeenEvent,
+  seenAfter,
+} from "../shared/event-protocol.ts";
 import { PLAN_MODE_STATUS_OWNER_CHANNEL } from "../shared/internal-events.ts";
 import { uiHostProfile } from "../shared/rich-ui.ts";
 import {
@@ -205,6 +212,12 @@ export class PlanModeController {
   private todoWidgetPresent = false;
   // 别的扩展挂上来的一段状态文字（key → text），渲染态，不持久化。
   private badges = new Map<string, string>();
+  /** 跨扩展事件的发布实例：序号只在本生命周期内递增。 */
+  private readonly events = createPublisher(
+    `plan-mode-${Math.random().toString(36).slice(2)}`,
+  );
+  /** 收到过的 badge 事件，按 key 记最后一次序号，重放/乱序的丢掉。 */
+  private readonly seenBadges = new Map<string, SeenEvent>();
   // 上一次广播出去的接管状态；只在翻转时通知生产方。
   private claimedStatusSurface = false;
   constructor(private readonly pi: ExtensionAPI) {}
@@ -351,10 +364,13 @@ export class PlanModeController {
     }
     this.claimedStatusSurface = claimed;
     try {
-      this.pi.events.emit(PLAN_MODE_STATUS_OWNER_CHANNEL, {
-        type: "plan-mode.status-owner",
-        active: claimed,
-      });
+      this.pi.events.emit(
+        PLAN_MODE_STATUS_OWNER_CHANNEL,
+        this.events.next({
+          type: "plan-mode.status-owner",
+          active: claimed,
+        }),
+      );
     } catch {
       // 没有订阅者不影响本次渲染。
     }
@@ -364,6 +380,25 @@ export class PlanModeController {
    * 另一扩展挂上来的一段状态文字（目前是 subagent 的运行计数）。
    * 文本不变就不重画：每次 tick 都会重复广播同一份内容。
    */
+  /**
+   * 从一条原始事件里取出 badge 负载：新格式是带序号信封，旧格式是裸负载。
+   * 返回 undefined 表示这条事件不该被处理（协议不符、重放、乱序）。
+   */
+  acceptBadgeEvent(
+    raw: unknown,
+  ): { key: string; text: string | null } | undefined {
+    const event = readEvent<{ key?: unknown; text?: unknown }>(raw);
+    if (event === undefined) return undefined;
+    const key = event.payload.key;
+    if (typeof key !== "string" || key === "") return undefined;
+    const seen = this.seenBadges.get(key);
+    if (!isFreshEvent(seen, event)) return undefined;
+    const next = seenAfter(seen, event);
+    if (next !== undefined) this.seenBadges.set(key, next);
+    const text = event.payload.text;
+    return { key, text: typeof text === "string" ? text : null };
+  }
+
   setBadge(key: string, text: string | null, ctx: ExtensionContext): void {
     if ((this.badges.get(key) ?? null) === text) {
       return;

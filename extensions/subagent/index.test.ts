@@ -409,10 +409,13 @@ describe("plan-mode 接管 footer", () => {
     return { pi, ui };
   };
 
+  /** badge 事件现在带信封（protocol/instanceId/sequence），断言看 payload。 */
   const badgePayloads = (pi: ReturnType<typeof makePi>["pi"]) =>
     pi.events.emit.mock.calls
       .filter(([channel]) => channel === PLAN_MODE_BADGE_CHANNEL)
-      .map(([, payload]) => payload as Record<string, unknown>);
+      .map(
+        ([, event]) => (event as { payload: Record<string, unknown> }).payload,
+      );
 
   const ownerHandler = (pi: ReturnType<typeof makePi>["pi"]) =>
     pi.events.on.mock.calls.find(

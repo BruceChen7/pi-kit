@@ -1,6 +1,6 @@
 # ADR-0002: 子 agent 的结算、持久化与跨扩展事件协议
 
-**Status:** accepted — T0、T1-D4 已实现（2026-11-14），T1 其余待做
+**Status:** accepted — T0、T1-D4/D5 已实现（2026-11-14），T1-D6 待做
 **Date:** 2026-11-14
 **Scope:** `extensions/subagent`、`extensions/shared/internal-events.ts`
 **参考:** [mavam/pi-agents](https://github.com/mavam/pi-agents) — `docs/design.md`（Obligations / Delivery / Recovery）、`docs/hooks.md`、`docs/architecture.md#state-snapshots`、`src/agents/obligations.ts`、`src/agents/receipts.ts`
@@ -83,4 +83,7 @@
 | D4 run 账本 | `extensions/subagent/ledger.ts`：`toLedgerEntry` / `ledgerEntriesOf` / `unsettledRuns` / `renderUnsettled`；接线在 `index.ts` 的 `recordRun`（start / settled / intermediate / failed / stopped，存任务摘要与结果字符数，不存正文） | `ledger.test.ts`（15 条）、`index.test.ts` 的 `run ledger`（4 条） |
 | D4 恢复语义 | `session_start` 读记录，把上次没结算的 run 报成一条 warning：会话内容已没了，只能重跑或放弃 | 同上 |
 
-未做：T1 剩余三项（跨扩展事件协议 `protocol/instanceId/sequence`、视图从已提交记录派生、receipt 只装不变量）。
+| D5 事件信封 | `extensions/shared/event-protocol.ts`：`wrapEvent` / `readEvent` / `isFreshEvent` / `createPublisher`；未知 protocol 显式拒绝，裸负载按 legacy 接受一版 | `event-protocol.test.ts`（11 条） |
+| D5 首个消费者 | plan-mode ↔ subagent 的两条 channel（badge、status-owner）改用信封，消费者按 instanceId + sequence 丢弃重放/乱序 | `todo-widget.test.ts`、`index.test.ts` 的断言改为读 `payload` |
+
+未做：D5 的"快照全量替换 + `:state:request` 主动索取"（现在是逐条 delta），以及 D6（视图从已提交记录派生、receipt 只装不变量）。

@@ -20,6 +20,13 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+  createPublisher,
+  isFreshEvent,
+  readEvent,
+  type SeenEvent,
+  seenAfter,
+} from "../shared/event-protocol.ts";
+import {
   PLAN_MODE_BADGE_CHANNEL,
   PLAN_MODE_STATUS_OWNER_CHANNEL,
 } from "../shared/internal-events.ts";
@@ -232,6 +239,10 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   log.info("extension registered", { tool: "subagent" });
   let state = createState();
   let lastContext: ExtensionToolContext | undefined;
+  /** 跨扩展事件的实例与序号：reload 后 instanceId 变化，序号不跨实例比较。 */
+  const events = createPublisher(`subagent-${randomUUID()}`);
+  /** plan-mode 广播的 status-owner 事件，只接受更新的序号。 */
+  let seenStatusOwner: SeenEvent | undefined;
   const sessions = new Map<string, AgentSession>();
   const inflight = new Set<string>();
   /** 等待方只关心「有 run 终态了」，不关心是哪一条；醒来自己查 state。 */
@@ -308,13 +319,16 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   const publishBadge = (text: string | undefined): void => {
     const ctx = liveContext();
     try {
-      pi.events.emit(PLAN_MODE_BADGE_CHANNEL, {
-        type: "plan-mode.badge",
-        cwd: ctx?.cwd ?? process.cwd(),
-        key: STATUS_KEY,
-        text: text ?? null,
-        ctx,
-      });
+      pi.events.emit(
+        PLAN_MODE_BADGE_CHANNEL,
+        events.next({
+          type: "plan-mode.badge",
+          cwd: ctx?.cwd ?? process.cwd(),
+          key: STATUS_KEY,
+          text: text ?? null,
+          ctx,
+        }),
+      );
     } catch {
       // 没有订阅者不影响本会话。
     }
@@ -423,9 +437,12 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   };
 
   /** plan-mode 接管/释放可见面；翻转才重画，避免广播回环。 */
-  const onStatusOwner = (payload: unknown): void => {
-    if (typeof payload !== "object" || payload === null) return;
-    const active = (payload as { active?: unknown }).active;
+  const onStatusOwner = (raw: unknown): void => {
+    const event = readEvent<{ active?: unknown }>(raw);
+    if (event === undefined) return;
+    if (!isFreshEvent(seenStatusOwner, event)) return;
+    seenStatusOwner = seenAfter(seenStatusOwner, event);
+    const active = event.payload.active;
     if (typeof active !== "boolean" || active === statusOwnedByPlanMode) return;
     statusOwnedByPlanMode = active;
     if (refreshing) return;

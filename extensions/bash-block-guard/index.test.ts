@@ -148,9 +148,12 @@ describe("decideBashGuard: bodies and blind spots", () => {
     });
   });
 
-  it("does not quote away an unterminated quote", () => {
+  it("fails closed on an unterminated quote instead of guessing", () => {
+    // 以前是把未闭合的尾巴拼回去再扫；现在结构层报错就 fail-closed，
+    // 因为"看不进去"恰恰是这条命令的风险点。
     expect(decide({ command: 'echo "unclosed then sleep 30' })).toMatchObject({
-      rule: "sleep",
+      action: "block",
+      rule: "unparseable",
     });
   });
 

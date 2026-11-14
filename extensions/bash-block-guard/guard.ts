@@ -6,8 +6,16 @@
  * limits from the environment, and turns the decision into a tool_call result.
  */
 
-import { analyzeShell, type ShellUnresolved } from "../shared/shell/index.ts";
-import { stripHeredocBodies } from "../shared/shell-text.ts";
+import {
+  analyzeShell,
+  commandSegments,
+  effectiveCommand,
+  hasLoopStructure,
+  type ShellAnalysis,
+  type ShellSegment,
+  type ShellUnresolved,
+  segmentWritesStdoutToFile,
+} from "../shared/shell/index.ts";
 
 export type BashCall = {
   command: string;
@@ -20,7 +28,9 @@ export type BashGuardRule =
   | "long-timeout"
   | "tail-follow"
   /** 命令里有一段护栏看不进去的动态执行（`sh -c "$CMD"`、`$CMD ...`）。 */
-  | "unresolved-dynamic-execution";
+  | "unresolved-dynamic-execution"
+  /** 命令本身解析不出来（引号没闭合），判定不了。 */
+  | "unparseable";
 
 export type BashGuardDecision =
   | { action: "allow" }
@@ -43,22 +53,6 @@ const DEFAULT_LIMITS: BashGuardLimits = {
 
 const ALLOW: BashGuardDecision = { action: "allow" };
 
-const FOR_LOOP = /\bfor\b[\s\S]*?\bdo\b/;
-const WHILE_OR_UNTIL = /\b(?:while|until)\b/;
-/** `sleep 30`, `sleep 1m`. A bare `sleep` with no amount is not a real call. */
-const SLEEP_WITH_AMOUNT = /\bsleep\s+(\d+(?:\.\d+)?)([smhd]?)\b/g;
-const COMMENT_START_BEFORE = /[\s;|&(]/;
-/**
- * `tail -f`, `tail -F`, `tail -n 40 -f`, `tail -20f`: follow mode never exits on its own,
- * so the call blocks until pi kills it.
- */
-const TAIL_FOLLOW = /\btail\b[^|;&\n]*\s-[A-Za-z0-9]*[fF]/;
-/**
- * A redirect that captures stdout (`> /tmp/x.log`). A stderr-only redirect (`2>/dev/null`)
- * does not help, so the `(?<![0-9])` guard excludes it.
- */
-const REDIRECTED_TO_FILE = /(?:^|[^0-9])>>?\s*[^\s|&;>]+/;
-
 const UNIT_SECONDS: Record<string, number> = {
   "": 1,
   s: 1,
@@ -67,69 +61,79 @@ const UNIT_SECONDS: Record<string, number> = {
   d: 86400,
 };
 
+/** `20`、`1m`、`10s`、`0.5`：sleep 的时长写法。 */
+const SLEEP_AMOUNT = /^(\d+(?:\.\d+)?)([smhd])?$/;
+
+/** `-f`、`-F`、`-20f`、`--follow`：tail 的跟随写法。 */
+const TAIL_FOLLOW_FLAG = /^(?:-[A-Za-z0-9]*[fF]|--follow(?:=|$))/;
+
 /**
- * Drops quoted strings and comments, so `echo "sleep 30"` and `# sleep 30`
- * are not read as calls. Known blind spot: a real wait hidden inside
- * `sh -c "..."` is stripped too; see README.
+ * 直接读结构层的结论，不再对原文跑正则：bash 命令是不可信输入，回溯匹配
+ * 既可能爆炸也可能看错（ADR-0001 D5）。
  */
-const stripQuotedAndComments = (command: string): string => {
-  let out = "";
-  let index = 0;
-  let quote: "'" | '"' | null = null;
-  let quoteStart = -1;
-
-  while (index < command.length) {
-    const char = command[index];
-    if (quote) {
-      if (char === "\\" && quote === '"') {
-        index += 2;
-        continue;
-      }
-      if (char === quote) {
-        quote = null;
-        out += " ";
-      }
-      index += 1;
-      continue;
-    }
-    if (char === "'" || char === '"') {
-      quote = char;
-      quoteStart = index;
-      index += 1;
-      continue;
-    }
-    const before = index === 0 ? " " : (command[index - 1] ?? "");
-    if (char === "#" && COMMENT_START_BEFORE.test(before)) {
-      while (index < command.length && command[index] !== "\n") {
-        index += 1;
-      }
-      continue;
-    }
-    out += char;
-    index += 1;
+const shellAnalysis = (command: string): ShellAnalysis | null => {
+  try {
+    return analyzeShell(command);
+  } catch {
+    // 结构层自己出错不该让护栏失声：当作"没有结构信息"。
+    return null;
   }
-
-  // An unterminated quote never closes, so nothing was actually quoted away.
-  if (quote) {
-    out += command.slice(quoteStart);
-  }
-
-  return out;
 };
 
-const hasLoop = (command: string): boolean =>
-  FOR_LOOP.test(command) || WHILE_OR_UNTIL.test(command);
+/** 所有 sleep 的时长（秒），含嵌套字面量脚本里的。 */
+const sleepAmounts = (analysis: ShellAnalysis): number[] => {
+  const amounts: number[] = [];
+  for (const { segment } of commandSegments(analysis)) {
+    const command = effectiveCommand(segment);
+    if (command.name !== "sleep") continue;
+    for (const arg of command.args) {
+      const match = SLEEP_AMOUNT.exec(arg.text);
+      if (match === null) continue;
+      const amount = Number.parseFloat(match[1] ?? "");
+      amounts.push(amount * (UNIT_SECONDS[match[2] ?? ""] ?? 1));
+      break;
+    }
+  }
+  return amounts;
+};
 
-/** The `|`/`;`/`&`-separated pieces that actually carry follow mode. */
-const followSegments = (command: string): string[] =>
-  command.split(/[|;&\n]+/).filter((segment) => TAIL_FOLLOW.test(segment));
+/** `sleep` 后面没有时长（`sleep` 单独出现）不算真的等待。 */
+const longestSleep = (analysis: ShellAnalysis): number | undefined => {
+  const amounts = sleepAmounts(analysis);
+  return amounts.length === 0 ? undefined : Math.max(...amounts);
+};
 
-const sleepSeconds = (command: string): number[] =>
-  [...command.matchAll(SLEEP_WITH_AMOUNT)].map((match) => {
-    const amount = Number.parseFloat(match[1] ?? "");
-    const unit = UNIT_SECONDS[match[2] ?? ""] ?? 1;
-    return amount * unit;
-  });
+/** 这一段是不是"跟随模式且输出没有落盘"的 tail。 */
+const isUnredirectedFollowTail = (segment: ShellSegment): boolean => {
+  const command = effectiveCommand(segment);
+  if (command.name !== "tail") return false;
+  const following = command.args.some((arg) => TAIL_FOLLOW_FLAG.test(arg.text));
+  return following && !segmentWritesStdoutToFile(segment);
+};
+
+const hasUnredirectedFollowTail = (analysis: ShellAnalysis): boolean =>
+  commandSegments(analysis).some(({ segment }) =>
+    isUnredirectedFollowTail(segment),
+  );
+
+/**
+ * 引号没闭合这类命令，bash 自己会报错，但护栏也不能假装看懂了它：
+ * 结构层报错就 fail-closed（ADR-0001 D2 的溢出方向）。
+ */
+const unparseableVerdict = (
+  analysis: ShellAnalysis,
+): BashGuardDecision | null => {
+  const error = analysis.errors[0];
+  if (error === undefined) return null;
+  return {
+    action: "block",
+    rule: "unparseable",
+    reason: [
+      `拦住原因：这条命令解析不出来（${error}），护栏看不进未闭合的部分。`,
+      "替代写法：把引号补全，或把这段脚本写成文件再执行。",
+    ].join("\n"),
+  };
+};
 
 /**
  * The reason strings are the whole product of a block: they name the rule and
@@ -290,6 +294,11 @@ const decideStructuralGuard = (
     return null;
   }
 
+  const unparseable = unparseableVerdict(analysis);
+  if (unparseable !== null) {
+    return unparseable;
+  }
+
   for (const nested of analysis.nested) {
     const decision = decideBashGuard({ command: nested.source }, limits);
     if (decision.action === "block") {
@@ -317,28 +326,36 @@ export const decideBashGuard = (
     return ALLOW;
   }
 
-  const structural = decideStructuralGuard(call, limits);
-  if (structural !== null) {
-    return structural;
+  const analysis = decideStructuralGuard(call, limits);
+  // 结构层已经处理了嵌套脚本与动态执行；这里只按结构查询做判断。
+  if (analysis !== null) {
+    return analysis;
   }
 
-  const scanned = stripQuotedAndComments(stripHeredocBodies(call.command));
-  const sleeps = sleepSeconds(scanned);
-  const longestSleep = sleeps.length > 0 ? Math.max(...sleeps) : undefined;
+  const shell = shellAnalysis(call.command) ?? {
+    source: call.command,
+    segments: [],
+    nested: [],
+    unresolved: [],
+    errors: [],
+    structure: [],
+  };
 
-  if (hasLoop(scanned) && longestSleep !== undefined) {
+  const longest = longestSleep(shell);
+
+  if (hasLoopStructure(shell) && longest !== undefined) {
     return {
       action: "block",
       rule: "sleep-loop",
-      reason: sleepLoopReason(longestSleep, call.command),
+      reason: sleepLoopReason(longest, call.command),
     };
   }
 
-  if (longestSleep !== undefined && longestSleep >= SLEEP_THRESHOLD_SECONDS) {
+  if (longest !== undefined && longest >= SLEEP_THRESHOLD_SECONDS) {
     return {
       action: "block",
       rule: "sleep",
-      reason: sleepReason(longestSleep),
+      reason: sleepReason(longest),
     };
   }
 
@@ -357,9 +374,7 @@ export const decideBashGuard = (
     };
   }
 
-  if (
-    followSegments(scanned).some((segment) => !REDIRECTED_TO_FILE.test(segment))
-  ) {
+  if (hasUnredirectedFollowTail(shell)) {
     return {
       action: "block",
       rule: "tail-follow",

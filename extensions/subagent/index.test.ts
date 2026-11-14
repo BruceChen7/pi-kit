@@ -84,6 +84,7 @@ const makePi = (): { pi: FakePi; tools: any[] } => {
     getAllTools: vi.fn(() => [{ name: "read" }]),
     events: { emit: vi.fn(), on: vi.fn() },
   };
+  lastRegisteredTools = tools;
   return { pi, tools };
 };
 
@@ -107,6 +108,18 @@ const call = (
   ctx: Record<string, unknown>,
 ) => tool.execute("call-1", params, undefined, undefined, ctx);
 
+/** `wait` 现在是独立工具（model-only），主工具不再有 wait action。 */
+let lastRegisteredTools: any[] = [];
+const waitTool = (tools: any[] = lastRegisteredTools) => {
+  const tool = tools.find((candidate) => candidate.name === "subagent_wait");
+  if (!tool) throw new Error("subagent_wait is not registered");
+  return tool;
+};
+
+/** `/subagent doctor` 是诊断的唯一入口，从 registerCommand 里取。 */
+const subagentCommand = (pi: FakePi) =>
+  pi.registerCommand.mock.calls.find(([name]) => name === "subagent")?.[1];
+
 beforeEach(() => {
   vi.mocked(createAgentSession).mockReset();
 });
@@ -116,13 +129,27 @@ afterEach(() => {
 });
 
 describe("subagent tool registration", () => {
-  it("registers exactly one tool named subagent", () => {
+  it("registers the lifecycle tool and a separate model-only wait tool", () => {
     const { pi, tools } = makePi();
     registerSubagent(pi as never);
 
-    expect(tools).toHaveLength(1);
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      "subagent",
+      "subagent_wait",
+    ]);
     expect(tools[0].name).toBe("subagent");
     expect(tools[0].label).toBe("Subagent");
+    expect(waitTool(tools).exposure).toBe("model-only");
+  });
+
+  it("keeps wait and doctor out of the lifecycle tool", () => {
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    const action = tools[0].parameters.properties.action;
+    expect(action.anyOf ?? action.enum).toBeDefined();
+    expect(JSON.stringify(tools[0].parameters)).not.toContain('"wait"');
+    expect(JSON.stringify(tools[0].parameters)).not.toContain('"doctor"');
   });
 
   it("keeps the task required by refusing a run without one", async () => {
@@ -534,15 +561,16 @@ describe("wait", () => {
       pi,
       runtime,
       tool: tools[0],
+      wait: waitTool(tools),
       runId: started.structuredContent.runId as string,
       release: gate.release,
     };
   };
 
   it("returns the child's text instead of making the caller poll", async () => {
-    const { tool, runId, release } = await startBackground("3 directories");
+    const { runId, release } = await startBackground("3 directories");
 
-    const waiting = call(tool, { action: "wait", runIds: [runId] }, makeCtx());
+    const waiting = call(waitTool(), { runIds: [runId] }, makeCtx());
     release();
     const result = await waiting;
 
@@ -569,7 +597,7 @@ describe("wait", () => {
       expect(vi.mocked(createAgentSession)).toHaveBeenCalledTimes(2),
     );
 
-    const waiting = call(tools[0], { action: "wait" }, makeCtx());
+    const waiting = call(waitTool(), {}, makeCtx());
     gate.release();
     const result = await waiting;
 
@@ -582,48 +610,40 @@ describe("wait", () => {
   });
 
   it("returns immediately when there is nothing active", async () => {
-    const { pi, tools } = makePi();
+    const { pi } = makePi();
     registerSubagent(pi as never);
 
-    const result = await call(tools[0], { action: "wait" }, makeCtx());
+    const result = await call(waitTool(), {}, makeCtx());
 
     expect(result.content[0].text).toBe("no subagent runs to wait for");
     expect(result.structuredContent.runs).toEqual([]);
   });
 
   it("returns the same result when called twice on one run", async () => {
-    const { tool, runId, release } = await startBackground("settled once");
+    const { runId, release } = await startBackground("settled once");
     release();
 
-    const first = await call(
-      tool,
-      { action: "wait", runIds: [runId] },
-      makeCtx(),
-    );
-    const second = await call(
-      tool,
-      { action: "wait", runIds: [runId] },
-      makeCtx(),
-    );
+    const first = await call(waitTool(), { runIds: [runId] }, makeCtx());
+    const second = await call(waitTool(), { runIds: [runId] }, makeCtx());
 
     expect(second.structuredContent).toEqual(first.structuredContent);
   });
 
   it("names the unknown id instead of hanging on it", async () => {
-    const { pi, tools } = makePi();
+    const { pi } = makePi();
     registerSubagent(pi as never);
 
     await expect(
-      call(tools[0], { action: "wait", runIds: ["nope"] }, makeCtx()),
+      call(waitTool(), { runIds: ["nope"] }, makeCtx()),
     ).rejects.toThrow('unknown run "nope"');
   });
 
   it("reports partial progress when the timeout fires first", async () => {
-    const { tool, runId, release } = await startBackground("too late");
+    const { runId, release } = await startBackground("too late");
 
     const result = await call(
-      tool,
-      { action: "wait", runIds: [runId], timeoutMs: 5 },
+      waitTool(),
+      { runIds: [runId], timeoutMs: 5 },
       makeCtx(),
     );
 
@@ -638,10 +658,10 @@ describe("wait", () => {
   });
 
   it("does not re-trigger a turn after wait returned the result", async () => {
-    const { pi, runtime, tool, runId, release } =
+    const { pi, runtime, runId, release } =
       await startBackground("3 directories");
 
-    const waiting = call(tool, { action: "wait", runIds: [runId] }, makeCtx());
+    const waiting = call(waitTool(), { runIds: [runId] }, makeCtx());
     release();
     await waiting;
 
@@ -653,12 +673,12 @@ describe("wait", () => {
   });
 
   it("stops waiting when the host cancels the tool call", async () => {
-    const { tool, runId, release } = await startBackground("cancelled");
+    const { runId, release } = await startBackground("cancelled");
 
     const controller = new AbortController();
     const waiting = callWithSignal(
-      tool,
-      { action: "wait", runIds: [runId] },
+      waitTool(),
+      { runIds: [runId] },
       makeCtx(),
       controller.signal,
     );
@@ -868,13 +888,18 @@ describe("capability inheritance", () => {
   });
 
   it("reports the resolved capabilities in doctor", async () => {
-    const { pi, tools } = makePi();
+    const { pi } = makePi();
     pi.getActiveTools.mockReturnValue(["codemode", "read"]);
     registerSubagent(pi as never);
 
-    const result = await call(tools[0], { action: "doctor" }, makeCtx());
-    const text = result.content[0].text as string;
+    const notify = vi.fn();
+    const command = subagentCommand(pi);
+    await command.handler(
+      "doctor",
+      makeCtx({ ui: { notify, theme: testTheme } }),
+    );
 
+    const text = notify.mock.calls[0]?.[0] as string;
     expect(text).toContain("codemode=inherit mcp=none");
   });
 });
@@ -940,11 +965,7 @@ describe("cancel salvage", () => {
     const { tool, runId } = await startHanging();
 
     await call(tool, { action: "stop", runId }, makeCtx());
-    const waited = await call(
-      tool,
-      { action: "wait", runIds: [runId] },
-      makeCtx(),
-    );
+    const waited = await call(waitTool(), { runIds: [runId] }, makeCtx());
 
     expect(waited.structuredContent.runs[0].text).toContain("读完了 a.go");
   });
@@ -981,16 +1002,21 @@ describe("steer and stop", () => {
 
 describe("doctor", () => {
   it("prints the resolved profiles and the log level", async () => {
-    const { pi, tools } = makePi();
+    const { pi } = makePi();
     registerSubagent(pi as never);
 
-    const result = await call(
-      tools[0],
-      { action: "doctor" },
-      makeCtx({ mode: "print", hasUI: false }),
+    const notify = vi.fn();
+    const command = subagentCommand(pi);
+    await command.handler(
+      "doctor",
+      makeCtx({
+        mode: "print",
+        hasUI: false,
+        ui: { notify, theme: testTheme },
+      }),
     );
-    const text = result.content[0].text as string;
 
+    const text = notify.mock.calls[0]?.[0] as string;
     expect(text).toContain("host: print (customPanels: false)");
     expect(text).toContain("reviewer [builtin]");
     expect(text).toContain("log level:");
@@ -1011,7 +1037,8 @@ describe("agent file discovery", () => {
 });
 
 describe("/agents command", () => {
-  const commandOf = (pi: FakePi): any => pi.registerCommand.mock.calls[0]?.[1];
+  const commandOf = (pi: FakePi): any =>
+    pi.registerCommand.mock.calls.find(([name]) => name === "agents")?.[1];
 
   it("registers the agents command", () => {
     const { pi } = makePi();

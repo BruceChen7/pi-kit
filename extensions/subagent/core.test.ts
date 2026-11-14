@@ -938,3 +938,43 @@ describe("renderWaitResult", () => {
     expect(text).toContain("keep going in the background");
   });
 });
+
+describe("intermediate answers", () => {
+  const withIntermediate = () => {
+    let state = createState();
+    state = admit(state, {
+      runId: "run-1",
+      agent: "explore",
+      task: "count dirs",
+      background: true,
+    }).state;
+    return settle(state, {
+      runId: "run-1",
+      status: "intermediate",
+      resultText: "我先去查一下，稍后汇总",
+    });
+  };
+
+  it("is a terminal state", () => {
+    const run = findRun(withIntermediate(), "run-1");
+
+    expect(run?.status).toBe("intermediate");
+    expect(isTerminal("intermediate")).toBe(true);
+  });
+
+  it("does not hand the half answer back as a result", () => {
+    const result = collectWaitResult(withIntermediate(), ["run-1"], false);
+
+    expect(result.runs[0]).toMatchObject({ status: "intermediate", text: "" });
+  });
+
+  it("says why there is no result and what to do", () => {
+    const text = renderWaitResult(
+      collectWaitResult(withIntermediate(), ["run-1"], false),
+    );
+
+    expect(text).toContain("intermediate answer");
+    expect(text).toContain("run-1");
+    expect(text).not.toContain("我先去查一下");
+  });
+});

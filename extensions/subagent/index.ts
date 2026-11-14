@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { StringEnum } from "@earendil-works/pi-ai";
 import type {
   AgentSession,
   AgentToolResult,
@@ -48,7 +49,6 @@ import {
   DEFAULT_MAX_CONCURRENT,
   detachToBackground,
   eventToTranscriptLine,
-  extractAssistantText,
   FOREGROUND_DETACH_MS,
   findRun,
   formatElapsed,
@@ -84,6 +84,11 @@ import {
   disposeChild,
   steerChild,
 } from "./session.ts";
+import {
+  deriveSettlement,
+  type SettlementMessage,
+  textOfAssistantContent,
+} from "./settlement.ts";
 import { registerAgentsCommand } from "./ui.ts";
 
 const WIDGET_KEY = "subagent";
@@ -94,20 +99,27 @@ const TICK_MS = 2_000;
 const DEFAULT_WAIT_MS = 5 * 60_000;
 const log = createLogger("subagent", { stderr: null });
 
-type SubagentAction = "run" | "list" | "status" | "stop" | "doctor" | "wait";
+/**
+ * 主工具只管生命周期（起、看、停）。`wait` 单独成一个工具、只给模型直调；
+ * `doctor` 退回 `/subagent doctor` 命令 —— 诊断跟"跑 agent"不是一回事
+ * （ADR-0002 D2/D3）。
+ */
+type SubagentAction = "run" | "list" | "status" | "stop";
 
 const SUBAGENT_ACTIONS: readonly SubagentAction[] = [
   "run",
   "list",
   "status",
   "stop",
-  "doctor",
-  "wait",
 ];
 
-/** 未知 action 直接报错，而不是静默落到 `run` 上把参数字典当任务跑。 */
-const parseAction = (raw: string | undefined): SubagentAction => {
-  const normalized = (raw ?? "run").trim().toLowerCase();
+/**
+ * 未知 action 直接报错，而不是静默落到 `run` 上把参数字典当任务跑。
+ * schema 已经用 StringEnum 约束过，这里只是调度层不信任输入的第二道。
+ */
+const parseAction = (raw: unknown): SubagentAction => {
+  const normalized = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (normalized === "") return "run";
   const matched = SUBAGENT_ACTIONS.find((action) => action === normalized);
   if (!matched) throw new Error(`unknown action "${normalized}"`);
   return matched;
@@ -186,14 +198,26 @@ async function readAgentDir(
   return sources;
 }
 
-function lastAssistantText(session: AgentSession): string {
-  for (let i = session.messages.length - 1; i >= 0; i--) {
-    const message = session.messages[i];
-    if (message?.role !== "assistant") continue;
-    const text = extractAssistantText(message.content).trim();
-    if (text) return text;
+/** 交给结算判据的 transcript：只留判据要看的字段（纯数据，不带会话）。 */
+function settlementMessages(session: AgentSession): SettlementMessage[] {
+  const messages: SettlementMessage[] = [];
+  for (const message of session.messages) {
+    if (message.role === "assistant") {
+      messages.push({
+        role: "assistant",
+        text: textOfAssistantContent(message.content),
+      });
+      continue;
+    }
+    if (message.role === "user") {
+      messages.push({ role: "user", text: "" });
+      continue;
+    }
+    if (message.role === "toolResult") {
+      messages.push({ role: "tool", text: "" });
+    }
   }
-  return "";
+  return messages;
 }
 
 export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
@@ -722,11 +746,24 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
 
     try {
       await session.prompt(run.task);
-      const text = lastAssistantText(session);
-      log.debug("child settled", { runId, chars: text.length });
+      const settlement = deriveSettlement({
+        messages: settlementMessages(session),
+        // 今天子会话拿不到 subagent 工具，欠项恒为空；规则先到，见 ADR-0002 D1。
+        obligations: [],
+      });
+      log.debug("child settled", {
+        runId,
+        chars: settlement.text.length,
+        status: settlement.status,
+      });
       state = settle(
         state,
-        { runId, status: "done", resultText: text },
+        {
+          runId,
+          status:
+            settlement.status === "intermediate" ? "intermediate" : "done",
+          resultText: settlement.text,
+        },
         maxConcurrent,
         Date.now(),
       );
@@ -892,17 +929,31 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     return findings;
   };
 
-  const doctor = async (): Promise<string[]> => {
-    const cwd = lastContext?.cwd ?? process.cwd();
+  /**
+   * 诊断只读这几个字段，工具上下文和命令上下文都满足它们 —— 所以不共用
+   * `lastContext` 的类型，改成显式传进来。
+   */
+  type DoctorContext = {
+    cwd: string;
+    mode?: string;
+    hasUI?: boolean;
+    model?: { id?: string };
+    thinkingLevel?: string;
+  };
+
+  const doctor = async (
+    ctx: DoctorContext | undefined = lastContext,
+  ): Promise<string[]> => {
+    const cwd = ctx?.cwd ?? process.cwd();
     const { profiles, scannedDirs } = await loadProfiles(cwd);
     return renderDoctor({
       scannedDirs,
       profiles,
       maxConcurrent,
-      hostKind: lastContext?.mode ?? "unknown",
-      customPanels: lastContext?.hasUI ?? false,
-      parentModel: lastContext?.model?.id ?? "",
-      parentThinking: lastContext?.thinkingLevel ?? "",
+      hostKind: ctx?.mode ?? "unknown",
+      customPanels: ctx?.hasUI ?? false,
+      parentModel: ctx?.model?.id ?? "",
+      parentThinking: ctx?.thinkingLevel ?? "",
       cwd,
       logLevel: resolveMinLogLevel(loadGlobalSettings().global, "subagent"),
       logConfigPath: getGlobalSettingsPath(),
@@ -916,13 +967,69 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     return `${run.runId} ${run.agent} ${run.status}${tail}`;
   };
 
+  /**
+   * `wait` 的实现：只被 subagent_wait 使用。返回值是结构化结果，
+   * 不在这里做 UI —— 等待期间靠 onUpdate 推进度。
+   */
+  const waitForRuns = async (
+    params: { runIds?: string[]; timeoutMs?: number },
+    signal: AbortSignal | undefined,
+    onUpdate: AgentToolUpdateCallback<StructuredPayload> | undefined,
+  ): Promise<AgentToolResult<StructuredPayload>> => {
+    const requested = params.runIds?.length ? params.runIds : undefined;
+    const { targets, unknown } = selectWaitTargets(state, requested);
+    if (unknown.length > 0) {
+      throw new Error(
+        `unknown run "${unknown.join('", "')}". Available: ${
+          state.runs.map((run) => run.runId).join(", ") || "(none)"
+        }`,
+      );
+    }
+
+    const runIds = targets.map((run) => run.runId);
+    if (runIds.length === 0) {
+      return structuredResult("no subagent runs to wait for", {
+        action: "wait",
+        runs: [],
+        timedOut: false,
+      });
+    }
+
+    for (const runId of runIds) {
+      awaited.add(runId);
+      if (onUpdate) liveUpdates.set(runId, onUpdate);
+    }
+    let timedOut: boolean;
+    try {
+      timedOut = await waitUntilSettled(runIds, {
+        timeoutMs: params.timeoutMs ?? DEFAULT_WAIT_MS,
+        signal,
+      });
+    } finally {
+      for (const runId of runIds) {
+        liveUpdates.delete(runId);
+        // 超时没等到终态的，交回后台投递；已终态的留着，避免重复触发。
+        const run = findRun(state, runId);
+        if (!run || !isTerminal(run.status)) awaited.delete(runId);
+      }
+    }
+
+    const result = collectWaitResult(state, runIds, timedOut, Date.now());
+    return structuredResult(renderWaitResult(result), {
+      action: "wait",
+      runs: result.runs,
+      timedOut,
+    });
+  };
+
   pi.registerTool({
     name: "subagent",
     label: "Subagent",
     description: [
       "Delegate work to a focused child agent with its own isolated context.",
       "Use it when a task would flood this conversation with intermediate reads, or when an independent review is worth more than your own second look.",
-      "Actions: run (default) starts an agent; wait blocks until background runs finish; list shows active runs; status shows one run; stop cancels one and hands back what the child had already found (its last words, tool trail, files touched); doctor prints the resolved agent profiles and config.",
+      "Actions: run (default) starts an agent; list shows active runs; status shows one run; stop cancels one and hands back what the child had already found (its last words, tool trail, files touched).",
+      "To block until runs finish, call the separate subagent_wait tool; it is model-only on purpose, because a script's return value is not evidence that the model received the result. `/subagent doctor` prints the resolved profiles and config.",
       "Children cannot see this conversation, so put the whole task in `task`.",
       "Background runs (default) return immediately and report back when finished.",
       `A foreground run (background:false) holds this session until the child settles or ${FOREGROUND_DETACH_MS / 60_000} minutes pass; after that it is moved to the background and its result arrives as a message. Use foreground only for a task that finishes in a couple of minutes.`,
@@ -934,9 +1041,8 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     ],
     parameters: Type.Object({
       action: Type.Optional(
-        Type.String({
-          description:
-            "run | wait | list | status | stop | doctor (default: run)",
+        StringEnum(SUBAGENT_ACTIONS, {
+          description: "run (default) | list | status | stop",
         }),
       ),
       agent: Type.Optional(
@@ -971,7 +1077,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     execute: async (
       _toolCallId,
       params,
-      signal,
+      _signal,
       onUpdate,
       ctx,
     ): Promise<AgentToolResult<StructuredPayload>> => {
@@ -979,11 +1085,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       const action = parseAction(params.action);
 
       switch (action) {
-        case "doctor": {
-          const lines = await doctor();
-          return structuredResult(lines.join("\n"), { action, lines });
-        }
-
         case "list": {
           const live = activeRuns(state);
           const text =
@@ -1020,53 +1121,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
             status: run.status,
             resultText: run.resultText ?? null,
             error: run.error ?? null,
-          });
-        }
-
-        case "wait": {
-          const requested = params.runIds?.length ? params.runIds : undefined;
-          const { targets, unknown } = selectWaitTargets(state, requested);
-          if (unknown.length > 0) {
-            throw new Error(
-              `unknown run "${unknown.join('", "')}". Available: ${
-                state.runs.map((run) => run.runId).join(", ") || "(none)"
-              }`,
-            );
-          }
-
-          const runIds = targets.map((run) => run.runId);
-          if (runIds.length === 0) {
-            return structuredResult("no subagent runs to wait for", {
-              action,
-              runs: [],
-              timedOut: false,
-            });
-          }
-
-          for (const runId of runIds) {
-            awaited.add(runId);
-            if (onUpdate) liveUpdates.set(runId, onUpdate);
-          }
-          let timedOut: boolean;
-          try {
-            timedOut = await waitUntilSettled(runIds, {
-              timeoutMs: params.timeoutMs ?? DEFAULT_WAIT_MS,
-              signal,
-            });
-          } finally {
-            for (const runId of runIds) {
-              liveUpdates.delete(runId);
-              // 超时没等到终态的，交回后台投递；已终态的留着，避免重复触发。
-              const run = findRun(state, runId);
-              if (!run || !isTerminal(run.status)) awaited.delete(runId);
-            }
-          }
-
-          const result = collectWaitResult(state, runIds, timedOut, Date.now());
-          return structuredResult(renderWaitResult(result), {
-            action,
-            runs: result.runs,
-            timedOut,
           });
         }
 
@@ -1156,6 +1210,47 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     },
   });
 
+  /**
+   * `wait` 是唯一的阻塞入口，并且只给模型直调（`exposure: "model-only"`）。
+   *
+   * 为什么不让脚本调：脚本可以丢弃、截断，或在抛错前吞掉返回值 —— 那样
+   * "模型收到了结果"就没有证据了。发起/查询/停止仍然可以脚本编排，
+   * 因为它们不依赖证据（ADR-0002 D2）。
+   */
+  pi.registerTool({
+    name: "subagent_wait",
+    label: "Wait for subagents",
+    description:
+      "Block this turn until the given subagent runs settle (or the timeout passes), and return their results. " +
+      "Omit runIds to wait for every active run. Background runs whose results already arrived are not affected. " +
+      "Call it directly, not from a codemode script.",
+    exposure: "model-only",
+    parameters: Type.Object({
+      runIds: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "Run ids to wait for. Omit to wait for every active run.",
+        }),
+      ),
+      timeoutMs: Type.Optional(
+        Type.Number({
+          description:
+            "How long wait blocks before reporting partial progress. Default 300000.",
+        }),
+      ),
+    }),
+    execute: async (
+      _toolCallId,
+      params,
+      signal,
+      onUpdate,
+      ctx,
+    ): Promise<AgentToolResult<StructuredPayload>> => {
+      lastContext = ctx;
+      return await waitForRuns(params, signal, onUpdate);
+    },
+  });
+
   pi.on("session_start", () => {
     state = createState();
     stopTicker();
@@ -1200,6 +1295,24 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     doctor,
     waitFor,
   };
+
+  /**
+   * `/subagent doctor`：诊断从工具面移出后，这是它唯一的入口。
+   * 人看得见，模型不会为了"跑个 agent"顺手调到它。
+   */
+  pi.registerCommand("subagent", {
+    description:
+      "Print resolved agent profiles and config (usage: /subagent doctor)",
+    handler: async (args: string, ctx) => {
+      const subcommand = args.trim().toLowerCase();
+      if (subcommand !== "" && subcommand !== "doctor") {
+        ctx.ui.notify("usage: /subagent doctor", "warning");
+        return;
+      }
+      const lines = await doctor(ctx);
+      ctx.ui.notify(lines.join("\n"), "info");
+    },
+  });
 
   registerAgentsCommand(pi, runtime);
 

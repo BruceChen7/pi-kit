@@ -8,9 +8,19 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentProfile } from "./agents.ts";
 
-export type RunStatus = "queued" | "running" | "done" | "failed" | "stopped";
+export type RunStatus =
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "stopped"
+  /**
+   * 它还有结果没等到就先给了答案（"我去查一下"）。这是终态 —— 这一轮结束了 ——
+   * 但那句答案不是结果，所以不交付（ADR-0002 D1）。
+   */
+  | "intermediate";
 
-export type TerminalStatus = "done" | "failed" | "stopped";
+export type TerminalStatus = "done" | "failed" | "stopped" | "intermediate";
 
 export type TranscriptRole = "user" | "assistant" | "tool";
 
@@ -61,7 +71,7 @@ export type AdmitRequest = {
 
 export type SettleInput = {
   runId: string;
-  status: "done" | "failed";
+  status: "done" | "failed" | "intermediate";
   resultText?: string;
   error?: string;
 };
@@ -111,7 +121,12 @@ export const MAX_TRANSCRIPT_LINES = 40;
  */
 export const FOREGROUND_DETACH_MS = 10 * 60_000;
 
-const TERMINAL: readonly RunStatus[] = ["done", "failed", "stopped"];
+const TERMINAL: readonly RunStatus[] = [
+  "done",
+  "failed",
+  "stopped",
+  "intermediate",
+];
 
 export const isTerminal = (status: RunStatus): status is TerminalStatus =>
   TERMINAL.includes(status);
@@ -167,7 +182,11 @@ export function collectWaitResult(
       runId: run.runId,
       agent: run.agent,
       status: run.status,
-      text: run.resultText ?? run.error ?? "",
+      // intermediate 的正文是"我还没做完"，不能当结果交给调用方。
+      text:
+        run.status === "intermediate"
+          ? ""
+          : (run.resultText ?? run.error ?? ""),
       progress: progressLine(run, now),
     };
   });
@@ -184,7 +203,22 @@ export function renderWaitResult(result: WaitResult): string {
     const head = run.progress ?? `${run.runId} ${run.agent} ${run.status}`;
     return run.text ? `${head}\n${run.text}` : head;
   });
-  if (!result.timedOut) return lines.join("\n\n");
+  const intermediate = result.runs.filter(
+    (run) => run.status === "intermediate",
+  );
+  const intermediateNote =
+    intermediate.length === 0
+      ? []
+      : [
+          "",
+          `${intermediate.length} run(s) stopped with an intermediate answer; ` +
+            "that text is not a result. Re-run or steer the agent if you need one: " +
+            intermediate.map((run) => run.runId).join(", "),
+        ];
+
+  if (!result.timedOut) {
+    return [...lines, ...intermediateNote].join("\n\n");
+  }
 
   const settled = result.runs.filter((run) => isTerminal(run.status)).length;
   const running = result.runs.length - settled;
@@ -192,6 +226,7 @@ export function renderWaitResult(result: WaitResult): string {
     `timed out with ${settled}/${result.runs.length} settled; ${running} still running`,
     "",
     ...lines,
+    ...intermediateNote,
     "",
     "Still-running agents keep going in the background. Do other work or end the turn; " +
       "wait again only when you have nothing else to do, and use `status`/`stop` on a run that shows `quiet`.",
@@ -410,6 +445,8 @@ const STATUS_GLYPH: Record<RunStatus, string> = {
   done: "✓",
   failed: "✗",
   stopped: "■",
+  // 半成品：有答案但不是结果
+  intermediate: "…",
 };
 
 /** 静默多久之后开始在进度行里标注 `quiet`。 */

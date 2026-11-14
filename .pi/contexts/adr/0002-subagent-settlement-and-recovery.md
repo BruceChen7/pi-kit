@@ -1,6 +1,6 @@
 # ADR-0002: 子 agent 的结算、持久化与跨扩展事件协议
 
-**Status:** proposed
+**Status:** accepted — T0 已实现（2026-11-14），T1 待做
 **Date:** 2026-11-14
 **Scope:** `extensions/subagent`、`extensions/shared/internal-events.ts`
 **参考:** [mavam/pi-agents](https://github.com/mavam/pi-agents) — `docs/design.md`（Obligations / Delivery / Recovery）、`docs/hooks.md`、`docs/architecture.md#state-snapshots`、`src/agents/obligations.ts`、`src/agents/receipts.ts`
@@ -67,3 +67,17 @@
 - 不做跨扩展 hooks（`pi-*:hooks:discover` 那套），等有真实外部消费者再谈。
 - 不改"子会话不加载扩展"这条隔离（`noExtensions: true`）。
 - 不做 agent 之间的点对点消息。
+
+## 实现状态
+
+已落地（2026-11-14）：
+
+| 项                  | 落点                                                                                                                   | 证据                                             |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| D1 结算判据         | `extensions/subagent/settlement.ts` 的 `deriveSettlement`：从 transcript 加欠项算 `settled` / `intermediate` / `empty` | `settlement.test.ts`（8 条）                     |
+| D1 中间回答不当结果 | `core.ts` 新增 `intermediate` 终态；`collectWaitResult` 不交付它的正文，`renderWaitResult` 说明为什么没有结果          | `core.test.ts` 的 `intermediate answers`（3 条） |
+| D2 唯一阻塞入口     | `subagent_wait` 独立工具，`exposure: "model-only"`；主工具只剩 run/list/status/stop                                    | `index.test.ts`                                  |
+| D2 枚举校验         | 主工具 `action` 改用 `StringEnum`，`parseAction` 只做第二道运行时校验                                                  | 同上                                             |
+| D3 诊断移出工具面   | `doctor` 从工具参数移除，改走 `/subagent doctor`；`doctor(ctx)` 显式接上下文而不是共享 `lastContext`                   | 同上                                             |
+
+未做：T1 的四项（run 账本 `appendEntry`、恢复语义、跨扩展事件协议 `protocol/instanceId/sequence`、视图从记录派生）。

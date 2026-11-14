@@ -84,6 +84,7 @@ import {
   toLedgerEntry,
   unsettledRuns,
 } from "./ledger.ts";
+import { observeRuns } from "./receipt.ts";
 import {
   buildRunEvent,
   handleRpc,
@@ -1095,6 +1096,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
         action: "wait",
         runs: [],
         timedOut: false,
+        receipt: observeRuns([]),
       });
     }
 
@@ -1122,6 +1124,12 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       action: "wait",
       runs: result.runs,
       timedOut,
+      receipt: observeRuns(
+        runIds.flatMap((runId) => {
+          const run = findRun(state, runId);
+          return run === undefined ? [] : [run];
+        }),
+      ),
     });
   };
 
@@ -1202,6 +1210,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
               status: run.status,
               step: run.step,
             })),
+            receipt: observeRuns(live),
           });
         }
 
@@ -1224,6 +1233,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
             status: run.status,
             resultText: run.resultText ?? null,
             error: run.error ?? null,
+            receipt: observeRuns([run]),
           });
         }
 
@@ -1238,6 +1248,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
             runId,
             status: run?.status ?? null,
             findings,
+            receipt: observeRuns(run === undefined ? [] : [run]),
           });
         }
 
@@ -1287,6 +1298,11 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
               step: outcome.step,
               tail: outcome.tail,
               resultText: "",
+              receipt: observeRuns(
+                [findRun(state, outcome.runId)].flatMap((run) =>
+                  run === undefined ? [] : [run],
+                ),
+              ),
             });
           }
 
@@ -1302,6 +1318,11 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
             agent: outcome.agent,
             status: outcome.kind === "settled" ? outcome.status : null,
             resultText: outcome.kind === "settled" ? outcome.text : "",
+            receipt: observeRuns(
+              [findRun(state, outcome.runId)].flatMap((run) =>
+                run === undefined ? [] : [run],
+              ),
+            ),
           });
         }
 

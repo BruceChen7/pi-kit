@@ -1,6 +1,6 @@
 # ADR-0002: 子 agent 的结算、持久化与跨扩展事件协议
 
-**Status:** accepted — T0、T1-D4/D5 已实现（2026-11-14），T1-D6 待做
+**Status:** accepted — T0 与 T1-D4/D5/D6 已实现（2026-11-14）
 **Date:** 2026-11-14
 **Scope:** `extensions/subagent`、`extensions/shared/internal-events.ts`
 **参考:** [mavam/pi-agents](https://github.com/mavam/pi-agents) — `docs/design.md`（Obligations / Delivery / Recovery）、`docs/hooks.md`、`docs/architecture.md#state-snapshots`、`src/agents/obligations.ts`、`src/agents/receipts.ts`
@@ -86,4 +86,7 @@
 | D5 事件信封 | `extensions/shared/event-protocol.ts`：`wrapEvent` / `readEvent` / `isFreshEvent` / `createPublisher`；未知 protocol 显式拒绝，裸负载按 legacy 接受一版 | `event-protocol.test.ts`（11 条） |
 | D5 首个消费者 | plan-mode ↔ subagent 的两条 channel（badge、status-owner）改用信封，消费者按 instanceId + sequence 丢弃重放/乱序 | `todo-widget.test.ts`、`index.test.ts` 的断言改为读 `payload` |
 
-未做：D5 的"快照全量替换 + `:state:request` 主动索取"（现在是逐条 delta），以及 D6（视图从已提交记录派生、receipt 只装不变量）。
+| D6 receipt | `extensions/subagent/receipt.ts`：`observeRun` / `observeRuns` 只装身份、观察到的状态、任务与结果长度、起止时间；不装 `step`、`lastEventAt`、transcript、结果正文与错误文本 | `receipt.test.ts`（7 条）、`index.test.ts` 的 `receipt`（2 条） |
+| D6 接线 | run / list / status / wait / stop 的结构化结果都带 `receipt`（`version: 1`） | 同上 |
+
+未做：D5 的"快照全量替换 + `:state:request` 主动索取"（现在仍是逐条 delta）。视图层已经在 `core.ts` 里是纯函数（`progressLine` / `renderRunOptions` / `renderWaitResult`），但输入仍是可变 `SubagentRun`，尚未换成"从账本记录派生的快照类型"。

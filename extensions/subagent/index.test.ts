@@ -1245,3 +1245,46 @@ describe("run ledger", () => {
     expect(notify).not.toHaveBeenCalled();
   });
 });
+
+describe("receipt", () => {
+  it("carries the observation, not the result text", async () => {
+    vi.mocked(createAgentSession).mockResolvedValue({
+      session: makeSession("3 directories"),
+    } as never);
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    const result = await call(
+      tools[0],
+      {
+        action: "run",
+        agent: "explore",
+        task: "count dirs",
+        background: false,
+      },
+      makeCtx(),
+    );
+
+    const receipt = (result.structuredContent as any).receipt;
+    expect(receipt.version).toBe(1);
+    expect(receipt.runs[0]).toMatchObject({
+      agent: "explore",
+      status: "done",
+      taskChars: "count dirs".length,
+    });
+    expect(JSON.stringify(receipt)).not.toContain("3 directories");
+    expect(receipt.runs[0]).not.toHaveProperty("transcript");
+  });
+
+  it("gives an empty observation when there is nothing to show", async () => {
+    const { pi } = makePi();
+    registerSubagent(pi as never);
+
+    const result = await call(waitTool(), {}, makeCtx());
+
+    expect((result.structuredContent as any).receipt).toEqual({
+      version: 1,
+      runs: [],
+    });
+  });
+});

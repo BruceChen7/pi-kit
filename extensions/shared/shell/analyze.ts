@@ -98,6 +98,8 @@ export type EffectiveCommand = {
   dynamic: boolean;
   /** 去掉包装前缀之前的原始首词。 */
   raw: string;
+  /** 被跳过的包装前缀（`sudo`、`env`、`timeout`…），护栏据此升级严重度。 */
+  wrappers: string[];
 };
 
 const isDynamic = (word: ShellWordToken): boolean => word.dynamic;
@@ -110,6 +112,7 @@ export const effectiveCommand = (segment: ShellSegment): EffectiveCommand => {
   let index = 0;
   const words = segment.words;
   const raw = words[index]?.text ?? "";
+  const wrappers: string[] = [];
 
   while (index < words.length) {
     const word = words[index];
@@ -119,6 +122,7 @@ export const effectiveCommand = (segment: ShellSegment): EffectiveCommand => {
       continue;
     }
     if (word.text === "timeout") {
+      wrappers.push(word.text);
       index += 1;
       // `timeout 90 cmd` 或 `timeout -s KILL 90 cmd`
       while (index < words.length) {
@@ -134,6 +138,7 @@ export const effectiveCommand = (segment: ShellSegment): EffectiveCommand => {
       continue;
     }
     if (COMMAND_WRAPPERS.has(word.text)) {
+      wrappers.push(word.text);
       index += 1;
       // env 的 VAR=value 前缀
       while (
@@ -149,13 +154,14 @@ export const effectiveCommand = (segment: ShellSegment): EffectiveCommand => {
 
   const command = words[index];
   if (command === undefined) {
-    return { name: null, args: [], dynamic: false, raw };
+    return { name: null, args: [], dynamic: false, raw, wrappers };
   }
   return {
     name: isDynamic(command) ? null : command.text,
     args: words.slice(index + 1),
     dynamic: isDynamic(command),
     raw: command.text,
+    wrappers,
   };
 };
 

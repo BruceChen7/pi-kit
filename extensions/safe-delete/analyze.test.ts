@@ -154,6 +154,42 @@ describe("analyzeCommand: sudo and multiple subcommands", () => {
   });
 });
 
+describe("analyzeCommand: 结构层带来的能力", () => {
+  it("sees a deletion inside a literal sh -c script", () => {
+    expect(descriptions('sh -c "rm -rf ~/Documents"')).toEqual([
+      expect.stringContaining("protected path"),
+    ]);
+  });
+
+  it("sees a deletion inside an eval script", () => {
+    expect(descriptions('eval "rm -rf ~/Documents"')).toEqual([
+      expect.stringContaining("protected path"),
+    ]);
+  });
+
+  it("reads a quoted home path as a target", () => {
+    expect(descriptions('rm -rf "~/Documents"')).toEqual([
+      expect.stringContaining(`${HOME}/Documents`),
+    ]);
+  });
+
+  it("flags xargs rm even without a pipe in the same segment", () => {
+    expect(descriptions("xargs rm < list.txt")).toEqual([
+      expect.stringContaining("xargs rm"),
+    ]);
+  });
+
+  it("does not flag a quoted mention of a deletion as an argument", () => {
+    expect(threatsOf('echo "rm -rf ~/Documents"')).toEqual([]);
+  });
+
+  it("keeps sudo escalation inside a nested script", () => {
+    const [threat] = threatsOf('sh -c "sudo rm -rf ~/Documents"');
+    expect(threat?.description.startsWith("[sudo] ")).toBe(true);
+    expect(threat?.severity).toBe("critical");
+  });
+});
+
 describe("formatThreats", () => {
   it("sorts critical first and tags the severity", () => {
     const text = formatThreats({

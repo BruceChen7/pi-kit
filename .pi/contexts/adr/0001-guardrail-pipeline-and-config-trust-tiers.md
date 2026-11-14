@@ -1,6 +1,6 @@
 # ADR-0001: 护栏判定走显式排序的流水线，配置按来源分信任等级
 
-**Status:** accepted — D1、D2 已实现（2026-11-14），D3–D5 待做
+**Status:** accepted — D1、D2 已实现，D3 部分实现（2026-11-14），D4–D5 待做
 **Date:** 2026-11-14
 **Scope:** `extensions/{bash-block-guard,safe-delete,plan-mode,shared}`
 **参考:** [czottmann/pi-automode](https://github.com/czottmann/pi-automode) — ADR-001（permission precedence / trust boundaries）、`docs/automode-classifier-flow.md`
@@ -85,6 +85,8 @@ bash 命令是不可信输入，由一个共享解析层产出结构化结果（
 | D2 接线        | `extensions/plan-mode/state.ts`：`PLAN_MODE_TRUST_RULES` + `loadPlanModeConfigWithDiagnostics`               | `extensions/plan-mode/config-trust.test.ts`                                           |
 | D5 一部分      | `MAX_GUARD_TEXT_LENGTH` 1 MiB → `input-too-large` deny                                                       | 同上                                                                                  |
 
-未做：D3 共享 shell AST 层、D4 Core/Shell 拆分（`safe-delete` 仍 1200 行、阶段里还带 UI 副作用）、D5 的线性匹配（`bash-block-guard` 仍是正则）。
+D3 剩下的：`safe-delete` 与 `env-guard` 还在用自己的文本扫描与正则（`bash-block-guard` 的正则仍留在结构判定之后，作第二道）。
+
+未做：D4 Core/Shell 拆分（`safe-delete` 仍 1200 行、阶段里还带 UI 副作用）、D5 的线性匹配（match 仍是正则）。
 
 留在流水线外的拦截器：`poteto-route`（路由闸门，不是安全护栏）、`tutor/notes-store`（教学约束）。它们将来若要并入，按 `kind: "deny"` 注册即可，不需要改流水线。

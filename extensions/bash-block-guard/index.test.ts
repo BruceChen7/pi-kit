@@ -154,12 +154,48 @@ describe("decideBashGuard: bodies and blind spots", () => {
     });
   });
 
-  it("accepts the documented blind spot of a wait inside sh -c", () => {
-    // Quotes are stripped before scanning, so this slips through on purpose.
-    // Changing that would start blocking `echo "sleep 30"`.
-    expect(decide({ command: 'sh -c "sleep 30"' })).toEqual({
-      action: "allow",
+  it("sees a wait inside a literal sh -c script", () => {
+    // 结构层把字面量脚本当嵌套命令递归判，所以这条以前漏掉的现在拦得住。
+    expect(decide({ command: 'sh -c "sleep 30"' })).toMatchObject({
+      action: "block",
+      rule: "sleep",
     });
+  });
+
+  it("sees a follow-mode tail inside a bash -c script", () => {
+    expect(decide({ command: 'bash -c "tail -f /tmp/x.log"' })).toMatchObject({
+      action: "block",
+      rule: "tail-follow",
+    });
+  });
+
+  it("fails closed when the nested script is a variable", () => {
+    expect(decide({ command: 'sh -c "$SCRIPT"' })).toMatchObject({
+      action: "block",
+      rule: "unresolved-dynamic-execution",
+    });
+  });
+
+  it("fails closed when the command name itself is dynamic", () => {
+    expect(decide({ command: "$RUNNER --wait" })).toMatchObject({
+      action: "block",
+      rule: "unresolved-dynamic-execution",
+    });
+  });
+
+  it("leaves a quiet nested script alone", () => {
+    expect(decide({ command: 'sh -c "echo hi"' })).toEqual({ action: "allow" });
+  });
+
+  it("does not read a heredoc body as a nested script", () => {
+    const command = [
+      "cat > /tmp/poll.sh <<'EOF'",
+      'sh -c "sleep 30"',
+      "EOF",
+      "sh /tmp/poll.sh",
+    ].join("\n");
+
+    expect(decide({ command })).toEqual({ action: "allow" });
   });
 });
 

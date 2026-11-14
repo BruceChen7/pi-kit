@@ -1,31 +1,29 @@
 /**
- * Shell text helpers shared by the command-scanning extensions.
+ * Shell 文本辅助。实现挂在共享结构层上（ADR-0001 D3），这样"heredoc 正文
+ * 不算命令"这件事只有一份判定，safe-delete 与 bash-block-guard 不会各写一遍。
  *
- * `stripHeredocBodies` exists so a script *written* by a command is not read as
- * the command itself: `cat >> f <<'EOF'` followed by prose that mentions a
- * destructive verb is a write, not a deletion.
+ * `stripHeredocBodies` 存在的理由：一条命令**写下去**的脚本不是它**执行**的
+ * 脚本 —— `cat >> f <<'EOF'` 后面那些提到删除、sleep 的正文只是文本。
  */
 
-const HEREDOC_START = /<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/;
+import { tokenizeShell } from "./shell/index.ts";
 
 export const stripHeredocBodies = (command: string): string => {
-  const lines = command.split("\n");
-  const kept: string[] = [];
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    kept.push(line);
-    const start = HEREDOC_START.exec(line);
-    if (!start) {
-      continue;
-    }
-    const delimiter = start[2] ?? "";
-    let end = index + 1;
-    while (end < lines.length && (lines[end] ?? "").trim() !== delimiter) {
-      end += 1;
-    }
-    index = end;
+  const { tokens } = tokenizeShell(command);
+  const spans = tokens.flatMap((token) =>
+    token.kind === "heredoc"
+      ? [{ start: token.bodyStart, end: token.bodyEnd }]
+      : [],
+  );
+  if (spans.length === 0) {
+    return command;
   }
 
-  return kept.join("\n");
+  let stripped = "";
+  let cursor = 0;
+  for (const span of spans) {
+    stripped += command.slice(cursor, span.start);
+    cursor = span.end;
+  }
+  return stripped + command.slice(cursor);
 };

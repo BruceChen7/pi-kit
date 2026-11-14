@@ -6,6 +6,7 @@
  * limits from the environment, and turns the decision into a tool_call result.
  */
 
+import { analyzeShell, type ShellUnresolved } from "../shared/shell/index.ts";
 import { stripHeredocBodies } from "../shared/shell-text.ts";
 
 export type BashCall = {
@@ -17,7 +18,9 @@ export type BashGuardRule =
   | "sleep-loop"
   | "sleep"
   | "long-timeout"
-  | "tail-follow";
+  | "tail-follow"
+  /** 命令里有一段护栏看不进去的动态执行（`sh -c "$CMD"`、`$CMD ...`）。 */
+  | "unresolved-dynamic-execution";
 
 export type BashGuardDecision =
   | { action: "allow" }
@@ -254,12 +257,69 @@ const longTimeoutReason = (
   ].join("\n");
 };
 
+const unresolvedReason = (unresolved: ShellUnresolved): string => {
+  const what =
+    unresolved.kind === "nested-shell-dynamic"
+      ? '嵌套 shell 的脚本是一个变量（sh -c "$SCRIPT" 这种）'
+      : unresolved.kind === "eval-dynamic"
+        ? "eval 的文本里含变量"
+        : "要执行的命令名由变量拼出来";
+  return [
+    `拦住原因：${what}，护栏看不进这段动态执行，无法判断它会不会把这一轮占住。`,
+    `这段命令：${unresolved.raw}`,
+    "替代写法：",
+    "1. 把脚本或命令名写成字面量，让护栏能读到它。",
+    "2. 真要动态拼，先把结果打印出来看一眼，再单次执行。",
+  ].join("\n");
+};
+
+/**
+ * 结构层再判一次：正则看不见"引号里面还有什么"。`sh -c "sleep 30"` 这种
+ * 以前是 README 里承认的盲区，现在按嵌套脚本递归判；脚本本身是变量时
+ * fail-closed，交给模型改写成字面量（ADR-0001 D3）。
+ */
+const decideStructuralGuard = (
+  call: BashCall,
+  limits: BashGuardLimits,
+): BashGuardDecision | null => {
+  let analysis: ReturnType<typeof analyzeShell>;
+  try {
+    analysis = analyzeShell(call.command);
+  } catch {
+    // 结构层自己出错不该让护栏失声：交回正则路径。
+    return null;
+  }
+
+  for (const nested of analysis.nested) {
+    const decision = decideBashGuard({ command: nested.source }, limits);
+    if (decision.action === "block") {
+      return decision;
+    }
+  }
+
+  const unresolved = analysis.unresolved[0];
+  if (unresolved !== undefined) {
+    return {
+      action: "block",
+      rule: "unresolved-dynamic-execution",
+      reason: unresolvedReason(unresolved),
+    };
+  }
+
+  return null;
+};
+
 export const decideBashGuard = (
   call: BashCall,
   limits: BashGuardLimits = DEFAULT_LIMITS,
 ): BashGuardDecision => {
   if (!limits.enabled) {
     return ALLOW;
+  }
+
+  const structural = decideStructuralGuard(call, limits);
+  if (structural !== null) {
+    return structural;
   }
 
   const scanned = stripQuotedAndComments(stripHeredocBodies(call.command));

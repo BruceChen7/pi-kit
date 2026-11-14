@@ -158,6 +158,21 @@ describe("rewriteGitDiffCommand", () => {
     expect(result).toContain("GIT_PAGER=cat");
   });
 
+  it("leaves git diff as an argument alone", () => {
+    expect(rewriteGitDiffCommand("echo git diff", [])).toBe("echo git diff");
+  });
+
+  it("leaves a quoted git diff alone", () => {
+    expect(rewriteGitDiffCommand('echo "git diff HEAD"', [])).toBe(
+      'echo "git diff HEAD"',
+    );
+  });
+
+  it("rewrites git diff inside a heredoc-free compound command", () => {
+    const result = rewriteGitDiffCommand("cd /a && git diff --stat", []);
+    expect(result).toBe("cd /a && git --no-pager diff --no-ext-diff --stat");
+  });
+
   it("avoids duplicating --no-ext-diff when already present", () => {
     const result = rewriteGitDiffCommand("git diff --no-ext-diff --stat", []);
     expect(result).toBe("git --no-pager diff --no-ext-diff --stat");

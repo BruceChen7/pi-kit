@@ -57,6 +57,7 @@ import {
   collectWaitResult,
   createState,
   DEFAULT_MAX_CONCURRENT,
+  deliveryFor,
   detachToBackground,
   eventToTranscriptLine,
   FOREGROUND_DETACH_MS,
@@ -138,7 +139,10 @@ const SUBAGENT_ACTIONS: readonly SubagentAction[] = [
  * schema 已经用 StringEnum 约束过，这里只是调度层不信任输入的第二道。
  */
 const parseAction = (raw: unknown): SubagentAction => {
-  const normalized = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (raw !== undefined && typeof raw !== "string") {
+    throw new Error(`unknown action "${String(raw)}"`);
+  }
+  const normalized = (raw ?? "run").trim().toLowerCase();
   if (normalized === "") return "run";
   const matched = SUBAGENT_ACTIONS.find((action) => action === normalized);
   if (!matched) throw new Error(`unknown action "${normalized}"`);
@@ -579,7 +583,16 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       run.status === "done"
         ? `subagent ${run.agent} (${run.runId}) finished`
         : `subagent ${run.agent} (${run.runId}) ${run.status}`;
-    const body = run.resultText ?? run.error ?? "(no output)";
+    const delivery = deliveryFor(run);
+    if (!delivery.deliver) {
+      log.warn("intermediate answer not delivered", {
+        runId,
+        agent: run.agent,
+        reason: delivery.reason,
+      });
+      return;
+    }
+    const body = delivery.body;
 
     try {
       pi.sendMessage(
@@ -1069,9 +1082,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     thinkingLevel?: string;
   };
 
-  const doctor = async (
-    ctx: DoctorContext | undefined = lastContext,
-  ): Promise<string[]> => {
+  const doctor = async (ctx: DoctorContext | undefined): Promise<string[]> => {
     const cwd = ctx?.cwd ?? process.cwd();
     const { profiles, scannedDirs } = await loadProfiles(cwd);
     return renderDoctor({
@@ -1171,7 +1182,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       "Give the child a budget in `task`: which files to read, what to produce, and how long the answer should be. An unbounded task is what turns a 5-minute delegation into a 45-minute one.",
     ].join(" "),
     promptGuidelines: [
-      'To wait for background runs, call subagent with action "wait". Never sleep or poll in bash to wait for a subagent; one wait call returns every requested result.',
+      "To wait for background runs, call the subagent_wait tool. Never sleep or poll in bash to wait for a subagent; one wait call returns every requested result.",
       'A wait that times out means the child is slow, not that it finished. Report the elapsed time, do other work or end the turn, and wait again only when you have nothing else to do; use action "status" or "stop" on a run that shows `quiet`.',
     ],
     parameters: Type.Object({
@@ -1197,17 +1208,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       runId: Type.Optional(
         Type.String({ description: "Run id, for status and stop." }),
       ),
-      runIds: Type.Optional(
-        Type.Array(Type.String(), {
-          description: "Run ids for wait. Omit to wait for every active run.",
-        }),
-      ),
-      timeoutMs: Type.Optional(
-        Type.Number({
-          description:
-            "How long wait blocks before reporting partial progress. Default 300000.",
-        }),
-      ),
     }),
     execute: async (
       _toolCallId,
@@ -1221,7 +1221,10 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
 
       switch (action) {
         case "list": {
-          const live = activeRuns(state);
+          // intermediate 是终态，但它"没有结果"，所以留在列表里让人看见。
+          const live = state.runs.filter(
+            (run) => !isTerminal(run.status) || run.status === "intermediate",
+          );
           const text =
             live.length === 0
               ? "no active subagent runs"
@@ -1245,6 +1248,9 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
           if (!run) throw new Error(`unknown run "${runId}"`);
           const text = [
             describeRun(runId),
+            run.status === "intermediate"
+              ? "\nintermediate answer (not a result):"
+              : "",
             run.resultText ? `\nresult:\n${run.resultText}` : "",
             run.error ? `\nerror: ${run.error}` : "",
           ]
@@ -1311,7 +1317,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
                 : "";
             const advice =
               `\n\nMoved to the background; the result will arrive as a message. ` +
-              `Do not re-run the same task — use action "status" or "wait" on ${outcome.runId}.`;
+              `Do not re-run the same task — use action "status" or the subagent_wait tool on ${outcome.runId}.`;
             return structuredResult(`${head}${activity}${advice}`, {
               action,
               runId: outcome.runId,
@@ -1331,10 +1337,12 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
           }
 
           const text =
-            outcome.kind === "settled"
-              ? outcome.text.trim() ||
-                `subagent ${outcome.agent} (${outcome.runId}) ${outcome.status}`
-              : `subagent ${outcome.agent} (${outcome.runId}) started in the background`;
+            outcome.kind !== "settled"
+              ? `subagent ${outcome.agent} (${outcome.runId}) started in the background`
+              : outcome.status === "intermediate"
+                ? `subagent ${outcome.agent} (${outcome.runId}) stopped with an intermediate answer, which is not a result.\n\n${outcome.text.trim()}`
+                : outcome.text.trim() ||
+                  `subagent ${outcome.agent} (${outcome.runId}) ${outcome.status}`;
 
           return structuredResult(text, {
             action,
@@ -1418,6 +1426,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     liveUpdates.clear();
     // 会话没了，run 就是停了；先落成 stopped 再唤醒，等待方拿到的结论和以前一致。
     for (const run of activeRuns(state)) {
+      recordRun(run.runId, "stopped");
       state = stop(state, run.runId, maxConcurrent, Date.now());
     }
     notifySettled();
@@ -1447,7 +1456,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     run: runTask,
     steer,
     stopRun,
-    doctor,
+    doctor: () => doctor(lastContext),
     waitFor,
   };
 

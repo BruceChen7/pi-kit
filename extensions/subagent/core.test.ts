@@ -10,6 +10,7 @@ import {
   collectWaitResult,
   createState,
   DEFAULT_MAX_CONCURRENT,
+  deliveryFor,
   detachToBackground,
   eventToTranscriptLine,
   findRun,
@@ -21,6 +22,7 @@ import {
   renderTranscript,
   renderWaitResult,
   renderWidgetLines,
+  type SubagentRun,
   type SubagentState,
   salvageFindings,
   selectWaitTargets,
@@ -976,5 +978,43 @@ describe("intermediate answers", () => {
     expect(text).toContain("intermediate answer");
     expect(text).toContain("run-1");
     expect(text).not.toContain("我先去查一下");
+  });
+});
+
+describe("deliveryFor", () => {
+  const run = (over: Partial<SubagentRun> = {}): SubagentRun => ({
+    runId: "run-1",
+    agent: "explore",
+    task: "count dirs",
+    status: "done",
+    startedAt: 10,
+    step: null,
+    lastEventAt: 10,
+    transcript: [],
+    background: true,
+    ...over,
+  });
+
+  it("delivers a settled result", () => {
+    expect(deliveryFor(run({ resultText: "3 directories" }))).toEqual({
+      deliver: true,
+      body: "3 directories",
+    });
+  });
+
+  it("delivers the error when the run failed", () => {
+    expect(deliveryFor(run({ status: "failed", error: "boom" }))).toEqual({
+      deliver: true,
+      body: "boom",
+    });
+  });
+
+  it("does not deliver an intermediate answer", () => {
+    const delivery = deliveryFor(
+      run({ status: "intermediate", resultText: "我先去查一下" }),
+    );
+
+    expect(delivery.deliver).toBe(false);
+    expect(JSON.stringify(delivery)).not.toContain("我先去查一下");
   });
 });

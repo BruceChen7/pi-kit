@@ -1351,3 +1351,32 @@ describe("state snapshots", () => {
     expect(snapshots(pi)).toEqual([]);
   });
 });
+
+describe("model-facing text stays in sync with the tool surface", () => {
+  it("points at subagent_wait instead of the removed wait action", () => {
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    const guidelines = (tools[0].promptGuidelines ?? []).join(" ");
+    expect(guidelines).toContain("subagent_wait");
+    expect(guidelines).not.toContain('action "wait"');
+  });
+
+  it("keeps wait-only parameters out of the lifecycle tool", () => {
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    const parameters = JSON.stringify(tools[0].parameters);
+    expect(parameters).not.toContain("runIds");
+    expect(parameters).not.toContain("timeoutMs");
+  });
+
+  it("rejects a non-string action instead of silently running it", async () => {
+    const { pi, tools } = makePi();
+    registerSubagent(pi as never);
+
+    await expect(
+      call(tools[0], { action: 42, task: "x" }, makeCtx()),
+    ).rejects.toThrow('unknown action "42"');
+  });
+});

@@ -193,6 +193,27 @@ export function collectWaitResult(
   return { runs, timedOut };
 }
 
+/**
+ * 一次结算该不该投递给父会话（ADR-0002 D1）。
+ *
+ * `intermediate` 是终态 —— 这一轮结束了 —— 但那句"我还在推进"不是结果，
+ * 所以不投递。后台消息、前台工具结果、`status` 展示都从这里取口径，避免
+ * "wait 拦住了、别的路径照旧交出去"。
+ */
+export type Delivery =
+  | { deliver: true; body: string }
+  | { deliver: false; reason: string };
+
+export const deliveryFor = (run: SubagentRun): Delivery => {
+  if (run.status === "intermediate") {
+    return {
+      deliver: false,
+      reason: "intermediate answer; its work did not settle",
+    };
+  }
+  return { deliver: true, body: run.resultText ?? run.error ?? "(no output)" };
+};
+
 /** 超时必须写清楚没等完，否则调用方会把部分结果读成全部完成。 */
 export function renderWaitResult(result: WaitResult): string {
   if (result.runs.length === 0) return "no subagent runs to wait for";

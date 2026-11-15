@@ -156,25 +156,40 @@ const isExistingFile = (absolutePath: string): boolean => {
   }
 };
 
-/** Return today's date as YYYY-MM-DD (UTC, which matches local date
- *  for all practical purposes). Pure function, no side-effects. */
-export const getTodayDateString = (): string =>
-  new Date().toISOString().slice(0, 10);
+/** Format a Date as YYYY-MM-DD in the **host's local** calendar. Pure.
+ *
+ *  Not `toISOString().slice(0, 10)`: that is the UTC date, and for the first
+ *  hours of a UTC+8 day it still says "yesterday". A plan written at 07:59
+ *  local was rejected with "today is <yesterday>"; thirty seconds later the
+ *  same path was rejected with "today is <today>". Whoever names the file
+ *  compares against the local calendar, so the gate must too. */
+export const formatLocalDate = (date: Date): string => {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+};
 
-/** Validate that a plan artifact path's date prefix equals today's date.
+/** Today as YYYY-MM-DD on the local calendar (thin clock read). */
+export const getTodayDateString = (): string => formatLocalDate(new Date());
+
+/** Validate that a plan artifact path's date prefix equals `today`.
+ *  `today` is passed in — the decision stays pure and testable without
+ *  touching the clock or the host timezone.
  *  Returns an error message when the date doesn't match, or null if it
  *  matches or the path has no date pattern (non-standard paths pass). */
-export const validatePathDate = (planPath: string): string | null => {
+export const validatePathDate = (
+  planPath: string,
+  today: string,
+): string | null => {
   const match = planPath.match(/(\d{4}-\d{2}-\d{2})/);
   if (!match) return null;
 
   const pathDate = match[1];
-  const today = getTodayDateString();
   if (pathDate === today) return null;
 
   return [
-    `Plan artifact path uses date "${pathDate}" but today is "${today}".`,
-    `Fix: rename the path to use ${today} as the date prefix.`,
+    `Plan artifact path uses date "${pathDate}" but today is "${today}" (local date).`,
+    `Fix: rename the file so the name starts with ${today} — mv it, don't rewrite it.`,
     `Example: .pi/plans/<repo>/plan/${today}-<slug>.md`,
   ].join("\n");
 };
@@ -927,15 +942,11 @@ export class PlanModeController {
           const policyPath = relativeToolPath(ctx.cwd, rawPath);
           // Validate the date prefix before marking — a wrong-date path
           // should not pollute latestReviewArtifactPath in state.
-          const dateError = validatePathDate(policyPath);
+          const dateError = validatePathDate(policyPath, getTodayDateString());
           if (dateError) {
-            // Fail the tool call with a clear error so the agent learns
-            // the date requirement and retries with the correct name.
-            try {
-              fs.unlinkSync(absolutePath);
-            } catch {
-              // best-effort cleanup
-            }
+            // Fail the tool call with a clear error so the agent learns the
+            // date requirement. The file is left on disk on purpose: the fix
+            // is a rename, and deleting it made "mv" fail with ENOENT.
             return {
               isError: true,
               content: [{ type: "text" as const, text: dateError }],

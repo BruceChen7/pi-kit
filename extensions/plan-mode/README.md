@@ -202,6 +202,13 @@ For reviewed implementation work, write artifacts in one of these paths:
 .pi/plans/<repo>/specs/YYYY-MM-DD-<slug>-design.md
 ```
 
+The date is **today on the host's local calendar**. A path whose date prefix is
+not today's local date fails the write and is reported back with the expected
+name; the file is kept on disk so the fix is a `mv`, not a rewrite. (The gate
+used to compare against the UTC date, which disagrees with local time for the
+first hours of a UTC+N day — a plan written at 07:59 local was first rejected as
+stale, then accepted thirty seconds later.)
+
 Then submit the artifact:
 
 ```text

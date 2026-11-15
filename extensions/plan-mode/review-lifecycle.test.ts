@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
+import { getTodayDateString } from "./controller.js";
 import {
   ACT_MODE_TODO_TOOL,
   approveDemoPlan,
@@ -846,7 +847,7 @@ describe("plan-mode extension: review lifecycle", () => {
       await harness.emit("session_start", {}, ctx);
       await startApprovedDemoRun(harness, ctx);
 
-      const today = new Date().toISOString().slice(0, 10);
+      const today = getTodayDateString();
       const htmlPath = `.pi/html/${path.basename(ctx.cwd)}/${today}-proto.html`;
       writePlanArtifact(ctx.cwd, htmlPath, "<!doctype html><div>proto</div>");
       await emitReviewArtifactWrite(harness, ctx, htmlPath);
@@ -883,14 +884,15 @@ describe("plan-mode extension: review lifecycle", () => {
       expect(teachResult).toBeUndefined();
       expect(fs.existsSync(path.join(ctx.cwd, staleTeachPath))).toBe(true);
 
-      // A plan file with a stale date prefix still fails and is removed.
+      // A plan file with a stale date prefix fails, but stays on disk: the
+      // fix is a rename, and deleting it made the agent's `mv` fail ENOENT.
       const planResult = await harness.emit(
         "tool_result",
         { toolName: "write", isError: false, input: { path: stalePlanPath } },
         ctx,
       );
       expect(planResult).toMatchObject({ isError: true });
-      expect(fs.existsSync(path.join(ctx.cwd, stalePlanPath))).toBe(false);
+      expect(fs.existsSync(path.join(ctx.cwd, stalePlanPath))).toBe(true);
     });
   });
 
@@ -927,7 +929,7 @@ describe("plan-mode extension: review lifecycle", () => {
 
   it("reminds the agent to fix the latest invalid plan artifact", async () => {
     await withTempCtx(async (ctx) => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = getTodayDateString();
       const planPath = `.pi/plans/pi-kit/plan/${today}-demo.md`;
       writePlanArtifact(ctx.cwd, planPath, invalidPlanContent);
       const { harness } = await startPlanModeSession("act", ctx);
@@ -957,7 +959,7 @@ describe("plan-mode extension: review lifecycle", () => {
 
   it("queues the policy-fix reminder again only when the failure changes", async () => {
     await withTempCtx(async (ctx) => {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = getTodayDateString();
       const planPath = `.pi/plans/pi-kit/plan/${today}-demo.md`;
       writePlanArtifact(ctx.cwd, planPath, invalidPlanContent);
       const { harness } = await startPlanModeSession("act", ctx);

@@ -46,6 +46,18 @@ const WHILE_OR_UNTIL = /\b(?:while|until)\b/;
 const SLEEP_WITH_AMOUNT = /\bsleep\s+(\d+(?:\.\d+)?)([smhd]?)\b/g;
 const COMMENT_START_BEFORE = /[\s;|&(]/;
 /**
+ * `bash -c '…'`, `sh -c "…"`, and the combined short forms (`bash -lc`, `sh -ec`).
+ * The payload has to be matched before quotes are stripped, because the payload
+ * *is* a quoted string.
+ */
+const SHELL_DASH_C =
+  /\b(?:bash|sh|zsh|dash)\b[^|;&\n]*?\s-[A-Za-z]*c[A-Za-z]*\s*(?:'([^']*)'|"((?:[^"\\]|\\.)*)")/g;
+/**
+ * How deep `-c` payloads are unpacked. Two levels covers `bash -c 'bash -c "…"'`;
+ * the cap only exists so a self-nesting command cannot spin here.
+ */
+const DASH_C_MAX_DEPTH = 3;
+/**
  * `tail -f`, `tail -F`, `tail -n 40 -f`, `tail -20f`: follow mode never exits on its own,
  * so the call blocks until pi kills it.
  */
@@ -117,6 +129,12 @@ const stripQuotedAndComments = (command: string): string => {
 const hasLoop = (command: string): boolean =>
   FOR_LOOP.test(command) || WHILE_OR_UNTIL.test(command);
 
+/** The commands a `-c` flag would actually run, outermost first. */
+const shellDashCPayloads = (command: string): string[] =>
+  [...command.matchAll(SHELL_DASH_C)]
+    .map((match) => match[1] ?? match[2] ?? "")
+    .filter((payload) => payload.trim() !== "");
+
 /** The `|`/`;`/`&`-separated pieces that actually carry follow mode. */
 const followSegments = (command: string): string[] =>
   command.split(/[|;&\n]+/).filter((segment) => TAIL_FOLLOW.test(segment));
@@ -183,6 +201,15 @@ const commandInsideLoop = (command: string): string | undefined => {
   return segments[0];
 };
 
+/**
+ * The replacement for "wait until this log line shows up". Phrased conditionally
+ * on purpose: this extension is installed globally, so it cannot assume any one
+ * repository ships the script (pi-clients does: `tools/wait-log.sh`).
+ */
+const WAIT_LOG_HINT =
+  "要等一条日志出现某一行：tools/wait-log.sh <log> <regex> [timeout] [interval]" +
+  "（仓库里有就用它；一次调用等到结论，每 10 秒自己出一行进度，命中 exit 0 / 超时 124）。";
+
 const sleepLoopReason = (
   seconds: number | undefined,
   command: string,
@@ -204,6 +231,7 @@ const sleepLoopReason = (
     "1. 先单次查询一次当前状态，拿到结果就结束这一轮。",
     "2. 还需要等，就把等待交还给用户，说明下次什么时候再看。",
     "3. 必须后台跑：<cmd> > /tmp/<slug>.log 2>&1 & ，之后用一次 read 或 grep 看那个日志。",
+    WAIT_LOG_HINT,
     "示例（示意，不是固定写法）：把 for 循环里反复 sleep 查询，换成一次 timeout 90 的单次查询，" +
       "例如 timeout 90 glab ci status --branch <branch> | head -5。",
   ].join("\n");
@@ -215,6 +243,7 @@ const sleepReason = (seconds: number): string =>
     "替代写法：",
     "1. 要等外部状态，换成单次查询，自带 timeout，命令自带输出。",
     "2. 要冷却等用户回来，直接结束这一轮把控制权交回去。",
+    WAIT_LOG_HINT,
     "示例（示意）：timeout 90 glab ci status --branch <branch> | head -5。",
   ].join("\n");
 
@@ -229,6 +258,7 @@ const tailFollowReason = (command: string): string => {
       "` 判断结束，再 `read` 那个日志的尾部。",
     `2. 命令还没起：\`${rerunnableCommand(command) ?? "<cmd>"} > /tmp/${slug}.log 2>&1 &\`，下一轮单次 read 或 grep 那个日志。`,
     "3. 只是想要最后几行：去掉 -f，用 tail -n 40 <log>。",
+    WAIT_LOG_HINT,
   ].join("\n");
 };
 
@@ -249,20 +279,17 @@ const longTimeoutReason = (
     `拦住原因：这次调用要求 pi 等 ${asked} 秒，上限 ${limit} 秒，期间没有中途输出。`,
     "替代写法：",
     ...background,
+    WAIT_LOG_HINT,
     `${background.length === 0 ? "1" : "2"}. 或拆成几条更小的调用，每条都自带输出。`,
     `${background.length === 0 ? "2" : "3"}. 真要突破上限，显式设 PI_BASH_GUARD_MAX_SECONDS=<秒数>，当前上限 ${limit}。`,
   ].join("\n");
 };
 
-export const decideBashGuard = (
+const decideScanned = (
+  scanned: string,
   call: BashCall,
-  limits: BashGuardLimits = DEFAULT_LIMITS,
+  limits: BashGuardLimits,
 ): BashGuardDecision => {
-  if (!limits.enabled) {
-    return ALLOW;
-  }
-
-  const scanned = stripQuotedAndComments(stripHeredocBodies(call.command));
   const sleeps = sleepSeconds(scanned);
   const longestSleep = sleeps.length > 0 ? Math.max(...sleeps) : undefined;
 
@@ -305,6 +332,40 @@ export const decideBashGuard = (
       rule: "tail-follow",
       reason: tailFollowReason(call.command),
     };
+  }
+
+  return ALLOW;
+};
+
+/**
+ * `sh -c "…"` used to be the documented blind spot: quotes are stripped before
+ * scanning, so a real wait hidden in a `-c` payload read as nothing. Unpack the
+ * payload first (it is quoted, so this has to happen before stripping) and judge
+ * it recursively; `echo "sleep 30"` still reads as an echo, because the payload
+ * goes through the same stripping.
+ */
+export const decideBashGuard = (
+  call: BashCall,
+  limits: BashGuardLimits = DEFAULT_LIMITS,
+  depth = 0,
+): BashGuardDecision => {
+  if (!limits.enabled) {
+    return ALLOW;
+  }
+
+  const body = stripHeredocBodies(call.command);
+  const outer = decideScanned(stripQuotedAndComments(body), call, limits);
+  if (outer.action === "block" || depth >= DASH_C_MAX_DEPTH) {
+    return outer;
+  }
+
+  for (const payload of shellDashCPayloads(body)) {
+    // Only the command shape carries over: the tool timeout belongs to the outer
+    // call and was already judged above.
+    const inner = decideBashGuard({ command: payload }, limits, depth + 1);
+    if (inner.action === "block") {
+      return inner;
+    }
   }
 
   return ALLOW;

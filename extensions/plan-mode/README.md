@@ -209,6 +209,12 @@ used to compare against the UTC date, which disagrees with local time for the
 first hours of a UTC+N day — a plan written at 07:59 local was first rejected as
 stale, then accepted thirty seconds later.)
 
+The date is never injected into the prompt (a per-turn date string would churn
+the prompt cache every midnight). Instead the prompt tells the agent to read the
+clock itself before naming the artifact, and plan phase allows exactly that one
+read-only probe — `date` with format/flags only — while every other `bash`
+call stays blocked. The rejection message repeats the hint.
+
 Then submit the artifact:
 
 ```text

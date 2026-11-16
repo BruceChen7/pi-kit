@@ -199,6 +199,20 @@ describe("plan-mode extension: prompt guards and reminders", () => {
     ).resolves.toMatchObject({ block: true });
   });
 
+  it("allows a bare date probe in plan phase so the artifact gets today's date", async () => {
+    const { harness, ctx } = await startPlanModeSession();
+
+    await sendAgentPrompt(harness, ctx, "plan the change");
+
+    await expect(
+      harness.runToolCall("bash", { command: "date +%F" }, ctx),
+    ).resolves.toBeUndefined();
+    // The allowance is exactly one read-only probe, not bash in general.
+    await expect(
+      harness.runToolCall("bash", { command: "date && git commit -am x" }, ctx),
+    ).resolves.toMatchObject({ block: true });
+  });
+
   it("skips plan reminders after an aborted assistant turn", async () => {
     const harness = buildHarness();
     const ctx = buildCtx();

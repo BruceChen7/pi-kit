@@ -200,9 +200,21 @@ export default function plannotatorAuto(pi: ExtensionAPI) {
       return;
     }
 
-    if (event.isError) {
+    // pi marks a call `isError` in two different situations, and only one of
+    // them wrote nothing:
+    //   · the tool never ran (plan-mode's pre-write block, a read-before-write
+    //     block, an aborted batch) — no file;
+    //   · the tool ran and a `tool_result` hook rejected the result
+    //     (plan-mode's date-prefix check) — the file is on disk on purpose,
+    //     the fix is a rename.
+    // `durationMs` is absent exactly when the tool did not run, so use it to
+    // tell them apart instead of skipping every `isError` call (which threw
+    // away the second case and dead-ended a wrong-date plan at "no pending
+    // review draft"). The queue still keys on the document that landed:
+    // `queuePlanReviewsForToolPaths` checks each path exists.
+    if (event.isError && event.durationMs === undefined) {
       log.debug(
-        "plannotator-auto skipping review queue after failed tool execution",
+        "plannotator-auto skipping review queue after a tool that did not run",
         {
           cwd: ctx.cwd,
           toolCallId: event.toolCallId,

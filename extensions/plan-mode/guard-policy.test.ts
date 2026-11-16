@@ -91,6 +91,70 @@ describe("plan-mode guard policy", () => {
     ).toBeUndefined();
   });
 
+  it("allows a bare date probe in plan phase but blocks other bash", () => {
+    expect(
+      decideToolBlock(
+        input({
+          isPlanPhase: true,
+          toolName: "bash",
+          isWriteTool: false,
+          isPathGuardedTool: false,
+          bashCommand: "date +%F",
+          targetResult: { kind: "paths", paths: [] },
+          targets: [],
+        }),
+      ),
+    ).toBeUndefined();
+
+    expect(
+      decideToolBlock(
+        input({
+          isPlanPhase: true,
+          toolName: "bash",
+          isWriteTool: false,
+          isPathGuardedTool: false,
+          bashCommand: "npm test",
+          targetResult: { kind: "paths", paths: [] },
+          targets: [],
+        }),
+      ),
+    ).toMatchObject({
+      block: true,
+      reason: expect.stringContaining("current phase is read-only"),
+    });
+  });
+
+  it("blocks plan-phase bash that chains a command onto date", () => {
+    expect(
+      decideToolBlock(
+        input({
+          isPlanPhase: true,
+          toolName: "bash",
+          isWriteTool: false,
+          isPathGuardedTool: false,
+          bashCommand: "date && rm -rf src",
+          targetResult: { kind: "paths", paths: [] },
+          targets: [],
+        }),
+      ),
+    ).toMatchObject({ block: true });
+  });
+
+  it("tells the agent the date probe is allowed when it blocks other bash", () => {
+    const result = decideToolBlock(
+      input({
+        isPlanPhase: true,
+        toolName: "bash",
+        isWriteTool: false,
+        isPathGuardedTool: false,
+        bashCommand: "npm test",
+        targetResult: { kind: "paths", paths: [] },
+        targets: [],
+      }),
+    );
+    expect(result?.reason).toContain("`date +%F` is allowed");
+  });
+
   it("allows plan-phase writes only when every target is a review artifact", () => {
     expect(
       decideToolBlock(

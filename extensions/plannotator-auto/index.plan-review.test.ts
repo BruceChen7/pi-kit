@@ -396,6 +396,124 @@ describe("plan review trigger timing", () => {
       },
     );
   });
+
+  it("still queues a plan whose write ran and was rejected by a tool_result hook", async () => {
+    // plan-mode's date-prefix check rejects the result *after* the write
+    // landed: the file is on disk on purpose, so the review draft must still
+    // be queued. pi reports this as isError with a durationMs (the tool ran).
+    await withPlannotatorAutoTest(
+      "plannotator-soft-reject-",
+      async ({ emit, repoRoot, repoName, createCtx }) => {
+        const planFileRelative = await writePlanDraft(repoRoot, repoName);
+        const ctx = createCtx();
+
+        await emit("session_start", {}, ctx);
+        await emit(
+          "tool_execution_start",
+          {
+            toolName: "write",
+            toolCallId: "call-1",
+            args: { path: planFileRelative },
+          },
+          ctx,
+        );
+        await emit(
+          "tool_execution_end",
+          {
+            toolName: "write",
+            toolCallId: "call-1",
+            isError: true,
+            durationMs: 3,
+          },
+          ctx,
+        );
+
+        const result = (await emit("before_agent_start", {}, ctx)) as {
+          message?: { content?: string };
+        };
+        expect(result.message?.content ?? "").toContain(planFileRelative);
+        expect(result.message?.content ?? "").toContain(
+          "plannotator_auto_submit_review",
+        );
+      },
+    );
+  });
+
+  it("does not queue a plan whose write ran but threw before landing a file", async () => {
+    // A throwing tool also reports a durationMs, so the run/did-not-run check
+    // alone would queue it. The existence gate is what keeps a path that
+    // never landed out of the review queue.
+    await withPlannotatorAutoTest(
+      "plannotator-threw-write-",
+      async ({ emit, repoName, createCtx }) => {
+        const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+        const ctx = createCtx();
+
+        await emit("session_start", {}, ctx);
+        await emit(
+          "tool_execution_start",
+          {
+            toolName: "write",
+            toolCallId: "call-1",
+            args: { path: planFileRelative },
+          },
+          ctx,
+        );
+        await emit(
+          "tool_execution_end",
+          {
+            toolName: "write",
+            toolCallId: "call-1",
+            isError: true,
+            durationMs: 5,
+          },
+          ctx,
+        );
+
+        const result = (await emit("before_agent_start", {}, ctx)) as
+          | { message?: { content?: string } }
+          | undefined;
+        expect(result?.message?.content ?? "").not.toContain(planFileRelative);
+      },
+    );
+  });
+
+  it("does not queue a plan whose write never ran (pre-write block)", async () => {
+    // plan-mode's pre-write block fails the call before execution: pi reports
+    // isError with no durationMs, and no file was written.
+    await withPlannotatorAutoTest(
+      "plannotator-blocked-write-",
+      async ({ emit, repoName, createCtx }) => {
+        const planFileRelative = `.pi/plans/${repoName}/plan/2026-04-16-workflow.md`;
+        const ctx = createCtx();
+
+        await emit("session_start", {}, ctx);
+        await emit(
+          "tool_execution_start",
+          {
+            toolName: "write",
+            toolCallId: "call-1",
+            args: { path: planFileRelative },
+          },
+          ctx,
+        );
+        await emit(
+          "tool_execution_end",
+          {
+            toolName: "write",
+            toolCallId: "call-1",
+            isError: true,
+          },
+          ctx,
+        );
+
+        const result = (await emit("before_agent_start", {}, ctx)) as
+          | { message?: { content?: string } }
+          | undefined;
+        expect(result?.message?.content ?? "").not.toContain(planFileRelative);
+      },
+    );
+  });
 });
 
 describe("selectReviewGuidance", () => {

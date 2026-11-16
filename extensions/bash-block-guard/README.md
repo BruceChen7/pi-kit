@@ -13,9 +13,29 @@
 
 `sleep` 的后缀按 GNU sleep 换算：`s`、`m`、`h`、`d`。`sleep 1m` 等于 60 秒，照样拦。
 
-## 已知盲区
+## `-c` 载荷递归
 
-把等待藏进引号字符串的调用会放行，例如 `sh -c "sleep 30"`。扫描前会剥掉引号内容，否则 `echo "sleep 30"` 会被误拦；两者取舍后选了不误拦。这条盲区有测试固定住（`accepts the documented blind spot of a wait inside sh -c`），不是意外。
+`sh -c "sleep 30"`、`bash -lc 'while ! grep -q x /tmp/a.log; do sleep 1; done'` 以前是放行的（引号在扫描前被剥掉，否则 `echo "sleep 30"` 会误拦）。现在先把 `-c` 的载荷取出来，再对载荷跑同一套判据（递归深度 3）：
+
+| 命令                                              | 结果                          |
+| ------------------------------------------------- | ----------------------------- |
+| `sh -c "sleep 30"`                                | 拦（`sleep`）                 |
+| `bash -c 'while ! grep -q x f; do sleep 1; done'` | 拦（`sleep-loop`）            |
+| `bash -lc 'sleep 45'`                             | 拦（`sleep`，组合短选项也认） |
+| `bash -c 'echo "sleep 30"'`                       | 放行（载荷里再剥一次引号）    |
+| `bash -c 'tools/wait-log.sh /tmp/a.log ^PASS'`    | 放行                          |
+
+只认 `-c`，不做通用 shell 解析：这是实际溜过去的形状（2026-11-15 两次 200s 的 while 循环），完整解析的边际收益抵不上误拦风险。
+
+## 拦下来之后用什么
+
+四段 reason 里都指向同一个替代品：
+
+```shell
+tools/wait-log.sh <log> <regex> [timeout=240] [interval=10] [--pid <pid>]
+```
+
+一次调用等到结论，每 `interval` 秒自己打一行进度（所以不撞 `sleep-loop`），命中 `exit 0`、超时 `exit 124`、被盯的进程先死 `exit 125`。pi-clients 里有一份（`tools/`，带自测）；**别的仓库没装也会读到这条提示，所以 reason 写的是「仓库里有就用它」**。
 
 `tail-follow` 只看 stdout 重定向：`tail -f a.log 2>/dev/null` 仍然拦，因为进程照样不退出；`nsh test . > /tmp/a.log 2>&1 & timeout 200 tail -f /tmp/a.log | grep -m1 x` 也仍然拦——那个 `>` 属于前半段，不是 tail 这一段。
 

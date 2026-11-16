@@ -154,12 +154,65 @@ describe("decideBashGuard: bodies and blind spots", () => {
     });
   });
 
-  it("accepts the documented blind spot of a wait inside sh -c", () => {
-    // Quotes are stripped before scanning, so this slips through on purpose.
-    // Changing that would start blocking `echo "sleep 30"`.
-    expect(decide({ command: 'sh -c "sleep 30"' })).toEqual({
+  it("blocks a wait hidden inside sh -c", () => {
+    // Quotes are stripped before scanning the outer command, so the payload has
+    // to be unpacked first — that is the whole point of the -c recursion.
+    expect(decide({ command: 'sh -c "sleep 30"' })).toMatchObject({
+      action: "block",
+      rule: "sleep",
+    });
+  });
+
+  it("blocks a polling loop hidden inside bash -c", () => {
+    // The shape from 2026-11-15: 200s of `while ! grep` wrapped in bash -c, which
+    // read as "no sleep at all" because the whole payload sat in single quotes.
+    const command =
+      "timeout 200 bash -c 'while ! grep -qE \"^[✓✗] [0-9]+ test\" /tmp/t.log; do sleep 1; done'";
+
+    expect(decide({ command })).toMatchObject({
+      action: "block",
+      rule: "sleep-loop",
+    });
+  });
+
+  it("reads combined short flags such as bash -lc", () => {
+    expect(decide({ command: "bash -lc 'sleep 45'" })).toMatchObject({
+      rule: "sleep",
+    });
+  });
+
+  it("recurses through nested -c payloads", () => {
+    expect(decide({ command: "bash -c 'bash -c \"sleep 30\"'" })).toMatchObject(
+      { rule: "sleep" },
+    );
+  });
+
+  it("still allows a sleep quoted inside a -c payload", () => {
+    expect(decide({ command: "bash -c 'echo \"sleep 30\"'" })).toEqual({
       action: "allow",
     });
+  });
+
+  it("still allows -c when the payload only mentions -c", () => {
+    expect(
+      decide({ command: "bash -c 'tools/wait-log.sh /tmp/a.log ^PASS'" }),
+    ).toEqual({ action: "allow" });
+  });
+
+  it("points at the wait-log replacement in every reason", () => {
+    const blocked = [
+      decide({ command: "sleep 30" }),
+      decide({ command: "while :; do sleep 1; done" }),
+      decide({ command: "tail -f /tmp/a.log" }),
+      decide({ command: "make build", timeoutSeconds: 900 }),
+    ];
+
+    for (const decision of blocked) {
+      if (decision.action !== "block") {
+        throw new Error("expected a block");
+      }
+      expect(decision.reason).toContain("tools/wait-log.sh");
+    }
   });
 });
 

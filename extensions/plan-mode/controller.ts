@@ -191,6 +191,7 @@ export const validatePathDate = (
     `Plan artifact path uses date "${pathDate}" but today is "${today}" (local date).`,
     `Fix: rename the file so the name starts with ${today} — mv it, don't rewrite it.`,
     `Example: .pi/plans/<repo>/plan/${today}-<slug>.md`,
+    "Next time, read the clock before naming the file: `date +%F`.",
   ].join("\n");
 };
 
@@ -463,6 +464,9 @@ export class PlanModeController {
       "- For implementation tasks, write only reviewable artifacts under " +
         `${MARKDOWN_PLAN_REVIEW_ARTIFACT_LOCATION} and submit them with ` +
         `${PLANNOTATOR_SUBMIT_TOOL_NAME}.`,
+      "- Plan artifact names start with today's local date. Before writing " +
+        "one, read the clock with a shell command (`date +%F` is allowed in " +
+        "plan phase) instead of guessing from context.",
       `- ${REVIEW_ARTIFACT_WRITE_HINT}`,
       "- Standard plan artifacts must use the following sections: " +
         "## Goal, ## Current Flow, ## Desired Flow, ## Boundaries, " +
@@ -754,6 +758,10 @@ export class PlanModeController {
       readBeforeWrite: this.config.guards.readBeforeWrite,
       toolName: event.toolName,
       todoToolName: this.getTodoToolNameForCurrentMode(),
+      bashCommand:
+        event.toolName === "bash"
+          ? stringProperty(event.input, "command")
+          : null,
       isWriteTool: isWriteToolCall(event.toolName, toolPolicy),
       isPathGuardedTool: isPathGuardedToolCall(event.toolName, toolPolicy),
       targetResult,

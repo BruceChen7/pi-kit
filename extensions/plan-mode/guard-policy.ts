@@ -1,3 +1,4 @@
+import { isReadOnlyDateProbe } from "./bash-date-probe.ts";
 import {
   PLAN_INSPECTION_TOOL_COMMA_LIST,
   REVIEW_ARTIFACT_WRITE_GUIDANCE,
@@ -21,6 +22,8 @@ export type GuardPolicyInput = {
   readBeforeWrite: boolean;
   toolName: string;
   todoToolName: string;
+  /** The `command` of a bash call, when there is one (`date +%F` probe). */
+  bashCommand?: string | null;
   isWriteTool: boolean;
   isPathGuardedTool: boolean;
   targetResult: ToolTargetPathResult;
@@ -40,11 +43,21 @@ export const decideToolBlock = (
   }
 
   if (input.isPlanPhase && input.toolName === "bash") {
+    // The clock is the one fact plan phase must be able to read but no
+    // inspection tool can print: artifacts are named `YYYY-MM-DD-<slug>`
+    // against the host's local date, and guessing it names the file with
+    // yesterday's date. Allow that one read-only probe; everything else
+    // stays blocked.
+    if (input.bashCommand && isReadOnlyDateProbe(input.bashCommand)) {
+      return undefined;
+    }
+
     return {
       block: true,
       reason:
         `plan-mode blocked ${input.toolName}: current phase is read-only. ` +
-        `Use ${PLAN_INSPECTION_TOOL_COMMA_LIST}, and ${input.todoToolName}.`,
+        `Use ${PLAN_INSPECTION_TOOL_COMMA_LIST}, and ${input.todoToolName}. ` +
+        "For today's local date before naming a plan artifact, `date +%F` is allowed.",
     };
   }
 

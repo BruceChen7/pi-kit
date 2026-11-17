@@ -1,0 +1,33 @@
+name: doop-local
+
+services:
+  doop:
+    build:
+      context: .
+      args:
+        DOOP_REF: ${DOOP_REF:-v0.15.0}
+    image: doop-local:latest
+    ports:
+      # Host 4300 is what extensions/doop/config.ts defaults to. The container
+      # itself serves web + REST + /mcp + /ws on its native 4400.
+      - "4300:4400"
+    environment:
+      NODE_ENV: production
+      PORT: "4400"
+      # Production requires these. The defaults are doop's own local-dev
+      # values, so an existing browser session and encrypted settings in
+      # data/pg keep working after the move. Override both with fresh values
+      # if you ever expose this beyond localhost (you will need to sign in
+      # again and reconnect encrypted model accounts).
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-doop-dev-secret-not-for-production}
+      SECRETS_ENCRYPTION_KEYS: ${SECRETS_ENCRYPTION_KEYS:-dev:YXnD8pQDrb/0baZcNI31TEA+jS58zbouH+ruCDh6P8M=}
+      # Sign-in Origin must be the public origin the browser and pi use.
+      BETTER_AUTH_URL: http://localhost:4300
+      TRUSTED_ORIGINS: http://127.0.0.1:4300
+      # Unset (empty) -> PGlite in /app/data/pg; uploads in /app/data/assets.
+      # Set this only if your old data actually lives in a separate Postgres.
+      DATABASE_URL: ${DATABASE_URL:-}
+    volumes:
+      # Relative to this compose file. Override with DOOP_DATA_DIR=/abs/path.
+      - ${DOOP_DATA_DIR:-../../doop/data}:/app/data
+    restart: unless-stopped

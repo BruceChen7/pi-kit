@@ -1,6 +1,7 @@
 .PHONY: help install install-all install-plugins install-skills install-third-party \
 	install-clis install-opencli-adapters update-clis update-peer-deps update-skills test lint \
-	package-settings restore-settings pi-web pi-web-restart pi-web-stop pi-web-update
+	package-settings restore-settings pi-web pi-web-restart pi-web-stop pi-web-update \
+	doop-start doop-stop doop-update
 
 PLUGIN_SCOPE ?= --library
 THIRD_PARTY_MODE ?= --install-only
@@ -11,6 +12,7 @@ PORT ?= 30141
 # (it would install an older pi-web than the one already present). Pass an
 # explicit registry here and the hook skips its probe.
 PI_WEB_REGISTRY ?= https://registry.npmjs.org/
+DOOP_DIR ?= doop-docker
 
 help:
 	@echo "pi-kit installer targets:"
@@ -31,6 +33,10 @@ help:
 	@echo "  make pi-web-restart          Stop the instance on PORT, then start it detached again"
 	@echo "  make pi-web-stop             Stop the Pi Web instance on PORT"
 	@echo "  make pi-web-update           Upgrade the global pi-web install (registry: $(PI_WEB_REGISTRY))"
+	@echo ""
+	@echo "  make doop-start              Start local doop container (host :4300; first run builds)"
+	@echo "  make doop-stop               Stop local doop container (bind-mounted data stays)"
+	@echo "  make doop-update             Rebuild doop (DOOP_REF=tag|sha, default v0.15.0)"
 	@echo ""
 	@echo "Examples:"
 	@echo "  make install"
@@ -92,3 +98,12 @@ test:
 
 lint:
 	npm run lint
+
+doop-start:
+	$(MAKE) -C $(DOOP_DIR) start
+
+doop-stop:
+	$(MAKE) -C $(DOOP_DIR) stop
+
+doop-update:
+	$(MAKE) -C $(DOOP_DIR) update

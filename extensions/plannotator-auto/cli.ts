@@ -1,6 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { ReviewHostMode } from "./terminal-browser.ts";
-import { wantsRemoteReviewUrl } from "./terminal-browser.ts";
+import {
+  deliverReviewToHost,
+  hostsReviewOffMachine,
+} from "./terminal-browser.ts";
 
 export type CliReviewDecision = {
   approved: boolean;
@@ -133,6 +136,22 @@ type RunCliOptions<T> = {
 };
 
 /**
+ * Pure: did the caller (or the deployment) already pick a side on remote mode?
+ *
+ * Any defined `PLANNOTATOR_REMOTE` counts — including `"0"`, which is an
+ * explicit "this is a local session" and must not be overridden by our
+ * `"1"`. `options.env` wins over `process.env`, mirroring how the spawn env is
+ * composed.
+ */
+const hasExplicitRemote = (
+  processEnv: NodeJS.ProcessEnv,
+  optionEnv: NodeJS.ProcessEnv | undefined,
+): boolean => {
+  const value = optionEnv?.PLANNOTATOR_REMOTE ?? processEnv.PLANNOTATOR_REMOTE;
+  return value !== undefined && value !== "";
+};
+
+/**
  * Shell: hand a remote review URL to the reviewer's own screen.
  *
  * The agent runs on the server; when the review is hosted remotely the page is
@@ -202,24 +221,32 @@ const runCli = async <T extends CliReviewDecision>(
   const isHerdrEnv =
     process.env.HERDR_ENV === "1" && !!process.env.HERDR_PANE_ID;
   const hostMode = options.hostMode ?? "browser";
-  // Remote/phone runtime (a LAN name, a tailnet name, an SSH box): the review
-  // page belongs on the reviewer's own screen, so the URL is delivered to the
-  // client instead of opened on the server. READY_FILE is the only channel the
-  // CLI offers for it, and it needs SKIP_BROWSER_OPEN so nothing pops up on
-  // the server while the reviewer waits on their phone.
-  const remoteUrl = !isTestEnv && wantsRemoteReviewUrl(process.env);
+  // Remote/phone runtime, an explicit Herdr pane, or a rich UI host (the pi
+  // desktop app / pi-web / a phone): the review page belongs on the reviewer's
+  // own screen, so the URL is delivered to the client instead of opened on the
+  // server. READY_FILE is the only channel the CLI offers for it, and it needs
+  // SKIP_BROWSER_OPEN so nothing pops up on the server while the reviewer waits
+  // on their own device. See `deliverReviewToHost` for the decision table.
+  const deliverToClient =
+    !isTestEnv &&
+    deliverReviewToHost({
+      env: process.env,
+      hostMode,
+      herdrEnv: isHerdrEnv,
+    }) === "client";
+  // The URL still has to be reachable from somewhere other than this machine for
+  // READY_FILE to be the only way it travels; those two facts are independent.
+  const offMachine = !isTestEnv && hostsReviewOffMachine(process.env);
   // Probe the panel path only when the caller opted into herdr-panel AND the
   // runtime looks like Herdr — browser mode never spawns terminal-browser.
-  const wantsReadyFile =
-    (!isTestEnv && hostMode === "herdr-panel" && isHerdrEnv) || remoteUrl;
-  if (wantsReadyFile) {
+  const useHerdrPanel = !isTestEnv && hostMode === "herdr-panel" && isHerdrEnv;
+  if (deliverToClient) {
     try {
       tb = await import("./terminal-browser.ts");
-      useTerminalBrowser =
-        !isTestEnv && hostMode === "herdr-panel" && isHerdrEnv
-          ? await tb.shouldUseTerminalBrowser(ctx, hostMode)
-          : false;
-      if (useTerminalBrowser || remoteUrl) {
+      useTerminalBrowser = useHerdrPanel
+        ? await tb.shouldUseTerminalBrowser(ctx, hostMode)
+        : false;
+      if (useTerminalBrowser || offMachine) {
         try {
           readyFile = await tb.createTempReadyFile();
           effectiveEnv = {
@@ -228,13 +255,13 @@ const runCli = async <T extends CliReviewDecision>(
             PLANNOTATOR_CWD: ctx.cwd,
             PLANNOTATOR_READY_FILE: readyFile,
             PLANNOTATOR_SKIP_BROWSER_OPEN: "1",
-            // A URL host alone does not switch the CLI into remote mode; ask
-            // for it so the session binds 0.0.0.0 on the fixed port the URL
-            // was built for. An explicit setting always wins.
-            ...(remoteUrl &&
-            !(options.env?.PLANNOTATOR_REMOTE ?? process.env.PLANNOTATOR_REMOTE)
-              ? { PLANNOTATOR_REMOTE: "1" }
-              : {}),
+            // Remote mode is what binds 0.0.0.0 on the fixed port: a URL host
+            // alone does not switch the CLI into it, and a client that cannot
+            // reach this machine's loopback gets a blank page either way. An
+            // explicit setting still wins.
+            ...(hasExplicitRemote(process.env, options.env)
+              ? {}
+              : { PLANNOTATOR_REMOTE: "1" }),
           };
         } catch {
           readyFile = null;

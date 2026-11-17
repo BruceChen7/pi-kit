@@ -42,7 +42,7 @@ import type {
   PendingPlanReview,
 } from "./plan-review/types.ts";
 import { getSessionState, type SessionRuntimeState } from "./session.ts";
-import { wantsRemoteReviewUrl } from "./terminal-browser.ts";
+import { hostsReviewOffMachine } from "./terminal-browser.ts";
 
 const KEEP_PLAN_HEADING_GUIDANCE =
   "Keep the first # heading unchanged unless the reviewer explicitly asks you " +
@@ -137,14 +137,14 @@ const getReviewWidgetMessage = (
     return null;
   }
 
-  // Remote hosting is where the reviewer's screen is not this machine (a phone
-  // on the same Wi-Fi, a tailnet name, an SSH box): the URL is delivered to the
-  // client instead of a browser opening here. Says so, so "no browser opened"
-  // never reads as "the review never started".
+  // Where the review page actually went. `remote` covers every case the URL was
+  // handed to the reviewer's own client instead of a browser here — an
+  // advertised remote host, or a rich UI host (the pi app / pi-web / a phone).
+  // Says so, so "no browser opened" never reads as "the review never started".
   const host =
     state.reviewHostMode === "herdr-panel"
       ? "herdr-panel"
-      : wantsRemoteReviewUrl(process.env)
+      : hostsReviewOffMachine(process.env)
         ? "remote"
         : "browser";
 

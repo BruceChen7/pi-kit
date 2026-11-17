@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLogger } from "../shared/logger.ts";
+import { parseUiHostOverride } from "../shared/ui-host.ts";
 import { getSessionKey } from "./session.ts";
 
 const log = createLogger("plannotator-auto", { stderr: null });
@@ -77,6 +78,63 @@ export const wantsRemoteReviewUrl = (
   return Boolean(
     env.PLANNOTATOR_URL_HOST?.trim() || env.PLANNOTATOR_PUBLIC_URL?.trim(),
   );
+};
+
+/**
+ * Pure: is the UI host a rich client that draws its own surfaces — the pi
+ * desktop app, pi-web, or a phone?
+ *
+ * `tui` is deliberately excluded: a terminal pi is usually nested INSIDE Herdr,
+ * which is where a pane-split review belongs, not a client hand-off.
+ *
+ * The vocabulary is `shared/ui-host.ts`'s (`PI_KIT_UI_HOST`); this module must
+ * not grow a second opinion about what a "rich host" is.
+ */
+export const isRichUiClientHost = (
+  env: NodeJS.ProcessEnv = process.env,
+): boolean => {
+  const kind = parseUiHostOverride(env.PI_KIT_UI_HOST);
+  return kind === "android" || kind === "pi-web";
+};
+
+/** Where a review URL should go: to the client's own UI, or a browser on this machine. */
+export type ReviewUrlTarget = "client" | "cli";
+
+/**
+ * Pure: does this environment host the review somewhere other than a browser on
+ * the agent's own machine — regardless of any Herdr pane?
+ *
+ * These are the two signals that make `READY_FILE` the only way the URL can
+ * travel (see `wantsRemoteReviewUrl` / `isRichUiClientHost`).
+ */
+export const hostsReviewOffMachine = (
+  env: NodeJS.ProcessEnv = process.env,
+): boolean => wantsRemoteReviewUrl(env) || isRichUiClientHost(env);
+
+/**
+ * Pure: who opens the review page — the client, or the CLI on this machine?
+ *
+ * `client` is the answer whenever the reviewer's screen is somewhere the agent's
+ * process cannot reach: an explicit Herdr pane, a deployment that advertises a
+ * remote URL, or a rich UI host (the pi app / pi-web / a phone) whose owner is
+ * not this machine's terminal.
+ *
+ * Why the rich-host signal had to be added: without it the default path is
+ * "browser", so the CLI opens a system browser and never hands pi-kit the URL.
+ * The pi desktop app then has nothing to embed — its `nextAutoReview` sees an
+ * empty review list — even though the whole client-side path works.
+ *
+ * `herdrEnv` is probed separately from `hostMode` so the caller stays the only
+ * reader of `process.env`. Test runs short-circuit at the call site (the repo's
+ * existing convention), so this stays a pure decision.
+ */
+export const deliverReviewToHost = (input: {
+  env: NodeJS.ProcessEnv;
+  hostMode: ReviewHostMode;
+  herdrEnv: boolean;
+}): ReviewUrlTarget => {
+  if (input.hostMode === "herdr-panel" && input.herdrEnv) return "client";
+  return hostsReviewOffMachine(input.env) ? "client" : "cli";
 };
 
 /** Pure: parse one READY_FILE JSONL line → url | null. */

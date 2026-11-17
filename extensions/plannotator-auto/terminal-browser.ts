@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLogger } from "../shared/logger.ts";
-import { parseUiHostOverride } from "../shared/ui-host.ts";
+import { parseUiHostOverride, profileForHostKind } from "../shared/ui-host.ts";
 import { getSessionKey } from "./session.ts";
 
 const log = createLogger("plannotator-auto", { stderr: null });
@@ -84,32 +84,51 @@ export const wantsRemoteReviewUrl = (
  * Pure: is the UI host a rich client that draws its own surfaces — the pi
  * desktop app, pi-web, or a phone?
  *
- * `tui` is deliberately excluded: a terminal pi is usually nested INSIDE Herdr,
- * which is where a pane-split review belongs, not a client hand-off.
- *
- * The vocabulary is `shared/ui-host.ts`'s (`PI_KIT_UI_HOST`); this module must
- * not grow a second opinion about what a "rich host" is.
+ * The classification comes from `shared/ui-host.ts` (the owner of `UiHostKind`):
+ * a host that renders custom panels is a client we can hand a URL to. `tui` is
+ * the one named exception — a terminal pi is usually nested INSIDE Herdr, where
+ * a pane split is the right home for a review, not a client hand-off. Deriving
+ * it (rather than listing kinds here) means a new rich host added to that table
+ * reaches this predicate instead of silently falling back to a server browser.
  */
 export const isRichUiClientHost = (
   env: NodeJS.ProcessEnv = process.env,
 ): boolean => {
   const kind = parseUiHostOverride(env.PI_KIT_UI_HOST);
-  return kind === "android" || kind === "pi-web";
+  if (kind === undefined || kind === "tui") return false;
+  return profileForHostKind(kind).customPanels;
+};
+
+/** Pure: the deployment explicitly said this is a local session. */
+export const isExplicitLocalSession = (
+  env: NodeJS.ProcessEnv = process.env,
+): boolean => {
+  const remote = env.PLANNOTATOR_REMOTE?.trim().toLowerCase();
+  return remote === "0" || remote === "false";
 };
 
 /** Where a review URL should go: to the client's own UI, or a browser on this machine. */
 export type ReviewUrlTarget = "client" | "cli";
 
 /**
- * Pure: does this environment host the review somewhere other than a browser on
- * the agent's own machine — regardless of any Herdr pane?
+ * Pure: does this environment deliver the review to a client rather than to a
+ * browser on the agent's own machine?
  *
- * These are the two signals that make `READY_FILE` the only way the URL can
- * travel (see `wantsRemoteReviewUrl` / `isRichUiClientHost`).
+ * Two signals make `READY_FILE` the only way the URL can travel: a deployment
+ * that advertises a reachable URL (`wantsRemoteReviewUrl`), or a rich UI host
+ * whose owner is not this terminal (`isRichUiClientHost`).
+ *
+ * An explicit `PLANNOTATOR_REMOTE=0` vetoes both. That flag is the deployment
+ * saying "local session", and a person who set it is not asking for a client
+ * hand-off — the app's own pane would otherwise quietly replace the browser they
+ * asked for. Explicit beats inferred, in both directions.
  */
-export const hostsReviewOffMachine = (
+export const deliversReviewToClient = (
   env: NodeJS.ProcessEnv = process.env,
-): boolean => wantsRemoteReviewUrl(env) || isRichUiClientHost(env);
+): boolean => {
+  if (isExplicitLocalSession(env)) return false;
+  return wantsRemoteReviewUrl(env) || isRichUiClientHost(env);
+};
 
 /**
  * Pure: who opens the review page — the client, or the CLI on this machine?
@@ -133,8 +152,10 @@ export const deliverReviewToHost = (input: {
   hostMode: ReviewHostMode;
   herdrEnv: boolean;
 }): ReviewUrlTarget => {
+  // A Herdr pane is on this machine, so an explicit local session is no
+  // conflict: the panel still hosts it.
   if (input.hostMode === "herdr-panel" && input.herdrEnv) return "client";
-  return hostsReviewOffMachine(input.env) ? "client" : "cli";
+  return deliversReviewToClient(input.env) ? "client" : "cli";
 };
 
 /** Pure: parse one READY_FILE JSONL line → url | null. */

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { profileForHostKind } from "../shared/ui-host.ts";
 import {
   deliverReviewToHost,
+  deliversReviewToClient,
   extractFirstUrlFromReadyContent,
   hasRightNeighborFromEdgesOutput,
+  isExplicitLocalSession,
   isHerdrEnvironment,
   isRichUiClientHost,
   nextHostMode,
@@ -209,6 +212,78 @@ describe("isRichUiClientHost", () => {
     expect(isRichUiClientHost(env({ PI_KIT_UI_HOST: "headless" }))).toBe(false);
     expect(isRichUiClientHost(env({ PI_KIT_UI_HOST: "nonsense" }))).toBe(false);
     expect(isRichUiClientHost(env({}))).toBe(false);
+  });
+
+  it("derives the classification from the shared host table", () => {
+    // Not a hardcoded kind list: every kind the shared table marks as
+    // panel-drawing is a rich host, minus the named `tui` exception. If the
+    // table grows a rich kind, this predicate must follow it.
+    for (const kind of ["pi-web", "android"] as const) {
+      expect(isRichUiClientHost(env({ PI_KIT_UI_HOST: kind }))).toBe(
+        profileForHostKind(kind).customPanels,
+      );
+    }
+  });
+});
+
+describe("isExplicitLocalSession", () => {
+  const env = (pairs: Record<string, string>): NodeJS.ProcessEnv =>
+    pairs as NodeJS.ProcessEnv;
+
+  it("recognizes the deployment's own local-session spellings", () => {
+    expect(isExplicitLocalSession(env({ PLANNOTATOR_REMOTE: "0" }))).toBe(true);
+    expect(isExplicitLocalSession(env({ PLANNOTATOR_REMOTE: "FALSE" }))).toBe(
+      true,
+    );
+    expect(isExplicitLocalSession(env({ PLANNOTATOR_REMOTE: " 0 " }))).toBe(
+      true,
+    );
+  });
+
+  it("is false when unset, empty, or asking for remote", () => {
+    expect(isExplicitLocalSession(env({}))).toBe(false);
+    expect(isExplicitLocalSession(env({ PLANNOTATOR_REMOTE: "" }))).toBe(false);
+    expect(isExplicitLocalSession(env({ PLANNOTATOR_REMOTE: "1" }))).toBe(
+      false,
+    );
+    expect(isExplicitLocalSession(env({ PLANNOTATOR_REMOTE: "true" }))).toBe(
+      false,
+    );
+  });
+});
+
+describe("deliversReviewToClient", () => {
+  const env = (pairs: Record<string, string>): NodeJS.ProcessEnv =>
+    pairs as NodeJS.ProcessEnv;
+
+  it("delivers for a rich host or an advertised remote URL", () => {
+    expect(deliversReviewToClient(env({ PI_KIT_UI_HOST: "android" }))).toBe(
+      true,
+    );
+    expect(deliversReviewToClient(env({ PLANNOTATOR_REMOTE: "1" }))).toBe(true);
+    expect(
+      deliversReviewToClient(env({ PLANNOTATOR_URL_HOST: "mini.local" })),
+    ).toBe(true);
+  });
+
+  it("lets an explicit local session veto an inferred rich host", () => {
+    // The deployment said "local session"; the worker's host profile must not
+    // silently replace the browser the person asked for with a notice.
+    expect(
+      deliversReviewToClient(
+        env({ PI_KIT_UI_HOST: "android", PLANNOTATOR_REMOTE: "0" }),
+      ),
+    ).toBe(false);
+    expect(
+      deliversReviewToClient(
+        env({ PLANNOTATOR_URL_HOST: "mini.local", PLANNOTATOR_REMOTE: "0" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("stays with the CLI on a plain terminal session", () => {
+    expect(deliversReviewToClient(env({}))).toBe(false);
+    expect(deliversReviewToClient(env({ PI_KIT_UI_HOST: "tui" }))).toBe(false);
   });
 });
 

@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import type { ReviewHostMode } from "./terminal-browser.ts";
 import {
   deliverReviewToHost,
-  hostsReviewOffMachine,
+  deliversReviewToClient,
 } from "./terminal-browser.ts";
 
 export type CliReviewDecision = {
@@ -234,9 +234,10 @@ const runCli = async <T extends CliReviewDecision>(
       hostMode,
       herdrEnv: isHerdrEnv,
     }) === "client";
-  // The URL still has to be reachable from somewhere other than this machine for
-  // READY_FILE to be the only way it travels; those two facts are independent.
-  const offMachine = !isTestEnv && hostsReviewOffMachine(process.env);
+  // The client path only if the deployment did not explicitly ask for local:
+  // an explicit PLANNOTATOR_REMOTE=0 is a person saying "use this machine's
+  // browser", so it must not be overridden into a notice.
+  const notifyClient = !isTestEnv && deliversReviewToClient(process.env);
   // Probe the panel path only when the caller opted into herdr-panel AND the
   // runtime looks like Herdr — browser mode never spawns terminal-browser.
   const useHerdrPanel = !isTestEnv && hostMode === "herdr-panel" && isHerdrEnv;
@@ -246,7 +247,10 @@ const runCli = async <T extends CliReviewDecision>(
       useTerminalBrowser = useHerdrPanel
         ? await tb.shouldUseTerminalBrowser(ctx, hostMode)
         : false;
-      if (useTerminalBrowser || offMachine) {
+      // Two delivery mechanisms share the one READY_FILE: a Herdr pane on this
+      // machine, or the review URL handed to the client. Either way the CLI must
+      // not open a browser itself.
+      if (useTerminalBrowser || notifyClient) {
         try {
           readyFile = await tb.createTempReadyFile();
           effectiveEnv = {

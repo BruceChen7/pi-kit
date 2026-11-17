@@ -42,7 +42,10 @@ import type {
   PendingPlanReview,
 } from "./plan-review/types.ts";
 import { getSessionState, type SessionRuntimeState } from "./session.ts";
-import { hostsReviewOffMachine } from "./terminal-browser.ts";
+import {
+  deliversReviewToClient,
+  type ReviewHostMode,
+} from "./terminal-browser.ts";
 
 const KEEP_PLAN_HEADING_GUIDANCE =
   "Keep the first # heading unchanged unless the reviewer explicitly asks you " +
@@ -128,6 +131,22 @@ export const preprocessPlanMarkdown = (markdown: string): string =>
       `${prefix}\n\`\`\`mermaid${suffix}\n${body}\n\`\`\``,
   );
 
+/**
+ * Pure: the widget's `host:` label — where the review page actually went.
+ *
+ * `remote` covers every case the URL was handed to the reviewer's own client
+ * instead of a browser here (an advertised remote host, or a rich UI host: the
+ * pi app / pi-web / a phone). Says so, so "no browser opened" never reads as
+ * "the review never started".
+ */
+export const reviewWidgetHost = (input: {
+  hostMode: ReviewHostMode;
+  env: NodeJS.ProcessEnv;
+}): "herdr-panel" | "remote" | "browser" => {
+  if (input.hostMode === "herdr-panel") return "herdr-panel";
+  return deliversReviewToClient(input.env) ? "remote" : "browser";
+};
+
 const getReviewWidgetMessage = (
   state: SessionRuntimeState,
   cwd: string,
@@ -137,16 +156,10 @@ const getReviewWidgetMessage = (
     return null;
   }
 
-  // Where the review page actually went. `remote` covers every case the URL was
-  // handed to the reviewer's own client instead of a browser here — an
-  // advertised remote host, or a rich UI host (the pi app / pi-web / a phone).
-  // Says so, so "no browser opened" never reads as "the review never started".
-  const host =
-    state.reviewHostMode === "herdr-panel"
-      ? "herdr-panel"
-      : hostsReviewOffMachine(process.env)
-        ? "remote"
-        : "browser";
+  const host = reviewWidgetHost({
+    hostMode: state.reviewHostMode,
+    env: process.env,
+  });
 
   return isHtmlPath(planReviewActive.resolvedPlanPath)
     ? `HTML review is active · host: ${host}`

@@ -395,7 +395,7 @@ describe("runCli rich UI host", () => {
     }
   });
 
-  it("respects an explicit PLANNOTATOR_REMOTE=0", async () => {
+  it("lets an explicit PLANNOTATOR_REMOTE=0 keep the local browser", async () => {
     vi.resetModules();
     process.env[PI_KIT_UI_HOST] = "android";
     process.env.PLANNOTATOR_REMOTE = "0";
@@ -403,7 +403,7 @@ describe("runCli rich UI host", () => {
       status: 0,
       stdout: JSON.stringify({ decision: "approved" }),
     });
-    mockReadyUrl(REVIEW_URL);
+    const { openUrl } = mockReadyUrl(REVIEW_URL);
     const notify = vi.fn();
     const repoRoot = await createTempRepo("cli-rich-host-local-");
 
@@ -419,8 +419,14 @@ describe("runCli rich UI host", () => {
       const spawnOptions = (spawn.mock.calls[0] as unknown[])[2] as {
         env: Record<string, string | undefined>;
       };
-      // Explicit wins: the deployment said this is a local session.
+      // Explicit beats inferred: "local session" means the CLI's own browser,
+      // so the server-side browser must NOT be suppressed and nothing is
+      // handed to the client.
       expect(spawnOptions.env.PLANNOTATOR_REMOTE).toBe("0");
+      expect(spawnOptions.env.PLANNOTATOR_SKIP_BROWSER_OPEN).toBeUndefined();
+      expect(spawnOptions.env.PLANNOTATOR_READY_FILE).toBeUndefined();
+      expect(notify).not.toHaveBeenCalled();
+      expect(openUrl).not.toHaveBeenCalled();
     } finally {
       await removeTempRepo(repoRoot);
     }

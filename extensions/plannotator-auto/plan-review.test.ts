@@ -3,6 +3,7 @@ import {
   decideReviewStateTransition,
   preprocessPlanMarkdown,
   type ReviewStateTransition,
+  reviewWidgetHost,
 } from "./plan-review.ts";
 
 describe("plan-review mermaid helpers", () => {
@@ -71,5 +72,55 @@ describe("decideReviewStateTransition (Functional Core)", () => {
   ])("$name", ({ decision, manual, auto }) => {
     expect(decideReviewStateTransition(decision, "manual")).toEqual(manual);
     expect(decideReviewStateTransition(decision, "auto")).toEqual(auto);
+  });
+});
+
+describe("reviewWidgetHost", () => {
+  const env = (pairs: Record<string, string>): NodeJS.ProcessEnv =>
+    pairs as NodeJS.ProcessEnv;
+
+  it("says herdr-panel whenever the panel mode is on", () => {
+    expect(reviewWidgetHost({ hostMode: "herdr-panel", env: env({}) })).toBe(
+      "herdr-panel",
+    );
+    expect(
+      reviewWidgetHost({
+        hostMode: "herdr-panel",
+        env: env({ PLANNOTATOR_REMOTE: "0" }),
+      }),
+    ).toBe("herdr-panel");
+  });
+
+  it("says remote when the URL went to the client", () => {
+    // The rich-host case this change exists for: the app is the reviewer's
+    // screen, so "no browser opened here" must not read as "never started".
+    expect(
+      reviewWidgetHost({
+        hostMode: "browser",
+        env: env({ PI_KIT_UI_HOST: "android" }),
+      }),
+    ).toBe("remote");
+    expect(
+      reviewWidgetHost({
+        hostMode: "browser",
+        env: env({ PLANNOTATOR_REMOTE: "1" }),
+      }),
+    ).toBe("remote");
+  });
+
+  it("says browser on an ordinary local session", () => {
+    expect(
+      reviewWidgetHost({
+        hostMode: "browser",
+        env: env({ PI_KIT_UI_HOST: "tui" }),
+      }),
+    ).toBe("browser");
+    // Explicit local wins over an inferred rich host.
+    expect(
+      reviewWidgetHost({
+        hostMode: "browser",
+        env: env({ PI_KIT_UI_HOST: "android", PLANNOTATOR_REMOTE: "0" }),
+      }),
+    ).toBe("browser");
   });
 });

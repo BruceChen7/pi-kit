@@ -195,15 +195,12 @@ describe("isRichUiClientHost", () => {
     pairs as NodeJS.ProcessEnv;
 
   it("is true for the hosts that draw their own surfaces", () => {
-    // The pi desktop app / phone host the worker sets today.
     expect(isRichUiClientHost(env({ PI_KIT_UI_HOST: "android" }))).toBe(true);
     expect(isRichUiClientHost(env({ PI_KIT_UI_HOST: "pi-web" }))).toBe(true);
     expect(isRichUiClientHost(env({ PI_KIT_UI_HOST: "  PIWEB  " }))).toBe(true);
   });
 
   it("is false for the terminal and for non-hosts", () => {
-    // A terminal pi is usually nested inside Herdr — a pane split is the
-    // right home for the review there, not a client hand-off.
     expect(isRichUiClientHost(env({ PI_KIT_UI_HOST: "tui" }))).toBe(false);
     expect(isRichUiClientHost(env({ PI_KIT_UI_HOST: "rpc" }))).toBe(false);
     expect(isRichUiClientHost(env({ PI_KIT_UI_HOST: "headless" }))).toBe(false);
@@ -222,7 +219,6 @@ describe("deliverReviewToHost", () => {
   ) => deliverReviewToHost({ env: env(pairs), hostMode, herdrEnv });
 
   it("hands the URL to the client when a rich UI host owns the screen", () => {
-    // The pi desktop app: no PLANNOTATOR_* at all, only the worker's host profile.
     expect(call({ PI_KIT_UI_HOST: "android" })).toBe("client");
     expect(call({ PI_KIT_UI_HOST: "pi-web" })).toBe("client");
   });
@@ -236,7 +232,6 @@ describe("deliverReviewToHost", () => {
   it("leaves the browser to the CLI on a plain terminal session", () => {
     expect(call({})).toBe("cli");
     expect(call({ PI_KIT_UI_HOST: "tui" })).toBe("cli");
-    // herdr-panel without a Herdr environment is the browser fallback.
     expect(call({ HERDR_ENV: "1" }, "herdr-panel", false)).toBe("cli");
   });
 });

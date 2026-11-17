@@ -169,14 +169,8 @@ export const formatLocalDate = (date: Date): string => {
   return `${date.getFullYear()}-${month}-${day}`;
 };
 
-/** Today as YYYY-MM-DD on the local calendar (thin clock read). */
 export const getTodayDateString = (): string => formatLocalDate(new Date());
 
-/** Validate that a plan artifact path's date prefix equals `today`.
- *  `today` is passed in — the decision stays pure and testable without
- *  touching the clock or the host timezone.
- *  Returns an error message when the date doesn't match, or null if it
- *  matches or the path has no date pattern (non-standard paths pass). */
 export const validatePathDate = (
   planPath: string,
   today: string,
@@ -228,11 +222,9 @@ export class PlanModeController {
   private todoWidgetPresent = false;
   // 别的扩展挂上来的一段状态文字（key → text），渲染态，不持久化。
   private badges = new Map<string, string>();
-  /** 跨扩展事件的发布实例：序号只在本生命周期内递增。 */
   private readonly events = createPublisher(
     `plan-mode-${Math.random().toString(36).slice(2)}`,
   );
-  /** 收到过的 badge 事件，按 key 记最后一次序号，重放/乱序的丢掉。 */
   private readonly seenBadges = new Map<string, SeenEvent>();
   // 上一次广播出去的接管状态；只在翻转时通知生产方。
   private claimedStatusSurface = false;
@@ -384,10 +376,6 @@ export class PlanModeController {
     }
   }
 
-  /**
-   * 从一条原始事件里取出 badge 负载：新格式是带序号信封，旧格式是裸负载。
-   * 返回 undefined 表示这条事件不该被处理（协议不符、重放、乱序）。
-   */
   acceptBadgeEvent(
     raw: unknown,
   ): { key: string; text: string | null } | undefined {

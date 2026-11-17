@@ -318,13 +318,6 @@ describe("runCli remote review URL", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// Rich UI host: the pi desktop app / pi-web / a phone owns the screen, but the
-// agent's process has no PLANNOTATOR_* of its own. The worker's host profile
-// (PI_KIT_UI_HOST) is the only signal — without honoring it the CLI opens a
-// system browser and the client never learns a review is waiting.
-// ---------------------------------------------------------------------------
-
 const PI_KIT_UI_HOST = "PI_KIT_UI_HOST";
 
 describe("runCli rich UI host", () => {
@@ -371,13 +364,11 @@ describe("runCli rich UI host", () => {
       expect(result.status).toBe("handled");
       await flushMicrotasks();
 
-      // The app draws the review pane from this notice — the URL has to travel.
       expect(notify).toHaveBeenCalledTimes(1);
       expect(notify).toHaveBeenCalledWith(
         expect.stringContaining(REVIEW_URL),
         "info",
       );
-      // Nothing opens on the machine that runs the agent.
       expect(openUrl).not.toHaveBeenCalled();
 
       const spawnOptions = (spawn.mock.calls[0] as unknown[])[2] as {
@@ -385,8 +376,6 @@ describe("runCli rich UI host", () => {
       };
       expect(spawnOptions.env).toMatchObject({
         PLANNOTATOR_SKIP_BROWSER_OPEN: "1",
-        // A URL host alone does not bind remotely; a client cannot reach this
-        // machine's loopback, so runCli asks for remote mode itself.
         PLANNOTATOR_REMOTE: "1",
       });
       expect(spawnOptions.env.PLANNOTATOR_READY_FILE).toBeDefined();
@@ -419,7 +408,6 @@ describe("runCli rich UI host", () => {
       const spawnOptions = (spawn.mock.calls[0] as unknown[])[2] as {
         env: Record<string, string | undefined>;
       };
-      // Explicit wins: the deployment said this is a local session.
       expect(spawnOptions.env.PLANNOTATOR_REMOTE).toBe("0");
     } finally {
       await removeTempRepo(repoRoot);
@@ -427,9 +415,6 @@ describe("runCli rich UI host", () => {
   });
 
   it("still arms the ready file when the panel is opted in but unusable", async () => {
-    // herdr-panel + Herdr env + a remote deployment, but terminal-browser is
-    // unavailable. The panel cannot host, yet the URL must still travel to the
-    // client — this case is easy to drop when the two gates get conflated.
     vi.resetModules();
     delete process.env.PLANNOTATOR_REMOTE;
     process.env.PLANNOTATOR_URL_HOST = "mac.local";
@@ -444,7 +429,6 @@ describe("runCli rich UI host", () => {
     const repoRoot = await createTempRepo("cli-panel-remote-unusable-");
 
     try {
-      // The panel probe is mocked off by a module that never resolves a URL.
       const cli = await import("./cli.ts");
       await cli.runPlannotatorAnnotateCli(
         { ...ctxFor(repoRoot), ui: { notify } },
@@ -456,7 +440,6 @@ describe("runCli rich UI host", () => {
       const spawnOptions = (spawn.mock.calls[0] as unknown[])[2] as {
         env: Record<string, string | undefined>;
       };
-      // The notice path still has to be armed even though no pane opened.
       expect(notify).toHaveBeenCalledTimes(1);
       expect(spawnOptions.env.PLANNOTATOR_READY_FILE).toBeDefined();
       expect(spawnOptions.env.PLANNOTATOR_SKIP_BROWSER_OPEN).toBe("1");
@@ -487,7 +470,6 @@ describe("runCli rich UI host", () => {
       );
 
       await flushMicrotasks();
-      // No hand-off: no ready file, no skip flag, no notice.
       expect(notify).not.toHaveBeenCalled();
       const spawnOptions = (spawn.mock.calls[0] as unknown[])[2] as {
         env: Record<string, string | undefined>;

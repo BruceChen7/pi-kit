@@ -45,17 +45,8 @@ const WHILE_OR_UNTIL = /\b(?:while|until)\b/;
 /** `sleep 30`, `sleep 1m`. A bare `sleep` with no amount is not a real call. */
 const SLEEP_WITH_AMOUNT = /\bsleep\s+(\d+(?:\.\d+)?)([smhd]?)\b/g;
 const COMMENT_START_BEFORE = /[\s;|&(]/;
-/**
- * `bash -c '…'`, `sh -c "…"`, and the combined short forms (`bash -lc`, `sh -ec`).
- * The payload has to be matched before quotes are stripped, because the payload
- * *is* a quoted string.
- */
 const SHELL_DASH_C =
   /\b(?:bash|sh|zsh|dash)\b[^|;&\n]*?\s-[A-Za-z]*c[A-Za-z]*\s*(?:'([^']*)'|"((?:[^"\\]|\\.)*)")/g;
-/**
- * How deep `-c` payloads are unpacked. Two levels covers `bash -c 'bash -c "…"'`;
- * the cap only exists so a self-nesting command cannot spin here.
- */
 const DASH_C_MAX_DEPTH = 3;
 /**
  * `tail -f`, `tail -F`, `tail -n 40 -f`, `tail -20f`: follow mode never exits on its own,
@@ -129,7 +120,6 @@ const stripQuotedAndComments = (command: string): string => {
 const hasLoop = (command: string): boolean =>
   FOR_LOOP.test(command) || WHILE_OR_UNTIL.test(command);
 
-/** The commands a `-c` flag would actually run, outermost first. */
 const shellDashCPayloads = (command: string): string[] =>
   [...command.matchAll(SHELL_DASH_C)]
     .map((match) => match[1] ?? match[2] ?? "")
@@ -337,13 +327,6 @@ const decideScanned = (
   return ALLOW;
 };
 
-/**
- * `sh -c "…"` used to be the documented blind spot: quotes are stripped before
- * scanning, so a real wait hidden in a `-c` payload read as nothing. Unpack the
- * payload first (it is quoted, so this has to happen before stripping) and judge
- * it recursively; `echo "sleep 30"` still reads as an echo, because the payload
- * goes through the same stripping.
- */
 export const decideBashGuard = (
   call: BashCall,
   limits: BashGuardLimits = DEFAULT_LIMITS,
@@ -360,8 +343,6 @@ export const decideBashGuard = (
   }
 
   for (const payload of shellDashCPayloads(body)) {
-    // Only the command shape carries over: the tool timeout belongs to the outer
-    // call and was already judged above.
     const inner = decideBashGuard({ command: payload }, limits, depth + 1);
     if (inner.action === "block") {
       return inner;

@@ -100,8 +100,6 @@ describe("plan-mode extension: commands and prompt basics", () => {
     expect(result.systemPrompt).toContain("pre-submit checklist");
     expect(result.systemPrompt).toContain("```mermaid");
     expect(result.systemPrompt).toContain("├─");
-    // The date is never injected (that would churn the prompt cache); the
-    // agent is told to read the clock itself before naming the artifact.
     expect(result.systemPrompt).toContain("`date +%F` is allowed in");
     expect(result.systemPrompt).not.toMatch(/\b20\d\d-\d\d-\d\d\b/);
   });

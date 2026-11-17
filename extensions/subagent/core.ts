@@ -14,14 +14,6 @@ export type RunStatus =
   | "done"
   | "failed"
   | "stopped"
-  /**
-   * 它还有结果没等到就先给了答案（"我去查一下"）。
-   *
-   * 这里的"终态"只表示**这一轮结束了**（调度上不再等它），不表示结果已交付：
-   * `deliveryFor` 不会投递它的正文。账本里的"终态"另有一个意思 —— 结果已交付，
-   * 所以 `ledger.ts` 的 TERMINAL_EVENTS 不含 intermediate，下次会话会把它报成
-   * 没结算的 run（ADR-0002 D1/D4）。
-   */
   | "intermediate";
 
 export type TerminalStatus = "done" | "failed" | "stopped" | "intermediate";
@@ -186,7 +178,6 @@ export function collectWaitResult(
       runId: run.runId,
       agent: run.agent,
       status: run.status,
-      // intermediate 的正文是"我还没做完"，不能当结果交给调用方。
       text:
         run.status === "intermediate"
           ? ""
@@ -197,13 +188,6 @@ export function collectWaitResult(
   return { runs, timedOut };
 }
 
-/**
- * 一次结算该不该投递给父会话（ADR-0002 D1）。
- *
- * `intermediate` 是终态 —— 这一轮结束了 —— 但那句"我还在推进"不是结果，
- * 所以不投递。后台消息、前台工具结果、`status` 展示都从这里取口径，避免
- * "wait 拦住了、别的路径照旧交出去"。
- */
 export type Delivery =
   | { deliver: true; body: string }
   | { deliver: false; reason: string };
@@ -470,7 +454,6 @@ const STATUS_GLYPH: Record<RunStatus, string> = {
   done: "✓",
   failed: "✗",
   stopped: "■",
-  // 半成品：有答案但不是结果
   intermediate: "…",
 };
 

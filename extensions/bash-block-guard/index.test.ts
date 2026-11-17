@@ -155,8 +155,6 @@ describe("decideBashGuard: bodies and blind spots", () => {
   });
 
   it("blocks a wait hidden inside sh -c", () => {
-    // Quotes are stripped before scanning the outer command, so the payload has
-    // to be unpacked first — that is the whole point of the -c recursion.
     expect(decide({ command: 'sh -c "sleep 30"' })).toMatchObject({
       action: "block",
       rule: "sleep",
@@ -164,8 +162,6 @@ describe("decideBashGuard: bodies and blind spots", () => {
   });
 
   it("blocks a polling loop hidden inside bash -c", () => {
-    // The shape from 2026-11-15: 200s of `while ! grep` wrapped in bash -c, which
-    // read as "no sleep at all" because the whole payload sat in single quotes.
     const command =
       "timeout 200 bash -c 'while ! grep -qE \"^[✓✗] [0-9]+ test\" /tmp/t.log; do sleep 1; done'";
 

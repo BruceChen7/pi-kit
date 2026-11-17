@@ -7,8 +7,6 @@ import {
 
 describe("formatLocalDate", () => {
   it("returns the date's own local calendar components", () => {
-    // Built from local components on purpose: whatever the host timezone is,
-    // the formatted result must echo what "today" means in that zone.
     expect(formatLocalDate(new Date(2026, 10, 5, 0, 30))).toBe("2026-11-05");
     expect(formatLocalDate(new Date(2026, 0, 1, 23, 59))).toBe("2026-01-01");
     expect(formatLocalDate(new Date(2026, 11, 31, 12, 0))).toBe("2026-12-31");
@@ -19,9 +17,6 @@ describe("formatLocalDate", () => {
   });
 
   it("agrees with the host's local calendar, not UTC", () => {
-    // Regression: `toISOString().slice(0, 10)` returns the UTC date, which is
-    // "yesterday" for the first hours of a UTC+8 day. A plan written at 07:59
-    // local was rejected as stale, then accepted 30s later at 08:00.
     const justAfterLocalMidnight = new Date(2026, 10, 15, 0, 5);
     expect(formatLocalDate(justAfterLocalMidnight)).toBe("2026-11-15");
     expect(formatLocalDate(justAfterLocalMidnight)).toBe(
@@ -78,7 +73,6 @@ describe("validatePathDate", () => {
   });
 
   it("takes today as an input instead of reading the clock", () => {
-    // If it still called `new Date()`, this path would be rejected.
     expect(
       validatePathDate(
         ".pi/plans/pi-kit/plan/1999-12-31-past.md",

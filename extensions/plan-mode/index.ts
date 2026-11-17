@@ -169,10 +169,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   // 别的扩展把自己的一段状态挂到 plan-mode 的可见面上（目前是 subagent 的运行计数）。
-  // 别的扩展把自己的一段状态挂到 plan-mode 的可见面上（目前是 subagent 的运行计数）。
   pi.events.on(PLAN_MODE_BADGE_CHANNEL, (raw) => {
-    // 新格式是带 protocol/instanceId/sequence 的信封，旧格式是裸负载：
-    // 两者都读，但只有信封参与序号去重（ADR-0002 D5）。
     const event = readEvent<Record<string, unknown>>(raw);
     if (event === undefined || !isRecord(event.payload.ctx)) {
       return;

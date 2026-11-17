@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SubagentRun } from "./core.ts";
-import {
-  openAgents,
-  STATE_BY_STATUS,
-  sameSnapshot,
-  snapshotOf,
-} from "./state-snapshot.ts";
+import { STATE_BY_STATUS, sameSnapshot, snapshotOf } from "./state-snapshot.ts";
 
 const run = (over: Partial<SubagentRun> = {}): SubagentRun => ({
   runId: "run-1",
@@ -69,7 +64,7 @@ describe("snapshotOf", () => {
   });
 });
 
-describe("sameSnapshot / openAgents", () => {
+describe("sameSnapshot", () => {
   it("detects unchanged snapshots", () => {
     const first = snapshotOf([run()]);
 
@@ -78,15 +73,5 @@ describe("sameSnapshot / openAgents", () => {
       false,
     );
     expect(sameSnapshot(undefined, first)).toBe(false);
-  });
-
-  it("lists the agents that are not closed yet", () => {
-    const snapshot = snapshotOf([
-      run({ runId: "a", status: "running" }),
-      run({ runId: "b", status: "done" }),
-      run({ runId: "c", status: "queued" }),
-    ]);
-
-    expect(openAgents(snapshot).map((entry) => entry.id)).toEqual(["a", "c"]);
   });
 });

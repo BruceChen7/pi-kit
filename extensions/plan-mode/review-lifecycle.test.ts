@@ -884,8 +884,6 @@ describe("plan-mode extension: review lifecycle", () => {
       expect(teachResult).toBeUndefined();
       expect(fs.existsSync(path.join(ctx.cwd, staleTeachPath))).toBe(true);
 
-      // A plan file with a stale date prefix fails, but stays on disk: the
-      // fix is a rename, and deleting it made the agent's `mv` fail ENOENT.
       const planResult = await harness.emit(
         "tool_result",
         { toolName: "write", isError: false, input: { path: stalePlanPath } },

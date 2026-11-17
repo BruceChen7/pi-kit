@@ -234,8 +234,6 @@ const runCli = async <T extends CliReviewDecision>(
       hostMode,
       herdrEnv: isHerdrEnv,
     }) === "client";
-  // The URL still has to be reachable from somewhere other than this machine for
-  // READY_FILE to be the only way it travels; those two facts are independent.
   const offMachine = !isTestEnv && hostsReviewOffMachine(process.env);
   // Probe the panel path only when the caller opted into herdr-panel AND the
   // runtime looks like Herdr — browser mode never spawns terminal-browser.

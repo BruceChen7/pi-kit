@@ -137,10 +137,6 @@ const getReviewWidgetMessage = (
     return null;
   }
 
-  // Where the review page actually went. `remote` covers every case the URL was
-  // handed to the reviewer's own client instead of a browser here — an
-  // advertised remote host, or a rich UI host (the pi app / pi-web / a phone).
-  // Says so, so "no browser opened" never reads as "the review never started".
   const host =
     state.reviewHostMode === "herdr-panel"
       ? "herdr-panel"
@@ -405,18 +401,6 @@ const markManuallyReviewedPath = (
   state.manuallyReviewedPathsByCwd.set(cwd, paths);
 };
 
-/**
- * The review queue keys on "a reviewable document landed on disk", not on
- * pi's `isError` verdict for the call.
- *
- * The two are not the same fact. pi marks a call `isError` both when it never
- * ran (plan-mode's pre-write block: no file) and when it ran and a
- * `tool_result` hook rejected the result (plan-mode's date-prefix check: the
- * file is on disk on purpose, and the fix is a rename). Skipping every
- * `isError` call threw away the second case, so a plan written with
- * yesterday's date dead-ended at "no pending review draft". Existence is the
- * fact that actually matters: a blocked call wrote nothing.
- */
 const isReviewableDocumentOnDisk = (absolutePath: string): boolean => {
   try {
     return fs.statSync(absolutePath).isFile();

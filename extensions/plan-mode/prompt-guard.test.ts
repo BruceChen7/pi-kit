@@ -207,7 +207,6 @@ describe("plan-mode extension: prompt guards and reminders", () => {
     await expect(
       harness.runToolCall("bash", { command: "date +%F" }, ctx),
     ).resolves.toBeUndefined();
-    // The allowance is exactly one read-only probe, not bash in general.
     await expect(
       harness.runToolCall("bash", { command: "date && git commit -am x" }, ctx),
     ).resolves.toMatchObject({ block: true });

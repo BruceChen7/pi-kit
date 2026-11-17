@@ -80,16 +80,6 @@ export const wantsRemoteReviewUrl = (
   );
 };
 
-/**
- * Pure: is the UI host a rich client that draws its own surfaces — the pi
- * desktop app, pi-web, or a phone?
- *
- * `tui` is deliberately excluded: a terminal pi is usually nested INSIDE Herdr,
- * which is where a pane-split review belongs, not a client hand-off.
- *
- * The vocabulary is `shared/ui-host.ts`'s (`PI_KIT_UI_HOST`); this module must
- * not grow a second opinion about what a "rich host" is.
- */
 export const isRichUiClientHost = (
   env: NodeJS.ProcessEnv = process.env,
 ): boolean => {
@@ -97,16 +87,8 @@ export const isRichUiClientHost = (
   return kind === "android" || kind === "pi-web";
 };
 
-/** Where a review URL should go: to the client's own UI, or a browser on this machine. */
 export type ReviewUrlTarget = "client" | "cli";
 
-/**
- * Pure: does this environment host the review somewhere other than a browser on
- * the agent's own machine — regardless of any Herdr pane?
- *
- * These are the two signals that make `READY_FILE` the only way the URL can
- * travel (see `wantsRemoteReviewUrl` / `isRichUiClientHost`).
- */
 export const hostsReviewOffMachine = (
   env: NodeJS.ProcessEnv = process.env,
 ): boolean => wantsRemoteReviewUrl(env) || isRichUiClientHost(env);

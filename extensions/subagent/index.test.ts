@@ -110,7 +110,6 @@ const call = (
   ctx: Record<string, unknown>,
 ) => tool.execute("call-1", params, undefined, undefined, ctx);
 
-/** `wait` 现在是独立工具（model-only），主工具不再有 wait action。 */
 let lastRegisteredTools: any[] = [];
 const waitTool = (tools: any[] = lastRegisteredTools) => {
   const tool = tools.find((candidate) => candidate.name === "subagent_wait");
@@ -118,7 +117,6 @@ const waitTool = (tools: any[] = lastRegisteredTools) => {
   return tool;
 };
 
-/** `/subagent doctor` 是诊断的唯一入口，从 registerCommand 里取。 */
 const subagentCommand = (pi: FakePi) =>
   pi.registerCommand.mock.calls.find(([name]) => name === "subagent")?.[1];
 
@@ -409,7 +407,6 @@ describe("plan-mode 接管 footer", () => {
     return { pi, ui };
   };
 
-  /** badge 事件现在带信封（protocol/instanceId/sequence），断言看 payload。 */
   const badgePayloads = (pi: ReturnType<typeof makePi>["pi"]) =>
     pi.events.emit.mock.calls
       .filter(([channel]) => channel === PLAN_MODE_BADGE_CHANNEL)

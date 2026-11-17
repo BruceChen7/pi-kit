@@ -116,11 +116,6 @@ const TICK_MS = 2_000;
 const DEFAULT_WAIT_MS = 5 * 60_000;
 const log = createLogger("subagent", { stderr: null });
 
-/**
- * 主工具只管生命周期（起、看、停）。`wait` 单独成一个工具、只给模型直调；
- * `doctor` 退回 `/subagent doctor` 命令 —— 诊断跟"跑 agent"不是一回事
- * （ADR-0002 D2/D3）。
- */
 type SubagentAction = "run" | "list" | "status" | "stop";
 
 const SUBAGENT_ACTIONS: readonly SubagentAction[] = [
@@ -130,10 +125,6 @@ const SUBAGENT_ACTIONS: readonly SubagentAction[] = [
   "stop",
 ];
 
-/**
- * 未知 action 直接报错，而不是静默落到 `run` 上把参数字典当任务跑。
- * schema 已经用 StringEnum 约束过，这里只是调度层不信任输入的第二道。
- */
 const parseAction = (raw: unknown): SubagentAction => {
   if (raw !== undefined && typeof raw !== "string") {
     throw new Error(`unknown action "${String(raw)}"`);
@@ -224,9 +215,7 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   let lastContext: ExtensionToolContext | undefined;
   /** 跨扩展事件的实例与序号：reload 后 instanceId 变化，序号不跨实例比较。 */
   const events = createPublisher(`subagent-${randomUUID()}`);
-  /** plan-mode 广播的 status-owner 事件，只接受更新的序号。 */
   let seenStatusOwner: SeenEvent | undefined;
-  /** 上一次发出去的状态快照；一样就不重发。 */
   let lastSnapshot: ReturnType<typeof snapshotOf> | undefined;
   const sessions = new Map<string, AgentSession>();
   const inflight = new Set<string>();
@@ -422,10 +411,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     publishSnapshot();
   };
 
-  /**
-   * 发一份全量状态快照。消费者可随时索取，所以这里只负责"变化时推一次"。
-   * 快照里没有任务正文与结果（ADR-0002 D5）。
-   */
   const publishSnapshot = (force = false): void => {
     const snapshot = snapshotOf(state.runs);
     if (!force && sameSnapshot(lastSnapshot, snapshot)) return;
@@ -706,10 +691,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     }
   };
 
-  /**
-   * 恢复只到"重跑或放弃"：`SessionManager.inMemory` 意味着子会话内容随进程没了，
-   * 假装续跑只会骗人。所以这里只把上次没结算的 run 报出来（ADR-0002 D4）。
-   */
   const reportUnsettledRuns = (ctx: {
     hasUI?: boolean;
     ui?: {
@@ -743,9 +724,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     if (ctx.hasUI) ctx.ui?.notify(text, "warning");
   };
 
-  /**
-   * 往父会话记录里写一条 run 账本。崩了也不该影响跑 agent，所以写失败只记日志。
-   */
   const recordRun = (
     runId: string,
     event: RunLedgerEvent,
@@ -855,7 +833,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
       await session.prompt(run.task);
       const settlement = deriveSettlement({
         messages: settlementMessagesFrom(session.messages),
-        // 今天子会话拿不到 subagent 工具，欠项恒为空；规则先到，见 ADR-0002 D1。
         obligations: [],
       });
       log.debug("child settled", {
@@ -1044,10 +1021,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     return findings;
   };
 
-  /**
-   * 诊断只读这几个字段，工具上下文和命令上下文都满足它们 —— 所以不共用
-   * `lastContext` 的类型，改成显式传进来。
-   */
   type DoctorContext = {
     cwd: string;
     mode?: string;
@@ -1080,10 +1053,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     return `${run.runId} ${run.agent} ${run.status}${tail}`;
   };
 
-  /**
-   * `wait` 的实现：只被 subagent_wait 使用。返回值是结构化结果，
-   * 不在这里做 UI —— 等待期间靠 onUpdate 推进度。
-   */
   const waitForRuns = async (
     params: { runIds?: string[]; timeoutMs?: number },
     signal: AbortSignal | undefined,
@@ -1122,7 +1091,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     } finally {
       for (const runId of runIds) {
         liveUpdates.delete(runId);
-        // 超时没等到终态的，交回后台投递；已终态的留着，避免重复触发。
         const run = findRun(state, runId);
         if (!run || !isTerminal(run.status)) awaited.delete(runId);
       }
@@ -1195,7 +1163,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
 
       switch (action) {
         case "list": {
-          // intermediate 是终态，但它"没有结果"，所以留在列表里让人看见。
           const live = state.runs.filter(
             (run) => !isTerminal(run.status) || run.status === "intermediate",
           );
@@ -1340,13 +1307,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     },
   });
 
-  /**
-   * `wait` 是唯一的阻塞入口，并且只给模型直调（`exposure: "model-only"`）。
-   *
-   * 为什么不让脚本调：脚本可以丢弃、截断，或在抛错前吞掉返回值 —— 那样
-   * "模型收到了结果"就没有证据了。发起/查询/停止仍然可以脚本编排，
-   * 因为它们不依赖证据（ADR-0002 D2）。
-   */
   pi.registerTool({
     name: "subagent_wait",
     label: "Wait for subagents",
@@ -1382,7 +1342,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   });
 
   pi.on("session_start", (_event, ctx) => {
-    // 上一个会话里没结算的 run：子会话内容已经没了，只能在这里说出来让人决定。
     reportUnsettledRuns(ctx);
     state = createState();
     stopTicker();
@@ -1411,7 +1370,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
   try {
     pi.events.on(RPC_REQUEST_CHANNEL, onRpcRequest);
     pi.events.on(PLAN_MODE_STATUS_OWNER_CHANNEL, onStatusOwner);
-    // 谁在中途 start 都能要一份全量：先订阅，再发索取。
     pi.events.on(snapshotRequestChannel(SUBAGENT_STATE_CHANNEL), (raw) => {
       if (!isSnapshotRequest(raw)) return;
       publishSnapshot(true);
@@ -1434,10 +1392,6 @@ export function registerSubagent(pi: ExtensionAPI): SubagentRuntime {
     waitFor,
   };
 
-  /**
-   * `/subagent doctor`：诊断从工具面移出后，这是它唯一的入口。
-   * 人看得见，模型不会为了"跑个 agent"顺手调到它。
-   */
   pi.registerCommand("subagent", {
     description:
       "Print resolved agent profiles and config (usage: /subagent doctor)",

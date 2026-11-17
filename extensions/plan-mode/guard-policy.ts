@@ -22,7 +22,6 @@ export type GuardPolicyInput = {
   readBeforeWrite: boolean;
   toolName: string;
   todoToolName: string;
-  /** The `command` of a bash call, when there is one (`date +%F` probe). */
   bashCommand?: string | null;
   isWriteTool: boolean;
   isPathGuardedTool: boolean;
@@ -43,11 +42,6 @@ export const decideToolBlock = (
   }
 
   if (input.isPlanPhase && input.toolName === "bash") {
-    // The clock is the one fact plan phase must be able to read but no
-    // inspection tool can print: artifacts are named `YYYY-MM-DD-<slug>`
-    // against the host's local date, and guessing it names the file with
-    // yesterday's date. Allow that one read-only probe; everything else
-    // stays blocked.
     if (input.bashCommand && isReadOnlyDateProbe(input.bashCommand)) {
       return undefined;
     }

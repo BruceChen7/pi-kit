@@ -18,7 +18,6 @@ export const EVENT_PROTOCOL = 1;
 
 export type EventEnvelope<T> = {
   protocol: number;
-  /** 知道就带上：同一宿主上多个会话并存时，消费方据此丢掉别的会话的事件。 */
   sessionId?: string;
   instanceId: string;
   sequence: number;
@@ -40,7 +39,6 @@ export const wrapEvent = <T>(
 
 export type ReadEvent<T> = {
   payload: T;
-  /** 没有信封的旧负载：照常处理，但不参与序号去重。 */
   legacy: boolean;
   sessionId?: string;
   instanceId?: string;
@@ -50,10 +48,6 @@ export type ReadEvent<T> = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-/**
- * 读一个事件。信封形状不对（protocol 不匹配、字段缺失）就返回 undefined ——
- * 消费者据此忽略它，而不是按猜的字段继续跑。
- */
 export const readEvent = <T>(value: unknown): ReadEvent<T> | undefined => {
   if (!isRecord(value)) return undefined;
 
@@ -84,10 +78,6 @@ export type SeenEvent = {
   sequence: number;
 };
 
-/**
- * 同一 instanceId 内只接受更大的序号；换了 instanceId 就重置（新生命周期从 1 起）。
- * legacy 事件永远接受：它没有序号可比，丢掉反而会丢状态。
- */
 export const isFreshEvent = (
   seen: SeenEvent | undefined,
   event: ReadEvent<unknown>,
@@ -100,7 +90,6 @@ export const isFreshEvent = (
   return sequence > seen.sequence;
 };
 
-/** 记住刚接受的事件；legacy 事件不更新状态。 */
 export const seenAfter = (
   seen: SeenEvent | undefined,
   event: ReadEvent<unknown>,
@@ -112,10 +101,6 @@ export const seenAfter = (
   return { instanceId: event.instanceId, sequence: event.sequence };
 };
 
-/**
- * 发布方的序号来源。`instanceId` 每次扩展加载生成一次，所以重启后的序号不会
- * 与上一次的比较。
- */
 export type EventPublisher = {
   instanceId: string;
   next: <T>(payload: T) => EventEnvelope<T>;
@@ -135,13 +120,6 @@ export const createPublisher = (
   };
 };
 
-// ── 快照与主动索取 ────────────────────────────────────────────────────────
-//
-// 逐条 delta 有两个问题：中途 attach 的消费者永远补不齐历史，重启后的第一条
-// delta 会被当成全量。所以状态类 channel 定成"快照"语义：每次发出的都是**全量**
-// （完整替换上一份），任何消费者先发一次索取，就能拿到当前状态。
-
-/** 索取当前快照的请求；比状态 channel 多一些约束，所以单独一份形状。 */
 export type SnapshotRequest = {
   protocol: number;
   type: "state-request";
@@ -157,14 +135,9 @@ export const isSnapshotRequest = (value: unknown): boolean => {
   return value.protocol === EVENT_PROTOCOL && value.type === "state-request";
 };
 
-/** 状态 channel 对应的索取 channel：`<channel>:request`。 */
 export const snapshotRequestChannel = (channel: string): string =>
   `${channel}:request`;
 
-/**
- * 快照内容的共同外壳：`kind: "snapshot"` 表示"这份替换上一份"，
- * `empty` 表示"我现在不持有任何状态"（与"没消息"区分开）。
- */
 export type SnapshotEnvelope<T> = {
   kind: "snapshot";
   empty: boolean;

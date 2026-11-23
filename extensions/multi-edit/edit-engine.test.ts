@@ -99,7 +99,7 @@ describe("normalizeEditParams", () => {
         patch: "*** Begin Patch\n*** End Patch",
         path: "a.txt",
       }),
-    ).toThrow("mutually exclusive");
+    ).toThrow(/mutually exclusive with non-empty path/);
   });
 
   it("getEditModeForRender ranks patch > multi > single > none", () => {

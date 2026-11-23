@@ -73,32 +73,70 @@ const editItemSchema = Type.Object({
   }),
 });
 
-const multiEditSchema = Type.Object({
-  path: Type.Optional(
-    Type.String({
-      description: "Path to the file to edit (relative or absolute)",
-    }),
-  ),
-  oldText: Type.Optional(
-    Type.String({
-      description: "Exact text to find and replace (must match exactly)",
-    }),
-  ),
-  newText: Type.Optional(
-    Type.String({ description: "New text to replace the old text with" }),
-  ),
-  multi: Type.Optional(
-    Type.Array(editItemSchema, {
+// Two shapes instead of one bag of optional fields: a patch call and an
+// exact-text call cannot both be expressed, so a mixed call is rejected at
+// tool-call validation instead of reaching the shell. Providers sometimes
+// serialise omitted fields as empty strings / empty arrays, so each shape
+// still accepts those placeholders for the fields it does not use.
+const classicEditShape = Type.Object(
+  {
+    path: Type.Optional(
+      Type.String({
+        description: "Path to the file to edit (relative or absolute)",
+      }),
+    ),
+    oldText: Type.Optional(
+      Type.String({
+        description: "Exact text to find and replace (must match exactly)",
+      }),
+    ),
+    newText: Type.Optional(
+      Type.String({ description: "New text to replace the old text with" }),
+    ),
+    multi: Type.Optional(
+      Type.Array(editItemSchema, {
+        description:
+          "Multiple edits to apply in sequence. Each item has path, oldText, and newText.",
+      }),
+    ),
+    patch: Type.Optional(
+      Type.Literal("", {
+        description: "Leave empty when using path/oldText/newText or multi.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const patchEditShape = Type.Object(
+  {
+    patch: Type.String({
+      minLength: 1,
       description:
-        "Multiple edits to apply in sequence. Each item has path, oldText, and newText.",
+        "Codex-style apply_patch payload (*** Begin Patch ... *** End Patch).",
     }),
-  ),
-  patch: Type.Optional(
-    Type.String({
-      description:
-        "Codex-style apply_patch payload (*** Begin Patch ... *** End Patch). Mutually exclusive with path/oldText/newText/multi.",
-    }),
-  ),
+    path: Type.Optional(
+      Type.Literal("", { description: "Leave empty in patch mode." }),
+    ),
+    oldText: Type.Optional(
+      Type.Literal("", { description: "Leave empty in patch mode." }),
+    ),
+    newText: Type.Optional(
+      Type.Literal("", { description: "Leave empty in patch mode." }),
+    ),
+    multi: Type.Optional(
+      Type.Array(editItemSchema, {
+        maxItems: 0,
+        description: "Leave empty in patch mode.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+export const multiEditSchema = Type.Union([classicEditShape, patchEditShape], {
+  description:
+    "Use either path/oldText/newText (optionally multi) or a patch payload — never both.",
 });
 
 interface Workspace {

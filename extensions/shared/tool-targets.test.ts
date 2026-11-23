@@ -40,6 +40,16 @@ describe("pathsFromToolArgs: pi write shapes", () => {
     ]);
   });
 
+  it("falls through to patch headers when multi items carry no path", () => {
+    expect(
+      pathsFromToolArgs({
+        multi: [{ oldText: "x", newText: "y" }],
+        patch:
+          "*** Begin Patch\n*** Update File: app/demo/mux-stubs.ts\n*** End Patch",
+      }),
+    ).toEqual([{ rawPath: "app/demo/mux-stubs.ts" }]);
+  });
+
   it("uses the top-level path when multi and patch are both empty", () => {
     expect(
       pathsFromToolArgs({ multi: [], patch: "", path: "src/a.ts" }),

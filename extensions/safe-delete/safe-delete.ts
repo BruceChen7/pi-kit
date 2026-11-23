@@ -99,6 +99,16 @@ function resolvePath({
   return path.resolve(cwd, resolved);
 }
 
+/**
+ * Dependency trees are untracked but expensive to rebuild: deleting one can
+ * silently break every lint/test/typecheck script and the pre-push hook.
+ * Protect the whole subtree, not just a directory literally named
+ * `node_modules`, so `rm -rf node_modules/.bin` is gated too.
+ */
+function isDependencyPath(resolved: string): boolean {
+  return resolved.split(path.sep).includes("node_modules");
+}
+
 function isProtectedPath({
   targetPath,
   cwd,
@@ -107,6 +117,8 @@ function isProtectedPath({
   cwd: string;
 }): boolean {
   const resolved = resolvePath({ targetPath, cwd });
+
+  if (isDependencyPath(resolved)) return true;
 
   for (const protectedPath of PROTECTED_PATHS) {
     // Exact match or the target IS a parent of a protected path
@@ -315,7 +327,9 @@ function detectRmThreats({
         command,
       });
       threats.push({
-        description: `Deletion targets protected path: ${resolved}`,
+        description: isDependencyPath(resolved)
+          ? `Deletion targets dependency directory: ${resolved}`
+          : `Deletion targets protected path: ${resolved}`,
         severity: "critical",
         paths: [resolved],
       });

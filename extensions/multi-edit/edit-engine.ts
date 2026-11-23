@@ -97,8 +97,16 @@ export function normalizeEditParams(
 
   if (patch !== undefined) {
     if (multi !== undefined || hasNonEmptyClassicParam) {
+      const conflict = [
+        multi !== undefined ? "multi" : null,
+        nonEmptyString(raw.path) ? "path" : null,
+        nonEmptyString(raw.oldText) ? "oldText" : null,
+        nonEmptyString(raw.newText) ? "newText" : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
       throw new Error(
-        "The `patch` parameter is mutually exclusive with path/oldText/newText/multi.",
+        `The \`patch\` parameter is mutually exclusive with non-empty ${conflict}. Send either a patch or ${conflict}, leaving the other fields empty.`,
       );
     }
     return { mode: "patch", patch };

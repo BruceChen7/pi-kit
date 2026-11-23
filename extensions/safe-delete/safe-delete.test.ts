@@ -381,4 +381,48 @@ describe("safe-delete MCP calls", () => {
     expect(blocked?.block).toBe(true);
     expect(blocked?.reason ?? "").toContain("Deletion targets protected path");
   });
+
+  it("protects node_modules from cleanup commands", async () => {
+    // 实录（2026-11-17 10:16:22）：`rm -rf herdr-menubar node_modules`
+    // 删掉了未纳管的依赖树，随后 npm run format/typecheck 全部 command not found。
+    const handlers = new Map<
+      string,
+      (event: unknown, ctx: unknown) => unknown
+    >();
+    const events = { emit: vi.fn(), on: vi.fn() };
+    const safeDelete = await loadSafeDelete();
+    safeDelete({
+      on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+        handlers.set(name, handler);
+      },
+      events,
+    } as unknown as ExtensionAPI);
+
+    const ctx = {
+      cwd: "/work/pi-kit",
+      hasUI: true,
+      ui: { confirm: vi.fn(async () => false) },
+      sessionManager: { getEntries: () => [] },
+    };
+
+    const blocked = (await handlers.get("tool_call")?.(
+      {
+        toolName: "bash",
+        input: { command: "rm -rf herdr-menubar node_modules" },
+      },
+      ctx,
+    )) as { block?: boolean; reason?: string } | undefined;
+
+    expect(ctx.ui.confirm).toHaveBeenCalledWith(
+      "CRITICAL: Destructive command detected",
+      expect.stringContaining(
+        "Deletion targets dependency directory: /work/pi-kit/node_modules",
+      ),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(blocked?.block).toBe(true);
+    expect(blocked?.reason ?? "").toContain(
+      "Deletion targets dependency directory: /work/pi-kit/node_modules",
+    );
+  });
 });

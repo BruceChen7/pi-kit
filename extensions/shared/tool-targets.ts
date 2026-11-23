@@ -123,7 +123,15 @@ export const pathsFromToolArgs = (input: unknown): ToolTargetPath[] => {
   const rawPath = candidatePath(stringProperty(input, "path"));
 
   if (isRecord(input) && Array.isArray(input.multi) && input.multi.length > 0) {
-    return dedupeTargetPaths(pathsFromMultiEdit(input.multi, rawPath));
+    const fromMulti = dedupeTargetPaths(
+      pathsFromMultiEdit(input.multi, rawPath),
+    );
+    // A provider may put the target in `patch` or another alias while still
+    // sending a non-empty `multi` whose items have no path. An empty result
+    // here must not hide those candidates from the guards.
+    if (fromMulti.length > 0) {
+      return fromMulti;
+    }
   }
 
   const patch = stringProperty(input, "patch");

@@ -1,9 +1,10 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Value } from "typebox/value";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import multiEditExtension from "./index.js";
+import multiEditExtension, { multiEditSchema } from "./index.js";
 
 type Renderable = {
   render: (width: number) => string[];
@@ -79,6 +80,55 @@ afterEach(async () => {
   await Promise.all(
     tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );
+});
+
+describe("edit tool schema", () => {
+  it.each([
+    ["single edit", { path: "a.txt", oldText: "x", newText: "y" }],
+    [
+      "multi edit with empty placeholders",
+      {
+        path: "",
+        oldText: "",
+        newText: "",
+        patch: "",
+        multi: [{ path: "a.txt", oldText: "x", newText: "y" }],
+      },
+    ],
+    [
+      "patch with empty placeholders",
+      {
+        path: "",
+        oldText: "",
+        newText: "",
+        multi: [],
+        patch: "*** Begin Patch\n*** Update File: a.txt\n-x\n+y\n*** End Patch",
+      },
+    ],
+  ])("accepts %s", (_name, params) => {
+    expect(Value.Check(multiEditSchema, params)).toBe(true);
+  });
+
+  it.each([
+    [
+      "patch plus classic fields",
+      { patch: "*** Begin Patch\n*** End Patch", path: "a.txt" },
+    ],
+    [
+      "patch plus non-empty multi (the repeated agent mistake)",
+      {
+        patch: "*** Begin Patch\n*** End Patch",
+        multi: [{ path: "a.txt", oldText: "x", newText: "y" }],
+      },
+    ],
+    [
+      "a path typed into the patch field",
+      { path: "", multi: [{ oldText: "x", newText: "y" }], patch: "a.txt" },
+    ],
+    ["a misspelled multi key", { multiple: [{ path: "a.txt" }] }],
+  ])("rejects %s before the tool runs", (_name, params) => {
+    expect(Value.Check(multiEditSchema, params)).toBe(false);
+  });
 });
 
 describe("multi-edit tool", () => {

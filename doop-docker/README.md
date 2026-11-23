@@ -106,5 +106,6 @@ without also changing the port mapping and `@extensions/doop/` configuration.
 | `/doop status` says doop is unreachable | `docker --context kiri compose ps`, then `curl http://localhost:4300/healthz` |
 | Sign-in rejected / 403 untrusted origin | `BETTER_AUTH_URL` must be the same origin the browser and pi use (`http://localhost:4300`) |
 | Canvases open but images are blank | `~/work/doop/data/assets` is mounted at `/app/data/assets` |
+| Chinese / Japanese / Korean text renders as boxes (□) | the image lacks a CJK font: `docker --context kiri exec doop-local-doop-1 fc-list : family \| grep -c CJK` should be > 0. `fonts-noto-cjk` is in the Dockerfile — if the running image predates that, `make doop-update` rebuilds it |
 | New canvases missing after restart | `docker compose down` does not remove the bind-mounted host data |
 | Port 4300 already in use | stop the old dev server / other process, or change the host side of `4300:4400` together with `BETTER_AUTH_URL` |

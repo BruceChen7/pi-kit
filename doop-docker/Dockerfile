@@ -38,10 +38,15 @@ ENV NODE_ENV=production \
     PORT=4400
 
 # Chromium: get_frame_screenshot, frame images and PDF export.
-# Fonts: fallback glyphs for screenshots (arrows, symbols, emoji).
+# Fonts: fallback glyphs for screenshots. Liberation for the metric-compatible
+# basics, DejaVu for symbols (arrows, geometric shapes, dingbats), Noto Color
+# Emoji for emoji — and Noto Sans CJK, without which every CJK frame renders as
+# tofu boxes: neither DejaVu nor Liberation carries a Han glyph, and frames
+# rarely declare a CJK face themselves. Bundled rather than left to the host:
+# screenshots and exports are what agents and reviewers look at.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji \
+      chromium fonts-liberation fonts-dejavu-core fonts-noto-color-emoji fonts-noto-cjk \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=source /src/package.json ./

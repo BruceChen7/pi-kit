@@ -61,6 +61,12 @@ const DEFAULT_BUDGET: TodoCloseoutBudget = {
 
 export type TodoCloseoutVariant = "initial" | "progress" | "completion-claim";
 
+export type CloseoutTrigger = {
+  id: string;
+  variant: TodoCloseoutVariant;
+  runKey: string | null;
+};
+
 export type TodoCloseoutSilentReason =
   | "not-act"
   | "closed"
@@ -139,6 +145,43 @@ export const claimsCompletion = (text: string): boolean =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
+
+const CLOSEOUT_VARIANTS: readonly TodoCloseoutVariant[] = [
+  "initial",
+  "progress",
+  "completion-claim",
+];
+
+/** The hidden follow-up trigger, read back out of a request's messages. */
+export const closeoutTriggerFromMessages = (
+  messages: readonly unknown[],
+  customType: string,
+  expectedId?: string,
+): CloseoutTrigger | null => {
+  for (const message of messages) {
+    if (!isRecord(message) || message.role !== "custom") continue;
+    if (message.customType !== customType) continue;
+    const details = message.details;
+    if (!isRecord(details)) continue;
+    const { id, variant, runKey } = details;
+    if (
+      typeof id !== "string" ||
+      typeof variant !== "string" ||
+      !CLOSEOUT_VARIANTS.includes(variant as TodoCloseoutVariant) ||
+      // Old triggers stay in the transcript. Without this, the first one
+      // hides the newest ask from the controller.
+      (expectedId !== undefined && id !== expectedId)
+    ) {
+      continue;
+    }
+    return {
+      id,
+      variant: variant as TodoCloseoutVariant,
+      runKey: typeof runKey === "string" ? runKey : null,
+    };
+  }
+  return null;
+};
 
 const messageText = (message: Record<string, unknown>): string => {
   const content = message.content;

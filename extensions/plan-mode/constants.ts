@@ -27,6 +27,7 @@ import type {
 } from "./types.ts";
 
 export const STATE_ENTRY_TYPE = "plan-mode-state";
+export const CLOSEOUT_TRIGGER_TYPE = "plan-mode-closeout-trigger";
 export const STATUS_KEY = "plan-mode";
 export const MODE_WIDGET_KEY = "plan-mode-current-mode";
 export const TODO_WIDGET_KEY = "plan-mode-todos";

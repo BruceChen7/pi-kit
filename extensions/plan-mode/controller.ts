@@ -44,6 +44,7 @@ import {
   ACT_CODE_WRITING_GUIDANCE,
   ACT_TODO_TOOL_NAME,
   BUILTIN_TOOL_NAMES,
+  CLOSEOUT_TRIGGER_TYPE,
   DEFAULT_CONFIG,
   DIRECT_ACT_TODO_GUIDANCE,
   EXECUTION_TODO_DISCIPLINE_GUIDANCE,
@@ -92,10 +93,14 @@ import {
   stringProperty,
 } from "./state.ts";
 import {
+  closeoutTriggerFromMessages,
   createTodoCloseoutLedger,
   decideTodoCloseout,
+  formatTodoCloseoutAsk,
   lastAssistantTextFromMessages,
   type TodoCloseoutLedger,
+  type TodoCloseoutVariant,
+  unsettledTodos,
 } from "./todo-closeout.ts";
 import type {
   InputSource,
@@ -212,6 +217,15 @@ export class PlanModeController {
   private policyReminderSentFor: string | null = null;
   // 收尾闸账本：会话内内存态，不进 snapshot（resume 后重新拿一次预算是期望行为）。
   private todoCloseoutLedger: TodoCloseoutLedger = createTodoCloseoutLedger();
+  // The ask is decided at agent_end but delivered as a follow-up. Keep only
+  // the variant here: the list is re-read when the follow-up actually starts,
+  // so a queued ask cannot echo a TODO state that has since been settled.
+  private pendingCloseout: {
+    id: string;
+    variant: TodoCloseoutVariant;
+    runKey: string | null;
+  } | null = null;
+  private consumedCloseoutTriggers = new Set<string>();
   // Session-scoped values, resolved in restore() (no IO at construction).
   // HTML artifact dirs need a `git rev-parse` (repo slug), so they resolve on
   // first use instead of on session_start; only the write guard and the mode
@@ -243,6 +257,8 @@ export class PlanModeController {
     this.reReviewReminderSentFor = null;
     this.policyReminderSentFor = null;
     this.todoCloseoutLedger = createTodoCloseoutLedger();
+    this.pendingCloseout = null;
+    this.consumedCloseoutTriggers.clear();
     this.todoWidgetPresent = false;
     // badge 是渲染态：换会话/换分支后由生产方下一 tick 重新挂上来。
     this.badges.clear();
@@ -761,6 +777,39 @@ export class PlanModeController {
     this.pi.sendUserMessage(message, { deliverAs: "followUp" });
   }
 
+  /**
+   * The hidden follow-up trigger is just a request for one more turn. Build
+   * its user-visible text from the list as it stands **when the turn starts**:
+   * other queued follow-ups may have settled items after `agent_end`.
+   */
+  consumeCloseoutTrigger(messages: readonly unknown[]): string | undefined {
+    const pending = this.pendingCloseout;
+    if (pending === null) return undefined;
+    const trigger = closeoutTriggerFromMessages(
+      messages,
+      CLOSEOUT_TRIGGER_TYPE,
+      pending.id,
+    );
+    if (
+      trigger === null ||
+      trigger.id !== pending.id ||
+      trigger.runKey !== pending.runKey ||
+      this.consumedCloseoutTriggers.has(trigger.id)
+    ) {
+      return undefined;
+    }
+    this.consumedCloseoutTriggers.add(trigger.id);
+    this.pendingCloseout = null;
+    if (this.state.phase !== "act") return undefined;
+    const open = unsettledTodos(this.state.todos);
+    if (open.length === 0) return undefined;
+    return formatTodoCloseoutAsk({
+      variant: pending.variant,
+      open,
+      todoToolName: this.getTodoToolNameForCurrentMode(),
+    });
+  }
+
   async handleAgentEnd(
     event: { messages?: readonly unknown[] },
     ctx: ExtensionContext,
@@ -893,7 +942,27 @@ export class PlanModeController {
     this.todoCloseoutLedger = closeout.ledger;
 
     if (closeout.kind === "ask") {
-      this.pi.sendUserMessage(closeout.message, { deliverAs: "followUp" });
+      // Queue a hidden trigger, not the list itself. The message is rendered
+      // by consumeCloseoutTrigger() when this follow-up actually starts.
+      const id = `closeout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      this.pendingCloseout = {
+        id,
+        variant: closeout.variant,
+        runKey: this.state.activeRun?.id ?? null,
+      };
+      this.pi.sendMessage(
+        {
+          customType: CLOSEOUT_TRIGGER_TYPE,
+          content: "Settle the Act TODO list before stopping.",
+          display: false,
+          details: {
+            id,
+            variant: closeout.variant,
+            runKey: this.state.activeRun?.id ?? null,
+          },
+        },
+        { deliverAs: "followUp" },
+      );
       this.finishTurn(ctx);
       return { kind: "todo-closeout-ask" };
     }

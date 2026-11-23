@@ -240,6 +240,23 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("context", async (event) => {
+    // The closeout follow-up carries only a hidden trigger. Render it from
+    // the list as it stands now, not from the snapshot taken at agent_end.
+    const closeoutMessage = controller.consumeCloseoutTrigger(
+      event.messages ?? [],
+    );
+    if (closeoutMessage) {
+      return {
+        messages: [
+          ...event.messages,
+          {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: closeoutMessage }],
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    }
     if (!isActPhase() || !hasTodo()) {
       return {};
     }

@@ -1072,9 +1072,27 @@ describe("plan-mode extension: review lifecycle", () => {
 
       expectNoReviewApprovalFollowUp(harness);
       // The leave-abandoned list behind is what the closeout gate exists for:
-      // it asks once instead of letting the list rot silently.
-      expect(harness.api.sendUserMessage).toHaveBeenCalledTimes(1);
-      expect(String(harness.api.sendUserMessage.mock.calls[0]?.[0])).toContain(
+      // it asks once instead of letting the list rot silently. The ask is a
+      // hidden trigger now; its text is rendered when the follow-up starts.
+      const trigger = harness.api.sendMessage.mock.calls.find(
+        (call) => call[0]?.customType === "plan-mode-closeout-trigger",
+      );
+      expect(trigger).toBeDefined();
+      const context = (await harness.emit(
+        "context",
+        {
+          messages: [
+            {
+              role: "custom",
+              customType: "plan-mode-closeout-trigger",
+              content: "",
+              details: trigger?.[0]?.details,
+            },
+          ],
+        },
+        ctx,
+      )) as { messages?: Array<{ content?: Array<{ text?: string }> }> };
+      expect(JSON.stringify(context.messages ?? [])).toContain(
         "open TODO item",
       );
 
@@ -1084,10 +1102,14 @@ describe("plan-mode extension: review lifecycle", () => {
         { action: "update", updates: [{ id: 1, status: "done" }] },
         ctx,
       );
-      harness.api.sendUserMessage.mockClear();
+      harness.api.sendMessage.mockClear();
       await harness.emit("agent_end", { messages: [] }, ctx);
 
-      expect(harness.api.sendUserMessage).not.toHaveBeenCalled();
+      expect(
+        harness.api.sendMessage.mock.calls.some(
+          (call) => call[0]?.customType === "plan-mode-closeout-trigger",
+        ),
+      ).toBe(false);
     });
   });
 

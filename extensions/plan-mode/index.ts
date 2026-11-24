@@ -9,6 +9,7 @@ import {
 } from "../shared/internal-events.ts";
 import {
   ACT_TODO_TOOL_NAME,
+  CLOSEOUT_TRIGGER_TYPE,
   PLAN_MODE_COMMAND_OPTIONS,
   PLAN_MODE_TOGGLE_SHORTCUT,
   TODO_TOOL_NAME,
@@ -240,15 +241,28 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("context", async (event) => {
+    const incoming = event.messages ?? [];
     // The closeout follow-up carries only a hidden trigger. Render it from
     // the list as it stands now, not from the snapshot taken at agent_end.
-    const closeoutMessage = controller.consumeCloseoutTrigger(
-      event.messages ?? [],
-    );
+    const closeoutMessage = controller.consumeCloseoutTrigger(incoming);
+    // `display: false` hides the marker in the TUI only: convertToLlm() still
+    // maps a custom message to a user message for the model. Strip it from
+    // every request, including ones where the list is already settled, or
+    // "Settle the Act TODO list before stopping." becomes the model's prompt
+    // and the run ends on that instead of on the real answer.
+    const visible = incoming.filter((message) => {
+      // AgentMessage's type omits the runtime `custom` role, so inspect it as a record.
+      const raw: unknown = message;
+      return !(
+        isRecord(raw) &&
+        raw.role === "custom" &&
+        raw.customType === CLOSEOUT_TRIGGER_TYPE
+      );
+    });
     if (closeoutMessage) {
       return {
         messages: [
-          ...event.messages,
+          ...visible,
           {
             role: "user" as const,
             content: [{ type: "text" as const, text: closeoutMessage }],
@@ -257,6 +271,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
         ],
       };
     }
+    if (visible.length !== incoming.length) return { messages: visible };
     if (!isActPhase() || !hasTodo()) {
       return {};
     }

@@ -45,6 +45,18 @@ const closeoutTriggerMessage = (details: unknown) => ({
   details,
 });
 
+/** The queued follow-up as the host actually delivers it: hidden, but with body text. */
+const deliveredCloseoutTrigger = (details: unknown) => ({
+  ...closeoutTriggerMessage(details),
+  content: "Settle the Act TODO list before stopping.",
+});
+
+/** A `context` handler returning nothing leaves the host's message list untouched. */
+const effectiveMessages = (result: unknown, input: readonly unknown[]) => {
+  const override = (result as { messages?: unknown[] } | undefined)?.messages;
+  return JSON.stringify(override ?? input);
+};
+
 const triggerDetails = (harness: ReturnType<typeof buildHarness>) => {
   const call = closeoutTriggers(harness).at(-1);
   return call?.[0]?.details;
@@ -81,6 +93,107 @@ describe("act todo closeout gate", () => {
     )) as { messages?: Array<{ content?: Array<{ text?: string }> }> };
     expect(JSON.stringify(context.messages ?? [])).not.toContain(
       "Act Mode is stopping",
+    );
+  });
+
+  it("does not let the hidden trigger body reach the model while the list is open", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+    await seedOpenTodos(harness, ctx);
+    harness.api.sendMessage.mockClear();
+
+    await harness.emit("agent_end", { messages: [] }, ctx);
+    const details = triggerDetails(harness);
+    const messages = [deliveredCloseoutTrigger(details)];
+
+    const result = await harness.emit("context", { messages }, ctx);
+    const text = effectiveMessages(result, messages);
+    expect(text).toContain("Act Mode is stopping");
+    expect(text).not.toContain("Settle the Act TODO list before stopping.");
+  });
+
+  it("drops the hidden trigger entirely once the list was settled", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+    await seedOpenTodos(harness, ctx);
+    harness.api.sendMessage.mockClear();
+
+    await harness.emit("agent_end", { messages: [] }, ctx);
+    const details = triggerDetails(harness);
+    await harness.runTool(
+      ACT_MODE_TODO_TOOL,
+      {
+        action: "update",
+        updates: [
+          { id: 1, status: "done" },
+          { id: 2, status: "done" },
+        ],
+      },
+      ctx,
+    );
+
+    const messages = [deliveredCloseoutTrigger(details)];
+    const result = await harness.emit("context", { messages }, ctx);
+    const text = effectiveMessages(result, messages);
+    expect(text).not.toContain("Act Mode is stopping");
+    expect(text).not.toContain("Settle the Act TODO list before stopping.");
+  });
+
+  it("never leaks a trigger seen by an earlier request after the list settles", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+    await seedOpenTodos(harness, ctx);
+    harness.api.sendMessage.mockClear();
+
+    await harness.emit("agent_end", { messages: [] }, ctx);
+    const messages = [deliveredCloseoutTrigger(triggerDetails(harness))];
+    // A queued follow-up can show up in a request before it is actually
+    // delivered (e.g. an error retry in the same run).
+    await harness.emit("context", { messages }, ctx);
+    await harness.runTool(
+      ACT_MODE_TODO_TOOL,
+      {
+        action: "update",
+        updates: [
+          { id: 1, status: "done" },
+          { id: 2, status: "done" },
+        ],
+      },
+      ctx,
+    );
+
+    const result = await harness.emit("context", { messages }, ctx);
+    const text = effectiveMessages(result, messages);
+    expect(text).not.toContain("Act Mode is stopping");
+    expect(text).not.toContain("Settle the Act TODO list before stopping.");
+  });
+
+  it("strips only the closeout trigger, leaving other request messages alone", async () => {
+    const { harness, ctx } = await startPlanModeSession("act");
+    await seedOpenTodos(harness, ctx);
+    harness.api.sendMessage.mockClear();
+    await harness.emit("agent_end", { messages: [] }, ctx);
+
+    const userMessage = { role: "user", content: "real user prompt" };
+    const otherCustom = {
+      role: "custom",
+      customType: "some-other-extension",
+      content: "keep",
+    };
+    const assistantMessage = { role: "assistant", content: "earlier answer" };
+    const messages = [
+      userMessage,
+      otherCustom,
+      deliveredCloseoutTrigger(triggerDetails(harness)),
+      assistantMessage,
+    ];
+    const result = (await harness.emit("context", { messages }, ctx)) as {
+      messages?: unknown[];
+    };
+    const kept = result.messages ?? messages;
+    expect(kept).toHaveLength(4);
+    expect(kept[0]).toEqual(userMessage);
+    expect(kept[1]).toEqual(otherCustom);
+    expect(kept[2]).toEqual(assistantMessage);
+    expect(JSON.stringify(kept)).not.toContain(
+      "Settle the Act TODO list before stopping.",
     );
   });
 

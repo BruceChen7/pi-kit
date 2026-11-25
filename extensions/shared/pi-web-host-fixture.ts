@@ -294,10 +294,11 @@ export const openPiWebPanel = async <T>(
   await flush();
 
   return {
-    lines: () => (component && !closed ? component.render(PI_WEB_COLUMNS) : []),
+    lines: () =>
+      component && !closed ? [...component.render(PI_WEB_COLUMNS)] : [],
     visibleLines: () =>
       normalizeCustomPanelLines(
-        component && !closed ? component.render(PI_WEB_COLUMNS) : [],
+        component && !closed ? [...component.render(PI_WEB_COLUMNS)] : [],
       ),
     input: (data: string) => {
       if (!component || closed) return;

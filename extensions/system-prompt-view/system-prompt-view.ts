@@ -171,7 +171,7 @@ class SystemPromptView implements Component {
     this.container.invalidate();
   }
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     return this.container.render(width);
   }
 }

@@ -1,3 +1,4 @@
+import { Container, Text } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 import { SkillTogglePicker } from "../skill-toggle/index.ts";
 import {
@@ -165,6 +166,23 @@ describe("pi-web panel contract", () => {
     picker.input(piWebKeys.enter);
     expect(await picker.result).toBe("b");
     expect(picker.closed()).toBe(true);
+  });
+
+  it("hands callers a copy of the component's cached render output", async () => {
+    // pi-tui 1.6.0 的 Container 连续 render 返回同一份缓存数组：调用方原地改一行，
+    // 下一次 render 就会把污染带进面板。fixture 的 lines() 必须先复制。
+    const container = new Container();
+    container.addChild(new Text("first"));
+    expect(container.render(80)).toBe(container.render(80));
+
+    markPiWebHost();
+    const panel = await openPiWebPanel(() => container);
+    const baseline = panel.lines();
+    const first = panel.lines();
+    first.push("injected");
+    const second = panel.lines();
+    expect(second).not.toContain("injected");
+    expect(second).toEqual(baseline);
   });
 
   it("answers undefined instead of crashing when the host cannot render", async () => {

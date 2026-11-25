@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import { createLinesWidget } from "./widget-lines.js";
 
 /** 组件工厂只用到 `render(width)`；tui / theme 参数这里不参与渲染。 */
-const renderWidget = (lines: readonly string[], width = 80): string[] =>
+const renderWidget = (
+  lines: readonly string[],
+  width = 80,
+): readonly string[] =>
   createLinesWidget(lines)({} as never, {} as never).render(width);
 
 const plain = (lines: readonly string[]): string[] =>

@@ -32,6 +32,15 @@ You are executing a git workflow for branching, committing, and pushing.
   `"all files"`, `"extra requirements: all files"`, or similar that covers untracked files.
 
 ## Step 2: Branch handling
+- **Retire an already-merged branch before choosing where the work goes.** On any non-base branch,
+  ask GitHub about the branch first:
+  `gh pr list --state all --head "$(git branch --show-current)" --json number,state,url,mergedAt`.
+  A `MERGED` or `CLOSED` result retires the branch: `git fetch`, then create a new branch from
+  `origin/master` and do the work there. This gate belongs here, before commit and push — a push
+  to a merged PR's head does not add commits to the PR, and both `git push` and `gh pr edit`
+  succeed silently. `git branch --merged` is not a substitute: once a post-merge commit exists,
+  the tip is no longer an ancestor of master and reads "unmerged". If `gh` is unavailable or
+  the query returns no PR, continue with the branch rules below.
 - If on base branch, create a new branch first (default safe behavior).
   - If the user gave a branch name, use it.
   - Otherwise propose a descriptive branch name based on the diff and confirm.

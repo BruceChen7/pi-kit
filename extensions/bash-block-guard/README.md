@@ -42,13 +42,13 @@ git commit -m 'fix(test): ...' && git push origin master 2>&1 | tail -25   # tim
 
 ## 拦下来之后用什么
 
-reason 里统一指向：
+reason 里统一给通用的等待形状，不假设任何仓库装了特定脚本：
 
-```shell
-tools/wait-log.sh <log> <regex> [timeout=240] [interval=10] [--pid <pid>]
-```
+1. 把长任务放后台跑，输出写进日志；
+2. 用一次带 `timeout` 的查询等到结论，每约 10 秒打印一行进度（所以不撞 `sleep-loop`）；
+3. 本仓若有 wait helper（例如 pi-clients 的 `tools/wait-log.sh`），直接用它，省掉自己拼。
 
-一次调用等到结论，每 `interval` 秒打一行进度（所以不撞 `sleep-loop`），命中 `exit 0`、超时 `exit 124`、被盯的进程先死 `exit 125`。pi-clients 里有这份脚本；别的仓库读到的提示会注明「仓库里有就用它」。
+pi-clients 那份脚本的退出码契约是 `0` 命中 / `124` 超时 / `125` 被盯进程先退出；这是它的局部约定，guard 文案不依赖这些码。
 
 **不拼「把你的循环换成 timeout N xxx」这类具体命令**：`guard.ts` 不负责理解命令语义，猜错了会静默丢掉检查。沿用「拦截而不是改写」这条既有原则。
 

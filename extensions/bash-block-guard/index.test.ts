@@ -190,13 +190,13 @@ describe("decideBashGuard: bodies and blind spots", () => {
     });
   });
 
-  it("still allows -c when the payload only mentions -c", () => {
-    expect(
-      decide({ command: "bash -c 'tools/wait-log.sh /tmp/a.log ^PASS'" }),
-    ).toEqual({ action: "allow" });
+  it("still allows -c when the payload has no wait pattern", () => {
+    expect(decide({ command: "bash -c 'grep -q PASS /tmp/a.log'" })).toEqual({
+      action: "allow",
+    });
   });
 
-  it("points at the wait-log replacement in every reason", () => {
+  it("points at a repo-agnostic wait pattern in every reason", () => {
     const blocked = [
       decide({ command: "sleep 30" }),
       decide({ command: "while :; do sleep 1; done" }),
@@ -211,7 +211,7 @@ describe("decideBashGuard: bodies and blind spots", () => {
       if (decision.action !== "block") {
         throw new Error("expected a block");
       }
-      expect(decision.reason).toContain("tools/wait-log.sh");
+      expect(decision.reason).toContain("本仓若有 wait helper");
     }
   });
 });
@@ -286,7 +286,7 @@ describe("decideBashGuard: long timeout", () => {
     if (decision.action !== "block") {
       throw new Error("expected a block");
     }
-    expect(decision.reason).toContain("tools/wait-log.sh");
+    expect(decision.reason).toContain("本仓若有 wait helper");
     expect(decision.reason).toContain("<cmd>");
     expect(decision.reason).not.toContain("改法（具体到你这条命令）");
     expect(decision.reason).not.toContain("timeout 30 glab");

@@ -75,10 +75,10 @@ const backgroundSlug = (command: string): string => {
   return slug === "" ? "pi-bg" : slug;
 };
 
-/** The query a sleep loop repeats, so the rewrite can name it. */
+/** Repo-agnostic guidance: describe the move, never assume a local helper exists. */
 const WAIT_LOG_HINT =
-  "要等一条日志出现某一行：tools/wait-log.sh <log> <regex> [timeout] [interval]" +
-  "（仓库里有就用它；一次调用等到结论，每 10 秒自己出一行进度，命中 exit 0 / 超时 124）。";
+  "要等日志出现某一行：把长任务后台跑并写日志，再用一次带 timeout 的查询等到结论" +
+  "（每 10 秒打印一行进度；本仓若有 wait helper，直接用它）。";
 
 const sleepReason = (seconds: number): string =>
   [

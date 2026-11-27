@@ -177,13 +177,13 @@ describe("wrappers must not hide a wait", () => {
 });
 
 describe("reason text", () => {
-  it("keeps the wait-log template but never invents a concrete rewrite", () => {
+  it("keeps the generic wait template but never invents a concrete rewrite", () => {
     const decision = decide(
       "for i in 1 2 3; do glab ci status --branch main | head -5; sleep 30; done",
     );
     if (decision.action !== "block") throw new Error("expected a block");
 
-    expect(decision.reason).toContain("tools/wait-log.sh");
+    expect(decision.reason).toContain("本仓若有 wait helper");
     expect(decision.reason).not.toContain("改法（具体到你这条命令）");
     expect(decision.reason).not.toContain("timeout 30 glab");
   });

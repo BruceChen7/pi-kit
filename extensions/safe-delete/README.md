@@ -10,7 +10,11 @@ This extension intercepts **bash** tool calls and prompts for confirmation when 
 
 ## Commands & patterns it detects
 
-> The extension analyzes the full command, splits pipelines/compound commands, and checks each sub-command.
+> Threat detectors consume the shell AST from `extensions/shared/shell-ast.ts`:
+> pipelines, `&&`, loops, quoted strings and heredoc bodies are structured
+> facts, not regex matches. Wrappers (`sudo`, `xargs`, `timeout`, `find -exec`,
+> `sh/bash -c`, `eval`) are expanded, so a deletion hidden behind one is still
+> checked. A wrapper whose payload cannot be resolved is confirmed fail-closed.
 
 ### Deletions
 

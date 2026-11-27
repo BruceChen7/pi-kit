@@ -33,7 +33,10 @@ import {
   SAFE_DELETE_APPROVAL_CHANNEL,
 } from "../shared/internal-events.ts";
 import { createLogger } from "../shared/logger.ts";
-import { stripHeredocBodies } from "../shared/shell-text.ts";
+import {
+  analyzeShellCommand,
+  type ShellCommandRef,
+} from "../shared/shell-ast.ts";
 
 // --- Configuration ---
 
@@ -186,131 +189,72 @@ function formatBytes({ bytes }: { bytes: number }): string {
 // --- Command Parsing ---
 
 /**
- * Strip sudo prefix from a command so we can analyze the actual operation.
- * sudo makes everything worse, so we flag it separately.
+ * Shell facts come from `shared/shell-ast.ts`. A single `CommandRef` already
+ * accounts for `&&`/pipelines, wrappers (`sudo`, `xargs`, `find -exec`, `-c`)
+ * and heredoc bodies, so the detectors below never scan command text.
  */
-function stripSudo({ command }: { command: string }): {
-  command: string;
-  hasSudo: boolean;
-} {
-  const sudoPattern = /^sudo\s+(?:-[a-zA-Z]*\s+)*/;
-  const match = command.match(sudoPattern);
-  if (match) {
-    return { command: command.slice(match[0].length), hasSudo: true };
+
+const flagArgs = (args: string[]): string[] =>
+  args.filter((arg) => arg.startsWith("-"));
+
+const plainArgs = (args: string[]): string[] =>
+  args.filter((arg) => !arg.startsWith("-"));
+
+const FIND_VALUE_FLAGS = new Set([
+  "-maxdepth",
+  "-mindepth",
+  "-type",
+  "-name",
+  "-iname",
+  "-path",
+  "-ipath",
+  "-regex",
+  "-iregex",
+  "-size",
+  "-mtime",
+  "-atime",
+  "-ctime",
+  "-user",
+  "-group",
+]);
+
+/** `find <root> …`: skip flags (and their values) before the search root. */
+const findSearchRoot = (args: string[]): string => {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (FIND_VALUE_FLAGS.has(arg)) {
+      index += 1;
+      continue;
+    }
+    if (!arg.startsWith("-")) return arg;
   }
-  return { command, hasSudo: false };
-}
-
-/**
- * Extract arguments from a command, filtering out flags.
- * Handles quoted strings.
- */
-function extractArgs({ argsString }: { argsString: string }): string[] {
-  const args: string[] = [];
-  // Simple tokenizer that respects quotes
-  const tokens = argsString.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
-
-  for (const token of tokens) {
-    // Skip flags
-    if (token.startsWith("-")) continue;
-    // Strip quotes
-    args.push(token.replace(/^["']|["']$/g, ""));
-  }
-
-  return args;
-}
-
-/**
- * Splits a command string into individual commands separated by &&, ||, ;, or |.
- * Handles quoted strings so we do not split inside them.
- */
-function splitCommands({ command }: { command: string }): string[] {
-  const commands: string[] = [];
-  let current = "";
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
-  let i = 0;
-
-  while (i < command.length) {
-    const char = command[i];
-    const next = command[i + 1];
-
-    if (char === "'" && !inDoubleQuote) {
-      inSingleQuote = !inSingleQuote;
-      current += char;
-      i++;
-      continue;
-    }
-
-    if (char === '"' && !inSingleQuote) {
-      inDoubleQuote = !inDoubleQuote;
-      current += char;
-      i++;
-      continue;
-    }
-
-    if (inSingleQuote || inDoubleQuote) {
-      current += char;
-      i++;
-      continue;
-    }
-
-    // Command separators
-    if (
-      char === ";" ||
-      char === "|" ||
-      (char === "&" && next === "&") ||
-      (char === "|" && next === "|")
-    ) {
-      if (current.trim()) commands.push(current.trim());
-      current = "";
-      // Skip double-char operators
-      if ((char === "&" && next === "&") || (char === "|" && next === "|")) i++;
-      i++;
-      continue;
-    }
-
-    current += char;
-    i++;
-  }
-
-  if (current.trim()) commands.push(current.trim());
-  return commands;
-}
+  return ".";
+};
 
 // --- Threat Detectors ---
 
-function detectRmThreats({
-  command,
-  cwd,
-}: {
-  command: string;
+type DetectorInput = {
+  ref: ShellCommandRef;
+  original: string;
   cwd: string;
-}): Threat[] {
+};
+
+function detectRmThreats({ ref, original, cwd }: DetectorInput): Threat[] {
   const threats: Threat[] = [];
+  const name = path.basename(ref.name);
+  if (name !== "rm" && name !== "rmdir") return threats;
 
-  // `rm` only counts where a command can start: not in prose after `echo "…`
-  // and not inside a quoted argument.
-  const rmPattern =
-    /(?:^|[;&|()\n]|\$\()\s*(rm|rmdir)\s+((?:-[a-zA-Z]+\s+)*)(.*)/;
-  const match = command.match(rmPattern);
-  if (!match) return threats;
+  const flags = flagArgs(ref.args).join(" ");
+  const isRecursive = /[rR]/.test(flags);
 
-  const flags = match[2] || "";
-  const isRecursive = /r/.test(flags) || /R/.test(flags);
-  const _isForced = /f/.test(flags);
-  const argsString = match[3];
-  const targets = extractArgs({ argsString });
-
-  for (const target of targets) {
-    // Wildcard explosion check
+  for (const target of plainArgs(ref.args)) {
     if (hasWildcardExplosion({ targetPath: target })) {
       log?.warn("rm wildcard deletion detected", {
         targetPath: target,
-        command,
+        command: original,
       });
       threats.push({
-        description: `Wildcard deletion: rm ${flags}${target}`,
+        description: `Wildcard deletion: ${name} ${flags} ${target}`,
         severity: "critical",
         paths: [target],
       });
@@ -318,13 +262,11 @@ function detectRmThreats({
     }
 
     const resolved = resolvePath({ targetPath: target, cwd });
-
-    // Protected path check
     if (isProtectedPath({ targetPath: target, cwd })) {
       log?.warn("rm protected path detected", {
         targetPath: target,
         resolved,
-        command,
+        command: original,
       });
       threats.push({
         description: isDependencyPath(resolved)
@@ -336,14 +278,13 @@ function detectRmThreats({
       continue;
     }
 
-    // Recursive + force on existing directory = check size
     if (isRecursive) {
       const size = getPathSize({ targetPath: resolved });
       if (size >= SIZE_THRESHOLD) {
         log?.info("rm large recursive deletion detected", {
           resolved,
           size,
-          command,
+          command: original,
         });
         threats.push({
           description: `Large recursive deletion: ${resolved} (${formatBytes({ bytes: size })})`,
@@ -358,30 +299,22 @@ function detectRmThreats({
 }
 
 function detectFindDeleteThreats({
-  command,
+  ref,
+  original,
   cwd,
-}: {
-  command: string;
-  cwd: string;
-}): Threat[] {
+}: DetectorInput): Threat[] {
   const threats: Threat[] = [];
+  if (path.basename(ref.name) !== "find") return threats;
+  if (!ref.args.includes("-delete")) return threats;
 
-  // find ... -delete or find ... -exec rm
-  const isFindDelete =
-    /\bfind\b/.test(command) &&
-    (/\s-delete\b/.test(command) || /\s-exec\s+rm\b/.test(command));
-  if (!isFindDelete) return threats;
-
-  // Extract the search root from find
-  const findMatch = command.match(/\bfind\s+(\S+)/);
-  const searchRoot = findMatch ? findMatch[1] : ".";
+  const searchRoot = findSearchRoot(ref.args);
   const resolved = resolvePath({ targetPath: searchRoot, cwd });
 
   if (isProtectedPath({ targetPath: searchRoot, cwd })) {
     log?.warn("find -delete protected path detected", {
       searchRoot,
       resolved,
-      command,
+      command: original,
     });
     threats.push({
       description: `find -delete rooted at protected path: ${resolved}`,
@@ -394,7 +327,7 @@ function detectFindDeleteThreats({
       log?.info("find -delete large directory detected", {
         resolved,
         size,
-        command,
+        command: original,
       });
       threats.push({
         description: `find -delete in large directory: ${resolved} (${formatBytes({ bytes: size })})`,
@@ -408,37 +341,30 @@ function detectFindDeleteThreats({
 }
 
 function detectChmodChownThreats({
-  command,
+  ref,
+  original,
   cwd,
-}: {
-  command: string;
-  cwd: string;
-}): Threat[] {
+}: DetectorInput): Threat[] {
   const threats: Threat[] = [];
+  const name = path.basename(ref.name);
+  if (name !== "chmod" && name !== "chown") return threats;
 
-  const match = command.match(/\b(chmod|chown)\s+((?:-[a-zA-Z]+\s+)*)(.*)/);
-  if (!match) return threats;
+  const flags = flagArgs(ref.args).join(" ");
+  if (!/[rR]/.test(flags)) return threats;
 
-  const flags = match[2] || "";
-  const isRecursive = /R/.test(flags) || /r/.test(flags);
-  if (!isRecursive) return threats;
-
-  const targets = extractArgs({ argsString: match[3] });
-  // For chmod/chown, the first non-flag arg is the mode/owner, rest are paths
-  // Skip the first arg (mode like 777 or owner like root:root)
-  const paths = targets.slice(1);
-
+  // First non-flag arg is the mode/owner; the rest are paths.
+  const paths = plainArgs(ref.args).slice(1);
   for (const target of paths) {
     if (isProtectedPath({ targetPath: target, cwd })) {
       const resolved = resolvePath({ targetPath: target, cwd });
       log?.warn("recursive chmod/chown protected path detected", {
-        operation: match[1],
+        operation: name,
         targetPath: target,
         resolved,
-        command,
+        command: original,
       });
       threats.push({
-        description: `Recursive ${match[1]} on protected path: ${resolved}`,
+        description: `Recursive ${name} on protected path: ${resolved}`,
         severity: "critical",
         paths: [resolved],
       });
@@ -448,22 +374,21 @@ function detectChmodChownThreats({
   return threats;
 }
 
-function detectGitCleanThreats({ command }: { command: string }): Threat[] {
+function detectGitCleanThreats({ ref, original }: DetectorInput): Threat[] {
   const threats: Threat[] = [];
+  if (path.basename(ref.name) !== "git" || ref.args[0] !== "clean") {
+    return threats;
+  }
 
-  // git clean -fdx or similar aggressive clean
-  const match = command.match(/\bgit\s+clean\b\s+((?:-[a-zA-Z]+\s*)*)/);
-  if (!match) return threats;
-
-  const flags = match[1] || "";
+  const flags = ref.args.slice(1).join("");
   const isForced = /f/.test(flags);
   const isDirectories = /d/.test(flags);
-  const isIgnored = /x/.test(flags) || /X/.test(flags);
+  const isIgnored = /[xX]/.test(flags);
 
   if (isForced && (isDirectories || isIgnored)) {
     log?.info("git clean aggressive detected", {
       flags: flags.trim(),
-      command,
+      command: original,
     });
     threats.push({
       description: `Aggressive git clean (${flags.trim()}) -- will permanently delete untracked${isIgnored ? " and gitignored" : ""} files${isDirectories ? " and directories" : ""}`,
@@ -476,100 +401,95 @@ function detectGitCleanThreats({ command }: { command: string }): Threat[] {
 }
 
 function detectPipedDeletionThreats({
-  command,
-}: {
-  command: string;
-}): Threat[] {
+  ref,
+  original,
+}: DetectorInput): Threat[] {
+  const threats: Threat[] = [];
+  const name = path.basename(ref.name);
+  if (name !== "rm" && name !== "rmdir") return threats;
+  if (!ref.wrappedBy.includes("xargs")) return threats;
+
+  log?.info("piped deletion via xargs rm detected", {
+    command: original,
+  });
+  threats.push({
+    description: "Piped deletion via xargs rm -- uncontrolled scope",
+    severity: "high",
+    paths: ["(piped input)"],
+  });
+  return threats;
+}
+
+const OUTFILE_OPERATORS = new Set([">", ">>", "&>", "&>>", ">|"]);
+
+function detectTruncationThreats({
+  ref,
+  original,
+  cwd,
+}: DetectorInput): Threat[] {
   const threats: Threat[] = [];
 
-  // xargs rm, xargs del, etc.
-  if (/\|\s*xargs\s+(?:.*\s)?rm\b/.test(command)) {
-    log?.info("piped deletion via xargs rm detected", { command });
+  // A bare `> file` is a redirect-only Command in the AST. `echo x > file`
+  // keeps its command name and is an intentional write, so it is not gated.
+  if (ref.name === "") {
+    for (const redirect of ref.redirects) {
+      if (!OUTFILE_OPERATORS.has(redirect.operator)) continue;
+      const target = redirect.target;
+      if (target === undefined) continue;
+      const resolved = resolvePath({ targetPath: target, cwd });
+      if (isProtectedPath({ targetPath: target, cwd })) {
+        log?.warn("truncation of protected file detected", {
+          targetPath: target,
+          resolved,
+          command: original,
+        });
+        threats.push({
+          description: `Truncation of protected file: ${resolved}`,
+          severity: "critical",
+          paths: [resolved],
+        });
+      }
+    }
+    return threats;
+  }
+
+  if (path.basename(ref.name) !== "truncate") return threats;
+  const target =
+    ref.args[0] === "-s" ? ref.args[2] : (plainArgs(ref.args)[0] ?? "");
+  const resolved = resolvePath({ targetPath: target, cwd });
+  const size = getPathSize({ targetPath: resolved });
+  if (size >= SIZE_THRESHOLD) {
+    log?.info("truncating large file detected", {
+      resolved,
+      size,
+      command: original,
+    });
     threats.push({
-      description: "Piped deletion via xargs rm -- uncontrolled scope",
+      description: `Truncating large file: ${resolved} (${formatBytes({ bytes: size })})`,
       severity: "high",
-      paths: ["(piped input)"],
+      paths: [resolved],
     });
   }
 
   return threats;
 }
 
-function detectTruncationThreats({
-  command,
-  cwd,
-}: {
-  command: string;
-  cwd: string;
-}): Threat[] {
-  const threats: Threat[] = [];
-
-  // > file (redirect that truncates)
-  // Only catch bare redirections at the start, not echo "x" > file (which is intentional writes)
-  const truncateRedirect = command.match(/^>\s*(\S+)/);
-  if (truncateRedirect) {
-    const target = truncateRedirect[1];
-    const resolved = resolvePath({ targetPath: target, cwd });
-    if (isProtectedPath({ targetPath: target, cwd })) {
-      log?.warn("truncation of protected file detected", {
-        targetPath: target,
-        resolved,
-        command,
-      });
-      threats.push({
-        description: `Truncation of protected file: ${resolved}`,
-        severity: "critical",
-        paths: [resolved],
-      });
-    }
-  }
-
-  // truncate command
-  const truncateCmd = command.match(/\btruncate\b.*?(?:-s\s*\d+\s+)?(\S+)/);
-  if (truncateCmd) {
-    const target = truncateCmd[1];
-    const resolved = resolvePath({ targetPath: target, cwd });
-    const size = getPathSize({ targetPath: resolved });
-    if (size >= SIZE_THRESHOLD) {
-      log?.info("truncating large file detected", {
-        resolved,
-        size,
-        command,
-      });
-      threats.push({
-        description: `Truncating large file: ${resolved} (${formatBytes({ bytes: size })})`,
-        severity: "high",
-        paths: [resolved],
-      });
-    }
-  }
-
-  return threats;
-}
-
-function getCommandName({ command }: { command: string }): string {
-  const firstToken = command.match(/^\s*(\S+)/)?.[1] ?? "";
-  return path.basename(firstToken);
-}
-
-function isFilesystemFormatCommand({ command }: { command: string }): boolean {
-  const commandName = getCommandName({ command });
-
+function isFilesystemFormatCommand(name: string): boolean {
   return (
-    commandName === "format" ||
-    commandName === "mkfs" ||
-    commandName.startsWith("mkfs.") ||
-    commandName === "newfs" ||
-    commandName.startsWith("newfs_")
+    name === "format" ||
+    name === "mkfs" ||
+    name.startsWith("mkfs.") ||
+    name === "newfs" ||
+    name.startsWith("newfs_")
   );
 }
 
-function detectDeviceThreats({ command }: { command: string }): Threat[] {
+function detectDeviceThreats({ ref, original }: DetectorInput): Threat[] {
   const threats: Threat[] = [];
+  const name = path.basename(ref.name);
 
-  // dd writing to a device
-  if (/\bdd\b/.test(command) && /\bof=\/dev\//.test(command)) {
-    log?.warn("dd writing to device detected", { command });
+  if (name === "dd" && ref.args.some((arg) => arg.startsWith("of=/dev/"))) {
+    log?.warn("dd writing to device detected", { command: original });
     threats.push({
       description: "dd writing directly to a device",
       severity: "critical",
@@ -578,8 +498,8 @@ function detectDeviceThreats({ command }: { command: string }): Threat[] {
   }
 
   // mkfs / newfs / format as the invoked executable, not language formatter subcommands.
-  if (isFilesystemFormatCommand({ command })) {
-    log?.warn("filesystem format command detected", { command });
+  if (isFilesystemFormatCommand(name)) {
+    log?.warn("filesystem format command detected", { command: original });
     threats.push({
       description: "Filesystem format command detected",
       severity: "critical",
@@ -587,9 +507,8 @@ function detectDeviceThreats({ command }: { command: string }): Threat[] {
     });
   }
 
-  // mv to /dev/null
-  if (/\bmv\b/.test(command) && /\/dev\/null/.test(command)) {
-    log?.warn("mv to /dev/null detected", { command });
+  if (name === "mv" && ref.args.includes("/dev/null")) {
+    log?.warn("mv to /dev/null detected", { command: original });
     threats.push({
       description: "mv to /dev/null -- data will be destroyed",
       severity: "high",
@@ -610,43 +529,42 @@ function analyzeCommand({
   cwd: string;
 }): Threat[] {
   const allThreats: Threat[] = [];
+  const analysis = analyzeShellCommand(command);
 
   log?.debug("analyzing command", { command, cwd });
 
-  // A heredoc body is *written*, not run: prose that mentions `rm` inside
-  // `cat >> f <<'EOF' … EOF` is not a deletion.
-  const scanned = stripHeredocBodies(command);
+  // A wrapper whose payload cannot be resolved may conceal any operation;
+  // this gate is a confirmation prompt, so fail closed.
+  if (
+    analysis.errors.some((error) => error.startsWith("unresolvable wrapper"))
+  ) {
+    allThreats.push({
+      description: "Unresolvable shell wrapper may hide a destructive command",
+      severity: "critical",
+      paths: ["(shell)"],
+    });
+  }
 
-  // Pipe-aware detectors must run on the full command before splitting,
-  // since splitCommands breaks on | and the pipe context is lost.
-  allThreats.push(...detectPipedDeletionThreats({ command: scanned }));
+  const detectors = [
+    detectRmThreats,
+    detectFindDeleteThreats,
+    detectChmodChownThreats,
+    detectGitCleanThreats,
+    detectPipedDeletionThreats,
+    detectTruncationThreats,
+    detectDeviceThreats,
+  ];
 
-  const subcommands = splitCommands({ command: scanned });
-
-  for (const sub of subcommands) {
-    const { command: stripped, hasSudo } = stripSudo({ command: sub });
-
-    const detectors = [
-      detectRmThreats,
-      detectFindDeleteThreats,
-      detectChmodChownThreats,
-      detectGitCleanThreats,
-      detectTruncationThreats,
-      detectDeviceThreats,
-    ];
-
+  for (const ref of analysis.commands) {
     for (const detect of detectors) {
-      const threats = detect({ command: stripped, cwd });
-
-      // Escalate severity if sudo is involved
-      if (hasSudo) {
-        for (const threat of threats) {
+      const threats = detect({ ref, original: command, cwd });
+      for (const threat of threats) {
+        if (ref.wrappedBy.includes("sudo")) {
           threat.description = `[sudo] ${threat.description}`;
           threat.severity = "critical";
         }
+        allThreats.push(threat);
       }
-
-      allThreats.push(...threats);
     }
   }
 

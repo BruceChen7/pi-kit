@@ -85,10 +85,10 @@ describe("decideBashGuard: sleep loop", () => {
     ).toMatchObject({ action: "block", rule: "sleep-loop" });
   });
 
-  it("blocks a while loop even when each sleep is short", () => {
+  it("allows a short polling loop that prints progress", () => {
     expect(
       decide({ command: "while true; do curl -s x; sleep 1; done" }),
-    ).toMatchObject({ rule: "sleep-loop" });
+    ).toEqual({ action: "allow" });
   });
 
   it("blocks an until loop", () => {
@@ -148,9 +148,10 @@ describe("decideBashGuard: bodies and blind spots", () => {
     });
   });
 
-  it("does not quote away an unterminated quote", () => {
+  it("fails closed on an unterminated quote instead of guessing", () => {
     expect(decide({ command: 'echo "unclosed then sleep 30' })).toMatchObject({
-      rule: "sleep",
+      action: "block",
+      rule: "unparseable",
     });
   });
 
@@ -200,7 +201,10 @@ describe("decideBashGuard: bodies and blind spots", () => {
       decide({ command: "sleep 30" }),
       decide({ command: "while :; do sleep 1; done" }),
       decide({ command: "tail -f /tmp/a.log" }),
-      decide({ command: "make build", timeoutSeconds: 900 }),
+      decide({
+        command: "make check > /tmp/check.log 2>&1",
+        timeoutSeconds: 900,
+      }),
     ];
 
     for (const decision of blocked) {
@@ -215,10 +219,19 @@ describe("decideBashGuard: bodies and blind spots", () => {
 // ── long-timeout ─────────────────────────────────────────────
 
 describe("decideBashGuard: long timeout", () => {
-  it("blocks a call that asks pi to wait past the limit", () => {
+  it("blocks a long call whose output is captured to a file", () => {
     expect(
-      decide({ command: "docker build .", timeoutSeconds: 600 }),
+      decide({
+        command: "docker build . > /tmp/build.log 2>&1",
+        timeoutSeconds: 600,
+      }),
     ).toMatchObject({ action: "block", rule: "long-timeout" });
+  });
+
+  it("allows a declared upper bound on a streaming command", () => {
+    expect(decide({ command: "docker build .", timeoutSeconds: 600 })).toEqual({
+      action: "allow",
+    });
   });
 
   it("allows a call at the limit", () => {
@@ -234,7 +247,10 @@ describe("decideBashGuard: long timeout", () => {
   });
 
   it("mentions the limit and the override in the reason", () => {
-    const decision = decide({ command: "make build", timeoutSeconds: 900 });
+    const decision = decide({
+      command: "make build > /tmp/build.log 2>&1",
+      timeoutSeconds: 900,
+    });
 
     if (decision.action !== "block") {
       throw new Error("expected a block");
@@ -245,7 +261,7 @@ describe("decideBashGuard: long timeout", () => {
 
   it("writes the caller's own command into the background rewrite", () => {
     const decision = decide({
-      command: "npx vitest run extensions/plan-mode",
+      command: "npx vitest run extensions/plan-mode > /tmp/vitest.log 2>&1",
       timeoutSeconds: 1800,
     });
 
@@ -261,7 +277,7 @@ describe("decideBashGuard: long timeout", () => {
     expect(decision.reason).not.toContain("<cmd>");
   });
 
-  it("turns a sleep loop into one concrete query", () => {
+  it("does not invent a concrete rewrite for a sleep loop", () => {
     const decision = decide({
       command:
         "for i in 1 2 3; do glab ci status --branch main | head -5; sleep 30; done",
@@ -270,9 +286,10 @@ describe("decideBashGuard: long timeout", () => {
     if (decision.action !== "block") {
       throw new Error("expected a block");
     }
-    expect(decision.reason).toContain(
-      "timeout 30 glab ci status --branch main | head -5",
-    );
+    expect(decision.reason).toContain("tools/wait-log.sh");
+    expect(decision.reason).toContain("<cmd>");
+    expect(decision.reason).not.toContain("改法（具体到你这条命令）");
+    expect(decision.reason).not.toContain("timeout 30 glab");
   });
 });
 
@@ -412,14 +429,14 @@ describe("tool_call hook", () => {
     expect(call("sleep 30")).toMatchObject({ block: true });
   });
 
-  it("blocks a loop whose sleeps are short", () => {
-    expect(call("for i in 1 2 3; do sleep 5; done")).toMatchObject({
-      block: true,
-    });
+  it("lets a bounded loop whose total sleep is short run", () => {
+    expect(call("for i in 1 2 3; do sleep 5; done")).toBeUndefined();
   });
 
-  it("blocks a 600 second call", () => {
-    expect(call("make build", 600)).toMatchObject({ block: true });
+  it("blocks a 600 second call with captured output", () => {
+    expect(call("make build > /tmp/build.log 2>&1", 600)).toMatchObject({
+      block: true,
+    });
   });
 
   it("lets a short sleep run", () => {
@@ -443,8 +460,10 @@ describe("tool_call hook", () => {
     expect(result?.reason).toContain("替代写法");
   });
 
-  it("blocks the 1100 second poll from the session that motivated this", () => {
-    expect(call("glab ci status", 1100)).toMatchObject({ block: true });
+  it("blocks the 1100 second poll when its output is captured", () => {
+    expect(call("glab ci status > /tmp/ci.log 2>&1", 1100)).toMatchObject({
+      block: true,
+    });
   });
 
   it("returns nothing for tools the guard does not own", () => {

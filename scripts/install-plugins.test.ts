@@ -31,6 +31,11 @@ function runInstall(
     env: {
       ...process.env,
       HOME: home,
+      // HOME is replaced by a fixture, so a version-manager shim (`node` from
+      // mise/asdf/etc.) can no longer find its trusted config and silently
+      // exits 1 — install-plugins.sh swallows that error and skips
+      // package-style plugins. Use the real node running the tests.
+      PATH: `${path.dirname(process.execPath)}:${process.env.PATH ?? ""}`,
       PI_KIT_SKIP_PLUGIN_DEP_INSTALL: "1",
       ...extraEnv,
     },
